@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<style>
+    @page { size: letter; margin: 25mm; }
+    body {
+        font-family: Arial, sans-serif;
+        font-size: 12px;
+        color: #000;
+        position: relative;
+    }
+
+    .header {
+        width: 100%;
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+    }
+
+    .logo {
+        width: 220px;
+    }
+
+    .box-cotizacion {
+        border: 3px solid #4b89ac;
+        padding: 10px;
+        width: 230px;
+        text-align: center;
+        font-weight: bold;
+    }
+
+    .titulo-cot {
+        font-size: 16px;
+        margin-top: 10px;
+        font-weight: bold;
+    }
+
+    .label {
+        font-weight: bold;
+        color: #003366;
+    }
+
+    table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 12px;
+        font-size: 11px;
+    }
+
+    th {
+        background: #d9d9d9;
+        padding: 6px;
+        border: 1px solid #888;
+    }
+
+    td {
+        border: 1px solid #888;
+        padding: 5px;
+    }
+
+    .marca-agua {
+        position: absolute;
+        top: 45%;
+        left: 50%;
+        width: 450px;
+        opacity: 0.15;
+        transform: translate(-50%, -50%);
+        z-index: -1;
+    }
+
+    .totales-cuadro {
+        width: 230px;
+        float: right;
+        margin-top: 20px;
+        font-size: 12px;
+    }
+
+    .cuadro-title {
+        font-weight: bold;
+        font-size: 12px;
+        margin-bottom: 5px;
+    }
+
+    .totales-cuadro td {
+        border: none;
+        padding: 4px 0;
+    }
+
+    .footer-bank {
+        margin-top: 30px;
+        width: 45%;
+        font-size: 11px;
+    }
+
+    .footer-bank td {
+        border: 1px solid #999;
+        padding: 4px;
+    }
+</style>
+</head>
+<body>
+
+<!-- Marca de Agua -->
+<img class="marca-agua" src="/logo_marca_agua.png" />
+
+<div class="header">
+    <img class="logo" src="/logo_superior_ficha.png">
+
+    <div class="box-cotizacion">
+        R.U.T.: 78.087.954-8<br>
+        <span class="titulo-cot">COTIZACIÓN</span><br>
+        N° {{numero_licitacion}}
+    </div>
+</div>
+
+<br><br>
+
+<div style="font-size: 12px;">
+    <span class="label">Fecha Emisión:</span> {{fecha_emision}}<br>
+</div>
+
+<br>
+
+<table style="width:100%; border:none; font-size: 12px;">
+    <tr>
+        <td style="border:none;">
+            <span class="label">SEÑOR(ES):</span> {{nombre_entidad}}<br>
+            <span class="label">R.U.T.:</span> {{rut_entidad}}<br>
+            <span class="label">DIRECCIÓN:</span><br>
+            <span class="label">COMUNA:</span><br>
+            <span class="label">GIRO:</span><br>
+            <span class="label">VIGENCIA:</span><br>
+        </td>
+
+        <td style="border:none;">
+            <span class="label">CONTACTO:</span><br>
+            <span class="label">EMAIL:</span><br>
+            <span class="label">TELÉFONO:</span><br>
+            <span class="label">COND. VENTA:</span><br>
+        </td>
+    </tr>
+</table>
+
+<br>
+
+<div class="label">OBSERVACIONES:</div>
+<br>
+
+<!-- TABLA ITEMS -->
+<table>
+    <thead>
+        <tr>
+            <th>Código</th>
+            <th>Descripción</th>
+            <th>Cant.</th>
+            <th>Precio</th>
+            <th>Descuento</th>
+            <th>Total</th>
+        </tr>
+    </thead>
+    <tbody>
+        {{items_tabla}}
+    </tbody>
+</table>
+
+<br><br>
+
+<!-- PIE TOTALES -->
+<div class="totales-cuadro">
+    <table>
+        <tr><td class="label">DESCUENTO:</td><td>$ {{descuento_total}}</td></tr>
+        <tr><td class="label">EXENTO:</td><td>$ 0</td></tr>
+        <tr><td class="label">AFECTO:</td><td>$ {{afecto}}</td></tr>
+        <tr><td class="label">I.V.A. 19%:</td><td>$ {{iva}}</td></tr>
+        <tr><td class="label">TOTAL:</td><td><strong>$ {{total_con_iva}}</strong></td></tr>
+    </table>
+</div>
+
+<!-- DATOS BANCARIOS -->
+<table class="footer-bank">
+    <tr><td colspan="2" style="text-align:center; font-weight:bold;">DATOS PARA TRANSFERENCIA BANCARIA</td></tr>
+    <tr><td>Banco:</td><td>Banco Santander Chile</td></tr>
+    <tr><td>Cuenta Corriente:</td><td>96608446</td></tr>
+    <tr><td>R.U.T.:</td><td>78.087.954-8</td></tr>
+    <tr><td>Empresa:</td><td>Amsodent Medical Spa</td></tr>
+    <tr><td>Aviso Email:</td><td>contacto@amsodentmedical.cl</td></tr>
+</table>
+
+</body>
+</html>

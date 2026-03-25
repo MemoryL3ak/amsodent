@@ -1,112 +1,93 @@
-import Sidebar from "./components/layout/Sidebar";
-import Topbar from "./components/layout/Topbar";
-import Card from "./components/ui/Card";
-import Button from "./components/ui/Button";
-import Badge from "./components/ui/Badge";
-import Input from "./components/ui/Input";
+import { BrowserRouter, Routes, Route } from "react-router-dom";
+import ProtectedRoute from "./components/ProtectedRoute";
+import SidebarLayout from "./components/SidebarLayout";
+import { UnsavedChangesProvider } from "./context/UnsavedChangesContext";
 
-const rows = [
-  {
-    id: "L-10454",
-    cliente: "Hospital San Juan",
-    estado: "En espera",
-    monto: "$1.290.000",
-    docs: 4,
-  },
-  {
-    id: "L-10453",
-    cliente: "Clínica del Norte",
-    estado: "Adjudicada",
-    monto: "$980.000",
-    docs: 7,
-  },
-  {
-    id: "L-10452",
-    cliente: "CESFAM Central",
-    estado: "Perdida",
-    monto: "$640.000",
-    docs: 2,
-  },
-];
+// AUTH
+import Login from "./pages/Login";
+import ResetPassword from "./pages/ResetPassword";
 
-function toneFor(estado) {
-  if (estado === "Adjudicada") return "success";
-  if (estado === "Perdida") return "danger";
-  if (estado === "En espera") return "waiting";
-  return "neutral";
-}
+// LICITACIONES
+import CrearLicitacion from "./pages/CrearLicitacion";
+import ListarLicitaciones from "./pages/ListarLicitaciones";
+import DetalleLicitacion from "./pages/DetalleLicitacion";
+
+// PRODUCTOS
+import Productos from "./pages/Productos";
+import CrearProducto from "./pages/CrearProducto";
+import EditarProducto from "./pages/EditarProducto";
+
+// CLIENTES
+import Clientes from "./pages/Clientes";
+import CrearCliente from "./pages/CrearCliente";
+import EditarCliente from "./pages/EditarCliente";
+
+// MONITOREO
+import MonitoreoUsuarios from "./pages/MonitoreoUsuarios";
+
+// USUARIOS
+import ConfiguracionUsuarios from "./pages/ConfiguracionUsuarios";
+
+// CAMPAÑAS
+import CampanasProductos from "./pages/CampanasProductos";
+import CrearCampana from "./pages/CrearCampana";
+import EditarCampana from "./pages/EditarCampana";
+import Ventas from "./pages/Ventas";
+import Metas from "./pages/Metas";
+import MetasPorCanal from "./pages/MetasPorCanal";
 
 export default function App() {
   return (
-    <div className="app-shell">
-      <Sidebar />
+    <BrowserRouter>
+      <Routes>
+        {/* RUTAS PÚBLICAS */}
+        <Route path="/login" element={<Login />} />
+        <Route path="/reset-password" element={<ResetPassword />} />
 
-      <main className="content">
-        <Topbar />
+        {/* RUTAS PROTEGIDAS */}
+        <Route
+          path="/"
+          element={
+            <ProtectedRoute>
+              <UnsavedChangesProvider>
+                <SidebarLayout />
+              </UnsavedChangesProvider>
+            </ProtectedRoute>
+          }
+        >
+          {/* LICITACIONES */}
+          <Route path="crear" element={<CrearLicitacion />} />
+          <Route path="listar" element={<ListarLicitaciones />} />
+          <Route path="detalle/:id" element={<DetalleLicitacion />} />
 
-        <section className="metrics">
-          <Card title="Licitaciones activas">
-            <p className="metric-value">87</p>
-            <p className="metric-foot">+12% respecto al mes anterior</p>
-          </Card>
+          {/* PRODUCTOS */}
+          <Route path="productos" element={<Productos />} />
+          <Route path="productos/nuevo" element={<CrearProducto />} />
+          <Route path="productos/editar/:id" element={<EditarProducto />} />
 
-          <Card title="Monto pipeline">
-            <p className="metric-value">$42.450.000</p>
-            <p className="metric-foot">Estado En espera + Pendientes</p>
-          </Card>
+          {/* CLIENTES */}
+          <Route path="clientes" element={<Clientes />} />
+          <Route path="clientes/nuevo" element={<CrearCliente />} />
+          <Route path="clientes/editar/:id" element={<EditarCliente />} />
 
-          <Card title="Documentos subidos">
-            <p className="metric-value">1.236</p>
-            <p className="metric-foot">OC, guías y facturas</p>
-          </Card>
-        </section>
+          {/* MONITOREO */}
+          <Route path="monitoreo" element={<MonitoreoUsuarios />} />
 
-        <section className="grid-2">
-          <Card
-            title="Últimas licitaciones"
-            subtitle="Tabla principal con estado comercial"
-            right={<Button size="sm">Nueva licitación</Button>}
-          >
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>ID</th>
-                  <th>Cliente</th>
-                  <th>Estado</th>
-                  <th>Monto</th>
-                  <th>Docs</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((row) => (
-                  <tr key={row.id}>
-                    <td>{row.id}</td>
-                    <td>{row.cliente}</td>
-                    <td>
-                      <Badge tone={toneFor(row.estado)}>{row.estado}</Badge>
-                    </td>
-                    <td>{row.monto}</td>
-                    <td>{row.docs}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </Card>
+          {/* USUARIOS */}
+          <Route path="usuarios" element={<ConfiguracionUsuarios />} />
 
-          <Card title="Formulario base" subtitle="Inputs y acciones unificadas">
-            <div className="stack">
-              <Input label="Nombre cliente" placeholder="Ej: Hospital Regional" />
-              <Input label="RUT" placeholder="99.999.999-9" />
-              <Input label="Correo contacto" placeholder="compras@cliente.cl" />
-              <div className="btn-row">
-                <Button variant="primary">Guardar</Button>
-                <Button variant="secondary">Cancelar</Button>
-                <Button variant="ghost">Enviar a revisión</Button>
-              </div>
-            </div>
-          </Card>
-        </section>
-      </main>
-    </div>
+          {/* CAMPAÑAS */}
+          <Route path="campanas" element={<CampanasProductos />} />
+          <Route path="campanas/nueva" element={<CrearCampana />} />
+          <Route path="campanas/editar/:id" element={<EditarCampana />} />
+          <Route path="ventas" element={<Ventas />} />
+          <Route path="metas" element={<Metas />} />
+          <Route path="metas-canal" element={<MetasPorCanal />} />
+        </Route>
+
+        {/* FALLBACK */}
+        <Route path="*" element={<Login />} />
+      </Routes>
+    </BrowserRouter>
   );
 }
