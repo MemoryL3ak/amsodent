@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { supabase } from "../lib/supabase";
+import { api } from "../lib/api";
 import { Link } from "react-router-dom";
 import ConfirmModal from "../components/ConfirmModal";
 
@@ -17,23 +17,22 @@ export default function Clientes() {
      CARGAR CLIENTES
   ============================================================ */
   async function cargar() {
-    const { data } = await supabase
-      .from("clientes")
-      .select("*")
-      .range(0, 20000)
-      .order("id", { ascending: true });
+    try {
+      const data = await api.get("/clientes");
+      if (!data) return;
 
-    if (!data) return;
+      const clean = data.map((c) => ({
+        ...c,
+        rut: c.rut?.trim() ?? "",
+        nombre: c.nombre?.trim() ?? "",
+        region: c.region?.trim() ?? "",
+        comuna: c.comuna?.trim() ?? "",
+      }));
 
-    const clean = data.map((c) => ({
-      ...c,
-      rut: c.rut?.trim() ?? "",
-      nombre: c.nombre?.trim() ?? "",
-      region: c.region?.trim() ?? "",
-      comuna: c.comuna?.trim() ?? "",
-    }));
-
-    setClientes(clean);
+      setClientes(clean);
+    } catch (err) {
+      console.error(err);
+    }
   }
 
   useEffect(() => {
@@ -62,7 +61,11 @@ export default function Clientes() {
 
   async function eliminarDefinitivo() {
     if (!clienteAEliminar) return;
-    await supabase.from("clientes").delete().eq("id", clienteAEliminar.id);
+    try {
+      await api.delete(`/clientes/${clienteAEliminar.id}`);
+    } catch (err) {
+      console.error(err);
+    }
     setModalOpen(false);
     setClienteAEliminar(null);
     cargar();

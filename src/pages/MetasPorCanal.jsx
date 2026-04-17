@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { supabase } from "../lib/supabase";
+import { api } from "../lib/api";
 import useAuth from "../hooks/useAuth";
 import MonthCalendarPicker from "../components/MonthCalendarPicker";
 
@@ -156,49 +156,39 @@ export default function MetasPorCanal() {
       setLoading(true);
       setErrorMsg("");
       try {
-        const { data: lics, error: licsError } = await supabase
-          .from("licitaciones")
-          .select("id,creado_por")
-          .order("id", { ascending: false });
-        if (licsError) throw licsError;
+        const lics = await api.get("/licitaciones/with-fields?fields=id,creado_por");
 
         const rows = lics || [];
         const ids = rows.map((l) => Number(l?.id)).filter((n) => Number.isFinite(n));
         let docsOcRows = [];
 
         if (ids.length > 0) {
-          const { data: docsOc, error: errDocsOc } = await supabase
-            .from("licitacion_documentos")
-            .select("licitacion_id,monto,fecha_oc,created_at")
-            .in("licitacion_id", ids)
-            .eq("tipo", "orden_compra")
-            .not("monto", "is", null);
-
-          if (!errDocsOc) {
-            docsOcRows = docsOc || [];
-          } else if (isMissingFechaOcColumnError(errDocsOc)) {
-            const { data: docsOcNoFecha, error: errDocsOcNoFecha } = await supabase
-              .from("licitacion_documentos")
-              .select("licitacion_id,monto,created_at")
-              .in("licitacion_id", ids)
-              .eq("tipo", "orden_compra")
-              .not("monto", "is", null);
-
-            if (!errDocsOcNoFecha) docsOcRows = (docsOcNoFecha || []).map((d) => ({ ...d, fecha_oc: null }));
-            else if (!isMissingMontoColumnError(errDocsOcNoFecha)) throw errDocsOcNoFecha;
-          } else if (!isMissingMontoColumnError(errDocsOc)) {
-            throw errDocsOc;
+          try {
+            docsOcRows = await api.post("/licitaciones/documentos/filter", {
+              filter: { licitacion_ids: ids, tipo: "orden_compra" },
+              fields: "licitacion_id,monto,fecha_oc,created_at",
+            }) || [];
+          } catch (errDocsOc) {
+            if (isMissingFechaOcColumnError(errDocsOc)) {
+              try {
+                const docsOcNoFecha = await api.post("/licitaciones/documentos/filter", {
+                  filter: { licitacion_ids: ids, tipo: "orden_compra" },
+                  fields: "licitacion_id,monto,created_at",
+                });
+                docsOcRows = (docsOcNoFecha || []).map((d) => ({ ...d, fecha_oc: null }));
+              } catch (errDocsOcNoFecha) {
+                if (!isMissingMontoColumnError(errDocsOcNoFecha)) throw errDocsOcNoFecha;
+              }
+            } else if (!isMissingMontoColumnError(errDocsOc)) {
+              throw errDocsOc;
+            }
           }
         }
 
-        const { data: perfilesVendedores, error: errPerfiles } = await supabase
-          .from("profiles")
-          .select("email,nombre,rol")
-          .in("rol", ["ventas", "jefe_ventas"]);
-        if (errPerfiles) throw errPerfiles;
+        const allProfiles = await api.get("/usuarios/profiles");
 
         const mapa = {};
-        (perfilesVendedores || []).forEach((p) => {
+        (allProfiles || []).filter((p) => ["ventas", "jefe_ventas"].includes(p?.rol)).forEach((p) => {
           const email = (p?.email || "").trim().toLowerCase();
           if (email) mapa[email] = (p?.nombre || "").trim() || email;
         });
@@ -233,25 +223,23 @@ export default function MetasPorCanal() {
       setMetasErrorMsg("");
       setMetasInfoMsg("");
 
-      const [asigRes, metasRes, detalleRes] = await Promise.all([
-        supabase
-          .from("vendedor_metas_canal_mensuales")
-          .select("vendedor_email,canal")
-          .eq("periodo", metaPeriodo),
-        supabase
-          .from("vendedor_metas_mensuales")
-          .select("vendedor_email,meta_neto")
-          .eq("periodo", metaPeriodo),
-        supabase
-          .from("vendedor_metas_canal_partes_mensuales")
-          .select("vendedor_email,canal_base,meta_neto")
-          .eq("periodo", metaPeriodo),
-      ]);
+      let asigData = null, metasData = null, detalleData = null;
+      let asigError = null, metasError = null, detalleError = null;
+
+      try {
+        [asigData, metasData, detalleData] = await Promise.all([
+          api.get(`/metas/canal?periodo=${metaPeriodo}`).catch((e) => { asigError = e; return null; }),
+          api.get(`/metas/mensuales?periodo=${metaPeriodo}`).catch((e) => { metasError = e; return null; }),
+          api.get(`/metas/canal-partes?periodo=${metaPeriodo}`).catch((e) => { detalleError = e; return null; }),
+        ]);
+      } catch (e) {
+        // handled individually
+      }
 
       if (!mounted) return;
 
-      if (asigRes.error) {
-        if (isMissingAsignacionTableError(asigRes.error)) {
+      if (asigError) {
+        if (isMissingAsignacionTableError(asigError)) {
           setMetasErrorMsg("Falta la tabla vendedor_metas_canal_mensuales. Ejecuta la migracion.");
         } else {
           setMetasErrorMsg("No se pudieron cargar las asignaciones de canal.");
@@ -261,8 +249,8 @@ export default function MetasPorCanal() {
         return;
       }
 
-      if (metasRes.error) {
-        if (isMissingMetasTableError(metasRes.error)) {
+      if (metasError) {
+        if (isMissingMetasTableError(metasError)) {
           setMetasErrorMsg("Falta la tabla vendedor_metas_mensuales. Define primero las metas por vendedor.");
         } else {
           setMetasErrorMsg("No se pudieron cargar las metas por vendedor del periodo.");
@@ -273,28 +261,28 @@ export default function MetasPorCanal() {
       }
 
       const canales = {};
-      (asigRes.data || []).forEach((row) => {
+      (asigData || []).forEach((row) => {
         const email = (row?.vendedor_email || "").trim().toLowerCase();
         if (email) canales[email] = normalizeCanal(row?.canal);
       });
 
       const metas = {};
-      (metasRes.data || []).forEach((row) => {
+      (metasData || []).forEach((row) => {
         const email = (row?.vendedor_email || "").trim().toLowerCase();
         if (email) metas[email] = Math.max(0, Number(row?.meta_neto || 0));
       });
 
       const detalle = {};
-      if (!detalleRes.error) {
-        (detalleRes.data || []).forEach((row) => {
+      if (!detalleError) {
+        (detalleData || []).forEach((row) => {
           const email = (row?.vendedor_email || "").trim().toLowerCase();
           const canalBase = normalizeCanal(row?.canal_base);
           if (!email || !canalBase) return;
           detalle[email] = detalle[email] || {};
           detalle[email][canalBase] = Math.max(0, Number(row?.meta_neto || 0));
         });
-      } else if (!isMissingMetaDetalleTableError(detalleRes.error)) {
-        console.error("Error cargando detalle de metas por canal:", detalleRes.error);
+      } else if (!isMissingMetaDetalleTableError(detalleError)) {
+        console.error("Error cargando detalle de metas por canal:", detalleError);
       }
 
       setCanalPorVendedorMap(canales);
@@ -334,14 +322,25 @@ export default function MetasPorCanal() {
       if (id && email) licById.set(id, email);
     });
 
+    // Fecha de adjudicación por licitación = fecha de creación de la primera OC
+    const primeraOcPorLic = new Map();
+    (ocs || []).forEach((doc) => {
+      const licId = Number(doc?.licitacion_id || 0);
+      if (!licId) return;
+      const fechaDoc = toDateISO(doc?.fecha_oc) || toDateISO(doc?.created_at);
+      if (!fechaDoc) return;
+      const actual = primeraOcPorLic.get(licId);
+      if (!actual || fechaDoc < actual) primeraOcPorLic.set(licId, fechaDoc);
+    });
+
     const avanceNetoPorVendedor = {};
     (ocs || []).forEach((doc) => {
       const licId = Number(doc?.licitacion_id || 0);
       const email = licById.get(licId);
       if (!email) return;
       if (filtroVendedor && filtroVendedor !== email) return;
-      const fechaBase = toDateISO(doc?.fecha_oc) || toDateISO(doc?.created_at);
-      if (!fechaBase || fechaBase < metaPeriodo || fechaBase > finPeriodo) return;
+      const fechaAdj = primeraOcPorLic.get(licId);
+      if (!fechaAdj || fechaAdj < metaPeriodo || fechaAdj > finPeriodo) return;
       avanceNetoPorVendedor[email] = Number(avanceNetoPorVendedor[email] || 0) + Number(doc?.monto || 0);
     });
 
@@ -437,19 +436,11 @@ export default function MetasPorCanal() {
       const deletions = entries.filter((x) => x.email && !x.canal).map((x) => x.email);
 
       if (deletions.length > 0) {
-        const { error: errDelete } = await supabase
-          .from("vendedor_metas_canal_mensuales")
-          .delete()
-          .eq("periodo", metaPeriodo)
-          .in("vendedor_email", deletions);
-        if (errDelete) throw errDelete;
+        await api.delete(`/metas/canal?periodo=${metaPeriodo}`);
       }
 
       if (upserts.length > 0) {
-        const { error: errUpsert } = await supabase
-          .from("vendedor_metas_canal_mensuales")
-          .upsert(upserts, { onConflict: "vendedor_email,periodo" });
-        if (errUpsert) throw errUpsert;
+        await api.post("/metas/canal", { rows: upserts });
       }
 
       const finalMap = {};

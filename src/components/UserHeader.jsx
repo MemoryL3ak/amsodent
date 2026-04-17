@@ -1,29 +1,21 @@
 import { useEffect, useState } from "react";
-import { supabase } from "../lib/supabase";
+import { api } from "../lib/api";
 
 export default function UserHeader() {
   const [perfil, setPerfil] = useState(null);
 
   useEffect(() => {
     async function cargarPerfil() {
-      // Obtener usuario autenticado
-      const { data: authData } = await supabase.auth.getUser();
-      const user = authData?.user;
-      if (!user) return;
-
-      // Buscar en profiles por EMAIL
-      const { data: perfilDB } = await supabase
-        .from("profiles")
-        .select("nombre, rol, email")
-        .eq("email", user.email)
-        .single();
-
-      // Construir el perfil final
-      setPerfil({
-        nombre: perfilDB?.nombre || user.email,
-        rol: perfilDB?.rol || "Sin rol",
-        email: user.email
-      });
+      try {
+        const perfilDB = await api.get("/auth/profile");
+        setPerfil({
+          nombre: perfilDB?.nombre || perfilDB?.email || "?",
+          rol: perfilDB?.rol || "Sin rol",
+          email: perfilDB?.email || "",
+        });
+      } catch {
+        // no autenticado
+      }
     }
 
     cargarPerfil();

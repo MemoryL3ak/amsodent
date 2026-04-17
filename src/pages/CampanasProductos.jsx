@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { supabase } from "../lib/supabase";
+import { api } from "../lib/api";
 import { useNavigate } from "react-router-dom";
 import Toast from "../components/Toast";
 import { ChevronRight } from "lucide-react";
@@ -17,63 +17,13 @@ export default function CampanasProductos() {
   const [loading, setLoading] = useState(true);
   const [campanas, setCampanas] = useState([]);
 
-  async function cargarCreators(userIds) {
-    const ids = Array.from(new Set((userIds || []).filter(Boolean)));
-    if (ids.length === 0) return new Map();
-
-    const { data, error } = await supabase
-      .from("profiles")
-      .select("id,nombre,email")
-      .in("id", ids);
-
-    if (error) { console.error("Error cargando profiles:", error); return new Map(); }
-
-    const m = new Map();
-    (data || []).forEach((p) => m.set(p.id, p));
-    return m;
-  }
-
   async function cargarCampanas() {
     setLoading(true);
     setToast(null);
 
     try {
-      const { data: c, error: e1 } = await supabase
-        .from("product_campaigns")
-        .select("id,nombre,start_date,end_date,created_at,created_by")
-        .order("created_at", { ascending: false });
-
-      if (e1) throw e1;
-
-      const campanasBase = c || [];
-      const ids = campanasBase.map((x) => x.id);
-
-      let countsMap = new Map();
-      if (ids.length > 0) {
-        const { data: items, error: e2 } = await supabase
-          .from("product_campaign_items")
-          .select("campaign_id")
-          .in("campaign_id", ids);
-
-        if (e2) throw e2;
-        (items || []).forEach((it) => {
-          countsMap.set(it.campaign_id, (countsMap.get(it.campaign_id) || 0) + 1);
-        });
-      }
-
-      const creatorIds = campanasBase.map((x) => x.created_by).filter(Boolean);
-      const creatorsMap = await cargarCreators(creatorIds);
-
-      const normalizado = campanasBase.map((x) => {
-        const p = x.created_by ? creatorsMap.get(x.created_by) : null;
-        return {
-          ...x,
-          items_count: countsMap.get(x.id) || 0,
-          creador_nombre: p?.nombre || p?.email || "—",
-        };
-      });
-
-      setCampanas(normalizado);
+      const data = await api.get("/campanas");
+      setCampanas(data || []);
     } catch (err) {
       console.error(err);
       setToast({ type: "error", message: "Error cargando campañas" });

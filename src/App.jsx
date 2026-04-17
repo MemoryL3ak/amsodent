@@ -35,6 +35,8 @@ import EditarCampana from "./pages/EditarCampana";
 import Ventas from "./pages/Ventas";
 import Metas from "./pages/Metas";
 import MetasPorCanal from "./pages/MetasPorCanal";
+import Trazabilidad from "./pages/Trazabilidad";
+import SeguimientoPagos from "./pages/SeguimientoPagos";
 
 export default function App() {
   return (
@@ -80,6 +82,8 @@ export default function App() {
           <Route path="campanas" element={<CampanasProductos />} />
           <Route path="campanas/nueva" element={<CrearCampana />} />
           <Route path="campanas/editar/:id" element={<EditarCampana />} />
+          <Route path="trazabilidad" element={<Trazabilidad />} />
+          <Route path="seguimiento-pagos" element={<SeguimientoPagos />} />
           <Route path="ventas" element={<Ventas />} />
           <Route path="metas" element={<Metas />} />
           <Route path="metas-canal" element={<MetasPorCanal />} />

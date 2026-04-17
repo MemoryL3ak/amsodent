@@ -1,6 +1,7 @@
 // EditarProducto.jsx
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
+import { api } from "../lib/api";
 import { useParams, useNavigate } from "react-router-dom";
 import Toast from "../components/Toast";
 import Select from "react-select";
@@ -204,16 +205,12 @@ export default function EditarProducto() {
 
   useEffect(() => {
     async function obtenerRol() {
-      const { data: usuario } = await supabase.auth.getUser();
-      if (!usuario?.user) return;
-
-      const { data: perfil } = await supabase
-        .from("profiles")
-        .select("rol")
-        .eq("id", usuario.user.id)
-        .single();
-
-      setRol(perfil?.rol ?? null);
+      try {
+        const perfil = await api.get("/auth/profile");
+        setRol(perfil?.rol ?? null);
+      } catch {
+        setRol(null);
+      }
     }
 
     obtenerRol();
@@ -226,13 +223,10 @@ export default function EditarProducto() {
     async function cargar() {
       setLoading(true);
 
-      const { data, error } = await supabase
-        .from("productos")
-        .select("*")
-        .eq("id", id)
-        .single();
-
-      if (error || !data) {
+      let data;
+      try {
+        data = await api.get(`/productos/${id}`);
+      } catch {
         setToast({ type: "error", message: "Error cargando producto" });
         setLoading(false);
         return;
@@ -332,10 +326,11 @@ export default function EditarProducto() {
   async function dataUrlFromStoragePath(bucket, path) {
     if (!bucket || !path) return "";
     try {
-      const { data, error } = await supabase.storage
-        .from(bucket)
-        .download(path);
-      if (error || !data) return "";
+      const signedData = await api.get(`/licitaciones/storage/signed-url?bucket=${bucket}&path=${encodeURIComponent(path)}`);
+      if (!signedData?.signedUrl) return "";
+      const res = await fetch(signedData.signedUrl);
+      if (!res.ok) return "";
+      const data = await res.blob();
       return await new Promise((resolve) => {
         const reader = new FileReader();
         reader.onload = () => resolve(reader.result || "");
@@ -384,19 +379,15 @@ export default function EditarProducto() {
         return;
       }
 
-      const { data, error } = await supabase.storage
-        .from("product-images")
-        .createSignedUrl(raw, 60 * 60);
-
-      if (!alive) return;
-
-      if (error) {
+      try {
+        const signedData = await api.get(`/licitaciones/storage/signed-url?bucket=product-images&path=${encodeURIComponent(raw)}`);
+        if (!alive) return;
+        setImagenDisplayUrl(signedData?.signedUrl || "");
+      } catch (error) {
+        if (!alive) return;
         console.error("Error creando signed URL:", error);
         setImagenDisplayUrl("");
-        return;
       }
-
-      setImagenDisplayUrl(data?.signedUrl || "");
     }
 
     resolverUrl();
@@ -408,29 +399,11 @@ export default function EditarProducto() {
   async function subirImagenProducto() {
     if (!imagenFile) return "";
 
-    const ext = imagenFile.name.split(".").pop()?.toLowerCase() || "jpg";
-    const skuBase = (producto.sku || skuOriginal || "")
-      .toString()
-      .trim()
-      .toUpperCase();
-    const safeSku = skuBase
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "")
-      .replace(/[^a-zA-Z0-9_-]/g, "_");
-    const fileName = safeSku
-      ? `productos/${safeSku}.${ext}`
-      : `productos/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
-
-    const { error: upErr } = await supabase.storage
-      .from("product-images")
-      .upload(fileName, imagenFile, {
-        contentType: imagenFile.type || "image/jpeg",
-        upsert: true,
-      });
-
-    if (upErr) throw upErr;
-
-    return fileName;
+    const skuBase = (producto.sku || skuOriginal || "").toString().trim().toUpperCase();
+    const formData = new FormData();
+    formData.append("file", imagenFile);
+    const res = await api.postForm(`/productos/upload-image?sku=${encodeURIComponent(skuBase)}`, formData);
+    return res.path;
   }
 
   async function resolverImagenFicha() {
@@ -519,12 +492,9 @@ export default function EditarProducto() {
       payload.costo = Number(producto.costo) || 0;
     }
 
-    const { error } = await supabase
-      .from("productos")
-      .update(payload)
-      .eq("id", id);
-
-    if (error) {
+    try {
+      await api.put(`/productos/${id}`, payload);
+    } catch (error) {
       console.error(error);
       setToast({ type: "error", message: "Error al guardar cambios" });
       return;
@@ -550,12 +520,7 @@ export default function EditarProducto() {
     setGuardando(true);
 
     try {
-      const { error } = await supabase
-        .from("productos")
-        .update({ estado: "Transitorio" })
-        .eq("id", id);
-
-      if (error) throw error;
+      await api.put(`/productos/${id}`, { estado: "Transitorio" });
 
       setProducto((prev) => ({ ...prev, estado: "Transitorio" }));
       setToast({ type: "success", message: "Producto aprobado." });
@@ -569,15 +534,8 @@ export default function EditarProducto() {
 
     
   async function cargarProductoActualizado() {
-    const { data, error } = await supabase
-      .from("productos")
-      .select("*")
-      .eq("id", id)
-      .single();
-
-    if (error || !data) {
-      throw new Error("No se pudo obtener el producto actualizado");
-    }
+    const data = await api.get(`/productos/${id}`);
+    if (!data) throw new Error("No se pudo obtener el producto actualizado");
 
     return {
       sku: (data.sku ?? "").toString().trim(),

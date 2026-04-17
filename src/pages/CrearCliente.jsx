@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { supabase } from "../lib/supabase";
+import { api } from "../lib/api";
 import Toast from "../components/Toast";
 import { Link } from "react-router-dom";
 import { REGIONES_CHILE } from "../constants/regiones";
@@ -25,27 +25,27 @@ export default function CrearCliente() {
       return;
     }
 
-    const { error } = await supabase.from("clientes").insert([{
-      rut,
-      nombre,
-      departamento,
-      municipalidad,
-      region,
-      comuna,
-      direccion,
-      contacto,
-      email,
-      telefono,
-      condiciones_venta: condVenta,
-    }]);
+    try {
+      await api.post("/clientes", {
+        rut,
+        nombre,
+        departamento,
+        municipalidad,
+        region,
+        comuna,
+        direccion,
+        contacto,
+        email,
+        telefono,
+        condiciones_venta: condVenta,
+      });
 
-    if (error) {
+      setToast({ type: "success", message: "Cliente creado con éxito" });
+    } catch (error) {
       console.error(error);
       setToast({ type: "error", message: "Error al guardar el cliente." });
       return;
     }
-
-    setToast({ type: "success", message: "Cliente creado con éxito" });
 
     setRut("");
     setNombre("");

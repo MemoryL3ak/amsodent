@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { supabase } from "../lib/supabase";
+import { api } from "../lib/api";
 import Toast from "../components/Toast";
 import { Link, useParams } from "react-router-dom";
 import { REGIONES_CHILE } from "../constants/regiones";
@@ -33,13 +33,10 @@ export default function EditarCliente() {
     async function cargarCliente() {
       setLoading(true);
 
-      const { data, error } = await supabase
-        .from("clientes")
-        .select("*")
-        .eq("id", id)
-        .single();
-
-      if (error || !data) {
+      let data;
+      try {
+        data = await api.get(`/clientes/${id}`);
+      } catch (error) {
         console.error(error);
         setToast({ type: "error", message: "Error cargando cliente" });
         setLoading(false);
@@ -96,9 +93,8 @@ export default function EditarCliente() {
       return;
     }
 
-    const { error } = await supabase
-      .from("clientes")
-      .update({
+    try {
+      await api.put(`/clientes/${id}`, {
         rut,
         nombre,
         departamento,
@@ -110,16 +106,13 @@ export default function EditarCliente() {
         email,
         telefono,
         condiciones_venta: condVenta,
-      })
-      .eq("id", id);
+      });
 
-    if (error) {
+      setToast({ type: "success", message: "Cliente actualizado correctamente" });
+    } catch (error) {
       console.error(error);
       setToast({ type: "error", message: "Error al guardar cambios" });
-      return;
     }
-
-    setToast({ type: "success", message: "Cliente actualizado correctamente" });
   }
 
   /* ============================================================

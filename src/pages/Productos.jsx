@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
+import { api } from "../lib/api";
 import { Link } from "react-router-dom";
 import ConfirmModal from "../components/ConfirmModal";
 import Select from "react-select";
@@ -60,22 +61,12 @@ export default function Productos() {
     async function cargarPerfil() {
       setPerfilLoading(true);
 
-      const { data: userData } = await supabase.auth.getUser();
-      const user = userData?.user;
-
-      if (!user) {
+      try {
+        const perfil = await api.get("/auth/profile");
+        setRol(perfil?.rol ?? null);
+      } catch {
         setRol(null);
-        setPerfilLoading(false);
-        return;
       }
-
-      const { data: perfil } = await supabase
-        .from("profiles")
-        .select("rol")
-        .eq("id", user.id)
-        .single();
-
-      setRol(perfil?.rol ?? null);
       setPerfilLoading(false);
     }
 
@@ -101,12 +92,13 @@ export default function Productos() {
      CARGAR PRODUCTOS
   ============================================================ */
   async function cargar() {
-    const { data } = await supabase
-      .from("productos")
-      .select("*")
-      .range(0, 20000)
-      .order("id", { ascending: true });
-
+    let data;
+    try {
+      data = await api.get("/productos");
+    } catch (err) {
+      console.error(err);
+      return;
+    }
     if (!data) return;
 
     const clean = data.map((p) => {
@@ -135,34 +127,21 @@ export default function Productos() {
   ============================================================ */
   useEffect(() => {
     async function cargarCampaniasVigentes() {
-      const hoy = new Date().toISOString().slice(0, 10);
+      try {
+        const data = await api.get("/productos/campaign-prices");
 
-      const { data, error } = await supabase
-        .from("product_campaign_items")
-        .select(
-          "sku, precio_campania, product_campaigns!inner(start_date, end_date, created_at)"
-        )
-        .lte("product_campaigns.start_date", hoy)
-        .gte("product_campaigns.end_date", hoy)
-        .order("created_at", {
-          foreignTable: "product_campaigns",
-          ascending: false,
+        const m = new Map();
+        (data || []).forEach((row) => {
+          const sku = row?.sku;
+          if (!sku) return;
+          if (!m.has(sku)) m.set(sku, Number(row.precio_campania || 0));
         });
 
-      if (error) {
+        setCampaignPriceBySku(m);
+      } catch (error) {
         console.error("Error cargando campañas vigentes:", error);
         setCampaignPriceBySku(new Map());
-        return;
       }
-
-      const m = new Map();
-      (data || []).forEach((row) => {
-        const sku = row?.sku;
-        if (!sku) return;
-        if (!m.has(sku)) m.set(sku, Number(row.precio_campania || 0));
-      });
-
-      setCampaignPriceBySku(m);
     }
 
     cargarCampaniasVigentes();
@@ -257,7 +236,11 @@ export default function Productos() {
     if (!productoAEliminar) return;
     if (!puedeEliminarProductos) return;
 
-    await supabase.from("productos").delete().eq("id", productoAEliminar.id);
+    try {
+      await api.delete(`/productos/${productoAEliminar.id}`);
+    } catch (err) {
+      console.error(err);
+    }
     setModalOpen(false);
     setProductoAEliminar(null);
     cargar();

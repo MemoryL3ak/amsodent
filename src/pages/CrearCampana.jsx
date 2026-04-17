@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { supabase } from "../lib/supabase";
+import { api } from "../lib/api";
 import { useNavigate } from "react-router-dom";
 import Select from "react-select";
 import Toast from "../components/Toast";
@@ -51,18 +51,13 @@ export default function CrearCampana() {
   useEffect(() => {
     async function cargarProductos() {
       setLoading(true);
-      const { data, error } = await supabase
-        .from("productos")
-        .select("sku,nombre,lista1")
-        .order("id")
-        .limit(20000);
-
-      if (error) {
+      try {
+        const data = await api.get("/productos");
+        setProductos((data || []).map((p) => ({ sku: p.sku, nombre: p.nombre, lista1: p.lista1 })));
+      } catch (error) {
         console.error(error);
         setToast({ type: "error", message: "Error cargando productos" });
         setProductos([]);
-      } else {
-        setProductos(data || []);
       }
       setLoading(false);
     }
@@ -143,38 +138,25 @@ export default function CrearCampana() {
       }
     }
 
-    const { data: auth } = await supabase.auth.getUser();
-    const user = auth?.user;
+    try {
+      await api.post("/campanas", {
+        nombre: nombre.trim(),
+        start_date: startDate,
+        end_date: endDate,
+        items: itemsParaGuardar.map((it) => ({
+          sku: String(it.sku),
+          producto: String(it.producto || ""),
+          precio_unitario: Number(it.precio_unitario || 0),
+          precio_campania: Number(it.precio_campania || 0),
+        })),
+      });
 
-    const { data: insCamp, error: e1 } = await supabase
-      .from("product_campaigns")
-      .insert([{ nombre: nombre.trim(), start_date: startDate, end_date: endDate, created_by: user?.id || null }])
-      .select("id")
-      .single();
-
-    if (e1) {
-      console.error(e1);
+      setToast({ type: "success", message: "Campaña creada correctamente." });
+      navigate("/campanas");
+    } catch (err) {
+      console.error(err);
       setToast({ type: "error", message: "Error creando campaña" });
-      return;
     }
-
-    const payloadItems = itemsParaGuardar.map((it) => ({
-      campaign_id:     insCamp.id,
-      sku:             String(it.sku),
-      producto:        String(it.producto || ""),
-      precio_unitario: Number(it.precio_unitario || 0),
-      precio_campania: Number(it.precio_campania || 0),
-    }));
-
-    const { error: e2 } = await supabase.from("product_campaign_items").insert(payloadItems);
-    if (e2) {
-      console.error(e2);
-      setToast({ type: "error", message: "Error guardando ítems de campaña" });
-      return;
-    }
-
-    setToast({ type: "success", message: "Campaña creada correctamente." });
-    navigate("/campanas");
   }
 
   if (loading) return <div className="page" style={{ color: "var(--text-muted)" }}>Cargando productos…</div>;

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { supabase } from "../lib/supabase";
+import { api } from "../lib/api";
 import Toast from "../components/Toast";
 import ModalCrearUsuario from "../components/ModalCrearUsuario";
 import ModalEditarUsuario from "../components/ModalEditarUsuario";
@@ -33,35 +33,34 @@ export default function ConfiguracionUsuarios() {
 
   async function loadUsers() {
     setLoading(true);
-    const { data, error } = await supabase
-      .from("profiles")
-      .select("*")
-      .order("nombre", { ascending: true });
-    if (!error) setUsuarios(data || []);
+    try {
+      const data = await api.get("/usuarios/profiles");
+      setUsuarios(data || []);
+    } catch (error) {
+      console.error("Error cargando usuarios:", error);
+    }
     setLoading(false);
   }
 
   useEffect(() => { loadUsers(); }, []);
 
   async function enviarReset(email) {
-    const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: window.location.origin + "/reset-password",
-    });
-    if (error) {
-      setToast({ type: "error", message: "Error al enviar correo de recuperación" });
-    } else {
+    try {
+      await api.post("/usuarios/reset-password", { email });
       setToast({ type: "success", message: `Correo de recuperación enviado a ${email}` });
+    } catch (error) {
+      setToast({ type: "error", message: "Error al enviar correo de recuperación" });
     }
   }
 
   async function eliminarUsuario(u) {
     if (!confirm(`¿Eliminar al usuario "${u.nombre || u.email}"?`)) return;
-    const { error } = await supabase.from("profiles").delete().eq("id", u.id);
-    if (error) {
-      setToast({ type: "error", message: "Error al eliminar usuario" });
-    } else {
+    try {
+      await api.delete(`/usuarios/profiles/${u.id}`);
       setToast({ type: "success", message: "Usuario eliminado" });
       loadUsers();
+    } catch (error) {
+      setToast({ type: "error", message: "Error al eliminar usuario" });
     }
   }
 

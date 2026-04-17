@@ -114,15 +114,17 @@ export default function PresenceTracker() {
         });
     };
 
-    // cerrar presence al irse / esconder pestaña (best-effort)
+    // cerrar/reabrir presence según visibilidad de la pestaña
     const onVisibility = async () => {
+      const ch = channelRef.current;
+      if (!ch) return;
+
       if (document.visibilityState === "hidden") {
-        // no matamos el canal siempre (en móviles puede volver),
-        // pero sí intentamos untrack para que Presence quite rápido al usuario
-        try {
-          const ch = channelRef.current;
-          if (ch) await ch.untrack();
-        } catch {}
+        // Untrack para que Presence quite rápido al usuario
+        try { await ch.untrack(); } catch {}
+      } else {
+        // Re-track inmediato al volver a la pestaña
+        try { await track(); } catch {}
       }
     };
 

@@ -8,6 +8,7 @@ const IDLE_WARN_MS = 14 * 60 * 1000;   // aviso a los 14 min
 const TICK_MS = 5 * 1000;             // cada 5s calculo activo/idle local
 const FLUSH_MS = 15 * 1000;           // heartbeat a BD cada 15s
 const ACTIVE_GRACE_MS = 60 * 1000;    // actividad reciente <= 60s => "activo"
+const STALE_SESSION_SEC = 45;          // umbral para cerrar sesiones zombie server-side
 
 const LS_KEY = "lici_session_id";
 
@@ -26,7 +27,7 @@ export default function SessionTracker() {
   const warnedRef = useRef(false);
   const [toast, setToast] = useState(null);
 
-  // registrar actividad del usuario
+  // registrar actividad del usuario (solo interacciones reales, NO visibilitychange)
   useEffect(() => {
     const touch = () => {
       lastActivityRef.current = Date.now();
@@ -35,11 +36,9 @@ export default function SessionTracker() {
     };
     const events = ["mousemove", "mousedown", "keydown", "scroll", "touchstart"];
     events.forEach((e) => window.addEventListener(e, touch, { passive: true }));
-    document.addEventListener("visibilitychange", touch);
 
     return () => {
       events.forEach((e) => window.removeEventListener(e, touch));
-      document.removeEventListener("visibilitychange", touch);
     };
   }, []);
 
@@ -54,6 +53,11 @@ export default function SessionTracker() {
 
       userIdRef.current = user.id;
 
+      // ✅ Limpiar sesiones zombie server-side al arrancar
+      try {
+        await supabase.rpc("fn_close_stale_sessions", { p_stale_seconds: STALE_SESSION_SEC });
+      } catch { /* RPC puede no existir aún */ }
+
       // reset relojes
       lastTickRef.current = Date.now();
       lastFlushRef.current = Date.now();
@@ -61,17 +65,20 @@ export default function SessionTracker() {
 
       const nowIso = new Date().toISOString();
 
-      // ✅ Reusar session_id de este navegador si existe y sigue abierta
+      // ✅ Reusar session_id de este navegador si existe, sigue abierta y es reciente
       const stored = localStorage.getItem(LS_KEY);
       if (stored) {
         const { data: srow, error: eCheck } = await supabase
           .from("user_sessions")
-          .select("id, ended_at")
+          .select("id, ended_at, last_seen_at")
           .eq("id", stored)
           .eq("user_id", user.id)
           .maybeSingle();
 
-        if (!eCheck && srow?.id && !srow.ended_at) {
+        const isRecent = srow?.last_seen_at &&
+          (Date.now() - new Date(srow.last_seen_at).getTime()) < IDLE_LOGOUT_MS;
+
+        if (!eCheck && srow?.id && !srow.ended_at && isRecent) {
           sessionIdRef.current = srow.id;
 
           await supabase
@@ -87,6 +94,15 @@ export default function SessionTracker() {
           tickInterval = setInterval(loopTick, TICK_MS);
           return;
         }
+
+        // Sesión vieja o cerrada: cerrarla si quedó abierta y limpiar
+        if (!eCheck && srow?.id && !srow.ended_at && !isRecent) {
+          await supabase
+            .from("user_sessions")
+            .update({ ended_at: srow.last_seen_at || nowIso })
+            .eq("id", srow.id);
+        }
+        localStorage.removeItem(LS_KEY);
       }
 
       // ✅ si no hay session reusable, crear nueva
@@ -183,57 +199,30 @@ export default function SessionTracker() {
 
       if (eUpd) console.error("user_sessions update error:", eUpd);
 
-      // ✅ mantener user_activity_daily (opcional: si ya no lo usarás, puedes quitarlo)
-      await supabase
-        .from("user_activity_daily")
-        .upsert(
-          [
-            {
+      // ✅ user_activity_daily con incremento atómico (evita race condition multi-tab)
+      try {
+        await supabase.rpc("fn_upsert_activity_daily", {
+          p_user_id: user_id,
+          p_day: day,
+          p_active_seconds: activeSec,
+          p_idle_seconds: idleSec,
+          p_last_seen_at: nowIso,
+        });
+      } catch (e) {
+        // Fallback si el RPC no existe aún: upsert directo (puede perder datos en multi-tab)
+        await supabase
+          .from("user_activity_daily")
+          .upsert(
+            [{
               user_id,
               day,
-              active_seconds: 0,
-              idle_seconds: 0,
+              active_seconds: activeSec,
+              idle_seconds: idleSec,
               last_seen_at: nowIso,
-            },
-          ],
-          { onConflict: "user_id,day" }
-        );
-
-      if (activeSec > 0 || idleSec > 0) {
-        const { data: row } = await supabase
-          .from("user_activity_daily")
-          .select("active_seconds, idle_seconds")
-          .eq("user_id", user_id)
-          .eq("day", day)
-          .single();
-
-        await supabase
-          .from("user_activity_daily")
-          .update({
-            active_seconds: (row?.active_seconds || 0) + activeSec,
-            idle_seconds: (row?.idle_seconds || 0) + idleSec,
-            last_seen_at: nowIso,
-          })
-          .eq("user_id", user_id)
-          .eq("day", day);
-      } else {
-        await supabase
-          .from("user_activity_daily")
-          .update({ last_seen_at: nowIso })
-          .eq("user_id", user_id)
-          .eq("day", day);
+            }],
+            { onConflict: "user_id,day" }
+          );
       }
-    }
-
-    async function endSessionBestEffort() {
-      const session_id = sessionIdRef.current;
-      if (!session_id) return;
-      const nowIso = new Date().toISOString();
-
-      await supabase
-        .from("user_sessions")
-        .update({ ended_at: nowIso })
-        .eq("id", session_id);
     }
 
     async function forceLogout() {
@@ -252,26 +241,41 @@ export default function SessionTracker() {
       navigate("/login", { replace: true });
     }
 
-    // ✅ cuando se va a background, best-effort
+    // ✅ solo flush al ir a background (no cerrar sesión, se reabre automáticamente al volver)
     const onVisibility = async () => {
       if (document.visibilityState === "hidden") {
-        try {
-          await flush(Date.now());
-          await endSessionBestEffort();
-        } catch {
-          // ignore
-        }
+        try { await flush(Date.now()); } catch { /* ignore */ }
       }
     };
 
-    // ✅ al cerrar pestaña, best-effort
-    const onBeforeUnload = async () => {
+    // ✅ al cerrar pestaña: flush + close con fetch keepalive (más confiable que async en beforeunload)
+    const onBeforeUnload = () => {
+      const session_id = sessionIdRef.current;
+      if (!session_id) return;
+
+      // flush acumuladores locales antes de cerrar
+      try { flush(Date.now()); } catch { /* ignore */ }
+
+      // Cerrar sesión con fetch keepalive (sobrevive al cierre de tab)
+      const nowIso = new Date().toISOString();
       try {
-        await flush(Date.now());
-        await endSessionBestEffort();
-      } catch {
-        // ignore
-      }
+        const url = `${supabase.supabaseUrl}/rest/v1/user_sessions?id=eq.${session_id}`;
+        const body = JSON.stringify({ ended_at: nowIso });
+        // Obtener token de sesión actual para RLS
+        const sessionToken = supabase.auth.session?.()?.access_token
+          || supabase.supabaseKey;
+        fetch(url, {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+            "apikey": supabase.supabaseKey,
+            "Authorization": `Bearer ${sessionToken}`,
+            "Prefer": "return=minimal",
+          },
+          body,
+          keepalive: true,
+        });
+      } catch { /* best effort */ }
     };
 
     document.addEventListener("visibilitychange", onVisibility);

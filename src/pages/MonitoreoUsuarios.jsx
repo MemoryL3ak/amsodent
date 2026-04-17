@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Select from "react-select";
-import { supabase } from "../lib/supabase";
+import { api } from "../lib/api";
+import DateFilter from "../components/DateFilter";
 
 const ACTIVE_GRACE_MS = 60 * 1000;
 // Para “online real” (evita sesiones zombie en UI)
@@ -167,9 +168,9 @@ export default function MonitoreoUsuarios() {
     };
   }, [fechaDesde, fechaHasta]);
 
-  // ticker UI
+  // ticker UI (cada 5s en vez de cada 1s para reducir re-renders)
   useEffect(() => {
-    const t = setInterval(() => setTick(Date.now()), 1000);
+    const t = setInterval(() => setTick(Date.now()), 5000);
     return () => clearInterval(t);
   }, []);
 
@@ -180,12 +181,7 @@ export default function MonitoreoUsuarios() {
     async function cargarProfiles() {
       setLoading(true);
       try {
-        const { data, error } = await supabase
-          .from("profiles")
-          .select("id, nombre, email, rol")
-          .order("nombre", { ascending: true });
-
-        if (error) throw error;
+        const data = await api.get("/usuarios/profiles");
         if (mounted) setProfiles(data || []);
       } catch (e) {
         console.error("Error cargando profiles:", e);
@@ -233,21 +229,14 @@ export default function MonitoreoUsuarios() {
 
     async function cargarHeartbeat() {
       try {
-        // Si existe tu RPC, cierra sesiones stale server-side
+        // Cierra sesiones stale server-side
         try {
-          await supabase.rpc("fn_close_stale_sessions", { p_stale_seconds: STALE_SESSION_SEC });
+          await api.post("/usuarios/sessions/close-stale", { staleSeconds: STALE_SESSION_SEC });
         } catch (e) {
           // si no existe o falla, no bloqueamos
         }
 
-        const { data, error } = await supabase
-          .from("user_sessions")
-          .select("user_id, last_seen_at")
-          .is("ended_at", null)
-          .order("last_seen_at", { ascending: false })
-          .limit(500);
-
-        if (error) throw error;
+        const data = await api.get("/usuarios/sessions/active");
 
         const m = new Map();
         (data || []).forEach((r) => {
@@ -275,14 +264,7 @@ export default function MonitoreoUsuarios() {
 
     async function cargarDailyLastSeen() {
       try {
-        const { data, error } = await supabase
-          .from("user_activity_daily")
-          .select("user_id, day, last_seen_at")
-          .gte("day", range.from)
-          .lte("day", range.to)
-          .limit(5000);
-
-        if (error) throw error;
+        const data = await api.get(`/usuarios/activity/in-range?from=${range.from}&to=${range.to}`);
 
         const m = new Map();
         (data || []).forEach((r) => {
@@ -319,16 +301,7 @@ export default function MonitoreoUsuarios() {
         const startIso = rangeStart.toISOString();
         const endIso = rangeEnd.toISOString();
 
-        const { data, error } = await supabase
-          .from("user_sessions")
-          .select("user_id, started_at, ended_at, last_seen_at")
-          // sesiones que intersectan la ventana [start, end)
-          .lt("started_at", endIso)
-          .or(`ended_at.is.null,ended_at.gte.${startIso}`)
-          .order("started_at", { ascending: false })
-          .limit(8000);
-
-        if (error) throw error;
+        const data = await api.get(`/usuarios/sessions/in-range?start=${encodeURIComponent(startIso)}&end=${encodeURIComponent(endIso)}`);
 
         const acc = new Map();
 
@@ -338,14 +311,23 @@ export default function MonitoreoUsuarios() {
           const sStart = new Date(s.started_at);
 
           // fin efectivo:
-          // - ended_at si existe
-          // - si no, last_seen_at (no "now")
-          // - si no hay last_seen_at => no sumar
+          // - ended_at si existe → sesión cerrada
+          // - si no, y last_seen_at es reciente (< 45s) → sesión activa, usar now()
+          // - si no, last_seen_at viejo → sesión zombie, usar last_seen_at como fin
+          // - si no hay last_seen_at → no sumar
           let effectiveEnd = null;
+          const nowMs = Date.now();
 
-          if (s.ended_at) effectiveEnd = new Date(s.ended_at);
-          else if (s.last_seen_at) effectiveEnd = new Date(s.last_seen_at);
-          else return;
+          if (s.ended_at) {
+            effectiveEnd = new Date(s.ended_at);
+          } else if (s.last_seen_at) {
+            const lastSeenMs = new Date(s.last_seen_at).getTime();
+            const ageSec = Math.floor((nowMs - lastSeenMs) / 1000);
+            // Si el heartbeat es reciente, la sesión está viva → contar hasta ahora
+            effectiveEnd = ageSec <= STALE_SESSION_SEC ? new Date(nowMs) : new Date(s.last_seen_at);
+          } else {
+            return;
+          }
 
           range.days.forEach((dayISO) => {
             const { start, end } = workBoundsLocal(dayISO);
@@ -515,7 +497,7 @@ export default function MonitoreoUsuarios() {
   };
 
   const vendedores = useMemo(() => {
-    return profiles.filter((p) => ["ventas", "jefe_ventas"].includes(p.rol));
+    return profiles.filter((p) => ["ventas", "jefe_ventas", "admin"].includes(p.rol));
   }, [profiles]);
 
   const onlineFiltered = useMemo(() => {
@@ -545,11 +527,16 @@ export default function MonitoreoUsuarios() {
         <div style={{ display: "flex", alignItems: "flex-end", gap: "12px", flexWrap: "wrap" }}>
           <div className="field" style={{ margin: 0 }}>
             <label className="field-label">Desde</label>
-            <input type="date" className="input" value={fechaDesde} onChange={(e) => setFechaDesde(e.target.value)} />
+            <DateFilter value={fechaDesde} onChange={setFechaDesde} placeholder="Desde" />
           </div>
           <div className="field" style={{ margin: 0 }}>
             <label className="field-label">Hasta</label>
-            <input type="date" className="input" value={fechaHasta} onChange={(e) => setFechaHasta(e.target.value)} />
+            <DateFilter
+              value={fechaHasta}
+              onChange={setFechaHasta}
+              placeholder="Hasta"
+              minDate={fechaDesde ? new Date(`${fechaDesde}T00:00:00`) : null}
+            />
           </div>
           <div className="field" style={{ margin: 0, minWidth: "220px" }}>
             <label className="field-label">Vendedor</label>

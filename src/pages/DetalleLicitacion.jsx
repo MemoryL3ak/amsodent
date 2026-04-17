@@ -11,7 +11,7 @@
 // - DRAG: persiste el reorder al tiro en localStorage (no esperar al useEffect)
 
 import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
-import { supabase } from "../lib/supabase";
+import { api } from "../lib/api";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import Toast from "../components/Toast";
 import ConfirmModal from "../components/ConfirmModal";
@@ -151,37 +151,6 @@ function normalizarVolumenCm3(valor) {
   return n;
 }
 
-function isMissingMontoColumnError(error) {
-  const code = (error?.code || "").toString().toUpperCase();
-  const msg = [error?.message, error?.details, error?.hint]
-    .filter(Boolean)
-    .join(" ")
-    .toString()
-    .toLowerCase();
-  return (
-    code === "42703" ||
-    code === "PGRST204" ||
-    (code.startsWith("PGRST") && msg.includes("monto")) ||
-    (msg.includes("monto") && msg.includes("column")) ||
-    (msg.includes("monto") && msg.includes("schema cache"))
-  );
-}
-
-function isMissingFechaOcColumnError(error) {
-  const code = (error?.code || "").toString().toUpperCase();
-  const msg = [error?.message, error?.details, error?.hint]
-    .filter(Boolean)
-    .join(" ")
-    .toString()
-    .toLowerCase();
-  return (
-    code === "42703" ||
-    code === "PGRST204" ||
-    (code.startsWith("PGRST") && msg.includes("fecha_oc")) ||
-    (msg.includes("fecha_oc") && msg.includes("column")) ||
-    (msg.includes("fecha_oc") && msg.includes("schema cache"))
-  );
-}
 
 /* ============================================================
    BUSCADOR MEJORADO (igual que Crear)
@@ -796,7 +765,13 @@ export default function EditarLicitacion() {
   const [confirmEliminarOpen, setConfirmEliminarOpen] = useState(false);
   const [confirmEliminarDocOpen, setConfirmEliminarDocOpen] = useState(false);
   const [confirmDuplicarOpen, setConfirmDuplicarOpen] = useState(false);
+  const [adjudicarPrompt, setAdjudicarPrompt] = useState(null); // { stage:"check"|"modificar", total, resolve }
   const [docAEliminar, setDocAEliminar] = useState(null);
+  const [docEditando, setDocEditando] = useState(null);
+  const [docEditNumero, setDocEditNumero] = useState("");
+  const [docEditMonto, setDocEditMonto] = useState("");
+  const [docEditFechaOC, setDocEditFechaOC] = useState("");
+  const [guardandoDocEdit, setGuardandoDocEdit] = useState(false);
   const [aprobando, setAprobando] = useState(false);
   const [documentos, setDocumentos] = useState([]);
   const [docTipo, setDocTipo] = useState("orden_compra");
@@ -822,6 +797,7 @@ export default function EditarLicitacion() {
   const [fechaAdjudicada, setFechaAdjudicada] = useState(null);
   const [margenAprobado, setMargenAprobado] = useState(false);
   const [tipoCompra, setTipoCompra] = useState("Compra ágil");
+  const [montoAdicionalOC, setMontoAdicionalOC] = useState("");
 
   const [observaciones, setObservaciones] = useState("");
 
@@ -901,9 +877,6 @@ export default function EditarLicitacion() {
     if (docTipo === "guia_despacho") {
       return documentos.filter((d) => d.tipo === "orden_compra");
     }
-    if (docTipo === "factura") {
-      return documentos.filter((d) => d.tipo === "guia_despacho");
-    }
     return [];
   }, [docTipo, documentos]);
 
@@ -948,44 +921,37 @@ export default function EditarLicitacion() {
   async function buscarClientePorRut(rut) {
     if (!rut) return;
 
-    const { data, error } = await supabase
-      .from("clientes")
-      .select("*")
-      .eq("rut", rut)
-      .maybeSingle();
+    try {
+      const data = await api.get(`/clientes?rut=${encodeURIComponent(rut)}`);
+      if (!data) return;
 
-    if (error || !data) return;
-
-    setNombreEntidad(data.nombre || "");
-    setDepartamento(data.departamento || "");
-    setMunicipalidad(data.municipalidad || "");
-    setRegion(data.region || "");
-    setComuna(data.comuna || "");
-    setDireccion(data.direccion || "");
-    setContacto(data.contacto || "");
-    setEmail(data.email || "");
-    setTelefono(data.telefono || "");
-    setCondVenta(data.condiciones_venta || "");
+      setNombreEntidad(data.nombre || "");
+      setDepartamento(data.departamento || "");
+      setMunicipalidad(data.municipalidad || "");
+      setRegion(data.region || "");
+      setComuna(data.comuna || "");
+      setDireccion(data.direccion || "");
+      setContacto(data.contacto || "");
+      setEmail(data.email || "");
+      setTelefono(data.telefono || "");
+      setCondVenta(data.condiciones_venta || "");
+    } catch (e) {
+      // Client not found or error - ignore
+    }
   }
 
   async function crearClienteSiNoExiste() {
     if (!rutEntidad) return;
 
-    const { data: existe, error: errExiste } = await supabase
-      .from("clientes")
-      .select("id")
-      .eq("rut", rutEntidad)
-      .maybeSingle();
-
-    if (errExiste) {
-      console.error("Error verificando cliente:", errExiste);
-      throw new Error("No se pudo verificar el cliente");
+    try {
+      const existe = await api.get(`/clientes?rut=${encodeURIComponent(rutEntidad)}`);
+      if (existe) return;
+    } catch (e) {
+      // Client not found - proceed to create
     }
 
-    if (existe) return;
-
-    const { error } = await supabase.from("clientes").insert([
-      {
+    try {
+      await api.post("/clientes", {
         rut: rutEntidad,
         nombre: nombreEntidad,
         departamento,
@@ -997,10 +963,8 @@ export default function EditarLicitacion() {
         email,
         telefono,
         condiciones_venta: condVenta,
-      },
-    ]);
-
-    if (error) {
+      });
+    } catch (error) {
       console.error("Error creando cliente:", error);
       throw new Error("No se pudo crear el cliente");
     }
@@ -1012,33 +976,20 @@ export default function EditarLicitacion() {
   useEffect(() => {
     (async () => {
       try {
-        const { data } = await supabase.auth.getUser();
-        const user = data?.user;
-        if (!user) return;
+        const profile = await api.get("/auth/profile");
+        if (!profile) return;
 
-        const { data: perfil } = await supabase
-          .from("profiles")
-          .select("rol")
-          .eq("id", user.id)
-          .single();
+        setRol(profile.rol ?? null);
 
-        setRol(perfil?.rol ?? null);
-
-        const meta = user.user_metadata || {};
-        const emailAuth = user.email || "";
-
-        setVendedorCorreo((prev) => prev || emailAuth || "");
+        setVendedorCorreo((prev) => prev || profile.email || "");
         setVendedorNombre(
           (prev) =>
             prev ||
-            meta?.nombre ||
-            meta?.name ||
-            meta?.full_name ||
-            meta?.display_name ||
+            profile.nombre ||
             ""
         );
         setVendedorCelular(
-          (prev) => prev || meta?.celular || meta?.phone || meta?.telefono || ""
+          (prev) => prev || profile.celular || profile.telefono || ""
         );
       } catch (e) {}
     })();
@@ -1051,41 +1002,29 @@ export default function EditarLicitacion() {
     setToast(null);
 
     try {
-      const { data: docsLic } = await supabase
-        .from("licitacion_documentos")
-        .select("id,bucket,storage_path")
-        .eq("licitacion_id", Number(id));
+      const docsLic = await api.get(`/licitaciones/${id}/documentos`);
 
       for (const doc of docsLic || []) {
         if (!doc?.bucket || !doc?.storage_path) continue;
-        const { error: errStorage } = await supabase.storage
-          .from(doc.bucket)
-          .remove([doc.storage_path]);
-        if (errStorage) {
+        try {
+          await api.delete(`/licitaciones/storage/file?bucket=${encodeURIComponent(doc.bucket)}&path=${encodeURIComponent(doc.storage_path)}`);
+        } catch (errStorage) {
           console.error("Error borrando archivo de storage:", errStorage);
         }
       }
 
-      const { error: errDocs } = await supabase
-        .from("licitacion_documentos")
-        .delete()
-        .eq("licitacion_id", Number(id));
+      // Delete all docs for this licitacion
+      for (const doc of docsLic || []) {
+        if (!doc?.id) continue;
+        try {
+          await api.delete(`/licitaciones/documentos/${doc.id}`);
+        } catch (e) {
+          console.error("Error eliminando documento:", e);
+        }
+      }
 
-      if (errDocs) throw errDocs;
-
-      const { error: errItems } = await supabase
-        .from("items_licitacion")
-        .delete()
-        .eq("licitacion_id", id);
-
-      if (errItems) throw errItems;
-
-      const { error: errLic } = await supabase
-        .from("licitaciones")
-        .delete()
-        .eq("id", id);
-
-      if (errLic) throw errLic;
+      // Delete items - the backend handles this via the licitacion delete
+      await api.delete(`/licitaciones/${id}`);
 
       localStorage.removeItem(STORAGE_KEY);
       setConfirmEliminarOpen(false);
@@ -1109,12 +1048,7 @@ export default function EditarLicitacion() {
     setToast(null);
 
     try {
-      const { error } = await supabase
-        .from("licitaciones")
-        .update({ estado: "En espera", margen_aprobado: true })
-        .eq("id", id);
-
-      if (error) throw error;
+      await api.put(`/licitaciones/${id}`, { estado: "En espera", margen_aprobado: true });
 
       setEstado("En espera");
       setEstadoActualDB("En espera");
@@ -1181,34 +1115,30 @@ export default function EditarLicitacion() {
   }
 
   async function cargarDocumentosLicitacion() {
-    const { data, error } = await supabase
-      .from("licitacion_documentos")
-      .select("*")
-      .eq("licitacion_id", Number(id))
-      .order("created_at", { ascending: true });
-
-    if (error) {
+    try {
+      const data = await api.get(`/licitaciones/${id}/documentos`);
+      setDocumentos(data || []);
+    } catch (error) {
       console.error("Error cargando documentos:", error);
       setDocumentos([]);
-      return;
     }
-
-    setDocumentos(data || []);
   }
 
   async function abrirDocumento(doc) {
     if (!doc?.bucket || !doc?.storage_path) return;
-    const { data, error } = await supabase.storage
-      .from(doc.bucket)
-      .createSignedUrl(doc.storage_path, 60);
+    try {
+      const data = await api.get(`/licitaciones/storage/signed-url?bucket=${encodeURIComponent(doc.bucket)}&path=${encodeURIComponent(doc.storage_path)}`);
 
-    if (error || !data?.signedUrl) {
+      if (!data?.signedUrl) {
+        setToast({ type: "error", message: "No se pudo abrir el documento." });
+        return;
+      }
+
+      window.open(data.signedUrl, "_blank", "noopener,noreferrer");
+    } catch (error) {
       console.error("Error creando URL firmada:", error);
       setToast({ type: "error", message: "No se pudo abrir el documento." });
-      return;
     }
-
-    window.open(data.signedUrl, "_blank", "noopener,noreferrer");
   }
 
   async function eliminarDocumento(doc) {
@@ -1216,23 +1146,18 @@ export default function EditarLicitacion() {
 
     setToast(null);
 
-    const { error: errDb } = await supabase
-      .from("licitacion_documentos")
-      .delete()
-      .eq("id", doc.id);
-
-    if (errDb) {
+    try {
+      await api.delete(`/licitaciones/documentos/${doc.id}`);
+    } catch (errDb) {
       console.error("Error eliminando documento:", errDb);
       setToast({ type: "error", message: "No se pudo eliminar el documento." });
       return;
     }
 
     if (doc.bucket && doc.storage_path) {
-      const { error: errStorage } = await supabase.storage
-        .from(doc.bucket)
-        .remove([doc.storage_path]);
-
-      if (errStorage) {
+      try {
+        await api.delete(`/licitaciones/storage/file?bucket=${encodeURIComponent(doc.bucket)}&path=${encodeURIComponent(doc.storage_path)}`);
+      } catch (errStorage) {
         console.error("Error borrando archivo de storage:", errStorage);
       }
     }
@@ -1245,6 +1170,44 @@ export default function EditarLicitacion() {
     if (!doc?.id) return;
     setDocAEliminar(doc);
     setConfirmEliminarDocOpen(true);
+  }
+
+  function iniciarEdicionDocumento(doc) {
+    if (!doc?.id) return;
+    setDocEditando(doc);
+    setDocEditNumero(doc.numero || "");
+    setDocEditMonto(doc.monto != null ? String(doc.monto) : "");
+    setDocEditFechaOC(doc.fecha_oc || "");
+  }
+
+  function cancelarEdicionDocumento() {
+    setDocEditando(null);
+    setDocEditNumero("");
+    setDocEditMonto("");
+    setDocEditFechaOC("");
+  }
+
+  async function guardarEdicionDocumento() {
+    if (!docEditando?.id) return;
+    setGuardandoDocEdit(true);
+    try {
+      const payload = {
+        numero: docEditNumero.trim() || null,
+        monto: docEditMonto ? Number(docEditMonto) : null,
+      };
+      if (docEditando.tipo === "orden_compra" && docEditFechaOC) {
+        payload.fecha_oc = docEditFechaOC;
+      }
+      await api.put(`/licitaciones/documentos/${docEditando.id}`, payload);
+      setToast({ type: "success", message: "Documento actualizado." });
+      cancelarEdicionDocumento();
+      await cargarDocumentosLicitacion();
+    } catch (e) {
+      console.error(e);
+      setToast({ type: "error", message: "Error actualizando documento." });
+    } finally {
+      setGuardandoDocEdit(false);
+    }
   }
 
   async function confirmarEliminarDocumento() {
@@ -1294,14 +1257,10 @@ export default function EditarLicitacion() {
       return;
     }
 
-    const requiereDeriva = tipo === "guia_despacho" || tipo === "factura";
-    if (requiereDeriva && !docDerivaDeId) {
+    if (tipo === "guia_despacho" && !docDerivaDeId) {
       setToast({
         type: "error",
-        message:
-          tipo === "guia_despacho"
-            ? "La guía de despacho debe derivar de una orden de compra."
-            : "La factura debe derivar de una guía de despacho.",
+        message: "La guía de despacho debe derivar de una orden de compra.",
       });
       return;
     }
@@ -1319,19 +1278,6 @@ export default function EditarLicitacion() {
       }
     }
 
-    if (tipo === "factura") {
-      const docOrigen = documentos.find(
-        (d) => String(d.id) === String(docDerivaDeId)
-      );
-      if (!docOrigen || docOrigen.tipo !== "guia_despacho") {
-        setToast({
-          type: "error",
-          message: "La factura debe vincularse a una guía de despacho válida.",
-        });
-        return;
-      }
-    }
-
     setSubiendoDoc(true);
 
     try {
@@ -1342,14 +1288,10 @@ export default function EditarLicitacion() {
         .slice(2)}-${safeName}.${ext}`;
       const storagePath = `${id}/${fileName}`;
 
-      const { error: upErr } = await supabase.storage
-        .from(bucket)
-        .upload(storagePath, file, {
-          contentType: "application/pdf",
-          upsert: false,
-        });
+      const formData = new FormData();
+      formData.append("file", file);
 
-      if (upErr) throw upErr;
+      await api.postForm(`/licitaciones/storage/upload?bucket=${encodeURIComponent(bucket)}&path=${encodeURIComponent(storagePath)}`, formData);
 
       const payload = {
         licitacion_id: Number(id),
@@ -1365,38 +1307,13 @@ export default function EditarLicitacion() {
         size_bytes: Number(file.size || 0),
       };
 
-      let usedFallbackSinMonto = false;
-      let { error: insErr } = await supabase
-        .from("licitacion_documentos")
-        .insert(payload)
-        .select("id")
-        .single();
-
-      if (insErr && isMissingMontoColumnError(insErr)) {
-        const payloadSinMonto = { ...payload };
-        delete payloadSinMonto.monto;
-        const retry = await supabase
-          .from("licitacion_documentos")
-          .insert(payloadSinMonto)
-          .select("id")
-          .single();
-        insErr = retry.error;
-        usedFallbackSinMonto = !insErr;
-      }
-
-      if (insErr && isMissingFechaOcColumnError(insErr)) {
-        const payloadSinFechaOc = { ...payload };
-        delete payloadSinFechaOc.fecha_oc;
-        const retry = await supabase
-          .from("licitacion_documentos")
-          .insert(payloadSinFechaOc)
-          .select("id")
-          .single();
-        insErr = retry.error;
-      }
-
-      if (insErr) {
-        await supabase.storage.from(bucket).remove([storagePath]);
+      try {
+        await api.post("/licitaciones/documentos", payload);
+      } catch (insErr) {
+        // Clean up uploaded file on failure
+        try {
+          await api.delete(`/licitaciones/storage/file?bucket=${encodeURIComponent(bucket)}&path=${encodeURIComponent(storagePath)}`);
+        } catch (_) {}
         throw insErr;
       }
 
@@ -1408,9 +1325,7 @@ export default function EditarLicitacion() {
       if (fileInputRef.current) fileInputRef.current.value = "";
       setToast({
         type: "success",
-        message: usedFallbackSinMonto
-          ? "Documento cargado. Falta aplicar migración para guardar monto de OC."
-          : "Documento cargado correctamente.",
+        message: "Documento cargado correctamente.",
       });
       await cargarDocumentosLicitacion();
     } catch (e) {
@@ -1451,6 +1366,7 @@ export default function EditarLicitacion() {
       setEstado(data.estado || "En espera");
       setTipoCompra(data.tipoCompra || "Compra ágil");
       setMargenAprobado(Boolean(data.margenAprobado || data.margen_aprobado));
+      setMontoAdicionalOC(data.montoAdicionalOC || "");
 
       setRutEntidad(data.rutEntidad || "");
       setNombreEntidad(data.nombreEntidad || "");
@@ -1529,6 +1445,7 @@ export default function EditarLicitacion() {
       vendedorNombre,
       vendedorCelular,
       vendedorCorreo,
+      montoAdicionalOC,
     };
 
     localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
@@ -1539,6 +1456,7 @@ export default function EditarLicitacion() {
     nombre,
     fechaHoraCierre,
     monto,
+    montoAdicionalOC,
     listado,
     estado,
     margenAprobado,
@@ -1670,25 +1588,27 @@ export default function EditarLicitacion() {
     localStorage.removeItem(STORAGE_KEY);
     setLoading(true);
 
-    const { data: lic, error: errLic } = await supabase
-      .from("licitaciones")
-      .select("*")
-      .eq("id", id)
-      .single();
+    let lic, itemsDB;
+    try {
+      lic = await api.get(`/licitaciones/${id}`);
+    } catch (errLic) {
+      setToast({ type: "error", message: "Error recargando la licitación" });
+      setLoading(false);
+      return;
+    }
 
-    if (errLic || !lic) {
+    if (!lic) {
       setToast({ type: "error", message: "Error recargando la licitación" });
       setLoading(false);
       return;
     }
 
     // ✅ ORDER FIX
-    const { data: itemsDB } = await supabase
-      .from("items_licitacion")
-      .select("*")
-      .eq("licitacion_id", id)
-      .order("orden", { ascending: true, nullsFirst: false })
-      .order("id", { ascending: true });
+    try {
+      itemsDB = await api.get(`/licitaciones/${id}/items`);
+    } catch (e) {
+      itemsDB = [];
+    }
 
     setIdLicitacionInput(lic.id_licitacion || "");
     setNombre(lic.nombre || "");
@@ -1798,14 +1718,13 @@ export default function EditarLicitacion() {
 ============================================================ */
   useEffect(() => {
     async function cargarProductos() {
-      const { data } = await supabase
-        .from("productos")
-        .select("*")
-        .in("estado", ["Activo", "Transitorio"])
-        .order("id")
-        .limit(20000);
-
-      setProductos(data || []);
+      try {
+        const data = await api.get("/productos");
+        setProductos(data || []);
+      } catch (e) {
+        console.error("Error cargando productos:", e);
+        setProductos([]);
+      }
     }
     cargarProductos();
   }, []);
@@ -1816,33 +1735,10 @@ export default function EditarLicitacion() {
   useEffect(() => {
     async function cargarCampaniasVigentes() {
       try {
-        const hoy = new Date().toISOString().slice(0, 10);
-
-        const { data: campaigns, error: e1 } = await supabase
-          .from("product_campaigns")
-          .select("id, created_at")
-          .lte("start_date", hoy)
-          .gte("end_date", hoy)
-          .order("created_at", { ascending: false });
-
-        if (e1) throw e1;
-
-        const ids = (campaigns || []).map((c) => c.id);
-        if (ids.length === 0) {
-          setCampaignPriceBySku(new Map());
-          return;
-        }
-
-        const { data: itemsCamp, error: e2 } = await supabase
-          .from("product_campaign_items")
-          .select("sku, precio_campania, campaign_id, created_at")
-          .in("campaign_id", ids)
-          .order("created_at", { ascending: false });
-
-        if (e2) throw e2;
+        const data = await api.get("/productos/campaign-prices");
 
         const m = new Map();
-        (itemsCamp || []).forEach((row) => {
+        (data || []).forEach((row) => {
           const sku = row?.sku;
           if (!sku) return;
           if (!m.has(sku)) m.set(sku, Number(row.precio_campania || 0));
@@ -1871,25 +1767,27 @@ export default function EditarLicitacion() {
 
       setLoading(true);
 
-      const { data: lic, error: errLic } = await supabase
-        .from("licitaciones")
-        .select("*")
-        .eq("id", id)
-        .single();
+      let lic, itemsDB;
+      try {
+        lic = await api.get(`/licitaciones/${id}`);
+      } catch (errLic) {
+        setToast({ type: "error", message: "Error cargando la licitación" });
+        setLoading(false);
+        return;
+      }
 
-      if (errLic || !lic) {
+      if (!lic) {
         setToast({ type: "error", message: "Error cargando la licitación" });
         setLoading(false);
         return;
       }
 
       // ✅ ORDER FIX
-      const { data: itemsDB } = await supabase
-        .from("items_licitacion")
-        .select("*")
-        .eq("licitacion_id", id)
-        .order("orden", { ascending: true, nullsFirst: false })
-        .order("id", { ascending: true });
+      try {
+        itemsDB = await api.get(`/licitaciones/${id}/items`);
+      } catch (e) {
+        itemsDB = [];
+      }
 
       setIdLicitacionInput(lic.id_licitacion || "");
       setNombre(lic.nombre || "");
@@ -2088,7 +1986,7 @@ export default function EditarLicitacion() {
   const montoConsumidoOC = calcularBrutoDesdeNeto(montoConsumidoOCNeto);
   const montoPresupuesto = parseMontoCL(monto);
   const saldoPresupuesto = montoPresupuesto - totalConIVA;
-  const saldoPorConsumirResumen = Math.max(0, montoPresupuesto - montoConsumidoOC);
+  const saldoPorConsumirResumen = Math.max(0, totalConIVA - montoConsumidoOC);
   const montoNetoOCFormulario = parseMontoCL(docMonto);
   const montoBrutoOCFormulario = calcularBrutoDesdeNeto(montoNetoOCFormulario);
 
@@ -2220,7 +2118,11 @@ export default function EditarLicitacion() {
 
     const target = items[index];
     if (target.id_item) {
-      await supabase.from("items_licitacion").delete().eq("id", target.id_item);
+      try {
+        await api.delete(`/licitaciones/items/${target.id_item}`);
+      } catch (e) {
+        console.error("Error eliminando ítem:", e);
+      }
     }
 
     const copia = [...items];
@@ -2360,14 +2262,10 @@ export default function EditarLicitacion() {
     try {
       const idLicitacionNorm = (idLicitacionInput || "").toString().trim();
 
-      const { data: dup, error: errDup } = await supabase
-        .from("licitaciones")
-        .select("id")
-        .eq("id_licitacion", idLicitacionNorm)
-        .neq("id", id)
-        .limit(1);
-
-      if (errDup) {
+      let dup;
+      try {
+        dup = await api.get(`/licitaciones?id_licitacion=${encodeURIComponent(idLicitacionNorm)}&exclude_id=${id}`);
+      } catch (errDup) {
         console.error(errDup);
         setToast({
           type: "error",
@@ -2447,9 +2345,25 @@ export default function EditarLicitacion() {
         setMargenAprobado(margenAprobadoFinal);
       }
 
-      const { error: errUpdate } = await supabase
-        .from("licitaciones")
-        .update({
+      // Confirmación del Monto Total al pasar a Adjudicada
+      if (estadoFinal === "Adjudicada" && estadoActualDB !== "Adjudicada") {
+        const totalActual = Number(totalConIVA) || 0;
+        const decision = await new Promise((resolve) => {
+          setAdjudicarPrompt({ stage: "check", total: totalActual, resolve });
+        });
+        if (decision !== "igual") {
+          setGuardando(false);
+          setToast(
+            decision === "modificar"
+              ? { type: "info", message: "Ajuste los items y vuelva a guardar como Adjudicada." }
+              : null
+          );
+          return false;
+        }
+      }
+
+      try {
+        await api.put(`/licitaciones/${id}`, {
           id_licitacion: idLicitacionInput,
           nombre,
           fecha_hora_cierre: fechaHoraCierre,
@@ -2479,10 +2393,8 @@ export default function EditarLicitacion() {
           total_iva: totalIVA,
 
           observaciones: observaciones || null,
-        })
-        .eq("id", id);
-
-      if (errUpdate) {
+        });
+      } catch (errUpdate) {
         console.error(errUpdate);
         setToast({ type: "error", message: "Error al guardar licitación" });
         return false;
@@ -2546,37 +2458,31 @@ export default function EditarLicitacion() {
         };
 
         if (it.id_item) {
-          const { error: eUpd } = await supabase
-            .from("items_licitacion")
-            .update(payload)
-            .eq("id", it.id_item);
-
-          if (eUpd) {
+          try {
+            await api.put(`/licitaciones/items/${it.id_item}`, payload);
+          } catch (eUpd) {
             console.error(eUpd);
             setToast({ type: "error", message: "Error al guardar un ítem" });
             return false;
           }
         } else {
-          const { data: ins, error: eIns } = await supabase
-            .from("items_licitacion")
-            .insert([payload])
-            .select("id")
-            .single();
+          try {
+            const ins = await api.post(`/licitaciones/${id}/items`, { items: [payload] });
 
-          if (eIns) {
+            const newId = Array.isArray(ins) ? ins[0]?.id : ins?.id;
+            if (newId) {
+              setItems((prev) =>
+                prev.map((x) =>
+                  x.uid === it.uid
+                    ? { ...x, id_item: newId, orden: payload.orden }
+                    : x
+                )
+              );
+            }
+          } catch (eIns) {
             console.error(eIns);
             setToast({ type: "error", message: "Error al insertar un ítem" });
             return false;
-          }
-
-          if (ins?.id) {
-            setItems((prev) =>
-              prev.map((x) =>
-                x.uid === it.uid
-                  ? { ...x, id_item: ins.id, orden: payload.orden }
-                  : x
-              )
-            );
           }
         }
       }
@@ -3424,7 +3330,6 @@ export default function EditarLicitacion() {
             >
               <option value="orden_compra">Orden de Compra</option>
               <option value="guia_despacho">Guía de Despacho</option>
-              <option value="factura">Factura</option>
             </select>
           </div>
 
@@ -3481,7 +3386,7 @@ export default function EditarLicitacion() {
             </div>
           )}
 
-          {(docTipo === "guia_despacho" || docTipo === "factura") && (
+          {docTipo === "guia_despacho" && (
             <div className="md:col-span-2">
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Deriva de *
@@ -3559,18 +3464,37 @@ export default function EditarLicitacion() {
             <tbody className="divide-y divide-gray-200 bg-white">
               {documentos.map((doc) => {
                 const docOrigen = documentos.find((x) => x.id === doc.deriva_de_id);
+                const editando = docEditando?.id === doc.id;
                 return (
                   <tr key={doc.id}>
                     <td className="px-3 py-2 text-sm">{DOC_TIPOS[doc.tipo] || doc.tipo}</td>
-                    <td className="px-3 py-2 text-sm">{doc.numero || "-"}</td>
                     <td className="px-3 py-2 text-sm">
-                      {doc.monto !== null && doc.monto !== undefined
+                      {editando ? (
+                        <input
+                          type="text"
+                          className="input text-sm"
+                          style={{ width: 100 }}
+                          value={docEditNumero}
+                          onChange={(e) => setDocEditNumero(e.target.value)}
+                        />
+                      ) : (doc.numero || "-")}
+                    </td>
+                    <td className="px-3 py-2 text-sm">
+                      {editando && doc.tipo === "orden_compra" ? (
+                        <input
+                          type="number"
+                          className="input text-sm"
+                          style={{ width: 110 }}
+                          value={docEditMonto}
+                          onChange={(e) => setDocEditMonto(e.target.value)}
+                        />
+                      ) : doc.monto !== null && doc.monto !== undefined
                         ? `$${Number(doc.monto).toLocaleString("es-CL")}`
                         : "-"}
                     </td>
                     <td className="px-3 py-2 text-sm">
                       {doc.monto !== null && doc.monto !== undefined
-                        ? `$${calcularBrutoDesdeNeto(doc.monto).toLocaleString("es-CL")}`
+                        ? `$${calcularBrutoDesdeNeto(editando && doc.tipo === "orden_compra" ? Number(docEditMonto || 0) : doc.monto).toLocaleString("es-CL")}`
                         : "-"}
                     </td>
                     <td className="px-3 py-2 text-sm">
@@ -3580,7 +3504,15 @@ export default function EditarLicitacion() {
                     </td>
                     <td className="px-3 py-2 text-sm">{doc.file_name || "-"}</td>
                     <td className="px-3 py-2 text-sm">
-                      {doc.tipo === "orden_compra" && doc.fecha_oc
+                      {editando && doc.tipo === "orden_compra" ? (
+                        <input
+                          type="date"
+                          className="input text-sm"
+                          style={{ width: 140 }}
+                          value={docEditFechaOC}
+                          onChange={(e) => setDocEditFechaOC(e.target.value)}
+                        />
+                      ) : doc.tipo === "orden_compra" && doc.fecha_oc
                         ? new Date(`${doc.fecha_oc}T00:00:00`).toLocaleDateString("es-CL")
                         : doc.created_at
                         ? new Date(doc.created_at).toLocaleString("es-CL")
@@ -3588,20 +3520,50 @@ export default function EditarLicitacion() {
                     </td>
                     <td className="px-3 py-2 text-sm">
                       <div className="flex gap-2">
-                        <button
-                          type="button"
-                          onClick={() => abrirDocumento(doc)}
-                          className="btn btn-secondary btn-sm"
-                        >
-                          Ver
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => solicitarEliminarDocumento(doc)}
-                          className="btn btn-danger btn-sm"
-                        >
-                          Eliminar
-                        </button>
+                        {editando ? (
+                          <>
+                            <button
+                              type="button"
+                              onClick={guardarEdicionDocumento}
+                              disabled={guardandoDocEdit}
+                              className="btn btn-primary btn-sm"
+                            >
+                              {guardandoDocEdit ? "…" : "Guardar"}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={cancelarEdicionDocumento}
+                              disabled={guardandoDocEdit}
+                              className="btn btn-secondary btn-sm"
+                            >
+                              Cancelar
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => iniciarEdicionDocumento(doc)}
+                              className="btn btn-secondary btn-sm"
+                            >
+                              Editar
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => abrirDocumento(doc)}
+                              className="btn btn-secondary btn-sm"
+                            >
+                              Ver
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => solicitarEliminarDocumento(doc)}
+                              className="btn btn-danger btn-sm"
+                            >
+                              Eliminar
+                            </button>
+                          </>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -3691,6 +3653,57 @@ export default function EditarLicitacion() {
           setDocAEliminar(null);
         }}
         onConfirm={confirmarEliminarDocumento}
+      />
+
+      <ConfirmModal
+        open={!!adjudicarPrompt && adjudicarPrompt.stage === "check"}
+        title="Confirmar adjudicación"
+        message={
+          adjudicarPrompt
+            ? `La cotización pasará a "Adjudicada". El Monto Total es $${adjudicarPrompt.total.toLocaleString("es-CL")}. ¿El monto adjudicado es igual a este total?`
+            : ""
+        }
+        confirmText="Sí, es igual"
+        cancelText="No, es distinto"
+        confirmTone="primary"
+        onConfirm={() => {
+          const r = adjudicarPrompt?.resolve;
+          setAdjudicarPrompt(null);
+          r && r("igual");
+        }}
+        onCancel={() => {
+          // Pasar a la segunda pregunta
+          const total = adjudicarPrompt?.total || 0;
+          const prevResolve = adjudicarPrompt?.resolve;
+          setAdjudicarPrompt({
+            stage: "modificar",
+            total,
+            resolve: prevResolve,
+          });
+        }}
+      />
+
+      <ConfirmModal
+        open={!!adjudicarPrompt && adjudicarPrompt.stage === "modificar"}
+        title="Monto distinto"
+        message={
+          adjudicarPrompt
+            ? `El monto adjudicado es distinto al total de la cotización ($${adjudicarPrompt.total.toLocaleString("es-CL")}). ¿Desea modificar la cotización (cantidad, items, etc.) antes de adjudicar?`
+            : ""
+        }
+        confirmText="Sí, modificar"
+        cancelText="Abortar"
+        confirmTone="primary"
+        onConfirm={() => {
+          const r = adjudicarPrompt?.resolve;
+          setAdjudicarPrompt(null);
+          r && r("modificar");
+        }}
+        onCancel={() => {
+          const r = adjudicarPrompt?.resolve;
+          setAdjudicarPrompt(null);
+          r && r("abortar");
+        }}
       />
 
       <ConfirmModal

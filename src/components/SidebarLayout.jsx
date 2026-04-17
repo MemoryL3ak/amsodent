@@ -1,5 +1,6 @@
 import { Link, useLocation, Outlet } from "react-router-dom";
 import { supabase } from "../lib/supabase";
+import { api } from "../lib/api";
 import { useEffect, useState } from "react";
 import { useUnsavedChanges } from "../context/UnsavedChangesContext";
 import SessionTracker from "./SessionTracker";
@@ -7,6 +8,7 @@ import PresenceTracker from "./PresenceTracker";
 import {
   FilePlus,
   ClipboardList,
+  FileText,
   Package,
   Users,
   Megaphone,
@@ -16,6 +18,7 @@ import {
   Activity,
   UserCog,
   LogOut,
+  CreditCard,
 } from "lucide-react";
 
 const ROLE_LABELS = {
@@ -46,24 +49,22 @@ export default function SidebarLayout() {
 
   useEffect(() => {
     async function cargarPerfil() {
-      const { data: authData } = await supabase.auth.getUser();
-      const user = authData?.user;
-      if (!user) return;
+      let perfilDB;
+      try {
+        perfilDB = await api.get("/auth/profile");
+      } catch {
+        return;
+      }
+      if (!perfilDB) return;
 
-      const { data: perfilDB } = await supabase
-        .from("profiles")
-        .select("id, nombre, rol, email")
-        .eq("id", user.id)
-        .maybeSingle();
-
-      const nombre = perfilDB?.nombre || user.email;
+      const nombre = perfilDB?.nombre || perfilDB?.email;
       const rolDB = perfilDB?.rol || "usuario";
 
       setPerfil({
         nombre,
         rol: rolDB,
         rolLabel: labelRol(rolDB),
-        email: user.email,
+        email: perfilDB?.email || "",
       });
     }
 
@@ -92,11 +93,13 @@ export default function SidebarLayout() {
   const puedeVerMetas = esAdmin || esJefatura || esVentas;
 
   const coreNav = [
-    { to: "/listar",   icon: ClipboardList, label: "Cotizaciones" },
-    { to: "/crear",    icon: FilePlus,      label: "Nueva Cotización" },
-    { to: "/productos",icon: Package,       label: "Productos" },
-    { to: "/clientes", icon: Users,         label: "Clientes" },
-    { to: "/campanas", icon: Megaphone,     label: "Campañas" },
+    { to: "/listar",            icon: ClipboardList, label: "Cotizaciones" },
+    { to: "/crear",             icon: FilePlus,      label: "Nueva Cotización" },
+    { to: "/trazabilidad",      icon: FileText,      label: "Trazabilidad" },
+    { to: "/seguimiento-pagos", icon: CreditCard,    label: "Seguimiento Pagos" },
+    { to: "/productos",         icon: Package,       label: "Productos" },
+    { to: "/clientes",          icon: Users,         label: "Clientes" },
+    { to: "/campanas",          icon: Megaphone,     label: "Campañas" },
   ];
 
   const reportNav = [

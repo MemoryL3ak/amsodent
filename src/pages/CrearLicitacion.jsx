@@ -2,6 +2,7 @@
 import React, { useEffect, useMemo, useState, useCallback } from "react";
 import { useLocation } from "react-router-dom";
 import { supabase } from "../lib/supabase";
+import { api } from "../lib/api";
 import Toast from "../components/Toast";
 import Select, { components } from "react-select";
 import { generarPDFcotizacion } from "../utils/generarPDFcotizacion";
@@ -654,36 +655,18 @@ export default function CrearLicitacion() {
     async function cargarPerfil() {
       setPerfilLoading(true);
 
-      const { data: userData, error: userErr } = await supabase.auth.getUser();
-      const user = userData?.user;
-
-      if (userErr || !user) {
+      try {
+        const perfil = await api.get("/auth/profile");
+        setPerfilEmail(perfil?.email || "");
+        setRol(perfil?.rol || null);
+        setPerfilNombre(perfil?.nombre || "");
+        setPerfilCelular(perfil?.celular || "");
+      } catch {
         setRol(null);
         setPerfilNombre("");
         setPerfilEmail("");
         setPerfilCelular("");
-        setPerfilLoading(false);
-        return;
       }
-
-      setPerfilEmail(user.email || "");
-
-      const { data: perfil, error: perfilErr } = await supabase
-        .from("profiles")
-        .select("rol, nombre, celular")
-        .eq("id", user.id)
-        .single();
-
-      if (perfilErr || !perfil) {
-        setRol(null);
-        setPerfilNombre("");
-        setPerfilCelular("");
-      } else {
-        setRol(perfil.rol || null);
-        setPerfilNombre(perfil.nombre || "");
-        setPerfilCelular(perfil.celular || "");
-      }
-
       setPerfilLoading(false);
     }
 
@@ -1287,8 +1270,8 @@ export default function CrearLicitacion() {
 
     if (existe) return;
 
-    const { error } = await supabase.from("clientes").insert([
-      {
+    try {
+      await api.post("/clientes", {
         rut: rutEntidad,
         nombre: nombreEntidad,
         departamento,
@@ -1300,10 +1283,8 @@ export default function CrearLicitacion() {
         email,
         telefono,
         condiciones_venta: condVenta,
-      },
-    ]);
-
-    if (error) {
+      });
+    } catch (error) {
       console.error("Error creando cliente:", error);
       throw new Error("No se pudo crear el cliente");
     }
@@ -1381,17 +1362,14 @@ export default function CrearLicitacion() {
 
     const fechaHoy = new Date().toISOString().slice(0, 10);
 
-    const { data: userData, error: userErr } = await supabase.auth.getUser();
-    const user = userData?.user;
+    const vendedorNombreFinal = (perfilNombre || "").toString().trim();
+    const vendedorCorreoFinal = (perfilEmail || "").toString().trim();
+    const vendedorCelularFinal = (perfilCelular || "").toString().trim();
 
-    if (userErr || !user) {
+    if (!vendedorCorreoFinal) {
       setToast({ type: "error", message: "Sesión no válida. Vuelve a iniciar." });
       return;
     }
-
-    const vendedorNombreFinal = (perfilNombre || "").toString().trim();
-    const vendedorCorreoFinal = (user.email || perfilEmail || "").toString().trim();
-    const vendedorCelularFinal = (perfilCelular || "").toString().trim();
 
     setGuardando(true);
     setToast({ type: "info", message: "Guardando licitación…" });
@@ -1399,13 +1377,11 @@ export default function CrearLicitacion() {
     try {
       // ✅ validar duplicado por ID Licitación
       const idLicitacionNorm = (idLicitacionInput || "").toString().trim();
-      const { data: dup, error: errDup } = await supabase
-        .from("licitaciones")
-        .select("id")
-        .eq("id_licitacion", idLicitacionNorm)
-        .limit(1);
-
-      if (errDup) {
+      let dup;
+      try {
+        const allLics = await api.get(`/licitaciones?id_licitacion=${encodeURIComponent(idLicitacionNorm)}`);
+        dup = allLics;
+      } catch (errDup) {
         console.error(errDup);
         setToast({
           type: "error",
@@ -1490,10 +1466,9 @@ export default function CrearLicitacion() {
 
       const requiereAprobacion = margenGeneral < 20;
 
-      const { data: lic, error } = await supabase
-        .from("licitaciones")
-        .insert([
-          {
+      let lic;
+      try {
+        lic = await api.post("/licitaciones", {
             id_licitacion: idLicitacionInput,
             nombre,
             fecha_hora_cierre: fechaHoraCierre,
@@ -1514,7 +1489,7 @@ export default function CrearLicitacion() {
             condicion_venta: condVenta,
 
             fecha: fechaHoy,
-            creado_por: user.email,
+            creado_por: vendedorCorreoFinal,
             estado: requiereAprobacion ? "Pendiente Aprobación" : "En espera",
             flete_estimado: Number(fleteEstimado),
             total_con_iva: totalConIVA,
@@ -1523,16 +1498,11 @@ export default function CrearLicitacion() {
 
             observaciones: observaciones || null,
 
-            created_by: user.id,
             vendedor_nombre: vendedorNombreFinal || null,
             vendedor_celular: vendedorCelularFinal || null,
             vendedor_correo: vendedorCorreoFinal || null,
-          },
-        ])
-        .select("id")
-        .single();
-
-      if (error) {
+        });
+      } catch (error) {
         console.error(error);
         setToast({ type: "error", message: "Error al guardar licitación" });
         return;
@@ -1559,11 +1529,9 @@ export default function CrearLicitacion() {
         };
       });
 
-      const { error: errItems } = await supabase
-        .from("items_licitacion")
-        .insert(payloadItems);
-
-      if (errItems) {
+      try {
+        await api.post(`/licitaciones/${idLicitacion}/items`, { items: payloadItems });
+      } catch (errItems) {
         console.error(errItems);
         setToast({
           type: "error",

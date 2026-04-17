@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { supabase } from "../lib/supabase";
+import { api } from "../lib/api";
 import { useNavigate, useParams } from "react-router-dom";
 import Select from "react-select";
 import Toast from "../components/Toast";
@@ -51,18 +51,13 @@ export default function EditarCampana() {
 
   useEffect(() => {
     async function cargarProductos() {
-      const { data, error } = await supabase
-        .from("productos")
-        .select("sku,nombre,lista1")
-        .order("id")
-        .limit(20000);
-
-      if (error) {
+      try {
+        const data = await api.get("/productos");
+        setProductos((data || []).map((p) => ({ sku: p.sku, nombre: p.nombre, lista1: p.lista1 })));
+      } catch (error) {
         console.error(error);
         setToast({ type: "error", message: "Error cargando productos" });
         setProductos([]);
-      } else {
-        setProductos(data || []);
       }
     }
     cargarProductos();
@@ -79,27 +74,13 @@ export default function EditarCampana() {
       setToast(null);
 
       try {
-        const { data: c, error: e1 } = await supabase
-          .from("product_campaigns")
-          .select("id,nombre,start_date,end_date")
-          .eq("id", id)
-          .single();
-
-        if (e1 || !c) throw e1 || new Error("No encontrada");
-
-        const { data: its, error: e2 } = await supabase
-          .from("product_campaign_items")
-          .select("id,campaign_id,sku,producto,precio_unitario,precio_campania")
-          .eq("campaign_id", id)
-          .order("created_at", { ascending: true });
-
-        if (e2) throw e2;
+        const c = await api.get(`/campanas/${id}`);
 
         setNombre(c.nombre || "");
         setStartDate(c.start_date || "");
         setEndDate(c.end_date || "");
 
-        const normalizados = (its || []).map((x) => ({
+        const normalizados = (c.items || []).map((x) => ({
           id_item:         x.id,
           sku:             x.sku || "",
           producto:        x.producto || "",
@@ -149,7 +130,7 @@ export default function EditarCampana() {
 
     const target = items[index];
     if (target?.id_item) {
-      await supabase.from("product_campaign_items").delete().eq("id", target.id_item);
+      try { await api.delete(`/campanas/items/${target.id_item}`); } catch (e) { console.error(e); }
     }
 
     const copia = [...items];
@@ -198,58 +179,26 @@ export default function EditarCampana() {
       }
     }
 
-    const { error: e1 } = await supabase
-      .from("product_campaigns")
-      .update({ nombre: nombre.trim(), start_date: startDate, end_date: endDate })
-      .eq("id", id);
+    try {
+      await api.put(`/campanas/${id}`, {
+        nombre: nombre.trim(),
+        start_date: startDate,
+        end_date: endDate,
+        items: itemsParaGuardar.map((it) => ({
+          id_item: it.id_item || null,
+          sku: String(it.sku),
+          producto: String(it.producto || ""),
+          precio_unitario: Number(it.precio_unitario || 0),
+          precio_campania: Number(it.precio_campania || 0),
+        })),
+      });
 
-    if (e1) {
-      console.error(e1);
+      setToast({ type: "success", message: "Campaña actualizada correctamente." });
+      navigate("/campanas");
+    } catch (err) {
+      console.error(err);
       setToast({ type: "error", message: "Error guardando campaña" });
-      return;
     }
-
-    for (const it of itemsParaGuardar) {
-      const payload = {
-        campaign_id:     id,
-        sku:             String(it.sku),
-        producto:        String(it.producto || ""),
-        precio_unitario: Number(it.precio_unitario || 0),
-        precio_campania: Number(it.precio_campania || 0),
-      };
-
-      if (it.id_item) {
-        const { error: eUpd } = await supabase
-          .from("product_campaign_items")
-          .update(payload)
-          .eq("id", it.id_item);
-
-        if (eUpd) {
-          console.error(eUpd);
-          setToast({ type: "error", message: "Error guardando un ítem" });
-          return;
-        }
-      } else {
-        const { data: ins, error: eIns } = await supabase
-          .from("product_campaign_items")
-          .insert([payload])
-          .select("id")
-          .single();
-
-        if (eIns) {
-          console.error(eIns);
-          setToast({ type: "error", message: "Error insertando un ítem" });
-          return;
-        }
-
-        if (ins?.id) {
-          setItems((prev) => prev.map((x) => (x === it ? { ...x, id_item: ins.id } : x)));
-        }
-      }
-    }
-
-    setToast({ type: "success", message: "Campaña actualizada correctamente." });
-    navigate("/campanas");
   }
 
   if (loading) return <div className="page" style={{ color: "var(--text-muted)" }}>Cargando campaña…</div>;

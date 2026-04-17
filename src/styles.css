@@ -1018,3 +1018,215 @@ body {
   .filter-bar { flex-direction: column; }
   .stats-row { grid-template-columns: 1fr; }
 }
+
+/* React DatePicker — Trazabilidad custom (corporate look) */
+.trazabilidad-datepicker {
+  display: inline-block !important;
+  width: 100% !important;
+}
+.trazabilidad-datepicker input {
+  width: 100% !important;
+  min-width: 0 !important;
+  padding: 7px 10px !important;
+  border: 1px solid #d1d5db !important;
+  border-radius: 6px !important;
+  background-color: #ffffff !important;
+  font-size: 13px !important;
+  font-family: inherit !important;
+  color: #111827 !important;
+  transition: border-color 0.15s, box-shadow 0.15s !important;
+  height: 36px !important;
+  box-sizing: border-box !important;
+}
+.trazabilidad-datepicker input::placeholder {
+  color: #9ca3af !important;
+}
+.trazabilidad-datepicker input:focus {
+  outline: none !important;
+  border-color: #28aeb1 !important;
+  box-shadow: 0 0 0 2px rgba(40, 174, 177, 0.12) !important;
+}
+
+/* Calendar popup — override completo */
+.react-datepicker {
+  font-family: inherit !important;
+  border: 1px solid #e2e8f0 !important;
+  border-radius: 8px !important;
+  box-shadow: 0 12px 32px -8px rgba(15, 23, 42, 0.18), 0 0 0 1px rgba(15, 23, 42, 0.04) !important;
+  font-size: 12px !important;
+  background: #ffffff !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+}
+.react-datepicker__triangle {
+  display: none !important;
+}
+.react-datepicker__header {
+  background: linear-gradient(180deg, #ffffff 0%, #fafbfc 100%) !important;
+  border-bottom: 1px solid #f1f5f9 !important;
+  border-top-left-radius: 8px !important;
+  border-top-right-radius: 8px !important;
+  padding: 14px 12px 10px !important;
+}
+.react-datepicker__current-month {
+  font-weight: 600 !important;
+  font-size: 13px !important;
+  color: #0f172a !important;
+  text-transform: capitalize !important;
+  letter-spacing: -0.01em !important;
+  margin-bottom: 4px !important;
+}
+.react-datepicker__day-names {
+  margin-top: 10px !important;
+  display: flex !important;
+  justify-content: space-around !important;
+}
+.react-datepicker__day-name {
+  color: #94a3b8 !important;
+  font-weight: 500 !important;
+  font-size: 10px !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.5px !important;
+  width: 30px !important;
+  margin: 0 !important;
+}
+.react-datepicker__month-container {
+  background: #ffffff !important;
+}
+.react-datepicker__month {
+  margin: 8px 12px 12px !important;
+  padding: 0 !important;
+}
+.react-datepicker__week {
+  display: flex !important;
+  justify-content: space-around !important;
+  margin-bottom: 2px !important;
+}
+.react-datepicker__day {
+  width: 30px !important;
+  height: 30px !important;
+  line-height: 30px !important;
+  margin: 0 !important;
+  border-radius: 6px !important;
+  color: #334155 !important;
+  font-size: 12px !important;
+  font-weight: 500 !important;
+  transition: all 0.1s !important;
+  border: 1px solid transparent !important;
+}
+.react-datepicker__day:hover {
+  background-color: #f1f5f9 !important;
+  color: #0f172a !important;
+  border-color: #e2e8f0 !important;
+}
+.react-datepicker__day--outside-month {
+  color: #cbd5e1 !important;
+}
+.react-datepicker__day--selected,
+.react-datepicker__day--keyboard-selected {
+  background-color: #28aeb1 !important;
+  color: #ffffff !important;
+  font-weight: 600 !important;
+  border-color: #28aeb1 !important;
+}
+.react-datepicker__day--selected:hover {
+  background-color: #1e8a8d !important;
+  color: #ffffff !important;
+  border-color: #1e8a8d !important;
+}
+.react-datepicker__day--today:not(.react-datepicker__day--selected) {
+  font-weight: 700 !important;
+  color: #28aeb1 !important;
+  background-color: #f0fdfd !important;
+  border-color: #ccfbf1 !important;
+}
+.react-datepicker__navigation {
+  top: 14px !important;
+  width: 26px !important;
+  height: 26px !important;
+  border-radius: 6px !important;
+  background: #ffffff !important;
+  border: 1px solid #e2e8f0 !important;
+}
+.react-datepicker__navigation:hover {
+  background: #f8fafc !important;
+  border-color: #cbd5e1 !important;
+}
+.react-datepicker__navigation--previous {
+  left: 12px !important;
+}
+.react-datepicker__navigation--next {
+  right: 12px !important;
+}
+.react-datepicker__navigation-icon {
+  top: 1px !important;
+}
+.react-datepicker__navigation-icon::before {
+  border-color: #475569 !important;
+  border-width: 1.5px 1.5px 0 0 !important;
+  width: 6px !important;
+  height: 6px !important;
+}
+.react-datepicker__navigation:hover .react-datepicker__navigation-icon::before {
+  border-color: #0f172a !important;
+}
+.react-datepicker__close-icon {
+  padding-right: 8px !important;
+}
+.react-datepicker__close-icon::after {
+  background-color: transparent !important;
+  color: #94a3b8 !important;
+  font-size: 16px !important;
+  font-weight: 600 !important;
+  padding: 0 !important;
+  height: 16px !important;
+  width: 16px !important;
+  line-height: 1 !important;
+}
+.react-datepicker__close-icon:hover::after {
+  color: #ef4444 !important;
+  background-color: transparent !important;
+}
+.react-datepicker-popper {
+  z-index: 100 !important;
+}
+.react-datepicker-popper[data-placement^="bottom"] {
+  padding-top: 6px !important;
+}
+
+/* Trazabilidad — refinamientos sutiles (hereda colores de .data-table th) */
+.trazabilidad-table thead th {
+  vertical-align: middle !important;
+  padding-top: 14px !important;
+  padding-bottom: 14px !important;
+}
+.trazabilidad-table tbody tr {
+  transition: background-color 0.15s ease;
+}
+.trazabilidad-table tbody td {
+  transition: background-color 0.15s ease;
+}
+.trazabilidad-table tbody td {
+  padding-top: 12px !important;
+  padding-bottom: 12px !important;
+  vertical-align: middle !important;
+}
+/* Acento sutil de marca en la primera celda de cada cotización (borde izquierdo) */
+.trazabilidad-table tbody tr:first-child td:first-child,
+.trazabilidad-table tbody tr td:first-child {
+  position: relative;
+}
+.trazabilidad-table tbody tr td:first-child::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: linear-gradient(180deg, #28aeb1 0%, #1e8a8d 100%);
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+.trazabilidad-table tbody tr:hover td:first-child::before {
+  opacity: 1;
+}

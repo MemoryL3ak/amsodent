@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import { supabase } from "../lib/supabase";
+import { api } from "../lib/api";
 import useAuth from "../hooks/useAuth";
+import DateFilter from "../components/DateFilter";
 import { FileText, Trophy, TrendingUp, CircleDollarSign, Activity } from "lucide-react";
 
 const ESTADOS_ORDEN = [
@@ -168,14 +169,7 @@ export default function Ventas() {
       setErrorMsg("");
 
       try {
-        const { data: lics, error } = await supabase
-          .from("licitaciones")
-          .select(
-            "id,id_licitacion,fecha,fecha_adjudicada,estado,creado_por,monto,total_con_iva,total_sin_iva,comuna,region"
-          )
-          .order("id", { ascending: false });
-
-        if (error) throw error;
+        const lics = await api.get("/licitaciones/with-fields?fields=id,id_licitacion,fecha,fecha_adjudicada,estado,creado_por,monto,total_con_iva,total_sin_iva,comuna,region");
 
         let rows = lics || [];
         const emailUser = (user?.email || "").trim().toLowerCase();
@@ -186,25 +180,36 @@ export default function Ventas() {
         const ids = rows.map((l) => Number(l?.id)).filter((n) => Number.isFinite(n));
         let montoOcMap = {};
         if (ids.length > 0) {
-          const { data: docsOc, error: errDocsOc } = await supabase
-            .from("licitacion_documentos")
-            .select("licitacion_id,monto")
-            .in("licitacion_id", ids)
-            .eq("tipo", "orden_compra")
-            .not("monto", "is", null);
+          try {
+            const docsOc = await api.post("/licitaciones/documentos/filter", {
+              filter: { licitacion_ids: ids, tipo: "orden_compra" },
+              fields: "licitacion_id,monto,fecha_oc,created_at",
+            });
 
-          if (!errDocsOc) {
+            const primeraOcMap = {};
             (docsOc || []).forEach((d) => {
               const licId = Number(d?.licitacion_id || 0);
               if (!licId) return;
               montoOcMap[licId] =
                 Number(montoOcMap[licId] || 0) +
                 montoBrutoDesdeNeto(Number(d?.monto || 0));
+              const fechaDoc = toDateISO(d?.fecha_oc) || toDateISO(d?.created_at);
+              if (fechaDoc) {
+                if (!primeraOcMap[licId] || fechaDoc < primeraOcMap[licId]) {
+                  primeraOcMap[licId] = fechaDoc;
+                }
+              }
             });
-          } else if (isMissingMontoColumnError(errDocsOc)) {
-            montoOcMap = {};
-          } else {
-            console.error("Error cargando montos OC:", errDocsOc);
+            rows = rows.map((l) => ({
+              ...l,
+              fecha_adjudicacion: primeraOcMap[Number(l.id)] || null,
+            }));
+          } catch (errDocsOc) {
+            if (isMissingMontoColumnError(errDocsOc)) {
+              montoOcMap = {};
+            } else {
+              console.error("Error cargando montos OC:", errDocsOc);
+            }
           }
         }
 
@@ -214,17 +219,14 @@ export default function Ventas() {
 
         let mapa = {};
         if (emails.length > 0) {
-          const { data: perfiles, error: errProfiles } = await supabase
-            .from("profiles")
-            .select("email,nombre")
-            .in("email", emails);
+          try {
+            const perfiles = await api.post("/usuarios/profiles/by-emails", { emails });
 
-          if (!errProfiles) {
             (perfiles || []).forEach((p) => {
               const email = (p?.email || "").trim().toLowerCase();
               if (email) mapa[email] = (p?.nombre || "").trim();
             });
-          } else {
+          } catch (errProfiles) {
             console.error("Error profiles:", errProfiles);
           }
         }
@@ -291,10 +293,13 @@ export default function Ventas() {
     }
 
     return licitaciones.filter((l) => {
-      const fecha = toDateISO(l.fecha);
-      if (!fecha) return false;
-      if (desde && fecha < desde) return false;
-      if (hasta && fecha > hasta) return false;
+      // Fecha de adjudicación = fecha de creación de la primera OC
+      const fechaAdj = l.fecha_adjudicacion || null;
+      if (desde || hasta) {
+        if (!fechaAdj) return false;
+        if (desde && fechaAdj < desde) return false;
+        if (hasta && fechaAdj > hasta) return false;
+      }
 
       const email = (l.creado_por || "").trim().toLowerCase();
       if (filtroVendedor && email !== filtroVendedor) return false;
@@ -544,20 +549,19 @@ export default function Ventas() {
             <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "12px", minWidth: "560px" }}>
               <div className="field">
                 <label className="field-label">Fecha desde</label>
-                <input
-                  type="date"
-                  className="input"
+                <DateFilter
                   value={fechaDesde}
-                  onChange={(e) => setFechaDesde(e.target.value)}
+                  onChange={setFechaDesde}
+                  placeholder="Desde"
                 />
               </div>
               <div className="field">
                 <label className="field-label">Fecha hasta</label>
-                <input
-                  type="date"
-                  className="input"
+                <DateFilter
                   value={fechaHasta}
-                  onChange={(e) => setFechaHasta(e.target.value)}
+                  onChange={setFechaHasta}
+                  placeholder="Hasta"
+                  minDate={fechaDesde ? new Date(`${fechaDesde}T00:00:00`) : null}
                 />
               </div>
               <div className="field">

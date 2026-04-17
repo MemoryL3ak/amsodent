@@ -1,6 +1,7 @@
 // CrearProducto.jsx
 import { useState, useEffect, useMemo } from "react";
 import { supabase } from "../lib/supabase";
+import { api } from "../lib/api";
 import Toast from "../components/Toast";
 import { Link } from "react-router-dom";
 import Select from "react-select";
@@ -159,6 +160,7 @@ export default function CrearProducto() {
 
   const [rol, setRol] = useState(null);
   const [rolLoading, setRolLoading] = useState(true);
+  const [userEmail, setUserEmail] = useState("");
 
   /* ==========================================================
      Cargar rol del usuario
@@ -170,25 +172,11 @@ export default function CrearProducto() {
       try {
         setRolLoading(true);
 
-        const { data: usuario, error: eUser } = await supabase.auth.getUser();
-        if (eUser || !usuario?.user) {
-          if (alive) setRol(null);
-          return;
+        const perfil = await api.get("/auth/profile");
+        if (alive) {
+          setRol(perfil?.rol ?? null);
+          setUserEmail(perfil?.email || "");
         }
-
-        const { data: perfil, error: ePerfil } = await supabase
-          .from("profiles")
-          .select("rol")
-          .eq("id", usuario.user.id)
-          .single();
-
-        if (ePerfil) {
-          console.error("Error obteniendo rol:", ePerfil);
-          if (alive) setRol(null);
-          return;
-        }
-
-        if (alive) setRol(perfil?.rol ?? null);
       } finally {
         if (alive) setRolLoading(false);
       }
@@ -264,26 +252,12 @@ export default function CrearProducto() {
   async function subirImagenProducto() {
     if (!imagenFile) return "";
 
-    const ext = imagenFile.name.split(".").pop()?.toLowerCase() || "jpg";
+    const formData = new FormData();
+    formData.append("file", imagenFile);
+
     const skuBase = (sku ?? "").toString().trim().toUpperCase();
-    const safeSku = skuBase
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "")
-      .replace(/[^a-zA-Z0-9_-]/g, "_");
-    const fileName = safeSku
-      ? `productos/${safeSku}.${ext}`
-      : `productos/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
-
-    const { error: upErr } = await supabase.storage
-      .from("product-images")
-      .upload(fileName, imagenFile, {
-        contentType: imagenFile.type || "image/jpeg",
-        upsert: true,
-      });
-
-    if (upErr) throw upErr;
-
-    return fileName;
+    const res = await api.postForm(`/productos/upload-image?sku=${encodeURIComponent(skuBase)}`, formData);
+    return res.path;
   }
 
   async function guardarProducto() {
@@ -304,6 +278,8 @@ export default function CrearProducto() {
     if (!(composicion ?? "").toString().trim()) missing.push("Composición");
     if (!(usoIndicaciones ?? "").toString().trim()) missing.push("Uso/Indicaciones");
     if (!(beneficios ?? "").toString().trim()) missing.push("Beneficios");
+    if (puedeVerCosto && !(Number(costo) > 0)) missing.push("Costo");
+    if (!(Number(precios.lista1) > 0)) missing.push("Precio de Venta (Lista 1)");
 
     if (missing.length) {
       setToast({
@@ -353,15 +329,16 @@ export default function CrearProducto() {
       lista2: Number(precios.lista2) || 0,
       lista3: 0,
       lista4: 0,
+      creado_por: userEmail || null,
     };
 
     if (puedeVerCosto) {
       payload.costo = Number(costo) || 0;
     }
 
-    const { error } = await supabase.from("productos").insert([payload]);
-
-    if (error) {
+    try {
+      await api.post("/productos", payload);
+    } catch (error) {
       console.error(error);
       setToast({
         type: "error",
@@ -774,7 +751,7 @@ export default function CrearProducto() {
               {puedeVerCosto && (
                 <div>
                   <label className="block text-sm text-gray-600 mb-1">
-                    Costo
+                    Costo *
                   </label>
                   <input
                     type="number"
@@ -790,8 +767,8 @@ export default function CrearProducto() {
                   <label className="block text-sm text-gray-600 mb-1">
                     {list === "lista1"
                       ? esVentasOJefe
-                        ? "Precio Venta Neto"
-                        : "Listado de Precios 1"
+                        ? "Precio Venta Neto *"
+                        : "Listado de Precios 1 *"
                       : "Listado de Precios 2"}
                   </label>
                   <input
