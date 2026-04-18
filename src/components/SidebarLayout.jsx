@@ -95,12 +95,12 @@ export default function SidebarLayout() {
   const coreNav = [
     { to: "/listar",            icon: ClipboardList, label: "Cotizaciones" },
     { to: "/crear",             icon: FilePlus,      label: "Nueva Cotización" },
-    { to: "/trazabilidad",      icon: FileText,      label: "Trazabilidad" },
-    { to: "/seguimiento-pagos", icon: CreditCard,    label: "Seguimiento Pagos" },
+    esAdmin && { to: "/trazabilidad",      icon: FileText,   label: "Trazabilidad" },
+    esAdmin && { to: "/seguimiento-pagos", icon: CreditCard, label: "Seguimiento de Pagos" },
     { to: "/productos",         icon: Package,       label: "Productos" },
     { to: "/clientes",          icon: Users,         label: "Clientes" },
     { to: "/campanas",          icon: Megaphone,     label: "Campañas" },
-  ];
+  ].filter(Boolean);
 
   const reportNav = [
     puedeVerVentas && { to: "/ventas", icon: TrendingUp, label: "Ventas" },
@@ -109,7 +109,7 @@ export default function SidebarLayout() {
   ].filter(Boolean);
 
   const adminNav = [
-    esAdmin && { to: "/monitoreo", icon: Activity, label: "Monitoreo" },
+    esAdmin && { to: "/monitoreo", icon: Activity, label: "Monitoreo de Usuarios" },
     esAdmin && { to: "/usuarios",  icon: UserCog,  label: "Usuarios" },
   ].filter(Boolean);
 

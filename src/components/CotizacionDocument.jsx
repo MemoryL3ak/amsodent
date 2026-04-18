@@ -1,34 +1,38 @@
 import { Document, Page, View, Text, Image, StyleSheet, pdf } from "@react-pdf/renderer";
 
-const BLUE    = "#4b89ac";
-const D_BLUE  = "#003366";
-const GRAY_BG = "#d9d9d9";
-const BORDER  = "#888888";
-const WHITE   = "#ffffff";
+/* Paleta — alineada con plantilla_cotizacion.html */
+const BLUE_LINE   = "#4b89ac";
+const BLUE_DARK   = "#1d4f67";
+const BG_HEADER   = "#eef3f6";
+const BORDER_TBL  = "#bfcbd2";
+const BORDER_SOFT = "#cdd5db";
+const TEXT        = "#1f1f1f";
 
-// Letter: 612 x 792 pt — padding 40
-const PAD   = 40;
-const W     = 612;
-const H     = 792;
-const WM    = 340; // watermark
+/* Letter: 612 x 792 pt — margen ~35pt */
+const PAD_X = 36;
+const PAD_Y = 32;
+const PAGE_W = 612;
+const PAGE_H = 792;
+const CONTENT_W = PAGE_W - PAD_X * 2; // 540
 
-const ITEMS_PAGE1 = 15; // primera página tiene header + info cliente
-const ITEMS_REST  = 26; // páginas siguientes
+const ITEMS_PAGE1 = 12;
+const ITEMS_REST  = 24;
 
 const s = StyleSheet.create({
   page: {
-    paddingTop: PAD, paddingBottom: PAD,
-    paddingLeft: PAD, paddingRight: PAD,
+    paddingTop: PAD_Y, paddingBottom: PAD_Y,
+    paddingLeft: PAD_X, paddingRight: PAD_X,
     fontFamily: "Helvetica",
-    backgroundColor: WHITE,
-    fontSize: 9,
+    backgroundColor: "#ffffff",
+    fontSize: 9.5,
+    color: TEXT,
   },
   watermark: {
     position: "absolute",
-    top:  (H - WM) / 2,
-    left: (W - WM) / 2,
-    width: WM, height: WM,
-    opacity: 0.12,
+    top: PAGE_H * 0.28,
+    left: (PAGE_W - 460) / 2,
+    width: 460,
+    opacity: 0.22,
   },
 
   /* Header */
@@ -36,100 +40,158 @@ const s = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "flex-start",
-    marginBottom: 10,
+    borderBottomWidth: 2,
+    borderBottomColor: BLUE_LINE,
+    paddingBottom: 8,
+    marginBottom: 8,
   },
-  logo: { width: 160, height: 52, objectFit: "contain" },
-  box: {
-    borderWidth: 3, borderColor: BLUE,
-    padding: 8, width: 170, alignItems: "center",
+  headerLeft: { flexDirection: "row", gap: 10, flex: 1, alignItems: "flex-start" },
+  logo: { width: 130, height: 42, objectFit: "contain" },
+  empresaInfo: { fontSize: 8.5, lineHeight: 1.35, color: TEXT },
+  empresaNombre: { fontFamily: "Helvetica-Bold", fontSize: 12.5, color: BLUE_DARK, marginBottom: 2 },
+
+  cotBox: {
+    borderWidth: 1.5, borderColor: BLUE_LINE,
+    paddingVertical: 8, paddingHorizontal: 10,
+    width: 150, alignItems: "center",
+    color: BLUE_DARK,
   },
-  boxTitle: {
+  cotTitulo: { fontFamily: "Helvetica-Bold", fontSize: 11, color: BLUE_DARK },
+  cotNumero: { fontFamily: "Helvetica-Bold", fontSize: 10, color: BLUE_DARK, marginTop: 4 },
+
+  /* Section title */
+  sectionTitle: {
     fontFamily: "Helvetica-Bold",
-    fontSize: 14, color: "#000", marginTop: 3, marginBottom: 3,
+    color: BLUE_DARK,
+    fontSize: 10.5,
+    marginTop: 12,
+    marginBottom: 5,
   },
-  boxText: { fontSize: 9, color: "#000" },
 
-  /* Fecha */
-  fecha: { fontSize: 9, marginBottom: 8 },
-
-  /* Info cliente */
-  infoRow: { flexDirection: "row", gap: 16, marginBottom: 8 },
-  infoCol: { flex: 1 },
-  infoLine: { flexDirection: "row", marginBottom: 3, fontSize: 9 },
-  label: { fontFamily: "Helvetica-Bold", color: D_BLUE, marginRight: 2 },
-
-  /* Observaciones */
-  obsSection: { marginBottom: 6 },
-
-  /* Tabla */
-  tableHeader: {
-    flexDirection: "row",
-    backgroundColor: GRAY_BG,
-    borderWidth: 1, borderColor: BORDER,
+  /* Info table (cliente / vendedor / fecha) */
+  infoRow: { flexDirection: "row", marginBottom: 3 },
+  infoCol: { flexDirection: "row", flex: 1 },
+  infoLabel: {
+    fontFamily: "Helvetica-Bold",
+    color: BLUE_DARK,
+    fontSize: 9,
+    width: 70,
   },
-  tableRow: {
+  infoValue: { fontSize: 9, color: TEXT, flex: 1, paddingRight: 10 },
+
+  /* Tabla items */
+  table: { borderWidth: 1, borderColor: BORDER_TBL, marginTop: 4 },
+  tHeader: {
     flexDirection: "row",
-    borderLeftWidth: 1, borderRightWidth: 1,
-    borderBottomWidth: 1, borderColor: BORDER,
+    backgroundColor: BG_HEADER,
+    borderBottomWidth: 1,
+    borderColor: BORDER_TBL,
   },
-  tableRowAlt: { backgroundColor: "#f5f5f5" },
-  obsRow: {
+  tRow: {
     flexDirection: "row",
-    borderLeftWidth: 1, borderRightWidth: 1,
-    borderBottomWidth: 1, borderColor: BORDER,
+    borderTopWidth: 1, borderColor: BORDER_SOFT,
+  },
+  tObsRow: {
+    flexDirection: "row",
+    borderTopWidth: 1, borderColor: BORDER_SOFT,
     backgroundColor: "#fafafa",
   },
   th: {
     fontFamily: "Helvetica-Bold",
-    fontSize: 8.5, padding: 5,
-    borderRightWidth: 1, borderColor: BORDER,
+    fontSize: 8.5,
+    color: BLUE_DARK,
+    paddingVertical: 5, paddingHorizontal: 4,
+    borderRightWidth: 1, borderColor: BORDER_TBL,
   },
   td: {
-    fontSize: 8.5, padding: 5,
-    borderRightWidth: 1, borderColor: BORDER,
+    fontSize: 8.5, color: TEXT,
+    paddingVertical: 4, paddingHorizontal: 4,
+    borderRightWidth: 1, borderColor: BORDER_SOFT,
   },
 
-  /* Totales */
-  totalesWrap: {
+  /* Bottom row: bank (izq) | totales+obs (der) */
+  bottomRow: {
     flexDirection: "row",
-    justifyContent: "flex-end",
-    marginTop: 10,
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    marginTop: 18,
+    gap: 14,
   },
-  totalesTable: { width: 210 },
-  totalesRow: { flexDirection: "row", marginBottom: 3 },
-  totalesLabel: { fontFamily: "Helvetica-Bold", fontSize: 9, width: 110 },
-  totalesValue: { fontSize: 9, flex: 1, textAlign: "right" },
-  totalesValueBold: { fontFamily: "Helvetica-Bold", fontSize: 9, flex: 1, textAlign: "right" },
 
-  /* Datos bancarios */
-  bankWrap: { marginTop: 14, width: "46%" },
-  bankTitle: {
-    fontFamily: "Helvetica-Bold", fontSize: 8.5,
+  /* Banco */
+  bankWrap: { width: 250, borderWidth: 1, borderColor: BORDER_TBL },
+  bankHeader: {
+    backgroundColor: BG_HEADER,
+    paddingVertical: 5,
+    fontFamily: "Helvetica-Bold",
+    fontSize: 9, color: BLUE_DARK,
     textAlign: "center",
-    borderWidth: 1, borderColor: BORDER,
-    padding: 4, backgroundColor: GRAY_BG,
+    borderBottomWidth: 1, borderColor: BORDER_TBL,
   },
-  bankRow: {
+  bankRow: { flexDirection: "row", borderTopWidth: 1, borderColor: BORDER_SOFT },
+  bankRowFirst: { flexDirection: "row" },
+  bankLabel: {
+    fontSize: 8.5, paddingVertical: 4, paddingHorizontal: 6,
+    width: 100, color: TEXT,
+    borderRightWidth: 1, borderColor: BORDER_SOFT,
+  },
+  bankValue: { fontSize: 8.5, paddingVertical: 4, paddingHorizontal: 6, flex: 1, color: TEXT },
+
+  /* Right col (totales + obs) */
+  rightCol: { width: 260 },
+  totales: {
+    borderWidth: 1, borderColor: BORDER_TBL,
+  },
+  totRow: {
     flexDirection: "row",
-    borderLeftWidth: 1, borderRightWidth: 1,
-    borderBottomWidth: 1, borderColor: BORDER,
+    paddingVertical: 5, paddingHorizontal: 8,
   },
-  bankLabel: { fontSize: 8.5, padding: 4, width: 115, fontFamily: "Helvetica-Bold" },
-  bankValue: { fontSize: 8.5, padding: 4, flex: 1 },
+  totLabel: {
+    fontFamily: "Helvetica-Bold", color: BLUE_DARK,
+    fontSize: 9.5, flex: 1,
+  },
+  totValue: { fontSize: 9.5, color: TEXT, textAlign: "right", width: 100 },
+  totLabelBig: {
+    fontFamily: "Helvetica-Bold", color: BLUE_DARK,
+    fontSize: 11.5, flex: 1,
+  },
+  totValueBig: {
+    fontFamily: "Helvetica-Bold", fontSize: 11.5,
+    color: TEXT, textAlign: "right", width: 100,
+  },
+
+  obsBox: {
+    borderWidth: 1, borderColor: BORDER_TBL,
+    paddingVertical: 8, paddingHorizontal: 10,
+    marginTop: 10,
+    minHeight: 70,
+  },
+  obsTitle: {
+    fontFamily: "Helvetica-Bold", color: BLUE_DARK,
+    fontSize: 9.5, marginBottom: 4, letterSpacing: 0.3,
+  },
+  obsText: { fontSize: 9, color: TEXT, lineHeight: 1.35 },
 });
 
-/* Anchos de columna */
-const C = { n: 22, sku: 65, fmt: 55, cant: 28, precio: 68, total: 68 };
+/* Anchos de columna (suman ~CONTENT_W menos bordes) */
+const C = { item: 30, sku: 60, fmt: 60, cant: 36, precio: 70, total: 70 };
 
-function TH({ w, flex, last, children }) {
+function TH({ w, flex, last, align, children }) {
   return (
-    <Text style={[s.th, w ? { width: w } : {}, flex ? { flex: 1 } : {}, last ? { borderRightWidth: 0 } : {}]}>
+    <Text style={[
+      s.th,
+      w ? { width: w } : {},
+      flex ? { flex: 1 } : {},
+      last ? { borderRightWidth: 0 } : {},
+      align === "right" ? { textAlign: "right" } : {},
+      align === "center" ? { textAlign: "center" } : {},
+    ]}>
       {children}
     </Text>
   );
 }
 
-function TD({ w, flex, last, align, bold, italic, children }) {
+function TD({ w, flex, last, align, italic, bold, children }) {
   return (
     <Text style={[
       s.td,
@@ -138,8 +200,8 @@ function TD({ w, flex, last, align, bold, italic, children }) {
       last ? { borderRightWidth: 0 } : {},
       align === "right" ? { textAlign: "right" } : {},
       align === "center" ? { textAlign: "center" } : {},
-      bold ? { fontFamily: "Helvetica-Bold" } : {},
       italic ? { fontFamily: "Helvetica-Oblique", color: "#444" } : {},
+      bold ? { fontFamily: "Helvetica-Bold" } : {},
     ]}>
       {children}
     </Text>
@@ -148,24 +210,23 @@ function TD({ w, flex, last, align, bold, italic, children }) {
 
 function TableHeader() {
   return (
-    <View style={s.tableHeader}>
-      <TH w={C.n}>N°</TH>
-      <TH w={C.sku}>Código</TH>
+    <View style={s.tHeader}>
+      <TH w={C.item} align="center">Ítem</TH>
+      <TH w={C.sku}>SKU</TH>
       <TH flex>Descripción</TH>
       <TH w={C.fmt}>Formato</TH>
-      <TH w={C.cant}>Cant.</TH>
-      <TH w={C.precio}>Precio Unit.</TH>
-      <TH w={C.total} last>Total</TH>
+      <TH w={C.cant} align="center">Cant.</TH>
+      <TH w={C.precio} align="right">Precio</TH>
+      <TH w={C.total} align="right" last>Total</TH>
     </View>
   );
 }
 
-function ItemRow({ item, idx }) {
-  const alt = idx % 2 !== 0;
+function ItemRow({ item }) {
   return (
     <>
-      <View style={[s.tableRow, alt ? s.tableRowAlt : {}]}>
-        <TD w={C.n} align="center">{item.n}</TD>
+      <View style={s.tRow}>
+        <TD w={C.item} align="center" bold>{item.n}</TD>
         <TD w={C.sku}>{item.sku}</TD>
         <TD flex>{item.producto}</TD>
         <TD w={C.fmt}>{item.formato}</TD>
@@ -174,8 +235,8 @@ function ItemRow({ item, idx }) {
         <TD w={C.total} align="right" last>$ {item.total}</TD>
       </View>
       {item.observacion ? (
-        <View style={s.obsRow}>
-          <TD w={C.n}>{""}</TD>
+        <View style={s.tObsRow}>
+          <TD w={C.item}>{""}</TD>
           <TD w={C.sku}>{""}</TD>
           <TD flex italic last>Observación: {item.observacion}</TD>
         </View>
@@ -185,27 +246,17 @@ function ItemRow({ item, idx }) {
 }
 
 function InfoLine({ label, value }) {
-  if (!value) return null;
   return (
-    <View style={s.infoLine}>
-      <Text style={s.label}>{label} </Text>
-      <Text>{value}</Text>
+    <View style={s.infoCol}>
+      <Text style={s.infoLabel}>{label}</Text>
+      <Text style={s.infoValue}>{value || ""}</Text>
     </View>
   );
 }
 
-function TotalesRow({ label, value, bold }) {
+function BankRow({ label, value, first }) {
   return (
-    <View style={s.totalesRow}>
-      <Text style={s.totalesLabel}>{label}</Text>
-      <Text style={bold ? s.totalesValueBold : s.totalesValue}>{value}</Text>
-    </View>
-  );
-}
-
-function BankRow({ label, value }) {
-  return (
-    <View style={s.bankRow}>
+    <View style={first ? s.bankRowFirst : s.bankRow}>
       <Text style={s.bankLabel}>{label}</Text>
       <Text style={s.bankValue}>{value}</Text>
     </View>
@@ -213,9 +264,11 @@ function BankRow({ label, value }) {
 }
 
 export function CotizacionDocument({ datos, items, logoSrc, marcaAguaSrc }) {
-  // Paginación manual
+  // Paginación
   const pages = [];
-  if (items.length <= ITEMS_PAGE1) {
+  if (items.length === 0) {
+    pages.push([]);
+  } else if (items.length <= ITEMS_PAGE1) {
     pages.push(items);
   } else {
     pages.push(items.slice(0, ITEMS_PAGE1));
@@ -234,85 +287,114 @@ export function CotizacionDocument({ datos, items, logoSrc, marcaAguaSrc }) {
 
         return (
           <Page key={pageIdx} size="LETTER" style={s.page}>
-            {/* Marca de agua */}
             {marcaAguaSrc && <Image src={marcaAguaSrc} style={s.watermark} />}
 
-            {/* Header */}
+            {/* HEADER */}
             <View style={s.header}>
-              {logoSrc
-                ? <Image src={logoSrc} style={s.logo} />
-                : <Text style={{ fontSize: 12, fontFamily: "Helvetica-Bold" }}>Amsodent Medical Spa</Text>
-              }
-              <View style={s.box}>
-                <Text style={s.boxText}>R.U.T.: 78.087.954-8</Text>
-                <Text style={s.boxTitle}>COTIZACIÓN</Text>
-                <Text style={s.boxText}>N° {datos.numero_licitacion}</Text>
+              <View style={s.headerLeft}>
+                {logoSrc
+                  ? <Image src={logoSrc} style={s.logo} />
+                  : <Text style={{ fontFamily: "Helvetica-Bold", fontSize: 14, color: BLUE_DARK }}>Amsodent</Text>}
+                <View style={s.empresaInfo}>
+                  <Text style={s.empresaNombre}>Amsodent Medical Spa</Text>
+                  <Text>R.U.T.: 78.087.954-8</Text>
+                  <Text>Giro: Venta de Insumos Médicos y Dentales</Text>
+                  <Text>Matriz: 1° Mayo 45, San Bernardo</Text>
+                  <Text>Tel: +56940943030</Text>
+                  <Text>Email: ventas@amsodentmedical.cl</Text>
+                </View>
+              </View>
+              <View style={s.cotBox}>
+                <Text style={s.cotTitulo}>COTIZACIÓN</Text>
+                <Text style={s.cotNumero}>Nº {datos.numero_licitacion}</Text>
               </View>
             </View>
 
-            {/* Página 1: fecha + info cliente + observaciones */}
             {isFirst && (
               <>
-                <Text style={s.fecha}>
-                  <Text style={s.label}>Fecha Emisión: </Text>
-                  {datos.fecha_emision}
-                </Text>
-
+                {/* Fecha + ID licitación */}
+                <Text style={s.sectionTitle}>Fecha de Emisión</Text>
                 <View style={s.infoRow}>
-                  <View style={s.infoCol}>
-                    <InfoLine label="SEÑOR(ES):"    value={datos.nombre_entidad} />
-                    <InfoLine label="R.U.T.:"       value={datos.rut_entidad} />
-                    <InfoLine label="DIRECCIÓN:"    value={datos.direccion} />
-                    <InfoLine label="COMUNA:"       value={datos.comuna} />
-                    <InfoLine label="COND. VENTA:"  value={datos.condicion_venta} />
-                  </View>
-                  <View style={s.infoCol}>
-                    <InfoLine label="CONTACTO:"   value={datos.contacto} />
-                    <InfoLine label="EMAIL:"      value={datos.email} />
-                    <InfoLine label="TELÉFONO:"   value={datos.telefono} />
-                    <InfoLine label="VENDEDOR:"   value={datos.vendedor_nombre} />
-                    <InfoLine label="CORREO:"     value={datos.vendedor_correo} />
-                    <InfoLine label="CELULAR:"    value={datos.vendedor_celular} />
-                  </View>
+                  <InfoLine label="Fecha:" value={datos.fecha_emision} />
+                  <InfoLine label="ID Licitación:" value={datos.id_licitacion} />
                 </View>
 
-                {datos.observaciones ? (
-                  <View style={s.obsSection}>
-                    <Text style={[s.label, { marginBottom: 2 }]}>OBSERVACIONES:</Text>
-                    <Text style={{ fontSize: 9 }}>{datos.observaciones}</Text>
-                  </View>
-                ) : null}
+                {/* Datos del Cliente */}
+                <Text style={s.sectionTitle}>Datos del Cliente</Text>
+                <View style={s.infoRow}>
+                  <InfoLine label="Señor(es):" value={datos.nombre_entidad} />
+                  <InfoLine label="Contacto:" value={datos.contacto} />
+                </View>
+                <View style={s.infoRow}>
+                  <InfoLine label="RUT:" value={datos.rut_entidad} />
+                  <InfoLine label="Email:" value={datos.email} />
+                </View>
+                <View style={s.infoRow}>
+                  <InfoLine label="Dirección:" value={datos.direccion} />
+                  <InfoLine label="Teléfono:" value={datos.telefono} />
+                </View>
+                <View style={s.infoRow}>
+                  <InfoLine label="Comuna:" value={datos.comuna} />
+                  <InfoLine label="Cond. Venta:" value={datos.condicion_venta} />
+                </View>
+
+                {/* Datos del Vendedor */}
+                <Text style={s.sectionTitle}>Datos de Vendedor</Text>
+                <View style={s.infoRow}>
+                  <InfoLine label="Nombre:" value={datos.vendedor_nombre} />
+                  <InfoLine label="Correo:" value={datos.vendedor_correo} />
+                </View>
+                <View style={s.infoRow}>
+                  <InfoLine label="Celular:" value={datos.vendedor_celular} />
+                  <InfoLine label="" value="" />
+                </View>
+
+                <Text style={s.sectionTitle}>Detalle de Productos</Text>
               </>
             )}
 
-            {/* Tabla de ítems */}
-            <View>
+            {/* TABLA ITEMS */}
+            <View style={s.table}>
               <TableHeader />
               {pageItems.map((item, idx) => (
-                <ItemRow key={idx} item={item} idx={idx} />
+                <ItemRow key={idx} item={item} />
               ))}
             </View>
 
-            {/* Última página: totales + datos bancarios */}
+            {/* ÚLTIMA PÁGINA: bank + totales + obs */}
             {isLast && (
-              <>
-                <View style={s.totalesWrap}>
-                  <View style={s.totalesTable}>
-                    <TotalesRow label="AFECTO:"     value={`$ ${datos.afecto}`} />
-                    <TotalesRow label="I.V.A. 19%:" value={`$ ${datos.iva}`} />
-                    <TotalesRow label="TOTAL:"      value={`$ ${datos.total_con_iva}`} bold />
-                  </View>
+              <View style={s.bottomRow}>
+                <View style={s.bankWrap}>
+                  <Text style={s.bankHeader}>DATOS PARA TRANSFERENCIA BANCARIA</Text>
+                  <BankRow label="Banco:" value="Banco Santander Chile" first />
+                  <BankRow label="Cuenta Corriente:" value="96608446" />
+                  <BankRow label="R.U.T.:" value="78.087.954-8" />
+                  <BankRow label="Empresa:" value="Amsodent Medical Spa" />
+                  <BankRow label="Aviso Email:" value="contacto@amsodentmedical.cl" />
                 </View>
 
-                <View style={s.bankWrap}>
-                  <Text style={s.bankTitle}>DATOS PARA TRANSFERENCIA BANCARIA</Text>
-                  <BankRow label="Banco:"            value="Banco Santander Chile" />
-                  <BankRow label="Cuenta Corriente:" value="96608446" />
-                  <BankRow label="R.U.T.:"           value="78.087.954-8" />
-                  <BankRow label="Empresa:"          value="Amsodent Medical Spa" />
-                  <BankRow label="Aviso Email:"      value="contacto@amsodentmedical.cl" />
+                <View style={s.rightCol}>
+                  <View style={s.totales}>
+                    <View style={s.totRow}>
+                      <Text style={s.totLabel}>Neto:</Text>
+                      <Text style={s.totValue}>$ {datos.afecto}</Text>
+                    </View>
+                    <View style={[s.totRow, { borderTopWidth: 1, borderColor: BORDER_SOFT }]}>
+                      <Text style={s.totLabel}>IVA 19%:</Text>
+                      <Text style={s.totValue}>$ {datos.iva}</Text>
+                    </View>
+                    <View style={[s.totRow, { borderTopWidth: 1, borderColor: BORDER_SOFT }]}>
+                      <Text style={s.totLabelBig}>TOTAL:</Text>
+                      <Text style={s.totValueBig}>$ {datos.total_con_iva}</Text>
+                    </View>
+                  </View>
+
+                  <View style={s.obsBox}>
+                    <Text style={s.obsTitle}>OBSERVACIONES</Text>
+                    <Text style={s.obsText}>{datos.observaciones || ""}</Text>
+                  </View>
                 </View>
-              </>
+              </View>
             )}
           </Page>
         );

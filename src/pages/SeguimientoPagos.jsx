@@ -48,82 +48,6 @@ function fmtDateCL(d) {
   return d.toLocaleDateString("es-CL");
 }
 
-/* DonutChart simple en SVG */
-function DonutChart({ data, size = 110, strokeWidth = 14 }) {
-  const total = data.reduce((s, d) => s + d.value, 0);
-  if (total === 0) {
-    return (
-      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
-        <circle
-          cx={size / 2}
-          cy={size / 2}
-          r={(size - strokeWidth) / 2}
-          fill="none"
-          stroke="#e5e7eb"
-          strokeWidth={strokeWidth}
-        />
-        <text x="50%" y="50%" textAnchor="middle" dy="0.35em" fontSize="11" fill="#9ca3af">
-          Sin datos
-        </text>
-      </svg>
-    );
-  }
-  const radius = (size - strokeWidth) / 2;
-  const cx = size / 2;
-  const cy = size / 2;
-  const circumference = 2 * Math.PI * radius;
-
-  let offset = 0;
-  return (
-    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
-      <circle cx={cx} cy={cy} r={radius} fill="none" stroke="#f1f5f9" strokeWidth={strokeWidth} />
-      {data.map((d, i) => {
-        const portion = d.value / total;
-        const len = circumference * portion;
-        const seg = (
-          <circle
-            key={i}
-            cx={cx}
-            cy={cy}
-            r={radius}
-            fill="none"
-            stroke={d.color}
-            strokeWidth={strokeWidth}
-            strokeDasharray={`${len} ${circumference - len}`}
-            strokeDashoffset={-offset}
-            transform={`rotate(-90 ${cx} ${cy})`}
-            strokeLinecap="butt"
-          />
-        );
-        offset += len;
-        return seg;
-      })}
-      <text
-        x="50%"
-        y="48%"
-        textAnchor="middle"
-        dy="0.35em"
-        fontSize="22"
-        fontWeight="700"
-        fill="#0f172a"
-      >
-        {total}
-      </text>
-      <text
-        x="50%"
-        y="62%"
-        textAnchor="middle"
-        fontSize="9"
-        fill="#94a3b8"
-        textTransform="uppercase"
-        letterSpacing="0.5"
-      >
-        FACTURAS
-      </text>
-    </svg>
-  );
-}
-
 function semaforo(diasRestantes, pagada) {
   if (pagada) return { color: "#15803d", bg: "#dcfce7", label: "Pagada" };
   if (diasRestantes == null) return { color: "#6b7280", bg: "#f3f4f6", label: "Sin fecha" };
@@ -135,6 +59,8 @@ function semaforo(diasRestantes, pagada) {
 
 export default function SeguimientoPagos() {
   const { user, rol, cargando } = useAuth();
+  const rolNorm = (rol ?? "").toString().trim().toLowerCase();
+  const esAdmin = rolNorm === "admin";
   const [facturas, setFacturas] = useState([]);
   const [licMap, setLicMap] = useState({});
   const [usuariosMap, setUsuariosMap] = useState({});
@@ -418,6 +344,18 @@ export default function SeguimientoPagos() {
     );
   }
 
+  if (!cargando && !esAdmin) {
+    return (
+      <div className="page">
+        <div className="surface">
+          <div className="surface-body" style={{ color: "var(--danger)" }}>
+            Acceso restringido: esta sección es solo para administradores.
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="page">
       {toast && <Toast type={toast.type} message={toast.message} onClose={() => setToast(null)} />}
@@ -431,56 +369,29 @@ export default function SeguimientoPagos() {
         </div>
       </div>
 
-      {/* Stats con DonutChart */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "auto 1fr",
-          gap: 28,
-          padding: "20px 24px",
-          backgroundColor: "#ffffff",
-          border: "1px solid var(--border, #e5e7eb)",
-          borderRadius: 10,
-          marginBottom: 16,
-          boxShadow: "0 1px 3px rgba(15, 23, 42, 0.04)",
-        }}
-      >
-        {/* Donut */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <DonutChart
-            data={[
-              { value: stats.pagadas, color: "#15803d", label: "Pagadas" },
-              { value: stats.porVencer, color: "#b45309", label: "Por vencer" },
-              { value: stats.vencidas, color: "#dc2626", label: "Vencidas" },
-              { value: Math.max(0, stats.pendientes - stats.porVencer - stats.vencidas), color: "#1d4ed8", label: "Pendientes" },
-            ]}
-          />
+      {/* Stats */}
+      <div className="stats-row">
+        <div className="stat-card">
+          <div className="stat-label">Pagadas</div>
+          <div className="stat-value" style={{ color: "var(--success)" }}>{stats.pagadas}</div>
+          <div className="stat-sub">facturas</div>
         </div>
-
-        {/* Legend & numbers */}
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(4, 1fr)",
-            gap: 16,
-            alignContent: "center",
-          }}
-        >
-          {[
-            { label: "Pagadas", value: stats.pagadas, color: "#15803d" },
-            { label: "Pendientes", value: Math.max(0, stats.pendientes - stats.porVencer - stats.vencidas), color: "#1d4ed8" },
-            { label: "Por vencer", value: stats.porVencer, color: "#b45309" },
-            { label: "Vencidas", value: stats.vencidas, color: "#dc2626" },
-          ].map((s) => (
-            <div key={s.label} style={{ borderLeft: `3px solid ${s.color}`, paddingLeft: 12 }}>
-              <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.5px" }}>
-                {s.label}
-              </div>
-              <div style={{ fontSize: 24, fontWeight: 700, color: s.color, lineHeight: 1.2, marginTop: 4 }}>
-                {s.value}
-              </div>
-            </div>
-          ))}
+        <div className="stat-card">
+          <div className="stat-label">Pendientes</div>
+          <div className="stat-value" style={{ color: "var(--primary)" }}>
+            {Math.max(0, stats.pendientes - stats.porVencer - stats.vencidas)}
+          </div>
+          <div className="stat-sub">aún en plazo</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-label">Por vencer</div>
+          <div className="stat-value" style={{ color: "var(--warning)" }}>{stats.porVencer}</div>
+          <div className="stat-sub">próximas a vencer</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-label">Vencidas</div>
+          <div className="stat-value" style={{ color: "var(--danger)" }}>{stats.vencidas}</div>
+          <div className="stat-sub">fuera de plazo</div>
         </div>
       </div>
 

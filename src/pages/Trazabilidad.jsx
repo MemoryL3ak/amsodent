@@ -561,6 +561,18 @@ export default function Trazabilidad() {
     await refrescarDocumentosLic(doc.licitacion_id);
   }
 
+  if (!cargando && !esAdmin) {
+    return (
+      <div className="page">
+        <div className="surface">
+          <div className="surface-body" style={{ color: "var(--danger)" }}>
+            Acceso restringido: esta sección es solo para administradores.
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (loading) {
     return (
       <div className="page">

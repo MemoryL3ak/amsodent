@@ -334,8 +334,8 @@ export default function ListarLicitaciones() {
         </div>
       </div>
 
-      {/* Filter bar - fila 1 */}
-      <div className="filter-bar">
+      {/* Filter bar */}
+      <div className="filter-bar filter-bar-grid">
         <div className="filter-field">
           <label className="filter-label">Desde</label>
           <DateFilter value={filtroFechaDesde} onChange={setFiltroFechaDesde} placeholder="Desde" />
@@ -377,10 +377,7 @@ export default function ListarLicitaciones() {
           <input type="text" className="input" placeholder="N°…"
             value={filtroNumeroCot} onChange={(e) => setFiltroNumeroCot(e.target.value)} />
         </div>
-      </div>
 
-      {/* Filter bar - fila 2 */}
-      <div className="filter-bar">
         <div className="filter-field">
           <label className="filter-label">Monto Total (mín)</label>
           <input type="number" className="input" placeholder="Mínimo"
@@ -492,7 +489,7 @@ export default function ListarLicitaciones() {
       {/* Table */}
       <div className="table-wrap">
         <div className="table-scroll" style={{ maxHeight: "calc(100vh - 400px)" }}>
-          <table className="data-table">
+          <table className="data-table cotizaciones-table">
             <thead>
               <tr>
                 <th onClick={() => toggleSort("id")} style={{ cursor: "pointer", userSelect: "none" }}>
@@ -505,9 +502,9 @@ export default function ListarLicitaciones() {
                   Fecha <SortIcon col="fecha" />
                 </th>
                 <th onClick={() => toggleSort("fecha_adjudicacion")} style={{ cursor: "pointer", userSelect: "none" }}>
-                  Fecha Adjudicación <SortIcon col="fecha_adjudicacion" />
+                  Adjudicación <SortIcon col="fecha_adjudicacion" />
                 </th>
-                <th onClick={() => toggleSort("monto")} style={{ cursor: "pointer", userSelect: "none", textAlign: "right" }}>
+                <th onClick={() => toggleSort("monto")} style={{ cursor: "pointer", userSelect: "none", textAlign: "left" }}>
                   Monto Total <SortIcon col="monto" />
                 </th>
                 <th onClick={() => toggleSort("comuna")} style={{ cursor: "pointer", userSelect: "none" }}>
@@ -519,7 +516,7 @@ export default function ListarLicitaciones() {
                 <th onClick={() => toggleSort("creado_por")} style={{ cursor: "pointer", userSelect: "none" }}>
                   Creado por <SortIcon col="creado_por" />
                 </th>
-                <th>Acción</th>
+                <th style={{ textAlign: "left" }}>Acción</th>
               </tr>
             </thead>
             <tbody>
@@ -549,14 +546,14 @@ export default function ListarLicitaciones() {
                     <td style={{ fontWeight: 600 }}>{l.id_licitacion || "—"}</td>
                     <td>{fechaFmt}</td>
                     <td>{fechaAdjFmt}</td>
-                    <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{montoFmt}</td>
+                    <td style={{ textAlign: "left", fontVariantNumeric: "tabular-nums" }}>{montoFmt}</td>
                     <td>{l.comuna || "—"}</td>
                     <td>
                       <span className={estadoBadgeClass(l.estado)}>{l.estado || "—"}</span>
                     </td>
                     <td>{nombre || "Sin nombre"}</td>
-                    <td style={{ textAlign: "right" }}>
-                      <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: "8px" }}>
+                    <td style={{ textAlign: "left" }}>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-start", gap: "8px" }}>
                         {esAdmin && l.estado === "Pendiente Aprobación" && (
                           <button
                             type="button"

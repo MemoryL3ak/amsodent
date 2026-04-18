@@ -7,7 +7,7 @@ const BORDER  = "#dddddd";
 const WHITE   = "#ffffff";
 
 // A4 en pt: 595.28 x 841.89 — padding 40 cada lado
-const WATERMARK_SIZE = 380;
+const WATERMARK_SIZE = 460;
 
 const s = StyleSheet.create({
   page: {
@@ -27,7 +27,7 @@ const s = StyleSheet.create({
     left: (595 - WATERMARK_SIZE) / 2,
     width: WATERMARK_SIZE,
     height: WATERMARK_SIZE,
-    opacity: 0.12,
+    opacity: 0.22,
   },
 
   /* ── Header ── */

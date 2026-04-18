@@ -96,14 +96,28 @@ body {
 .nav-group {
   padding: 4px 10px 8px;
 }
+.nav-group + .nav-group {
+  border-top: 1px solid #eef1f4;
+  margin-top: 6px;
+  padding-top: 10px;
+}
 
 .nav-group-label {
-  font-size: 9.5px;
-  font-weight: 700;
-  letter-spacing: 1.1px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 1.4px;
   text-transform: uppercase;
-  color: #a0aab5;
-  padding: 14px 8px 5px;
+  color: var(--primary-dark, #0e6e74);
+  padding: 10px 8px 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.nav-group-label::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, var(--primary-light, #d4f0f1) 0%, transparent 100%);
 }
 
 .nav-item {
@@ -364,6 +378,21 @@ body {
   align-items: flex-end;
 }
 
+/* Grid uniforme para barras con muchos filtros (cotizaciones) */
+.filter-bar.filter-bar-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  row-gap: 14px;
+  column-gap: 12px;
+}
+.filter-bar.filter-bar-grid .filter-field { min-width: 0; }
+@media (max-width: 1100px) {
+  .filter-bar.filter-bar-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 720px) {
+  .filter-bar.filter-bar-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
 .filter-field {
   display: flex;
   flex-direction: column;
@@ -607,6 +636,36 @@ body {
 }
 
 .data-table th:last-child { text-align: right; }
+
+/* Tabla de cotizaciones — columna Acción sticky a la derecha */
+.data-table.cotizaciones-table { table-layout: auto; }
+.data-table.cotizaciones-table th,
+.data-table.cotizaciones-table td {
+  padding-left: 10px;
+  padding-right: 10px;
+  white-space: nowrap;
+}
+/* ID Cotización (col 2) más compacta */
+.data-table.cotizaciones-table th:nth-child(2),
+.data-table.cotizaciones-table td:nth-child(2) {
+  width: 1%;
+  font-size: 11.5px;
+  padding-left: 6px;
+  padding-right: 6px;
+  letter-spacing: -0.2px;
+}
+.data-table.cotizaciones-table th:last-child,
+.data-table.cotizaciones-table td:last-child {
+  position: sticky;
+  right: 0;
+  background: var(--surface);
+  box-shadow: -6px 0 8px -6px rgba(15, 23, 42, 0.15);
+  z-index: 1;
+}
+.data-table.cotizaciones-table thead th:last-child {
+  background: linear-gradient(90deg, var(--primary-light) 0%, #f0f9f9 100%);
+  z-index: 3;
+}
 
 .data-table td {
   padding: 13px 16px;
