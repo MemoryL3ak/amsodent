@@ -1515,10 +1515,11 @@ export default function EditarLicitacion() {
       vendedorCorreo: vendedorCorreo || "",
 
       // el orden queda implícito por el orden del arreglo
+      // NOTA: id_item y orden son metadatos del backend (asignados tras guardar),
+      // no campos editables por el usuario → se excluyen del snapshot para no
+      // marcar dirty cuando el backend devuelve los IDs recién insertados.
       items: (items || []).map((it) => ({
         uid: it.uid,
-        id_item: it.id_item ?? null,
-        orden: it.orden ?? null,
         sku: it.sku || "",
         producto: it.producto || "",
         categoria: it.categoria || "",

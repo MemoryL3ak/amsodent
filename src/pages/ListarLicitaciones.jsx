@@ -260,12 +260,12 @@ export default function ListarLicitaciones() {
 
   // ── Acciones admin ────────────────────────────────────────────
   async function aprobarCotizacion(id) {
-    const { error } = await supabase
-      .from("licitaciones")
-      .update({ estado: "En espera", margen_aprobado: true })
-      .eq("id", id);
-
-    if (error) { setToast({ type: "error", message: "No se pudo aprobar la cotización." }); return; }
+    try {
+      await api.put(`/licitaciones/${id}`, { estado: "En espera", margen_aprobado: true });
+    } catch (error) {
+      setToast({ type: "error", message: "No se pudo aprobar la cotización." });
+      return;
+    }
 
     setData((prev) =>
       prev.map((l) => l.id === id ? { ...l, estado: "En espera", margen_aprobado: true } : l)
