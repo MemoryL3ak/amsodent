@@ -59,6 +59,11 @@ export class LicitacionesController {
     return this.licitacionesService.upsertItems(body.items);
   }
 
+  @Put('items/:itemId')
+  updateItem(@Param('itemId', ParseIntPipe) itemId: number, @Body() body: any) {
+    return this.licitacionesService.updateItem(itemId, body);
+  }
+
   @Delete('items/:itemId')
   deleteItem(@Param('itemId', ParseIntPipe) itemId: number) {
     return this.licitacionesService.deleteItem(itemId);
