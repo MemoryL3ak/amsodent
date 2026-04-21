@@ -101,6 +101,17 @@ export class LicitacionesService {
     return data;
   }
 
+  async updateItem(itemId: number, body: Record<string, any>) {
+    const { data, error } = await this.supabase.getClient()
+      .from('items_licitacion')
+      .update(body)
+      .eq('id', itemId)
+      .select()
+      .single();
+    if (error) throw new BadRequestException(error.message);
+    return data;
+  }
+
   async deleteItem(itemId: number) {
     const { error } = await this.supabase.getClient()
       .from('items_licitacion')
