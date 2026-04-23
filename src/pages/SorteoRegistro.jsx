@@ -299,7 +299,7 @@ function SuccessCard({ nombre }) {
       </h1>
       <p className="sorteo-sub">
         Tu registro fue recibido correctamente y ya estás participando por el sorteo.
-        Te contactaremos por correo electrónico o teléfono si resultas ganador.
+        Te contactaremos por correo electrónico si resultas ganador.
       </p>
       <div className="sorteo-success-meta">
         <Sparkles size={14} />
