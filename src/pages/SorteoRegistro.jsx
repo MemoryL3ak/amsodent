@@ -123,7 +123,6 @@ function FormCard({ form, set, submit, error, enviando }) {
         </h1>
         <p className="sorteo-sub">
           Déjanos tus datos y quedarás automáticamente participando por nuestro sorteo.
-          Un gesto simple, una sonrisa grande.
         </p>
       </div>
 
