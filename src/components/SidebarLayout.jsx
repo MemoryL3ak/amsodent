@@ -19,6 +19,7 @@ import {
   UserCog,
   LogOut,
   CreditCard,
+  Gift,
 } from "lucide-react";
 
 const ROLE_LABELS = {
@@ -109,8 +110,9 @@ export default function SidebarLayout() {
   ].filter(Boolean);
 
   const adminNav = [
-    esAdmin && { to: "/monitoreo", icon: Activity, label: "Monitoreo de Usuarios" },
-    esAdmin && { to: "/usuarios",  icon: UserCog,  label: "Usuarios" },
+    esAdmin && { to: "/sorteo-registros", icon: Gift,     label: "Sorteo" },
+    esAdmin && { to: "/monitoreo",        icon: Activity, label: "Monitoreo de Usuarios" },
+    esAdmin && { to: "/usuarios",         icon: UserCog,  label: "Usuarios" },
   ].filter(Boolean);
 
   function NavGroup({ label, items }) {
