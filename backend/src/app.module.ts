@@ -8,6 +8,7 @@ import { CampanasModule } from './campanas/campanas.module';
 import { LicitacionesModule } from './licitaciones/licitaciones.module';
 import { MetasModule } from './metas/metas.module';
 import { UsuariosModule } from './usuarios/usuarios.module';
+import { SorteoModule } from './sorteo/sorteo.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { UsuariosModule } from './usuarios/usuarios.module';
     LicitacionesModule,
     MetasModule,
     UsuariosModule,
+    SorteoModule,
   ],
 })
 export class AppModule {}

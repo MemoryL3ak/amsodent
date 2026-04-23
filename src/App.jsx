@@ -38,6 +38,11 @@ import MetasPorCanal from "./pages/MetasPorCanal";
 import Trazabilidad from "./pages/Trazabilidad";
 import SeguimientoPagos from "./pages/SeguimientoPagos";
 
+// SORTEO
+import SorteoRegistro from "./pages/SorteoRegistro";
+import SorteoRegistros from "./pages/SorteoRegistros";
+import RequireRole from "./components/RequireRole";
+
 export default function App() {
   return (
     <BrowserRouter>
@@ -45,6 +50,7 @@ export default function App() {
         {/* RUTAS PÚBLICAS */}
         <Route path="/login" element={<Login />} />
         <Route path="/reset-password" element={<ResetPassword />} />
+        <Route path="/sorteo" element={<SorteoRegistro />} />
 
         {/* RUTAS PROTEGIDAS */}
         <Route
@@ -87,6 +93,16 @@ export default function App() {
           <Route path="ventas" element={<Ventas />} />
           <Route path="metas" element={<Metas />} />
           <Route path="metas-canal" element={<MetasPorCanal />} />
+
+          {/* SORTEO (solo admin) */}
+          <Route
+            path="sorteo-registros"
+            element={
+              <RequireRole allow={["admin"]}>
+                <SorteoRegistros />
+              </RequireRole>
+            }
+          />
         </Route>
 
         {/* FALLBACK */}
