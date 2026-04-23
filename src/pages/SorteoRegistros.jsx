@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../lib/api";
 import * as XLSX from "xlsx";
 import Toast from "../components/Toast";
+import DateFilter from "../components/DateFilter";
 import {
   Gift,
   Users,
@@ -24,6 +25,8 @@ export default function SorteoRegistros() {
   const [data, setData] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filtro, setFiltro] = useState("");
+  const [fechaDesde, setFechaDesde] = useState("");
+  const [fechaHasta, setFechaHasta] = useState("");
   const [toast, setToast] = useState(null);
 
   // Ganador animado
@@ -54,18 +57,32 @@ export default function SorteoRegistros() {
 
   const filtrada = useMemo(() => {
     const q = filtro.trim().toLowerCase();
-    if (!q) return data;
+    const desde = fechaDesde ? new Date(`${fechaDesde}T00:00:00`) : null;
+    const hasta = fechaHasta ? new Date(`${fechaHasta}T23:59:59.999`) : null;
     return data.filter((p) => {
-      const hay = [p.nombre, p.email, p.universidad_clinica].map((x) =>
-        String(x || "").toLowerCase()
-      );
-      return hay.some((s) => s.includes(q));
+      if (q) {
+        const hay = [p.nombre, p.email, p.universidad_clinica].map((x) =>
+          String(x || "").toLowerCase()
+        );
+        if (!hay.some((s) => s.includes(q))) return false;
+      }
+      if (desde || hasta) {
+        const created = p.created_at ? new Date(p.created_at) : null;
+        if (!created) return false;
+        if (desde && created < desde) return false;
+        if (hasta && created > hasta) return false;
+      }
+      return true;
     });
-  }, [data, filtro]);
+  }, [data, filtro, fechaDesde, fechaHasta]);
 
+  const hoyIso = new Date().toISOString().slice(0, 10);
   const totalRegistros = data.length;
-  const totalAcepta = data.filter((p) => p.acepta_uso_datos).length;
-  const totalComs = data.filter((p) => p.acepta_comunicaciones).length;
+  const totalHoy = data.filter(
+    (p) => p.created_at && p.created_at.slice(0, 10) === hoyIso
+  ).length;
+  const totalEstudiantes = data.filter((p) => p.tipo_perfil === "estudiante").length;
+  const totalEgresados = data.filter((p) => p.tipo_perfil === "egresado").length;
   const yaGanador = data.find((p) => p.ganador);
 
   async function sortearGanador() {
@@ -209,41 +226,59 @@ export default function SorteoRegistros() {
       <div className="sorteo-stats">
         <StatCard
           icon={<Users size={18} />}
-          label="Inscritos"
+          label="Inscritos totales"
           value={totalRegistros}
           tone="blue"
         />
         <StatCard
-          icon={<CheckCircle2 size={18} />}
-          label="Aceptan uso de datos"
-          value={totalAcepta}
-          tone="green"
-        />
-        <StatCard
-          icon={<Mail size={18} />}
-          label="Opt-in comunicaciones"
-          value={totalComs}
+          icon={<Calendar size={18} />}
+          label="Inscritos hoy"
+          value={totalHoy}
           tone="violet"
         />
         <StatCard
-          icon={<Crown size={18} />}
-          label="Ganadores"
-          value={data.filter((p) => p.ganador).length}
-          tone="gold"
+          icon={<GraduationCap size={18} />}
+          label="Estudiantes"
+          value={totalEstudiantes}
+          tone="blue"
+        />
+        <StatCard
+          icon={<Building2 size={18} />}
+          label="Egresados"
+          value={totalEgresados}
+          tone="green"
         />
       </div>
 
-      {/* Filtro */}
+      {/* Filtros */}
       <div className="sorteo-admin-toolbar">
-        <div className="sorteo-search">
-          <Search size={14} />
-          <input
-            type="text"
-            placeholder="Buscar por nombre, correo o universidad/clínica…"
-            value={filtro}
-            onChange={(e) => setFiltro(e.target.value)}
-          />
+        <div className="sorteo-filters-left">
+          <div className="sorteo-search">
+            <Search size={14} />
+            <input
+              type="text"
+              placeholder="Buscar por nombre, correo o universidad/clínica…"
+              value={filtro}
+              onChange={(e) => setFiltro(e.target.value)}
+            />
+          </div>
+
+          <div className="sorteo-date-range">
+            <span className="sorteo-date-label">Desde</span>
+            <DateFilter
+              value={fechaDesde}
+              onChange={setFechaDesde}
+              maxDate={fechaHasta ? new Date(`${fechaHasta}T00:00:00`) : undefined}
+            />
+            <span className="sorteo-date-label">Hasta</span>
+            <DateFilter
+              value={fechaHasta}
+              onChange={setFechaHasta}
+              minDate={fechaDesde ? new Date(`${fechaDesde}T00:00:00`) : undefined}
+            />
+          </div>
         </div>
+
         {yaGanador && (
           <button className="btn btn-ghost" onClick={pedirResetGanadores} title="Reiniciar ganadores">
             <RefreshCw size={14} />
@@ -616,6 +651,29 @@ const ADMIN_STYLES = `
   flex: 1;
   font-size: 13px;
   color: var(--text);
+}
+
+/* Agrupación izquierda: search + fechas */
+.sorteo-filters-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  flex: 1;
+}
+
+/* Filtro de fechas (usa DateFilter custom) */
+.sorteo-date-range {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: nowrap;
+}
+.sorteo-date-label {
+  font-size: 12px;
+  color: var(--text-soft);
+  font-weight: 600;
+  letter-spacing: .02em;
 }
 
 /* Botón sortear gradient */

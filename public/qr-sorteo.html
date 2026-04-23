@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>QR Sorteo · AMSODENT</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet" />
+  <script src="https://unpkg.com/qr-code-styling@1.6.0-rc.1/lib/qr-code-styling.js"></script>
+  <style>
+    :root {
+      --primary:       #28aeb1;
+      --primary-dark:  #1e9295;
+      --primary-light: #e8f7f7;
+      --gold:          #f59e0b;
+      --text:          #1a1d23;
+      --muted:         #6b7280;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; }
+    body {
+      font-family: "Inter", system-ui, sans-serif;
+      background:
+        radial-gradient(1200px 800px at 0% 0%, rgba(255,255,255,.55) 0%, transparent 65%),
+        radial-gradient(900px 600px at 100% 100%, rgba(15,115,116,.45) 0%, transparent 60%),
+        linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+      min-height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 32px 20px;
+      color: var(--text);
+    }
+
+    /* Marco del QR (lo que se imprime/descarga) */
+    .qr-frame {
+      position: relative;
+      width: 100%;
+      max-width: 460px;
+      background: #fff;
+      border-radius: 28px;
+      padding: 32px 28px 26px;
+      box-shadow: 0 30px 70px -15px rgba(15,23,42,.45);
+      text-align: center;
+      overflow: hidden;
+    }
+    .qr-frame::before {
+      content: "";
+      position: absolute;
+      inset: -2px;
+      border-radius: 28px;
+      padding: 2px;
+      background: linear-gradient(135deg, var(--primary), var(--gold), var(--primary));
+      -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+      -webkit-mask-composite: xor;
+              mask-composite: exclude;
+      pointer-events: none;
+    }
+
+    .qr-logo {
+      height: 52px;
+      margin-bottom: 10px;
+    }
+    .qr-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 14px;
+      border-radius: 999px;
+      background: linear-gradient(135deg, var(--primary-dark), var(--primary));
+      color: #fff;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: .14em;
+      margin-bottom: 14px;
+    }
+    .qr-title {
+      margin: 0 0 4px;
+      font-size: 26px;
+      font-weight: 800;
+      letter-spacing: -.015em;
+      line-height: 1.15;
+    }
+    .qr-title .accent {
+      background: linear-gradient(135deg, var(--primary), var(--gold));
+      -webkit-background-clip: text;
+              background-clip: text;
+      color: transparent;
+    }
+    .qr-sub {
+      margin: 0 0 22px;
+      color: var(--muted);
+      font-size: 13.5px;
+    }
+
+    .qr-canvas-wrap {
+      display: flex;
+      justify-content: center;
+      padding: 14px;
+      background: #fff;
+      border-radius: 18px;
+      box-shadow: inset 0 0 0 1.5px var(--primary-light);
+    }
+
+    .qr-url {
+      margin: 16px 0 0;
+      font-size: 11.5px;
+      color: var(--muted);
+      font-variant: tabular-nums;
+      word-break: break-all;
+    }
+    .qr-scan-hint {
+      margin: 18px 0 0;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--primary-dark);
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    /* Acciones (fuera del marco) */
+    .actions {
+      margin-top: 22px;
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      height: 44px;
+      padding: 0 20px;
+      border-radius: 12px;
+      border: none;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 14px;
+      transition: transform .15s, box-shadow .15s, filter .15s;
+      font-family: inherit;
+    }
+    .btn-primary {
+      background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+      color: #fff;
+      box-shadow: 0 10px 22px -8px rgba(40,174,177,.6);
+    }
+    .btn-primary:hover { transform: translateY(-1px); filter: brightness(1.05); }
+    .btn-ghost {
+      background: rgba(255,255,255,.95);
+      color: var(--primary-dark);
+      border: 1.5px solid rgba(255,255,255,.9);
+    }
+    .btn-ghost:hover { transform: translateY(-1px); }
+
+    .footer {
+      margin-top: 18px;
+      color: rgba(255,255,255,.85);
+      font-size: 12px;
+      text-align: center;
+    }
+
+    @media (max-width: 480px) {
+      .qr-frame { padding: 24px 20px 20px; }
+      .qr-title { font-size: 22px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="qr-frame" id="qr-frame">
+    <img src="/logo_superior_ficha.png" alt="AMSODENT" class="qr-logo" />
+    <div class="qr-badge">🎁 SORTEO EXCLUSIVO</div>
+    <h1 class="qr-title">
+      ¡Participa y <span class="accent">gana</span>!
+    </h1>
+    <p class="qr-sub">Escanea el código y déjanos tus datos</p>
+
+    <div class="qr-canvas-wrap" id="qr-canvas-wrap"></div>
+
+    <div class="qr-scan-hint">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="3" width="7" height="7" rx="1"/>
+        <rect x="14" y="3" width="7" height="7" rx="1"/>
+        <rect x="3" y="14" width="7" height="7" rx="1"/>
+        <path d="M14 14h7v7h-7z"/>
+      </svg>
+      Apunta tu cámara aquí
+    </div>
+    <p class="qr-url" id="qr-url"></p>
+  </div>
+
+  <div class="actions">
+    <button class="btn btn-primary" id="btn-download-png">⬇ Descargar PNG (alta calidad)</button>
+    <button class="btn btn-ghost" id="btn-download-svg">⬇ Descargar SVG</button>
+    <button class="btn btn-ghost" onclick="window.print()">🖨 Imprimir</button>
+  </div>
+
+  <p class="footer">Tamaño recomendado de impresión: mínimo 5 × 5 cm para escaneo fluido.</p>
+
+  <script>
+    const URL_SORTEO = "https://amsodent.vercel.app/sorteo";
+    document.getElementById("qr-url").textContent = URL_SORTEO;
+
+    // QR estilizado con paleta AMSODENT
+    const qrCode = new QRCodeStyling({
+      width: 340,
+      height: 340,
+      type: "canvas",
+      data: URL_SORTEO,
+      image: "/logo_superior_ficha.png",
+      margin: 4,
+      qrOptions: {
+        errorCorrectionLevel: "H"
+      },
+      dotsOptions: {
+        type: "rounded",
+        gradient: {
+          type: "linear",
+          rotation: Math.PI / 4,
+          colorStops: [
+            { offset: 0, color: "#28aeb1" },
+            { offset: 1, color: "#1e9295" }
+          ]
+        }
+      },
+      backgroundOptions: {
+        color: "#ffffff"
+      },
+      cornersSquareOptions: {
+        type: "extra-rounded",
+        color: "#0f7374"
+      },
+      cornersDotOptions: {
+        type: "dot",
+        color: "#f59e0b"
+      },
+      imageOptions: {
+        crossOrigin: "anonymous",
+        margin: 6,
+        imageSize: 0.22,
+        hideBackgroundDots: true
+      }
+    });
+
+    qrCode.append(document.getElementById("qr-canvas-wrap"));
+
+    // Descargas en resolución grande (para impresión)
+    const hiResConfig = { width: 1200, height: 1200 };
+
+    document.getElementById("btn-download-png").addEventListener("click", async () => {
+      const hi = new QRCodeStyling({
+        ...qrCode._options,
+        ...hiResConfig,
+        imageOptions: { ...qrCode._options.imageOptions, margin: 18 }
+      });
+      hi.download({ name: "qr-sorteo-amsodent", extension: "png" });
+    });
+
+    document.getElementById("btn-download-svg").addEventListener("click", () => {
+      qrCode.download({ name: "qr-sorteo-amsodent", extension: "svg" });
+    });
+  </script>
+</body>
+</html>
