@@ -4,6 +4,9 @@ import { api } from "../lib/api";
 import { Link } from "react-router-dom";
 import ConfirmModal from "../components/ConfirmModal";
 import Select from "react-select";
+import { FileDown } from "lucide-react";
+import Toast from "../components/Toast";
+import { descargarFichaTecnica } from "../utils/generarFichaTecnica";
 
 /* ============================================================
    HELPERS FILTRO PRODUCTO (TOKENS + NORMALIZACIÓN)
@@ -35,6 +38,9 @@ export default function Productos() {
 
   const [modalOpen, setModalOpen] = useState(false);
   const [productoAEliminar, setProductoAEliminar] = useState(null);
+
+  const [generandoFichaId, setGenerandoFichaId] = useState(null);
+  const [toast, setToast] = useState(null);
 
   // ✅ precios de campaña vigentes por SKU (cache)
   const [campaignPriceBySku, setCampaignPriceBySku] = useState(new Map());
@@ -246,6 +252,29 @@ export default function Productos() {
     cargar();
   }
 
+  async function descargarFicha(producto) {
+    if (generandoFichaId != null) return;
+    setGenerandoFichaId(producto.id);
+    setToast({ type: "info", message: `Generando ficha técnica de ${producto.sku || producto.nombre}…` });
+    try {
+      // Traemos el producto completo por si la tabla no trae todos los campos de la ficha
+      let productoCompleto = producto;
+      try {
+        const full = await api.get(`/productos/${producto.id}`);
+        if (full) productoCompleto = { ...producto, ...full };
+      } catch {
+        // si falla, usamos lo que ya tenemos
+      }
+      await descargarFichaTecnica(productoCompleto);
+      setToast({ type: "success", message: "Ficha técnica descargada." });
+    } catch (e) {
+      console.error(e);
+      setToast({ type: "error", message: "No se pudo generar la ficha técnica." });
+    } finally {
+      setGenerandoFichaId(null);
+    }
+  }
+
   /* ============================================================
      UI
   ============================================================ */
@@ -255,6 +284,10 @@ export default function Productos() {
 
   return (
     <div className="page">
+      {toast && (
+        <Toast type={toast.type} message={toast.message} onClose={() => setToast(null)} />
+      )}
+
       {/* HEADER */}
       <div className="page-header">
         <h1 className="page-title">Productos</h1>
@@ -339,7 +372,7 @@ export default function Productos() {
               <col style={{width: 150}} />
               <col style={{width: 110}} />
               <col style={{width: 150}} />
-              <col style={{width: 170}} />
+              <col style={{width: 260}} />
             </colgroup>
             <thead>
               <tr>
@@ -391,6 +424,16 @@ export default function Productos() {
 
                     <td style={{textAlign: "right"}}>
                       <div className="btn-row" style={{justifyContent: "flex-end"}}>
+                        <button
+                          type="button"
+                          onClick={() => descargarFicha(p)}
+                          className="btn btn-secondary btn-sm"
+                          disabled={generandoFichaId === p.id}
+                          title="Descargar ficha técnica en PDF"
+                        >
+                          <FileDown size={14} />
+                          {generandoFichaId === p.id ? "Generando…" : "Ficha"}
+                        </button>
                         {puedeEditarProductoFila(p) ? (
                           <>
                             <Link
