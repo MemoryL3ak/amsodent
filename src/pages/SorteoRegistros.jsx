@@ -11,8 +11,6 @@ import {
   Shuffle,
   Crown,
   Trash2,
-  CheckCircle2,
-  XCircle,
   RefreshCw,
   Mail,
   Calendar,
@@ -300,20 +298,19 @@ export default function SorteoRegistros() {
                 <th>Universidad / Clínica</th>
                 <th style={{ width: 110 }}>Nos conocía</th>
                 <th style={{ width: 170 }}>Registro</th>
-                <th style={{ width: 150 }}>Estado</th>
                 <th style={{ width: 80 }}>Acciones</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={9} style={{ textAlign: "center", padding: 30, opacity: 0.6 }}>
+                  <td colSpan={8} style={{ textAlign: "center", padding: 30, opacity: 0.6 }}>
                     Cargando participantes…
                   </td>
                 </tr>
               ) : filtrada.length === 0 ? (
                 <tr>
-                  <td colSpan={9} style={{ textAlign: "center", padding: 40, opacity: 0.6 }}>
+                  <td colSpan={8} style={{ textAlign: "center", padding: 40, opacity: 0.6 }}>
                     {filtro ? "Sin resultados para el filtro." : "Aún no hay participantes."}
                   </td>
                 </tr>
@@ -370,19 +367,6 @@ export default function SorteoRegistros() {
                         <Calendar size={12} />
                         {p.created_at ? new Date(p.created_at).toLocaleString("es-CL") : "—"}
                       </span>
-                    </td>
-                    <td>
-                      {p.acepta_uso_datos ? (
-                        <span className="badge badge-primary">
-                          <CheckCircle2 size={11} style={{ marginRight: 3 }} />
-                          Válido
-                        </span>
-                      ) : (
-                        <span className="badge badge-danger">
-                          <XCircle size={11} style={{ marginRight: 3 }} />
-                          Sin autorización
-                        </span>
-                      )}
                     </td>
                     <td style={{ textAlign: "right" }}>
                       <button
