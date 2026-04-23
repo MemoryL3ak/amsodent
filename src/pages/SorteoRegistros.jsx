@@ -17,6 +17,7 @@ import {
   AlertTriangle,
   GraduationCap,
   Building2,
+  Stethoscope,
 } from "lucide-react";
 
 export default function SorteoRegistros() {
@@ -59,7 +60,7 @@ export default function SorteoRegistros() {
     const hasta = fechaHasta ? new Date(`${fechaHasta}T23:59:59.999`) : null;
     return data.filter((p) => {
       if (q) {
-        const hay = [p.nombre, p.email, p.universidad_clinica].map((x) =>
+        const hay = [p.nombre, p.email, p.universidad_clinica, p.especialidad].map((x) =>
           String(x || "").toLowerCase()
         );
         if (!hay.some((s) => s.includes(q))) return false;
@@ -173,6 +174,7 @@ export default function SorteoRegistros() {
       Email: p.email,
       Perfil: p.tipo_perfil === "estudiante" ? "Estudiante" : "Egresado",
       "Universidad / Clínica": p.universidad_clinica || "",
+      Especialidad: p.especialidad || "",
       "Nos conocía": p.conocia_amsodent ? "Sí" : "No",
       "Acepta uso datos": p.acepta_uso_datos ? "Sí" : "No",
       "Acepta comunicaciones": p.acepta_comunicaciones ? "Sí" : "No",
@@ -255,7 +257,7 @@ export default function SorteoRegistros() {
             <Search size={14} />
             <input
               type="text"
-              placeholder="Buscar por nombre, correo o universidad/clínica…"
+              placeholder="Buscar por nombre, correo, universidad o especialidad…"
               value={filtro}
               onChange={(e) => setFiltro(e.target.value)}
             />
@@ -296,6 +298,7 @@ export default function SorteoRegistros() {
                 <th>Correo</th>
                 <th style={{ width: 130 }}>Perfil</th>
                 <th>Universidad / Clínica</th>
+                <th style={{ width: 180 }}>Especialidad</th>
                 <th style={{ width: 110 }}>Nos conocía</th>
                 <th style={{ width: 170 }}>Registro</th>
                 <th style={{ width: 80 }}>Acciones</th>
@@ -304,13 +307,13 @@ export default function SorteoRegistros() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={8} style={{ textAlign: "center", padding: 30, opacity: 0.6 }}>
+                  <td colSpan={9} style={{ textAlign: "center", padding: 30, opacity: 0.6 }}>
                     Cargando participantes…
                   </td>
                 </tr>
               ) : filtrada.length === 0 ? (
                 <tr>
-                  <td colSpan={8} style={{ textAlign: "center", padding: 40, opacity: 0.6 }}>
+                  <td colSpan={9} style={{ textAlign: "center", padding: 40, opacity: 0.6 }}>
                     {filtro ? "Sin resultados para el filtro." : "Aún no hay participantes."}
                   </td>
                 </tr>
@@ -354,6 +357,16 @@ export default function SorteoRegistros() {
                     </td>
                     <td style={{ fontSize: 13, color: "var(--text-soft)", maxWidth: 220 }}>
                       {p.universidad_clinica || "—"}
+                    </td>
+                    <td style={{ fontSize: 12.5 }}>
+                      {p.especialidad ? (
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                          <Stethoscope size={12} style={{ color: "var(--primary)" }} />
+                          {p.especialidad}
+                        </span>
+                      ) : (
+                        <span style={{ color: "var(--text-soft)" }}>—</span>
+                      )}
                     </td>
                     <td>
                       {p.conocia_amsodent ? (

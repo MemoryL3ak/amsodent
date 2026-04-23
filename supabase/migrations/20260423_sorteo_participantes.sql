@@ -8,6 +8,7 @@ create table if not exists public.sorteo_participantes (
   email                   text        not null,
   tipo_perfil             text        not null check (tipo_perfil in ('estudiante','egresado')),
   universidad_clinica     text,
+  especialidad            text        not null,
   conocia_amsodent        boolean     not null default false,
   acepta_uso_datos        boolean     not null default false,
   acepta_comunicaciones   boolean     not null default false,

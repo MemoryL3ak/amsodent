@@ -57,6 +57,7 @@ export class SorteoService {
         : '';
     const universidadClinica =
       sanitizeText(body?.universidad_clinica, 200) || null;
+    const especialidad = sanitizeText(body?.especialidad, 120);
     const conociaAmsodent = Boolean(body?.conocia_amsodent);
     const aceptaUsoDatos = Boolean(body?.acepta_uso_datos);
     const aceptaComunicaciones = Boolean(body?.acepta_comunicaciones);
@@ -68,6 +69,7 @@ export class SorteoService {
     if (tipoPerfil === 'egresado' && !universidadClinica) {
       faltantes.push('nombre de universidad o clínica donde trabaja');
     }
+    if (!especialidad) faltantes.push('especialidad odontológica');
     if (!aceptaUsoDatos) faltantes.push('autorización de uso de datos');
 
     if (faltantes.length > 0) {
@@ -89,6 +91,7 @@ export class SorteoService {
           email,
           tipo_perfil: tipoPerfil,
           universidad_clinica: tipoPerfil === 'egresado' ? universidadClinica : null,
+          especialidad,
           conocia_amsodent: conociaAmsodent,
           acepta_uso_datos: aceptaUsoDatos,
           acepta_comunicaciones: aceptaComunicaciones,
@@ -132,7 +135,7 @@ export class SorteoService {
     // Solo sortea entre quienes aceptaron uso de datos y aún no son ganadores
     const { data: elegibles, error: errElig } = await client
       .from('sorteo_participantes')
-      .select('id, nombre, email, tipo_perfil, universidad_clinica')
+      .select('id, nombre, email, tipo_perfil, universidad_clinica, especialidad')
       .eq('acepta_uso_datos', true)
       .eq('ganador', false);
 

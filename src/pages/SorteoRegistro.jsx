@@ -1,5 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Gift, CheckCircle2, Sparkles, Mail, User, ShieldCheck, GraduationCap, Building2 } from "lucide-react";
+import { Gift, CheckCircle2, Sparkles, Mail, User, ShieldCheck, GraduationCap, Building2, Stethoscope, ChevronDown } from "lucide-react";
+
+const ESPECIALIDADES = [
+  "Odontología general",
+  "Ortodoncia",
+  "Endodoncia",
+  "Periodoncia",
+  "Cirugía maxilofacial",
+  "Implantología",
+  "Odontopediatría",
+  "Rehabilitación oral",
+  "Estomatología / Patología oral",
+  "Aún no tengo especialidad",
+  "Otra",
+];
 
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3001/api";
 const AMSODENT_LOGO = "/logo_superior_ficha.png";
@@ -10,6 +24,7 @@ export default function SorteoRegistro() {
     email: "",
     tipo_perfil: "",           // "estudiante" | "egresado"
     universidad_clinica: "",
+    especialidad: "",
     conocia_amsodent: "",
     acepta_uso_datos: false,
     acepta_comunicaciones: false,
@@ -38,6 +53,8 @@ export default function SorteoRegistro() {
       return setError("Indícanos si eres estudiante o egresado.");
     if (form.tipo_perfil === "egresado" && !form.universidad_clinica.trim())
       return setError("Cuéntanos el nombre de tu universidad o clínica.");
+    if (!form.especialidad)
+      return setError("Selecciona tu especialidad odontológica.");
     if (form.conocia_amsodent === "")
       return setError("Cuéntanos si nos conocías antes.");
     if (!form.acepta_uso_datos)
@@ -54,6 +71,7 @@ export default function SorteoRegistro() {
           tipo_perfil: form.tipo_perfil,
           universidad_clinica:
             form.tipo_perfil === "egresado" ? form.universidad_clinica.trim() : null,
+          especialidad: form.especialidad,
           conocia_amsodent: form.conocia_amsodent === "si",
           acepta_uso_datos: form.acepta_uso_datos,
           acepta_comunicaciones: form.acepta_comunicaciones,
@@ -179,6 +197,26 @@ function FormCard({ form, set, submit, error, enviando }) {
             />
           </Field>
         )}
+
+        <Field icon={<Stethoscope size={16} />} label="¿Cuál es tu especialidad odontológica?" required>
+          <div className="sorteo-select">
+            <select
+              value={form.especialidad}
+              onChange={set("especialidad")}
+              required
+            >
+              <option value="" disabled>
+                Selecciona una opción…
+              </option>
+              {ESPECIALIDADES.map((esp) => (
+                <option key={esp} value={esp}>
+                  {esp}
+                </option>
+              ))}
+            </select>
+            <ChevronDown size={16} className="sorteo-select-chevron" aria-hidden />
+          </div>
+        </Field>
 
         <Field label="¿Nos conocías antes?" required>
           <div className="sorteo-choices">
@@ -646,6 +684,43 @@ const STYLES = `
   border-radius: 0 !important;
 }
 .sorteo-tel input:focus { box-shadow: none !important; }
+
+/* Select custom */
+.sorteo-select {
+  position: relative;
+  display: block;
+}
+.sorteo-select select {
+  width: 100%;
+  height: 46px;
+  border: 1.5px solid var(--sorteo-border);
+  border-radius: 12px;
+  padding: 0 42px 0 14px;
+  font-size: 15px;
+  color: var(--sorteo-text);
+  background: #fff;
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+  font-family: inherit;
+  outline: none;
+  transition: border-color .18s, box-shadow .18s;
+}
+.sorteo-select select:focus {
+  border-color: var(--sorteo-primary);
+  box-shadow: 0 0 0 4px rgba(40,174,177,.18);
+}
+.sorteo-select select:invalid {
+  color: #9ca3af;
+}
+.sorteo-select-chevron {
+  position: absolute;
+  right: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--sorteo-primary);
+  pointer-events: none;
+}
 
 /* ---------- Chips Sí/No ---------- */
 .sorteo-choices {
