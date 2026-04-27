@@ -79,16 +79,12 @@ export default function Productos() {
     cargarPerfil();
   }, []);
 
-  // ? Ventas: puede editar solo transitorios; no puede eliminar
+  // Todos los roles pueden abrir el editor.
+  // Los permisos finos por sección se controlan dentro de EditarProducto:
+  // ventas en productos no-transitorios solo edita "Detalle del Producto".
   const puedeEditarProductoFila = useMemo(() => {
-    return (producto) => {
-      if (rolNorm !== "ventas") return true;
-      const estado = (producto?.estado ?? "").toString().trim().toLowerCase();
-      if (estado) return estado === "transitorio" || estado === "transsitorio";
-      const sku = (producto?.sku ?? "").toString().trim();
-      return sku === "";
-    };
-  }, [rolNorm]);
+    return () => true;
+  }, []);
 
   const puedeEliminarProductos = useMemo(() => {
     return rolNorm !== "ventas";
