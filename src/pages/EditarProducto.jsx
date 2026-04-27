@@ -189,9 +189,18 @@ export default function EditarProducto() {
 
   const puedeEditarProducto = useMemo(() => {
     if (!rolNorm) return false;
-    if (rolNorm === "ventas") return esProductoTransitorio;
+    // Ventas: puede acceder siempre. Si el producto NO es transitorio, solo
+    // podrá editar la sección "Detalle del Producto" (controlado por
+    // esVentasNoTransitorio más abajo). Si es transitorio, edita todo.
     return true;
-  }, [rolNorm, esProductoTransitorio]);
+  }, [rolNorm]);
+
+  // Ventas mirando un producto ya activo: solo edita "Detalle del Producto";
+  // el resto de secciones quedan readonly u ocultas.
+  const esVentasNoTransitorio = useMemo(
+    () => rolNorm === "ventas" && !esProductoTransitorio,
+    [rolNorm, esProductoTransitorio]
+  );
 
   const estadoMostrado =
     producto.estado ||
@@ -743,12 +752,14 @@ try {
                 <div>
                   <label className="label">Nombre del Producto</label>
                   <input className="input" value={producto.nombre}
+                    disabled={esVentasNoTransitorio}
                     onChange={(e) => setProducto((prev) => ({ ...prev, nombre: e.target.value }))} />
                 </div>
 
                 <div>
                   <label className="label">Marca</label>
                   <input className="input" value={producto.marca}
+                    disabled={esVentasNoTransitorio}
                     onChange={(e) => setProducto((prev) => ({ ...prev, marca: e.target.value }))} />
                 </div>
 
@@ -760,6 +771,7 @@ try {
                     placeholder="Seleccione categoría…"
                     menuPortalTarget={document.body}
                     isSearchable
+                    isDisabled={esVentasNoTransitorio}
                     filterOption={filtrarPorTerminos}
                     value={opcionesCategoria.find((o) => o.value === producto.categoria) || null}
                     onChange={(op) => setProducto((prev) => ({ ...prev, categoria: op ? op.value : "" }))}
@@ -769,6 +781,7 @@ try {
                 <div>
                   <label className="label">Formato</label>
                   <input className="input" value={producto.formato}
+                    disabled={esVentasNoTransitorio}
                     onChange={(e) => setProducto((prev) => ({ ...prev, formato: e.target.value }))} />
                 </div>
               </div>
@@ -790,17 +803,19 @@ try {
                       Sin imagen
                     </div>
                   )}
-                  <div style={{marginTop:12}}>
-                    <p style={{fontSize:11, color:"var(--text-muted)", marginBottom:6}}>JPG o PNG</p>
-                    <div className="flex items-center gap-2">
-                      <label className="btn btn-secondary btn-sm" style={{cursor:"pointer"}}>
-                        Seleccionar imagen
-                        <input type="file" accept="image/png,image/jpeg" style={{display:"none"}}
-                          onChange={(e) => setImagenFile(e.target.files?.[0] || null)} />
-                      </label>
-                      <span style={{fontSize:12, color:"var(--text-muted)"}}>{imagenFile?.name || "Sin archivo"}</span>
+                  {!esVentasNoTransitorio && (
+                    <div style={{marginTop:12}}>
+                      <p style={{fontSize:11, color:"var(--text-muted)", marginBottom:6}}>JPG o PNG</p>
+                      <div className="flex items-center gap-2">
+                        <label className="btn btn-secondary btn-sm" style={{cursor:"pointer"}}>
+                          Seleccionar imagen
+                          <input type="file" accept="image/png,image/jpeg" style={{display:"none"}}
+                            onChange={(e) => setImagenFile(e.target.files?.[0] || null)} />
+                        </label>
+                        <span style={{fontSize:12, color:"var(--text-muted)"}}>{imagenFile?.name || "Sin archivo"}</span>
+                      </div>
                     </div>
-                  </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -859,73 +874,77 @@ try {
         </div>
       </div>
 
-      {/* DIMENSIONES Y PESO */}
-      <div className="surface">
-        <div className="surface-header">
-          <h3 className="surface-title">Dimensiones y Peso</h3>
-        </div>
-        <div className="surface-body">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div>
-              <label className="label">Peso (kg)</label>
-              <input type="number" step="0.01" className="input" value={producto.peso}
-                onChange={(e) => setProducto((prev) => ({ ...prev, peso: e.target.value }))} />
-            </div>
-            <div>
-              <label className="label">Alto (cm)</label>
-              <input type="number" step="0.1" className="input" value={producto.alto}
-                onChange={(e) => setProducto((prev) => ({ ...prev, alto: e.target.value }))} />
-            </div>
-            <div>
-              <label className="label">Largo (cm)</label>
-              <input type="number" step="0.1" className="input" value={producto.largo}
-                onChange={(e) => setProducto((prev) => ({ ...prev, largo: e.target.value }))} />
-            </div>
-            <div>
-              <label className="label">Ancho (cm)</label>
-              <input type="number" step="0.1" className="input" value={producto.ancho}
-                onChange={(e) => setProducto((prev) => ({ ...prev, ancho: e.target.value }))} />
-            </div>
-            <div>
-              <label className="label">Centímetro cúbico (cm³)</label>
-              <input readOnly className="input" style={{background:"var(--bg)"}} value={metroCubico} />
+      {/* DIMENSIONES Y PESO — oculto para ventas en productos no transitorios */}
+      {!esVentasNoTransitorio && (
+        <div className="surface">
+          <div className="surface-header">
+            <h3 className="surface-title">Dimensiones y Peso</h3>
+          </div>
+          <div className="surface-body">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div>
+                <label className="label">Peso (kg)</label>
+                <input type="number" step="0.01" className="input" value={producto.peso}
+                  onChange={(e) => setProducto((prev) => ({ ...prev, peso: e.target.value }))} />
+              </div>
+              <div>
+                <label className="label">Alto (cm)</label>
+                <input type="number" step="0.1" className="input" value={producto.alto}
+                  onChange={(e) => setProducto((prev) => ({ ...prev, alto: e.target.value }))} />
+              </div>
+              <div>
+                <label className="label">Largo (cm)</label>
+                <input type="number" step="0.1" className="input" value={producto.largo}
+                  onChange={(e) => setProducto((prev) => ({ ...prev, largo: e.target.value }))} />
+              </div>
+              <div>
+                <label className="label">Ancho (cm)</label>
+                <input type="number" step="0.1" className="input" value={producto.ancho}
+                  onChange={(e) => setProducto((prev) => ({ ...prev, ancho: e.target.value }))} />
+              </div>
+              <div>
+                <label className="label">Centímetro cúbico (cm³)</label>
+                <input readOnly className="input" style={{background:"var(--bg)"}} value={metroCubico} />
+              </div>
             </div>
           </div>
         </div>
-      </div>
+      )}
 
-      {/* LISTA DE PRECIOS */}
-      <div className="surface">
-        <div className="surface-header">
-          <h3 className="surface-title">Lista de Precios</h3>
-        </div>
-        <div className="surface-body">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {(esAdmin || (esVentasOJefe && (esProductoTransitorio || esPendienteAprobacion))) && (
-              <div>
-                <label className="label">Costo</label>
-                <input type="number" className="input" value={producto.costo}
-                  onChange={(e) => setProducto((prev) => ({ ...prev, costo: e.target.value }))} />
-              </div>
-            )}
-            {(esVentasOJefe ? ["lista1"] : ["lista1", "lista2"]).map((list) => (
-              <div key={list}>
-                <label className="label">
-                  {list === "lista1" ? (esVentasOJefe ? "Precio Venta Neto" : "Listado de Precios 1") : "Listado de Precios 2"}
-                </label>
-                <input type="number" className="input" value={producto[list]}
-                  onChange={(e) => setProducto((prev) => ({ ...prev, [list]: e.target.value }))} />
-              </div>
-            ))}
-            {mostrarMargen && (
-              <div>
-                <label className="label">Margen</label>
-                <input readOnly className="input" style={{background:"var(--bg)"}} value={margenVenta} />
-              </div>
-            )}
+      {/* LISTA DE PRECIOS — oculto para ventas en productos no transitorios */}
+      {!esVentasNoTransitorio && (
+        <div className="surface">
+          <div className="surface-header">
+            <h3 className="surface-title">Lista de Precios</h3>
+          </div>
+          <div className="surface-body">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {(esAdmin || (esVentasOJefe && (esProductoTransitorio || esPendienteAprobacion))) && (
+                <div>
+                  <label className="label">Costo</label>
+                  <input type="number" className="input" value={producto.costo}
+                    onChange={(e) => setProducto((prev) => ({ ...prev, costo: e.target.value }))} />
+                </div>
+              )}
+              {(esVentasOJefe ? ["lista1"] : ["lista1", "lista2"]).map((list) => (
+                <div key={list}>
+                  <label className="label">
+                    {list === "lista1" ? (esVentasOJefe ? "Precio Venta Neto" : "Listado de Precios 1") : "Listado de Precios 2"}
+                  </label>
+                  <input type="number" className="input" value={producto[list]}
+                    onChange={(e) => setProducto((prev) => ({ ...prev, [list]: e.target.value }))} />
+                </div>
+              ))}
+              {mostrarMargen && (
+                <div>
+                  <label className="label">Margen</label>
+                  <input readOnly className="input" style={{background:"var(--bg)"}} value={margenVenta} />
+                </div>
+              )}
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       {/* ACCIONES */}
       <div className="btn-row" style={{marginTop:"1.5rem"}}>

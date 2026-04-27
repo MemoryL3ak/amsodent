@@ -6,3 +6,6 @@ dist
 !.env.example
 
 certificates
+
+# Artefactos generados por scripts (SQLs producidos a partir de CSVs locales)
+scripts/output/
