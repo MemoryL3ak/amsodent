@@ -423,7 +423,7 @@ export default function Productos() {
                         <button
                           type="button"
                           onClick={() => descargarFicha(p)}
-                          className="btn btn-secondary btn-sm"
+                          className="btn btn-ghost btn-sm"
                           disabled={generandoFichaId === p.id}
                           title="Descargar ficha técnica en PDF"
                         >
