@@ -803,19 +803,17 @@ try {
                       Sin imagen
                     </div>
                   )}
-                  {!esVentasNoTransitorio && (
-                    <div style={{marginTop:12}}>
-                      <p style={{fontSize:11, color:"var(--text-muted)", marginBottom:6}}>JPG o PNG</p>
-                      <div className="flex items-center gap-2">
-                        <label className="btn btn-secondary btn-sm" style={{cursor:"pointer"}}>
-                          Seleccionar imagen
-                          <input type="file" accept="image/png,image/jpeg" style={{display:"none"}}
-                            onChange={(e) => setImagenFile(e.target.files?.[0] || null)} />
-                        </label>
-                        <span style={{fontSize:12, color:"var(--text-muted)"}}>{imagenFile?.name || "Sin archivo"}</span>
-                      </div>
+                  <div style={{marginTop:12}}>
+                    <p style={{fontSize:11, color:"var(--text-muted)", marginBottom:6}}>JPG o PNG</p>
+                    <div className="flex items-center gap-2">
+                      <label className="btn btn-secondary btn-sm" style={{cursor:"pointer"}}>
+                        Seleccionar imagen
+                        <input type="file" accept="image/png,image/jpeg" style={{display:"none"}}
+                          onChange={(e) => setImagenFile(e.target.files?.[0] || null)} />
+                      </label>
+                      <span style={{fontSize:12, color:"var(--text-muted)"}}>{imagenFile?.name || "Sin archivo"}</span>
                     </div>
-                  )}
+                  </div>
                 </div>
               </div>
             </div>
