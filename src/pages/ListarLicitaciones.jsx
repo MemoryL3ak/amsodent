@@ -21,13 +21,14 @@ export default function ListarLicitaciones() {
   const [filtroIdLicitacion, setFiltroIdLicitacion] = useState("");
   const [filtroNumeroCot,    setFiltroNumeroCot]    = useState("");
   const [filtroMontoMin,     setFiltroMontoMin]     = useState("");
-  const [filtroMontoMax,     setFiltroMontoMax]     = useState("");
   const [filtroComuna,       setFiltroComuna]       = useState("");
   const [filtroCreadores,    setFiltroCreadores]    = useState([]);
   const [filtroEstado,       setFiltroEstado]       = useState([]);
+  const [filtroTipoCompra,   setFiltroTipoCompra]   = useState([]);
 
   const [openCreadores, setOpenCreadores] = useState(false);
   const [openEstados,   setOpenEstados]   = useState(false);
+  const [openTipoCompra, setOpenTipoCompra] = useState(false);
 
   // Orden
   const [sortCol, setSortCol] = useState("id");
@@ -42,11 +43,13 @@ export default function ListarLicitaciones() {
   }
   const creadoresRef = useRef(null);
   const estadosRef   = useRef(null);
+  const tipoCompraRef = useRef(null);
 
   useEffect(() => {
     const onClickOutside = (e) => {
       if (creadoresRef.current && !creadoresRef.current.contains(e.target)) setOpenCreadores(false);
       if (estadosRef.current   && !estadosRef.current.contains(e.target))   setOpenEstados(false);
+      if (tipoCompraRef.current && !tipoCompraRef.current.contains(e.target)) setOpenTipoCompra(false);
     };
     document.addEventListener("mousedown", onClickOutside);
     return () => document.removeEventListener("mousedown", onClickOutside);
@@ -137,6 +140,10 @@ export default function ListarLicitaciones() {
     "En espera","Adjudicada","Perdida","Desierta","Descartada","Pendiente Aprobación",
   ];
 
+  const opcionesTipoCompra = [
+    "Compra ágil","Compra directa","Licitación","Cliente particular",
+  ];
+
   const textoCreadores = useMemo(() => {
     if (filtroCreadores.length === 0) return "Todos";
     return filtroCreadores.map((e) => (usuariosMap[e] || "").trim() || "Sin nombre").join(", ");
@@ -147,6 +154,11 @@ export default function ListarLicitaciones() {
     return filtroEstado.join(", ");
   }, [filtroEstado]);
 
+  const textoTipoCompra = useMemo(() => {
+    if (filtroTipoCompra.length === 0) return "Todos";
+    return filtroTipoCompra.join(", ");
+  }, [filtroTipoCompra]);
+
   // ── Filtrado ──────────────────────────────────────────────────
   const dataFiltrada = data.filter((l) => {
     const email  = (l.creado_por || "").trim().toLowerCase();
@@ -156,9 +168,9 @@ export default function ListarLicitaciones() {
     const numeroCot = String(l.id ?? "");
     const montoTotal = Number(l.total_con_iva) || 0;
     const montoMin = filtroMontoMin !== "" ? Number(filtroMontoMin) : null;
-    const montoMax = filtroMontoMax !== "" ? Number(filtroMontoMax) : null;
 
     const fechaAdj = l.fecha_adjudicacion || "";
+    const tipoCompraRow = (l.tipo_compra || "").toString().trim();
 
     return (
       (filtroFechaDesde   ? fecha >= filtroFechaDesde   : true) &&
@@ -168,10 +180,10 @@ export default function ListarLicitaciones() {
       (filtroIdLicitacion ? idLic.includes(filtroIdLicitacion.trim().toLowerCase()) : true) &&
       (filtroNumeroCot    ? numeroCot.includes(filtroNumeroCot.trim()) : true) &&
       (montoMin != null ? montoTotal >= montoMin : true) &&
-      (montoMax != null ? montoTotal <= montoMax : true) &&
       (filtroComuna       ? comuna.includes(filtroComuna.trim().toLowerCase())      : true) &&
       (filtroCreadores.length > 0 ? filtroCreadores.includes(email)   : true) &&
-      (filtroEstado.length   > 0 ? filtroEstado.includes(l.estado)    : true)
+      (filtroEstado.length   > 0 ? filtroEstado.includes(l.estado)    : true) &&
+      (filtroTipoCompra.length > 0 ? filtroTipoCompra.includes(tipoCompraRow) : true)
     );
   });
 
@@ -380,14 +392,8 @@ export default function ListarLicitaciones() {
 
         <div className="filter-field">
           <label className="filter-label">Monto Total (mín)</label>
-          <input type="number" className="input" placeholder="Mínimo"
+          <input type="number" className="input" placeholder="≥ monto"
             value={filtroMontoMin} onChange={(e) => setFiltroMontoMin(e.target.value)} />
-        </div>
-
-        <div className="filter-field">
-          <label className="filter-label">Monto Total (máx)</label>
-          <input type="number" className="input" placeholder="Máximo"
-            value={filtroMontoMax} onChange={(e) => setFiltroMontoMax(e.target.value)} />
         </div>
 
         <div className="filter-field">
@@ -445,6 +451,35 @@ export default function ListarLicitaciones() {
                       onChange={(e) => {
                         if (e.target.checked) setFiltroEstado((prev) => [...prev, op]);
                         else setFiltroEstado((prev) => prev.filter((x) => x !== op));
+                      }} />
+                    {op}
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Tipo de Compra */}
+        <div className="filter-field" style={{ position: "relative" }} ref={tipoCompraRef}>
+          <label className="filter-label">Tipo de Compra</label>
+          <button type="button" className="dropdown-trigger" onClick={() => setOpenTipoCompra((v) => !v)}>
+            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{textoTipoCompra}</span>
+            <ChevronDown size={14} style={{ flexShrink: 0, opacity: .6 }} />
+          </button>
+          {openTipoCompra && (
+            <div className="dropdown-menu">
+              <div className="dropdown-menu-header">
+                <button className="btn btn-sm btn-secondary" onClick={() => setFiltroTipoCompra([...opcionesTipoCompra])}>Todos</button>
+                <button className="btn btn-sm btn-secondary" onClick={() => setFiltroTipoCompra([])}>Limpiar</button>
+              </div>
+              <div className="dropdown-menu-body">
+                {opcionesTipoCompra.map((op) => (
+                  <label key={op} className="dropdown-option">
+                    <input type="checkbox" checked={filtroTipoCompra.includes(op)}
+                      onChange={(e) => {
+                        if (e.target.checked) setFiltroTipoCompra((prev) => [...prev, op]);
+                        else setFiltroTipoCompra((prev) => prev.filter((x) => x !== op));
                       }} />
                     {op}
                   </label>

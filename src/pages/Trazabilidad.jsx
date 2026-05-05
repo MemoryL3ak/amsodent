@@ -6,7 +6,76 @@ import Toast from "../components/Toast";
 import ConfirmModal from "../components/ConfirmModal";
 import Select from "react-select";
 import DateFilter from "../components/DateFilter";
-import { Upload, Eye, Trash2, ArrowUpDown, ArrowUp, ArrowDown, Calendar, FileCheck } from "lucide-react";
+import { calcularSLAGuiaDespacho, cargarFeriadosParaAnios } from "../utils/diasHabiles";
+
+const SLA_GUIA_DIAS_HABILES = 3;
+
+function hoyLocalISO() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function SLABadge({ fechaOc }) {
+  if (!fechaOc) return null;
+  const sla = calcularSLAGuiaDespacho(fechaOc, hoyLocalISO(), SLA_GUIA_DIAS_HABILES);
+
+  let bg = "#dcfce7";
+  let color = "#15803d";
+  let texto = `Quedan ${sla.diasRestantes} días háb.`;
+  let titulo = `Vence el ${sla.vence}`;
+
+  if (sla.estado === "vencido") {
+    bg = "#fee2e2";
+    color = "#b91c1c";
+    const atraso = Math.abs(Number(sla.diasRestantes || 0));
+    texto = atraso > 0 ? `Vencido hace ${atraso} días háb.` : "Vencido";
+    titulo = `Vencía el ${sla.vence}`;
+  } else if (sla.estado === "vence_hoy") {
+    bg = "#fef3c7";
+    color = "#b45309";
+    texto = "Vence hoy";
+  } else if (sla.estado === "por_vencer") {
+    bg = "#fef3c7";
+    color = "#b45309";
+    texto = `Vence en ${sla.diasRestantes} día háb.`;
+  }
+
+  return (
+    <span
+      title={titulo}
+      style={{
+        display: "inline-block",
+        marginTop: 4,
+        padding: "2px 8px",
+        fontSize: 10,
+        fontWeight: 600,
+        borderRadius: 999,
+        backgroundColor: bg,
+        color,
+        whiteSpace: "nowrap",
+      }}
+    >
+      {texto}
+    </span>
+  );
+}
+import { Upload, Eye, Trash2, ArrowUpDown, ArrowUp, ArrowDown, Calendar, FileCheck, ChevronDown, Truck } from "lucide-react";
+
+// Mapping empresa courier → builder de URL de tracking. Si la empresa no
+// tiene URL o no hay número, devuelve "" (no renderizamos el link).
+const TRACKING_URL_BUILDER = {
+  "Starken": (codigo) =>
+    `https://www.starken.cl/seguimiento?codigo=${encodeURIComponent(codigo)}`,
+  "Blue Express": (codigo) =>
+    `https://www.blue.cl/seguimiento/?n_seguimiento=${encodeURIComponent(codigo)}`,
+};
+
+function buildTrackingUrl(empresa, nSeguimiento) {
+  const codigo = String(nSeguimiento || "").trim();
+  if (!codigo) return "";
+  const builder = TRACKING_URL_BUILDER[String(empresa || "").trim()];
+  return builder ? builder(codigo) : "";
+}
 
 /* ============================================================
    Helpers
@@ -88,7 +157,11 @@ export default function Trazabilidad() {
   const [filtroVendedor, setFiltroVendedor] = useState("");
   const [filtroFechaDesde, setFiltroFechaDesde] = useState("");
   const [filtroFechaHasta, setFiltroFechaHasta] = useState("");
-  // Cada flag: false = sin filtro, true = debe tener
+  const [filtroTipoCompra, setFiltroTipoCompra] = useState([]);
+  const [openTipoCompra, setOpenTipoCompra] = useState(false);
+  // Filtro de documentos: match EXACTO. Sin selección → cotizaciones sin ningún
+  // documento (OC/Guía/Factura). Con selección → cotizaciones cuyo conjunto de
+  // documentos coincide exactamente con los flags activos.
   const [flagOc, setFlagOc] = useState(false);
   const [flagGuia, setFlagGuia] = useState(false);
   const [flagFactura, setFlagFactura] = useState(false);
@@ -110,9 +183,37 @@ export default function Trazabilidad() {
   const [facturaGuiaId, setFacturaGuiaId] = useState("");
   const [subiendoFactura, setSubiendoFactura] = useState(false);
   const fileInputRef = useRef(null);
+  const tipoCompraRef = useRef(null);
 
   // Delete confirm
   const [confirmEliminar, setConfirmEliminar] = useState(null);
+
+  useEffect(() => {
+    const onClickOutside = (e) => {
+      if (tipoCompraRef.current && !tipoCompraRef.current.contains(e.target)) {
+        setOpenTipoCompra(false);
+      }
+    };
+    document.addEventListener("mousedown", onClickOutside);
+    return () => document.removeEventListener("mousedown", onClickOutside);
+  }, []);
+
+  useEffect(() => {
+    const yearActual = new Date().getFullYear();
+    cargarFeriadosParaAnios([yearActual, yearActual + 1]);
+  }, []);
+
+  const opcionesTipoCompra = [
+    "Compra ágil",
+    "Compra directa",
+    "Licitación",
+    "Cliente particular",
+  ];
+
+  const textoTipoCompra = useMemo(() => {
+    if (filtroTipoCompra.length === 0) return "Todos";
+    return filtroTipoCompra.join(", ");
+  }, [filtroTipoCompra]);
 
   const rolNorm = (rol ?? "").toString().trim().toLowerCase();
   const esAdmin = rolNorm === "admin";
@@ -141,7 +242,7 @@ export default function Trazabilidad() {
       // Cotizaciones adjudicadas
       let rows;
       try {
-        const licitaciones = await api.get("/licitaciones/with-fields?fields=id,id_licitacion,nombre,nombre_entidad,estado,fecha_adjudicada,total_con_iva,total_sin_iva,creado_por,comuna");
+        const licitaciones = await api.get("/licitaciones/with-fields?fields=id,id_licitacion,nombre,nombre_entidad,estado,fecha_adjudicada,total_con_iva,total_sin_iva,creado_por,comuna,tipo_compra");
         rows = (licitaciones || []).filter((l) => l.estado === "Adjudicada");
       } catch (error) {
         console.error("Error cargando cotizaciones:", error);
@@ -224,19 +325,27 @@ export default function Trazabilidad() {
         if (filtroFechaHasta && fechaRef > filtroFechaHasta) return false;
       }
 
-      // Filtros por flags (OC / Guía / Factura) — true = debe tener
+      // Filtro por tipo de compra (multi-select; vacío = todos)
+      if (filtroTipoCompra.length > 0) {
+        const tipoRow = (l.tipo_compra || "").toString().trim();
+        if (!filtroTipoCompra.includes(tipoRow)) return false;
+      }
+
+      // Filtro por documentos — match EXACTO sobre {OC, Guía, Factura}.
+      // Sin selección → cotizaciones sin ningún documento de esos tres tipos.
+      // Con selección → cotizaciones cuyo conjunto de tipos coincida exactamente.
       const docs = documentosMap[l.id] || [];
       const tieneOC = docs.some((d) => d.tipo === "orden_compra");
       const tieneGuia = docs.some((d) => d.tipo === "guia_despacho");
       const tieneFactura = docs.some((d) => d.tipo === "factura");
 
-      if (flagOc && !tieneOC) return false;
-      if (flagGuia && !tieneGuia) return false;
-      if (flagFactura && !tieneFactura) return false;
+      if (tieneOC !== flagOc) return false;
+      if (tieneGuia !== flagGuia) return false;
+      if (tieneFactura !== flagFactura) return false;
 
       return true;
     });
-  }, [data, filtroId, filtroEntidad, filtroVendedor, filtroFechaDesde, filtroFechaHasta, flagOc, flagGuia, flagFactura, usuariosMap, documentosMap]);
+  }, [data, filtroId, filtroEntidad, filtroVendedor, filtroFechaDesde, filtroFechaHasta, filtroTipoCompra, flagOc, flagGuia, flagFactura, usuariosMap, documentosMap]);
 
   /* ── Ordenamiento ──────────────────────────────────────────── */
   function toggleSort(col) {
@@ -681,11 +790,11 @@ export default function Trazabilidad() {
         {/* Separador sutil */}
         <div style={{ height: 1, backgroundColor: "#f1f5f9" }} />
 
-        {/* Fila 2: período + flags + limpiar (mismo grid 3 columnas) */}
+        {/* Fila 2: período + tipo compra + flags + limpiar */}
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "1fr 1fr 1fr",
+            gridTemplateColumns: "1fr 1fr 1.4fr auto",
             gap: 18,
             alignItems: "end",
           }}
@@ -708,8 +817,56 @@ export default function Trazabilidad() {
             </div>
           </div>
 
+          <div style={{ position: "relative" }} ref={tipoCompraRef}>
+            <label className="filter-label">Tipo de Compra</label>
+            <button
+              type="button"
+              className="dropdown-trigger"
+              onClick={() => setOpenTipoCompra((v) => !v)}
+              style={{ width: "100%", height: 36 }}
+            >
+              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {textoTipoCompra}
+              </span>
+              <ChevronDown size={14} style={{ flexShrink: 0, opacity: 0.6 }} />
+            </button>
+            {openTipoCompra && (
+              <div className="dropdown-menu">
+                <div className="dropdown-menu-header">
+                  <button
+                    className="btn btn-sm btn-secondary"
+                    onClick={() => setFiltroTipoCompra([...opcionesTipoCompra])}
+                  >
+                    Todos
+                  </button>
+                  <button
+                    className="btn btn-sm btn-secondary"
+                    onClick={() => setFiltroTipoCompra([])}
+                  >
+                    Limpiar
+                  </button>
+                </div>
+                <div className="dropdown-menu-body">
+                  {opcionesTipoCompra.map((op) => (
+                    <label key={op} className="dropdown-option">
+                      <input
+                        type="checkbox"
+                        checked={filtroTipoCompra.includes(op)}
+                        onChange={(e) => {
+                          if (e.target.checked) setFiltroTipoCompra((prev) => [...prev, op]);
+                          else setFiltroTipoCompra((prev) => prev.filter((x) => x !== op));
+                        }}
+                      />
+                      {op}
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
           <div>
-            <label className="filter-label">Filtrar por documentos</label>
+            <label className="filter-label">Filtrar por documentos (match exacto)</label>
             <div style={{ display: "flex", gap: 6 }}>
               {[
                 { label: "Orden de Compra", value: flagOc, set: setFlagOc, color: "#1d4ed8", bg: "#dbeafe" },
@@ -746,7 +903,7 @@ export default function Trazabilidad() {
           </div>
 
           <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "end" }}>
-            {(filtroId || filtroEntidad || filtroVendedor || filtroFechaDesde || filtroFechaHasta || flagOc || flagGuia || flagFactura) ? (
+            {(filtroId || filtroEntidad || filtroVendedor || filtroFechaDesde || filtroFechaHasta || filtroTipoCompra.length > 0 || flagOc || flagGuia || flagFactura) ? (
               <button
                 type="button"
                 className="btn btn-secondary btn-sm"
@@ -757,6 +914,7 @@ export default function Trazabilidad() {
                   setFiltroVendedor("");
                   setFiltroFechaDesde("");
                   setFiltroFechaHasta("");
+                  setFiltroTipoCompra([]);
                   setFlagOc(false);
                   setFlagGuia(false);
                   setFlagFactura(false);
@@ -941,26 +1099,34 @@ export default function Trazabilidad() {
                               backgroundColor: hoverOc ? hoverBg : undefined,
                             }}
                           >
-                            {oc ? (
-                              <div>
-                                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                                  <span style={{ fontWeight: 500, color: "#1f2937" }}>{oc.numero || "S/N"}</span>
-                                  <button
-                                    type="button"
-                                    onClick={() => abrirDocumento(oc)}
-                                    style={{ background: "none", border: "none", cursor: "pointer", color: "var(--primary)", padding: 0 }}
-                                    title="Ver PDF"
-                                  >
-                                    <Eye size={13} />
-                                  </button>
+                            {oc ? (() => {
+                              const tieneGuia = getDocsForLic(lic.id).some(
+                                (d) => d.tipo === "guia_despacho" && d.deriva_de_id === oc.id
+                              );
+                              return (
+                                <div>
+                                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                    <span style={{ fontWeight: 500, color: "#1f2937" }}>{oc.numero || "S/N"}</span>
+                                    <button
+                                      type="button"
+                                      onClick={() => abrirDocumento(oc)}
+                                      style={{ background: "none", border: "none", cursor: "pointer", color: "var(--primary)", padding: 0 }}
+                                      title="Ver PDF"
+                                    >
+                                      <Eye size={13} />
+                                    </button>
+                                  </div>
+                                  <div style={{ color: "var(--text-muted)", fontSize: "11px" }}>
+                                    {oc.fecha_oc
+                                      ? new Date(`${oc.fecha_oc}T00:00:00`).toLocaleDateString("es-CL")
+                                      : <span style={{ fontStyle: "italic", color: "#cbd5e1" }}>Sin fecha</span>}
+                                  </div>
+                                  {!tieneGuia && oc.fecha_oc && (
+                                    <SLABadge fechaOc={oc.fecha_oc} />
+                                  )}
                                 </div>
-                                <div style={{ color: "var(--text-muted)", fontSize: "11px" }}>
-                                  {oc.fecha_oc
-                                    ? new Date(`${oc.fecha_oc}T00:00:00`).toLocaleDateString("es-CL")
-                                    : <span style={{ fontStyle: "italic", color: "#cbd5e1" }}>Sin fecha</span>}
-                                </div>
-                              </div>
-                            ) : (
+                              );
+                            })() : (
                               <span style={{ color: "var(--text-muted)" }}>—</span>
                             )}
                           </td>
@@ -978,24 +1144,67 @@ export default function Trazabilidad() {
                               backgroundColor: hoverGuia ? hoverBg : undefined,
                             }}
                           >
-                            {guia ? (
-                              <div>
-                                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                                  <span style={{ fontWeight: 500, color: "#1f2937" }}>{guia.numero || "S/N"}</span>
-                                  <button
-                                    type="button"
-                                    onClick={() => abrirDocumento(guia)}
-                                    style={{ background: "none", border: "none", cursor: "pointer", color: "var(--primary)", padding: 0 }}
-                                    title="Ver PDF"
-                                  >
-                                    <Eye size={13} />
-                                  </button>
+                            {guia ? (() => {
+                              const trackingUrl = buildTrackingUrl(guia.empresa_despacho, guia.n_seguimiento);
+                              const empresaTxt = (guia.empresa_despacho || "").trim();
+                              const esInterno = empresaTxt.toLowerCase() === "despacho interno";
+                              return (
+                                <div>
+                                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                    <span style={{ fontWeight: 500, color: "#1f2937" }}>{guia.numero || "S/N"}</span>
+                                    <button
+                                      type="button"
+                                      onClick={() => abrirDocumento(guia)}
+                                      style={{ background: "none", border: "none", cursor: "pointer", color: "var(--primary)", padding: 0 }}
+                                      title="Ver PDF"
+                                    >
+                                      <Eye size={13} />
+                                    </button>
+                                    {trackingUrl && (
+                                      <a
+                                        href={trackingUrl}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        onClick={() => {
+                                          if (navigator?.clipboard && guia.n_seguimiento) {
+                                            navigator.clipboard.writeText(String(guia.n_seguimiento)).catch(() => {});
+                                          }
+                                        }}
+                                        style={{
+                                          display: "inline-flex",
+                                          alignItems: "center",
+                                          gap: 4,
+                                          padding: "3px 8px",
+                                          borderRadius: 6,
+                                          backgroundColor: "#ea580c",
+                                          color: "#ffffff",
+                                          fontSize: 11,
+                                          fontWeight: 600,
+                                          textDecoration: "none",
+                                          lineHeight: 1,
+                                          boxShadow: "0 1px 2px rgba(234,88,12,.3)",
+                                        }}
+                                        title={`Abrir tracking ${empresaTxt} (${guia.n_seguimiento}) — número copiado al portapapeles`}
+                                      >
+                                        <Truck size={12} />
+                                        Tracking
+                                      </a>
+                                    )}
+                                  </div>
+                                  <div style={{ color: "var(--text-muted)", fontSize: "11px" }}>
+                                    {(guia.fecha_oc || guia.created_at)
+                                      ? new Date(`${(guia.fecha_oc || guia.created_at).slice(0, 10)}T00:00:00`).toLocaleDateString("es-CL")
+                                      : ""}
+                                  </div>
+                                  {empresaTxt && (
+                                    <div style={{ color: "var(--text-muted)", fontSize: "10px", marginTop: 2 }}>
+                                      {empresaTxt}
+                                      {!esInterno && guia.n_seguimiento ? ` · ${guia.n_seguimiento}` : ""}
+                                    </div>
+                                  )}
                                 </div>
-                                <div style={{ color: "var(--text-muted)", fontSize: "11px" }}>
-                                  {guia.created_at ? new Date(guia.created_at).toLocaleDateString("es-CL") : ""}
-                                </div>
-                              </div>
-                            ) : (
+                              );
+                            })() : (
                               <span style={{ color: "var(--text-muted)" }}>—</span>
                             )}
                           </td>

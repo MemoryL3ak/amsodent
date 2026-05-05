@@ -191,6 +191,8 @@ export class LicitacionesService {
       if (msg.includes('pagada')) { delete bodyWithout.pagada; removed = true; }
       if (msg.includes('fecha_pago')) { delete bodyWithout.fecha_pago; removed = true; }
       if (msg.includes('forma_pago')) { delete bodyWithout.forma_pago; removed = true; }
+      if (msg.includes('empresa_despacho')) { delete bodyWithout.empresa_despacho; removed = true; }
+      if (msg.includes('n_seguimiento')) { delete bodyWithout.n_seguimiento; removed = true; }
       if (removed) {
         const { data: d2, error: e2 } = await this.supabase.getClient()
           .from('licitacion_documentos')

@@ -43,6 +43,9 @@ import SorteoRegistro from "./pages/SorteoRegistro";
 import SorteoRegistros from "./pages/SorteoRegistros";
 import RequireRole from "./components/RequireRole";
 
+// COMUNICACIONES
+import Comunicaciones from "./pages/Comunicaciones";
+
 export default function App() {
   return (
     <BrowserRouter>
@@ -100,6 +103,16 @@ export default function App() {
             element={
               <RequireRole allow={["admin"]}>
                 <SorteoRegistros />
+              </RequireRole>
+            }
+          />
+
+          {/* COMUNICACIONES (solo admin) */}
+          <Route
+            path="comunicaciones"
+            element={
+              <RequireRole allow={["admin"]}>
+                <Comunicaciones />
               </RequireRole>
             }
           />

@@ -688,7 +688,7 @@ export default function CrearLicitacion() {
   const [nombre, setNombre] = useState("");
   const [fechaHoraCierre, setFechaHoraCierre] = useState("");
   const [monto, setMonto] = useState(""); // string formateado "1.234.567"
-  const [listado, setListado] = useState("1");
+  const [listado, setListado] = useState("2"); // derivado de tipoCompra: "Compra ágil" → lista 2
 
   const [rutEntidad, setRutEntidad] = useState("");
   const [nombreEntidad, setNombreEntidad] = useState("");
@@ -782,7 +782,7 @@ export default function CrearLicitacion() {
         setMonto(formatearCLDesdeString(montoGuardado));
       }
 
-      setListado(data.listado || "1");
+      setListado(data.listado || "2");
 
       setRutEntidad(data.rutEntidad || "");
       setNombreEntidad(data.nombreEntidad || "");
@@ -1028,37 +1028,6 @@ export default function CrearLicitacion() {
       copia[index] = item;
       return copia;
     });
-  }
-
-  /* ============================================================
-     CAMBIO DE LISTA (no pisa manual)
-  ============================================================ */
-  function actualizarPreciosPorLista(nuevaLista) {
-    const copia = items.map((it) => {
-      const sku = String(it.sku || "").trim();
-      const prod =
-        (sku
-          ? productos.find((p) => String(p.sku || "").trim() === sku)
-          : null) ||
-        (it.producto ? productos.find((p) => p.nombre === it.producto) : null);
-
-      if (!prod) return it;
-
-      const precioAuto = getPrecioBaseParaSKU(prod, nuevaLista, campaignPrices);
-      const cantidad = Math.max(1, Number(it.cantidad || 1));
-
-      const precioBaseFinal = it.precioManual ? Number(it.precio || 0) : precioAuto;
-      const precioConFlete = precioBaseFinal + fletePorUnidad;
-
-      return {
-        ...it,
-        precio: precioBaseFinal,
-        precioUnitarioStr: it.precioManual ? (it.precioUnitarioStr || "") : "",
-        total: redondear(cantidad * precioConFlete),
-      };
-    });
-
-    setItems(copia);
   }
 
   /* ============================================================
@@ -1769,35 +1738,25 @@ export default function CrearLicitacion() {
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              Lista de Precios *
-            </label>
-            <select
-              className="w-full rounded-md border border-gray-300 px-3 py-2"
-              value={listado}
-              onChange={(e) => {
-                setListado(e.target.value);
-                actualizarPreciosPorLista(e.target.value);
-              }}
-            >
-              <option value="1">Lista 1</option>
-              <option value="2">Lista 2</option>
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
               Tipo de Compra *
             </label>
             <select
               className="w-full rounded-md border border-gray-300 px-3 py-2"
               value={tipoCompra}
-              onChange={(e) => setTipoCompra(e.target.value)}
+              onChange={(e) => {
+                const next = e.target.value;
+                setTipoCompra(next);
+                setListado(next === "Cliente particular" ? "1" : "2");
+              }}
             >
               <option value="Compra ágil">Compra ágil</option>
               <option value="Compra directa">Compra directa</option>
               <option value="Licitación">Licitación</option>
               <option value="Cliente particular">Cliente particular</option>
             </select>
+            <p className="text-[11px] text-gray-500 mt-1">
+              Cliente particular usa Lista 1; las demás opciones usan Lista 2.
+            </p>
           </div>
         </div>
         </div>

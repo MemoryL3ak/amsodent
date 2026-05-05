@@ -771,10 +771,11 @@ export default function Metas() {
                               <div style={{ width: "100%" }}>
                                 <div style={{ fontSize: "10px", color: "var(--text-muted)", marginBottom: "4px" }}>{splitCfg.firstLabel}</div>
                                 <input
-                                  type="number" min="0" step="1" value={splitFirst}
+                                  type="text" inputMode="numeric"
+                                  value={fmtCLP(splitFirst)}
                                   disabled={!puedeEditarMetas}
                                   onChange={(e) => {
-                                    const nextFirst = Math.max(0, Number(e.target.value || 0));
+                                    const nextFirst = Math.max(0, Number((e.target.value || "").replace(/\D/g, "") || 0));
                                     const nextSecond = splitSecond;
                                     setMetasSplitDraftMap((prev) => ({ ...prev, [r.email]: { [splitCfg.firstKey]: nextFirst, [splitCfg.secondKey]: nextSecond } }));
                                     setMetasDraftMap((prev) => ({ ...prev, [r.email]: nextFirst + nextSecond }));
@@ -785,10 +786,11 @@ export default function Metas() {
                               <div style={{ width: "100%" }}>
                                 <div style={{ fontSize: "10px", color: "var(--text-muted)", marginBottom: "4px" }}>{splitCfg.secondLabel}</div>
                                 <input
-                                  type="number" min="0" step="1" value={splitSecond}
+                                  type="text" inputMode="numeric"
+                                  value={fmtCLP(splitSecond)}
                                   disabled={!puedeEditarMetas}
                                   onChange={(e) => {
-                                    const nextSecond = Math.max(0, Number(e.target.value || 0));
+                                    const nextSecond = Math.max(0, Number((e.target.value || "").replace(/\D/g, "") || 0));
                                     const nextFirst = splitFirst;
                                     setMetasSplitDraftMap((prev) => ({ ...prev, [r.email]: { [splitCfg.firstKey]: nextFirst, [splitCfg.secondKey]: nextSecond } }));
                                     setMetasDraftMap((prev) => ({ ...prev, [r.email]: nextFirst + nextSecond }));
@@ -800,11 +802,11 @@ export default function Metas() {
                             </div>
                           ) : (
                             <input
-                              type="number" min="0" step="1"
-                              value={Number(metasDraftMap[r.email] ?? 0)}
+                              type="text" inputMode="numeric"
+                              value={fmtCLP(Number(metasDraftMap[r.email] ?? 0))}
                               disabled={!puedeEditarMetas}
                               onChange={(e) => {
-                                const v = Math.max(0, Number(e.target.value || 0));
+                                const v = Math.max(0, Number((e.target.value || "").replace(/\D/g, "") || 0));
                                 setMetasSplitDraftMap((prev) => { if (!prev[r.email]) return prev; const next = { ...prev }; delete next[r.email]; return next; });
                                 setMetasDraftMap((prev) => ({ ...prev, [r.email]: v }));
                               }}

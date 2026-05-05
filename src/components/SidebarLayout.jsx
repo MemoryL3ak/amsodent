@@ -20,6 +20,7 @@ import {
   LogOut,
   CreditCard,
   Gift,
+  Mail,
 } from "lucide-react";
 
 const ROLE_LABELS = {
@@ -111,6 +112,7 @@ export default function SidebarLayout() {
 
   const adminNav = [
     esAdmin && { to: "/sorteo-registros", icon: Gift,     label: "Sorteo" },
+    esAdmin && { to: "/comunicaciones",   icon: Mail,     label: "Comunicaciones" },
     esAdmin && { to: "/monitoreo",        icon: Activity, label: "Monitoreo de Usuarios" },
     esAdmin && { to: "/usuarios",         icon: UserCog,  label: "Usuarios" },
   ].filter(Boolean);
