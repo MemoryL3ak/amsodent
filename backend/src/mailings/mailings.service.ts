@@ -65,6 +65,11 @@ export class MailingsService {
       // Railway/Fly/Render no soportan IPv6 saliente. Sin esto Node resuelve
       // smtp.gmail.com a una IPv6 y falla con ENETUNREACH.
       family: 4,
+      // Si la red está bloqueada o lenta, queremos fallar rápido y no dejar
+      // la petición HTTP colgada minutos.
+      connectionTimeout: 20 * 1000,
+      greetingTimeout: 20 * 1000,
+      socketTimeout: 60 * 1000,
     } as any);
     return this.transporter;
   }
