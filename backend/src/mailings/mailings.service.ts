@@ -376,6 +376,17 @@ export class MailingsService {
     }));
   }
 
+  async eliminarEnvio(envioId: number) {
+    const client = this.supabase.getClient();
+    // El FK con on delete cascade borra los destinatarios automáticamente.
+    const { error } = await client
+      .from('mailings_envios')
+      .delete()
+      .eq('id', envioId);
+    if (error) throw new BadRequestException(error.message);
+    return { deleted: true };
+  }
+
   async getEnvioDetalle(envioId: number) {
     const client = this.supabase.getClient();
     const { data: envio, error: errEnvio } = await client

@@ -326,7 +326,7 @@ export default function Comunicaciones() {
             Comunicaciones · Envío de correos
           </h1>
           <p className="page-subtitle">
-            Componé un correo y enviálo a una lista libre de destinatarios. Cada correo va por separado con un pixel de tracking, así sabemos quién lo abrió.
+            Envío de correos masivos con tracking de aperturas por destinatario.
           </p>
         </div>
       </div>
@@ -602,12 +602,10 @@ export default function Comunicaciones() {
               ))}
             </div>
             <div style={{ fontSize: 11, color: "var(--text-soft)", marginBottom: 8 }}>
-              {flyerModo === "imagen" &&
-                "El PDF se convierte a PNG (página 1) y va embebido como imagen en el cuerpo. La fidelidad visual es perfecta pero el texto no es seleccionable."}
               {flyerModo === "html_enriquecido" &&
                 "El PDF se convierte a HTML: PNG de fondo + capa de texto invisible posicionada encima. El texto queda seleccionable e indexable en clientes que respetan position:absolute (Gmail webmail, Apple Mail). En Outlook desktop la imagen se ve OK pero la capa de texto puede colapsar."}
               {flyerModo === "adjunto_pdf" &&
-                "El PDF viaja como archivo adjunto descargable. El cuerpo del correo es el texto que escribas — lo abrís el PDF aparte."}
+                "El PDF viaja como archivo adjunto descargable. El cuerpo del correo es el texto que se escriba; el PDF se abre aparte."}
             </div>
 
             <input
@@ -730,9 +728,6 @@ export default function Comunicaciones() {
               style={{ width: "100%", resize: "vertical", fontFamily: "ui-monospace, monospace", fontSize: 13 }}
               disabled={enviando}
             />
-            <div style={{ fontSize: 11, color: "var(--text-soft)", marginTop: 4 }}>
-              Si pegás HTML se respeta tal cual. Si es texto plano, los saltos de línea se convierten en párrafos automáticamente.
-            </div>
           </div>
 
           {resumen && (
@@ -807,6 +802,8 @@ function HistorialEnvios() {
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState("");
   const [seleccionado, setSeleccionado] = useState(null); // id del envío con detalle abierto
+  const [confirmarEliminar, setConfirmarEliminar] = useState(null); // envío a eliminar
+  const [eliminando, setEliminando] = useState(false);
 
   useEffect(() => {
     cargar();
@@ -825,6 +822,20 @@ function HistorialEnvios() {
     }
   }
 
+  async function eliminarEnvio() {
+    if (!confirmarEliminar) return;
+    setEliminando(true);
+    try {
+      await api.delete(`/mailings/envios/${confirmarEliminar.id}`);
+      setEnvios((prev) => prev.filter((e) => e.id !== confirmarEliminar.id));
+      setConfirmarEliminar(null);
+    } catch (e) {
+      setError(e?.message || "No se pudo eliminar el envío.");
+    } finally {
+      setEliminando(false);
+    }
+  }
+
   if (seleccionado) {
     return (
       <DetalleEnvio
@@ -838,6 +849,70 @@ function HistorialEnvios() {
   }
 
   return (
+    <>
+      {confirmarEliminar && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(15,23,42,.45)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 1000,
+            padding: 16,
+          }}
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !eliminando) setConfirmarEliminar(null);
+          }}
+        >
+          <div
+            style={{
+              width: "100%",
+              maxWidth: 460,
+              background: "var(--surface)",
+              borderRadius: 12,
+              padding: 22,
+              boxShadow: "0 20px 50px rgba(15,23,42,.25)",
+            }}
+          >
+            <h3 style={{ margin: "0 0 10px", fontSize: 17, fontWeight: 700 }}>
+              Eliminar envío
+            </h3>
+            <p style={{ margin: "0 0 6px", fontSize: 13, color: "var(--text)" }}>
+              Se eliminará el envío y todo el registro de destinatarios y aperturas.
+            </p>
+            <p style={{ margin: "0 0 14px", fontSize: 13, color: "var(--text-muted)" }}>
+              <strong>{confirmarEliminar.asunto || "(sin asunto)"}</strong>
+              {" · "}
+              {confirmarEliminar.creado_at
+                ? new Date(confirmarEliminar.creado_at).toLocaleString("es-CL")
+                : ""}
+            </p>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => setConfirmarEliminar(null)}
+                disabled={eliminando}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                className="btn btn-danger"
+                onClick={eliminarEnvio}
+                disabled={eliminando}
+              >
+                {eliminando ? "Eliminando…" : "Eliminar"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     <div className="surface">
       <div className="surface-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <h3 className="surface-title">Envíos realizados</h3>
@@ -874,7 +949,7 @@ function HistorialEnvios() {
                   <th style={{ textAlign: "right", width: 100 }}>Enviados</th>
                   <th style={{ textAlign: "right", width: 100 }}>Fallidos</th>
                   <th style={{ width: 200 }}>Aperturas</th>
-                  <th style={{ width: 120 }}></th>
+                  <th style={{ width: 180 }}></th>
                 </tr>
               </thead>
               <tbody>
@@ -911,13 +986,24 @@ function HistorialEnvios() {
                         </div>
                       </td>
                       <td>
-                        <button
-                          type="button"
-                          className="btn btn-secondary btn-sm"
-                          onClick={() => setSeleccionado(e.id)}
-                        >
-                          Ver detalle
-                        </button>
+                        <div style={{ display: "flex", gap: 6 }}>
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-sm"
+                            onClick={() => setSeleccionado(e.id)}
+                          >
+                            Ver detalle
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-ghost btn-sm"
+                            onClick={() => setConfirmarEliminar(e)}
+                            title="Eliminar envío"
+                            style={{ color: "#b91c1c" }}
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -928,6 +1014,7 @@ function HistorialEnvios() {
         )}
       </div>
     </div>
+    </>
   );
 }
 

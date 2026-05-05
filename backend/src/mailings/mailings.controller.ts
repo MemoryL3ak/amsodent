@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  Delete,
   Body,
   Param,
   ParseIntPipe,
@@ -194,6 +195,11 @@ export class MailingsController {
     const detalle = await this.mailingsService.getEnvioDetalle(id);
     if (!detalle) throw new BadRequestException(`Envío ${id} no encontrado.`);
     return detalle;
+  }
+
+  @Delete('envios/:id')
+  async eliminarEnvio(@Param('id', ParseIntPipe) id: number) {
+    return this.mailingsService.eliminarEnvio(id);
   }
 
   // Emails que abrieron el último envío (para cruzar con sorteo / clientes)
