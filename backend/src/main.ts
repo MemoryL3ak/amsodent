@@ -1,5 +1,12 @@
 import { NestFactory } from '@nestjs/core';
+import * as dns from 'dns';
 import { AppModule } from './app.module';
+
+// Railway (y la mayoría de cloud providers chicos) sólo tienen IPv4 saliente.
+// Por default Node resuelve hostnames con IPv6 primero, lo que hace fallar
+// llamadas a Gmail SMTP (smtp.gmail.com), Boostr (api.boostr.cl), etc. con
+// ENETUNREACH. Forzamos IPv4 a nivel global.
+dns.setDefaultResultOrder('ipv4first');
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);

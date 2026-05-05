@@ -62,7 +62,10 @@ export class MailingsService {
       port,
       secure: port === 465,
       auth: { user, pass },
-    });
+      // Railway/Fly/Render no soportan IPv6 saliente. Sin esto Node resuelve
+      // smtp.gmail.com a una IPv6 y falla con ENETUNREACH.
+      family: 4,
+    } as any);
     return this.transporter;
   }
 
