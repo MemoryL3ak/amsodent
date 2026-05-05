@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 /**
- * Convierte un CSV de precios → un único UPDATE bulk SQL para Supabase.
+ * Convierte un CSV de productos → un único UPDATE bulk SQL para Supabase.
  *
  * Uso:
  *   node scripts/csv-a-sql-precios.mjs "C:/ruta/al/Lista de Precios.csv"
  *
- * Requisitos del CSV: encabezados sku,nombre,categoria,marca,formato,costo,lista1,lista2
- * Solo se actualizan lista1 y lista2 — el resto de columnas se ignoran.
+ * Layout fijo del CSV (por posición de columna):
+ *   A=sku  C=nombre  D=categoria  E=marca  F=formato
+ *   H=costo  J=lista1  K=margen  M=lista2
  *
  * Salida: scripts/output/actualizar-precios.sql
  */
@@ -25,7 +26,17 @@ if (!csvPath) {
   process.exit(1);
 }
 
-const raw = readFileSync(csvPath, "utf8").replace(/^﻿/, "");
+// Lee el archivo como buffer y detecta encoding (UTF-8 vs Latin-1).
+// Muchos CSV exportados desde Excel en Windows vienen en latin1 (cp1252).
+const buf = readFileSync(csvPath);
+let raw = buf.toString("utf8");
+// Si detectamos el carácter de reemplazo o secuencias típicas de doble-codificación,
+// re-decodificamos como latin1.
+if (raw.includes("�") || /Ã[©³¡±¨º»]/.test(raw)) {
+  raw = buf.toString("latin1");
+}
+raw = raw.replace(/^﻿/, "");
+
 const lines = raw.split(/\r?\n/).filter((l) => l.trim().length > 0);
 
 if (lines.length < 2) {
@@ -58,16 +69,20 @@ function parseCsvLine(line) {
   return result;
 }
 
-const header = parseCsvLine(lines[0]).map((h) => h.trim().toLowerCase());
-const idxSku = header.indexOf("sku");
-const idxLista1 = header.indexOf("lista1");
-const idxLista2 = header.indexOf("lista2");
+// Mapeo fijo de columnas (0-indexed)
+const idxSku = 0;       // A
+const idxNombre = 2;    // C
+const idxCategoria = 3; // D
+const idxMarca = 4;     // E
+const idxFormato = 5;   // F
+const idxCosto = 7;     // H
+const idxLista1 = 9;    // J
+const idxMargen = 10;   // K
+const idxLista2 = 12;   // M
 
-if (idxSku === -1 || idxLista1 === -1 || idxLista2 === -1) {
-  console.error(`❌ Faltan columnas requeridas. Encabezados: ${header.join(", ")}`);
-  console.error("   Se requieren: sku, lista1, lista2");
-  process.exit(1);
-}
+console.log(
+  `   Mapeo fijo: A=sku, C=nombre, D=categoria, E=marca, F=formato, H=costo, J=lista1, K=margen, M=lista2`
+);
 
 // Parsea precios CL: "$3.277" / "3277" / "3,277.00" → 3277
 function parsePrecio(raw) {
@@ -75,18 +90,14 @@ function parsePrecio(raw) {
   let s = String(raw).trim();
   if (!s) return null;
   s = s.replace(/[\s$]/g, "");
-  // Si tiene "." y "," asumimos formato CL: $1.234,56 → 1234.56
   if (s.includes(".") && s.includes(",")) {
     s = s.replace(/\./g, "").replace(",", ".");
   } else if (s.includes(".")) {
-    // Formato CL típico: "$3.277" donde "." es separador de miles
-    // Heurística: si después del último "." hay 3 dígitos, son miles
     const lastDot = s.lastIndexOf(".");
     const decimals = s.length - lastDot - 1;
     if (decimals === 3) {
       s = s.replace(/\./g, "");
     }
-    // si decimals !== 3, asumimos que el "." es separador decimal y se deja
   } else if (s.includes(",")) {
     s = s.replace(",", ".");
   }
@@ -94,8 +105,28 @@ function parsePrecio(raw) {
   return Number.isFinite(n) ? n : null;
 }
 
-function escSku(sku) {
-  return String(sku).replace(/'/g, "''");
+// Parsea margen: "30%" / "30,5%" / "0,30" → número (porcentaje, p.ej. 30 o 30.5)
+function parseMargen(raw) {
+  if (raw == null) return null;
+  let s = String(raw).trim();
+  if (!s) return null;
+  s = s.replace(/[\s%]/g, "");
+  if (s.includes(".") && s.includes(",")) {
+    s = s.replace(/\./g, "").replace(",", ".");
+  } else if (s.includes(",")) {
+    s = s.replace(",", ".");
+  }
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+}
+
+function escSql(v) {
+  if (v == null) return "null";
+  return `'${String(v).replace(/'/g, "''")}'`;
+}
+
+function num(v) {
+  return v == null ? "null" : v;
 }
 
 const rows = [];
@@ -104,19 +135,21 @@ const errores = [];
 for (let i = 1; i < lines.length; i++) {
   const cols = parseCsvLine(lines[i]);
   const sku = (cols[idxSku] ?? "").trim();
-  const l1 = parsePrecio(cols[idxLista1]);
-  const l2 = parsePrecio(cols[idxLista2]);
-
   if (!sku) {
     errores.push({ linea: i + 1, motivo: "SKU vacío", raw: lines[i].slice(0, 80) });
     continue;
   }
-  if (l1 == null && l2 == null) {
-    errores.push({ linea: i + 1, motivo: "lista1 y lista2 vacíos/inválidos", sku });
-    continue;
-  }
 
-  rows.push({ sku, l1, l2 });
+  const nombre = (cols[idxNombre] ?? "").trim() || null;
+  const categoria = (cols[idxCategoria] ?? "").trim() || null;
+  const marca = (cols[idxMarca] ?? "").trim() || null;
+  const formato = (cols[idxFormato] ?? "").trim() || null;
+  const costo = parsePrecio(cols[idxCosto]);
+  const lista1 = parsePrecio(cols[idxLista1]);
+  const lista2 = parsePrecio(cols[idxLista2]);
+  const margen = parseMargen(cols[idxMargen]);
+
+  rows.push({ sku, nombre, categoria, marca, formato, costo, lista1, margen, lista2 });
 }
 
 if (rows.length === 0) {
@@ -124,38 +157,57 @@ if (rows.length === 0) {
   process.exit(1);
 }
 
-// Genera SQL bulk
+// Genera SQL bulk (upsert: actualiza existentes, inserta nuevos)
 const valuesSql = rows
   .map(
     (r) =>
-      `  ('${escSku(r.sku)}', ${r.l1 == null ? "null" : r.l1}, ${r.l2 == null ? "null" : r.l2})`
+      `  (${escSql(r.sku)}, ${escSql(r.nombre)}, ${escSql(r.categoria)}, ${escSql(r.marca)}, ${escSql(r.formato)}, ${num(r.costo)}, ${num(r.lista1)}, ${num(r.lista2)})`
   )
   .join(",\n");
 
-const sql = `-- Actualización masiva de precios (lista1 y lista2)
+const sql = `-- Upsert masivo de productos (nombre, categoria, marca, formato, costo, lista1, lista2)
 -- Generado: ${new Date().toISOString()}
 -- Filas: ${rows.length}
 -- Origen: ${csvPath.replace(/\\/g, "/")}
+-- Comportamiento:
+--   * SKU existente y estado <> 'Transitorio' -> UPDATE
+--   * SKU existente y estado = 'Transitorio'  -> NO se toca
+--   * SKU NO existente                        -> INSERT con estado = 'Activo'
 
 begin;
 
-with v(sku, lista1, lista2) as (
-  values
+insert into public.productos as p
+  (sku, nombre, categoria, marca, formato, costo, lista1, lista2, estado)
+select
+  v.sku,
+  v.nombre,
+  v.categoria,
+  v.marca,
+  v.formato,
+  coalesce(v.costo, 0),
+  coalesce(v.lista1, 0),
+  coalesce(v.lista2, 0),
+  'Activo'
+from (values
 ${valuesSql}
-)
-update public.productos as p
+) as v(sku, nombre, categoria, marca, formato, costo, lista1, lista2)
+on conflict (sku) do update
 set
-  lista1 = coalesce(v.lista1, p.lista1),
-  lista2 = coalesce(v.lista2, p.lista2)
-from v
-where p.sku = v.sku;
+  nombre    = coalesce(excluded.nombre,    p.nombre),
+  categoria = coalesce(excluded.categoria, p.categoria),
+  marca     = coalesce(excluded.marca,     p.marca),
+  formato   = coalesce(excluded.formato,   p.formato),
+  costo     = coalesce(excluded.costo,     p.costo),
+  lista1    = coalesce(excluded.lista1,    p.lista1),
+  lista2    = coalesce(excluded.lista2,    p.lista2)
+where lower(coalesce(p.estado, '')) <> 'transitorio';
 
--- Diagnóstico: SKUs del CSV que NO existen en la tabla productos
--- (descomenta para revisar después de hacer commit/rollback)
--- select v.sku
--- from (values ${rows.map((r) => `('${escSku(r.sku)}')`).join(",")}) as v(sku)
--- left join public.productos p on p.sku = v.sku
--- where p.id is null;
+-- Diagnóstico: SKUs del CSV que estaban en estado Transitorio (no se actualizan ni insertan)
+-- (descomenta para revisar)
+-- select p.sku, p.estado
+-- from public.productos p
+-- where p.sku in (${rows.map((r) => `'${String(r.sku).replace(/'/g, "''")}'`).join(",")})
+--   and lower(coalesce(p.estado,'')) = 'transitorio';
 
 commit;
 `;

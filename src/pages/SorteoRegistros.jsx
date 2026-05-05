@@ -13,6 +13,8 @@ import {
   Trash2,
   RefreshCw,
   Mail,
+  MailOpen,
+  Send,
   Calendar,
   AlertTriangle,
   GraduationCap,
@@ -38,8 +40,16 @@ export default function SorteoRegistros() {
   const [confirmar, setConfirmar] = useState(null);
   // shape: { title, message, confirmText, tone: "danger"|"warning", onConfirm: () => Promise<void>|void }
 
+  // Modal de envío de correo masivo
+  const [mostrarMailing, setMostrarMailing] = useState(false);
+
+  // Tracking de aperturas del último envío masivo
+  const [ultimoEnvio, setUltimoEnvio] = useState(null); // { id, asunto, creado_at, ... }
+  const [emailsAbiertos, setEmailsAbiertos] = useState(new Set());
+
   useEffect(() => {
     cargar();
+    cargarAperturas();
   }, []);
 
   async function cargar() {
@@ -51,6 +61,19 @@ export default function SorteoRegistros() {
       setToast({ type: "error", message: e.message || "Error cargando participantes." });
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function cargarAperturas() {
+    try {
+      const r = await api.get("/mailings/aperturas/ultimo-envio");
+      setUltimoEnvio(r?.envio || null);
+      const s = new Set(
+        (r?.emails || []).map((e) => String(e || "").trim().toLowerCase())
+      );
+      setEmailsAbiertos(s);
+    } catch {
+      // si no hay envíos previos, simplemente no mostramos la columna
     }
   }
 
@@ -203,13 +226,29 @@ export default function SorteoRegistros() {
           </p>
         </div>
         <div className="page-actions" style={{ gap: 8 }}>
-          <button className="btn btn-secondary" onClick={cargar} disabled={loading}>
+          <button
+            className="btn btn-secondary"
+            onClick={() => {
+              cargar();
+              cargarAperturas();
+            }}
+            disabled={loading}
+          >
             <RefreshCw size={14} />
             Actualizar
           </button>
           <button className="btn btn-secondary" onClick={exportarXLSX} disabled={filtrada.length === 0}>
             <Download size={14} />
             Exportar XLSX
+          </button>
+          <button
+            className="btn btn-secondary"
+            onClick={() => setMostrarMailing(true)}
+            disabled={totalRegistros === 0}
+            title="Enviar correo masivo a participantes"
+          >
+            <Send size={14} />
+            Enviar correo
           </button>
           <button
             className="sorteo-admin-btn-win"
@@ -300,6 +339,11 @@ export default function SorteoRegistros() {
                 <th>Universidad / Clínica</th>
                 <th style={{ width: 180 }}>Especialidad</th>
                 <th style={{ width: 110 }}>Nos conocía</th>
+                {ultimoEnvio && (
+                  <th style={{ width: 130 }} title={`Último envío: ${ultimoEnvio.asunto || "-"}`}>
+                    Abrió correo
+                  </th>
+                )}
                 <th style={{ width: 170 }}>Registro</th>
                 <th style={{ width: 80 }}>Acciones</th>
               </tr>
@@ -307,7 +351,7 @@ export default function SorteoRegistros() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={9} style={{ textAlign: "center", padding: 30, opacity: 0.6 }}>
+                  <td colSpan={ultimoEnvio ? 10 : 9} style={{ textAlign: "center", padding: 30, opacity: 0.6 }}>
                     Cargando participantes…
                   </td>
                 </tr>
@@ -375,6 +419,27 @@ export default function SorteoRegistros() {
                         <span className="badge badge-neutral">No</span>
                       )}
                     </td>
+                    {ultimoEnvio && (
+                      <td>
+                        {emailsAbiertos.has(String(p.email || "").trim().toLowerCase()) ? (
+                          <span
+                            className="badge badge-success"
+                            style={{ display: "inline-flex", alignItems: "center", gap: 4 }}
+                            title={`Abrió: ${ultimoEnvio.asunto || ""}`}
+                          >
+                            <MailOpen size={11} /> Abrió
+                          </span>
+                        ) : (
+                          <span
+                            className="badge badge-neutral"
+                            style={{ display: "inline-flex", alignItems: "center", gap: 4, opacity: 0.7 }}
+                            title={`Aún no registra apertura de: ${ultimoEnvio.asunto || ""}`}
+                          >
+                            <Mail size={11} /> Pendiente
+                          </span>
+                        )}
+                      </td>
+                    )}
                     <td style={{ fontSize: 12.5, color: "var(--text-soft)", whiteSpace: "nowrap" }}>
                       <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
                         <Calendar size={12} />
@@ -417,6 +482,23 @@ export default function SorteoRegistros() {
           {...confirmar}
           onCancel={() => setConfirmar(null)}
           onDone={() => setConfirmar(null)}
+        />
+      )}
+
+      {/* Modal de envío de correo masivo */}
+      {mostrarMailing && (
+        <MailingModal
+          onClose={() => setMostrarMailing(false)}
+          onSent={(resumen) => {
+            setMostrarMailing(false);
+            setToast({
+              type: resumen.fallidos > 0 ? "warning" : "success",
+              message: `Enviados ${resumen.enviados} de ${resumen.totalDestinatarios}${
+                resumen.fallidos > 0 ? ` (${resumen.fallidos} fallidos)` : ""
+              }.`,
+            });
+            cargarAperturas();
+          }}
         />
       )}
 
@@ -583,6 +665,246 @@ function GanadorModal({ rolling, ganador, onClose }) {
         )}
 
         {!ganador && <div className="sorteo-modal-hint">Eligiendo al azar entre los participantes elegibles…</div>}
+      </div>
+    </div>
+  );
+}
+
+/* ──────────────────────────────── Mailing Modal ──────────────────────────────── */
+
+function MailingModal({ onClose, onSent }) {
+  const [asunto, setAsunto] = useState("");
+  const [cuerpo, setCuerpo] = useState("");
+  const [soloAceptaron, setSoloAceptaron] = useState(true);
+  const [tipoPerfil, setTipoPerfil] = useState(""); // "" | "estudiante" | "egresado"
+  const [emailsExtraStr, setEmailsExtraStr] = useState("");
+  const [previewCount, setPreviewCount] = useState(null);
+  const [cargandoPreview, setCargandoPreview] = useState(false);
+  const [enviando, setEnviando] = useState(false);
+  const [error, setError] = useState("");
+
+  const emailsExtra = useMemo(() => {
+    return emailsExtraStr
+      .split(/[\s,;\n]+/)
+      .map((e) => e.trim())
+      .filter((e) => e.includes("@"));
+  }, [emailsExtraStr]);
+
+  const filtrosKey = `${soloAceptaron ? "1" : "0"}|${tipoPerfil}|${emailsExtra.join(",")}`;
+
+  useEffect(() => {
+    let cancelado = false;
+    setCargandoPreview(true);
+    setError("");
+
+    api
+      .post("/mailings/sorteo/preview", {
+        soloAceptaron,
+        tipoPerfil: tipoPerfil || null,
+        emailsExtra,
+      })
+      .then((r) => {
+        if (!cancelado) setPreviewCount(Number(r?.total ?? 0));
+      })
+      .catch((e) => {
+        if (!cancelado) {
+          setPreviewCount(null);
+          setError(e?.message || "No se pudo calcular destinatarios.");
+        }
+      })
+      .finally(() => {
+        if (!cancelado) setCargandoPreview(false);
+      });
+
+    return () => {
+      cancelado = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filtrosKey]);
+
+  async function enviar() {
+    setError("");
+    if (!asunto.trim()) return setError("Falta el asunto.");
+    if (!cuerpo.trim()) return setError("Falta el cuerpo del correo.");
+    if (!previewCount || previewCount === 0) return setError("No hay destinatarios.");
+
+    setEnviando(true);
+    try {
+      const cuerpoHtml = cuerpo.includes("<")
+        ? cuerpo
+        : cuerpo
+            .split(/\n\n+/)
+            .map((p) => `<p>${p.replace(/\n/g, "<br/>")}</p>`)
+            .join("");
+
+      const resumen = await api.post("/mailings/sorteo", {
+        asunto,
+        cuerpoHtml,
+        soloAceptaron,
+        tipoPerfil: tipoPerfil || null,
+        emailsExtra,
+      });
+      onSent?.(resumen);
+    } catch (e) {
+      setError(e?.message || "No se pudo enviar el correo.");
+    } finally {
+      setEnviando(false);
+    }
+  }
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(15,23,42,.45)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 1000,
+        padding: 16,
+      }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget && !enviando) onClose?.();
+      }}
+    >
+      <div
+        style={{
+          width: "100%",
+          maxWidth: 720,
+          maxHeight: "92vh",
+          overflow: "auto",
+          background: "var(--surface)",
+          borderRadius: 12,
+          padding: 22,
+          boxShadow: "0 20px 50px rgba(15,23,42,.25)",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+          <Send size={18} style={{ color: "var(--primary)" }} />
+          <h3 style={{ margin: 0, fontSize: 18, fontWeight: 700 }}>Enviar correo a participantes</h3>
+        </div>
+
+        {/* Filtros */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
+            <input
+              type="checkbox"
+              checked={soloAceptaron}
+              onChange={(e) => setSoloAceptaron(e.target.checked)}
+            />
+            Sólo los que aceptaron comunicaciones
+          </label>
+          <div>
+            <label className="filter-label">Tipo de perfil</label>
+            <select
+              className="input"
+              value={tipoPerfil}
+              onChange={(e) => setTipoPerfil(e.target.value)}
+              style={{ width: "100%" }}
+            >
+              <option value="">Todos</option>
+              <option value="estudiante">Estudiantes</option>
+              <option value="egresado">Egresados</option>
+            </select>
+          </div>
+        </div>
+
+        <div style={{ marginBottom: 14 }}>
+          <label className="filter-label">Correos adicionales (opcional)</label>
+          <textarea
+            className="input"
+            placeholder="Pegá correos separados por coma, espacio o salto de línea"
+            value={emailsExtraStr}
+            onChange={(e) => setEmailsExtraStr(e.target.value)}
+            rows={2}
+            style={{ width: "100%", resize: "vertical" }}
+          />
+        </div>
+
+        <div
+          style={{
+            background: "var(--primary-light)",
+            color: "var(--primary-dark)",
+            padding: "8px 12px",
+            borderRadius: 8,
+            fontSize: 13,
+            fontWeight: 600,
+            marginBottom: 14,
+          }}
+        >
+          {cargandoPreview
+            ? "Calculando destinatarios…"
+            : previewCount != null
+            ? `${previewCount} destinatario${previewCount === 1 ? "" : "s"} recibirá${previewCount === 1 ? "" : "n"} este correo`
+            : "—"}
+        </div>
+
+        <div style={{ marginBottom: 14 }}>
+          <label className="filter-label">Asunto</label>
+          <input
+            type="text"
+            className="input"
+            value={asunto}
+            onChange={(e) => setAsunto(e.target.value)}
+            placeholder="Asunto del correo"
+            style={{ width: "100%" }}
+            disabled={enviando}
+          />
+        </div>
+
+        <div style={{ marginBottom: 14 }}>
+          <label className="filter-label">Cuerpo (texto plano o HTML)</label>
+          <textarea
+            className="input"
+            value={cuerpo}
+            onChange={(e) => setCuerpo(e.target.value)}
+            placeholder={"Hola {{nombre}},\n\nGracias por participar en el sorteo de AMSODENT…\n\nPodés usar HTML si querés (<b>, <a>, <p>, <img>)."}
+            rows={10}
+            style={{ width: "100%", resize: "vertical", fontFamily: "ui-monospace, monospace", fontSize: 13 }}
+            disabled={enviando}
+          />
+          <div style={{ fontSize: 11, color: "var(--text-soft)", marginTop: 4 }}>
+            Si pegás HTML se respeta. Si es texto plano, los saltos de línea se convierten a párrafos.
+          </div>
+        </div>
+
+        {error && (
+          <div
+            style={{
+              background: "#fee2e2",
+              color: "#b91c1c",
+              padding: "8px 12px",
+              borderRadius: 8,
+              fontSize: 13,
+              marginBottom: 14,
+            }}
+          >
+            {error}
+          </div>
+        )}
+
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={onClose}
+            disabled={enviando}
+          >
+            Cancelar
+          </button>
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={enviar}
+            disabled={enviando || cargandoPreview || !previewCount}
+          >
+            <Send size={14} />
+            {enviando ? "Enviando…" : `Enviar a ${previewCount ?? "—"}`}
+          </button>
+        </div>
       </div>
     </div>
   );

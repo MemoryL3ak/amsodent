@@ -779,6 +779,8 @@ export default function EditarLicitacion() {
   const [docMonto, setDocMonto] = useState("");
   const [docFechaOC, setDocFechaOC] = useState(fechaHoyISO());
   const [docDerivaDeId, setDocDerivaDeId] = useState("");
+  const [docEmpresa, setDocEmpresa] = useState("Starken");
+  const [docNumSeguimiento, setDocNumSeguimiento] = useState("");
   const [docFile, setDocFile] = useState(null);
   const [subiendoDoc, setSubiendoDoc] = useState(false);
 
@@ -1250,6 +1252,16 @@ export default function EditarLicitacion() {
       return;
     }
 
+    if (tipo === "guia_despacho" && !fechaOc) {
+      setToast({ type: "error", message: "Debes ingresar la fecha de la guía." });
+      return;
+    }
+    if (tipo === "guia_despacho" && !(docEmpresa || "").trim()) {
+      setToast({ type: "error", message: "Debes seleccionar la empresa de despacho." });
+      return;
+    }
+    const montoGuia = parseMontoCL(docMonto);
+
     const esPdf =
       file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
     if (!esPdf) {
@@ -1293,13 +1305,18 @@ export default function EditarLicitacion() {
 
       await api.postForm(`/licitaciones/storage/upload?bucket=${encodeURIComponent(bucket)}&path=${encodeURIComponent(storagePath)}`, formData);
 
+      const esGuia = tipo === "guia_despacho";
+      const empresaGuia = esGuia ? (docEmpresa || "").trim() : null;
+      const esDespachoInterno = empresaGuia === "Despacho interno";
       const payload = {
         licitacion_id: Number(id),
         tipo,
         numero: (docNumero || "").trim() || null,
-        monto: tipo === "orden_compra" ? montoNetoOrdenCompra : null,
-        fecha_oc: tipo === "orden_compra" ? fechaOc : null,
+        monto: tipo === "orden_compra" ? montoNetoOrdenCompra : (esGuia && montoGuia > 0 ? montoGuia : null),
+        fecha_oc: tipo === "orden_compra" ? fechaOc : (esGuia ? fechaOc : null),
         deriva_de_id: docDerivaDeId ? Number(docDerivaDeId) : null,
+        empresa_despacho: esGuia ? empresaGuia : null,
+        n_seguimiento: esGuia && !esDespachoInterno ? ((docNumSeguimiento || "").trim() || null) : null,
         bucket,
         storage_path: storagePath,
         file_name: file.name,
@@ -1321,6 +1338,8 @@ export default function EditarLicitacion() {
       setDocMonto("");
       setDocFechaOC(fechaHoyISO());
       setDocDerivaDeId("");
+      setDocEmpresa("Starken");
+      setDocNumSeguimiento("");
       setDocFile(null);
       if (fileInputRef.current) fileInputRef.current.value = "";
       setToast({
@@ -2000,54 +2019,6 @@ export default function EditarLicitacion() {
   else if (porcentajePresupuesto <= 100) colorPresupuesto = "presupuesto-warn";
   else                                   colorPresupuesto = "presupuesto-over";
 
-  function actualizarPreciosPorLista(nuevaLista) {
-    if (!esEditable) return;
-
-    const copia = items.map((it) => {
-      if (it.precioManual) {
-        const cantidad = Math.max(1, Number(it.cantidad || 1));
-        return {
-          ...it,
-          total: redondear(
-            cantidad * (Number(it.precio || 0) + fletePorUnidad)
-          ),
-        };
-      }
-
-      const sku = String(it.sku || "").trim();
-      const productoNombre = String(it.producto || "").trim();
-
-      const prod = sku
-        ? productos.find((p) => String(p.sku || "").trim() === sku)
-        : productoNombre
-        ? productos.find((p) => String(p.nombre || "").trim() === productoNombre)
-        : null;
-
-      if (!prod) return it;
-
-      const listaValida = nuevaLista === "2" ? "lista2" : "lista1";
-      const skuProd = String(prod.sku || "").trim();
-
-      const precioCampania = skuProd ? campaignPriceBySku.get(skuProd) : null;
-      const precioBase =
-        precioCampania != null
-          ? Number(precioCampania)
-          : Number(prod[listaValida] ?? 0);
-
-      const cantidad = Math.max(1, Number(it.cantidad || 1));
-
-      return {
-        ...it,
-        sku: skuProd || it.sku || "",
-        precio: precioBase,
-        precioUnitarioStr: "",
-        total: redondear(cantidad * (precioBase + fletePorUnidad)),
-      };
-    });
-
-    setItems(copia);
-  }
-
   function actualizarItem(index, campo, valor) {
     if (!esEditable) return;
 
@@ -2650,30 +2621,16 @@ export default function EditarLicitacion() {
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              Lista de Precios *
-            </label>
-            <select
-              className={inputClass}
-              value={listado}
-              onChange={(e) => {
-                setListado(e.target.value);
-                actualizarPreciosPorLista(e.target.value);
-              }}
-              disabled={!esEditable}
-            >
-              <option value="1">Lista 1</option>
-              <option value="2">Lista 2</option>
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
               Tipo de Compra *
             </label>
             <select
               className={inputClass}
               value={tipoCompra}
-              onChange={(e) => setTipoCompra(e.target.value)}
+              onChange={(e) => {
+                const next = e.target.value;
+                setTipoCompra(next);
+                setListado(next === "Cliente particular" ? "1" : "2");
+              }}
               disabled={!esEditable}
             >
               <option value="Compra ágil">Compra ágil</option>
@@ -2681,6 +2638,9 @@ export default function EditarLicitacion() {
               <option value="Licitación">Licitación</option>
               <option value="Cliente particular">Cliente particular</option>
             </select>
+            <p className="text-[11px] text-gray-500 mt-1">
+              Cliente particular usa Lista 1; las demás opciones usan Lista 2.
+            </p>
           </div>
 
           {/* ✅ Estado bloqueado en "Pendiente Aprobación" para no-admin */}
@@ -3320,7 +3280,8 @@ export default function EditarLicitacion() {
         </div>
         <div className="surface-body">
 
-        <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-end">
+        {/* Línea 1: comunes (Tipo, Número) + campos específicos del tipo */}
+        <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
           <div className="md:col-span-3">
             <label className="block text-sm font-medium text-gray-700 mb-1">Tipo *</label>
             <select
@@ -3334,20 +3295,109 @@ export default function EditarLicitacion() {
             </select>
           </div>
 
-          <div className="md:col-span-2">
+          <div className="md:col-span-3">
             <label className="block text-sm font-medium text-gray-700 mb-1">Número</label>
             <input
               className={`${inputClass} text-sm`}
               value={docNumero}
               onChange={(e) => setDocNumero(e.target.value)}
-              placeholder="Ej: OC-2026-001"
+              placeholder={docTipo === "orden_compra" ? "Ej: OC-2026-001" : "Ej: GD-2026-001"}
               disabled={subiendoDoc}
             />
           </div>
 
           {docTipo === "orden_compra" && (
-            <div className="md:col-span-2">
-              <label className="block text-sm font-medium text-gray-700 mb-1">Monto Neto OC *</label>
+            <>
+              <div className="md:col-span-2">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Monto Neto OC *</label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  className={`${inputClass} text-sm`}
+                  value={docMonto}
+                  onChange={(e) => setDocMonto(formatearCLDesdeString(e.target.value))}
+                  placeholder="Ej: 1.250.000"
+                  disabled={subiendoDoc}
+                />
+              </div>
+              <div className="md:col-span-2">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Fecha OC *</label>
+                <input
+                  type="date"
+                  className={`${inputClass} text-sm`}
+                  value={docFechaOC}
+                  onChange={(e) => setDocFechaOC(e.target.value)}
+                  disabled={subiendoDoc}
+                />
+              </div>
+              <div className="md:col-span-2">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Monto Bruto OC</label>
+                <input
+                  type="text"
+                  className={`${inputClass} text-sm bg-gray-100`}
+                  value={montoNetoOCFormulario > 0 ? `$${montoBrutoOCFormulario.toLocaleString("es-CL")}` : ""}
+                  placeholder="Neto x 1,19"
+                  readOnly
+                  disabled
+                />
+              </div>
+            </>
+          )}
+
+          {docTipo === "guia_despacho" && (
+            <>
+              <div className="md:col-span-3">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Deriva de *</label>
+                <Select
+                  options={opcionesDerivaSelect}
+                  styles={{
+                    ...customStyles,
+                    control: (base, state) => ({
+                      ...customStyles.control(base, state),
+                      minHeight: "38px",
+                      height: "38px",
+                    }),
+                    valueContainer: (base) => ({
+                      ...customStyles.valueContainer(base),
+                      padding: "0 8px",
+                    }),
+                    indicatorsContainer: (base) => ({
+                      ...base,
+                      height: "38px",
+                    }),
+                  }}
+                  placeholder="Buscar OC"
+                  menuPortalTarget={document.body}
+                  isSearchable={true}
+                  filterOption={filtrarPorTerminos}
+                  isClearable={true}
+                  isDisabled={subiendoDoc}
+                  noOptionsMessage={() => "Sin documentos disponibles"}
+                  value={
+                    opcionesDerivaSelect.find((o) => o.value === String(docDerivaDeId)) || null
+                  }
+                  onChange={(op) => setDocDerivaDeId(op?.value || "")}
+                />
+              </div>
+              <div className="md:col-span-3">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Fecha *</label>
+                <input
+                  type="date"
+                  className={`${inputClass} text-sm`}
+                  value={docFechaOC}
+                  onChange={(e) => setDocFechaOC(e.target.value)}
+                  disabled={subiendoDoc}
+                />
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* Línea 2 (sólo guía): Monto + Empresa + N° Seguimiento */}
+        {docTipo === "guia_despacho" && (
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-4 mt-4">
+            <div className="md:col-span-3">
+              <label className="block text-sm font-medium text-gray-700 mb-1">Monto Neto Guía</label>
               <input
                 type="text"
                 inputMode="numeric"
@@ -3358,60 +3408,43 @@ export default function EditarLicitacion() {
                 disabled={subiendoDoc}
               />
             </div>
-          )}
-
-          {docTipo === "orden_compra" && (
-            <div className="md:col-span-2">
-              <label className="block text-sm font-medium text-gray-700 mb-1">Fecha OC *</label>
-              <input
-                type="date"
+            <div className="md:col-span-3">
+              <label className="block text-sm font-medium text-gray-700 mb-1">Empresa *</label>
+              <select
                 className={`${inputClass} text-sm`}
-                value={docFechaOC}
-                onChange={(e) => setDocFechaOC(e.target.value)}
+                value={docEmpresa}
+                onChange={(e) => {
+                  const next = e.target.value;
+                  setDocEmpresa(next);
+                  if (next === "Despacho interno") setDocNumSeguimiento("");
+                }}
                 disabled={subiendoDoc}
-              />
+              >
+                <option value="Starken">Starken</option>
+                <option value="Blue Express">Blue Express</option>
+                <option value="Despacho interno">Despacho interno</option>
+                <option value="Otro">Otro</option>
+              </select>
             </div>
-          )}
+            {docEmpresa !== "Despacho interno" && (
+              <div className="md:col-span-6">
+                <label className="block text-sm font-medium text-gray-700 mb-1">N° Seguimiento</label>
+                <input
+                  type="text"
+                  className={`${inputClass} text-sm`}
+                  value={docNumSeguimiento}
+                  onChange={(e) => setDocNumSeguimiento(e.target.value)}
+                  placeholder="Código de tracking del courier"
+                  disabled={subiendoDoc}
+                />
+              </div>
+            )}
+          </div>
+        )}
 
-          {docTipo === "orden_compra" && (
-            <div className="md:col-span-2">
-              <label className="block text-sm font-medium text-gray-700 mb-1">Monto Bruto OC</label>
-              <input
-                type="text"
-                className={`${inputClass} text-sm bg-gray-100`}
-                value={montoNetoOCFormulario > 0 ? `$${montoBrutoOCFormulario.toLocaleString("es-CL")}` : ""}
-                placeholder="Neto x 1,19"
-                readOnly
-                disabled
-              />
-            </div>
-          )}
-
-          {docTipo === "guia_despacho" && (
-            <div className="md:col-span-2">
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Deriva de *
-              </label>
-              <Select
-                options={opcionesDerivaSelect}
-                styles={customStyles}
-                placeholder="Buscar documento"
-                menuPortalTarget={document.body}
-                isSearchable={true}
-                filterOption={filtrarPorTerminos}
-                isClearable={true}
-                isDisabled={subiendoDoc}
-                noOptionsMessage={() => "Sin documentos disponibles"}
-                value={
-                  opcionesDerivaSelect.find((o) => o.value === String(docDerivaDeId)) ||
-                  null
-                }
-                onChange={(op) => setDocDerivaDeId(op?.value || "")}
-              />
-            </div>
-          )}
-
-          <div className="md:col-span-3">
+        {/* Línea 3: PDF + Botón agregar */}
+        <div className="grid grid-cols-1 md:grid-cols-12 gap-4 mt-4 items-end">
+          <div className="md:col-span-9">
             <label className="block text-sm font-medium text-gray-700 mb-1">PDF *</label>
             <input
               ref={fileInputRef}
@@ -3430,20 +3463,19 @@ export default function EditarLicitacion() {
               >
                 Seleccionar PDF
               </button>
-              <span className="text-sm text-gray-500 truncate max-w-[160px]">
+              <span className="text-sm text-gray-500 truncate">
                 {docFile ? docFile.name : "Sin archivo"}
               </span>
             </div>
           </div>
-
-          <div className="md:col-span-2">
+          <div className="md:col-span-3 flex md:justify-end">
             <button
               type="button"
               onClick={subirDocumento}
               disabled={subiendoDoc}
               className="btn btn-primary"
             >
-              {subiendoDoc ? "Subiendo…" : "Agregar"}
+              {subiendoDoc ? "Subiendo…" : "Agregar documento"}
             </button>
           </div>
         </div>
@@ -3503,7 +3535,16 @@ export default function EditarLicitacion() {
                         ? `${DOC_TIPOS[docOrigen.tipo] || docOrigen.tipo}${docOrigen.numero ? ` - ${docOrigen.numero}` : ""}`
                         : "-"}
                     </td>
-                    <td className="px-3 py-2 text-sm">{doc.file_name || "-"}</td>
+                    <td className="px-3 py-2 text-sm">
+                      <div>{doc.file_name || "-"}</div>
+                      {doc.tipo === "guia_despacho" && (doc.empresa_despacho || doc.n_seguimiento) && (
+                        <div className="text-xs text-gray-500 mt-1">
+                          {doc.empresa_despacho || ""}
+                          {doc.empresa_despacho && doc.n_seguimiento ? " · " : ""}
+                          {doc.n_seguimiento ? `Tracking: ${doc.n_seguimiento}` : ""}
+                        </div>
+                      )}
+                    </td>
                     <td className="px-3 py-2 text-sm">
                       {editando && doc.tipo === "orden_compra" ? (
                         <input
@@ -3513,7 +3554,7 @@ export default function EditarLicitacion() {
                           value={docEditFechaOC}
                           onChange={(e) => setDocEditFechaOC(e.target.value)}
                         />
-                      ) : doc.tipo === "orden_compra" && doc.fecha_oc
+                      ) : (doc.tipo === "orden_compra" || doc.tipo === "guia_despacho") && doc.fecha_oc
                         ? new Date(`${doc.fecha_oc}T00:00:00`).toLocaleDateString("es-CL")
                         : doc.created_at
                         ? new Date(doc.created_at).toLocaleString("es-CL")

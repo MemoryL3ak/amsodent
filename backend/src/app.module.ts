@@ -9,6 +9,8 @@ import { LicitacionesModule } from './licitaciones/licitaciones.module';
 import { MetasModule } from './metas/metas.module';
 import { UsuariosModule } from './usuarios/usuarios.module';
 import { SorteoModule } from './sorteo/sorteo.module';
+import { FeriadosModule } from './feriados/feriados.module';
+import { MailingsModule } from './mailings/mailings.module';
 
 @Module({
   imports: [
@@ -22,6 +24,8 @@ import { SorteoModule } from './sorteo/sorteo.module';
     MetasModule,
     UsuariosModule,
     SorteoModule,
+    FeriadosModule,
+    MailingsModule,
   ],
 })
 export class AppModule {}

@@ -62,7 +62,11 @@ export default function MonthCalendarPicker({ value, onChange, className = "" })
 
   const title = useMemo(() => {
     const selected = new Date(Date.UTC(year, month - 1, 1));
-    return selected.toLocaleDateString("es-CL", { month: "long", year: "numeric" });
+    return selected.toLocaleDateString("es-CL", {
+      month: "long",
+      year: "numeric",
+      timeZone: "UTC",
+    });
   }, [year, month]);
 
   return (
