@@ -1,6 +1,7 @@
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import * as nodemailer from 'nodemailer';
 import * as crypto from 'crypto';
+import * as dns from 'dns';
 import { SupabaseService } from '../supabase/supabase.service';
 
 const BATCH_SIZE = 500; // Gmail/Workspace permite hasta 500 destinatarios por mensaje (modo BCC)
@@ -63,8 +64,17 @@ export class MailingsService {
       secure: port === 465,
       auth: { user, pass },
       // Railway/Fly/Render no soportan IPv6 saliente. Sin esto Node resuelve
-      // smtp.gmail.com a una IPv6 y falla con ENETUNREACH.
+      // smtp.gmail.com a una IPv6 y falla con ENETUNREACH. Aunque
+      // dns.setDefaultResultOrder ya fuerza IPv4 globalmente, redundamos
+      // acá con un lookup explícito porque algunas versiones de nodemailer
+      // ignoran el setting global.
       family: 4,
+      lookup: (hostname: string, options: any, callback: any) => {
+        // Asegura family:4 incluso si el caller no lo pasó.
+        const opts = typeof options === 'function' ? {} : options || {};
+        const cb = typeof options === 'function' ? options : callback;
+        return dns.lookup(hostname, { ...opts, family: 4 }, cb);
+      },
       // Si la red está bloqueada o lenta, queremos fallar rápido y no dejar
       // la petición HTTP colgada minutos.
       connectionTimeout: 20 * 1000,
