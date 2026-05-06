@@ -10,7 +10,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { SorteoService } from './sorteo.service';
-import { AdminGuard } from '../auth/admin.guard';
+import { SorteoAccessGuard } from '../auth/sorteo-access.guard';
 
 function extractIp(req: any): string {
   const fwd = req.headers?.['x-forwarded-for'];
@@ -39,28 +39,28 @@ export class SorteoController {
 
   // ADMIN: listado de participantes
   @Get('participantes')
-  @UseGuards(AdminGuard)
+  @UseGuards(SorteoAccessGuard)
   listar() {
     return this.sorteoService.listarParticipantes();
   }
 
   // ADMIN: elegir un ganador aleatorio
   @Post('sortear')
-  @UseGuards(AdminGuard)
+  @UseGuards(SorteoAccessGuard)
   sortear() {
     return this.sorteoService.sortearGanador();
   }
 
   // ADMIN: limpiar flag ganador (para volver a sortear)
   @Post('reset-ganadores')
-  @UseGuards(AdminGuard)
+  @UseGuards(SorteoAccessGuard)
   resetGanadores() {
     return this.sorteoService.resetGanadores();
   }
 
   // ADMIN: eliminar un participante puntual
   @Delete('participantes/:id')
-  @UseGuards(AdminGuard)
+  @UseGuards(SorteoAccessGuard)
   eliminar(@Param('id', ParseIntPipe) id: number) {
     return this.sorteoService.eliminarParticipante(id);
   }

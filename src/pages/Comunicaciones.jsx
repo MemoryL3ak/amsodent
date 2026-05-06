@@ -18,6 +18,10 @@ export default function Comunicaciones() {
   const [toast, setToast] = useState(null);
   const [resumen, setResumen] = useState(null);
 
+  // Si está en true → envío individual con tracking pixel por destinatario (lento, ~3 min para 256).
+  // Si está en false → envío rápido en BCC sin saber quién abrió (~30 seg para 256).
+  const [conTracking, setConTracking] = useState(true);
+
   // Modo de envío del archivo:
   //   "imagen"           → PDF/imagen → PNG inline (fidelidad pixel-perfect, no seleccionable)
   //   "html_enriquecido" → PDF → PNG + capa de texto invisible posicionada (selectable)
@@ -267,6 +271,7 @@ export default function Comunicaciones() {
         const fd = new FormData();
         fd.append("asunto", asunto);
         fd.append("destinatarios", JSON.stringify(validos));
+        fd.append("conTracking", conTracking ? "true" : "false");
         if (remitenteNombre.trim()) fd.append("remitenteNombre", remitenteNombre.trim());
 
         if (flyerModo === "adjunto_pdf") {
@@ -298,6 +303,7 @@ export default function Comunicaciones() {
           cuerpoHtml,
           destinatarios: validos,
           remitenteNombre: remitenteNombre.trim() || undefined,
+          conTracking,
         });
       }
 
@@ -756,6 +762,37 @@ export default function Comunicaciones() {
               )}
             </div>
           )}
+
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 12,
+              padding: "10px 12px",
+              background: "var(--surface-soft, #f8fafc)",
+              border: "1px solid var(--border, #e2e8f0)",
+              borderRadius: 8,
+              marginBottom: 8,
+            }}
+          >
+            <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13, fontWeight: 500 }}>
+              <input
+                type="checkbox"
+                checked={conTracking}
+                onChange={(e) => setConTracking(e.target.checked)}
+                disabled={enviando}
+              />
+              Registrar quién abre cada correo (tracking individual)
+            </label>
+            <span style={{ fontSize: 12, color: "var(--text-soft, #64748b)" }}>
+              {conTracking ? (
+                <>Lento: ~3 min por cada 256 correos. Permite ver aperturas por destinatario.</>
+              ) : (
+                <>Envío rápido en BCC: ~30 seg por cada 256 correos. No registra aperturas.</>
+              )}
+            </span>
+          </div>
 
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
             <button

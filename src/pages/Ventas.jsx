@@ -142,7 +142,7 @@ export default function Ventas() {
 
   const rolNorm = (rol || "").toString().trim().toLowerCase();
   const esAdmin = rolNorm === "admin" || rolNorm === "administrador";
-  const esVentas = rolNorm === "ventas";
+  const esVentas = rolNorm === "ventas" || rolNorm === "ventas_especial";
   const esJefatura =
     esAdmin ||
     rolNorm === "jefe_ventas" ||

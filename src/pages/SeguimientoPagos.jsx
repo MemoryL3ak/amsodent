@@ -122,7 +122,7 @@ export default function SeguimientoPagos() {
 
         const rolNorm = (rol ?? "").toString().trim().toLowerCase();
         const emailUser = (user?.email || "").trim().toLowerCase();
-        if (rolNorm === "ventas" && emailUser) {
+        if ((rolNorm === "ventas" || rolNorm === "ventas_especial") && emailUser) {
           rows = rows.filter((l) => (l.creado_por || "").trim().toLowerCase() === emailUser);
         }
 

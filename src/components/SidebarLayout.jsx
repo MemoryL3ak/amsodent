@@ -24,9 +24,10 @@ import {
 } from "lucide-react";
 
 const ROLE_LABELS = {
-  admin:       "Administrador",
-  jefe_ventas: "Jefe de Ventas",
-  ventas:      "Ventas",
+  admin:           "Administrador",
+  jefe_ventas:     "Jefe de Ventas",
+  ventas:          "Ventas",
+  ventas_especial: "Ventas Especial",
 };
 
 function labelRol(rol) {
@@ -90,7 +91,8 @@ export default function SidebarLayout() {
   const rolNorm = (perfil?.rol || "").toString().trim().toLowerCase();
   const esAdmin = rolNorm === "admin";
   const esJefatura = ["jefe_ventas", "jefe ventas", "jefe-ventas", "jefe de ventas"].includes(rolNorm);
-  const esVentas = rolNorm === "ventas";
+  const esVentas = rolNorm === "ventas" || rolNorm === "ventas_especial";
+  const esVentasEspecial = rolNorm === "ventas_especial";
   const puedeVerVentas = esAdmin || esJefatura || esVentas;
   const puedeVerMetas = esAdmin || esJefatura || esVentas;
 
@@ -111,7 +113,7 @@ export default function SidebarLayout() {
   ].filter(Boolean);
 
   const adminNav = [
-    esAdmin && { to: "/sorteo-registros", icon: Gift,     label: "Sorteo" },
+    (esAdmin || esVentasEspecial) && { to: "/sorteo-registros", icon: Gift, label: "Sorteo" },
     esAdmin && { to: "/comunicaciones",   icon: Mail,     label: "Comunicaciones" },
     esAdmin && { to: "/monitoreo",        icon: Activity, label: "Monitoreo de Usuarios" },
     esAdmin && { to: "/usuarios",         icon: UserCog,  label: "Usuarios" },

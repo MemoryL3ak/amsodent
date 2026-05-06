@@ -195,7 +195,7 @@ export default function CrearProducto() {
   }, [rol]);
   const esAdmin = puedeIngresarSKU;
   const esVentasOJefe = useMemo(
-    () => rolNorm === "ventas" || rolNorm === "jefe_ventas",
+    () => rolNorm === "ventas" || rolNorm === "ventas_especial" || rolNorm === "jefe_ventas",
     [rolNorm]
   );
   const esTransitorio = (sku ?? "").toString().trim() === "";
