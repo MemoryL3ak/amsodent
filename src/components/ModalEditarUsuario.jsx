@@ -2,9 +2,10 @@ import { useState } from "react";
 import { supabase } from "../lib/supabase";
 
 const ROLES = [
-  { value: "admin",       label: "Administrador" },
-  { value: "jefe_ventas", label: "Jefe de Ventas" },
-  { value: "ventas",      label: "Ventas" },
+  { value: "admin",           label: "Administrador" },
+  { value: "jefe_ventas",     label: "Jefe de Ventas" },
+  { value: "ventas",          label: "Ventas" },
+  { value: "ventas_especial", label: "Ventas Especial" },
 ];
 
 export default function ModalEditarUsuario({ user, close, onToast }) {

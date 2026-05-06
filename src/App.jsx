@@ -97,11 +97,11 @@ export default function App() {
           <Route path="metas" element={<Metas />} />
           <Route path="metas-canal" element={<MetasPorCanal />} />
 
-          {/* SORTEO (solo admin) */}
+          {/* SORTEO (admin + ventas_especial) */}
           <Route
             path="sorteo-registros"
             element={
-              <RequireRole allow={["admin"]}>
+              <RequireRole allow={["admin", "ventas_especial"]}>
                 <SorteoRegistros />
               </RequireRole>
             }

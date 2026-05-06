@@ -59,7 +59,7 @@ export default function Productos() {
     ) {
       return "jefe_ventas";
     }
-    if (r === "ventas") return "ventas";
+    if (r === "ventas" || r === "ventas_especial") return "ventas";
     return r;
   }, [rol]);
 

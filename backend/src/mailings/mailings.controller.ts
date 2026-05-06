@@ -171,6 +171,16 @@ export class MailingsController {
 
     if (!cuerpoHtml.trim()) throw new BadRequestException('Falta el cuerpo del correo.');
 
+    // conTracking: por defecto true (envío individual con pixel por persona).
+    // Si el cliente manda explícitamente "false" → modo BCC rápido sin tracking.
+    const conTrackingRaw = body?.conTracking;
+    const conTracking =
+      conTrackingRaw === false ||
+      conTrackingRaw === 'false' ||
+      conTrackingRaw === '0'
+        ? false
+        : true;
+
     return this.mailingsService.sendBulkBCC({
       destinatarios,
       asunto,
@@ -178,7 +188,7 @@ export class MailingsController {
       remitenteNombre,
       inlineAttachments,
       attachments,
-      conTracking: true, // siempre tracking por destinatario
+      conTracking,
       creadoPor: req?.user?.email || null,
     });
   }

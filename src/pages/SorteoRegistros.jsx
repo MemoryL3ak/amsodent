@@ -3,6 +3,7 @@ import { api } from "../lib/api";
 import * as XLSX from "xlsx";
 import Toast from "../components/Toast";
 import DateFilter from "../components/DateFilter";
+import useAuth from "../hooks/useAuth";
 import {
   Gift,
   Users,
@@ -13,7 +14,6 @@ import {
   Trash2,
   RefreshCw,
   Mail,
-  MailOpen,
   Send,
   Calendar,
   AlertTriangle,
@@ -23,11 +23,15 @@ import {
 } from "lucide-react";
 
 export default function SorteoRegistros() {
+  const { rol } = useAuth();
+  const esAdmin = String(rol || "").trim().toLowerCase() === "admin";
+
   const [data, setData] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filtro, setFiltro] = useState("");
   const [fechaDesde, setFechaDesde] = useState("");
   const [fechaHasta, setFechaHasta] = useState("");
+  const [soloGanador, setSoloGanador] = useState(false);
   const [toast, setToast] = useState(null);
 
   // Ganador animado
@@ -43,13 +47,8 @@ export default function SorteoRegistros() {
   // Modal de envío de correo masivo
   const [mostrarMailing, setMostrarMailing] = useState(false);
 
-  // Tracking de aperturas del último envío masivo
-  const [ultimoEnvio, setUltimoEnvio] = useState(null); // { id, asunto, creado_at, ... }
-  const [emailsAbiertos, setEmailsAbiertos] = useState(new Set());
-
   useEffect(() => {
     cargar();
-    cargarAperturas();
   }, []);
 
   async function cargar() {
@@ -64,24 +63,12 @@ export default function SorteoRegistros() {
     }
   }
 
-  async function cargarAperturas() {
-    try {
-      const r = await api.get("/mailings/aperturas/ultimo-envio");
-      setUltimoEnvio(r?.envio || null);
-      const s = new Set(
-        (r?.emails || []).map((e) => String(e || "").trim().toLowerCase())
-      );
-      setEmailsAbiertos(s);
-    } catch {
-      // si no hay envíos previos, simplemente no mostramos la columna
-    }
-  }
-
   const filtrada = useMemo(() => {
     const q = filtro.trim().toLowerCase();
     const desde = fechaDesde ? new Date(`${fechaDesde}T00:00:00`) : null;
     const hasta = fechaHasta ? new Date(`${fechaHasta}T23:59:59.999`) : null;
     return data.filter((p) => {
+      if (soloGanador && !p.ganador) return false;
       if (q) {
         const hay = [p.nombre, p.email, p.universidad_clinica, p.especialidad].map((x) =>
           String(x || "").toLowerCase()
@@ -96,7 +83,7 @@ export default function SorteoRegistros() {
       }
       return true;
     });
-  }, [data, filtro, fechaDesde, fechaHasta]);
+  }, [data, filtro, fechaDesde, fechaHasta, soloGanador]);
 
   const hoyIso = new Date().toISOString().slice(0, 10);
   const totalRegistros = data.length;
@@ -119,9 +106,10 @@ export default function SorteoRegistros() {
     setGanador(null);
     setMostrarModalGanador(true);
 
-    // Animación tipo ruleta local de ~2.8s
+    // Animación tipo ruleta local de ~5s
     let i = 0;
-    const totalFrames = 28;
+    const totalFrames = 50;
+    const frameMs = 100;
     const interval = setInterval(() => {
       const pick = elegibles[Math.floor(Math.random() * elegibles.length)];
       setRolling(pick);
@@ -129,13 +117,13 @@ export default function SorteoRegistros() {
       if (i >= totalFrames) {
         clearInterval(interval);
       }
-    }, 90);
+    }, frameMs);
 
     try {
       // En paralelo hacemos el sorteo real en el backend
       const [elegido] = await Promise.all([
         api.post("/sorteo/sortear", {}),
-        new Promise((r) => setTimeout(r, totalFrames * 90 + 200)),
+        new Promise((r) => setTimeout(r, totalFrames * frameMs + 200)),
       ]);
       setRolling(null);
       setGanador(elegido);
@@ -228,10 +216,7 @@ export default function SorteoRegistros() {
         <div className="page-actions" style={{ gap: 8 }}>
           <button
             className="btn btn-secondary"
-            onClick={() => {
-              cargar();
-              cargarAperturas();
-            }}
+            onClick={cargar}
             disabled={loading}
           >
             <RefreshCw size={14} />
@@ -241,14 +226,25 @@ export default function SorteoRegistros() {
             <Download size={14} />
             Exportar XLSX
           </button>
+          {esAdmin && (
+            <button
+              className="btn btn-secondary"
+              onClick={() => setMostrarMailing(true)}
+              disabled={totalRegistros === 0}
+              title="Enviar correo masivo a participantes"
+            >
+              <Send size={14} />
+              Enviar correo
+            </button>
+          )}
           <button
             className="btn btn-secondary"
-            onClick={() => setMostrarMailing(true)}
-            disabled={totalRegistros === 0}
-            title="Enviar correo masivo a participantes"
+            onClick={pedirResetGanadores}
+            disabled={!yaGanador || sorteando}
+            title={yaGanador ? "Limpiar ganador y volver a estado inicial" : "No hay ganador para limpiar"}
           >
-            <Send size={14} />
-            Enviar correo
+            <RefreshCw size={14} />
+            Limpiar ganador
           </button>
           <button
             className="sorteo-admin-btn-win"
@@ -316,14 +312,26 @@ export default function SorteoRegistros() {
               minDate={fechaDesde ? new Date(`${fechaDesde}T00:00:00`) : undefined}
             />
           </div>
+
+          <button
+            type="button"
+            onClick={() => setSoloGanador((v) => !v)}
+            disabled={!yaGanador}
+            className={soloGanador ? "btn btn-primary" : "btn btn-secondary"}
+            title={
+              yaGanador
+                ? soloGanador
+                  ? "Mostrando solo ganador. Click para ver todos."
+                  : "Filtrar para ver solo el ganador."
+                : "No hay ganador para filtrar."
+            }
+            style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
+          >
+            <Crown size={14} />
+            {soloGanador ? "Mostrando ganador" : "Solo ganador"}
+          </button>
         </div>
 
-        {yaGanador && (
-          <button className="btn btn-ghost" onClick={pedirResetGanadores} title="Reiniciar ganadores">
-            <RefreshCw size={14} />
-            Reiniciar ganadores
-          </button>
-        )}
       </div>
 
       {/* Tabla */}
@@ -339,11 +347,6 @@ export default function SorteoRegistros() {
                 <th>Universidad / Clínica</th>
                 <th style={{ width: 180 }}>Especialidad</th>
                 <th style={{ width: 110 }}>Nos conocía</th>
-                {ultimoEnvio && (
-                  <th style={{ width: 130 }} title={`Último envío: ${ultimoEnvio.asunto || "-"}`}>
-                    Abrió correo
-                  </th>
-                )}
                 <th style={{ width: 170 }}>Registro</th>
                 <th style={{ width: 80 }}>Acciones</th>
               </tr>
@@ -351,7 +354,7 @@ export default function SorteoRegistros() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={ultimoEnvio ? 10 : 9} style={{ textAlign: "center", padding: 30, opacity: 0.6 }}>
+                  <td colSpan={9} style={{ textAlign: "center", padding: 30, opacity: 0.6 }}>
                     Cargando participantes…
                   </td>
                 </tr>
@@ -419,27 +422,6 @@ export default function SorteoRegistros() {
                         <span className="badge badge-neutral">No</span>
                       )}
                     </td>
-                    {ultimoEnvio && (
-                      <td>
-                        {emailsAbiertos.has(String(p.email || "").trim().toLowerCase()) ? (
-                          <span
-                            className="badge badge-success"
-                            style={{ display: "inline-flex", alignItems: "center", gap: 4 }}
-                            title={`Abrió: ${ultimoEnvio.asunto || ""}`}
-                          >
-                            <MailOpen size={11} /> Abrió
-                          </span>
-                        ) : (
-                          <span
-                            className="badge badge-neutral"
-                            style={{ display: "inline-flex", alignItems: "center", gap: 4, opacity: 0.7 }}
-                            title={`Aún no registra apertura de: ${ultimoEnvio.asunto || ""}`}
-                          >
-                            <Mail size={11} /> Pendiente
-                          </span>
-                        )}
-                      </td>
-                    )}
                     <td style={{ fontSize: 12.5, color: "var(--text-soft)", whiteSpace: "nowrap" }}>
                       <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
                         <Calendar size={12} />
@@ -497,7 +479,6 @@ export default function SorteoRegistros() {
                 resumen.fallidos > 0 ? ` (${resumen.fallidos} fallidos)` : ""
               }.`,
             });
-            cargarAperturas();
           }}
         />
       )}
