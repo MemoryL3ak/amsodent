@@ -268,7 +268,7 @@ export default function ListarLicitaciones() {
 
   const rolNorm    = (rol ?? "").toString().trim().toLowerCase();
   const esAdmin    = rolNorm === "admin";
-  const esJefatura = ["jefe_ventas","jefe ventas","jefe-ventas","jefe de ventas"].includes(rolNorm);
+  const esJefatura = ["jefe_ventas","jefe ventas","jefe-ventas","jefe de ventas","jefe_ventas_especial"].includes(rolNorm);
 
   // ── Acciones admin ────────────────────────────────────────────
   async function aprobarCotizacion(id) {

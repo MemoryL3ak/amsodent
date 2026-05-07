@@ -217,6 +217,7 @@ export default function Trazabilidad() {
 
   const rolNorm = (rol ?? "").toString().trim().toLowerCase();
   const esAdmin = rolNorm === "admin";
+  const puedeVerTrazabilidad = esAdmin || rolNorm === "jefe_ventas_especial";
 
   // Reload counter para forzar recargas desde subir/eliminar factura
   // Refresca solo los documentos de una cotización (sin tocar loading global)
@@ -670,12 +671,12 @@ export default function Trazabilidad() {
     await refrescarDocumentosLic(doc.licitacion_id);
   }
 
-  if (!cargando && !esAdmin) {
+  if (!cargando && !puedeVerTrazabilidad) {
     return (
       <div className="page">
         <div className="surface">
           <div className="surface-body" style={{ color: "var(--danger)" }}>
-            Acceso restringido: esta sección es solo para administradores.
+            Acceso restringido.
           </div>
         </div>
       </div>

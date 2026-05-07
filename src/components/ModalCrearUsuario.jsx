@@ -1,10 +1,11 @@
 import { useState } from "react";
 
 const ROLES = [
-  { value: "admin",           label: "Administrador" },
-  { value: "jefe_ventas",     label: "Jefe de Ventas" },
-  { value: "ventas",          label: "Ventas" },
-  { value: "ventas_especial", label: "Ventas Especial" },
+  { value: "admin",                label: "Administrador" },
+  { value: "jefe_ventas",          label: "Jefe de Ventas" },
+  { value: "jefe_ventas_especial", label: "Jefe de Ventas Especial" },
+  { value: "ventas",               label: "Ventas" },
+  { value: "ventas_especial",      label: "Ventas Especial" },
 ];
 
 export default function ModalCrearUsuario({ abierto, cerrar, onSuccess, onToast }) {

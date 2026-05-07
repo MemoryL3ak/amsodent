@@ -5,10 +5,11 @@ import ModalCrearUsuario from "../components/ModalCrearUsuario";
 import ModalEditarUsuario from "../components/ModalEditarUsuario";
 
 const ROL_CONFIG = {
-  admin:           { label: "Administrador",   text: "var(--primary-dark)", bg: "rgba(40,174,177,0.10)", border: "rgba(40,174,177,0.30)" },
-  jefe_ventas:     { label: "Jefe de Ventas",  text: "#1d4ed8",             bg: "#eff6ff",               border: "#bfdbfe"               },
-  ventas:          { label: "Ventas",          text: "#15803d",             bg: "#f0fdf4",               border: "#bbf7d0"               },
-  ventas_especial: { label: "Ventas Especial", text: "#7c3aed",             bg: "#f5f3ff",               border: "#ddd6fe"               },
+  admin:                { label: "Administrador",          text: "var(--primary-dark)", bg: "rgba(40,174,177,0.10)", border: "rgba(40,174,177,0.30)" },
+  jefe_ventas:          { label: "Jefe de Ventas",         text: "#1d4ed8",             bg: "#eff6ff",               border: "#bfdbfe"               },
+  jefe_ventas_especial: { label: "Jefe de Ventas Especial", text: "#0e7490",            bg: "#ecfeff",               border: "#a5f3fc"               },
+  ventas:               { label: "Ventas",                 text: "#15803d",             bg: "#f0fdf4",               border: "#bbf7d0"               },
+  ventas_especial:      { label: "Ventas Especial",        text: "#7c3aed",             bg: "#f5f3ff",               border: "#ddd6fe"               },
 };
 
 function RolBadge({ rol }) {

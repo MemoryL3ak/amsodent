@@ -674,7 +674,7 @@ export default function CrearLicitacion() {
   }, []);
 
   const puedeCrearLicitacion = useMemo(() => {
-    return ["admin", "jefe_ventas", "ventas", "ventas_especial"].includes(rol);
+    return ["admin", "jefe_ventas", "jefe_ventas_especial", "ventas", "ventas_especial"].includes(rol);
   }, [rol]);
 
   const esAdmin = useMemo(() => {

@@ -91,8 +91,22 @@ export default function App() {
           <Route path="campanas" element={<CampanasProductos />} />
           <Route path="campanas/nueva" element={<CrearCampana />} />
           <Route path="campanas/editar/:id" element={<EditarCampana />} />
-          <Route path="trazabilidad" element={<Trazabilidad />} />
-          <Route path="seguimiento-pagos" element={<SeguimientoPagos />} />
+          <Route
+            path="trazabilidad"
+            element={
+              <RequireRole allow={["admin", "jefe_ventas_especial"]}>
+                <Trazabilidad />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="seguimiento-pagos"
+            element={
+              <RequireRole allow={["admin", "jefe_ventas_especial"]}>
+                <SeguimientoPagos />
+              </RequireRole>
+            }
+          />
           <Route path="ventas" element={<Ventas />} />
           <Route path="metas" element={<Metas />} />
           <Route path="metas-canal" element={<MetasPorCanal />} />
