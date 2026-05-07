@@ -195,7 +195,11 @@ export default function CrearProducto() {
   }, [rol]);
   const esAdmin = puedeIngresarSKU;
   const esVentasOJefe = useMemo(
-    () => rolNorm === "ventas" || rolNorm === "ventas_especial" || rolNorm === "jefe_ventas",
+    () =>
+      rolNorm === "ventas" ||
+      rolNorm === "ventas_especial" ||
+      rolNorm === "jefe_ventas" ||
+      rolNorm === "jefe_ventas_especial",
     [rolNorm]
   );
   const esTransitorio = (sku ?? "").toString().trim() === "";
@@ -226,6 +230,14 @@ export default function CrearProducto() {
     if (precioVenta <= 0) return 0;
     return ((precioVenta - costoNum) / precioVenta) * 100;
   }, [precios.lista1, costo]);
+
+  const margenVentaLista2 = useMemo(() => {
+    const precioVenta = Number(precios.lista2) || 0;
+    const costoNum = Number(costo) || 0;
+    if (precioVenta <= 0) return "0.00%";
+    const margen = ((precioVenta - costoNum) / precioVenta) * 100;
+    return `${margen.toFixed(2)}%`;
+  }, [precios.lista2, costo]);
 
   const estadoMostrado = useMemo(() => {
     if (sku.trim()) return "Activo";
@@ -280,6 +292,7 @@ export default function CrearProducto() {
     if (!(beneficios ?? "").toString().trim()) missing.push("Beneficios");
     if (puedeVerCosto && !(Number(costo) > 0)) missing.push("Costo");
     if (!(Number(precios.lista1) > 0)) missing.push("Precio de Venta (Lista 1)");
+    if (!esVentasOJefe && !(Number(precios.lista2) > 0)) missing.push("Listado de Precios 2");
 
     if (missing.length) {
       setToast({
@@ -769,7 +782,7 @@ export default function CrearProducto() {
                       ? esVentasOJefe
                         ? "Precio Venta Neto *"
                         : "Listado de Precios 1 *"
-                      : "Listado de Precios 2"}
+                      : "Listado de Precios 2 *"}
                   </label>
                   <input
                     type="number"
@@ -783,12 +796,25 @@ export default function CrearProducto() {
               {mostrarMargen && (
                 <div>
                   <label className="block text-sm text-gray-600 mb-1">
-                    Margen
+                    Margen Lista 1
                   </label>
                   <input
                     readOnly
                     className="w-full rounded-md border border-gray-300 bg-gray-100 px-3 py-2"
                     value={margenVenta}
+                  />
+                </div>
+              )}
+
+              {mostrarMargen && !esVentasOJefe && (
+                <div>
+                  <label className="block text-sm text-gray-600 mb-1">
+                    Margen Lista 2
+                  </label>
+                  <input
+                    readOnly
+                    className="w-full rounded-md border border-gray-300 bg-gray-100 px-3 py-2"
+                    value={margenVentaLista2}
                   />
                 </div>
               )}

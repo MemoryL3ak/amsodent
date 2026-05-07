@@ -24,10 +24,11 @@ import {
 } from "lucide-react";
 
 const ROLE_LABELS = {
-  admin:           "Administrador",
-  jefe_ventas:     "Jefe de Ventas",
-  ventas:          "Ventas",
-  ventas_especial: "Ventas Especial",
+  admin:                "Administrador",
+  jefe_ventas:          "Jefe de Ventas",
+  jefe_ventas_especial: "Jefe de Ventas Especial",
+  ventas:               "Ventas",
+  ventas_especial:      "Ventas Especial",
 };
 
 function labelRol(rol) {
@@ -90,7 +91,8 @@ export default function SidebarLayout() {
 
   const rolNorm = (perfil?.rol || "").toString().trim().toLowerCase();
   const esAdmin = rolNorm === "admin";
-  const esJefatura = ["jefe_ventas", "jefe ventas", "jefe-ventas", "jefe de ventas"].includes(rolNorm);
+  const esJefatura = ["jefe_ventas", "jefe ventas", "jefe-ventas", "jefe de ventas", "jefe_ventas_especial"].includes(rolNorm);
+  const esJefeVentasEspecial = rolNorm === "jefe_ventas_especial";
   const esVentas = rolNorm === "ventas" || rolNorm === "ventas_especial";
   const esVentasEspecial = rolNorm === "ventas_especial";
   const puedeVerVentas = esAdmin || esJefatura || esVentas;
@@ -99,8 +101,8 @@ export default function SidebarLayout() {
   const coreNav = [
     { to: "/listar",            icon: ClipboardList, label: "Cotizaciones" },
     { to: "/crear",             icon: FilePlus,      label: "Nueva Cotización" },
-    esAdmin && { to: "/trazabilidad",      icon: FileText,   label: "Trazabilidad" },
-    esAdmin && { to: "/seguimiento-pagos", icon: CreditCard, label: "Seguimiento de Pagos" },
+    (esAdmin || esJefeVentasEspecial) && { to: "/trazabilidad",      icon: FileText,   label: "Trazabilidad" },
+    (esAdmin || esJefeVentasEspecial) && { to: "/seguimiento-pagos", icon: CreditCard, label: "Seguimiento de Pagos" },
     { to: "/productos",         icon: Package,       label: "Productos" },
     { to: "/clientes",          icon: Users,         label: "Clientes" },
     { to: "/campanas",          icon: Megaphone,     label: "Campañas" },

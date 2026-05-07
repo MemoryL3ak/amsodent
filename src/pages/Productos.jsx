@@ -55,7 +55,8 @@ export default function Productos() {
       r === "jefe_ventas" ||
       r === "jefe ventas" ||
       r === "jefe-ventas" ||
-      r === "jefe de ventas"
+      r === "jefe de ventas" ||
+      r === "jefe_ventas_especial"
     ) {
       return "jefe_ventas";
     }

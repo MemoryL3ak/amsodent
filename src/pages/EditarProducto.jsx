@@ -138,7 +138,8 @@ export default function EditarProducto() {
       r === "jefe_ventas" ||
       r === "jefe ventas" ||
       r === "jefe-ventas" ||
-      r === "jefe de ventas"
+      r === "jefe de ventas" ||
+      r === "jefe_ventas_especial"
     ) {
       return "jefe_ventas";
     }
@@ -173,6 +174,14 @@ export default function EditarProducto() {
     if (precioVenta <= 0) return 0;
     return ((precioVenta - costoNum) / precioVenta) * 100;
   }, [producto.lista1, producto.costo]);
+
+  const margenVentaLista2 = useMemo(() => {
+    const precioVenta = Number(producto.lista2) || 0;
+    const costoNum = Number(producto.costo) || 0;
+    if (precioVenta <= 0) return "0.00%";
+    const margen = ((precioVenta - costoNum) / precioVenta) * 100;
+    return `${margen.toFixed(2)}%`;
+  }, [producto.lista2, producto.costo]);
 
   // 1) ✅ ventas NO debe editar productos
     const esVentasOJefe = useMemo(
@@ -442,6 +451,16 @@ export default function EditarProducto() {
       setToast({
         type: "error",
         message: "Debes completar Nombre, Categoria y Formato.",
+      });
+      return;
+    }
+
+    // Lista 2 obligatoria salvo cuando ventas/jefe edita un producto donde
+    // ese campo no se muestra (en ese caso el campo no existe en el form).
+    if (!esVentasOJefe && !(Number(producto.lista2) > 0)) {
+      setToast({
+        type: "error",
+        message: "Debes completar el Listado de Precios 2.",
       });
       return;
     }
@@ -927,7 +946,7 @@ try {
               {(esVentasOJefe ? ["lista1"] : ["lista1", "lista2"]).map((list) => (
                 <div key={list}>
                   <label className="label">
-                    {list === "lista1" ? (esVentasOJefe ? "Precio Venta Neto" : "Listado de Precios 1") : "Listado de Precios 2"}
+                    {list === "lista1" ? (esVentasOJefe ? "Precio Venta Neto" : "Listado de Precios 1") : "Listado de Precios 2 *"}
                   </label>
                   <input type="number" className="input" value={producto[list]}
                     onChange={(e) => setProducto((prev) => ({ ...prev, [list]: e.target.value }))} />
@@ -935,8 +954,14 @@ try {
               ))}
               {mostrarMargen && (
                 <div>
-                  <label className="label">Margen</label>
+                  <label className="label">Margen Lista 1</label>
                   <input readOnly className="input" style={{background:"var(--bg)"}} value={margenVenta} />
+                </div>
+              )}
+              {mostrarMargen && !esVentasOJefe && (
+                <div>
+                  <label className="label">Margen Lista 2</label>
+                  <input readOnly className="input" style={{background:"var(--bg)"}} value={margenVentaLista2} />
                 </div>
               )}
             </div>

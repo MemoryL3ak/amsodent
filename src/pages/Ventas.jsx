@@ -148,7 +148,8 @@ export default function Ventas() {
     rolNorm === "jefe_ventas" ||
     rolNorm === "jefe ventas" ||
     rolNorm === "jefe-ventas" ||
-    rolNorm === "jefe de ventas";
+    rolNorm === "jefe de ventas" ||
+    rolNorm === "jefe_ventas_especial";
   const puedeVerVentas = esJefatura || esVentas;
 
   useEffect(() => {
