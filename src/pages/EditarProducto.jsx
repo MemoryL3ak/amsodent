@@ -935,35 +935,39 @@ try {
             <h3 className="surface-title">Lista de Precios</h3>
           </div>
           <div className="surface-body">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {(esAdmin || (esVentasOJefe && (esProductoTransitorio || esPendienteAprobacion))) && (
-                <div>
-                  <label className="label">Costo</label>
-                  <input type="number" className="input" value={producto.costo}
-                    onChange={(e) => setProducto((prev) => ({ ...prev, costo: e.target.value }))} />
-                </div>
+                <>
+                  <div>
+                    <label className="label">Costo</label>
+                    <input type="number" className="input" value={producto.costo}
+                      onChange={(e) => setProducto((prev) => ({ ...prev, costo: e.target.value }))} />
+                  </div>
+                  <div />
+                </>
               )}
-              {["lista1", "lista2"].map((list) => (
-                <div key={list}>
-                  <label className="label">
-                    {list === "lista1"
-                      ? esVentasOJefe
-                        ? "Precio Venta Neto 1 *"
-                        : "Listado de Precios 1"
-                      : esVentasOJefe
-                        ? "Precio Venta Neto 2 *"
-                        : "Listado de Precios 2 *"}
-                  </label>
-                  <input type="number" className="input" value={producto[list]}
-                    onChange={(e) => setProducto((prev) => ({ ...prev, [list]: e.target.value }))} />
-                </div>
-              ))}
+
+              <div>
+                <label className="label">
+                  {esVentasOJefe ? "Precio Venta Neto 1 *" : "Listado de Precios 1"}
+                </label>
+                <input type="number" className="input" value={producto.lista1}
+                  onChange={(e) => setProducto((prev) => ({ ...prev, lista1: e.target.value }))} />
+              </div>
               {mostrarMargen && (
                 <div>
                   <label className="label">{esVentasOJefe ? "Margen Venta Neto 1" : "Margen Lista 1"}</label>
                   <input readOnly className="input" style={{background:"var(--bg)"}} value={margenVenta} />
                 </div>
               )}
+
+              <div>
+                <label className="label">
+                  {esVentasOJefe ? "Precio Venta Neto 2 *" : "Listado de Precios 2 *"}
+                </label>
+                <input type="number" className="input" value={producto.lista2}
+                  onChange={(e) => setProducto((prev) => ({ ...prev, lista2: e.target.value }))} />
+              </div>
               {mostrarMargen && (
                 <div>
                   <label className="label">{esVentasOJefe ? "Margen Venta Neto 2" : "Margen Lista 2"}</label>

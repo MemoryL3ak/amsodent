@@ -762,39 +762,33 @@ export default function CrearProducto() {
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {puedeVerCosto && (
-                <div>
-                  <label className="block text-sm text-gray-600 mb-1">
-                    Costo *
-                  </label>
-                  <input
-                    type="number"
-                    className="w-full rounded-md border border-gray-300 bg-gray-50 px-3 py-2"
-                    value={costo}
-                    onChange={(e) => setCosto(e.target.value)}
-                  />
-                </div>
+                <>
+                  <div>
+                    <label className="block text-sm text-gray-600 mb-1">
+                      Costo *
+                    </label>
+                    <input
+                      type="number"
+                      className="w-full rounded-md border border-gray-300 bg-gray-50 px-3 py-2"
+                      value={costo}
+                      onChange={(e) => setCosto(e.target.value)}
+                    />
+                  </div>
+                  <div />
+                </>
               )}
 
-              {["lista1", "lista2"].map((list) => (
-                <div key={list}>
-                  <label className="block text-sm text-gray-600 mb-1">
-                    {list === "lista1"
-                      ? esVentasOJefe
-                        ? "Precio Venta Neto 1 *"
-                        : "Listado de Precios 1 *"
-                      : esVentasOJefe
-                        ? "Precio Venta Neto 2 *"
-                        : "Listado de Precios 2 *"}
-                  </label>
-                  <input
-                    type="number"
-                    className="w-full rounded-md border border-gray-300 bg-gray-50 px-3 py-2"
-                    value={precios[list]}
-                    onChange={(e) => actualizarPrecio(list, e.target.value)}
-                  />
-                </div>
-              ))}
-
+              <div>
+                <label className="block text-sm text-gray-600 mb-1">
+                  {esVentasOJefe ? "Precio Venta Neto 1 *" : "Listado de Precios 1 *"}
+                </label>
+                <input
+                  type="number"
+                  className="w-full rounded-md border border-gray-300 bg-gray-50 px-3 py-2"
+                  value={precios.lista1}
+                  onChange={(e) => actualizarPrecio("lista1", e.target.value)}
+                />
+              </div>
               {mostrarMargen && (
                 <div>
                   <label className="block text-sm text-gray-600 mb-1">
@@ -808,6 +802,17 @@ export default function CrearProducto() {
                 </div>
               )}
 
+              <div>
+                <label className="block text-sm text-gray-600 mb-1">
+                  {esVentasOJefe ? "Precio Venta Neto 2 *" : "Listado de Precios 2 *"}
+                </label>
+                <input
+                  type="number"
+                  className="w-full rounded-md border border-gray-300 bg-gray-50 px-3 py-2"
+                  value={precios.lista2}
+                  onChange={(e) => actualizarPrecio("lista2", e.target.value)}
+                />
+              </div>
               {mostrarMargen && (
                 <div>
                   <label className="block text-sm text-gray-600 mb-1">
@@ -824,11 +829,11 @@ export default function CrearProducto() {
           </div>
         </div>
 
-        <div className="mt-6">
+        <div className="btn-row" style={{ marginTop: "1.5rem" }}>
           <button
             type="button"
             onClick={guardarProducto}
-            className="cursor-pointer bg-blue-600 text-white px-6 py-2 rounded-md shadow hover:bg-blue-700 transition-colors"
+            className="btn btn-primary"
           >
             Guardar Producto
           </button>
