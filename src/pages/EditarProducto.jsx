@@ -455,12 +455,12 @@ export default function EditarProducto() {
       return;
     }
 
-    // Lista 2 obligatoria salvo cuando ventas/jefe edita un producto donde
-    // ese campo no se muestra (en ese caso el campo no existe en el form).
-    if (!esVentasOJefe && !(Number(producto.lista2) > 0)) {
+    if (!(Number(producto.lista2) > 0)) {
       setToast({
         type: "error",
-        message: "Debes completar el Listado de Precios 2.",
+        message: esVentasOJefe
+          ? "Debes completar el Precio Venta Neto 2."
+          : "Debes completar el Listado de Precios 2.",
       });
       return;
     }
@@ -943,10 +943,16 @@ try {
                     onChange={(e) => setProducto((prev) => ({ ...prev, costo: e.target.value }))} />
                 </div>
               )}
-              {(esVentasOJefe ? ["lista1"] : ["lista1", "lista2"]).map((list) => (
+              {["lista1", "lista2"].map((list) => (
                 <div key={list}>
                   <label className="label">
-                    {list === "lista1" ? (esVentasOJefe ? "Precio Venta Neto" : "Listado de Precios 1") : "Listado de Precios 2 *"}
+                    {list === "lista1"
+                      ? esVentasOJefe
+                        ? "Precio Venta Neto 1 *"
+                        : "Listado de Precios 1"
+                      : esVentasOJefe
+                        ? "Precio Venta Neto 2 *"
+                        : "Listado de Precios 2 *"}
                   </label>
                   <input type="number" className="input" value={producto[list]}
                     onChange={(e) => setProducto((prev) => ({ ...prev, [list]: e.target.value }))} />
@@ -954,13 +960,13 @@ try {
               ))}
               {mostrarMargen && (
                 <div>
-                  <label className="label">Margen Lista 1</label>
+                  <label className="label">{esVentasOJefe ? "Margen Venta Neto 1" : "Margen Lista 1"}</label>
                   <input readOnly className="input" style={{background:"var(--bg)"}} value={margenVenta} />
                 </div>
               )}
-              {mostrarMargen && !esVentasOJefe && (
+              {mostrarMargen && (
                 <div>
-                  <label className="label">Margen Lista 2</label>
+                  <label className="label">{esVentasOJefe ? "Margen Venta Neto 2" : "Margen Lista 2"}</label>
                   <input readOnly className="input" style={{background:"var(--bg)"}} value={margenVentaLista2} />
                 </div>
               )}

@@ -292,7 +292,7 @@ export default function CrearProducto() {
     if (!(beneficios ?? "").toString().trim()) missing.push("Beneficios");
     if (puedeVerCosto && !(Number(costo) > 0)) missing.push("Costo");
     if (!(Number(precios.lista1) > 0)) missing.push("Precio de Venta (Lista 1)");
-    if (!esVentasOJefe && !(Number(precios.lista2) > 0)) missing.push("Listado de Precios 2");
+    if (!(Number(precios.lista2) > 0)) missing.push("Precio de Venta (Lista 2)");
 
     if (missing.length) {
       setToast({
@@ -775,14 +775,16 @@ export default function CrearProducto() {
                 </div>
               )}
 
-              {(esVentasOJefe ? ["lista1"] : ["lista1", "lista2"]).map((list) => (
+              {["lista1", "lista2"].map((list) => (
                 <div key={list}>
                   <label className="block text-sm text-gray-600 mb-1">
                     {list === "lista1"
                       ? esVentasOJefe
-                        ? "Precio Venta Neto *"
+                        ? "Precio Venta Neto 1 *"
                         : "Listado de Precios 1 *"
-                      : "Listado de Precios 2 *"}
+                      : esVentasOJefe
+                        ? "Precio Venta Neto 2 *"
+                        : "Listado de Precios 2 *"}
                   </label>
                   <input
                     type="number"
@@ -796,7 +798,7 @@ export default function CrearProducto() {
               {mostrarMargen && (
                 <div>
                   <label className="block text-sm text-gray-600 mb-1">
-                    Margen Lista 1
+                    {esVentasOJefe ? "Margen Venta Neto 1" : "Margen Lista 1"}
                   </label>
                   <input
                     readOnly
@@ -806,10 +808,10 @@ export default function CrearProducto() {
                 </div>
               )}
 
-              {mostrarMargen && !esVentasOJefe && (
+              {mostrarMargen && (
                 <div>
                   <label className="block text-sm text-gray-600 mb-1">
-                    Margen Lista 2
+                    {esVentasOJefe ? "Margen Venta Neto 2" : "Margen Lista 2"}
                   </label>
                   <input
                     readOnly
