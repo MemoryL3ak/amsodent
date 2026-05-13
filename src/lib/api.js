@@ -22,14 +22,28 @@ async function request(path, options = {}) {
     headers: { ...headers, ...options.headers },
   });
 
+  // Lee siempre como texto y parsea solo si hay contenido — evita romper
+  // cuando el backend devuelve body vacío (204 No Content, null, etc.).
+  const text = await res.text();
+  const body = text ? safeJsonParse(text) : null;
+
   if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    const error = new Error(body.message || `Error ${res.status}`);
+    const msg = (body && (body.message || body.error)) || `Error ${res.status}`;
+    const error = new Error(msg);
     error.status = res.status;
+    error.body = body;
     throw error;
   }
 
-  return res.json();
+  return body;
+}
+
+function safeJsonParse(text) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
 }
 
 export const api = {
@@ -44,12 +58,15 @@ export const api = {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
       body: formData,
     });
+    const text = await res.text();
+    const body = text ? safeJsonParse(text) : null;
     if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      const error = new Error(body.message || `Error ${res.status}`);
+      const msg = (body && (body.message || body.error)) || `Error ${res.status}`;
+      const error = new Error(msg);
       error.status = res.status;
+      error.body = body;
       throw error;
     }
-    return res.json();
+    return body;
   },
 };

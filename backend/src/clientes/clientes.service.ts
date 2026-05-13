@@ -17,7 +17,7 @@ export class ClientesService {
     return data;
   }
 
-  async findOne(id: number) {
+  async findOne(id: string | number) {
     const { data, error } = await this.supabase
       .getClient()
       .from('clientes')
@@ -41,6 +41,7 @@ export class ClientesService {
     email: string;
     telefono?: string;
     condiciones_venta?: string;
+    tipo_cliente?: 'Cliente Particular' | 'Entidad Pública' | null;
   }) {
     const { data, error } = await this.supabase
       .getClient()
@@ -53,7 +54,7 @@ export class ClientesService {
     return data;
   }
 
-  async update(id: number, body: Record<string, any>) {
+  async update(id: string | number, body: Record<string, any>) {
     const { data, error } = await this.supabase
       .getClient()
       .from('clientes')
@@ -66,7 +67,7 @@ export class ClientesService {
     return data;
   }
 
-  async remove(id: number) {
+  async remove(id: string | number) {
     const { error } = await this.supabase
       .getClient()
       .from('clientes')

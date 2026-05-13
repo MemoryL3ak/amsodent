@@ -5,6 +5,7 @@ import { api } from "../lib/api";
 import Toast from "../components/Toast";
 import { Link } from "react-router-dom";
 import Select from "react-select";
+import { FACTOR_LISTA_3, calcularLista3 } from "../lib/listas";
 
 /* ============================================================
    BUSCADOR MEJORADO (igual que CrearLicitacion)
@@ -27,6 +28,53 @@ function filtrarPorTerminos(option, inputValue) {
   const label = normalizarTexto(option.label);
   const terms = q.split(" ").filter(Boolean);
   return terms.every((t) => label.includes(t));
+}
+
+// Formato monetario chileno: "1.234.567" (sin signo $, el signo va por fuera).
+function formatearCLDesdeString(value) {
+  const digits = String(value ?? "").replace(/\D/g, "");
+  if (!digits) return "";
+  return Number(digits).toLocaleString("es-CL");
+}
+
+// Devuelve el número entero detrás de un string con separadores ("1.234" → 1234).
+function numFromCL(value) {
+  if (typeof value === "number") return value;
+  const digits = String(value ?? "").replace(/\D/g, "");
+  return digits ? Number(digits) : 0;
+}
+
+// Input monetario CLP: muestra "$" como prefijo y separador de miles.
+function MoneyInput({ value, onChange, readOnly = false, placeholder = "" }) {
+  const display = typeof value === "number"
+    ? (value > 0 ? value.toLocaleString("es-CL") : "")
+    : (value ?? "");
+  return (
+    <div style={{ position: "relative" }}>
+      <span
+        style={{
+          position: "absolute",
+          left: 12,
+          top: "50%",
+          transform: "translateY(-50%)",
+          color: "#6b7280",
+          fontSize: 14,
+          pointerEvents: "none",
+        }}
+      >
+        $
+      </span>
+      <input
+        type="text"
+        inputMode="numeric"
+        readOnly={readOnly}
+        placeholder={placeholder}
+        className={`w-full rounded-md border border-gray-300 ${readOnly ? "bg-gray-100" : "bg-gray-50"} pl-7 pr-3 py-2`}
+        value={display}
+        onChange={(e) => onChange?.(e.target.value)}
+      />
+    </div>
+  );
 }
 
 /* ============================================================
@@ -199,7 +247,8 @@ export default function CrearProducto() {
       rolNorm === "ventas" ||
       rolNorm === "ventas_especial" ||
       rolNorm === "jefe_ventas" ||
-      rolNorm === "jefe_ventas_especial",
+      rolNorm === "jefe_ventas_especial" ||
+      rolNorm === "contabilidad",
     [rolNorm]
   );
   const esTransitorio = (sku ?? "").toString().trim() === "";
@@ -217,27 +266,44 @@ export default function CrearProducto() {
   }, [alto, largo, ancho]);
 
   const margenVenta = useMemo(() => {
-    const precioVenta = Number(precios.lista1) || 0;
-    const costoNum = Number(costo) || 0;
+    const precioVenta = numFromCL(precios.lista1);
+    const costoNum = numFromCL(costo);
     if (precioVenta <= 0) return "0.00%";
     const margen = ((precioVenta - costoNum) / precioVenta) * 100;
     return `${margen.toFixed(2)}%`;
   }, [precios.lista1, costo]);
 
   const margenVentaNum = useMemo(() => {
-    const precioVenta = Number(precios.lista1) || 0;
-    const costoNum = Number(costo) || 0;
+    const precioVenta = numFromCL(precios.lista1);
+    const costoNum = numFromCL(costo);
     if (precioVenta <= 0) return 0;
     return ((precioVenta - costoNum) / precioVenta) * 100;
   }, [precios.lista1, costo]);
 
   const margenVentaLista2 = useMemo(() => {
-    const precioVenta = Number(precios.lista2) || 0;
-    const costoNum = Number(costo) || 0;
+    const precioVenta = numFromCL(precios.lista2);
+    const costoNum = numFromCL(costo);
     if (precioVenta <= 0) return "0.00%";
     const margen = ((precioVenta - costoNum) / precioVenta) * 100;
     return `${margen.toFixed(2)}%`;
   }, [precios.lista2, costo]);
+
+  // Lista 3 es siempre calculada (Lista 2 × factor), no editable.
+  const lista3Calculada = useMemo(() => {
+    return calcularLista3(numFromCL(precios.lista2));
+  }, [precios.lista2]);
+
+  const lista3Display = useMemo(() => {
+    return lista3Calculada > 0 ? lista3Calculada.toLocaleString("es-CL") : "";
+  }, [lista3Calculada]);
+
+  const margenVentaLista3 = useMemo(() => {
+    const precioVenta = lista3Calculada;
+    const costoNum = numFromCL(costo);
+    if (precioVenta <= 0) return "0.00%";
+    const margen = ((precioVenta - costoNum) / precioVenta) * 100;
+    return `${margen.toFixed(2)}%`;
+  }, [lista3Calculada, costo]);
 
   const estadoMostrado = useMemo(() => {
     if (sku.trim()) return "Activo";
@@ -258,7 +324,7 @@ export default function CrearProducto() {
   }, [imagenFile]);
 
   function actualizarPrecio(lista, valor) {
-    setPrecios((prev) => ({ ...prev, [lista]: valor }));
+    setPrecios((prev) => ({ ...prev, [lista]: formatearCLDesdeString(valor) }));
   }
 
   async function subirImagenProducto() {
@@ -290,9 +356,9 @@ export default function CrearProducto() {
     if (!(composicion ?? "").toString().trim()) missing.push("Composición");
     if (!(usoIndicaciones ?? "").toString().trim()) missing.push("Uso/Indicaciones");
     if (!(beneficios ?? "").toString().trim()) missing.push("Beneficios");
-    if (puedeVerCosto && !(Number(costo) > 0)) missing.push("Costo");
-    if (!(Number(precios.lista1) > 0)) missing.push("Precio de Venta (Lista 1)");
-    if (!(Number(precios.lista2) > 0)) missing.push("Precio de Venta (Lista 2)");
+    if (puedeVerCosto && !(numFromCL(costo) > 0)) missing.push("Costo");
+    if (!(numFromCL(precios.lista1) > 0)) missing.push("Precio de Venta (Lista 1)");
+    if (!(numFromCL(precios.lista2) > 0)) missing.push("Precio de Venta (Lista 2)");
 
     if (missing.length) {
       setToast({
@@ -338,15 +404,17 @@ export default function CrearProducto() {
       largo: Number(largo) || 0,
       ancho: Number(ancho) || 0,
       metro_cubico: Number(metroCubico) || 0,
-      lista1: Number(precios.lista1) || 0,
-      lista2: Number(precios.lista2) || 0,
+      lista1: numFromCL(precios.lista1),
+      lista2: numFromCL(precios.lista2),
+      // Lista 3 siempre es derivada (Lista 2 × 1.08); guardamos 0 y el
+      // frontend hace fallback al leer.
       lista3: 0,
       lista4: 0,
       creado_por: userEmail || null,
     };
 
     if (puedeVerCosto) {
-      payload.costo = Number(costo) || 0;
+      payload.costo = numFromCL(costo);
     }
 
     try {
@@ -767,11 +835,9 @@ export default function CrearProducto() {
                     <label className="block text-sm text-gray-600 mb-1">
                       Costo *
                     </label>
-                    <input
-                      type="number"
-                      className="w-full rounded-md border border-gray-300 bg-gray-50 px-3 py-2"
+                    <MoneyInput
                       value={costo}
-                      onChange={(e) => setCosto(e.target.value)}
+                      onChange={(v) => setCosto(formatearCLDesdeString(v))}
                     />
                   </div>
                   <div />
@@ -782,11 +848,9 @@ export default function CrearProducto() {
                 <label className="block text-sm text-gray-600 mb-1">
                   {esVentasOJefe ? "Precio Venta Neto 1 *" : "Listado de Precios 1 *"}
                 </label>
-                <input
-                  type="number"
-                  className="w-full rounded-md border border-gray-300 bg-gray-50 px-3 py-2"
+                <MoneyInput
                   value={precios.lista1}
-                  onChange={(e) => actualizarPrecio("lista1", e.target.value)}
+                  onChange={(v) => actualizarPrecio("lista1", v)}
                 />
               </div>
               {mostrarMargen && (
@@ -806,11 +870,9 @@ export default function CrearProducto() {
                 <label className="block text-sm text-gray-600 mb-1">
                   {esVentasOJefe ? "Precio Venta Neto 2 *" : "Listado de Precios 2 *"}
                 </label>
-                <input
-                  type="number"
-                  className="w-full rounded-md border border-gray-300 bg-gray-50 px-3 py-2"
+                <MoneyInput
                   value={precios.lista2}
-                  onChange={(e) => actualizarPrecio("lista2", e.target.value)}
+                  onChange={(v) => actualizarPrecio("lista2", v)}
                 />
               </div>
               {mostrarMargen && (
@@ -822,6 +884,28 @@ export default function CrearProducto() {
                     readOnly
                     className="w-full rounded-md border border-gray-300 bg-gray-100 px-3 py-2"
                     value={margenVentaLista2}
+                  />
+                </div>
+              )}
+
+              <div>
+                <label className="block text-sm text-gray-600 mb-1">
+                  {esVentasOJefe ? "Precio Venta Neto 3" : "Listado de Precios 3"}
+                </label>
+                <MoneyInput value={lista3Display} readOnly />
+                <p className="text-[11px] text-gray-500 mt-1">
+                  Calculado automáticamente (Lista 2 × {FACTOR_LISTA_3}). Usado en Licitación 9 a 24 meses.
+                </p>
+              </div>
+              {mostrarMargen && (
+                <div>
+                  <label className="block text-sm text-gray-600 mb-1">
+                    {esVentasOJefe ? "Margen Venta Neto 3" : "Margen Lista 3"}
+                  </label>
+                  <input
+                    readOnly
+                    className="w-full rounded-md border border-gray-300 bg-gray-100 px-3 py-2"
+                    value={margenVentaLista3}
                   />
                 </div>
               )}

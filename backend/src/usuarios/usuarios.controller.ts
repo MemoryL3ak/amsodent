@@ -4,6 +4,7 @@ import {
 } from '@nestjs/common';
 import { UsuariosService } from './usuarios.service';
 import { AuthGuard } from '../auth/auth.guard';
+import { AdminGuard } from '../auth/admin.guard';
 
 @Controller('usuarios')
 @UseGuards(AuthGuard)
@@ -38,6 +39,16 @@ export class UsuariosController {
   @Post('reset-password')
   resetPassword(@Body() body: { email: string }) {
     return this.usuariosService.resetPassword(body.email);
+  }
+
+  // Admin establece manualmente la contraseña de un usuario.
+  @Post('profiles/:id/set-password')
+  @UseGuards(AdminGuard)
+  setPasswordAdmin(
+    @Param('id') id: string,
+    @Body() body: { password: string },
+  ) {
+    return this.usuariosService.setPasswordAdmin(id, body?.password);
   }
 
   // Sessions

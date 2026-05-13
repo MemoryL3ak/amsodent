@@ -168,7 +168,7 @@ export function UnsavedChangesProvider({ children }) {
             </div>
 
             <p style={{ margin: "0 0 24px", fontSize: 13.5, color: "var(--text-soft)", lineHeight: 1.55 }}>
-              Si navegas ahora perderás los cambios que hiciste en esta sección. ¿Qué querés hacer?
+              Si navegas ahora perderás los cambios que hiciste en esta sección. ¿Qué deseas hacer?
             </p>
 
             <div className="btn-row" style={{ justifyContent: "flex-end" }}>

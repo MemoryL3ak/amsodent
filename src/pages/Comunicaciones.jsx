@@ -126,7 +126,7 @@ export default function Comunicaciones() {
           return;
         }
         if (!esImagen) {
-          setToast({ type: "error", message: "Subí una imagen (PNG/JPG) o un PDF." });
+          setToast({ type: "error", message: "Sube una imagen (PNG/JPG) o un PDF." });
           return;
         }
         // Imagen subida directa: sin overlays (no hay metadata de links)
@@ -729,7 +729,7 @@ export default function Comunicaciones() {
               className="input"
               value={cuerpo}
               onChange={(e) => setCuerpo(e.target.value)}
-              placeholder={"Hola,\n\nGracias por…\n\n(podés usar HTML: <b>, <a href=\"…\">, <p>, <img src=\"…\"> )"}
+              placeholder={"Hola,\n\nGracias por…\n\n(puedes usar HTML: <b>, <a href=\"…\">, <p>, <img src=\"…\"> )"}
               rows={12}
               style={{ width: "100%", resize: "vertical", fontFamily: "ui-monospace, monospace", fontSize: 13 }}
               disabled={enviando}

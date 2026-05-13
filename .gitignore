@@ -9,3 +9,7 @@ certificates
 
 # Artefactos generados por scripts (SQLs producidos a partir de CSVs locales)
 scripts/output/
+
+# Cache local de Claude Code y build de Next.js
+.claude/
+.next/

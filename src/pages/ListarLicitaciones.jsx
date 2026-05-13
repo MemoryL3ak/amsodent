@@ -141,7 +141,7 @@ export default function ListarLicitaciones() {
   ];
 
   const opcionesTipoCompra = [
-    "Compra ágil","Compra directa","Licitación","Cliente particular",
+    "Compra ágil","Compra directa","Licitación 0 a 8 meses","Licitación 9 a 24 meses","Cliente particular",
   ];
 
   const textoCreadores = useMemo(() => {
@@ -268,7 +268,7 @@ export default function ListarLicitaciones() {
 
   const rolNorm    = (rol ?? "").toString().trim().toLowerCase();
   const esAdmin    = rolNorm === "admin";
-  const esJefatura = ["jefe_ventas","jefe ventas","jefe-ventas","jefe de ventas","jefe_ventas_especial"].includes(rolNorm);
+  const esJefatura = ["jefe_ventas","jefe ventas","jefe-ventas","jefe de ventas","jefe_ventas_especial","contabilidad"].includes(rolNorm);
 
   // ── Acciones admin ────────────────────────────────────────────
   async function aprobarCotizacion(id) {

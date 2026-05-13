@@ -3,6 +3,7 @@ import { api } from "../lib/api";
 import Toast from "../components/Toast";
 import ModalCrearUsuario from "../components/ModalCrearUsuario";
 import ModalEditarUsuario from "../components/ModalEditarUsuario";
+import ModalResetClave from "../components/ModalResetClave";
 
 const ROL_CONFIG = {
   admin:                { label: "Administrador",          text: "var(--primary-dark)", bg: "rgba(40,174,177,0.10)", border: "rgba(40,174,177,0.30)" },
@@ -10,6 +11,7 @@ const ROL_CONFIG = {
   jefe_ventas_especial: { label: "Jefe de Ventas Especial", text: "#0e7490",            bg: "#ecfeff",               border: "#a5f3fc"               },
   ventas:               { label: "Ventas",                 text: "#15803d",             bg: "#f0fdf4",               border: "#bbf7d0"               },
   ventas_especial:      { label: "Ventas Especial",        text: "#7c3aed",             bg: "#f5f3ff",               border: "#ddd6fe"               },
+  contabilidad:         { label: "Contabilidad",           text: "#b45309",             bg: "#fffbeb",               border: "#fde68a"               },
 };
 
 function RolBadge({ rol }) {
@@ -32,6 +34,7 @@ export default function ConfiguracionUsuarios() {
   const [toast, setToast]       = useState(null);
   const [modalCrear, setModalCrear]   = useState(false);
   const [modalEditar, setModalEditar] = useState(null);
+  const [modalResetClave, setModalResetClave] = useState(null);
 
   async function loadUsers() {
     setLoading(true);
@@ -128,10 +131,10 @@ export default function ConfiguracionUsuarios() {
                       <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px" }}>
                         <button
                           className="btn btn-sm btn-ghost"
-                          onClick={() => enviarReset(u.email)}
-                          title="Enviar correo de recuperación"
+                          onClick={() => setModalResetClave(u)}
+                          title="Establecer una nueva contraseña para este usuario"
                         >
-                          Reset contraseña
+                          Cambiar clave
                         </button>
                         <button
                           className="btn btn-sm btn-secondary"
@@ -167,6 +170,14 @@ export default function ConfiguracionUsuarios() {
         <ModalEditarUsuario
           user={modalEditar}
           close={() => { setModalEditar(null); loadUsers(); }}
+          onToast={setToast}
+        />
+      )}
+
+      {modalResetClave && (
+        <ModalResetClave
+          user={modalResetClave}
+          cerrar={() => setModalResetClave(null)}
           onToast={setToast}
         />
       )}

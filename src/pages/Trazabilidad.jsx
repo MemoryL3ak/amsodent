@@ -206,7 +206,8 @@ export default function Trazabilidad() {
   const opcionesTipoCompra = [
     "Compra ágil",
     "Compra directa",
-    "Licitación",
+    "Licitación 0 a 8 meses",
+    "Licitación 9 a 24 meses",
     "Cliente particular",
   ];
 
@@ -215,9 +216,14 @@ export default function Trazabilidad() {
     return filtroTipoCompra.join(", ");
   }, [filtroTipoCompra]);
 
+  // Cuando el usuario filtra solo por "Cliente particular", ocultamos las
+  // columnas Orden de Compra y Guía de Despacho — ese flujo no las usa.
+  const esSoloClienteParticular =
+    filtroTipoCompra.length === 1 && filtroTipoCompra[0] === "Cliente particular";
+
   const rolNorm = (rol ?? "").toString().trim().toLowerCase();
   const esAdmin = rolNorm === "admin";
-  const puedeVerTrazabilidad = esAdmin || rolNorm === "jefe_ventas_especial";
+  const puedeVerTrazabilidad = esAdmin || rolNorm === "jefe_ventas_especial" || rolNorm === "contabilidad";
 
   // Reload counter para forzar recargas desde subir/eliminar factura
   // Refresca solo los documentos de una cotización (sin tocar loading global)
@@ -708,28 +714,42 @@ export default function Trazabilidad() {
         </div>
       </div>
 
-      {/* Stats */}
-      <div className="stats-row">
-        <div className="stat-card">
-          <div className="stat-label">Adjudicadas</div>
-          <div className="stat-value">{dataFiltrada.length}</div>
-          <div className="stat-sub">cotizaciones</div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-label">Con Factura</div>
-          <div className="stat-value" style={{ color: "var(--success)" }}>
-            {dataFiltrada.filter((l) => getFacturas(l.id).length > 0).length}
+      {/* Stats — totales de documentos creados dentro del filtro activo */}
+      {(() => {
+        const totalOCs = dataFiltrada.reduce((acc, l) => acc + getOrdenes(l.id).length, 0);
+        const totalGuias = dataFiltrada.reduce((acc, l) => acc + getGuias(l.id).length, 0);
+        const totalFacturas = dataFiltrada.reduce((acc, l) => acc + getFacturas(l.id).length, 0);
+        const sinFactura = dataFiltrada.filter((l) => getFacturas(l.id).length === 0).length;
+        return (
+          <div className="stats-row">
+            <div className="stat-card">
+              <div className="stat-label">Cotizaciones</div>
+              <div className="stat-value">{dataFiltrada.length}</div>
+              <div className="stat-sub">adjudicadas</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-label">Órdenes de Compra</div>
+              <div className="stat-value" style={{ color: "#1d4ed8" }}>{totalOCs}</div>
+              <div className="stat-sub">documentos</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-label">Guías de Despacho</div>
+              <div className="stat-value" style={{ color: "#7c3aed" }}>{totalGuias}</div>
+              <div className="stat-sub">documentos</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-label">Facturas</div>
+              <div className="stat-value" style={{ color: "var(--success)" }}>{totalFacturas}</div>
+              <div className="stat-sub">documentos</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-label">Sin Factura</div>
+              <div className="stat-value" style={{ color: "var(--warning)" }}>{sinFactura}</div>
+              <div className="stat-sub">cotizaciones</div>
+            </div>
           </div>
-          <div className="stat-sub">facturadas</div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-label">Sin Factura</div>
-          <div className="stat-value" style={{ color: "var(--warning)" }}>
-            {dataFiltrada.filter((l) => getFacturas(l.id).length === 0).length}
-          </div>
-          <div className="stat-sub">pendientes</div>
-        </div>
-      </div>
+        );
+      })()}
 
       {/* Filtros unificados — 2 filas */}
       <div
@@ -959,8 +979,12 @@ export default function Trazabilidad() {
                     Monto <SortIcon col="monto" />
                   </span>
                 </th>
-                <th style={{ width: "15%", textAlign: "left" }}>Orden de Compra</th>
-                <th style={{ width: "15%", textAlign: "left" }}>Guía Despacho</th>
+                {!esSoloClienteParticular && (
+                  <>
+                    <th style={{ width: "15%", textAlign: "left" }}>Orden de Compra</th>
+                    <th style={{ width: "15%", textAlign: "left" }}>Guía Despacho</th>
+                  </>
+                )}
                 <th style={{ width: "15%", textAlign: "left" }}>Factura</th>
                 <th style={{ textAlign: "right", width: "13%" }}>Acción</th>
               </tr>
@@ -968,7 +992,7 @@ export default function Trazabilidad() {
             <tbody>
               {dataFiltrada.length === 0 ? (
                 <tr>
-                  <td colSpan="6" style={{ textAlign: "center", padding: "60px 0", color: "var(--text-muted)" }}>
+                  <td colSpan={esSoloClienteParticular ? 4 : 6} style={{ textAlign: "center", padding: "60px 0", color: "var(--text-muted)" }}>
                     No hay cotizaciones adjudicadas que coincidan con los filtros.
                   </td>
                 </tr>
@@ -1089,7 +1113,7 @@ export default function Trazabilidad() {
                         )}
 
                         {/* Orden de Compra */}
-                        {firstOfOc && (
+                        {!esSoloClienteParticular && firstOfOc && (
                           <td
                             rowSpan={ocSpan}
                             onMouseEnter={() => setHoverChain({ type: "oc", licId: lic.id, ocKey: cycle.ocKey })}
@@ -1134,7 +1158,7 @@ export default function Trazabilidad() {
                         )}
 
                         {/* Guía de Despacho */}
-                        {firstOfGuia && (
+                        {!esSoloClienteParticular && firstOfGuia && (
                           <td
                             rowSpan={guiaSpan}
                             onMouseEnter={() => setHoverChain({ type: "guia", licId: lic.id, ocKey: cycle.ocKey, guiaKey: cycle.guiaKey })}

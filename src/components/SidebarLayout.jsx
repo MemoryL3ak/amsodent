@@ -22,6 +22,7 @@ import {
   Gift,
   Mail,
 } from "lucide-react";
+import NotificacionesMenu from "./NotificacionesMenu";
 
 const ROLE_LABELS = {
   admin:                "Administrador",
@@ -29,6 +30,7 @@ const ROLE_LABELS = {
   jefe_ventas_especial: "Jefe de Ventas Especial",
   ventas:               "Ventas",
   ventas_especial:      "Ventas Especial",
+  contabilidad:         "Contabilidad",
 };
 
 function labelRol(rol) {
@@ -93,16 +95,17 @@ export default function SidebarLayout() {
   const esAdmin = rolNorm === "admin";
   const esJefatura = ["jefe_ventas", "jefe ventas", "jefe-ventas", "jefe de ventas", "jefe_ventas_especial"].includes(rolNorm);
   const esJefeVentasEspecial = rolNorm === "jefe_ventas_especial";
+  const esContabilidad = rolNorm === "contabilidad";
   const esVentas = rolNorm === "ventas" || rolNorm === "ventas_especial";
   const esVentasEspecial = rolNorm === "ventas_especial";
-  const puedeVerVentas = esAdmin || esJefatura || esVentas;
-  const puedeVerMetas = esAdmin || esJefatura || esVentas;
+  const puedeVerVentas = esAdmin || esJefatura || esVentas || esContabilidad;
+  const puedeVerMetas = esAdmin || esJefatura || esVentas || esContabilidad;
 
   const coreNav = [
     { to: "/listar",            icon: ClipboardList, label: "Cotizaciones" },
     { to: "/crear",             icon: FilePlus,      label: "Nueva Cotización" },
-    (esAdmin || esJefeVentasEspecial) && { to: "/trazabilidad",      icon: FileText,   label: "Trazabilidad" },
-    (esAdmin || esJefeVentasEspecial) && { to: "/seguimiento-pagos", icon: CreditCard, label: "Seguimiento de Pagos" },
+    (esAdmin || esJefeVentasEspecial || esContabilidad) && { to: "/trazabilidad",      icon: FileText,   label: "Trazabilidad" },
+    (esAdmin || esJefeVentasEspecial || esContabilidad) && { to: "/seguimiento-pagos", icon: CreditCard, label: "Seguimiento de Pagos" },
     { to: "/productos",         icon: Package,       label: "Productos" },
     { to: "/clientes",          icon: Users,         label: "Clientes" },
     { to: "/campanas",          icon: Megaphone,     label: "Campañas" },
@@ -111,7 +114,7 @@ export default function SidebarLayout() {
   const reportNav = [
     puedeVerVentas && { to: "/ventas", icon: TrendingUp, label: "Ventas" },
     puedeVerMetas  && { to: "/metas",  icon: Target,     label: "Metas" },
-    (esAdmin || esJefatura) && { to: "/metas-canal", icon: BarChart2, label: "Metas por Canal" },
+    (esAdmin || esJefatura || esContabilidad) && { to: "/metas-canal", icon: BarChart2, label: "Metas por Canal" },
   ].filter(Boolean);
 
   const adminNav = [
@@ -173,6 +176,7 @@ export default function SidebarLayout() {
               <div className="user-name">{perfil.nombre}</div>
               <div className="user-role">{perfil.rolLabel}</div>
             </div>
+            <NotificacionesMenu />
             <button
               className="logout-btn"
               onClick={cerrarSesion}

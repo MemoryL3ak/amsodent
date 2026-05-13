@@ -26,9 +26,14 @@ function todayISO() {
 }
 
 function monthStartISO() {
+  // Componer la fecha en local sin pasar por toISOString para evitar el bug
+  // de timezone: con UTC-4, llamando a esta función después de las 20:00 hora
+  // local, toISOString() saltaba al día siguiente y rompía el check
+  // periodo_mes_check (que exige día 1).
   const d = new Date();
-  d.setDate(1);
-  return d.toISOString().slice(0, 10);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  return `${y}-${m}-01`;
 }
 
 function monthEndISO(start) {
@@ -96,16 +101,26 @@ function isMissingFechaOcColumnError(error) {
   return code === "42703" || code === "PGRST204" || (msg.includes("fecha_oc") && msg.includes("column"));
 }
 
-function isMissingAsignacionTableError(error) {
+// Detecta SOLO el error real de tabla inexistente (PostgreSQL 42P01).
+// Antes era muy permisivo y disparaba con cualquier mensaje que mencionara
+// el nombre de la tabla, ocultando errores reales (permisos, schema cache, etc.).
+function isUndefinedTableError(error, tableName) {
   const code = (error?.code || "").toString().toUpperCase();
-  const msg = [error?.message, error?.details, error?.hint].filter(Boolean).join(" ").toLowerCase();
-  return code === "42P01" || msg.includes("vendedor_metas_canal_mensuales");
+  const body = error?.body || {};
+  const bodyCode = (body?.code || "").toString().toUpperCase();
+  const msg = [error?.message, error?.details, error?.hint, body?.message, body?.details]
+    .filter(Boolean).join(" ").toLowerCase();
+  if (code === "42P01" || bodyCode === "42P01") return true;
+  // Mensaje canónico de Postgres + nombre exacto de la tabla.
+  return msg.includes("does not exist") && msg.includes(tableName.toLowerCase());
+}
+
+function isMissingAsignacionTableError(error) {
+  return isUndefinedTableError(error, "vendedor_metas_canal_mensuales");
 }
 
 function isMissingMetasTableError(error) {
-  const code = (error?.code || "").toString().toUpperCase();
-  const msg = [error?.message, error?.details, error?.hint].filter(Boolean).join(" ").toLowerCase();
-  return code === "42P01" || msg.includes("vendedor_metas_mensuales");
+  return isUndefinedTableError(error, "vendedor_metas_mensuales");
 }
 
 function isMissingMetaDetalleTableError(error) {
@@ -239,10 +254,11 @@ export default function MetasPorCanal() {
       if (!mounted) return;
 
       if (asigError) {
+        console.error("[MetasPorCanal] asigError:", asigError);
         if (isMissingAsignacionTableError(asigError)) {
           setMetasErrorMsg("Falta la tabla vendedor_metas_canal_mensuales. Ejecuta la migracion.");
         } else {
-          setMetasErrorMsg("No se pudieron cargar las asignaciones de canal.");
+          setMetasErrorMsg(`No se pudieron cargar las asignaciones de canal: ${asigError?.message || "error desconocido"}`);
         }
         setCanalPorVendedorMap({});
         setCanalPorVendedorDraftMap({});
@@ -250,10 +266,11 @@ export default function MetasPorCanal() {
       }
 
       if (metasError) {
+        console.error("[MetasPorCanal] metasError:", metasError);
         if (isMissingMetasTableError(metasError)) {
           setMetasErrorMsg("Falta la tabla vendedor_metas_mensuales. Define primero las metas por vendedor.");
         } else {
-          setMetasErrorMsg("No se pudieron cargar las metas por vendedor del periodo.");
+          setMetasErrorMsg(`No se pudieron cargar las metas por vendedor del periodo: ${metasError?.message || "error desconocido"}`);
         }
         setMetasVendedorMap({});
         setMetasDetalleVendedorMap({});
@@ -455,7 +472,8 @@ export default function MetasPorCanal() {
       if (isMissingAsignacionTableError(e)) {
         setMetasErrorMsg("Falta la tabla vendedor_metas_canal_mensuales. Ejecuta la migracion.");
       } else {
-        setMetasErrorMsg("No se pudo guardar la configuracion de canales.");
+        const detalle = e?.message || e?.error || String(e || "");
+        setMetasErrorMsg(`No se pudo guardar la configuracion de canales. Detalle: ${detalle}`);
       }
     } finally {
       setGuardando(false);

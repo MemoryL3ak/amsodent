@@ -797,7 +797,7 @@ function MailingModal({ onClose, onSent }) {
           <label className="filter-label">Correos adicionales (opcional)</label>
           <textarea
             className="input"
-            placeholder="Pegá correos separados por coma, espacio o salto de línea"
+            placeholder="Pega correos separados por coma, espacio o salto de línea"
             value={emailsExtraStr}
             onChange={(e) => setEmailsExtraStr(e.target.value)}
             rows={2}
@@ -842,7 +842,7 @@ function MailingModal({ onClose, onSent }) {
             className="input"
             value={cuerpo}
             onChange={(e) => setCuerpo(e.target.value)}
-            placeholder={"Hola {{nombre}},\n\nGracias por participar en el sorteo de AMSODENT…\n\nPodés usar HTML si querés (<b>, <a>, <p>, <img>)."}
+            placeholder={"Hola {{nombre}},\n\nGracias por participar en el sorteo de AMSODENT…\n\nPuedes usar HTML si lo deseas (<b>, <a>, <p>, <img>)."}
             rows={10}
             style={{ width: "100%", resize: "vertical", fontFamily: "ui-monospace, monospace", fontSize: 13 }}
             disabled={enviando}
