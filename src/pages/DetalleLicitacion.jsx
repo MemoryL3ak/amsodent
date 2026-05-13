@@ -17,6 +17,7 @@ import Toast from "../components/Toast";
 import ConfirmModal from "../components/ConfirmModal";
 import Select, { components } from "react-select";
 import { generarPDFcotizacion } from "../utils/generarPDFcotizacion";
+import { calcularLista3 } from "../lib/listas";
 import { useUnsavedChanges } from "../context/UnsavedChangesContext";
 import { GripVertical, Plus, Trash2, MessageSquare, Minus, ChevronUp, ChevronDown } from "lucide-react";
 
@@ -141,6 +142,19 @@ function fechaHoyISO() {
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
+}
+
+// Precio base según la lista activa. Lista 3 se usa para tipo de compra
+// "Licitación 9 a 24 meses". Si el producto tiene Lista 3 explícita la usamos;
+// si no, fallback al factor configurado (ver src/lib/listas.js).
+function getPrecioPorListado(prod, listado) {
+  if (!prod) return 0;
+  if (String(listado) === "3") {
+    const explicit = Number(prod.lista3 ?? 0);
+    if (explicit > 0) return explicit;
+    return calcularLista3(prod.lista2);
+  }
+  return Number(prod[`lista${listado}`] ?? 0);
 }
 
 function normalizarVolumenCm3(valor) {
@@ -758,6 +772,7 @@ export default function EditarLicitacion() {
   const [toast, setToast] = useState(null);
   const [loading, setLoading] = useState(true);
   const [mostrarEntidad, setMostrarEntidad] = useState(true);
+  const [mostrarPortalModal, setMostrarPortalModal] = useState(false);
 
   const [guardando, setGuardando] = useState(false);
   const [generandoPDF, setGenerandoPDF] = useState(false);
@@ -2048,7 +2063,7 @@ export default function EditarLicitacion() {
       item.precio =
         precioCampania != null
           ? Number(precioCampania)
-          : Number(prod[`lista${listado}`] ?? 0);
+          : getPrecioPorListado(prod, listado);
 
       item.precioManual = false;
       item.precioUnitarioStr = "";
@@ -2523,6 +2538,16 @@ export default function EditarLicitacion() {
           <h1 className="page-title">Edición de Cotizaciones #{idLicitacionInput}</h1>
         </div>
         <div className="btn-row">
+          {esAdmin && idLicitacionInput && rutEntidad && (
+            <button
+              type="button"
+              onClick={() => setMostrarPortalModal(true)}
+              className="btn btn-secondary"
+              title="Ver datos del portal del cliente"
+            >
+              Compartir portal
+            </button>
+          )}
           <button
             type="button"
             onClick={() => setConfirmDuplicarOpen(true)}
@@ -2629,17 +2654,20 @@ export default function EditarLicitacion() {
               onChange={(e) => {
                 const next = e.target.value;
                 setTipoCompra(next);
-                setListado(next === "Cliente particular" ? "1" : "2");
+                if (next === "Cliente particular") setListado("1");
+                else if (next === "Licitación 9 a 24 meses") setListado("3");
+                else setListado("2");
               }}
               disabled={!esEditable}
             >
               <option value="Compra ágil">Compra ágil</option>
               <option value="Compra directa">Compra directa</option>
-              <option value="Licitación">Licitación</option>
+              <option value="Licitación 0 a 8 meses">Licitación 0 a 8 meses</option>
+              <option value="Licitación 9 a 24 meses">Licitación 9 a 24 meses</option>
               <option value="Cliente particular">Cliente particular</option>
             </select>
             <p className="text-[11px] text-gray-500 mt-1">
-              Cliente particular usa Lista 1; las demás opciones usan Lista 2.
+              Cliente particular usa Lista 1, Licitación 9 a 24 meses usa Lista 3 (Lista 2 × 1.08); el resto usa Lista 2.
             </p>
           </div>
 
@@ -3755,6 +3783,135 @@ export default function EditarLicitacion() {
         onCancel={() => setConfirmEliminarOpen(false)}
         onConfirm={eliminarLicitacion}
       />
+
+      {mostrarPortalModal && (
+        <CompartirPortalModal
+          rut={rutEntidad}
+          idLicitacion={idLicitacionInput}
+          onClose={() => setMostrarPortalModal(false)}
+          onToast={setToast}
+        />
+      )}
+    </div>
+  );
+}
+
+function CompartirPortalModal({ rut, idLicitacion, onClose, onToast }) {
+  const portalBase = (import.meta.env.VITE_PORTAL_URL || window.location.origin).replace(/\/$/, "");
+  const url = `${portalBase}/portal`;
+
+  async function copiar(valor, etiqueta) {
+    try {
+      await navigator.clipboard.writeText(valor);
+      onToast?.({ type: "success", message: `${etiqueta} copiado.` });
+    } catch {
+      onToast?.({ type: "error", message: "No se pudo copiar." });
+    }
+  }
+
+  const filas = [
+    { label: "URL del portal", valor: url, monospace: true },
+    { label: "RUT", valor: rut, monospace: true },
+    { label: "N° de cotización", valor: idLicitacion, monospace: true },
+  ];
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: "fixed", inset: 0, zIndex: 1000,
+        background: "rgba(15,23,42,.45)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        padding: 16,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: "var(--surface, #fff)", borderRadius: 12,
+          width: "100%", maxWidth: 520,
+          boxShadow: "0 24px 64px rgba(15,23,42,.18)",
+          border: "1px solid var(--border, #e2e8f0)",
+          overflow: "hidden",
+        }}
+      >
+        <div style={{
+          padding: "16px 20px",
+          borderBottom: "1px solid var(--border, #e2e8f0)",
+          display: "flex", justifyContent: "space-between", alignItems: "center",
+        }}>
+          <div>
+            <div style={{ fontSize: 16, fontWeight: 700, color: "var(--text)" }}>Compartir portal del cliente</div>
+            <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 2 }}>
+              Copia cada dato y pégalo en el correo al cliente.
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            style={{ background: "none", border: "none", cursor: "pointer", fontSize: 22, lineHeight: 1, color: "var(--text-muted)" }}
+          >
+            ×
+          </button>
+        </div>
+
+        <div style={{ padding: "16px 20px", display: "flex", flexDirection: "column", gap: 12 }}>
+          {filas.map((f) => (
+            <div key={f.label}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 4 }}>
+                {f.label}
+              </div>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <input
+                  type="text"
+                  readOnly
+                  value={f.valor || ""}
+                  onFocus={(e) => e.target.select()}
+                  style={{
+                    flex: 1, padding: "8px 12px",
+                    border: "1px solid var(--border, #cbd5e1)", borderRadius: 8,
+                    fontSize: 13, background: "var(--bg, #f8fafc)",
+                    fontFamily: f.monospace ? "ui-monospace, monospace" : undefined,
+                    color: "var(--text)",
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => copiar(f.valor, f.label)}
+                  className="btn btn-secondary"
+                  style={{ whiteSpace: "nowrap" }}
+                >
+                  Copiar
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div style={{
+          padding: "12px 20px 16px",
+          borderTop: "1px solid var(--border, #e2e8f0)",
+          display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center",
+        }}>
+          <button
+            type="button"
+            onClick={() => {
+              const texto = [
+                "Portal de seguimiento Amsodent",
+                `URL: ${url}`,
+                `RUT: ${rut}`,
+                `N° de cotización: ${idLicitacion}`,
+              ].join("\n");
+              copiar(texto, "Bloque completo");
+            }}
+            className="btn btn-secondary"
+          >
+            Copiar todo (para correo)
+          </button>
+          <button type="button" onClick={onClose} className="btn btn-primary">
+            Listo
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

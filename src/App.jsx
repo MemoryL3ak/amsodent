@@ -40,6 +40,7 @@ import SeguimientoPagos from "./pages/SeguimientoPagos";
 
 // SORTEO
 import SorteoRegistro from "./pages/SorteoRegistro";
+import PortalCliente from "./pages/PortalCliente";
 import SorteoRegistros from "./pages/SorteoRegistros";
 import RequireRole from "./components/RequireRole";
 
@@ -54,6 +55,7 @@ export default function App() {
         <Route path="/login" element={<Login />} />
         <Route path="/reset-password" element={<ResetPassword />} />
         <Route path="/sorteo" element={<SorteoRegistro />} />
+        <Route path="/portal" element={<PortalCliente />} />
 
         {/* RUTAS PROTEGIDAS */}
         <Route
@@ -94,7 +96,7 @@ export default function App() {
           <Route
             path="trazabilidad"
             element={
-              <RequireRole allow={["admin", "jefe_ventas_especial"]}>
+              <RequireRole allow={["admin", "jefe_ventas_especial", "contabilidad"]}>
                 <Trazabilidad />
               </RequireRole>
             }
@@ -102,7 +104,7 @@ export default function App() {
           <Route
             path="seguimiento-pagos"
             element={
-              <RequireRole allow={["admin", "jefe_ventas_especial"]}>
+              <RequireRole allow={["admin", "jefe_ventas_especial", "contabilidad"]}>
                 <SeguimientoPagos />
               </RequireRole>
             }

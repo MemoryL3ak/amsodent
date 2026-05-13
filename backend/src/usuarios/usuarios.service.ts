@@ -61,6 +61,22 @@ export class UsuariosService {
     return { sent: true };
   }
 
+  // Admin establece manualmente la contraseña de un usuario.
+  // Usa la Admin API de Supabase (requiere SERVICE_ROLE_KEY).
+  async setPasswordAdmin(userId: string, password: string) {
+    if (!password || typeof password !== 'string') {
+      throw new BadRequestException('Falta la contraseña.');
+    }
+    if (password.length < 8) {
+      throw new BadRequestException('La contraseña debe tener al menos 8 caracteres.');
+    }
+    const { error } = await this.supabase.getClient().auth.admin.updateUserById(userId, {
+      password,
+    });
+    if (error) throw new BadRequestException(error.message);
+    return { ok: true };
+  }
+
   // Sessions
   async getSessions() {
     const { data, error } = await this.supabase.getClient()

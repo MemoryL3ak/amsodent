@@ -7,6 +7,7 @@ import Toast from "../components/Toast";
 import Select from "react-select";
 import { pdf } from "@react-pdf/renderer";
 import { FichaTecnicaDocument } from "../components/FichaTecnica";
+import { FACTOR_LISTA_3, calcularLista3 } from "../lib/listas";
 
 /* ============================================================
    BUSCADOR MEJORADO (igual que licitaciones)
@@ -55,6 +56,54 @@ const CATEGORIAS = [
 ];
 
 const opcionesCategoria = CATEGORIAS.map((c) => ({ value: c, label: c }));
+
+// Formato monetario CLP — agrupa miles con punto, sin decimales.
+function formatearCLDesdeString(value) {
+  const digits = String(value ?? "").replace(/\D/g, "");
+  if (!digits) return "";
+  return Number(digits).toLocaleString("es-CL");
+}
+
+function numFromCL(value) {
+  if (typeof value === "number") return value;
+  const digits = String(value ?? "").replace(/\D/g, "");
+  return digits ? Number(digits) : 0;
+}
+
+// Input monetario CLP con "$" como prefijo. Comparte estética con el resto
+// de inputs del form (class "input" del design system).
+function MoneyInput({ value, onChange, readOnly = false, placeholder = "" }) {
+  const display = typeof value === "number"
+    ? (value > 0 ? value.toLocaleString("es-CL") : "")
+    : (value ?? "");
+  return (
+    <div style={{ position: "relative" }}>
+      <span
+        style={{
+          position: "absolute",
+          left: 10,
+          top: "50%",
+          transform: "translateY(-50%)",
+          color: "var(--text-muted)",
+          fontSize: 13.5,
+          pointerEvents: "none",
+        }}
+      >
+        $
+      </span>
+      <input
+        type="text"
+        inputMode="numeric"
+        readOnly={readOnly}
+        placeholder={placeholder}
+        className="input"
+        style={{ paddingLeft: 22, background: readOnly ? "var(--bg)" : undefined }}
+        value={display}
+        onChange={(e) => onChange?.(e.target.value)}
+      />
+    </div>
+  );
+}
 
 /* ============================================================
    ESTILOS react-select — design system
@@ -121,6 +170,7 @@ export default function EditarProducto() {
     costo: 0,
     lista1: 0,
     lista2: 0,
+    lista3: 0,
   });
   const [imagenFile, setImagenFile] = useState(null);
   const [imagenPreview, setImagenPreview] = useState("");
@@ -139,7 +189,8 @@ export default function EditarProducto() {
       r === "jefe ventas" ||
       r === "jefe-ventas" ||
       r === "jefe de ventas" ||
-      r === "jefe_ventas_especial"
+      r === "jefe_ventas_especial" ||
+      r === "contabilidad"
     ) {
       return "jefe_ventas";
     }
@@ -161,27 +212,44 @@ export default function EditarProducto() {
   }, [producto.alto, producto.largo, producto.ancho]);
 
   const margenVenta = useMemo(() => {
-    const precioVenta = Number(producto.lista1) || 0;
-    const costoNum = Number(producto.costo) || 0;
+    const precioVenta = numFromCL(producto.lista1);
+    const costoNum = numFromCL(producto.costo);
     if (precioVenta <= 0) return "0.00%";
     const margen = ((precioVenta - costoNum) / precioVenta) * 100;
     return `${margen.toFixed(2)}%`;
   }, [producto.lista1, producto.costo]);
 
   const margenVentaNum = useMemo(() => {
-    const precioVenta = Number(producto.lista1) || 0;
-    const costoNum = Number(producto.costo) || 0;
+    const precioVenta = numFromCL(producto.lista1);
+    const costoNum = numFromCL(producto.costo);
     if (precioVenta <= 0) return 0;
     return ((precioVenta - costoNum) / precioVenta) * 100;
   }, [producto.lista1, producto.costo]);
 
   const margenVentaLista2 = useMemo(() => {
-    const precioVenta = Number(producto.lista2) || 0;
-    const costoNum = Number(producto.costo) || 0;
+    const precioVenta = numFromCL(producto.lista2);
+    const costoNum = numFromCL(producto.costo);
     if (precioVenta <= 0) return "0.00%";
     const margen = ((precioVenta - costoNum) / precioVenta) * 100;
     return `${margen.toFixed(2)}%`;
   }, [producto.lista2, producto.costo]);
+
+  // Lista 3 siempre calculada (Lista 2 × factor), no editable.
+  const lista3Calculada = useMemo(() => {
+    return calcularLista3(numFromCL(producto.lista2));
+  }, [producto.lista2]);
+
+  const lista3Display = useMemo(() => {
+    return lista3Calculada > 0 ? lista3Calculada.toLocaleString("es-CL") : "";
+  }, [lista3Calculada]);
+
+  const margenVentaLista3 = useMemo(() => {
+    const precioVenta = lista3Calculada;
+    const costoNum = numFromCL(producto.costo);
+    if (precioVenta <= 0) return "0.00%";
+    const margen = ((precioVenta - costoNum) / precioVenta) * 100;
+    return `${margen.toFixed(2)}%`;
+  }, [lista3Calculada, producto.costo]);
 
   // 1) ✅ ventas NO debe editar productos
     const esVentasOJefe = useMemo(
@@ -278,9 +346,12 @@ export default function EditarProducto() {
         largo: data.largo ?? 0,
         ancho: data.ancho ?? 0,
         metro_cubico: data.metro_cubico ?? 0,
-        costo: data.costo ?? 0,
-        lista1: data.lista1 ?? 0,
-        lista2: data.lista2 ?? 0,
+        // Guardamos los precios como string formateado para mostrarlos con
+        // separador de miles directamente en el input.
+        costo: formatearCLDesdeString(String(data.costo ?? "")),
+        lista1: formatearCLDesdeString(String(data.lista1 ?? "")),
+        lista2: formatearCLDesdeString(String(data.lista2 ?? "")),
+        lista3: 0,
       });
 
       setLoading(false);
@@ -455,12 +526,22 @@ export default function EditarProducto() {
       return;
     }
 
-    if (!(Number(producto.lista2) > 0)) {
+    const puedeVerCosto =
+      esAdmin || (esVentasOJefe && (esProductoTransitorio || esPendienteAprobacion));
+
+    const missing = [];
+    if (puedeVerCosto && !(numFromCL(producto.costo) > 0)) missing.push("Costo");
+    if (!(numFromCL(producto.lista1) > 0)) {
+      missing.push(esVentasOJefe ? "Precio Venta Neto 1" : "Listado de Precios 1");
+    }
+    if (!(numFromCL(producto.lista2) > 0)) {
+      missing.push(esVentasOJefe ? "Precio Venta Neto 2" : "Listado de Precios 2");
+    }
+
+    if (missing.length) {
       setToast({
         type: "error",
-        message: esVentasOJefe
-          ? "Debes completar el Precio Venta Neto 2."
-          : "Debes completar el Listado de Precios 2.",
+        message: `Debes completar: ${missing.join(", ")}.`,
       });
       return;
     }
@@ -512,12 +593,15 @@ export default function EditarProducto() {
       largo: Number(producto.largo) || 0,
       ancho: Number(producto.ancho) || 0,
       metro_cubico: Number(metroCubico) || 0,
-      lista1: Number(producto.lista1) || 0,
-      lista2: Number(producto.lista2) || 0,
+      lista1: numFromCL(producto.lista1),
+      lista2: numFromCL(producto.lista2),
+      // Lista 3 siempre derivada (Lista 2 × 1.08); guardamos 0 y el frontend
+      // hace fallback al leer.
+      lista3: 0,
     };
 
     if (esAdmin || (esVentasOJefe && (esProductoTransitorio || esPendienteAprobacion))) {
-      payload.costo = Number(producto.costo) || 0;
+      payload.costo = numFromCL(producto.costo);
     }
 
     try {
@@ -939,9 +1023,11 @@ try {
               {(esAdmin || (esVentasOJefe && (esProductoTransitorio || esPendienteAprobacion))) && (
                 <>
                   <div>
-                    <label className="label">Costo</label>
-                    <input type="number" className="input" value={producto.costo}
-                      onChange={(e) => setProducto((prev) => ({ ...prev, costo: e.target.value }))} />
+                    <label className="label">Costo *</label>
+                    <MoneyInput
+                      value={producto.costo}
+                      onChange={(v) => setProducto((prev) => ({ ...prev, costo: formatearCLDesdeString(v) }))}
+                    />
                   </div>
                   <div />
                 </>
@@ -949,10 +1035,12 @@ try {
 
               <div>
                 <label className="label">
-                  {esVentasOJefe ? "Precio Venta Neto 1 *" : "Listado de Precios 1"}
+                  {esVentasOJefe ? "Precio Venta Neto 1 *" : "Listado de Precios 1 *"}
                 </label>
-                <input type="number" className="input" value={producto.lista1}
-                  onChange={(e) => setProducto((prev) => ({ ...prev, lista1: e.target.value }))} />
+                <MoneyInput
+                  value={producto.lista1}
+                  onChange={(v) => setProducto((prev) => ({ ...prev, lista1: formatearCLDesdeString(v) }))}
+                />
               </div>
               {mostrarMargen && (
                 <div>
@@ -965,13 +1053,31 @@ try {
                 <label className="label">
                   {esVentasOJefe ? "Precio Venta Neto 2 *" : "Listado de Precios 2 *"}
                 </label>
-                <input type="number" className="input" value={producto.lista2}
-                  onChange={(e) => setProducto((prev) => ({ ...prev, lista2: e.target.value }))} />
+                <MoneyInput
+                  value={producto.lista2}
+                  onChange={(v) => setProducto((prev) => ({ ...prev, lista2: formatearCLDesdeString(v) }))}
+                />
               </div>
               {mostrarMargen && (
                 <div>
                   <label className="label">{esVentasOJefe ? "Margen Venta Neto 2" : "Margen Lista 2"}</label>
                   <input readOnly className="input" style={{background:"var(--bg)"}} value={margenVentaLista2} />
+                </div>
+              )}
+
+              <div>
+                <label className="label">
+                  {esVentasOJefe ? "Precio Venta Neto 3" : "Listado de Precios 3"}
+                </label>
+                <MoneyInput value={lista3Display} readOnly />
+                <p style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>
+                  Calculado automáticamente (Lista 2 × {FACTOR_LISTA_3}). Usado en Licitación 9 a 24 meses.
+                </p>
+              </div>
+              {mostrarMargen && (
+                <div>
+                  <label className="label">{esVentasOJefe ? "Margen Venta Neto 3" : "Margen Lista 3"}</label>
+                  <input readOnly className="input" style={{background:"var(--bg)"}} value={margenVentaLista3} />
                 </div>
               )}
             </div>

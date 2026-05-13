@@ -7,6 +7,7 @@ import Select from "react-select";
 import { FileDown } from "lucide-react";
 import Toast from "../components/Toast";
 import { descargarFichaTecnica } from "../utils/generarFichaTecnica";
+import { calcularLista3 } from "../lib/listas";
 
 /* ============================================================
    HELPERS FILTRO PRODUCTO (TOKENS + NORMALIZACIÓN)
@@ -34,7 +35,23 @@ export default function Productos() {
   const [filtroProducto, setFiltroProducto] = useState("");
   const [filtroCategoria, setFiltroCategoria] = useState("");
   const [filtroMarcas, setFiltroMarcas] = useState([]);
+  const [filtroEstado, setFiltroEstado] = useState("");
   const [ordenTabla, setOrdenTabla] = useState({ key: null, dir: "asc" });
+  // Qué lista de precios muestra la columna "Precio Unitario" (lista1 | lista2 | lista3).
+  // Lista 3 NO está en la DB: es un valor calculado = lista2 * FACTOR_LISTA_3.
+  const [listaPrecio, setListaPrecio] = useState("lista1");
+
+  function getPrecioPorLista(p, lista) {
+    if (!p) return 0;
+    if (lista === "lista3") {
+      // Si el producto tiene Lista 3 explícita usamos ese valor; si no,
+      // fallback al factor configurado (ver src/lib/listas.js).
+      const explicit = Number(p.lista3 ?? 0);
+      if (explicit > 0) return explicit;
+      return calcularLista3(p.lista2);
+    }
+    return Number(p?.[lista] ?? 0);
+  }
 
   const [modalOpen, setModalOpen] = useState(false);
   const [productoAEliminar, setProductoAEliminar] = useState(null);
@@ -56,7 +73,8 @@ export default function Productos() {
       r === "jefe ventas" ||
       r === "jefe-ventas" ||
       r === "jefe de ventas" ||
-      r === "jefe_ventas_especial"
+      r === "jefe_ventas_especial" ||
+      r === "contabilidad"
     ) {
       return "jefe_ventas";
     }
@@ -179,7 +197,11 @@ export default function Productos() {
           ? filtroMarcas.some((m) => m.value === p.marca)
           : true;
 
-      return matchSKU && matchProducto && matchCategoria && matchMarca;
+      // Estado: si la fila no trae estado, inferimos Activo/Transitorio según haya SKU.
+      const estadoRow = (p.estado || (p.sku ? "Activo" : "Transitorio")).toString().trim();
+      const matchEstado = filtroEstado ? estadoRow === filtroEstado : true;
+
+      return matchSKU && matchProducto && matchCategoria && matchMarca && matchEstado;
     })
     .sort((a, b) => {
       if (!ordenTabla.key) return 0;
@@ -188,7 +210,7 @@ export default function Productos() {
       const dir = ordenTabla.dir === "asc" ? 1 : -1;
 
       const getValue = (p) => {
-        if (key === "precio") return Number(p.lista1 ?? 0);
+        if (key === "precio") return getPrecioPorLista(p, listaPrecio);
         return String(p?.[key] ?? "").toLowerCase();
       };
 
@@ -356,6 +378,20 @@ export default function Productos() {
             }}
           />
         </div>
+
+        <div className="filter-field">
+          <label className="filter-label">Estado</label>
+          <select
+            className="input"
+            value={filtroEstado}
+            onChange={(e) => setFiltroEstado(e.target.value)}
+          >
+            <option value="">Todos los estados</option>
+            <option value="Activo">Activo</option>
+            <option value="Transitorio">Transitorio</option>
+            <option value="Pendiente Aprobación">Pendiente Aprobación</option>
+          </select>
+        </div>
       </div>
 
       {/* TABLA */}
@@ -388,8 +424,39 @@ export default function Productos() {
                 <th style={{cursor:"pointer", userSelect:"none"}} onClick={() => toggleSort("formato")}>
                   Formato{sortIndicator("formato")}
                 </th>
-                <th style={{cursor:"pointer", userSelect:"none"}} onClick={() => toggleSort("precio")}>
-                  Precio Unitario{sortIndicator("precio")}
+                <th style={{ userSelect: "none", padding: 0 }}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 0, lineHeight: 1.15 }}>
+                    <span
+                      onClick={() => toggleSort("precio")}
+                      style={{ cursor: "pointer" }}
+                    >
+                      Precio Unitario{sortIndicator("precio")}
+                    </span>
+                    <select
+                      value={listaPrecio}
+                      onChange={(e) => setListaPrecio(e.target.value)}
+                      onClick={(e) => e.stopPropagation()}
+                      title="Elegir qué lista de precios mostrar"
+                      style={{
+                        marginTop: 2,
+                        padding: 0,
+                        border: "none",
+                        background: "transparent",
+                        color: "var(--primary, #28aeb1)",
+                        fontSize: 11,
+                        fontWeight: 600,
+                        textTransform: "none",
+                        letterSpacing: 0,
+                        cursor: "pointer",
+                        appearance: "auto",
+                        width: "fit-content",
+                      }}
+                    >
+                      <option value="lista1">Lista 1 ▾</option>
+                      <option value="lista2">Lista 2 ▾</option>
+                      <option value="lista3">Lista 3 ▾</option>
+                    </select>
+                  </div>
                 </th>
                 <th>Acciones</th>
               </tr>
@@ -397,7 +464,7 @@ export default function Productos() {
 
             <tbody>
               {productosFiltrados.map((p) => {
-                const precioNormal = Number(p.lista1 ?? 0);
+                const precioNormal = getPrecioPorLista(p, listaPrecio);
                 const precioCampania = campaignPriceBySku.get(p.sku);
 
                 return (

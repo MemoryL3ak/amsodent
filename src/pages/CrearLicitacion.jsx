@@ -6,6 +6,7 @@ import { api } from "../lib/api";
 import Toast from "../components/Toast";
 import Select, { components } from "react-select";
 import { generarPDFcotizacion } from "../utils/generarPDFcotizacion";
+import { calcularLista3 } from "../lib/listas";
 
 import {
   DndContext,
@@ -112,6 +113,15 @@ function getPrecioBaseParaSKU(prod, listado, campaignPrices) {
   // campaña solo si existe SKU
   const camp = sku ? campaignPrices?.[sku] : null;
   if (camp && camp.precio != null) return Number(camp.precio || 0);
+
+  // Lista 3 se usa para tipo de compra "Licitación 9 a 24 meses".
+  // Si el producto tiene Lista 3 explícita usamos ese valor; si no,
+  // fallback al factor configurado (ver src/lib/listas.js).
+  if (String(listado) === "3") {
+    const explicit = Number(prod.lista3 ?? 0);
+    if (explicit > 0) return explicit;
+    return calcularLista3(prod.lista2);
+  }
 
   // si no hay sku o no hay campaña: usa lista
   return Number(prod[`lista${listado}`] ?? 0);
@@ -674,7 +684,7 @@ export default function CrearLicitacion() {
   }, []);
 
   const puedeCrearLicitacion = useMemo(() => {
-    return ["admin", "jefe_ventas", "jefe_ventas_especial", "ventas", "ventas_especial"].includes(rol);
+    return ["admin", "jefe_ventas", "jefe_ventas_especial", "ventas", "ventas_especial", "contabilidad"].includes(rol);
   }, [rol]);
 
   const esAdmin = useMemo(() => {
@@ -1746,16 +1756,19 @@ export default function CrearLicitacion() {
               onChange={(e) => {
                 const next = e.target.value;
                 setTipoCompra(next);
-                setListado(next === "Cliente particular" ? "1" : "2");
+                if (next === "Cliente particular") setListado("1");
+                else if (next === "Licitación 9 a 24 meses") setListado("3");
+                else setListado("2");
               }}
             >
               <option value="Compra ágil">Compra ágil</option>
               <option value="Compra directa">Compra directa</option>
-              <option value="Licitación">Licitación</option>
+              <option value="Licitación 0 a 8 meses">Licitación 0 a 8 meses</option>
+              <option value="Licitación 9 a 24 meses">Licitación 9 a 24 meses</option>
               <option value="Cliente particular">Cliente particular</option>
             </select>
             <p className="text-[11px] text-gray-500 mt-1">
-              Cliente particular usa Lista 1; las demás opciones usan Lista 2.
+              Cliente particular usa Lista 1, Licitación 9 a 24 meses usa Lista 3 (Lista 2 × 1.08); el resto usa Lista 2.
             </p>
           </div>
         </div>

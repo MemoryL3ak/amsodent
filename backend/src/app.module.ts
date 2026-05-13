@@ -11,6 +11,8 @@ import { UsuariosModule } from './usuarios/usuarios.module';
 import { SorteoModule } from './sorteo/sorteo.module';
 import { FeriadosModule } from './feriados/feriados.module';
 import { MailingsModule } from './mailings/mailings.module';
+import { PortalModule } from './portal/portal.module';
+import { NotificacionesModule } from './notificaciones/notificaciones.module';
 
 @Module({
   imports: [
@@ -26,6 +28,8 @@ import { MailingsModule } from './mailings/mailings.module';
     SorteoModule,
     FeriadosModule,
     MailingsModule,
+    PortalModule,
+    NotificacionesModule,
   ],
 })
 export class AppModule {}

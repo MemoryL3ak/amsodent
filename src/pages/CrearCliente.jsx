@@ -5,6 +5,7 @@ import { Link } from "react-router-dom";
 import { REGIONES_CHILE } from "../constants/regiones";
 
 export default function CrearCliente() {
+  const [tipoCliente, setTipoCliente] = useState("");
   const [rut, setRut] = useState("");
   const [nombre, setNombre] = useState("");
   const [departamento, setDepartamento] = useState("");
@@ -20,13 +21,14 @@ export default function CrearCliente() {
   const [toast, setToast] = useState(null);
 
   async function guardarCliente() {
-    if (!rut || !nombre || !region || !comuna || !direccion || !contacto || !email || !condVenta) {
+    if (!tipoCliente || !rut || !nombre || !region || !comuna || !direccion || !contacto || !email || !condVenta) {
       setToast({ type: "error", message: "Debes completar todos los campos obligatorios." });
       return;
     }
 
     try {
       await api.post("/clientes", {
+        tipo_cliente: tipoCliente,
         rut,
         nombre,
         departamento,
@@ -47,6 +49,7 @@ export default function CrearCliente() {
       return;
     }
 
+    setTipoCliente("");
     setRut("");
     setNombre("");
     setDepartamento("");
@@ -86,6 +89,19 @@ export default function CrearCliente() {
         </div>
         <div className="surface-body">
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px" }}>
+
+            <div className="field">
+              <label className="field-label">Tipo de Cliente *</label>
+              <select
+                className="input"
+                value={tipoCliente}
+                onChange={(e) => setTipoCliente(e.target.value)}
+              >
+                <option value="">Seleccione tipo de cliente…</option>
+                <option value="Cliente Particular">Cliente Particular</option>
+                <option value="Entidad Pública">Entidad Pública</option>
+              </select>
+            </div>
 
             <div className="field">
               <label className="field-label">RUT *</label>

@@ -10,6 +10,7 @@ export default function EditarCliente() {
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState(null);
 
+  const [tipoCliente, setTipoCliente] = useState("");
   const [rut, setRut] = useState("");
   const [nombre, setNombre] = useState("");
   const [departamento, setDepartamento] = useState("");
@@ -38,7 +39,13 @@ export default function EditarCliente() {
         data = await api.get(`/clientes/${id}`);
       } catch (error) {
         console.error(error);
-        setToast({ type: "error", message: "Error cargando cliente" });
+        setToast({ type: "error", message: `Error cargando cliente: ${error?.message || "intenta de nuevo"}` });
+        setLoading(false);
+        return;
+      }
+
+      if (!data) {
+        setToast({ type: "error", message: "Cliente no encontrado." });
         setLoading(false);
         return;
       }
@@ -46,6 +53,7 @@ export default function EditarCliente() {
       const regionDB = (data.region || "").toString().trim();
       const comunaDB = (data.comuna || "").toString().trim();
 
+      setTipoCliente((data.tipo_cliente || "").toString());
       setRut((data.rut || "").toString());
       setNombre((data.nombre || "").toString());
       setDepartamento((data.departamento || "").toString());
@@ -88,13 +96,14 @@ export default function EditarCliente() {
      GUARDAR CAMBIOS
   ============================================================ */
   async function guardarCambios() {
-    if (!rut || !nombre || !region || !comuna || !direccion || !contacto || !email) {
+    if (!tipoCliente || !rut || !nombre || !region || !comuna || !direccion || !contacto || !email) {
       setToast({ type: "error", message: "Debes completar todos los campos obligatorios." });
       return;
     }
 
     try {
       await api.put(`/clientes/${id}`, {
+        tipo_cliente: tipoCliente,
         rut,
         nombre,
         departamento,
@@ -146,6 +155,19 @@ export default function EditarCliente() {
         </div>
         <div className="surface-body">
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px" }}>
+
+            <div className="field">
+              <label className="field-label">Tipo de Cliente *</label>
+              <select
+                className="input"
+                value={tipoCliente}
+                onChange={(e) => setTipoCliente(e.target.value)}
+              >
+                <option value="">Seleccione tipo de cliente…</option>
+                <option value="Cliente Particular">Cliente Particular</option>
+                <option value="Entidad Pública">Entidad Pública</option>
+              </select>
+            </div>
 
             <div className="field">
               <label className="field-label">RUT *</label>

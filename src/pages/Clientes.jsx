@@ -129,11 +129,21 @@ export default function Clientes() {
       {/* TABLA */}
       <div className="table-wrap">
         <div className="table-scroll" style={{ maxHeight: "calc(100vh - 320px)" }}>
-          <table className="data-table">
+          <table className="data-table" style={{ tableLayout: "fixed", width: "100%" }}>
+            <colgroup>
+              <col style={{ width: 130 }} />
+              <col />
+              <col style={{ width: 150 }} />
+              <col style={{ width: 180 }} />
+              <col style={{ width: 150 }} />
+              <col style={{ width: 180 }} />
+              <col style={{ width: 180 }} />
+            </colgroup>
             <thead>
               <tr>
                 <th>RUT</th>
                 <th>Nombre</th>
+                <th>Tipo</th>
                 <th>Región</th>
                 <th>Comuna</th>
                 <th>Contacto</th>
@@ -144,22 +154,24 @@ export default function Clientes() {
             <tbody>
               {clientesFiltrados.map((c) => (
                 <tr key={c.id}>
-                  <td style={{ fontWeight: 500 }}>{c.rut}</td>
-                  <td>{c.nombre}</td>
-                  <td>{c.region}</td>
-                  <td>{c.comuna}</td>
-                  <td>{c.contacto}</td>
+                  <td style={{ fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.rut}</td>
+                  <td style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={c.nombre}>{c.nombre}</td>
+                  <td style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.tipo_cliente || "—"}</td>
+                  <td style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.region}</td>
+                  <td style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.comuna}</td>
+                  <td style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={c.contacto}>{c.contacto}</td>
                   <td style={{ textAlign: "right" }}>
-                    <div style={{ display: "flex", gap: "6px", justifyContent: "flex-end" }}>
+                    <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", flexWrap: "nowrap" }}>
                       <Link
                         to={`/clientes/editar/${c.id}`}
-                        className="btn btn-sm btn-secondary"
+                        className="btn btn-secondary btn-sm"
                       >
                         Editar
                       </Link>
                       <button
+                        type="button"
                         onClick={() => solicitarEliminacion(c)}
-                        className="btn btn-sm btn-outline-danger"
+                        className="btn btn-danger btn-sm"
                       >
                         Eliminar
                       </button>
@@ -170,7 +182,7 @@ export default function Clientes() {
 
               {clientesFiltrados.length === 0 && (
                 <tr>
-                  <td colSpan="6" style={{ textAlign: "center", padding: "60px 0", color: "var(--text-muted)" }}>
+                  <td colSpan="7" style={{ textAlign: "center", padding: "60px 0", color: "var(--text-muted)" }}>
                     No hay clientes que coincidan con el filtro.
                   </td>
                 </tr>

@@ -6,6 +6,7 @@ const ROLES = [
   { value: "jefe_ventas_especial", label: "Jefe de Ventas Especial" },
   { value: "ventas",               label: "Ventas" },
   { value: "ventas_especial",      label: "Ventas Especial" },
+  { value: "contabilidad",         label: "Contabilidad" },
 ];
 
 export default function ModalCrearUsuario({ abierto, cerrar, onSuccess, onToast }) {

@@ -50,9 +50,12 @@ function hoyISO() {
 }
 
 function inicioMesISO() {
+  // Componemos en local en vez de pasar por toISOString para evitar saltar
+  // al mes siguiente cuando la hora local + offset UTC empuja el día.
   const d = new Date();
-  d.setDate(1);
-  return d.toISOString().slice(0, 10);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  return `${y}-${m}-01`;
 }
 
 function finMesISO(fechaMes) {
@@ -200,7 +203,9 @@ export default function Metas() {
     rolNorm === "jefe_ventas" ||
     rolNorm === "jefe ventas" ||
     rolNorm === "jefe-ventas" ||
-    rolNorm === "jefe de ventas";
+    rolNorm === "jefe de ventas" ||
+    rolNorm === "jefe_ventas_especial" ||
+    rolNorm === "contabilidad";
   const esVentas = rolNorm === "ventas";
   const puedeVerTodo = esAdmin || esJefatura;
   const puedeVerMetas = esAdmin || esJefatura || esVentas;
@@ -226,7 +231,7 @@ export default function Metas() {
       setLoading(true);
       setErrorMsg("");
       try {
-        const lics = await api.get("/licitaciones/with-fields?fields=id,creado_por");
+        const lics = await api.get("/licitaciones/with-fields?fields=id,creado_por,tipo_compra");
 
         let rows = lics || [];
         const emailUser = (user?.email || "").trim().toLowerCase();
@@ -422,11 +427,13 @@ export default function Metas() {
   const avanceMetas = useMemo(() => {
     const finPeriodo = finMesISO(metaPeriodo);
     const licById = new Map();
+    const tipoCompraByLicId = new Map();
 
     licitaciones.forEach((l) => {
       const id = Number(l?.id || 0);
       const email = (l?.creado_por || "").trim().toLowerCase();
       if (id && email) licById.set(id, email);
+      if (id) tipoCompraByLicId.set(id, (l?.tipo_compra || "").toString().trim());
     });
 
     // Fecha de adjudicación por licitación = fecha de creación de la primera OC
@@ -440,29 +447,87 @@ export default function Metas() {
       if (!actual || fechaDoc < actual) primeraOcPorLic.set(licId, fechaDoc);
     });
 
-    const consumidoPorVendedor = {};
+    // Desglosamos el consumo en dos baldes:
+    //   Particular = OCs cuya licitación.tipo_compra === "Cliente particular"
+    //   Mercado    = todo el resto (Compra ágil, Compra directa, Licitación)
+    // Esto permite que vendedores con canal mixto vean sus métricas separadas
+    // (Meta Terreno = Particular, Meta Mercado = Otros).
+    const consumidoParticular = {};
+    const consumidoMercado = {};
     (ocs || []).forEach((doc) => {
       const licId = Number(doc?.licitacion_id || 0);
       const email = licById.get(licId);
       if (!email) return;
       if (filtroVendedor && email !== filtroVendedor) return;
 
-      // Filtrar la licitación por fecha de adjudicación (primera OC), no por OC individual
       const fechaAdj = primeraOcPorLic.get(licId);
       if (!fechaAdj) return;
       if (fechaAdj < metaPeriodo || fechaAdj > finPeriodo) return;
 
-      consumidoPorVendedor[email] = Number(consumidoPorVendedor[email] || 0) + Number(doc?.monto || 0);
+      const monto = Number(doc?.monto || 0);
+      const esParticular = (tipoCompraByLicId.get(licId) || "") === "Cliente particular";
+      if (esParticular) {
+        consumidoParticular[email] = Number(consumidoParticular[email] || 0) + monto;
+      } else {
+        consumidoMercado[email] = Number(consumidoMercado[email] || 0) + monto;
+      }
     });
 
     return opcionesVendedores
       .filter((v) => !filtroVendedor || v.value === filtroVendedor)
       .map((v) => {
-        const metaNeto = Math.max(0, Number(metasDraftMap[v.value] ?? metasMap[v.value] ?? 0));
-        const avanceNeto = Number(consumidoPorVendedor[v.value] || 0);
-        const canal = normalizeCanal(canalPorVendedorMap[v.value] || "");
+        const email = v.value;
+        const metaNeto = Math.max(0, Number(metasDraftMap[email] ?? metasMap[email] ?? 0));
+        const avanceParticular = Number(consumidoParticular[email] || 0);
+        const avanceMercado = Number(consumidoMercado[email] || 0);
+        const avanceNeto = avanceParticular + avanceMercado;
+        const canal = normalizeCanal(canalPorVendedorMap[email] || "");
+        const splitCfg = canalSplitConfig(canal);
+
+        // Si el canal es mixto, calculamos métricas por cada sub-canal.
+        // Regla: la clave "vendedor_terreno" recibe SIEMPRE el consumo de
+        // tipo "Cliente particular"; el otro sub-canal recibe el resto.
+        let split = null;
+        if (splitCfg) {
+          const splitSaved = metasDetalleMap[email] || {};
+          const splitDraft = metasSplitDraftMap[email];
+          const metaFirst = Math.max(
+            0,
+            Number(
+              (splitDraft ? splitDraft[splitCfg.firstKey] : splitSaved[splitCfg.firstKey]) ?? 0,
+            ),
+          );
+          const metaSecond = Math.max(
+            0,
+            Number(
+              (splitDraft ? splitDraft[splitCfg.secondKey] : splitSaved[splitCfg.secondKey]) ?? 0,
+            ),
+          );
+          const avanceFirst =
+            splitCfg.firstKey === "vendedor_terreno" ? avanceParticular : avanceMercado;
+          const avanceSecond =
+            splitCfg.secondKey === "vendedor_terreno" ? avanceParticular : avanceMercado;
+
+          split = {
+            firstKey: splitCfg.firstKey,
+            firstLabel: splitCfg.firstLabel,
+            firstMeta: metaFirst,
+            firstAvanceNeto: avanceFirst,
+            firstAvanceBruto: montoBrutoDesdeNeto(avanceFirst),
+            firstBrecha: Math.max(0, metaFirst - avanceFirst),
+            firstPct: metaFirst > 0 ? (avanceFirst / metaFirst) * 100 : 0,
+            secondKey: splitCfg.secondKey,
+            secondLabel: splitCfg.secondLabel,
+            secondMeta: metaSecond,
+            secondAvanceNeto: avanceSecond,
+            secondAvanceBruto: montoBrutoDesdeNeto(avanceSecond),
+            secondBrecha: Math.max(0, metaSecond - avanceSecond),
+            secondPct: metaSecond > 0 ? (avanceSecond / metaSecond) * 100 : 0,
+          };
+        }
+
         return {
-          email: v.value,
+          email,
           nombre: v.label,
           canal,
           canalLabel: canalLabel(canal),
@@ -471,17 +536,31 @@ export default function Metas() {
           brechaNeto: Math.max(0, metaNeto - avanceNeto),
           pctCumplimiento: metaNeto > 0 ? (avanceNeto / metaNeto) * 100 : 0,
           avanceBruto: montoBrutoDesdeNeto(avanceNeto),
+          split,
         };
       })
       .sort((a, b) => b.pctCumplimiento - a.pctCumplimiento || b.avanceNeto - a.avanceNeto);
-  }, [metaPeriodo, licitaciones, ocs, opcionesVendedores, metasDraftMap, metasMap, filtroVendedor, canalPorVendedorMap]);
+  }, [
+    metaPeriodo,
+    licitaciones,
+    ocs,
+    opcionesVendedores,
+    metasDraftMap,
+    metasMap,
+    filtroVendedor,
+    canalPorVendedorMap,
+    metasDetalleMap,
+    metasSplitDraftMap,
+  ]);
 
   const resumenMetas = useMemo(() => {
     const metaNetaTotal = avanceMetas.reduce((acc, x) => acc + Number(x.metaNeto || 0), 0);
     const avanceNetoTotal = avanceMetas.reduce((acc, x) => acc + Number(x.avanceNeto || 0), 0);
+    const avanceBrutoTotal = avanceMetas.reduce((acc, x) => acc + Number(x.avanceBruto || 0), 0);
     return {
       metaNetaTotal,
       avanceNetoTotal,
+      avanceBrutoTotal,
       brechaNetaTotal: Math.max(0, metaNetaTotal - avanceNetoTotal),
       pctCumplimientoTotal: metaNetaTotal > 0 ? (avanceNetoTotal / metaNetaTotal) * 100 : 0,
     };
@@ -814,28 +893,121 @@ export default function Metas() {
                             />
                           )}
                         </td>
-                        <td style={{ textAlign: "right", fontWeight: 600, color: "#15803d" }}>{fmtCLP(r.avanceNeto)}</td>
-                        <td style={{ textAlign: "right", fontWeight: 600, color: "var(--primary-dark)" }}>{fmtCLP(r.avanceBruto)}</td>
-                        <td style={{ minWidth: "200px" }}>
-                          <div style={{ height: "8px", borderRadius: "4px", background: "var(--bg)", border: "1px solid var(--border)", overflow: "hidden" }}>
-                            <div style={{ height: "100%", borderRadius: "4px", background: barColorCumplimiento(pct), width: `${clamp(pct, 0, 100)}%` }} />
-                          </div>
-                          <div style={{ marginTop: "4px", fontSize: "11px", color: "var(--text-muted)" }}>
-                            {fmtCLP(r.avanceNeto)} de {fmtCLP(r.metaNeto)}
-                          </div>
-                        </td>
-                        <td style={{ textAlign: "right" }}>
-                          <span style={{
-                            display: "inline-flex", alignItems: "center", padding: "2px 10px",
-                            borderRadius: "999px", fontSize: "12px", fontWeight: 600, border: "1px solid",
-                            color: colorCumplimiento(pct),
-                            borderColor: `${colorCumplimiento(pct)}40`,
-                            background: `${colorCumplimiento(pct)}12`,
-                          }}>
-                            {fmtPct(pct)}
-                          </span>
-                        </td>
-                        <td style={{ textAlign: "right", fontWeight: 600, color: "#b45309" }}>{fmtCLP(r.brechaNeto)}</td>
+                        {r.split ? (
+                          <>
+                            <td style={{ textAlign: "right" }}>
+                              <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                                <div>
+                                  <div style={{ fontSize: "10px", color: "var(--text-muted)" }}>{r.split.firstLabel}</div>
+                                  <div style={{ fontWeight: 600, color: "#15803d" }}>{fmtCLP(r.split.firstAvanceNeto)}</div>
+                                </div>
+                                <div>
+                                  <div style={{ fontSize: "10px", color: "var(--text-muted)" }}>{r.split.secondLabel}</div>
+                                  <div style={{ fontWeight: 600, color: "#15803d" }}>{fmtCLP(r.split.secondAvanceNeto)}</div>
+                                </div>
+                              </div>
+                            </td>
+                            <td style={{ textAlign: "right" }}>
+                              <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                                <div>
+                                  <div style={{ fontSize: "10px", color: "var(--text-muted)" }}>{r.split.firstLabel}</div>
+                                  <div style={{ fontWeight: 600, color: "var(--primary-dark)" }}>{fmtCLP(r.split.firstAvanceBruto)}</div>
+                                </div>
+                                <div>
+                                  <div style={{ fontSize: "10px", color: "var(--text-muted)" }}>{r.split.secondLabel}</div>
+                                  <div style={{ fontWeight: 600, color: "var(--primary-dark)" }}>{fmtCLP(r.split.secondAvanceBruto)}</div>
+                                </div>
+                              </div>
+                            </td>
+                            <td style={{ minWidth: "200px" }}>
+                              <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                                <div>
+                                  <div style={{ fontSize: "10px", color: "var(--text-muted)", marginBottom: "2px" }}>{r.split.firstLabel}</div>
+                                  <div style={{ height: "8px", borderRadius: "4px", background: "var(--bg)", border: "1px solid var(--border)", overflow: "hidden" }}>
+                                    <div style={{ height: "100%", borderRadius: "4px", background: barColorCumplimiento(r.split.firstPct), width: `${clamp(r.split.firstPct, 0, 100)}%` }} />
+                                  </div>
+                                  <div style={{ marginTop: "2px", fontSize: "11px", color: "var(--text-muted)" }}>
+                                    {fmtCLP(r.split.firstAvanceNeto)} de {fmtCLP(r.split.firstMeta)}
+                                  </div>
+                                </div>
+                                <div>
+                                  <div style={{ fontSize: "10px", color: "var(--text-muted)", marginBottom: "2px" }}>{r.split.secondLabel}</div>
+                                  <div style={{ height: "8px", borderRadius: "4px", background: "var(--bg)", border: "1px solid var(--border)", overflow: "hidden" }}>
+                                    <div style={{ height: "100%", borderRadius: "4px", background: barColorCumplimiento(r.split.secondPct), width: `${clamp(r.split.secondPct, 0, 100)}%` }} />
+                                  </div>
+                                  <div style={{ marginTop: "2px", fontSize: "11px", color: "var(--text-muted)" }}>
+                                    {fmtCLP(r.split.secondAvanceNeto)} de {fmtCLP(r.split.secondMeta)}
+                                  </div>
+                                </div>
+                              </div>
+                            </td>
+                            <td style={{ textAlign: "right" }}>
+                              <div style={{ display: "flex", flexDirection: "column", gap: "6px", alignItems: "flex-end" }}>
+                                <div>
+                                  <div style={{ fontSize: "10px", color: "var(--text-muted)" }}>{r.split.firstLabel}</div>
+                                  <span style={{
+                                    display: "inline-flex", alignItems: "center", padding: "2px 10px",
+                                    borderRadius: "999px", fontSize: "12px", fontWeight: 600, border: "1px solid",
+                                    color: colorCumplimiento(r.split.firstPct),
+                                    borderColor: `${colorCumplimiento(r.split.firstPct)}40`,
+                                    background: `${colorCumplimiento(r.split.firstPct)}12`,
+                                  }}>
+                                    {fmtPct(r.split.firstPct)}
+                                  </span>
+                                </div>
+                                <div>
+                                  <div style={{ fontSize: "10px", color: "var(--text-muted)" }}>{r.split.secondLabel}</div>
+                                  <span style={{
+                                    display: "inline-flex", alignItems: "center", padding: "2px 10px",
+                                    borderRadius: "999px", fontSize: "12px", fontWeight: 600, border: "1px solid",
+                                    color: colorCumplimiento(r.split.secondPct),
+                                    borderColor: `${colorCumplimiento(r.split.secondPct)}40`,
+                                    background: `${colorCumplimiento(r.split.secondPct)}12`,
+                                  }}>
+                                    {fmtPct(r.split.secondPct)}
+                                  </span>
+                                </div>
+                              </div>
+                            </td>
+                            <td style={{ textAlign: "right" }}>
+                              <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                                <div>
+                                  <div style={{ fontSize: "10px", color: "var(--text-muted)" }}>{r.split.firstLabel}</div>
+                                  <div style={{ fontWeight: 600, color: "#b45309" }}>{fmtCLP(r.split.firstBrecha)}</div>
+                                </div>
+                                <div>
+                                  <div style={{ fontSize: "10px", color: "var(--text-muted)" }}>{r.split.secondLabel}</div>
+                                  <div style={{ fontWeight: 600, color: "#b45309" }}>{fmtCLP(r.split.secondBrecha)}</div>
+                                </div>
+                              </div>
+                            </td>
+                          </>
+                        ) : (
+                          <>
+                            <td style={{ textAlign: "right", fontWeight: 600, color: "#15803d" }}>{fmtCLP(r.avanceNeto)}</td>
+                            <td style={{ textAlign: "right", fontWeight: 600, color: "var(--primary-dark)" }}>{fmtCLP(r.avanceBruto)}</td>
+                            <td style={{ minWidth: "200px" }}>
+                              <div style={{ height: "8px", borderRadius: "4px", background: "var(--bg)", border: "1px solid var(--border)", overflow: "hidden" }}>
+                                <div style={{ height: "100%", borderRadius: "4px", background: barColorCumplimiento(pct), width: `${clamp(pct, 0, 100)}%` }} />
+                              </div>
+                              <div style={{ marginTop: "4px", fontSize: "11px", color: "var(--text-muted)" }}>
+                                {fmtCLP(r.avanceNeto)} de {fmtCLP(r.metaNeto)}
+                              </div>
+                            </td>
+                            <td style={{ textAlign: "right" }}>
+                              <span style={{
+                                display: "inline-flex", alignItems: "center", padding: "2px 10px",
+                                borderRadius: "999px", fontSize: "12px", fontWeight: 600, border: "1px solid",
+                                color: colorCumplimiento(pct),
+                                borderColor: `${colorCumplimiento(pct)}40`,
+                                background: `${colorCumplimiento(pct)}12`,
+                              }}>
+                                {fmtPct(pct)}
+                              </span>
+                            </td>
+                            <td style={{ textAlign: "right", fontWeight: 600, color: "#b45309" }}>{fmtCLP(r.brechaNeto)}</td>
+                          </>
+                        )}
                       </tr>
                     );
                   })}
