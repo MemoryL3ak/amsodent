@@ -436,13 +436,14 @@ export default function Productos() {
         <div className="table-scroll" style={{maxHeight: 760}}>
           <table className="data-table" style={{tableLayout: "fixed", width: "100%"}}>
             <colgroup>
-              <col style={{width: 110}} />
-              <col />
-              <col style={{width: 150}} />
-              <col style={{width: 150}} />
-              <col style={{width: 110}} />
-              <col style={{width: 150}} />
-              <col style={{width: 260}} />
+              <col style={{width: 110}} />   {/* SKU */}
+              <col />                         {/* Producto */}
+              <col style={{width: 140}} />   {/* Marca */}
+              <col style={{width: 140}} />   {/* Categoría */}
+              <col style={{width: 100}} />   {/* Formato */}
+              <col style={{width: 130}} />   {/* Precio Neto */}
+              <col style={{width: 130}} />   {/* Precio Bruto */}
+              <col style={{width: 340}} />   {/* Acciones */}
             </colgroup>
             <thead>
               <tr>
@@ -538,7 +539,7 @@ export default function Productos() {
                     </td>
 
                     <td style={{textAlign: "right"}}>
-                      <div className="btn-row" style={{justifyContent: "flex-end"}}>
+                      <div className="btn-row" style={{justifyContent: "flex-end", flexWrap: "nowrap", gap: 4}}>
                         <button
                           type="button"
                           onClick={() => descargarFicha(p)}
