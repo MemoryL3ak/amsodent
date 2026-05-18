@@ -37,6 +37,8 @@ import Metas from "./pages/Metas";
 import MetasPorCanal from "./pages/MetasPorCanal";
 import Trazabilidad from "./pages/Trazabilidad";
 import SeguimientoPagos from "./pages/SeguimientoPagos";
+import BitacoraCotizaciones from "./pages/BitacoraCotizaciones";
+import PlantillasCorreo from "./pages/PlantillasCorreo";
 
 // SORTEO
 import SorteoRegistro from "./pages/SorteoRegistro";
@@ -46,6 +48,10 @@ import RequireRole from "./components/RequireRole";
 
 // COMUNICACIONES
 import Comunicaciones from "./pages/Comunicaciones";
+
+// PERFIL (conexión Gmail)
+import Perfil from "./pages/Perfil";
+import GmailConectado from "./pages/GmailConectado";
 
 export default function App() {
   return (
@@ -132,6 +138,23 @@ export default function App() {
               </RequireRole>
             }
           />
+
+          {/* BITÁCORA — todos los roles logueados */}
+          <Route path="bitacora-cotizaciones" element={<BitacoraCotizaciones />} />
+
+          {/* PLANTILLAS DE CORREO (solo admin) */}
+          <Route
+            path="plantillas-correo"
+            element={
+              <RequireRole allow={["admin"]}>
+                <PlantillasCorreo />
+              </RequireRole>
+            }
+          />
+
+          {/* PERFIL — disponible para cualquier usuario logueado */}
+          <Route path="perfil" element={<Perfil />} />
+          <Route path="perfil/gmail-conectado" element={<GmailConectado />} />
         </Route>
 
         {/* FALLBACK */}

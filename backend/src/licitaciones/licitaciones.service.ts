@@ -42,6 +42,18 @@ export class LicitacionesService {
     return data;
   }
 
+  async getNextId() {
+    // max(id) + 1. Si la tabla está vacía → 1.
+    const { data, error } = await this.supabase.getClient()
+      .from('licitaciones')
+      .select('id')
+      .order('id', { ascending: false })
+      .limit(1);
+    if (error) throw new BadRequestException(error.message);
+    const maxId = Array.isArray(data) && data.length > 0 ? Number(data[0].id) || 0 : 0;
+    return { next: maxId + 1 };
+  }
+
   async create(body: Record<string, any>) {
     const { data, error } = await this.supabase.getClient()
       .from('licitaciones')

@@ -122,6 +122,7 @@ export default function ListarLicitaciones() {
     if (estado === "Perdida")              return "badge badge-danger";
     if (estado === "En espera")            return "badge badge-warning";
     if (estado === "Pendiente Aprobación") return "badge badge-primary";
+    if (estado === "Cancelada")            return "badge badge-neutral";
     return "badge badge-neutral";
   }
 
@@ -137,7 +138,7 @@ export default function ListarLicitaciones() {
   }, [data, usuariosMap]);
 
   const opcionesEstado = [
-    "En espera","Adjudicada","Perdida","Desierta","Descartada","Pendiente Aprobación",
+    "En espera","Adjudicada","Perdida","Desierta","Descartada","Cancelada","Pendiente Aprobación",
   ];
 
   const opcionesTipoCompra = [

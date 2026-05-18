@@ -21,8 +21,10 @@ import {
   CreditCard,
   Gift,
   Mail,
+  BookOpen,
 } from "lucide-react";
 import NotificacionesMenu from "./NotificacionesMenu";
+import GmailTokenSync from "./GmailTokenSync";
 
 const ROLE_LABELS = {
   admin:                "Administrador",
@@ -104,6 +106,7 @@ export default function SidebarLayout() {
   const coreNav = [
     { to: "/listar",            icon: ClipboardList, label: "Cotizaciones" },
     { to: "/crear",             icon: FilePlus,      label: "Nueva Cotización" },
+    { to: "/bitacora-cotizaciones", icon: BookOpen,  label: "Bitácora" },
     (esAdmin || esJefeVentasEspecial || esContabilidad) && { to: "/trazabilidad",      icon: FileText,   label: "Trazabilidad" },
     (esAdmin || esJefeVentasEspecial || esContabilidad) && { to: "/seguimiento-pagos", icon: CreditCard, label: "Seguimiento de Pagos" },
     { to: "/productos",         icon: Package,       label: "Productos" },
@@ -120,6 +123,7 @@ export default function SidebarLayout() {
   const adminNav = [
     (esAdmin || esVentasEspecial) && { to: "/sorteo-registros", icon: Gift, label: "Sorteo" },
     esAdmin && { to: "/comunicaciones",   icon: Mail,     label: "Comunicaciones" },
+    esAdmin && { to: "/plantillas-correo", icon: Mail,    label: "Plantillas de Correo" },
     esAdmin && { to: "/monitoreo",        icon: Activity, label: "Monitoreo de Usuarios" },
     esAdmin && { to: "/usuarios",         icon: UserCog,  label: "Usuarios" },
   ].filter(Boolean);
@@ -148,6 +152,7 @@ export default function SidebarLayout() {
     <div className="app-shell">
       <SessionTracker />
       <PresenceTracker />
+      <GmailTokenSync />
 
       <aside className="sidebar">
         {/* Brand */}
@@ -169,13 +174,23 @@ export default function SidebarLayout() {
         {/* User section */}
         {perfil && (
           <div className="sidebar-user">
-            <div className="user-avatar">
+            <Link
+              to="/perfil"
+              className="user-avatar"
+              title="Ir a mi perfil"
+              style={{ textDecoration: "none" }}
+            >
               {String(perfil.nombre || "U").charAt(0).toUpperCase()}
-            </div>
-            <div className="user-info">
+            </Link>
+            <Link
+              to="/perfil"
+              className="user-info"
+              title="Ir a mi perfil"
+              style={{ textDecoration: "none", color: "inherit" }}
+            >
               <div className="user-name">{perfil.nombre}</div>
               <div className="user-role">{perfil.rolLabel}</div>
-            </div>
+            </Link>
             <NotificacionesMenu />
             <button
               className="logout-btn"

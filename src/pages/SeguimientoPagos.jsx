@@ -4,7 +4,7 @@ import { Link } from "react-router-dom";
 import useAuth from "../hooks/useAuth";
 import Toast from "../components/Toast";
 import DateFilter from "../components/DateFilter";
-import { Eye, CheckCircle2, Circle, AlertTriangle, ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react";
+import { Eye, CheckCircle2, Circle, AlertTriangle, ArrowUpDown, ArrowUp, ArrowDown, Download, ChevronDown } from "lucide-react";
 
 const FORMAS_PAGO = [
   { value: "transferencia", label: "Transferencia" },
@@ -101,6 +101,9 @@ export default function SeguimientoPagos() {
 
   const [reloadKey, setReloadKey] = useState(0);
   const recargar = () => setReloadKey((k) => k + 1);
+
+  // Punto 36: dropdown descarga reporte
+  const [openDescargar, setOpenDescargar] = useState(false);
 
   useEffect(() => {
     if (cargando) return;
@@ -249,6 +252,72 @@ export default function SeguimientoPagos() {
     return arr;
   }, [facturasFiltradas, licMap, sortCol, sortDir]);
 
+  /* ── Reporte descargable (Punto 36) ────────────────────────── */
+  function construirFilasReporte() {
+    const fmtFecha = (d) => {
+      if (!d) return "";
+      try { return new Date(d).toISOString().slice(0, 10); } catch { return String(d).slice(0, 10); }
+    };
+    return facturasOrdenadas.map((f) => {
+      const lic = licMap[f.licitacion_id] || {};
+      const venc = calcularFechaVencimiento(f.fecha_factura, lic.condicion_venta);
+      const dias = diasEntre(f.fecha_factura);
+      const restantes = dias != null ? plazoDias(lic.condicion_venta) - dias : null;
+      let estado;
+      if (f.pagada) estado = "Pagada";
+      else if (restantes == null) estado = "Sin fecha";
+      else if (restantes < 0) estado = "Vencida";
+      else if (restantes <= 5) estado = "Por vencer";
+      else estado = "En plazo";
+      return {
+        "ID Cotización": lic.id_licitacion || lic.id || "",
+        "Cliente": lic.nombre_entidad || "",
+        "N° Factura": f.numero || "",
+        "Fecha Factura": fmtFecha(f.fecha_factura),
+        "Vencimiento": venc ? venc.toISOString().slice(0, 10) : "",
+        "Condición Venta": lic.condicion_venta || "",
+        "Monto": Number(lic.total_con_iva ?? 0),
+        "Estado": estado,
+        "Pagada": f.pagada ? "Sí" : "No",
+        "Fecha Pago": fmtFecha(f.fecha_pago),
+        "Forma Pago": f.forma_pago || "",
+      };
+    });
+  }
+
+  async function descargarReporte(formato) {
+    const filas = construirFilasReporte();
+    if (filas.length === 0) {
+      setToast({ type: "info", message: "No hay datos en el filtro actual para exportar." });
+      return;
+    }
+    const ts = new Date().toISOString().slice(0, 10);
+    const nombreArchivo = `seguimiento_pagos_${ts}`;
+    try {
+      const XLSX = await import("xlsx");
+      const ws = XLSX.utils.json_to_sheet(filas);
+      if (formato === "xlsx") {
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "Seguimiento");
+        XLSX.writeFile(wb, `${nombreArchivo}.xlsx`);
+      } else {
+        const csv = XLSX.utils.sheet_to_csv(ws, { FS: ";" });
+        const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" });
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        link.download = `${nombreArchivo}.csv`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(link.href);
+      }
+      setToast({ type: "success", message: `Reporte ${formato.toUpperCase()} generado.` });
+    } catch (err) {
+      console.error(err);
+      setToast({ type: "error", message: "No se pudo generar el reporte." });
+    }
+  }
+
   // Stats globales (de todas las facturas, no solo las filtradas)
   const stats = useMemo(() => {
     let total = 0, pagadas = 0, pendientes = 0, vencidas = 0, porVencer = 0;
@@ -360,12 +429,54 @@ export default function SeguimientoPagos() {
     <div className="page">
       {toast && <Toast type={toast.type} message={toast.message} onClose={() => setToast(null)} />}
 
-      <div className="page-header">
+      <div className="page-header" style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16 }}>
         <div>
           <h1 className="page-title">Seguimiento de Pagos</h1>
           <p className="page-subtitle">
             {facturasFiltradas.length} factura{facturasFiltradas.length !== 1 ? "s" : ""}
           </p>
+        </div>
+        <div style={{ position: "relative" }}>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={() => setOpenDescargar((v) => !v)}
+            style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
+            disabled={facturasFiltradas.length === 0}
+          >
+            <Download size={14} /> Descargar reporte <ChevronDown size={14} />
+          </button>
+          {openDescargar && (
+            <div
+              style={{
+                position: "absolute",
+                right: 0,
+                marginTop: 4,
+                background: "var(--surface, #fff)",
+                border: "1px solid var(--border, #e2e8f0)",
+                borderRadius: 8,
+                boxShadow: "0 4px 12px rgba(0,0,0,0.08)",
+                zIndex: 30,
+                minWidth: 160,
+              }}
+              onMouseLeave={() => setOpenDescargar(false)}
+            >
+              <button
+                type="button"
+                onClick={() => { setOpenDescargar(false); descargarReporte("xlsx"); }}
+                style={{ display: "block", width: "100%", textAlign: "left", padding: "8px 12px", background: "transparent", border: "none", cursor: "pointer", fontSize: 13 }}
+              >
+                Excel (.xlsx)
+              </button>
+              <button
+                type="button"
+                onClick={() => { setOpenDescargar(false); descargarReporte("csv"); }}
+                style={{ display: "block", width: "100%", textAlign: "left", padding: "8px 12px", background: "transparent", border: "none", cursor: "pointer", fontSize: 13 }}
+              >
+                CSV
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
