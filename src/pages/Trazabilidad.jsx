@@ -541,7 +541,15 @@ export default function Trazabilidad() {
     return getDocsForLic(licId).filter((d) => d.tipo === "guia_despacho");
   }
   function getFacturas(licId) {
-    return getDocsForLic(licId).filter((d) => d.tipo === "factura");
+    // Cliente particular: una "factura/boleta" es el equivalente al ciclo OC en
+    // el flujo público, así que la incluimos como factura para que aparezca en
+    // la columna "Factura" cuando el filtro es solo Cliente Particular.
+    return getDocsForLic(licId).filter(
+      (d) => d.tipo === "factura" || d.tipo === "factura_boleta",
+    );
+  }
+  function getComprobantes(licId) {
+    return getDocsForLic(licId).filter((d) => d.tipo === "comprobante_pago");
   }
 
   /* ── Reporte descargable (Punto 36) ────────────────────────── */
@@ -1095,14 +1103,19 @@ export default function Trazabilidad() {
                     <th style={{ width: "15%", textAlign: "left" }}>Guía Despacho</th>
                   </>
                 )}
-                <th style={{ width: "15%", textAlign: "left" }}>Factura</th>
+                <th style={{ width: "15%", textAlign: "left" }}>
+                  {esSoloClienteParticular ? "Factura / Boleta" : "Factura"}
+                </th>
+                {esSoloClienteParticular && (
+                  <th style={{ width: "15%", textAlign: "left" }}>Comprobante</th>
+                )}
                 <th style={{ textAlign: "right", width: "13%" }}>Acción</th>
               </tr>
             </thead>
             <tbody>
               {dataFiltrada.length === 0 ? (
                 <tr>
-                  <td colSpan={esSoloClienteParticular ? 4 : 6} style={{ textAlign: "center", padding: "60px 0", color: "var(--text-muted)" }}>
+                  <td colSpan={esSoloClienteParticular ? 5 : 6} style={{ textAlign: "center", padding: "60px 0", color: "var(--text-muted)" }}>
                     No hay cotizaciones adjudicadas que coincidan con los filtros.
                   </td>
                 </tr>
@@ -1388,6 +1401,50 @@ export default function Trazabilidad() {
                             <span className="badge badge-warning">Pendiente</span>
                           )}
                         </td>
+
+                        {/* Comprobante de transferencia (solo Cliente Particular) — uno por cotización */}
+                        {esSoloClienteParticular && isFirstRow && (() => {
+                          const comprobantes = getComprobantes(lic.id);
+                          const comprobante = comprobantes[0];
+                          return (
+                            <td rowSpan={cycles.length} style={{ verticalAlign: "middle" }}>
+                              {comprobante ? (
+                                <div>
+                                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                    <span style={{ fontWeight: 500, color: "#1f2937" }}>
+                                      {comprobante.numero || "S/N"}
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={() => abrirDocumento(comprobante)}
+                                      style={{ background: "none", border: "none", cursor: "pointer", color: "var(--primary)", padding: 0 }}
+                                      title="Ver PDF"
+                                    >
+                                      <Eye size={13} />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => setConfirmEliminar(comprobante)}
+                                      style={{ background: "none", border: "none", cursor: "pointer", color: "#ef4444", padding: 0 }}
+                                      title="Eliminar"
+                                    >
+                                      <Trash2 size={12} />
+                                    </button>
+                                  </div>
+                                  <div style={{ color: "var(--text-muted)", fontSize: "11px" }}>
+                                    {comprobante.fecha_oc
+                                      ? new Date(`${comprobante.fecha_oc}T00:00:00`).toLocaleDateString("es-CL")
+                                      : comprobante.created_at
+                                      ? new Date(comprobante.created_at).toLocaleDateString("es-CL")
+                                      : ""}
+                                  </div>
+                                </div>
+                              ) : (
+                                <span className="badge badge-warning">Pendiente</span>
+                              )}
+                            </td>
+                          );
+                        })()}
 
                         {/* Acción - solo en la primera fila */}
                         {isFirstRow && (

@@ -643,11 +643,15 @@ const DOC_TIPOS = {
   orden_compra: "Orden de Compra",
   guia_despacho: "Guía de Despacho",
   factura: "Factura",
+  factura_boleta: "Factura o Boleta",
+  comprobante_pago: "Comprobante de Transferencia",
 };
 const DOC_BUCKET_BY_TIPO = {
   orden_compra: "orden-compra",
   guia_despacho: "guia-despacho",
   factura: "factura",
+  factura_boleta: "factura",
+  comprobante_pago: "factura",
 };
 
 /* ============================================================
@@ -790,6 +794,9 @@ export default function EditarLicitacion() {
   const [guardandoDocEdit, setGuardandoDocEdit] = useState(false);
   const [aprobando, setAprobando] = useState(false);
   const [documentos, setDocumentos] = useState([]);
+  // Tipo de documento por defecto. Si la cotización es Cliente Particular, el
+  // selector arranca en "factura_boleta" (los tipos de doc cambian); si es
+  // pública, arranca en "orden_compra".
   const [docTipo, setDocTipo] = useState("orden_compra");
   const [docNumero, setDocNumero] = useState("");
   const [docMonto, setDocMonto] = useState("");
@@ -799,6 +806,22 @@ export default function EditarLicitacion() {
   const [docNumSeguimiento, setDocNumSeguimiento] = useState("");
   const [docFile, setDocFile] = useState(null);
   const [subiendoDoc, setSubiendoDoc] = useState(false);
+
+  // Sincroniza el tipo de documento default con el tipo de compra: si la cotización
+  // es Cliente Particular, los tipos son factura_boleta / comprobante_pago.
+  // Si el usuario tenía un tipo no aplicable (ej. orden_compra) lo reajustamos.
+  useEffect(() => {
+    if (tipoCompra === "Cliente particular") {
+      if (docTipo !== "factura_boleta" && docTipo !== "comprobante_pago") {
+        setDocTipo("factura_boleta");
+      }
+    } else {
+      if (docTipo !== "orden_compra" && docTipo !== "guia_despacho") {
+        setDocTipo("orden_compra");
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tipoCompra]);
 
   const STORAGE_KEY = `${STORAGE_KEY_PREFIX}${id}`;
 
@@ -1269,12 +1292,25 @@ export default function EditarLicitacion() {
       });
       return;
     }
+    // Cliente Particular: Factura/Boleta exige monto neto + fecha (igual que OC).
+    if (tipo === "factura_boleta" && montoNetoOrdenCompra <= 0) {
+      setToast({ type: "error", message: "Debes ingresar el monto neto de la factura o boleta." });
+      return;
+    }
     const fechaOc = (docFechaOC || "").toString().trim();
     if (tipo === "orden_compra" && !fechaOc) {
       setToast({
         type: "error",
         message: "Debes ingresar la fecha de la orden de compra.",
       });
+      return;
+    }
+    if (tipo === "factura_boleta" && !fechaOc) {
+      setToast({ type: "error", message: "Debes ingresar la fecha de la factura o boleta." });
+      return;
+    }
+    if (tipo === "comprobante_pago" && !fechaOc) {
+      setToast({ type: "error", message: "Debes ingresar la fecha del comprobante." });
       return;
     }
 
@@ -1334,12 +1370,17 @@ export default function EditarLicitacion() {
       const esGuia = tipo === "guia_despacho";
       const empresaGuia = esGuia ? (docEmpresa || "").trim() : null;
       const esDespachoInterno = empresaGuia === "Despacho interno";
+      const esFacturaBoleta = tipo === "factura_boleta";
+      const esComprobantePago = tipo === "comprobante_pago";
+      const tieneMonto = tipo === "orden_compra" || esFacturaBoleta;
+      const tieneFecha = tipo === "orden_compra" || esGuia || esFacturaBoleta || esComprobantePago;
+
       const payload = {
         licitacion_id: Number(id),
         tipo,
         numero: (docNumero || "").trim() || null,
-        monto: tipo === "orden_compra" ? montoNetoOrdenCompra : (esGuia && montoGuia > 0 ? montoGuia : null),
-        fecha_oc: tipo === "orden_compra" ? fechaOc : (esGuia ? fechaOc : null),
+        monto: tieneMonto ? montoNetoOrdenCompra : (esGuia && montoGuia > 0 ? montoGuia : null),
+        fecha_oc: tieneFecha ? fechaOc : null,
         deriva_de_id: docDerivaDeId ? Number(docDerivaDeId) : null,
         empresa_despacho: esGuia ? empresaGuia : null,
         n_seguimiento: esGuia && !esDespachoInterno ? ((docNumSeguimiento || "").trim() || null) : null,
@@ -3466,8 +3507,17 @@ export default function EditarLicitacion() {
               onChange={(e) => setDocTipo(e.target.value)}
               disabled={subiendoDoc}
             >
-              <option value="orden_compra">Orden de Compra</option>
-              <option value="guia_despacho">Guía de Despacho</option>
+              {tipoCompra === "Cliente particular" ? (
+                <>
+                  <option value="factura_boleta">Factura o Boleta</option>
+                  <option value="comprobante_pago">Comprobante de Transferencia</option>
+                </>
+              ) : (
+                <>
+                  <option value="orden_compra">Orden de Compra</option>
+                  <option value="guia_despacho">Guía de Despacho</option>
+                </>
+              )}
             </select>
           </div>
 
@@ -3477,10 +3527,68 @@ export default function EditarLicitacion() {
               className={`${inputClass} text-sm`}
               value={docNumero}
               onChange={(e) => setDocNumero(e.target.value)}
-              placeholder={docTipo === "orden_compra" ? "Ej: OC-2026-001" : "Ej: GD-2026-001"}
+              placeholder={
+                docTipo === "orden_compra" ? "Ej: OC-2026-001" :
+                docTipo === "factura_boleta" ? "Ej: FB-2026-001" :
+                docTipo === "comprobante_pago" ? "Ej: TRX-2026-001" :
+                "Ej: GD-2026-001"
+              }
               disabled={subiendoDoc}
             />
           </div>
+
+          {/* Cliente particular — Factura o Boleta: mismos campos que OC (monto + fecha) */}
+          {docTipo === "factura_boleta" && (
+            <>
+              <div className="md:col-span-2">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Monto Neto *</label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  className={`${inputClass} text-sm`}
+                  value={docMonto}
+                  onChange={(e) => setDocMonto(formatearCLDesdeString(e.target.value))}
+                  placeholder="Ej: 1.250.000"
+                  disabled={subiendoDoc}
+                />
+              </div>
+              <div className="md:col-span-2">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Fecha *</label>
+                <input
+                  type="date"
+                  className={`${inputClass} text-sm`}
+                  value={docFechaOC}
+                  onChange={(e) => setDocFechaOC(e.target.value)}
+                  disabled={subiendoDoc}
+                />
+              </div>
+              <div className="md:col-span-2">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Monto Bruto</label>
+                <input
+                  type="text"
+                  className={`${inputClass} text-sm bg-gray-100`}
+                  value={montoNetoOCFormulario > 0 ? `$${montoBrutoOCFormulario.toLocaleString("es-CL")}` : ""}
+                  placeholder="Neto x 1,19"
+                  readOnly
+                  disabled
+                />
+              </div>
+            </>
+          )}
+
+          {/* Cliente particular — Comprobante de Transferencia: solo fecha */}
+          {docTipo === "comprobante_pago" && (
+            <div className="md:col-span-3">
+              <label className="block text-sm font-medium text-gray-700 mb-1">Fecha *</label>
+              <input
+                type="date"
+                className={`${inputClass} text-sm`}
+                value={docFechaOC}
+                onChange={(e) => setDocFechaOC(e.target.value)}
+                disabled={subiendoDoc}
+              />
+            </div>
+          )}
 
           {docTipo === "orden_compra" && (
             <>

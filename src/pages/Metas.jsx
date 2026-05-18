@@ -240,19 +240,21 @@ export default function Metas() {
         }
         const ids = rows.map((l) => Number(l?.id)).filter((n) => Number.isFinite(n));
 
+        // Para meta: OCs (cotizaciones públicas) + Facturas/Boletas (Cliente Particular).
+        // Ambos son el "trigger" de adjudicación en su respectivo flujo y se suman al avance.
         let docsOcRows = [];
         if (ids.length > 0) {
           try {
             docsOcRows = await api.post("/licitaciones/documentos/filter", {
-              filter: { licitacion_ids: ids, tipo: "orden_compra" },
-              fields: "licitacion_id,monto,fecha_oc,created_at",
+              filter: { licitacion_ids: ids, tipo: ["orden_compra", "factura_boleta"] },
+              fields: "licitacion_id,tipo,monto,fecha_oc,created_at",
             }) || [];
           } catch (errDocsOc) {
             if (isMissingFechaOcColumnError(errDocsOc)) {
               try {
                 const docsOcSinFecha = await api.post("/licitaciones/documentos/filter", {
-                  filter: { licitacion_ids: ids, tipo: "orden_compra" },
-                  fields: "licitacion_id,monto,created_at",
+                  filter: { licitacion_ids: ids, tipo: ["orden_compra", "factura_boleta"] },
+                  fields: "licitacion_id,tipo,monto,created_at",
                 });
                 docsOcRows = (docsOcSinFecha || []).map((d) => ({ ...d, fecha_oc: null }));
               } catch (errDocsOcSinFecha) {
