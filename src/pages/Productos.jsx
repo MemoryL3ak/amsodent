@@ -4,7 +4,7 @@ import { api } from "../lib/api";
 import { Link } from "react-router-dom";
 import ConfirmModal from "../components/ConfirmModal";
 import Select from "react-select";
-import { FileDown } from "lucide-react";
+import { FileDown, Upload, X, Download } from "lucide-react";
 import Toast from "../components/Toast";
 import { descargarFichaTecnica } from "../utils/generarFichaTecnica";
 import { calcularLista3 } from "../lib/listas";
@@ -55,6 +55,8 @@ export default function Productos() {
 
   const [modalOpen, setModalOpen] = useState(false);
   const [productoAEliminar, setProductoAEliminar] = useState(null);
+  // Punto 37: modal de carga masiva
+  const [cargaMasivaOpen, setCargaMasivaOpen] = useState(false);
 
   const [generandoFichaId, setGenerandoFichaId] = useState(null);
   const [toast, setToast] = useState(null);
@@ -271,6 +273,30 @@ export default function Productos() {
     cargar();
   }
 
+  // Punto 38: alternar Activo/Inactivo desde la grilla.
+  async function toggleEstadoActivo(producto) {
+    if (!puedeEditarProductoFila(producto)) return;
+    const actual = (producto.estado || "").toString();
+    // Solo permitimos togglear entre Activo e Inactivo. "Transitorio" y "Pendiente Aprobación"
+    // se manejan por la lógica de SKU/margen y no se tocan acá.
+    if (actual === "Transitorio" || actual === "Pendiente Aprobación") {
+      setToast({
+        type: "info",
+        message: "Este producto está en flujo de aprobación y no puede marcarse como Inactivo manualmente.",
+      });
+      return;
+    }
+    const nuevo = actual === "Inactivo" ? "Activo" : "Inactivo";
+    try {
+      await api.put(`/productos/${producto.id}`, { estado: nuevo });
+      setToast({ type: "success", message: `${producto.sku || producto.nombre} ahora está ${nuevo}.` });
+      cargar();
+    } catch (err) {
+      console.error(err);
+      setToast({ type: "error", message: "No se pudo cambiar el estado del producto." });
+    }
+  }
+
   async function descargarFicha(producto) {
     if (generandoFichaId != null) return;
     setGenerandoFichaId(producto.id);
@@ -311,6 +337,16 @@ export default function Productos() {
       <div className="page-header">
         <h1 className="page-title">Productos</h1>
         <div className="btn-row">
+          {(rolNorm === "admin" || rolNorm === "jefe_ventas") && (
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => setCargaMasivaOpen(true)}
+              style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
+            >
+              <Upload size={14} /> Carga Masiva
+            </button>
+          )}
           <Link to="/productos/nuevo" className="btn btn-primary">
             + Crear Producto
           </Link>
@@ -388,6 +424,7 @@ export default function Productos() {
           >
             <option value="">Todos los estados</option>
             <option value="Activo">Activo</option>
+            <option value="Inactivo">Inactivo</option>
             <option value="Transitorio">Transitorio</option>
             <option value="Pendiente Aprobación">Pendiente Aprobación</option>
           </select>
@@ -430,7 +467,7 @@ export default function Productos() {
                       onClick={() => toggleSort("precio")}
                       style={{ cursor: "pointer" }}
                     >
-                      Precio Unitario{sortIndicator("precio")}
+                      Precio Neto{sortIndicator("precio")}
                     </span>
                     <select
                       value={listaPrecio}
@@ -458,6 +495,7 @@ export default function Productos() {
                     </select>
                   </div>
                 </th>
+                <th>Precio Bruto</th>
                 <th>Acciones</th>
               </tr>
             </thead>
@@ -486,6 +524,19 @@ export default function Productos() {
                       </div>
                     </td>
 
+                    <td style={{fontWeight: 600}}>
+                      {/* Punto 34: bruto (neto × 1.19) — IVA incluido */}
+                      <div style={{lineHeight: 1.4}}>
+                        <div>${Math.round(precioNormal * 1.19).toLocaleString("es-CL")}</div>
+                        {precioCampania != null && (
+                          <div style={{fontSize: 12, color: "#15803d"}}>
+                            ${Math.round(Number(precioCampania) * 1.19).toLocaleString("es-CL")}{" "}
+                            <span style={{fontSize: 11, fontWeight: 500}}>(Campaña)</span>
+                          </div>
+                        )}
+                      </div>
+                    </td>
+
                     <td style={{textAlign: "right"}}>
                       <div className="btn-row" style={{justifyContent: "flex-end"}}>
                         <button
@@ -506,6 +557,33 @@ export default function Productos() {
                             >
                               Editar
                             </Link>
+                            {(() => {
+                              const estadoRow = (p.estado || (p.sku ? "Activo" : "Transitorio")).toString();
+                              const esInactivo = estadoRow === "Inactivo";
+                              const bloqueado = estadoRow === "Transitorio" || estadoRow === "Pendiente Aprobación";
+                              return (
+                                <button
+                                  type="button"
+                                  onClick={() => toggleEstadoActivo(p)}
+                                  className="btn btn-sm"
+                                  disabled={bloqueado}
+                                  title={
+                                    bloqueado
+                                      ? "Productos transitorios o pendientes no se pueden marcar manualmente"
+                                      : esInactivo
+                                      ? "Reactivar este producto"
+                                      : "Marcar como Inactivo (no aparece en cotizaciones)"
+                                  }
+                                  style={{
+                                    background: esInactivo ? "#dcfce7" : "#fef3c7",
+                                    color: esInactivo ? "#15803d" : "#92400e",
+                                    borderColor: esInactivo ? "#86efac" : "#fcd34d",
+                                  }}
+                                >
+                                  {esInactivo ? "Activar" : "Inactivar"}
+                                </button>
+                              );
+                            })()}
                             <button
                               onClick={() => puedeEliminarProductos ? solicitarEliminacion(p) : undefined}
                               className={puedeEliminarProductos ? "btn btn-danger btn-sm" : "btn btn-sm"}
@@ -534,7 +612,7 @@ export default function Productos() {
 
               {productosFiltrados.length === 0 && (
                 <tr>
-                  <td colSpan="7" style={{textAlign: "center", color: "var(--text-muted)", padding: "32px 16px"}}>
+                  <td colSpan="8" style={{textAlign: "center", color: "var(--text-muted)", padding: "32px 16px"}}>
                     No hay productos que coincidan con el filtro.
                   </td>
                 </tr>
@@ -551,6 +629,230 @@ export default function Productos() {
         onCancel={() => setModalOpen(false)}
         onConfirm={eliminarDefinitivo}
       />
+
+      {cargaMasivaOpen && (
+        <CargaMasivaProductosModal
+          onClose={() => setCargaMasivaOpen(false)}
+          onSuccess={() => { setCargaMasivaOpen(false); cargar(); }}
+          onToast={setToast}
+        />
+      )}
+    </div>
+  );
+}
+
+/* ============================================================
+   Modal: Carga Masiva de Productos (Punto 37)
+   ─ Acepta .xlsx, .xls o .csv
+   ─ Match por SKU; si no existe → crea (upsert)
+   ─ Campos editables: sku, nombre, categoria, marca, formato, costo,
+     lista1, lista2, estado
+============================================================ */
+const COLUMNAS_PLANTILLA = ["sku", "nombre", "categoria", "marca", "formato", "costo", "lista1", "lista2", "estado"];
+
+function CargaMasivaProductosModal({ onClose, onSuccess, onToast }) {
+  const [archivo, setArchivo] = useState(null);
+  const [filas, setFilas] = useState([]);
+  const [parsing, setParsing] = useState(false);
+  const [enviando, setEnviando] = useState(false);
+  const [resumen, setResumen] = useState(null);
+
+  async function manejarArchivo(file) {
+    if (!file) return;
+    setArchivo(file);
+    setResumen(null);
+    setParsing(true);
+    try {
+      const XLSX = await import("xlsx");
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: "array" });
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      // defval: "" para que columnas vacías vengan como string vacío y se descarten luego.
+      const raw = XLSX.utils.sheet_to_json(sheet, { defval: "", raw: false });
+      const normalizadas = raw.map((row) => {
+        const out = {};
+        for (const [k, v] of Object.entries(row)) {
+          const key = String(k).trim().toLowerCase();
+          if (!COLUMNAS_PLANTILLA.includes(key)) continue;
+          let val = typeof v === "string" ? v.trim() : v;
+          if (val === "" || val == null) continue;
+          // Campos numéricos: limpiar puntos de miles y comas decimales.
+          if (["costo", "lista1", "lista2"].includes(key)) {
+            const n = Number(String(val).replace(/\./g, "").replace(",", "."));
+            if (!Number.isFinite(n)) continue;
+            val = Math.round(n);
+          }
+          out[key] = val;
+        }
+        return out;
+      }).filter((r) => r.sku);
+      setFilas(normalizadas);
+    } catch (e) {
+      console.error(e);
+      onToast?.({ type: "error", message: "No se pudo leer el archivo. ¿Es un .xlsx, .xls o .csv válido?" });
+      setFilas([]);
+    } finally {
+      setParsing(false);
+    }
+  }
+
+  async function descargarPlantilla() {
+    try {
+      const XLSX = await import("xlsx");
+      const ejemplo = [
+        { sku: "EJ-001", nombre: "Producto ejemplo", categoria: "Categoría", marca: "Marca", formato: "1 unidad", costo: 1000, lista1: 2000, lista2: 2500, estado: "Activo" },
+      ];
+      const ws = XLSX.utils.json_to_sheet(ejemplo, { header: COLUMNAS_PLANTILLA });
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Productos");
+      XLSX.writeFile(wb, "plantilla_productos.xlsx");
+    } catch (e) {
+      console.error(e);
+      onToast?.({ type: "error", message: "No se pudo generar la plantilla." });
+    }
+  }
+
+  async function importar() {
+    if (filas.length === 0) return;
+    setEnviando(true);
+    try {
+      const res = await api.post("/productos/bulk-upsert", { rows: filas });
+      setResumen(res);
+      if (res.errores?.length > 0) {
+        onToast?.({ type: "info", message: `Importado con ${res.errores.length} errores. Revisa el detalle.` });
+      } else {
+        onToast?.({ type: "success", message: `Listo: ${res.creados} creados, ${res.actualizados} actualizados.` });
+      }
+    } catch (e) {
+      console.error(e);
+      onToast?.({ type: "error", message: e?.message || "Error al importar." });
+    } finally {
+      setEnviando(false);
+    }
+  }
+
+  return (
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(15,23,42,0.45)",
+        zIndex: 9999,
+        display: "flex",
+        alignItems: "flex-start",
+        justifyContent: "center",
+        padding: "5vh 16px",
+        overflowY: "auto",
+        pointerEvents: "auto",
+      }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget && !enviando) onClose();
+      }}
+    >
+      <div
+        style={{
+          background: "var(--surface, #fff)",
+          borderRadius: 12,
+          padding: "22px 24px",
+          width: "min(640px, 100%)",
+          boxShadow: "0 20px 50px rgba(0,0,0,0.25)",
+        }}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+          <h3 style={{ margin: 0, fontSize: 18, fontWeight: 600 }}>Carga Masiva de Productos</h3>
+          <button type="button" onClick={onClose} disabled={enviando} style={{ background: "transparent", border: "none", cursor: "pointer", padding: 4 }}>
+            <X size={18} />
+          </button>
+        </div>
+        <p style={{ fontSize: 13, color: "var(--text-muted, #64748b)", marginTop: 2, marginBottom: 16 }}>
+          Sube un archivo .xlsx o .csv. El match es por <strong>SKU</strong>: si existe se actualiza, si no se crea.
+          Las celdas vacías no sobrescriben los valores actuales.
+        </p>
+
+        <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
+          <button type="button" onClick={descargarPlantilla} className="btn btn-ghost btn-sm" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+            <Download size={14} /> Descargar plantilla
+          </button>
+        </div>
+
+        <label
+          style={{
+            display: "block",
+            border: "2px dashed var(--border, #cbd5e1)",
+            borderRadius: 10,
+            padding: "20px 16px",
+            textAlign: "center",
+            cursor: "pointer",
+            background: archivo ? "#f0fdfa" : "var(--bg, #f8fafc)",
+            transition: "background 0.15s",
+          }}
+        >
+          <input
+            type="file"
+            accept=".xlsx,.xls,.csv"
+            onChange={(e) => manejarArchivo(e.target.files?.[0])}
+            style={{ display: "none" }}
+            disabled={enviando}
+          />
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
+            <Upload size={22} color="var(--primary, #28aeb1)" />
+            <span style={{ fontSize: 14, fontWeight: 500 }}>
+              {archivo ? archivo.name : "Haz clic o arrastra el archivo aquí"}
+            </span>
+            <span style={{ fontSize: 11, color: "var(--text-muted, #64748b)" }}>
+              Columnas reconocidas: {COLUMNAS_PLANTILLA.join(", ")}
+            </span>
+          </div>
+        </label>
+
+        {parsing && <p style={{ fontSize: 12, marginTop: 10 }}>Procesando archivo…</p>}
+
+        {archivo && !parsing && (
+          <p style={{ fontSize: 13, marginTop: 12 }}>
+            <strong>{filas.length}</strong> {filas.length === 1 ? "fila lista" : "filas listas"} para importar
+            {filas.length === 0 && " — ¿el archivo tiene la columna SKU?"}
+          </p>
+        )}
+
+        {resumen && (
+          <div style={{ marginTop: 14, padding: "10px 12px", background: "#f1f5f9", borderRadius: 8, fontSize: 13 }}>
+            <div>✅ Creados: <strong>{resumen.creados}</strong></div>
+            <div>🔄 Actualizados: <strong>{resumen.actualizados}</strong></div>
+            <div>⚠️ Ignorados (sin SKU): <strong>{resumen.ignorados}</strong></div>
+            {resumen.errores?.length > 0 && (
+              <details style={{ marginTop: 8 }}>
+                <summary style={{ cursor: "pointer", color: "#b91c1c" }}>
+                  {resumen.errores.length} {resumen.errores.length === 1 ? "error" : "errores"}
+                </summary>
+                <ul style={{ margin: "6px 0 0 18px", fontSize: 12 }}>
+                  {resumen.errores.slice(0, 20).map((e, i) => <li key={i}>{e}</li>)}
+                </ul>
+              </details>
+            )}
+          </div>
+        )}
+
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 18 }}>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={onClose} disabled={enviando}>
+            {resumen ? "Cerrar" : "Cancelar"}
+          </button>
+          {!resumen && (
+            <button
+              type="button"
+              className="btn btn-primary btn-sm"
+              onClick={importar}
+              disabled={filas.length === 0 || enviando}
+            >
+              {enviando ? "Importando…" : `Importar ${filas.length || ""}`}
+            </button>
+          )}
+          {resumen && (
+            <button type="button" className="btn btn-primary btn-sm" onClick={onSuccess}>
+              Refrescar lista
+            </button>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

@@ -59,7 +59,7 @@ function SLABadge({ fechaOc }) {
     </span>
   );
 }
-import { Upload, Eye, Trash2, ArrowUpDown, ArrowUp, ArrowDown, Calendar, FileCheck, ChevronDown, Truck } from "lucide-react";
+import { Upload, Eye, Trash2, ArrowUpDown, ArrowUp, ArrowDown, Calendar, FileCheck, ChevronDown, Truck, Download } from "lucide-react";
 
 // Mapping empresa courier → builder de URL de tracking. Si la empresa no
 // tiene URL o no hay número, devuelve "" (no renderizamos el link).
@@ -159,6 +159,7 @@ export default function Trazabilidad() {
   const [filtroFechaHasta, setFiltroFechaHasta] = useState("");
   const [filtroTipoCompra, setFiltroTipoCompra] = useState([]);
   const [openTipoCompra, setOpenTipoCompra] = useState(false);
+  const [openDescargar, setOpenDescargar] = useState(false);
   // Filtro de documentos: match EXACTO. Sin selección → cotizaciones sin ningún
   // documento (OC/Guía/Factura). Con selección → cotizaciones cuyo conjunto de
   // documentos coincide exactamente con los flags activos.
@@ -543,6 +544,73 @@ export default function Trazabilidad() {
     return getDocsForLic(licId).filter((d) => d.tipo === "factura");
   }
 
+  /* ── Reporte descargable (Punto 36) ────────────────────────── */
+  function construirFilasReporte() {
+    return dataOrdenada.map((lic) => {
+      const emailCreador = (lic.creado_por || "").trim().toLowerCase();
+      const ocs = getOrdenes(lic.id);
+      const guias = getGuias(lic.id);
+      const facturas = getFacturas(lic.id);
+      const fechasFacturas = facturas
+        .map((f) => f.fecha_documento || f.fecha_emision || f.fecha || "")
+        .filter(Boolean)
+        .sort();
+      // Resumen de estado documentación para esta cotización
+      let estadoDoc;
+      if (ocs.length === 0) estadoDoc = "sin documentos";
+      else if (facturas.length > 0) estadoDoc = "con factura";
+      else if (guias.length > 0) estadoDoc = "falta factura";
+      else estadoDoc = "solo OC";
+      return {
+        "ID Cotización": lic.id_licitacion || lic.id || "",
+        "Cliente": lic.nombre_entidad || "",
+        "Vendedor": usuariosMap[emailCreador] || emailCreador || "",
+        "Tipo de Compra": lic.tipo_compra || "",
+        "Fecha Adjudicación": (lic.fecha_adjudicada || "").toString().slice(0, 10),
+        "Monto Total": Number(lic.total_con_iva ?? lic.total_sin_iva ?? 0),
+        "# OCs": ocs.length,
+        "# Guías": guias.length,
+        "# Facturas": facturas.length,
+        "Última Factura": fechasFacturas.length ? fechasFacturas[fechasFacturas.length - 1] : "",
+        "Estado Documentación": estadoDoc,
+      };
+    });
+  }
+
+  async function descargarReporte(formato) {
+    const filas = construirFilasReporte();
+    if (filas.length === 0) {
+      setToast({ type: "info", message: "No hay datos en el filtro actual para exportar." });
+      return;
+    }
+    const ts = new Date().toISOString().slice(0, 10);
+    const nombreArchivo = `trazabilidad_${ts}`;
+    try {
+      const XLSX = await import("xlsx");
+      const ws = XLSX.utils.json_to_sheet(filas);
+      if (formato === "xlsx") {
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "Trazabilidad");
+        XLSX.writeFile(wb, `${nombreArchivo}.xlsx`);
+      } else {
+        const csv = XLSX.utils.sheet_to_csv(ws, { FS: ";" });
+        // BOM para que Excel detecte UTF-8.
+        const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" });
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        link.download = `${nombreArchivo}.csv`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(link.href);
+      }
+      setToast({ type: "success", message: `Reporte ${formato.toUpperCase()} generado.` });
+    } catch (err) {
+      console.error(err);
+      setToast({ type: "error", message: "No se pudo generar el reporte." });
+    }
+  }
+
   /* ── Open doc ──────────────────────────────────────────────── */
   async function abrirDocumento(doc) {
     if (!doc?.bucket || !doc?.storage_path) return;
@@ -705,12 +773,54 @@ export default function Trazabilidad() {
       {toast && <Toast type={toast.type} message={toast.message} onClose={() => setToast(null)} />}
 
       {/* Header */}
-      <div className="page-header">
+      <div className="page-header" style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16 }}>
         <div>
           <h1 className="page-title">Trazabilidad de Facturación</h1>
           <p className="page-subtitle">
             {dataFiltrada.length} cotización{dataFiltrada.length !== 1 ? "es" : ""} adjudicada{dataFiltrada.length !== 1 ? "s" : ""}
           </p>
+        </div>
+        <div style={{ position: "relative" }}>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={() => setOpenDescargar((v) => !v)}
+            style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
+            disabled={dataFiltrada.length === 0}
+          >
+            <Download size={14} /> Descargar reporte <ChevronDown size={14} />
+          </button>
+          {openDescargar && (
+            <div
+              style={{
+                position: "absolute",
+                right: 0,
+                marginTop: 4,
+                background: "var(--surface, #fff)",
+                border: "1px solid var(--border, #e2e8f0)",
+                borderRadius: 8,
+                boxShadow: "0 4px 12px rgba(0,0,0,0.08)",
+                zIndex: 30,
+                minWidth: 160,
+              }}
+              onMouseLeave={() => setOpenDescargar(false)}
+            >
+              <button
+                type="button"
+                onClick={() => { setOpenDescargar(false); descargarReporte("xlsx"); }}
+                style={{ display: "block", width: "100%", textAlign: "left", padding: "8px 12px", background: "transparent", border: "none", cursor: "pointer", fontSize: 13 }}
+              >
+                Excel (.xlsx)
+              </button>
+              <button
+                type="button"
+                onClick={() => { setOpenDescargar(false); descargarReporte("csv"); }}
+                style={{ display: "block", width: "100%", textAlign: "left", padding: "8px 12px", background: "transparent", border: "none", cursor: "pointer", fontSize: 13 }}
+              >
+                CSV
+              </button>
+            </div>
+          )}
         </div>
       </div>
 

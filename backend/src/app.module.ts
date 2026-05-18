@@ -13,6 +13,7 @@ import { FeriadosModule } from './feriados/feriados.module';
 import { MailingsModule } from './mailings/mailings.module';
 import { PortalModule } from './portal/portal.module';
 import { NotificacionesModule } from './notificaciones/notificaciones.module';
+import { BitacoraModule } from './bitacora/bitacora.module';
 
 @Module({
   imports: [
@@ -30,6 +31,7 @@ import { NotificacionesModule } from './notificaciones/notificaciones.module';
     MailingsModule,
     PortalModule,
     NotificacionesModule,
+    BitacoraModule,
   ],
 })
 export class AppModule {}
