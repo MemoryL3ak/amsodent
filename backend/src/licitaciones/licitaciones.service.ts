@@ -153,6 +153,9 @@ export class LicitacionesService {
       for (const [key, value] of Object.entries(filter)) {
         if (key === 'licitacion_ids') {
           query = query.in('licitacion_id', value as number[]);
+        } else if (Array.isArray(value)) {
+          // Permite { tipo: ['orden_compra', 'factura_boleta'] } → IN
+          query = query.in(key, value as any[]);
         } else {
           query = query.eq(key, value);
         }
