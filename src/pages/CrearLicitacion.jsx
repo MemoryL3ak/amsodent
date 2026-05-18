@@ -1354,6 +1354,7 @@ export default function CrearLicitacion() {
     if (!nombre) errores.push("Nombre Licitación");
     if (!fechaHoraCierre) errores.push("Fecha y Hora de Cierre");
     if (!monto) errores.push("Monto");
+    if (!tipoCliente) errores.push("Tipo de Cliente");
     if (!rutEntidad) errores.push("RUT Entidad");
     if (!nombreEntidad) errores.push("Nombre Entidad");
     // Punto 29: Departamento no es obligatorio cuando el tipo de compra es "Cliente particular".
@@ -1754,7 +1755,7 @@ export default function CrearLicitacion() {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              Tipo de Cliente
+              Tipo de Cliente *
             </label>
             <select
               className="w-full rounded-md border border-gray-300 px-3 py-2"

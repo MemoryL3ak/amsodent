@@ -2251,9 +2251,10 @@ export default function EditarLicitacion() {
     if (!nombre) errores.push("Nombre Licitación");
     if (!fechaHoraCierre) errores.push("Fecha y Hora de Cierre");
     if (!monto) errores.push("Monto");
+    if (!tipoCliente) errores.push("Tipo de Cliente");
     if (!rutEntidad) errores.push("RUT Entidad");
     if (!nombreEntidad) errores.push("Nombre Entidad");
-    if (!departamento) errores.push("Departamento");
+    if (tipoCompra !== "Cliente particular" && !departamento) errores.push("Departamento");
     if (!tipoCompra) errores.push("Tipo de Compra");
     if (!region) errores.push("Región");
     if (!comuna) errores.push("Comuna");
@@ -2624,7 +2625,7 @@ export default function EditarLicitacion() {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              Tipo de Cliente
+              Tipo de Cliente *
             </label>
             <select
               className={inputClass}
