@@ -1019,7 +1019,7 @@ try {
             <h3 className="surface-title">Lista de Precios</h3>
           </div>
           <div className="surface-body">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className={`grid grid-cols-1 ${mostrarMargen ? "md:grid-cols-3" : "md:grid-cols-2"} gap-4`}>
               {(esAdmin || (esVentasOJefe && (esProductoTransitorio || esPendienteAprobacion))) && (
                 <>
                   <div>
@@ -1030,6 +1030,7 @@ try {
                     />
                   </div>
                   <div />
+                  {mostrarMargen && <div />}
                 </>
               )}
 
@@ -1040,6 +1041,15 @@ try {
                 <MoneyInput
                   value={producto.lista1}
                   onChange={(v) => setProducto((prev) => ({ ...prev, lista1: formatearCLDesdeString(v) }))}
+                />
+              </div>
+              <div>
+                <label className="label">Precio Bruto 1</label>
+                <input
+                  readOnly
+                  className="input"
+                  style={{background:"var(--bg)"}}
+                  value={`$${Math.round((Number(String(producto.lista1).replace(/\./g, "")) || 0) * 1.19).toLocaleString("es-CL")}`}
                 />
               </div>
               {mostrarMargen && (
@@ -1058,6 +1068,15 @@ try {
                   onChange={(v) => setProducto((prev) => ({ ...prev, lista2: formatearCLDesdeString(v) }))}
                 />
               </div>
+              <div>
+                <label className="label">Precio Bruto 2</label>
+                <input
+                  readOnly
+                  className="input"
+                  style={{background:"var(--bg)"}}
+                  value={`$${Math.round((Number(String(producto.lista2).replace(/\./g, "")) || 0) * 1.19).toLocaleString("es-CL")}`}
+                />
+              </div>
               {mostrarMargen && (
                 <div>
                   <label className="label">{esVentasOJefe ? "Margen Venta Neto 2" : "Margen Lista 2"}</label>
@@ -1073,6 +1092,15 @@ try {
                 <p style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>
                   Calculado automáticamente (Lista 2 × {FACTOR_LISTA_3}). Usado en Licitación 9 a 24 meses.
                 </p>
+              </div>
+              <div>
+                <label className="label">Precio Bruto 3</label>
+                <input
+                  readOnly
+                  className="input"
+                  style={{background:"var(--bg)"}}
+                  value={`$${Math.round((Number(String(lista3Display).replace(/\./g, "")) || 0) * 1.19).toLocaleString("es-CL")}`}
+                />
               </div>
               {mostrarMargen && (
                 <div>

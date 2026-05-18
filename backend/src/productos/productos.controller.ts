@@ -32,6 +32,11 @@ export class ProductosController {
     return this.productosService.create(body);
   }
 
+  @Post('bulk-upsert')
+  bulkUpsert(@Body() body: { rows: Record<string, any>[] }) {
+    return this.productosService.bulkUpsert(body?.rows || []);
+  }
+
   @Post('upload-image')
   @UseInterceptors(FileInterceptor('file'))
   uploadImage(@UploadedFile() file: Express.Multer.File, @Query('sku') sku: string) {

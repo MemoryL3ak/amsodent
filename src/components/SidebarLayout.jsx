@@ -20,7 +20,7 @@ import {
   LogOut,
   CreditCard,
   Gift,
-  Mail,
+  BookOpen,
 } from "lucide-react";
 import NotificacionesMenu from "./NotificacionesMenu";
 
@@ -104,6 +104,7 @@ export default function SidebarLayout() {
   const coreNav = [
     { to: "/listar",            icon: ClipboardList, label: "Cotizaciones" },
     { to: "/crear",             icon: FilePlus,      label: "Nueva Cotización" },
+    { to: "/bitacora-cotizaciones", icon: BookOpen,  label: "Bitácora" },
     (esAdmin || esJefeVentasEspecial || esContabilidad) && { to: "/trazabilidad",      icon: FileText,   label: "Trazabilidad" },
     (esAdmin || esJefeVentasEspecial || esContabilidad) && { to: "/seguimiento-pagos", icon: CreditCard, label: "Seguimiento de Pagos" },
     { to: "/productos",         icon: Package,       label: "Productos" },
@@ -119,7 +120,6 @@ export default function SidebarLayout() {
 
   const adminNav = [
     (esAdmin || esVentasEspecial) && { to: "/sorteo-registros", icon: Gift, label: "Sorteo" },
-    esAdmin && { to: "/comunicaciones",   icon: Mail,     label: "Comunicaciones" },
     esAdmin && { to: "/monitoreo",        icon: Activity, label: "Monitoreo de Usuarios" },
     esAdmin && { to: "/usuarios",         icon: UserCog,  label: "Usuarios" },
   ].filter(Boolean);

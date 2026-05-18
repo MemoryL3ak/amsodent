@@ -22,6 +22,14 @@ export class LicitacionesController {
     return this.licitacionesService.findAllWithFields(fields || '*');
   }
 
+  // Próximo correlativo (max(id) + 1). Aproximado: si otra persona inserta entre
+  // el preview y el guardado, el id real puede diferir. El frontend lo confirma
+  // tras el INSERT.
+  @Get('next-id')
+  nextId() {
+    return this.licitacionesService.getNextId();
+  }
+
   @Get(':id')
   findOne(@Param('id', ParseIntPipe) id: number) {
     return this.licitacionesService.findOne(id);

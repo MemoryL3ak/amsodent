@@ -702,6 +702,11 @@ export default function CrearLicitacion() {
 
   const [rutEntidad, setRutEntidad] = useState("");
   const [nombreEntidad, setNombreEntidad] = useState("");
+  const [giro, setGiro] = useState("");
+  const [tipoCliente, setTipoCliente] = useState(""); // "Entidad Pública" | "Cliente Particular" | ""
+  // Preview del próximo correlativo para cliente particular (max(id)+1 al momento de la consulta).
+  const [idPreview, setIdPreview] = useState(null);
+  const [idPreviewLoading, setIdPreviewLoading] = useState(false);
   const [departamento, setDepartamento] = useState("");
   const [municipalidad, setMunicipalidad] = useState("");
   const [direccion, setDireccion] = useState("");
@@ -757,6 +762,19 @@ export default function CrearLicitacion() {
     setEmail(data.email || "");
     setTelefono(data.telefono || "");
     setCondVenta(data.condiciones_venta || "");
+    const tc = (data.tipo_cliente || "").toString().trim();
+    if (tc) {
+      setTipoCliente(tc);
+      // Si el cliente es Particular, el único tipo de compra válido es "Cliente particular".
+      if (tc.toLowerCase() === "cliente particular") {
+        setTipoCompra("Cliente particular");
+        setListado("1");
+      } else if (tipoCompra === "Cliente particular") {
+        // Si el cliente es Entidad Pública y veníamos con "Cliente particular", resetear.
+        setTipoCompra("Compra ágil");
+        setListado("2");
+      }
+    }
   }
 
   useEffect(() => {
@@ -796,6 +814,8 @@ export default function CrearLicitacion() {
 
       setRutEntidad(data.rutEntidad || "");
       setNombreEntidad(data.nombreEntidad || "");
+      setGiro(data.giro || "");
+      setTipoCliente(data.tipoCliente || "");
       setDepartamento(data.departamento || "");
       setMunicipalidad(data.municipalidad || "");
       setDireccion(data.direccion || "");
@@ -840,6 +860,8 @@ export default function CrearLicitacion() {
       listado,
       rutEntidad,
       nombreEntidad,
+      giro,
+      tipoCliente,
       departamento,
       municipalidad,
       direccion,
@@ -865,6 +887,8 @@ export default function CrearLicitacion() {
     listado,
     rutEntidad,
     nombreEntidad,
+    giro,
+    tipoCliente,
     departamento,
     municipalidad,
     direccion,
@@ -1262,6 +1286,7 @@ export default function CrearLicitacion() {
         email,
         telefono,
         condiciones_venta: condVenta,
+        tipo_cliente: tipoCliente || null,
       });
     } catch (error) {
       console.error("Error creando cliente:", error);
@@ -1278,6 +1303,8 @@ export default function CrearLicitacion() {
 
     setRutEntidad("");
     setNombreEntidad("");
+    setGiro("");
+    setTipoCliente("");
     setDepartamento("");
     setMunicipalidad("");
     setRegion("");
@@ -1319,14 +1346,18 @@ export default function CrearLicitacion() {
       return;
     }
 
+    const esClienteParticular = tipoCliente.toLowerCase() === "cliente particular" || tipoCompra === "Cliente particular";
+
     const errores = [];
-    if (!idLicitacionInput) errores.push("ID Licitación");
+    // Para cliente particular el ID se genera automáticamente (igual al id interno) — no validamos.
+    if (!esClienteParticular && !idLicitacionInput) errores.push("ID Licitación");
     if (!nombre) errores.push("Nombre Licitación");
     if (!fechaHoraCierre) errores.push("Fecha y Hora de Cierre");
     if (!monto) errores.push("Monto");
     if (!rutEntidad) errores.push("RUT Entidad");
     if (!nombreEntidad) errores.push("Nombre Entidad");
-    if (!departamento) errores.push("Departamento");
+    // Punto 29: Departamento no es obligatorio cuando el tipo de compra es "Cliente particular".
+    if (tipoCompra !== "Cliente particular" && !departamento) errores.push("Departamento");
     if (!tipoCompra) errores.push("Tipo de Compra");
     if (!region) errores.push("Región");
     if (!comuna) errores.push("Comuna");
@@ -1354,29 +1385,32 @@ export default function CrearLicitacion() {
     setToast({ type: "info", message: "Guardando licitación…" });
 
     try {
-      // ✅ validar duplicado por ID Licitación
+      // ✅ validar duplicado por ID Licitación (solo si NO es cliente particular —
+      // los particulares reciben el correlativo automáticamente al guardar).
       const idLicitacionNorm = (idLicitacionInput || "").toString().trim();
-      let dup;
-      try {
-        const allLics = await api.get(`/licitaciones?id_licitacion=${encodeURIComponent(idLicitacionNorm)}`);
-        dup = allLics;
-      } catch (errDup) {
-        console.error(errDup);
-        setToast({
-          type: "error",
-          message: "No se pudo validar el ID de licitación.",
-        });
-        return;
-      }
+      if (!esClienteParticular) {
+        let dup;
+        try {
+          const allLics = await api.get(`/licitaciones?id_licitacion=${encodeURIComponent(idLicitacionNorm)}`);
+          dup = allLics;
+        } catch (errDup) {
+          console.error(errDup);
+          setToast({
+            type: "error",
+            message: "No se pudo validar el ID de licitación.",
+          });
+          return;
+        }
 
-      if (dup && dup.length > 0) {
-        setToast({
-          type: "error",
-          message:
-            `Ya existe una licitación con el ID "${idLicitacionNorm}".\n` +
-            "No se puede guardar nuevamente con el mismo ID Licitación.",
-        });
-        return;
+        if (dup && dup.length > 0) {
+          setToast({
+            type: "error",
+            message:
+              `Ya existe una licitación con el ID "${idLicitacionNorm}".\n` +
+              "No se puede guardar nuevamente con el mismo ID Licitación.",
+          });
+          return;
+        }
       }
 
       try {
@@ -1445,10 +1479,17 @@ export default function CrearLicitacion() {
 
       const requiereAprobacion = margenGeneral < 20;
 
+      // Para cliente particular el id_licitacion final = String(id interno). Como necesitamos
+      // el id antes del INSERT, mandamos un placeholder único y lo reemplazamos con un UPDATE
+      // posterior. El placeholder evita colisiones por UNIQUE constraint.
+      const idLicitacionParaInsert = esClienteParticular
+        ? `__pending_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+        : idLicitacionInput;
+
       let lic;
       try {
         lic = await api.post("/licitaciones", {
-            id_licitacion: idLicitacionInput,
+            id_licitacion: idLicitacionParaInsert,
             nombre,
             fecha_hora_cierre: fechaHoraCierre,
             monto: parseMontoCL(monto),
@@ -1456,6 +1497,7 @@ export default function CrearLicitacion() {
 
             rut_entidad: rutEntidad,
             nombre_entidad: nombreEntidad,
+            giro: giro || null,
             departamento,
             municipalidad,
             direccion,
@@ -1488,6 +1530,18 @@ export default function CrearLicitacion() {
       }
 
       const idLicitacion = lic.id;
+
+      // Cliente particular: reemplazar el placeholder con el id interno como id_licitacion final.
+      if (esClienteParticular) {
+        try {
+          await api.put(`/licitaciones/${idLicitacion}`, {
+            id_licitacion: String(idLicitacion),
+          });
+          setIdLicitacionInput(String(idLicitacion));
+        } catch (errCorr) {
+          console.error("No se pudo asignar el correlativo automático:", errCorr);
+        }
+      }
 
       // ✅ INSERT EN BATCH + ✅ ORDEN
       const payloadItems = itemsParaGuardar.map((it, idx) => {
@@ -1700,13 +1754,67 @@ export default function CrearLicitacion() {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              ID Cotización *
+              Tipo de Cliente
+            </label>
+            <select
+              className="w-full rounded-md border border-gray-300 px-3 py-2"
+              value={tipoCliente}
+              onChange={async (e) => {
+                const nuevo = e.target.value;
+                setTipoCliente(nuevo);
+                if (nuevo.toLowerCase() === "cliente particular") {
+                  setTipoCompra("Cliente particular");
+                  setListado("1");
+                  // Para cliente particular el ID se asigna automáticamente: pedimos el preview.
+                  setIdLicitacionInput("");
+                  setIdPreviewLoading(true);
+                  try {
+                    const res = await api.get("/licitaciones/next-id");
+                    setIdPreview(res?.next ?? null);
+                  } catch (err) {
+                    console.error("No se pudo obtener el correlativo:", err);
+                    setIdPreview(null);
+                  } finally {
+                    setIdPreviewLoading(false);
+                  }
+                } else {
+                  setIdPreview(null);
+                  if (nuevo.toLowerCase() === "entidad pública" && tipoCompra === "Cliente particular") {
+                    setTipoCompra("Compra ágil");
+                    setListado("2");
+                  }
+                }
+              }}
+            >
+              <option value="">(Seleccionar)</option>
+              <option value="Entidad Pública">Entidad Pública</option>
+              <option value="Cliente Particular">Cliente Particular</option>
+            </select>
+            <p className="text-[11px] text-gray-500 mt-1">
+              Define las opciones de tipo de compra disponibles.
+            </p>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              ID Cotización{tipoCliente.toLowerCase() === "cliente particular" ? " (auto)" : " *"}
             </label>
             <input
-              className="w-full rounded-md border border-gray-300 px-3 py-2"
-              value={idLicitacionInput}
+              className="w-full rounded-md border border-gray-300 px-3 py-2 disabled:bg-gray-100 disabled:text-gray-500 disabled:font-semibold"
+              value={
+                tipoCliente.toLowerCase() === "cliente particular"
+                  ? (idPreviewLoading ? "Cargando…" : (idPreview != null ? String(idPreview) : ""))
+                  : idLicitacionInput
+              }
               onChange={(e) => setIdLicitacionInput(e.target.value)}
+              disabled={tipoCliente.toLowerCase() === "cliente particular"}
+              placeholder={tipoCliente.toLowerCase() === "cliente particular" ? "Se asigna al guardar" : ""}
             />
+            {tipoCliente.toLowerCase() === "cliente particular" && (
+              <p className="text-[11px] text-gray-500 mt-1">
+                Correlativo automático. El número definitivo se confirma al guardar.
+              </p>
+            )}
           </div>
 
           <div>
@@ -1761,11 +1869,19 @@ export default function CrearLicitacion() {
                 else setListado("2");
               }}
             >
-              <option value="Compra ágil">Compra ágil</option>
-              <option value="Compra directa">Compra directa</option>
-              <option value="Licitación 0 a 8 meses">Licitación 0 a 8 meses</option>
-              <option value="Licitación 9 a 24 meses">Licitación 9 a 24 meses</option>
-              <option value="Cliente particular">Cliente particular</option>
+              {/* Filtrado por tipoCliente: Particular → solo "Cliente particular"; Pública → resto. */}
+              {tipoCliente.toLowerCase() === "cliente particular" ? (
+                <option value="Cliente particular">Cliente particular</option>
+              ) : (
+                <>
+                  <option value="Compra ágil">Compra ágil</option>
+                  <option value="Compra directa">Compra directa</option>
+                  <option value="Licitación 0 a 8 meses">Licitación 0 a 8 meses</option>
+                  <option value="Licitación 9 a 24 meses">Licitación 9 a 24 meses</option>
+                  {/* Si aún no eligen tipo de cliente, mostrar todas las opciones. */}
+                  {!tipoCliente && <option value="Cliente particular">Cliente particular</option>}
+                </>
+              )}
             </select>
             <p className="text-[11px] text-gray-500 mt-1">
               Cliente particular usa Lista 1, Licitación 9 a 24 meses usa Lista 3 (Lista 2 × 1.08); el resto usa Lista 2.
@@ -1820,12 +1936,26 @@ export default function CrearLicitacion() {
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              Departamento *
+              Giro
+            </label>
+            <input
+              className="w-full rounded-md border border-gray-300 px-3 py-2"
+              value={giro}
+              onChange={(e) => setGiro(e.target.value)}
+              placeholder="Ej: Servicios dentales"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Departamento{tipoCompra !== "Cliente particular" ? " *" : ""}
             </label>
             <input
               className="w-full rounded-md border border-gray-300 px-3 py-2"
               value={departamento}
               onChange={(e) => setDepartamento(e.target.value)}
+              disabled={tipoCompra === "Cliente particular"}
+              placeholder={tipoCompra === "Cliente particular" ? "No aplica para cliente particular" : ""}
             />
           </div>
 

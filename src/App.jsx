@@ -37,6 +37,7 @@ import Metas from "./pages/Metas";
 import MetasPorCanal from "./pages/MetasPorCanal";
 import Trazabilidad from "./pages/Trazabilidad";
 import SeguimientoPagos from "./pages/SeguimientoPagos";
+import BitacoraCotizaciones from "./pages/BitacoraCotizaciones";
 
 // SORTEO
 import SorteoRegistro from "./pages/SorteoRegistro";
@@ -132,6 +133,9 @@ export default function App() {
               </RequireRole>
             }
           />
+
+          {/* BITÁCORA — todos los roles logueados */}
+          <Route path="bitacora-cotizaciones" element={<BitacoraCotizaciones />} />
         </Route>
 
         {/* FALLBACK */}

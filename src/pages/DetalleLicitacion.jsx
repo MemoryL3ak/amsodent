@@ -247,6 +247,7 @@ const estadoStyles = {
   Perdida: "bg-red-50 text-red-800 border-red-300",
   Desierta: "bg-gray-100 text-gray-700 border-gray-300",
   Descartada: "bg-purple-50 text-purple-800 border-purple-300",
+  Cancelada: "bg-slate-100 text-slate-700 border-slate-300",
   "Pendiente Aprobación": "bg-orange-50 text-orange-800 border-orange-300",
 };
 
@@ -833,7 +834,15 @@ export default function EditarLicitacion() {
   ================================ */
   const [rutEntidad, setRutEntidad] = useState("");
   const [nombreEntidad, setNombreEntidad] = useState("");
+  const [giro, setGiro] = useState("");
+  const [tipoCliente, setTipoCliente] = useState("");
   const [departamento, setDepartamento] = useState("");
+  const [motivoPerdida, setMotivoPerdida] = useState("");
+  const [motivoPerdidaOtro, setMotivoPerdidaOtro] = useState("");
+  const [modalMotivoPerdidaOpen, setModalMotivoPerdidaOpen] = useState(false);
+  // Estado "candidato": al cambiar el select a Perdida, retenemos el cambio hasta que el modal
+  // confirme. Si el usuario cancela el modal, restauramos el estado anterior.
+  const estadoPrevioRef = useRef("En espera");
   const [municipalidad, setMunicipalidad] = useState("");
   const [region, setRegion] = useState("");
   const [comuna, setComuna] = useState("");
@@ -952,6 +961,8 @@ export default function EditarLicitacion() {
       setEmail(data.email || "");
       setTelefono(data.telefono || "");
       setCondVenta(data.condiciones_venta || "");
+      const tc = (data.tipo_cliente || "").toString().trim();
+      if (tc) setTipoCliente(tc);
     } catch (e) {
       // Client not found or error - ignore
     }
@@ -1404,6 +1415,8 @@ export default function EditarLicitacion() {
 
       setRutEntidad(data.rutEntidad || "");
       setNombreEntidad(data.nombreEntidad || "");
+      setGiro(data.giro || "");
+      setTipoCliente(data.tipoCliente || "");
       setDepartamento(data.departamento || "");
       setMunicipalidad(data.municipalidad || "");
       setRegion(data.region || "");
@@ -1416,6 +1429,8 @@ export default function EditarLicitacion() {
 
       setFleteEstimado(data.fleteEstimado || 0);
       setObservaciones(data.observaciones || "");
+      setMotivoPerdida(data.motivoPerdida || "");
+      setMotivoPerdidaOtro(data.motivoPerdidaOtro || "");
 
       setVendedorNombre(data.vendedorNombre || "");
       setVendedorCelular(data.vendedorCelular || "");
@@ -1658,6 +1673,7 @@ export default function EditarLicitacion() {
 
     setRutEntidad(lic.rut_entidad || "");
     setNombreEntidad(lic.nombre_entidad || "");
+    setGiro(lic.giro || "");
     setDepartamento(lic.departamento || "");
     setMunicipalidad(lic.municipalidad || "");
     setRegion(lic.region || "");
@@ -1670,6 +1686,8 @@ export default function EditarLicitacion() {
     setFleteEstimado(lic.flete_estimado || 0);
 
     setObservaciones(lic.observaciones || "");
+    setMotivoPerdida(lic.motivo_perdida || "");
+    setMotivoPerdidaOtro(lic.motivo_perdida_otro || "");
 
     setVendedorNombre(lic.vendedor_nombre || "");
     setVendedorCelular(lic.vendedor_celular || "");
@@ -1755,7 +1773,9 @@ export default function EditarLicitacion() {
     async function cargarProductos() {
       try {
         const data = await api.get("/productos");
-        setProductos(data || []);
+        // Punto 38: ocultar productos Inactivos del selector de la cotización.
+        const visibles = (data || []).filter((p) => (p?.estado || "") !== "Inactivo");
+        setProductos(visibles);
       } catch (e) {
         console.error("Error cargando productos:", e);
         setProductos([]);
@@ -1837,6 +1857,7 @@ export default function EditarLicitacion() {
 
       setRutEntidad(lic.rut_entidad || "");
       setNombreEntidad(lic.nombre_entidad || "");
+      setGiro(lic.giro || "");
       setDepartamento(lic.departamento || "");
       setMunicipalidad(lic.municipalidad || "");
       setRegion(lic.region || "");
@@ -1849,6 +1870,8 @@ export default function EditarLicitacion() {
       setFleteEstimado(lic.flete_estimado || 0);
 
       setObservaciones(lic.observaciones || "");
+      setMotivoPerdida(lic.motivo_perdida || "");
+      setMotivoPerdidaOtro(lic.motivo_perdida_otro || "");
 
       setVendedorNombre(lic.vendedor_nombre || "");
       setVendedorCelular(lic.vendedor_celular || "");
@@ -2359,6 +2382,7 @@ export default function EditarLicitacion() {
 
           rut_entidad: rutEntidad,
           nombre_entidad: nombreEntidad,
+          giro: giro || null,
           departamento,
           municipalidad,
           direccion,
@@ -2380,6 +2404,14 @@ export default function EditarLicitacion() {
           total_iva: totalIVA,
 
           observaciones: observaciones || null,
+
+          // Punto 35: motivo de pérdida (solo persistir si estado es Perdida; si cambia a otro
+          // estado limpiamos para no dejar datos colgando).
+          motivo_perdida: estadoFinal === "Perdida" ? motivoPerdida || null : null,
+          motivo_perdida_otro:
+            estadoFinal === "Perdida" && motivoPerdida === "Otro"
+              ? motivoPerdidaOtro || null
+              : null,
         });
       } catch (errUpdate) {
         console.error(errUpdate);
@@ -2592,6 +2624,32 @@ export default function EditarLicitacion() {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
+              Tipo de Cliente
+            </label>
+            <select
+              className={inputClass}
+              value={tipoCliente}
+              onChange={(e) => {
+                const nuevo = e.target.value;
+                setTipoCliente(nuevo);
+                if (nuevo.toLowerCase() === "cliente particular") {
+                  setTipoCompra("Cliente particular");
+                  setListado("1");
+                } else if (nuevo.toLowerCase() === "entidad pública" && tipoCompra === "Cliente particular") {
+                  setTipoCompra("Compra ágil");
+                  setListado("2");
+                }
+              }}
+              disabled={!esEditable}
+            >
+              <option value="">(Seleccionar)</option>
+              <option value="Entidad Pública">Entidad Pública</option>
+              <option value="Cliente Particular">Cliente Particular</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
               ID Cotización *
             </label>
             <input
@@ -2601,7 +2659,7 @@ export default function EditarLicitacion() {
                 setIdLicitacionInput(e.target.value);
                 setIsDirty(true);
               }}
-              disabled={!esEditable}
+              disabled={!esEditable || tipoCliente.toLowerCase() === "cliente particular"}
             />
           </div>
 
@@ -2660,11 +2718,17 @@ export default function EditarLicitacion() {
               }}
               disabled={!esEditable}
             >
-              <option value="Compra ágil">Compra ágil</option>
-              <option value="Compra directa">Compra directa</option>
-              <option value="Licitación 0 a 8 meses">Licitación 0 a 8 meses</option>
-              <option value="Licitación 9 a 24 meses">Licitación 9 a 24 meses</option>
-              <option value="Cliente particular">Cliente particular</option>
+              {tipoCliente.toLowerCase() === "cliente particular" ? (
+                <option value="Cliente particular">Cliente particular</option>
+              ) : (
+                <>
+                  <option value="Compra ágil">Compra ágil</option>
+                  <option value="Compra directa">Compra directa</option>
+                  <option value="Licitación 0 a 8 meses">Licitación 0 a 8 meses</option>
+                  <option value="Licitación 9 a 24 meses">Licitación 9 a 24 meses</option>
+                  {!tipoCliente && <option value="Cliente particular">Cliente particular</option>}
+                </>
+              )}
             </select>
             <p className="text-[11px] text-gray-500 mt-1">
               Cliente particular usa Lista 1, Licitación 9 a 24 meses usa Lista 3 (Lista 2 × 1.08); el resto usa Lista 2.
@@ -2682,7 +2746,22 @@ export default function EditarLicitacion() {
                 estadoStyles[estado] || ""
               } disabled:opacity-70 disabled:cursor-not-allowed`}
               value={estado}
-              onChange={(e) => setEstado(e.target.value)}
+              onChange={(e) => {
+                const next = e.target.value;
+                // Punto 35: al pasar a Perdida, exigimos seleccionar el motivo vía modal antes de
+                // efectuar el cambio. Si el usuario cancela el modal, no aplicamos el cambio.
+                if (next === "Perdida" && estado !== "Perdida") {
+                  estadoPrevioRef.current = estado;
+                  setModalMotivoPerdidaOpen(true);
+                  return;
+                }
+                // Si saliendo de Perdida, limpiamos motivo para no persistir datos colgando.
+                if (estado === "Perdida" && next !== "Perdida") {
+                  setMotivoPerdida("");
+                  setMotivoPerdidaOtro("");
+                }
+                setEstado(next);
+              }}
               disabled={!puedeEditarEstado}
             >
               <option value="En espera">En espera</option>
@@ -2691,7 +2770,61 @@ export default function EditarLicitacion() {
               <option value="Perdida">Perdida</option>
               <option value="Desierta">Desierta</option>
               <option value="Descartada">Descartada</option>
+              <option value="Cancelada">Cancelada</option>
             </select>
+            {estado === "Perdida" && motivoPerdida && (
+              <div
+                style={{
+                  marginTop: 8,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 8,
+                  padding: "8px 10px",
+                  background: "#fef2f2",
+                  border: "1px solid #fecaca",
+                  borderRadius: 8,
+                }}
+              >
+                <div style={{ display: "flex", flexDirection: "column", lineHeight: 1.25, minWidth: 0 }}>
+                  <span style={{ fontSize: 10, fontWeight: 600, color: "#b91c1c", textTransform: "uppercase", letterSpacing: 0.4 }}>
+                    Motivo de pérdida
+                  </span>
+                  <span
+                    title={motivoPerdida === "Otro" ? motivoPerdidaOtro : motivoPerdida}
+                    style={{
+                      fontSize: 13,
+                      fontWeight: 600,
+                      color: "#7f1d1d",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {motivoPerdida === "Otro" ? (motivoPerdidaOtro || "Otro") : motivoPerdida}
+                  </span>
+                </div>
+                {puedeEditarEstado && (
+                  <button
+                    type="button"
+                    onClick={() => setModalMotivoPerdidaOpen(true)}
+                    style={{
+                      flexShrink: 0,
+                      background: "transparent",
+                      border: "1px solid #fca5a5",
+                      borderRadius: 6,
+                      color: "#b91c1c",
+                      cursor: "pointer",
+                      fontSize: 11,
+                      fontWeight: 600,
+                      padding: "4px 10px",
+                    }}
+                  >
+                    Editar
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         </div>
         </div>
@@ -2740,13 +2873,27 @@ export default function EditarLicitacion() {
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              Departamento *
+              Giro
+            </label>
+            <input
+              className={inputClass}
+              value={giro}
+              onChange={(e) => setGiro(e.target.value)}
+              disabled={!esEditable}
+              placeholder="Ej: Servicios dentales"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Departamento{tipoCompra !== "Cliente particular" ? " *" : ""}
             </label>
             <input
               className={inputClass}
               value={departamento}
               onChange={(e) => setDepartamento(e.target.value)}
-              disabled={!esEditable}
+              disabled={!esEditable || tipoCompra === "Cliente particular"}
+              placeholder={tipoCompra === "Cliente particular" ? "No aplica para cliente particular" : ""}
             />
           </div>
 
@@ -3792,6 +3939,136 @@ export default function EditarLicitacion() {
           onToast={setToast}
         />
       )}
+
+      {modalMotivoPerdidaOpen && (
+        <ModalMotivoPerdida
+          motivoActual={motivoPerdida}
+          otroActual={motivoPerdidaOtro}
+          onCancel={() => setModalMotivoPerdidaOpen(false)}
+          onConfirm={(nuevoMotivo, nuevoOtro) => {
+            setMotivoPerdida(nuevoMotivo);
+            setMotivoPerdidaOtro(nuevoMotivo === "Otro" ? nuevoOtro : "");
+            // Si veníamos del select (estado !== "Perdida"), aplicamos el cambio ahora.
+            if (estado !== "Perdida") setEstado("Perdida");
+            setModalMotivoPerdidaOpen(false);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+/* ============================================================
+   Modal: motivo de pérdida (selección única + texto si "Otro")
+============================================================ */
+function ModalMotivoPerdida({ motivoActual, otroActual, onCancel, onConfirm }) {
+  const [seleccion, setSeleccion] = useState(motivoActual || "");
+  const [otro, setOtro] = useState(otroActual || "");
+
+  const opciones = [
+    "Precio",
+    "Especificación técnica",
+    "Documentación",
+    "Plazo de entrega",
+    "Otro",
+  ];
+
+  function confirmar() {
+    if (!seleccion) return;
+    if (seleccion === "Otro" && !otro.trim()) return;
+    onConfirm(seleccion, otro.trim());
+  }
+
+  return (
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(15,23,42,0.45)",
+        zIndex: 9999,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 16,
+      }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onCancel();
+      }}
+    >
+      <div
+        style={{
+          background: "var(--surface, #fff)",
+          borderRadius: 10,
+          padding: "20px 22px",
+          width: "min(420px, 100%)",
+          boxShadow: "0 20px 50px rgba(0,0,0,0.25)",
+        }}
+      >
+        <h3 style={{ margin: 0, fontSize: 16, fontWeight: 600 }}>Motivo de pérdida</h3>
+        <p style={{ fontSize: 12, color: "var(--text-muted, #64748b)", margin: "6px 0 14px" }}>
+          Selecciona la razón por la que la cotización se perdió.
+        </p>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {opciones.map((op) => (
+            <label
+              key={op}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                fontSize: 14,
+                cursor: "pointer",
+              }}
+            >
+              <input
+                type="radio"
+                name="motivo_perdida"
+                value={op}
+                checked={seleccion === op}
+                onChange={() => setSeleccion(op)}
+              />
+              {op}
+            </label>
+          ))}
+        </div>
+
+        {seleccion === "Otro" && (
+          <div style={{ marginTop: 12 }}>
+            <label style={{ fontSize: 12, color: "var(--text-muted, #64748b)" }}>
+              Especificar
+            </label>
+            <input
+              type="text"
+              value={otro}
+              onChange={(e) => setOtro(e.target.value)}
+              style={{
+                width: "100%",
+                padding: "8px 10px",
+                borderRadius: 6,
+                border: "1px solid var(--border, #e2e8f0)",
+                marginTop: 4,
+                fontSize: 14,
+              }}
+              autoFocus
+            />
+          </div>
+        )}
+
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 18 }}>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={onCancel}>
+            Cancelar
+          </button>
+          <button
+            type="button"
+            className="btn btn-primary btn-sm"
+            disabled={!seleccion || (seleccion === "Otro" && !otro.trim())}
+            onClick={confirmar}
+          >
+            Confirmar
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

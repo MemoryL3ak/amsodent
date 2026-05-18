@@ -828,7 +828,7 @@ export default function CrearProducto() {
               Lista de Precios
             </h3>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className={`grid grid-cols-1 ${mostrarMargen ? "md:grid-cols-3" : "md:grid-cols-2"} gap-4`}>
               {puedeVerCosto && (
                 <>
                   <div>
@@ -841,6 +841,7 @@ export default function CrearProducto() {
                     />
                   </div>
                   <div />
+                  {mostrarMargen && <div />}
                 </>
               )}
 
@@ -851,6 +852,14 @@ export default function CrearProducto() {
                 <MoneyInput
                   value={precios.lista1}
                   onChange={(v) => actualizarPrecio("lista1", v)}
+                />
+              </div>
+              <div>
+                <label className="block text-sm text-gray-600 mb-1">Precio Bruto 1</label>
+                <input
+                  readOnly
+                  className="w-full rounded-md border border-gray-300 bg-gray-100 px-3 py-2"
+                  value={`$${Math.round((numFromCL(precios.lista1) || 0) * 1.19).toLocaleString("es-CL")}`}
                 />
               </div>
               {mostrarMargen && (
@@ -875,6 +884,14 @@ export default function CrearProducto() {
                   onChange={(v) => actualizarPrecio("lista2", v)}
                 />
               </div>
+              <div>
+                <label className="block text-sm text-gray-600 mb-1">Precio Bruto 2</label>
+                <input
+                  readOnly
+                  className="w-full rounded-md border border-gray-300 bg-gray-100 px-3 py-2"
+                  value={`$${Math.round((numFromCL(precios.lista2) || 0) * 1.19).toLocaleString("es-CL")}`}
+                />
+              </div>
               {mostrarMargen && (
                 <div>
                   <label className="block text-sm text-gray-600 mb-1">
@@ -896,6 +913,14 @@ export default function CrearProducto() {
                 <p className="text-[11px] text-gray-500 mt-1">
                   Calculado automáticamente (Lista 2 × {FACTOR_LISTA_3}). Usado en Licitación 9 a 24 meses.
                 </p>
+              </div>
+              <div>
+                <label className="block text-sm text-gray-600 mb-1">Precio Bruto 3</label>
+                <input
+                  readOnly
+                  className="w-full rounded-md border border-gray-300 bg-gray-100 px-3 py-2"
+                  value={`$${Math.round((lista3Calculada || 0) * 1.19).toLocaleString("es-CL")}`}
+                />
               </div>
               {mostrarMargen && (
                 <div>
