@@ -807,22 +807,6 @@ export default function EditarLicitacion() {
   const [docFile, setDocFile] = useState(null);
   const [subiendoDoc, setSubiendoDoc] = useState(false);
 
-  // Sincroniza el tipo de documento default con el tipo de compra: si la cotización
-  // es Cliente Particular, los tipos son factura_boleta / comprobante_pago.
-  // Si el usuario tenía un tipo no aplicable (ej. orden_compra) lo reajustamos.
-  useEffect(() => {
-    if (tipoCompra === "Cliente particular") {
-      if (docTipo !== "factura_boleta" && docTipo !== "comprobante_pago") {
-        setDocTipo("factura_boleta");
-      }
-    } else {
-      if (docTipo !== "orden_compra" && docTipo !== "guia_despacho") {
-        setDocTipo("orden_compra");
-      }
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tipoCompra]);
-
   const STORAGE_KEY = `${STORAGE_KEY_PREFIX}${id}`;
 
   /* ===============================
@@ -866,6 +850,24 @@ export default function EditarLicitacion() {
   // Estado "candidato": al cambiar el select a Perdida, retenemos el cambio hasta que el modal
   // confirme. Si el usuario cancela el modal, restauramos el estado anterior.
   const estadoPrevioRef = useRef("En espera");
+
+  // Sincroniza el tipo de documento default con el tipo de compra: si la cotización
+  // es Cliente Particular, los tipos son factura_boleta / comprobante_pago.
+  // Si el usuario tenía un tipo no aplicable (ej. orden_compra) lo reajustamos.
+  // IMPORTANTE: este efecto debe declararse DESPUÉS de useState(tipoCompra) para
+  // evitar "Cannot access 'tipoCompra' before initialization" en producción.
+  useEffect(() => {
+    if (tipoCompra === "Cliente particular") {
+      if (docTipo !== "factura_boleta" && docTipo !== "comprobante_pago") {
+        setDocTipo("factura_boleta");
+      }
+    } else {
+      if (docTipo !== "orden_compra" && docTipo !== "guia_despacho") {
+        setDocTipo("orden_compra");
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tipoCompra]);
   const [municipalidad, setMunicipalidad] = useState("");
   const [region, setRegion] = useState("");
   const [comuna, setComuna] = useState("");
