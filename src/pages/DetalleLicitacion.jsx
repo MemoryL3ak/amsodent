@@ -996,11 +996,25 @@ export default function EditarLicitacion() {
   async function crearClienteSiNoExiste() {
     if (!rutEntidad) return;
 
+    let existe = null;
     try {
-      const existe = await api.get(`/clientes?rut=${encodeURIComponent(rutEntidad)}`);
-      if (existe) return;
+      existe = await api.get(`/clientes?rut=${encodeURIComponent(rutEntidad)}`);
     } catch (e) {
       // Client not found - proceed to create
+    }
+
+    if (existe) {
+      // Sincronizar tipo_cliente en la ficha del cliente si cambió en la cotización.
+      const tcActual = (existe.tipo_cliente || "").toString().trim();
+      const tcNuevo = (tipoCliente || "").toString().trim();
+      if (tcNuevo && tcNuevo !== tcActual && existe.id) {
+        try {
+          await api.put(`/clientes/${existe.id}`, { tipo_cliente: tcNuevo });
+        } catch (errUpd) {
+          console.warn("No se pudo actualizar tipo_cliente del cliente:", errUpd);
+        }
+      }
+      return;
     }
 
     try {
@@ -1016,6 +1030,7 @@ export default function EditarLicitacion() {
         email,
         telefono,
         condiciones_venta: condVenta,
+        tipo_cliente: tipoCliente || null,
       });
     } catch (error) {
       console.error("Error creando cliente:", error);
