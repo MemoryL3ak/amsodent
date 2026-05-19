@@ -1262,7 +1262,7 @@ export default function CrearLicitacion() {
 
     const { data: existe, error: errExiste } = await supabase
       .from("clientes")
-      .select("id")
+      .select("id, tipo_cliente")
       .eq("rut", rutEntidad)
       .maybeSingle();
 
@@ -1271,7 +1271,22 @@ export default function CrearLicitacion() {
       throw new Error("No se pudo verificar el cliente");
     }
 
-    if (existe) return;
+    if (existe) {
+      // Cliente existente: si el tipo_cliente cambió en la cotización lo
+      // sincronizamos en la ficha del cliente (antes se ignoraba y por eso
+      // nunca se persistía).
+      const tcActual = (existe.tipo_cliente || "").toString().trim();
+      const tcNuevo = (tipoCliente || "").toString().trim();
+      if (tcNuevo && tcNuevo !== tcActual) {
+        try {
+          await api.put(`/clientes/${existe.id}`, { tipo_cliente: tcNuevo });
+        } catch (errUpd) {
+          console.warn("No se pudo actualizar tipo_cliente del cliente existente:", errUpd);
+          // No bloqueamos la creación de la cotización por esto.
+        }
+      }
+      return;
+    }
 
     try {
       await api.post("/clientes", {
