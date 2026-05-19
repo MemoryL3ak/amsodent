@@ -1244,11 +1244,15 @@ export default function EditarLicitacion() {
     if (!docEditando?.id) return;
     setGuardandoDocEdit(true);
     try {
+      // Tipos cuya fecha se persiste en fecha_oc (no en fecha_factura):
+      // OC, Factura/Boleta y Comprobante de Transferencia. La Guía también
+      // usa fecha_oc pero su edición está restringida más arriba en el flujo.
+      const tiposConFechaOc = ["orden_compra", "factura_boleta", "comprobante_pago"];
       const payload = {
         numero: docEditNumero.trim() || null,
         monto: docEditMonto ? Number(docEditMonto) : null,
       };
-      if (docEditando.tipo === "orden_compra" && docEditFechaOC) {
+      if (tiposConFechaOc.includes(docEditando.tipo) && docEditFechaOC) {
         payload.fecha_oc = docEditFechaOC;
       }
       await api.put(`/licitaciones/documentos/${docEditando.id}`, payload);
@@ -3799,7 +3803,7 @@ export default function EditarLicitacion() {
                       ) : (doc.numero || "-")}
                     </td>
                     <td className="px-3 py-2 text-sm">
-                      {editando && doc.tipo === "orden_compra" ? (
+                      {editando && (doc.tipo === "orden_compra" || doc.tipo === "factura_boleta") ? (
                         <input
                           type="number"
                           className="input text-sm"
@@ -3813,7 +3817,7 @@ export default function EditarLicitacion() {
                     </td>
                     <td className="px-3 py-2 text-sm">
                       {doc.monto !== null && doc.monto !== undefined
-                        ? `$${calcularBrutoDesdeNeto(editando && doc.tipo === "orden_compra" ? Number(docEditMonto || 0) : doc.monto).toLocaleString("es-CL")}`
+                        ? `$${calcularBrutoDesdeNeto(editando && (doc.tipo === "orden_compra" || doc.tipo === "factura_boleta") ? Number(docEditMonto || 0) : doc.monto).toLocaleString("es-CL")}`
                         : "-"}
                     </td>
                     <td className="px-3 py-2 text-sm">
@@ -3832,7 +3836,7 @@ export default function EditarLicitacion() {
                       )}
                     </td>
                     <td className="px-3 py-2 text-sm">
-                      {editando && doc.tipo === "orden_compra" ? (
+                      {editando && ["orden_compra", "factura_boleta", "comprobante_pago"].includes(doc.tipo) ? (
                         <input
                           type="date"
                           className="input text-sm"
@@ -3840,7 +3844,7 @@ export default function EditarLicitacion() {
                           value={docEditFechaOC}
                           onChange={(e) => setDocEditFechaOC(e.target.value)}
                         />
-                      ) : (doc.tipo === "orden_compra" || doc.tipo === "guia_despacho") && doc.fecha_oc
+                      ) : ["orden_compra", "guia_despacho", "factura_boleta", "comprobante_pago"].includes(doc.tipo) && doc.fecha_oc
                         ? new Date(`${doc.fecha_oc}T00:00:00`).toLocaleDateString("es-CL")
                         : doc.created_at
                         ? new Date(doc.created_at).toLocaleString("es-CL")
