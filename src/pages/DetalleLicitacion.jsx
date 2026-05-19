@@ -1736,6 +1736,7 @@ export default function EditarLicitacion() {
     setRutEntidad(lic.rut_entidad || "");
     setNombreEntidad(lic.nombre_entidad || "");
     setGiro(lic.giro || "");
+    if (lic.tipo_cliente) setTipoCliente(lic.tipo_cliente);
     setDepartamento(lic.departamento || "");
     setMunicipalidad(lic.municipalidad || "");
     setRegion(lic.region || "");
@@ -1920,6 +1921,7 @@ export default function EditarLicitacion() {
       setRutEntidad(lic.rut_entidad || "");
       setNombreEntidad(lic.nombre_entidad || "");
       setGiro(lic.giro || "");
+      if (lic.tipo_cliente) setTipoCliente(lic.tipo_cliente);
       setDepartamento(lic.departamento || "");
       setMunicipalidad(lic.municipalidad || "");
       setRegion(lic.region || "");
@@ -2446,6 +2448,7 @@ export default function EditarLicitacion() {
           rut_entidad: rutEntidad,
           nombre_entidad: nombreEntidad,
           giro: giro || null,
+          tipo_cliente: tipoCliente || null,
           departamento,
           municipalidad,
           direccion,

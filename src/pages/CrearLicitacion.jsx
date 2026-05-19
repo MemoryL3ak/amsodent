@@ -1514,6 +1514,7 @@ export default function CrearLicitacion() {
             rut_entidad: rutEntidad,
             nombre_entidad: nombreEntidad,
             giro: giro || null,
+            tipo_cliente: tipoCliente || null,
             departamento,
             municipalidad,
             direccion,
