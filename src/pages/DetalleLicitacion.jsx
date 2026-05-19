@@ -645,6 +645,7 @@ const DOC_TIPOS = {
   factura: "Factura",
   factura_boleta: "Factura o Boleta",
   comprobante_pago: "Comprobante de Transferencia",
+  efectivo: "Efectivo",
 };
 const DOC_BUCKET_BY_TIPO = {
   orden_compra: "orden-compra",
@@ -652,6 +653,7 @@ const DOC_BUCKET_BY_TIPO = {
   factura: "factura",
   factura_boleta: "factura",
   comprobante_pago: "factura",
+  efectivo: "factura",
 };
 
 /* ============================================================
@@ -1262,7 +1264,7 @@ export default function EditarLicitacion() {
       // Tipos cuya fecha se persiste en fecha_oc (no en fecha_factura):
       // OC, Factura/Boleta y Comprobante de Transferencia. La Guía también
       // usa fecha_oc pero su edición está restringida más arriba en el flujo.
-      const tiposConFechaOc = ["orden_compra", "factura_boleta", "comprobante_pago"];
+      const tiposConFechaOc = ["orden_compra", "factura_boleta", "comprobante_pago", "efectivo"];
       const payload = {
         numero: docEditNumero.trim() || null,
         monto: docEditMonto ? Number(docEditMonto) : null,
@@ -1318,6 +1320,10 @@ export default function EditarLicitacion() {
       setToast({ type: "error", message: "Debes ingresar el monto neto de la factura o boleta." });
       return;
     }
+    if (tipo === "efectivo" && montoNetoOrdenCompra <= 0) {
+      setToast({ type: "error", message: "Debes ingresar el monto neto del pago en efectivo." });
+      return;
+    }
     const fechaOc = (docFechaOC || "").toString().trim();
     if (tipo === "orden_compra" && !fechaOc) {
       setToast({
@@ -1332,6 +1338,10 @@ export default function EditarLicitacion() {
     }
     if (tipo === "comprobante_pago" && !fechaOc) {
       setToast({ type: "error", message: "Debes ingresar la fecha del comprobante." });
+      return;
+    }
+    if (tipo === "efectivo" && !fechaOc) {
+      setToast({ type: "error", message: "Debes ingresar la fecha del pago en efectivo." });
       return;
     }
 
@@ -1393,8 +1403,9 @@ export default function EditarLicitacion() {
       const esDespachoInterno = empresaGuia === "Despacho interno";
       const esFacturaBoleta = tipo === "factura_boleta";
       const esComprobantePago = tipo === "comprobante_pago";
-      const tieneMonto = tipo === "orden_compra" || esFacturaBoleta;
-      const tieneFecha = tipo === "orden_compra" || esGuia || esFacturaBoleta || esComprobantePago;
+      const esEfectivo = tipo === "efectivo";
+      const tieneMonto = tipo === "orden_compra" || esFacturaBoleta || esEfectivo;
+      const tieneFecha = tipo === "orden_compra" || esGuia || esFacturaBoleta || esComprobantePago || esEfectivo;
 
       const payload = {
         licitacion_id: Number(id),
@@ -3535,6 +3546,7 @@ export default function EditarLicitacion() {
                 <>
                   <option value="factura_boleta">Factura o Boleta</option>
                   <option value="comprobante_pago">Comprobante de Transferencia</option>
+                  <option value="efectivo">Efectivo</option>
                 </>
               ) : (
                 <>
@@ -3555,14 +3567,15 @@ export default function EditarLicitacion() {
                 docTipo === "orden_compra" ? "Ej: OC-2026-001" :
                 docTipo === "factura_boleta" ? "Ej: FB-2026-001" :
                 docTipo === "comprobante_pago" ? "Ej: TRX-2026-001" :
+                docTipo === "efectivo" ? "Ej: EFE-2026-001" :
                 "Ej: GD-2026-001"
               }
               disabled={subiendoDoc}
             />
           </div>
 
-          {/* Cliente particular — Factura o Boleta: mismos campos que OC (monto + fecha) */}
-          {docTipo === "factura_boleta" && (
+          {/* Cliente particular — Factura/Boleta y Efectivo: mismos campos (monto + fecha) */}
+          {(docTipo === "factura_boleta" || docTipo === "efectivo") && (
             <>
               <div className="md:col-span-2">
                 <label className="block text-sm font-medium text-gray-700 mb-1">Monto Neto *</label>
@@ -3821,7 +3834,7 @@ export default function EditarLicitacion() {
                       ) : (doc.numero || "-")}
                     </td>
                     <td className="px-3 py-2 text-sm">
-                      {editando && (doc.tipo === "orden_compra" || doc.tipo === "factura_boleta") ? (
+                      {editando && (doc.tipo === "orden_compra" || doc.tipo === "factura_boleta" || doc.tipo === "efectivo") ? (
                         <input
                           type="number"
                           className="input text-sm"
@@ -3835,7 +3848,7 @@ export default function EditarLicitacion() {
                     </td>
                     <td className="px-3 py-2 text-sm">
                       {doc.monto !== null && doc.monto !== undefined
-                        ? `$${calcularBrutoDesdeNeto(editando && (doc.tipo === "orden_compra" || doc.tipo === "factura_boleta") ? Number(docEditMonto || 0) : doc.monto).toLocaleString("es-CL")}`
+                        ? `$${calcularBrutoDesdeNeto(editando && (doc.tipo === "orden_compra" || doc.tipo === "factura_boleta" || doc.tipo === "efectivo") ? Number(docEditMonto || 0) : doc.monto).toLocaleString("es-CL")}`
                         : "-"}
                     </td>
                     <td className="px-3 py-2 text-sm">
@@ -3854,7 +3867,7 @@ export default function EditarLicitacion() {
                       )}
                     </td>
                     <td className="px-3 py-2 text-sm">
-                      {editando && ["orden_compra", "factura_boleta", "comprobante_pago"].includes(doc.tipo) ? (
+                      {editando && ["orden_compra", "factura_boleta", "comprobante_pago", "efectivo"].includes(doc.tipo) ? (
                         <input
                           type="date"
                           className="input text-sm"
@@ -3862,7 +3875,7 @@ export default function EditarLicitacion() {
                           value={docEditFechaOC}
                           onChange={(e) => setDocEditFechaOC(e.target.value)}
                         />
-                      ) : ["orden_compra", "guia_despacho", "factura_boleta", "comprobante_pago"].includes(doc.tipo) && doc.fecha_oc
+                      ) : ["orden_compra", "guia_despacho", "factura_boleta", "comprobante_pago", "efectivo"].includes(doc.tipo) && doc.fecha_oc
                         ? new Date(`${doc.fecha_oc}T00:00:00`).toLocaleDateString("es-CL")
                         : doc.created_at
                         ? new Date(doc.created_at).toLocaleString("es-CL")

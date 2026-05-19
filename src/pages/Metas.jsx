@@ -246,14 +246,14 @@ export default function Metas() {
         if (ids.length > 0) {
           try {
             docsOcRows = await api.post("/licitaciones/documentos/filter", {
-              filter: { licitacion_ids: ids, tipo: ["orden_compra", "factura_boleta"] },
+              filter: { licitacion_ids: ids, tipo: ["orden_compra", "factura_boleta", "efectivo"] },
               fields: "licitacion_id,tipo,monto,fecha_oc,created_at",
             }) || [];
           } catch (errDocsOc) {
             if (isMissingFechaOcColumnError(errDocsOc)) {
               try {
                 const docsOcSinFecha = await api.post("/licitaciones/documentos/filter", {
-                  filter: { licitacion_ids: ids, tipo: ["orden_compra", "factura_boleta"] },
+                  filter: { licitacion_ids: ids, tipo: ["orden_compra", "factura_boleta", "efectivo"] },
                   fields: "licitacion_id,tipo,monto,created_at",
                 });
                 docsOcRows = (docsOcSinFecha || []).map((d) => ({ ...d, fecha_oc: null }));

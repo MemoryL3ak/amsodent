@@ -74,7 +74,7 @@ export default function ListarLicitaciones() {
       if (ids.length > 0) {
         try {
           const docsOc = await api.post("/licitaciones/documentos/filter", {
-            filter: { licitacion_ids: ids, tipo: ["orden_compra", "factura_boleta"] },
+            filter: { licitacion_ids: ids, tipo: ["orden_compra", "factura_boleta", "efectivo"] },
             fields: "licitacion_id,fecha_oc,created_at",
           });
           (docsOc || []).forEach((d) => {
