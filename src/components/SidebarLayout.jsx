@@ -105,7 +105,7 @@ export default function SidebarLayout() {
     { to: "/listar",            icon: ClipboardList, label: "Cotizaciones" },
     { to: "/crear",             icon: FilePlus,      label: "Nueva Cotización" },
     { to: "/bitacora-cotizaciones", icon: BookOpen,  label: "Bitácora" },
-    (esAdmin || esJefeVentasEspecial || esContabilidad) && { to: "/trazabilidad",      icon: FileText,   label: "Trazabilidad" },
+    (esAdmin || esJefatura || esContabilidad) && { to: "/trazabilidad",      icon: FileText,   label: "Trazabilidad" },
     (esAdmin || esJefeVentasEspecial || esContabilidad) && { to: "/seguimiento-pagos", icon: CreditCard, label: "Seguimiento de Pagos" },
     { to: "/productos",         icon: Package,       label: "Productos" },
     { to: "/clientes",          icon: Users,         label: "Clientes" },

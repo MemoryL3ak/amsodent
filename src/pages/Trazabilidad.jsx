@@ -224,7 +224,11 @@ export default function Trazabilidad() {
 
   const rolNorm = (rol ?? "").toString().trim().toLowerCase();
   const esAdmin = rolNorm === "admin";
-  const puedeVerTrazabilidad = esAdmin || rolNorm === "jefe_ventas_especial" || rolNorm === "contabilidad";
+  const puedeVerTrazabilidad =
+    esAdmin ||
+    rolNorm === "jefe_ventas" ||
+    rolNorm === "jefe_ventas_especial" ||
+    rolNorm === "contabilidad";
 
   // Reload counter para forzar recargas desde subir/eliminar factura
   // Refresca solo los documentos de una cotización (sin tocar loading global)
