@@ -224,7 +224,11 @@ export default function Trazabilidad() {
 
   const rolNorm = (rol ?? "").toString().trim().toLowerCase();
   const esAdmin = rolNorm === "admin";
-  const puedeVerTrazabilidad = esAdmin || rolNorm === "jefe_ventas_especial" || rolNorm === "contabilidad";
+  const puedeVerTrazabilidad =
+    esAdmin ||
+    rolNorm === "jefe_ventas" ||
+    rolNorm === "jefe_ventas_especial" ||
+    rolNorm === "contabilidad";
 
   // Reload counter para forzar recargas desde subir/eliminar factura
   // Refresca solo los documentos de una cotización (sin tocar loading global)
@@ -541,11 +545,12 @@ export default function Trazabilidad() {
     return getDocsForLic(licId).filter((d) => d.tipo === "guia_despacho");
   }
   function getFacturas(licId) {
-    // Cliente particular: una "factura/boleta" es el equivalente al ciclo OC en
-    // el flujo público, así que la incluimos como factura para que aparezca en
-    // la columna "Factura" cuando el filtro es solo Cliente Particular.
+    // Cliente particular: una "factura/boleta" y un pago en "efectivo" son
+    // equivalentes al ciclo OC en el flujo público, así que los incluimos como
+    // factura para que aparezcan en la columna "Factura/Boleta" cuando el
+    // filtro es solo Cliente Particular.
     return getDocsForLic(licId).filter(
-      (d) => d.tipo === "factura" || d.tipo === "factura_boleta",
+      (d) => d.tipo === "factura" || d.tipo === "factura_boleta" || d.tipo === "efectivo",
     );
   }
   function getComprobantes(licId) {
