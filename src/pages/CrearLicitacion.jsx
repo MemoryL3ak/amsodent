@@ -53,6 +53,40 @@ const ProductoSingleValue = (props) => {
 };
 
 /* ============================================================
+   MENULIST LIMITADA
+   react-select NO virtualiza: al abrir el menú renderiza TODAS las
+   opciones en el DOM. Con catálogos grandes (miles de productos) eso
+   agota la memoria del navegador (pantalla "Out of Memory"). Esta
+   MenuList renderiza solo las primeras N coincidencias; el resto se
+   alcanza escribiendo para filtrar.
+============================================================ */
+const CAP_OPCIONES_SELECT = 60;
+
+const MenuListLimitada = (props) => {
+  const { children } = props;
+  if (Array.isArray(children) && children.length > CAP_OPCIONES_SELECT) {
+    return (
+      <components.MenuList {...props}>
+        {children.slice(0, CAP_OPCIONES_SELECT)}
+        <div
+          style={{
+            padding: "8px 12px",
+            fontSize: 12,
+            color: "#64748b",
+            textAlign: "center",
+            borderTop: "1px solid #eef1f4",
+          }}
+        >
+          {children.length.toLocaleString("es-CL")} resultados — escribe para
+          refinar la búsqueda
+        </div>
+      </components.MenuList>
+    );
+  }
+  return <components.MenuList {...props}>{children}</components.MenuList>;
+};
+
+/* ============================================================
    FORMATEO DE VALORES
 ============================================================ */
 function redondear(valor) {
@@ -1659,17 +1693,25 @@ export default function CrearLicitacion() {
   /* ============================================================
      OPCIONES SELECT (SKU: solo productos con SKU)
   ============================================================ */
-  const opcionesSKU = productos
-    .filter((p) => String(p.sku || "").trim() !== "")
-    .map((p) => ({
-      value: String(p.sku).trim(),
-      label: String(p.sku).trim(),
-    }));
+  const opcionesSKU = useMemo(
+    () =>
+      productos
+        .filter((p) => String(p.sku || "").trim() !== "")
+        .map((p) => ({
+          value: String(p.sku).trim(),
+          label: String(p.sku).trim(),
+        })),
+    [productos]
+  );
 
-  const opcionesProducto = productos.map((p) => ({
-    value: p.nombre,
-    label: p.nombre,
-  }));
+  const opcionesProducto = useMemo(
+    () =>
+      productos.map((p) => ({
+        value: p.nombre,
+        label: p.nombre,
+      })),
+    [productos]
+  );
 
   /* DRAG & DROP */
   const sensors = useSensors(
@@ -2145,6 +2187,7 @@ export default function CrearLicitacion() {
                           menuPortalTarget={document.body}
                           isSearchable={true}
                           filterOption={filtrarPorTerminos}
+                          components={{ MenuList: MenuListLimitada }}
                           value={opcionesSKU.find((o) => o.value === it.sku) || null}
                           onChange={(op) =>
                             actualizarItem(index, "sku", op ? op.value : "")
@@ -2170,7 +2213,10 @@ export default function CrearLicitacion() {
                           onChange={(op) =>
                             actualizarItem(index, "producto", op ? op.value : "")
                           }
-                          components={{ SingleValue: ProductoSingleValue }}
+                          components={{
+                            SingleValue: ProductoSingleValue,
+                            MenuList: MenuListLimitada,
+                          }}
                           setTooltip={setTooltip}
                         />
                       </div>
