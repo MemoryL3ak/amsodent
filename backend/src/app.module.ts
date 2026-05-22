@@ -14,6 +14,7 @@ import { MailingsModule } from './mailings/mailings.module';
 import { PortalModule } from './portal/portal.module';
 import { NotificacionesModule } from './notificaciones/notificaciones.module';
 import { BitacoraModule } from './bitacora/bitacora.module';
+import { IaModule } from './ia/ia.module';
 
 @Module({
   imports: [
@@ -32,6 +33,7 @@ import { BitacoraModule } from './bitacora/bitacora.module';
     PortalModule,
     NotificacionesModule,
     BitacoraModule,
+    IaModule,
   ],
 })
 export class AppModule {}

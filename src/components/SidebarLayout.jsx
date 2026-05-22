@@ -23,6 +23,7 @@ import {
   BookOpen,
 } from "lucide-react";
 import NotificacionesMenu from "./NotificacionesMenu";
+import DamarIAWidget from "./DamarIAWidget";
 
 const ROLE_LABELS = {
   admin:                "Administrador",
@@ -148,6 +149,7 @@ export default function SidebarLayout() {
     <div className="app-shell">
       <SessionTracker />
       <PresenceTracker />
+      {esAdmin && <DamarIAWidget />}
 
       <aside className="sidebar">
         {/* Brand */}
