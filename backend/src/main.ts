@@ -1,3 +1,12 @@
+import * as path from 'path';
+import * as dotenv from 'dotenv';
+
+// Cargar el .env de /backend de forma explícita, antes de importar AppModule.
+// Defensivo: independiza la carga de credenciales (ANTHROPIC_API_KEY, etc.)
+// del cwd con el que se haya invocado el proceso, en lugar de depender de la
+// resolución implícita de ConfigModule.
+dotenv.config({ path: path.resolve(__dirname, '..', '.env') });
+
 import { NestFactory } from '@nestjs/core';
 import * as dns from 'dns';
 import { AppModule } from './app.module';
