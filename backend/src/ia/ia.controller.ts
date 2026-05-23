@@ -1,4 +1,13 @@
-import { Controller, Get, Post, Body, UseGuards, BadRequestException } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Res,
+  UseGuards,
+  BadRequestException,
+} from '@nestjs/common';
+import type { Response } from 'express';
 import { AdminGuard } from '../auth/admin.guard';
 import { IaService } from './ia.service';
 
@@ -12,9 +21,15 @@ export class IaController {
     return { configurada: this.ia.configurada() };
   }
 
+  // Endpoint SSE: emite eventos a medida que DamarIA piensa, consulta y
+  // redacta la respuesta. El frontend lee el stream para mostrar el resumen
+  // letra por letra y bajar la latencia percibida.
   @Post('consultar')
   @UseGuards(AdminGuard)
-  async consultar(@Body() body: { pregunta?: string }) {
+  async consultar(
+    @Body() body: { pregunta?: string },
+    @Res() res: Response,
+  ) {
     const pregunta = String(body?.pregunta || '').trim();
     if (!pregunta) {
       throw new BadRequestException('Falta la pregunta para DamarIA.');
@@ -22,6 +37,23 @@ export class IaController {
     if (pregunta.length > 1000) {
       throw new BadRequestException('La pregunta es demasiado larga.');
     }
-    return this.ia.consultar(pregunta);
+
+    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders?.();
+
+    const emit = (evento: any) => {
+      res.write(`data: ${JSON.stringify(evento)}\n\n`);
+    };
+
+    try {
+      await this.ia.consultarStream(pregunta, emit);
+    } catch (e: any) {
+      emit({ tipo: 'error', mensaje: e?.message || 'Error desconocido.' });
+    } finally {
+      res.end();
+    }
   }
 }
