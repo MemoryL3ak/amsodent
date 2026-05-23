@@ -845,6 +845,12 @@ export default function EditarLicitacion() {
   const [nombreEntidad, setNombreEntidad] = useState("");
   const [giro, setGiro] = useState("");
   const [tipoCliente, setTipoCliente] = useState("");
+  // Valor de tipo_cliente que ya está guardado en BD. Lo usamos para mostrar el
+  // botón "Guardar" inline cuando la licitación está bloqueada (Adjudicada,
+  // Perdida, Cancelada): el campo Tipo de Cliente sigue editable y persistible
+  // aunque el resto del formulario esté bloqueado.
+  const [tipoClienteGuardado, setTipoClienteGuardado] = useState("");
+  const [guardandoTipoCliente, setGuardandoTipoCliente] = useState(false);
   const [departamento, setDepartamento] = useState("");
   const [motivoPerdida, setMotivoPerdida] = useState("");
   const [motivoPerdidaOtro, setMotivoPerdidaOtro] = useState("");
@@ -1037,6 +1043,37 @@ export default function EditarLicitacion() {
     } catch (error) {
       console.error("Error creando cliente:", error);
       throw new Error("No se pudo crear el cliente");
+    }
+  }
+
+  // Guarda solo el Tipo de Cliente cuando la cotización está bloqueada por
+  // estado (Adjudicada, Perdida, Cancelada). Persiste el cambio en la
+  // cotización y, si existe, también lo sincroniza en la ficha del cliente.
+  async function guardarSoloTipoCliente() {
+    if (!tipoCliente || tipoCliente === tipoClienteGuardado) return;
+    setGuardandoTipoCliente(true);
+    try {
+      await api.put(`/licitaciones/${id}`, { tipo_cliente: tipoCliente });
+      if (rutEntidad) {
+        try {
+          const existe = await api.get(`/clientes?rut=${encodeURIComponent(rutEntidad)}`);
+          if (existe?.id) {
+            const tcActual = (existe.tipo_cliente || "").toString().trim();
+            if (tipoCliente !== tcActual) {
+              await api.put(`/clientes/${existe.id}`, { tipo_cliente: tipoCliente });
+            }
+          }
+        } catch (errCli) {
+          console.warn("No se pudo sincronizar tipo_cliente en la ficha del cliente:", errCli);
+        }
+      }
+      setTipoClienteGuardado(tipoCliente);
+      setToast({ type: "success", message: "Tipo de cliente actualizado." });
+    } catch (e) {
+      console.error("Error guardando tipo de cliente:", e);
+      setToast({ type: "error", message: "No se pudo guardar el tipo de cliente." });
+    } finally {
+      setGuardandoTipoCliente(false);
     }
   }
 
@@ -1748,6 +1785,7 @@ export default function EditarLicitacion() {
     setNombreEntidad(lic.nombre_entidad || "");
     setGiro(lic.giro || "");
     if (lic.tipo_cliente) setTipoCliente(lic.tipo_cliente);
+    setTipoClienteGuardado(lic.tipo_cliente || "");
     setDepartamento(lic.departamento || "");
     setMunicipalidad(lic.municipalidad || "");
     setRegion(lic.region || "");
@@ -1933,6 +1971,7 @@ export default function EditarLicitacion() {
       setNombreEntidad(lic.nombre_entidad || "");
       setGiro(lic.giro || "");
       if (lic.tipo_cliente) setTipoCliente(lic.tipo_cliente);
+      setTipoClienteGuardado(lic.tipo_cliente || "");
       setDepartamento(lic.departamento || "");
       setMunicipalidad(lic.municipalidad || "");
       setRegion(lic.region || "");
@@ -2496,6 +2535,7 @@ export default function EditarLicitacion() {
         return false;
       }
       setEstadoActualDB(estadoFinal);
+      setTipoClienteGuardado(tipoCliente || "");
 
       if (requiereAprobacion) {
         const detalleLineas = lineasBajoMargen.length
@@ -2709,20 +2749,31 @@ export default function EditarLicitacion() {
               onChange={(e) => {
                 const nuevo = e.target.value;
                 setTipoCliente(nuevo);
-                if (nuevo.toLowerCase() === "cliente particular") {
-                  setTipoCompra("Cliente particular");
-                  setListado("1");
-                } else if (nuevo.toLowerCase() === "entidad pública" && tipoCompra === "Cliente particular") {
-                  setTipoCompra("Compra ágil");
-                  setListado("2");
+                if (esEditable) {
+                  if (nuevo.toLowerCase() === "cliente particular") {
+                    setTipoCompra("Cliente particular");
+                    setListado("1");
+                  } else if (nuevo.toLowerCase() === "entidad pública" && tipoCompra === "Cliente particular") {
+                    setTipoCompra("Compra ágil");
+                    setListado("2");
+                  }
                 }
               }}
-              disabled={!esEditable}
             >
               <option value="">(Seleccionar)</option>
               <option value="Entidad Pública">Entidad Pública</option>
               <option value="Cliente Particular">Cliente Particular</option>
             </select>
+            {!esEditable && tipoCliente && tipoCliente !== tipoClienteGuardado && (
+              <button
+                type="button"
+                className="mt-2 text-xs font-medium rounded-md border border-blue-600 text-blue-700 bg-white hover:bg-blue-50 px-3 py-1 disabled:opacity-50"
+                onClick={guardarSoloTipoCliente}
+                disabled={guardandoTipoCliente}
+              >
+                {guardandoTipoCliente ? "Guardando..." : "Guardar Tipo de Cliente"}
+              </button>
+            )}
           </div>
 
           <div>
