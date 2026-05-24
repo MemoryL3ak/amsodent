@@ -12,6 +12,9 @@ import {
   X,
   RotateCcw,
   Download,
+  Sparkles,
+  Heart,
+  Users,
 } from "lucide-react";
 import { api } from "../lib/api";
 import { supabase } from "../lib/supabase";
@@ -83,10 +86,13 @@ const PALETA = [
 ];
 
 const EJEMPLOS = [
-  "¿Cuántas cotizaciones hay por estado?",
-  "Top 10 productos más cotizados",
-  "Monto adjudicado por vendedor este año",
-  "Cotizaciones por tipo de compra",
+  { texto: "¿Cuántas cotizaciones hay por estado?",      icon: BarChart3, color: "#F59E0B" },
+  { texto: "Top 10 productos más cotizados",              icon: BarChart3, color: "#F59E0B" },
+  { texto: "Monto adjudicado por vendedor este año",      icon: BarChart3, color: "#F59E0B" },
+  { texto: "Cotizaciones por tipo de compra",             icon: BarChart3, color: "#F59E0B" },
+  { texto: "Damarita, cuéntame algo de ti ✨",            icon: Sparkles,  color: "#9333ea" },
+  { texto: "¿Cómo es tu familia?",                        icon: Users,     color: "#0e7d83" },
+  { texto: "¿Cómo va tu vida amorosa? 😊",                icon: Heart,     color: "#ec4899" },
 ];
 
 /* ── Helpers ─────────────────────────────────────────────────────────── */
@@ -711,8 +717,21 @@ export default function DamarIAWidget() {
 function Bienvenida({ onEjemplo, cargando }) {
   return (
     <div style={{ textAlign: "center", padding: "14px 4px" }}>
-      <div style={{ ...avatarHeader, width: 52, height: 52, borderRadius: 16, margin: "0 auto 12px" }}>
-        <SunflowerIcon size={32} petalColor="#fff" centerColor={CAFE_CENTRO} />
+      <div
+        style={{
+          width: 64,
+          height: 64,
+          borderRadius: "50%",
+          margin: "0 auto 14px",
+          background: `radial-gradient(circle at 50% 45%, #fff8e6 0%, #fde68a 60%, ${AMARILLO_CLARO} 100%)`,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          boxShadow: `0 8px 22px -8px ${AMARILLO}80, 0 0 0 4px rgba(251,191,36,.18)`,
+          animation: "dm-flower-pop .6s cubic-bezier(.4,1.6,.6,1) both",
+        }}
+      >
+        <SunflowerIcon size={42} petalColor={AMARILLO} centerColor={CAFE_CENTRO} />
       </div>
       <h2
         style={{
@@ -734,17 +753,17 @@ function Bienvenida({ onEjemplo, cargando }) {
         Soy la mejor en lo mío 💅
       </p>
       <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
-        {EJEMPLOS.map((ej) => (
+        {EJEMPLOS.map(({ texto, icon: Icon, color }) => (
           <button
-            key={ej}
+            key={texto}
             type="button"
             className="dm-ejemplo"
             disabled={cargando}
-            onClick={() => onEjemplo(ej)}
+            onClick={() => onEjemplo(texto)}
             style={chipEjemplo}
           >
-            <BarChart3 size={14} style={{ color: AMARILLO, flexShrink: 0 }} />
-            {ej}
+            <Icon size={14} style={{ color, flexShrink: 0 }} />
+            {texto}
           </button>
         ))}
       </div>
@@ -1242,6 +1261,11 @@ const ESTILOS = `
   @keyframes dm-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
   @keyframes dm-panel-in { from { opacity: 0; transform: translateY(20px) scale(.97); } to { opacity: 1; transform: none; } }
   @keyframes dm-fab-in { from { opacity: 0; transform: scale(.6); } to { opacity: 1; transform: none; } }
+  @keyframes dm-flower-pop {
+    0%   { opacity: 0; transform: scale(.5) rotate(-30deg); }
+    60%  { opacity: 1; transform: scale(1.08) rotate(8deg); }
+    100% { opacity: 1; transform: scale(1) rotate(0deg); }
+  }
   .dm-fab { animation: dm-fab-in .2s ease; transition: transform .14s ease, box-shadow .14s ease; }
   .dm-fab:hover { transform: translateY(-3px) scale(1.04); box-shadow: 0 14px 32px -8px rgba(245,158,11,.7); }
   .dm-panel { animation: dm-panel-in .2s ease; }
