@@ -13,8 +13,6 @@ import {
   RotateCcw,
   Download,
   Sparkles,
-  Heart,
-  Users,
 } from "lucide-react";
 import { api } from "../lib/api";
 import { supabase } from "../lib/supabase";
@@ -91,8 +89,6 @@ const EJEMPLOS = [
   { texto: "Monto adjudicado por vendedor este año",      icon: BarChart3, color: "#F59E0B" },
   { texto: "Cotizaciones por tipo de compra",             icon: BarChart3, color: "#F59E0B" },
   { texto: "Damarita, cuéntame algo de ti ✨",            icon: Sparkles,  color: "#9333ea" },
-  { texto: "¿Cómo es tu familia?",                        icon: Users,     color: "#0e7d83" },
-  { texto: "¿Cómo va tu vida amorosa? 😊",                icon: Heart,     color: "#ec4899" },
 ];
 
 /* ── Helpers ─────────────────────────────────────────────────────────── */
