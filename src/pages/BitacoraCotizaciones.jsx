@@ -384,6 +384,7 @@ function TabBitacora({ activo, onClick, icon: Icon, label }) {
 function ModalRegistro({ registro, onClose, onSaved, onToast }) {
   const editando = !!registro;
   const [idCot, setIdCot] = useState(registro?.id_cotizacion || "");
+  const [idCot2, setIdCot2] = useState("");
   const [estado, setEstado] = useState(registro?.estado || "Pendiente");
   const [obs, setObs] = useState(registro?.observaciones || "");
   const [guardando, setGuardando] = useState(false);
@@ -391,6 +392,11 @@ function ModalRegistro({ registro, onClose, onSaved, onToast }) {
   async function guardar() {
     if (!idCot.trim()) {
       onToast?.({ type: "error", message: "El ID de cotización es obligatorio." });
+      return;
+    }
+    const segundo = idCot2.trim();
+    if (!editando && segundo && segundo === idCot.trim()) {
+      onToast?.({ type: "error", message: "Los dos IDs deben ser distintos." });
       return;
     }
     setGuardando(true);
@@ -407,7 +413,17 @@ function ModalRegistro({ registro, onClose, onSaved, onToast }) {
           estado,
           observaciones: obs.trim() || null,
         });
-        onToast?.({ type: "success", message: "Registro creado." });
+        if (segundo) {
+          await api.post("/bitacora-cotizaciones", {
+            id_cotizacion: segundo,
+            estado,
+            observaciones: obs.trim() || null,
+          });
+        }
+        onToast?.({
+          type: "success",
+          message: segundo ? "2 registros creados." : "Registro creado.",
+        });
       }
       onSaved();
     } catch (e) {
@@ -471,6 +487,25 @@ function ModalRegistro({ registro, onClose, onSaved, onToast }) {
               </p>
             )}
           </div>
+
+          {!editando && (
+            <div>
+              <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>
+                Segundo ID <span style={{ fontWeight: 400, color: "var(--text-muted)" }}>(opcional)</span>
+              </label>
+              <input
+                type="text"
+                className="input"
+                value={idCot2}
+                onChange={(e) => setIdCot2(e.target.value)}
+                disabled={guardando}
+                placeholder="Otra licitación a registrar junto a la anterior"
+              />
+              <p style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>
+                Si lo completas, se crearán 2 registros con el mismo estado y observaciones.
+              </p>
+            </div>
+          )}
 
           <div>
             <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>

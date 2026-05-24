@@ -2011,24 +2011,38 @@ function ReproductorAudio({ url, duracion, esMio }) {
 
 function ModalLicitacion({ mensajeBase, onCerrar, onRegistrar }) {
   const [id, setId] = useState("");
+  const [id2, setId2] = useState("");
   const [estado, setEstado] = useState("Pendiente");
   const [obs, setObs] = useState(mensajeBase ? resumenMensaje(mensajeBase).slice(0, 500) : "");
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState("");
 
   async function guardar() {
-    if (!id.trim()) {
+    const primero = id.trim();
+    const segundo = id2.trim();
+    if (!primero) {
       setError("Ingresa el ID de la licitación.");
+      return;
+    }
+    if (segundo && segundo === primero) {
+      setError("Los dos IDs deben ser distintos.");
       return;
     }
     setGuardando(true);
     setError("");
     try {
       await onRegistrar({
-        id_cotizacion: id.trim(),
+        id_cotizacion: primero,
         estado,
         observaciones: obs.trim() || null,
       });
+      if (segundo) {
+        await onRegistrar({
+          id_cotizacion: segundo,
+          estado,
+          observaciones: obs.trim() || null,
+        });
+      }
       onCerrar();
     } catch (e) {
       setError(e?.message || "No se pudo registrar la licitación.");
@@ -2086,6 +2100,21 @@ function ModalLicitacion({ mensajeBase, onCerrar, onRegistrar }) {
               style={inputModal}
               className="ch-input-modal"
             />
+          </CampoModal>
+
+          <CampoModal etiqueta="Segundo ID (opcional)">
+            <input
+              type="text"
+              value={id2}
+              onChange={(e) => setId2(e.target.value)}
+              placeholder="Otra licitación a registrar junto a la anterior"
+              disabled={guardando}
+              style={inputModal}
+              className="ch-input-modal"
+            />
+            <p style={{ margin: "6px 2px 0", fontSize: 11.5, color: MUTED, lineHeight: 1.45 }}>
+              Si lo completas, se registran 2 licitaciones y se publican 2 tarjetas en el chat.
+            </p>
           </CampoModal>
 
           <CampoModal etiqueta="Estado">
