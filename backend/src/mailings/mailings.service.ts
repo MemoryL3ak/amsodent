@@ -278,6 +278,47 @@ export class MailingsService {
     };
   }
 
+  // Envío de un único correo transaccional (agradecimiento OC, guía, etc.).
+  // Reusa el transporter SMTP compartido. replyTo permite que las respuestas
+  // del cliente lleguen al vendedor aunque el remitente sea la cuenta común.
+  async enviarUno(opts: {
+    para: string;
+    asunto: string;
+    cuerpoHtml: string;
+    cuerpoTexto?: string;
+    replyTo?: string;
+    remitenteNombre?: string;
+    attachments?: Array<{ filename: string; content: Buffer; contentType?: string }>;
+  }): Promise<{ enviado: boolean; messageId?: string }> {
+    const para = String(opts.para || '').trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(para)) {
+      throw new BadRequestException('El destinatario no es un correo válido.');
+    }
+    if (!opts.asunto?.trim()) {
+      throw new BadRequestException('Falta el asunto del correo.');
+    }
+    if (!opts.cuerpoHtml?.trim()) {
+      throw new BadRequestException('Falta el cuerpo del correo.');
+    }
+
+    const transporter = this.getTransporter();
+    const from = this.buildFrom({ remitenteNombre: opts.remitenteNombre } as SendBulkOptions);
+
+    const info = await transporter.sendMail({
+      from,
+      to: para,
+      replyTo: opts.replyTo?.trim() || undefined,
+      subject: opts.asunto.trim(),
+      html: opts.cuerpoHtml,
+      text: opts.cuerpoTexto || stripHtml(opts.cuerpoHtml),
+      attachments:
+        opts.attachments && opts.attachments.length > 0 ? opts.attachments : undefined,
+    });
+
+    this.logger.log(`Correo transaccional enviado a ${para}: ${info?.messageId || 'ok'}`);
+    return { enviado: true, messageId: info?.messageId };
+  }
+
   private buildFrom(opts: SendBulkOptions): string {
     const fromUser = process.env.SMTP_USER!;
     const fromName = (opts.remitenteNombre || process.env.SMTP_FROM_NAME || 'AMSODENT').replace(

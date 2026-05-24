@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Param, ParseIntPipe, Req, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Post, Param, ParseIntPipe, Req, Query, UseGuards } from '@nestjs/common';
 import { AuthGuard } from '../auth/auth.guard';
 import { NotificacionesService } from './notificaciones.service';
 
@@ -29,5 +29,15 @@ export class NotificacionesController {
   marcarTodas(@Req() req: any) {
     const email = String(req.user?.email || '').toLowerCase();
     return this.notif.marcarTodasLeidas(email);
+  }
+
+  @Post(':id/snooze')
+  snooze(
+    @Req() req: any,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { horas?: number },
+  ) {
+    const email = String(req.user?.email || '').toLowerCase();
+    return this.notif.snooze(id, email, Number(body?.horas) || 2);
   }
 }
