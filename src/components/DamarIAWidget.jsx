@@ -730,8 +730,8 @@ function Bienvenida({ onEjemplo, cargando }) {
         <DamariaLogo size={20} primary={INK} accent={AMARILLO_OSC} />
       </h2>
       <p style={{ margin: "0 auto 16px", fontSize: 12.5, color: MUTED, lineHeight: 1.55 }}>
-        Pregúntame sobre cotizaciones, productos, ventas o clientes. Te respondo con un
-        resumen y un gráfico.
+        Pregúntame lo que quieras de cotizaciones, productos, ventas o clientes.
+        Soy la mejor en lo mío 💅
       </p>
       <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
         {EJEMPLOS.map((ej) => (

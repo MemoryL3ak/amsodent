@@ -20,9 +20,13 @@ import {
   LogOut,
   CreditCard,
   Gift,
-  BookOpen,
+  MessagesSquare,
+  Mail,
+  ChevronLeft,
 } from "lucide-react";
 import NotificacionesMenu from "./NotificacionesMenu";
+import RecordatoriosCorreo from "./RecordatoriosCorreo";
+import GoogleAuthSync from "./GoogleAuthSync";
 import DamarIAWidget from "./DamarIAWidget";
 
 const ROLE_LABELS = {
@@ -43,7 +47,26 @@ function labelRol(rol) {
 export default function SidebarLayout() {
   const location = useLocation();
   const [perfil, setPerfil] = useState(null);
+  const [colapsada, setColapsada] = useState(() => {
+    try {
+      return localStorage.getItem("sidebar_collapsed") === "1";
+    } catch {
+      return false;
+    }
+  });
   const { requestNavigation } = useUnsavedChanges();
+
+  function toggleSidebar() {
+    setColapsada((v) => {
+      const nuevo = !v;
+      try {
+        localStorage.setItem("sidebar_collapsed", nuevo ? "1" : "0");
+      } catch {
+        // ignore
+      }
+      return nuevo;
+    });
+  }
 
   const isActive = (path) =>
     location.pathname === path || location.pathname.startsWith(`${path}/`);
@@ -102,15 +125,22 @@ export default function SidebarLayout() {
   const puedeVerVentas = esAdmin || esJefatura || esVentas || esContabilidad;
   const puedeVerMetas = esAdmin || esJefatura || esVentas || esContabilidad;
 
-  const coreNav = [
-    { to: "/listar",            icon: ClipboardList, label: "Cotizaciones" },
-    { to: "/crear",             icon: FilePlus,      label: "Nueva Cotización" },
-    { to: "/bitacora-cotizaciones", icon: BookOpen,  label: "Bitácora" },
+  const comercialNav = [
+    { to: "/listar",      icon: ClipboardList, label: "Cotizaciones" },
+    { to: "/crear",       icon: FilePlus,      label: "Nueva Cotización" },
+    { to: "/clientes",    icon: Users,         label: "Clientes" },
+    { to: "/productos",   icon: Package,       label: "Productos" },
+    { to: "/campanas",    icon: Megaphone,     label: "Campañas" },
+  ].filter(Boolean);
+
+  const postVentaNav = [
     (esAdmin || esJefatura || esContabilidad) && { to: "/trazabilidad",      icon: FileText,   label: "Trazabilidad" },
     (esAdmin || esJefeVentasEspecial || esContabilidad) && { to: "/seguimiento-pagos", icon: CreditCard, label: "Seguimiento de Pagos" },
-    { to: "/productos",         icon: Package,       label: "Productos" },
-    { to: "/clientes",          icon: Users,         label: "Clientes" },
-    { to: "/campanas",          icon: Megaphone,     label: "Campañas" },
+  ].filter(Boolean);
+
+  const comunicacionNav = [
+    esAdmin && { to: "/buzon",                 icon: Mail,          label: "Mi Correo" },
+    esAdmin && { to: "/bitacora-cotizaciones", icon: MessagesSquare, label: "Chat Grupal" },
   ].filter(Boolean);
 
   const reportNav = [
@@ -119,10 +149,13 @@ export default function SidebarLayout() {
     (esAdmin || esJefatura || esContabilidad) && { to: "/metas-canal", icon: BarChart2, label: "Metas por Canal" },
   ].filter(Boolean);
 
-  const adminNav = [
+  const herramientasNav = [
     (esAdmin || esVentasEspecial) && { to: "/sorteo-registros", icon: Gift, label: "Sorteo" },
-    esAdmin && { to: "/monitoreo",        icon: Activity, label: "Monitoreo de Usuarios" },
-    esAdmin && { to: "/usuarios",         icon: UserCog,  label: "Usuarios" },
+  ].filter(Boolean);
+
+  const adminNav = [
+    esAdmin && { to: "/usuarios",  icon: UserCog,  label: "Usuarios" },
+    esAdmin && { to: "/monitoreo", icon: Activity, label: "Monitoreo de Usuarios" },
   ].filter(Boolean);
 
   function NavGroup({ label, items }) {
@@ -136,9 +169,11 @@ export default function SidebarLayout() {
             to={to}
             onClick={(e) => onNavClick(e, to)}
             className={`nav-item ${isActive(to) ? "is-active" : ""}`}
+            data-label={itemLabel}
+            title={itemLabel}
           >
             <Icon size={16} className="nav-icon" />
-            {itemLabel}
+            <span className="nav-item-label">{itemLabel}</span>
           </Link>
         ))}
       </div>
@@ -146,10 +181,22 @@ export default function SidebarLayout() {
   }
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${colapsada ? "is-collapsed" : ""}`}>
       <SessionTracker />
       <PresenceTracker />
+      <GoogleAuthSync />
+      <RecordatoriosCorreo />
       {esAdmin && <DamarIAWidget />}
+
+      <button
+        type="button"
+        className="sidebar-toggle"
+        onClick={toggleSidebar}
+        title={colapsada ? "Expandir menú" : "Colapsar menú"}
+        aria-label={colapsada ? "Expandir menú" : "Colapsar menú"}
+      >
+        <ChevronLeft size={16} strokeWidth={2.5} />
+      </button>
 
       <aside className="sidebar">
         {/* Brand */}
@@ -164,8 +211,11 @@ export default function SidebarLayout() {
         </div>
 
         {/* Navigation */}
-        <NavGroup label="Operaciones" items={coreNav} />
+        <NavGroup label="Comercial" items={comercialNav} />
+        {postVentaNav.length > 0 && <NavGroup label="Post-Venta" items={postVentaNav} />}
+        <NavGroup label="Comunicación" items={comunicacionNav} />
         {reportNav.length > 0 && <NavGroup label="Reportes" items={reportNav} />}
+        {herramientasNav.length > 0 && <NavGroup label="Herramientas" items={herramientasNav} />}
         {adminNav.length > 0 && <NavGroup label="Administración" items={adminNav} />}
 
         {/* User section */}

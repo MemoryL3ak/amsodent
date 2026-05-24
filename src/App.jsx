@@ -38,6 +38,7 @@ import MetasPorCanal from "./pages/MetasPorCanal";
 import Trazabilidad from "./pages/Trazabilidad";
 import SeguimientoPagos from "./pages/SeguimientoPagos";
 import BitacoraCotizaciones from "./pages/BitacoraCotizaciones";
+import Buzon from "./pages/Buzon";
 
 // SORTEO
 import SorteoRegistro from "./pages/SorteoRegistro";
@@ -134,8 +135,25 @@ export default function App() {
             }
           />
 
-          {/* BITÁCORA — todos los roles logueados */}
-          <Route path="bitacora-cotizaciones" element={<BitacoraCotizaciones />} />
+          {/* CHAT GRUPAL — solo admin */}
+          <Route
+            path="bitacora-cotizaciones"
+            element={
+              <RequireRole allow={["admin"]}>
+                <BitacoraCotizaciones />
+              </RequireRole>
+            }
+          />
+
+          {/* BUZÓN DE CORREO — solo admin */}
+          <Route
+            path="buzon"
+            element={
+              <RequireRole allow={["admin"]}>
+                <Buzon />
+              </RequireRole>
+            }
+          />
         </Route>
 
         {/* FALLBACK */}

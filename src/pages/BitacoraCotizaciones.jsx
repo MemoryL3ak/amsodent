@@ -3,7 +3,8 @@ import { api } from "../lib/api";
 import useAuth from "../hooks/useAuth";
 import Toast from "../components/Toast";
 import ConfirmModal from "../components/ConfirmModal";
-import { Plus, Pencil, Trash2, X, Search } from "lucide-react";
+import ChatEquipo from "../components/ChatEquipo";
+import { Plus, Pencil, Trash2, X, Search, MessageSquare, ClipboardList } from "lucide-react";
 
 const ESTADOS = ["Pendiente", "Ingresada"];
 
@@ -36,6 +37,7 @@ export default function BitacoraCotizaciones() {
   const [usuariosMap, setUsuariosMap] = useState({});
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState(null);
+  const [tab, setTab] = useState("chat");
 
   // Filtros
   const [filtroId, setFiltroId] = useState("");
@@ -144,21 +146,53 @@ export default function BitacoraCotizaciones() {
 
       <div className="page-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
         <div>
-          <h1 className="page-title">Bitácora de Cotizaciones</h1>
+          <h1 className="page-title">Chat Grupal</h1>
           <p className="page-subtitle">
-            Registro de cotizaciones ingresadas en plataformas externas.
+            Conversación del equipo y registro de licitaciones tomadas.
           </p>
         </div>
-        <button
-          type="button"
-          className="btn btn-primary"
-          onClick={abrirNuevo}
-          style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
-        >
-          <Plus size={14} /> Nuevo Registro
-        </button>
+        {tab === "registro" && (
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={abrirNuevo}
+            style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
+          >
+            <Plus size={14} /> Nuevo Registro
+          </button>
+        )}
       </div>
 
+      {/* Pestañas */}
+      <div
+        style={{
+          display: "flex",
+          gap: 6,
+          background: "#eef1f4",
+          borderRadius: 11,
+          padding: 4,
+          marginBottom: 14,
+          width: "fit-content",
+        }}
+      >
+        <TabBitacora
+          activo={tab === "chat"}
+          onClick={() => setTab("chat")}
+          icon={MessageSquare}
+          label="Chat del equipo"
+        />
+        <TabBitacora
+          activo={tab === "registro"}
+          onClick={() => setTab("registro")}
+          icon={ClipboardList}
+          label="Registro"
+        />
+      </div>
+
+      {tab === "chat" && <ChatEquipo onLicitacionRegistrada={cargar} />}
+
+      {tab === "registro" && (
+        <>
       {/* Stats */}
       <div className="stats-row">
         <div className="stat-card">
@@ -296,6 +330,8 @@ export default function BitacoraCotizaciones() {
           </table>
         </div>
       </div>
+        </>
+      )}
 
       {modalOpen && (
         <ModalRegistro
@@ -314,6 +350,34 @@ export default function BitacoraCotizaciones() {
         onConfirm={eliminarConfirmado}
       />
     </div>
+  );
+}
+
+function TabBitacora({ activo, onClick, icon: Icon, label }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 7,
+        padding: "8px 16px",
+        borderRadius: 8,
+        border: "none",
+        cursor: "pointer",
+        fontSize: 13,
+        fontWeight: 700,
+        background: activo ? "#fff" : "transparent",
+        color: activo ? "#0e7d83" : "#64748b",
+        boxShadow: activo
+          ? "0 1px 2px rgba(16,24,40,.12), 0 0 0 1px rgba(16,24,40,.04)"
+          : "none",
+        transition: "color .14s ease",
+      }}
+    >
+      <Icon size={15} /> {label}
+    </button>
   );
 }
 

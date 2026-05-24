@@ -11,10 +11,12 @@ import { UsuariosModule } from './usuarios/usuarios.module';
 import { SorteoModule } from './sorteo/sorteo.module';
 import { FeriadosModule } from './feriados/feriados.module';
 import { MailingsModule } from './mailings/mailings.module';
+import { CorreosModule } from './correos/correos.module';
 import { PortalModule } from './portal/portal.module';
 import { NotificacionesModule } from './notificaciones/notificaciones.module';
 import { BitacoraModule } from './bitacora/bitacora.module';
 import { IaModule } from './ia/ia.module';
+import { ChatModule } from './chat/chat.module';
 
 @Module({
   imports: [
@@ -30,10 +32,12 @@ import { IaModule } from './ia/ia.module';
     SorteoModule,
     FeriadosModule,
     MailingsModule,
+    CorreosModule,
     PortalModule,
     NotificacionesModule,
     BitacoraModule,
     IaModule,
+    ChatModule,
   ],
 })
 export class AppModule {}

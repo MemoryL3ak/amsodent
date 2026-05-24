@@ -13,3 +13,8 @@ scripts/output/
 # Cache local de Claude Code y build de Next.js
 .claude/
 .next/
+
+# Clave de cuenta de servicio de Google (SECRETA — nunca subir al repo)
+backend/google-sa.json
+**/google-sa.json
+**/*service-account*.json
