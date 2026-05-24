@@ -637,11 +637,11 @@ export default function Buzon() {
           <Loader2 size={28} style={{ animation: "bz-spin 1s linear infinite", color: TEAL }} />
         </div>
       ) : !estado.disponible ? (
-        estado.puedeConectar ? (
-          <BuzonConectar onConectar={conectarCorreo} conectando={conectando} />
-        ) : (
-          <BuzonNoDisponible motivo={estado.motivo} />
-        )
+        <BuzonConectar
+          onConectar={conectarCorreo}
+          conectando={conectando}
+          aviso={!estado.puedeConectar ? estado.motivo : null}
+        />
       ) : (
         <div style={split}>
           {/* Panel sidebar: carpetas del sistema + etiquetas custom */}
@@ -1942,7 +1942,7 @@ function LecturaMensaje({
   );
 }
 
-function BuzonConectar({ onConectar, conectando }) {
+function BuzonConectar({ onConectar, conectando, aviso }) {
   const bullets = [
     "Envía correos a tus clientes desde tu propia casilla",
     "Lee y responde tu bandeja sin salir del sistema",
@@ -2048,6 +2048,30 @@ function BuzonConectar({ onConectar, conectando }) {
           Te llevamos a la pantalla oficial de Google para autorizar el acceso. Solo tú puedes ver y
           enviar desde tu correo.
         </p>
+
+        {aviso && (
+          <div
+            style={{
+              marginTop: 22,
+              padding: "11px 14px",
+              borderRadius: 10,
+              background: "#fef3c7",
+              border: "1px solid #fcd34d",
+              color: "#92400e",
+              fontSize: 12.5,
+              lineHeight: 1.5,
+              textAlign: "left",
+              display: "flex",
+              gap: 9,
+              alignItems: "flex-start",
+            }}
+          >
+            <AlertCircle size={16} style={{ color: "#d97706", flexShrink: 0, marginTop: 1 }} />
+            <span>
+              <strong>Heads up:</strong> {aviso}
+            </span>
+          </div>
+        )}
       </div>
     </div>
   );
