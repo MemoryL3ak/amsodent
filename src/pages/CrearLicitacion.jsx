@@ -7,6 +7,7 @@ import Toast from "../components/Toast";
 import Select, { components } from "react-select";
 import { generarPDFcotizacion } from "../utils/generarPDFcotizacion";
 import { calcularLista3 } from "../lib/listas";
+import ProductoPickerModal from "../components/ProductoPickerModal";
 
 import {
   DndContext,
@@ -758,6 +759,8 @@ export default function CrearLicitacion() {
   const [toast, setToast] = useState(null);
   const [campaignPrices, setCampaignPrices] = useState({});
   const [items, setItems] = useState([crearItemVacio()]);
+  // Índice del ítem para el que está abierto el buscador de productos (popup).
+  const [pickerIndex, setPickerIndex] = useState(null);
   const [hydrated, setHydrated] = useState(false);
 
   // ✅ Observaciones generales
@@ -1141,6 +1144,19 @@ export default function CrearLicitacion() {
 
     copia[index] = item;
     setItems(copia);
+  }
+
+  // Selección de un producto desde el popup buscador.
+  function seleccionarProductoDesdePicker(prod) {
+    const idx = pickerIndex;
+    setPickerIndex(null);
+    if (idx == null || !prod) return;
+    const sku = String(prod.sku || "").trim();
+    if (sku) {
+      actualizarItem(idx, "sku", sku);
+    } else {
+      actualizarItem(idx, "producto", prod.nombre || "");
+    }
   }
 
   function getCostoParaItem(item) {
@@ -1798,6 +1814,15 @@ export default function CrearLicitacion() {
         />
       )}
 
+      {pickerIndex !== null && (
+        <ProductoPickerModal
+          productos={productos}
+          onSelect={seleccionarProductoDesdePicker}
+          onClose={() => setPickerIndex(null)}
+          listadoInicial={listado}
+        />
+      )}
+
       <div className="page-header">
         <div>
           <h1 className="page-title">Crear Cotización</h1>
@@ -2196,9 +2221,50 @@ export default function CrearLicitacion() {
                       </div>
 
                       <div className={esAdmin ? "md:col-span-4" : "md:col-span-9"}>
-                        <label className="block text-xs text-gray-600 mb-1">
-                          Producto
-                        </label>
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="block text-xs text-gray-600">
+                            Producto
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => setPickerIndex(index)}
+                            title="Buscar producto en el catálogo"
+                            style={{
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: 5,
+                              padding: "3px 10px",
+                              borderRadius: 999,
+                              border: "1px solid #25b7bd",
+                              background: "#fff",
+                              color: "#178a8f",
+                              fontSize: 11,
+                              fontWeight: 700,
+                              cursor: "pointer",
+                              letterSpacing: ".02em",
+                              boxShadow: "0 1px 3px -1px rgba(37,183,189,.25)",
+                              transition: "all .15s cubic-bezier(.4, 0, .2, 1)",
+                            }}
+                            onMouseEnter={(e) => {
+                              e.currentTarget.style.background = "linear-gradient(135deg, #25b7bd 0%, #178a8f 100%)";
+                              e.currentTarget.style.color = "#fff";
+                              e.currentTarget.style.boxShadow = "0 3px 10px -2px rgba(37,183,189,.55)";
+                              e.currentTarget.style.transform = "translateY(-1px)";
+                            }}
+                            onMouseLeave={(e) => {
+                              e.currentTarget.style.background = "#fff";
+                              e.currentTarget.style.color = "#178a8f";
+                              e.currentTarget.style.boxShadow = "0 1px 3px -1px rgba(37,183,189,.25)";
+                              e.currentTarget.style.transform = "translateY(0)";
+                            }}
+                          >
+                            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round">
+                              <circle cx="11" cy="11" r="8"/>
+                              <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                            </svg>
+                            Buscar catálogo
+                          </button>
+                        </div>
                         <Select
                           options={opcionesProducto}
                           styles={customStyles}
