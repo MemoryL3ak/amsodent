@@ -20,6 +20,8 @@ type PerfilFirma = {
   firma_html: string | null;
   firma_celular: string | null;
   firma_cargo: string | null;
+  firma_nombre: string | null;
+  firma_email: string | null;
 };
 
 @Injectable()
@@ -34,7 +36,7 @@ export class FirmasService {
     const { data, error } = await this.supabase
       .getClient()
       .from('profiles')
-      .select('id, email, nombre, rol, firma_html, firma_celular, firma_cargo')
+      .select('id, email, nombre, rol, firma_html, firma_celular, firma_cargo, firma_nombre, firma_email')
       .eq('id', id)
       .maybeSingle();
     if (error) {
@@ -52,19 +54,21 @@ export class FirmasService {
       throw new BadRequestException('No se pudo cargar tu perfil.');
     }
     const cargo = (p.firma_cargo || '').trim() || ROL_LABELS[p.rol || ''] || 'Equipo AMSODENT';
+    const nombre = (p.firma_nombre || '').trim() || p.nombre || p.email;
+    const email = (p.firma_email || '').trim() || p.email;
     const html = (p.firma_html || '').trim() || generarFirmaDefault({
-      nombre: p.nombre || p.email,
+      nombre,
       cargo,
-      email: p.email,
+      email,
       celular: p.firma_celular || '',
     });
     return {
       html,
       personalizada: Boolean((p.firma_html || '').trim()),
       campos: {
-        nombre: p.nombre || '',
+        nombre,
         cargo,
-        email: p.email,
+        email,
         celular: p.firma_celular || '',
       },
     };
@@ -102,18 +106,25 @@ export class FirmasService {
   // Guarda los campos del modo simple: regenera el HTML con la plantilla.
   async setFirmaCampos(
     userId: string,
-    body: { cargo?: string; celular?: string },
+    body: { cargo?: string; celular?: string; nombre?: string; email?: string },
   ) {
     const id = String(userId || '').trim();
     if (!id) throw new BadRequestException('Usuario no válido.');
     const cargo = String(body?.cargo || '').trim().slice(0, 120);
     const celular = String(body?.celular || '').trim().slice(0, 60);
+    const nombre = String(body?.nombre || '').trim().slice(0, 120);
+    const email = String(body?.email || '').trim().slice(0, 160);
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      throw new BadRequestException('El correo de la firma no es válido.');
+    }
     const { error } = await this.supabase
       .getClient()
       .from('profiles')
       .update({
         firma_cargo: cargo || null,
         firma_celular: celular || null,
+        firma_nombre: nombre || null,
+        firma_email: email || null,
         firma_html: null, // borrar custom para usar plantilla actualizada
       })
       .eq('id', id);
