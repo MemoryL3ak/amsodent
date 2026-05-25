@@ -30,4 +30,33 @@ export class ChatController {
     const invitadoPor = String(req?.user?.email || '').trim().toLowerCase();
     return this.chat.notificarInvitacionSala(salaId, emails, invitadoPor);
   }
+
+  // Notificación genérica del chat (ej. sala eliminada). El frontend usa
+  // este endpoint cuando ya tiene la lista de destinatarios.
+  @Post('notificar-evento')
+  @UseGuards(AuthGuard)
+  notificarEvento(
+    @Body()
+    body: {
+      tipo?: string;
+      mensaje?: string;
+      emails?: string[];
+      link?: string;
+      metadata?: Record<string, unknown>;
+    },
+  ) {
+    const tipo = String(body?.tipo || '').trim();
+    const mensaje = String(body?.mensaje || '').trim();
+    const emails = Array.isArray(body?.emails) ? body.emails : [];
+    if (!tipo || !mensaje) {
+      throw new BadRequestException('Faltan tipo y/o mensaje.');
+    }
+    return this.chat.notificarEvento({
+      tipo,
+      mensaje,
+      emails,
+      link: body?.link,
+      metadata: body?.metadata,
+    });
+  }
 }

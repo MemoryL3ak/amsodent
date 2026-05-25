@@ -190,6 +190,7 @@ export default function ChatEquipo({ onLicitacionRegistrada }) {
   const inputImagen = useRef(null);
   const inputPdf = useRef(null);
   const textareaRef = useRef(null);
+  const canalLifecycleRef = useRef(null);
 
   const salaActiva = useMemo(
     () => salas.find((s) => s.id === salaActivaId) || null,
@@ -413,6 +414,148 @@ export default function ChatEquipo({ onLicitacionRegistrada }) {
       });
     return () => {
       supabase.removeChannel(canal);
+    };
+  }, [yo.email]);
+
+  /* ── Canal Broadcast global: lifecycle de salas (crear / eliminar / invitar) ──
+     Más confiable que postgres_changes con cascade deletes y RLS. Todos los
+     usuarios del chat se suscriben a este canal y reciben los eventos al
+     instante. */
+  useEffect(() => {
+    if (!yo.email) return undefined;
+    const canal = supabase.channel("chat_lifecycle", {
+      config: { broadcast: { self: false } },
+    });
+
+    canal.on("broadcast", { event: "sala-creada" }, async ({ payload }) => {
+      const { salaId, miembros = [] } = payload || {};
+      const yoIncluido = (miembros || []).some(
+        (e) => String(e).toLowerCase() === yo.email,
+      );
+      if (!salaId || !yoIncluido) return;
+      // Traer la sala recién creada
+      const { data: sala } = await supabase
+        .from("chat_salas")
+        .select("*")
+        .eq("id", salaId)
+        .maybeSingle();
+      if (!sala) return;
+      setSalas((prev) => {
+        if (prev.some((s) => s.id === sala.id)) return prev;
+        return [...prev, sala].sort((a, b) => {
+          if (a.es_general !== b.es_general) return a.es_general ? -1 : 1;
+          return (a.nombre || "").localeCompare(b.nombre || "");
+        });
+      });
+      setMiembrosPorSala((prev) => ({
+        ...prev,
+        [sala.id]: (miembros || []).map((e) => String(e).toLowerCase()),
+      }));
+      setAvisoSala({ nombre: sala.nombre, salaId: sala.id });
+      try {
+        if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+          new Notification("Te agregaron a una sala", {
+            body: sala.nombre || "Nueva sala disponible",
+            icon: "/favicon.ico",
+            tag: `chat-sala-${sala.id}`,
+          });
+        }
+      } catch {
+        // ignorar
+      }
+    });
+
+    canal.on("broadcast", { event: "sala-eliminada" }, ({ payload }) => {
+      const { salaId, nombre } = payload || {};
+      if (!salaId) return;
+      let teniaLaSala = false;
+      setSalas((prev) => {
+        const filtrada = prev.filter((s) => {
+          if (s.id === salaId) {
+            teniaLaSala = true;
+            return false;
+          }
+          return true;
+        });
+        return filtrada;
+      });
+      setMiembrosPorSala((prev) => {
+        if (!(salaId in prev)) return prev;
+        const copia = { ...prev };
+        delete copia[salaId];
+        return copia;
+      });
+      setSalaActivaId((actual) => (actual === salaId ? null : actual));
+      if (teniaLaSala) {
+        setAvisoSala({
+          nombre: `🗑 Sala "${nombre || ""}" eliminada`,
+          salaId: null,
+        });
+      }
+    });
+
+    canal.on("broadcast", { event: "miembros-agregados" }, async ({ payload }) => {
+      const { salaId, nuevos = [] } = payload || {};
+      if (!salaId) return;
+      const yoEntreNuevos = (nuevos || []).some(
+        (e) => String(e).toLowerCase() === yo.email,
+      );
+      if (yoEntreNuevos) {
+        const { data: sala } = await supabase
+          .from("chat_salas")
+          .select("*")
+          .eq("id", salaId)
+          .maybeSingle();
+        if (!sala) return;
+        const { data: miembros } = await supabase
+          .from("chat_sala_miembros")
+          .select("email")
+          .eq("sala_id", salaId);
+        let eraNueva = false;
+        setSalas((prev) => {
+          if (prev.some((s) => s.id === sala.id)) return prev;
+          eraNueva = true;
+          return [...prev, sala].sort((a, b) => {
+            if (a.es_general !== b.es_general) return a.es_general ? -1 : 1;
+            return (a.nombre || "").localeCompare(b.nombre || "");
+          });
+        });
+        setMiembrosPorSala((prev) => ({
+          ...prev,
+          [sala.id]: (miembros || []).map((m) => m.email),
+        }));
+        if (eraNueva) {
+          setAvisoSala({ nombre: sala.nombre, salaId: sala.id });
+          try {
+            if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+              new Notification("Te agregaron a una sala", {
+                body: sala.nombre,
+                icon: "/favicon.ico",
+                tag: `chat-sala-${sala.id}`,
+              });
+            }
+          } catch {
+            // ignorar
+          }
+        }
+      } else {
+        // No me sumaron a mí, pero si ya estaba en la sala, refresco miembros
+        setMiembrosPorSala((prev) => {
+          if (!(salaId in prev)) return prev;
+          const set = new Set([
+            ...prev[salaId],
+            ...(nuevos || []).map((e) => String(e).toLowerCase()),
+          ]);
+          return { ...prev, [salaId]: Array.from(set) };
+        });
+      }
+    });
+
+    canal.subscribe();
+    canalLifecycleRef.current = canal;
+    return () => {
+      supabase.removeChannel(canal);
+      canalLifecycleRef.current = null;
     };
   }, [yo.email]);
 
@@ -648,6 +791,7 @@ export default function ChatEquipo({ onLicitacionRegistrada }) {
       etiquetaConfirmar: "Eliminar sala",
       peligro: true,
       onConfirmar: async () => {
+        const miembrosAfectados = miembrosPorSala[sala.id] || [];
         const { error: e } = await supabase
           .from("chat_salas")
           .delete()
@@ -664,6 +808,35 @@ export default function ChatEquipo({ onLicitacionRegistrada }) {
           setSalaActivaId(general?.id || null);
         }
         setModalMiembros(null);
+
+        // Broadcast a los otros usuarios: la sala fue eliminada
+        try {
+          await canalLifecycleRef.current?.send({
+            type: "broadcast",
+            event: "sala-eliminada",
+            payload: {
+              salaId: sala.id,
+              nombre: sala.nombre,
+              miembros: miembrosAfectados,
+            },
+          });
+        } catch {
+          // ignorar
+        }
+        // Notificación in-app persistente a los miembros (vía bell del sidebar)
+        const otros = miembrosAfectados.filter((e) => e !== yo.email);
+        if (otros.length > 0) {
+          try {
+            await api.post("/chat/notificar-evento", {
+              tipo: "chat_sala_eliminada",
+              mensaje: `Se eliminó la sala "${sala.nombre}".`,
+              emails: otros,
+              metadata: { sala_id: sala.id, nombre: sala.nombre },
+            });
+          } catch {
+            // ignorar
+          }
+        }
       },
     });
   }
@@ -699,6 +872,17 @@ export default function ChatEquipo({ onLicitacionRegistrada }) {
     setMiembrosPorSala((prev) => ({ ...prev, [sala.id]: todos }));
     setSalaActivaId(sala.id);
 
+    // Broadcast realtime: sala creada — los miembros la ven al instante
+    try {
+      await canalLifecycleRef.current?.send({
+        type: "broadcast",
+        event: "sala-creada",
+        payload: { salaId: sala.id, miembros: todos },
+      });
+    } catch {
+      // ignorar
+    }
+
     // Notificación in-app para los miembros invitados (excepto yo).
     const invitados = todos.filter((e) => e !== yo.email);
     if (invitados.length > 0) {
@@ -723,16 +907,29 @@ export default function ChatEquipo({ onLicitacionRegistrada }) {
       .from("chat_sala_miembros")
       .insert(filas);
     if (e) throw e;
+    const emailsNuevos = filas.map((f) => f.email);
     setMiembrosPorSala((prev) => ({
       ...prev,
-      [salaId]: [...(prev[salaId] || []), ...filas.map((f) => f.email)],
+      [salaId]: [...(prev[salaId] || []), ...emailsNuevos],
     }));
+
+    // Broadcast: miembros agregados — los demás miembros refrescan, los
+    // recién invitados ven la sala aparecer al instante
+    try {
+      await canalLifecycleRef.current?.send({
+        type: "broadcast",
+        event: "miembros-agregados",
+        payload: { salaId, nuevos: emailsNuevos },
+      });
+    } catch {
+      // ignorar
+    }
 
     // Notificación in-app para los nuevos invitados.
     try {
       await api.post("/chat/notificar-invitacion", {
         sala_id: salaId,
-        emails: filas.map((f) => f.email),
+        emails: emailsNuevos,
       });
     } catch {
       // No bloquear si la notificación falla
