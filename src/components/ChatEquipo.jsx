@@ -162,6 +162,7 @@ export default function ChatEquipo({ onLicitacionRegistrada }) {
   const [mensajes, setMensajes] = useState([]);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState("");
+  const [avisoSala, setAvisoSala] = useState(null); // { nombre, salaId }
   const [texto, setTexto] = useState("");
   const [enviando, setEnviando] = useState(false);
   const [menuAbierto, setMenuAbierto] = useState(false);
@@ -321,6 +322,104 @@ export default function ChatEquipo({ onLicitacionRegistrada }) {
       supabase.removeChannel(canal);
     };
   }, [salaActivaId, agregarMensaje]);
+
+  /* ── Suscripción realtime: me agregaron / removieron de una sala ──── */
+  useEffect(() => {
+    if (!yo.email) return undefined;
+    const emailFiltro = `email=eq.${yo.email}`;
+    const canal = supabase
+      .channel(`chat_miembros_${yo.email}`)
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "chat_sala_miembros", filter: emailFiltro },
+        async (payload) => {
+          const salaId = payload?.new?.sala_id;
+          if (!salaId) return;
+          // Si la sala ya está en mi lista (ej. yo la creé), solo refrescar miembros.
+          if (salas.some((s) => s.id === salaId)) {
+            const { data: miembros } = await supabase
+              .from("chat_sala_miembros")
+              .select("email")
+              .eq("sala_id", salaId);
+            setMiembrosPorSala((prev) => ({
+              ...prev,
+              [salaId]: (miembros || []).map((m) => m.email),
+            }));
+            return;
+          }
+          // Si es una sala nueva: traerla, sumarla a la lista y avisar.
+          const { data: sala } = await supabase
+            .from("chat_salas")
+            .select("*")
+            .eq("id", salaId)
+            .maybeSingle();
+          if (!sala) return;
+          const { data: miembros } = await supabase
+            .from("chat_sala_miembros")
+            .select("email")
+            .eq("sala_id", salaId);
+          setSalas((prev) => {
+            if (prev.some((s) => s.id === sala.id)) return prev;
+            return [...prev, sala].sort((a, b) => {
+              if (a.es_general !== b.es_general) return a.es_general ? -1 : 1;
+              return (a.nombre || "").localeCompare(b.nombre || "");
+            });
+          });
+          setMiembrosPorSala((prev) => ({
+            ...prev,
+            [sala.id]: (miembros || []).map((m) => m.email),
+          }));
+          setAvisoSala({ nombre: sala.nombre, salaId: sala.id });
+          // Notificación nativa del navegador si el permiso ya fue concedido.
+          try {
+            if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+              new Notification("Te agregaron a una sala de chat", {
+                body: sala.nombre || "Nueva sala disponible",
+                icon: "/favicon.ico",
+                tag: `chat-sala-${sala.id}`,
+              });
+            }
+          } catch {
+            // ignorar fallas de notificaciones
+          }
+        },
+      )
+      .on(
+        "postgres_changes",
+        { event: "DELETE", schema: "public", table: "chat_sala_miembros", filter: emailFiltro },
+        (payload) => {
+          const salaId = payload?.old?.sala_id;
+          if (!salaId) return;
+          setSalas((prev) => prev.filter((s) => s.id !== salaId));
+          setMiembrosPorSala((prev) => {
+            const copia = { ...prev };
+            delete copia[salaId];
+            return copia;
+          });
+          setSalaActivaId((actual) => {
+            if (actual !== salaId) return actual;
+            // si la sala activa se cerró para mí, saltar a la general u otra.
+            const otra = salas.find((s) => s.id !== salaId);
+            return otra?.id || null;
+          });
+        },
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(canal);
+    };
+  }, [yo.email, salas]);
+
+  // Pedir permiso de notificación una sola vez al montar (no bloquea si lo deniegan)
+  useEffect(() => {
+    try {
+      if (typeof Notification !== "undefined" && Notification.permission === "default") {
+        Notification.requestPermission().catch(() => {});
+      }
+    } catch {
+      // ignorar
+    }
+  }, []);
 
   // Auto-scroll al fondo
   useEffect(() => {
@@ -1052,6 +1151,68 @@ export default function ChatEquipo({ onLicitacionRegistrada }) {
             </div>
           )}
         </div>
+
+        {/* Aviso: te agregaron a una sala nueva */}
+        {avisoSala && (
+          <div style={avisoNuevaSala}>
+            <span
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                width: 24,
+                height: 24,
+                borderRadius: "50%",
+                background: "rgba(255,255,255,.2)",
+                flexShrink: 0,
+              }}
+            >
+              <MessageSquare size={13} />
+            </span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 12.5, fontWeight: 700, lineHeight: 1.2 }}>
+                Te agregaron a una nueva sala
+              </div>
+              <div style={{ fontSize: 11.5, opacity: 0.92, marginTop: 1 }}>
+                {avisoSala.nombre || "Nueva sala"}
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setSalaActivaId(avisoSala.salaId);
+                setAvisoSala(null);
+              }}
+              style={{
+                background: "rgba(255,255,255,.18)",
+                color: "#fff",
+                border: "none",
+                padding: "5px 10px",
+                borderRadius: 7,
+                fontSize: 12,
+                fontWeight: 700,
+                cursor: "pointer",
+                whiteSpace: "nowrap",
+              }}
+            >
+              Abrir
+            </button>
+            <button
+              type="button"
+              onClick={() => setAvisoSala(null)}
+              style={{
+                background: "none",
+                border: "none",
+                cursor: "pointer",
+                color: "inherit",
+                display: "inline-flex",
+                padding: 2,
+              }}
+            >
+              <X size={14} />
+            </button>
+          </div>
+        )}
 
         {/* Aviso de error puntual */}
         {error && mensajes.length > 0 && (
@@ -3127,6 +3288,17 @@ const avisoError = {
   color: "#b91c1c",
   fontSize: 12.5,
   borderTop: "1px solid #fecaca",
+};
+
+const avisoNuevaSala = {
+  display: "flex",
+  alignItems: "center",
+  gap: 10,
+  padding: "10px 14px",
+  background: `linear-gradient(135deg, ${TEAL_DEEP}, ${TEAL})`,
+  color: "#fff",
+  borderTop: `1px solid ${TEAL}`,
+  animation: "ch-fade-up .35s ease",
 };
 
 const previewRespuesta = {
