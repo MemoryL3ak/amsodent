@@ -698,6 +698,19 @@ export default function ChatEquipo({ onLicitacionRegistrada }) {
     }));
     setMiembrosPorSala((prev) => ({ ...prev, [sala.id]: todos }));
     setSalaActivaId(sala.id);
+
+    // Notificación in-app para los miembros invitados (excepto yo).
+    const invitados = todos.filter((e) => e !== yo.email);
+    if (invitados.length > 0) {
+      try {
+        await api.post("/chat/notificar-invitacion", {
+          sala_id: sala.id,
+          emails: invitados,
+        });
+      } catch {
+        // No bloquear la creación si la notificación falla
+      }
+    }
   }
 
   async function agregarMiembrosSala(salaId, nuevos) {
@@ -714,6 +727,16 @@ export default function ChatEquipo({ onLicitacionRegistrada }) {
       ...prev,
       [salaId]: [...(prev[salaId] || []), ...filas.map((f) => f.email)],
     }));
+
+    // Notificación in-app para los nuevos invitados.
+    try {
+      await api.post("/chat/notificar-invitacion", {
+        sala_id: salaId,
+        emails: filas.map((f) => f.email),
+      });
+    } catch {
+      // No bloquear si la notificación falla
+    }
   }
 
   /* ── Grabación de audio ───────────────────────────────────────────── */
