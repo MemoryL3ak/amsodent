@@ -1,6 +1,6 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Search, X, PackageSearch, Tag, Filter } from "lucide-react";
+import { Search, X, PackageSearch, Tag, Filter, Check, ChevronDown } from "lucide-react";
 import { calcularLista3 } from "../lib/listas";
 
 // Popup buscador de productos para usar dentro de la cotización, así no hay
@@ -54,8 +54,8 @@ export default function ProductoPickerModal({
   tipoCompra,
 }) {
   const [busqueda, setBusqueda] = useState("");
-  const [categoria, setCategoria] = useState("");
-  const [marca, setMarca] = useState("");
+  const [categoriasSel, setCategoriasSel] = useState([]); // array de strings
+  const [marcasSel, setMarcasSel] = useState([]);
   // El listado es READ-ONLY — viene del tipo de compra y no se puede cambiar.
   const listado = String(listadoInicial || "2");
   const infoTC = ETIQUETA_TIPO_COMPRA[tipoCompra] || null;
@@ -71,17 +71,19 @@ export default function ProductoPickerModal({
 
   const filtrados = useMemo(() => {
     const tokens = normalizar(busqueda).split(" ").filter(Boolean);
+    const setCat = new Set(categoriasSel);
+    const setMar = new Set(marcasSel);
     return (productos || []).filter((p) => {
-      if (categoria && p.categoria !== categoria) return false;
-      if (marca && p.marca !== marca) return false;
+      if (setCat.size > 0 && !setCat.has(p.categoria)) return false;
+      if (setMar.size > 0 && !setMar.has(p.marca)) return false;
       if (tokens.length === 0) return true;
       const texto = normalizar(`${p.sku || ""} ${p.nombre || ""} ${p.marca || ""}`);
       return tokens.every((t) => texto.includes(t));
     });
-  }, [productos, busqueda, categoria, marca]);
+  }, [productos, busqueda, categoriasSel, marcasSel]);
 
   const visibles = filtrados.slice(0, MAX_FILAS);
-  const hayFiltros = busqueda || categoria || marca;
+  const hayFiltros = busqueda || categoriasSel.length > 0 || marcasSel.length > 0;
 
   const overlay = (
     <div
@@ -234,50 +236,22 @@ export default function ProductoPickerModal({
               }}
             />
           </div>
-          <select
-            value={categoria}
-            onChange={(e) => setCategoria(e.target.value)}
-            className="ppm-select"
-            style={{
-              padding: "0 12px",
-              height: 40,
-              borderRadius: 10,
-              border: `1.5px solid ${TEAL_MID}`,
-              fontSize: 13.5,
-              minWidth: 170,
-              background: "#fff",
-              cursor: "pointer",
-              outline: "none",
-              transition: "border-color .15s, box-shadow .15s",
-            }}
-          >
-            <option value="">Todas las categorías</option>
-            {categorias.map((c) => (
-              <option key={c} value={c}>{c}</option>
-            ))}
-          </select>
-          <select
-            value={marca}
-            onChange={(e) => setMarca(e.target.value)}
-            className="ppm-select"
-            style={{
-              padding: "0 12px",
-              height: 40,
-              borderRadius: 10,
-              border: `1.5px solid ${TEAL_MID}`,
-              fontSize: 13.5,
-              minWidth: 150,
-              background: "#fff",
-              cursor: "pointer",
-              outline: "none",
-              transition: "border-color .15s, box-shadow .15s",
-            }}
-          >
-            <option value="">Todas las marcas</option>
-            {marcas.map((m) => (
-              <option key={m} value={m}>{m}</option>
-            ))}
-          </select>
+          <MultiSelect
+            placeholder="Todas las categorías"
+            opciones={categorias}
+            seleccionados={categoriasSel}
+            onChange={setCategoriasSel}
+            icon={<Filter size={14} />}
+            minWidth={190}
+          />
+          <MultiSelect
+            placeholder="Todas las marcas"
+            opciones={marcas}
+            seleccionados={marcasSel}
+            onChange={setMarcasSel}
+            icon={<Tag size={14} />}
+            minWidth={160}
+          />
           {/* Badge read-only del listado de precios — lo determina el tipo
               de compra de la cotización, no se puede cambiar manualmente. */}
           <div
@@ -340,6 +314,7 @@ export default function ProductoPickerModal({
               flexWrap: "wrap",
               padding: "10px 18px 0",
               fontSize: 11.5,
+              alignItems: "center",
             }}
           >
             {busqueda && (
@@ -347,15 +322,46 @@ export default function ProductoPickerModal({
                 {busqueda}
               </Chip>
             )}
-            {categoria && (
-              <Chip onRemove={() => setCategoria("")} icon={<Filter size={11} />}>
-                {categoria}
+            {categoriasSel.map((c) => (
+              <Chip
+                key={`cat-${c}`}
+                onRemove={() => setCategoriasSel(categoriasSel.filter((x) => x !== c))}
+                icon={<Filter size={11} />}
+              >
+                {c}
               </Chip>
-            )}
-            {marca && (
-              <Chip onRemove={() => setMarca("")} icon={<Tag size={11} />}>
-                {marca}
+            ))}
+            {marcasSel.map((m) => (
+              <Chip
+                key={`mar-${m}`}
+                onRemove={() => setMarcasSel(marcasSel.filter((x) => x !== m))}
+                icon={<Tag size={11} />}
+              >
+                {m}
               </Chip>
+            ))}
+            {(categoriasSel.length > 0 || marcasSel.length > 0 || busqueda) && (
+              <button
+                type="button"
+                onClick={() => {
+                  setBusqueda("");
+                  setCategoriasSel([]);
+                  setMarcasSel([]);
+                }}
+                style={{
+                  marginLeft: 4,
+                  background: "transparent",
+                  border: "none",
+                  color: "#64748b",
+                  fontSize: 11,
+                  fontWeight: 600,
+                  cursor: "pointer",
+                  textDecoration: "underline",
+                  padding: "2px 4px",
+                }}
+              >
+                Limpiar filtros
+              </button>
             )}
           </div>
         )}
@@ -537,6 +543,255 @@ function Td({ children, bold, mono, align = "left" }) {
   );
 }
 
+function MultiSelect({ placeholder, opciones, seleccionados, onChange, icon, minWidth = 160 }) {
+  const [abierto, setAbierto] = useState(false);
+  const [busca, setBusca] = useState("");
+  const wrapRef = useRef(null);
+
+  useEffect(() => {
+    if (!abierto) return undefined;
+    function onClick(e) {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) {
+        setAbierto(false);
+        setBusca("");
+      }
+    }
+    document.addEventListener("mousedown", onClick);
+    return () => document.removeEventListener("mousedown", onClick);
+  }, [abierto]);
+
+  const opcionesFiltradas = useMemo(() => {
+    const q = String(busca || "").toLowerCase().trim();
+    if (!q) return opciones;
+    return opciones.filter((o) => String(o).toLowerCase().includes(q));
+  }, [opciones, busca]);
+
+  function toggle(valor) {
+    if (seleccionados.includes(valor)) {
+      onChange(seleccionados.filter((x) => x !== valor));
+    } else {
+      onChange([...seleccionados, valor]);
+    }
+  }
+
+  const cant = seleccionados.length;
+  const etiqueta =
+    cant === 0
+      ? placeholder
+      : cant === 1
+        ? seleccionados[0]
+        : `${cant} seleccionadas`;
+
+  return (
+    <div ref={wrapRef} style={{ position: "relative", minWidth }}>
+      <button
+        type="button"
+        onClick={() => setAbierto((v) => !v)}
+        className="ppm-select"
+        style={{
+          width: "100%",
+          height: 40,
+          padding: "0 12px",
+          borderRadius: 10,
+          border: `1.5px solid ${cant > 0 ? TEAL : TEAL_MID}`,
+          background: cant > 0 ? TEAL_SOFT : "#fff",
+          fontSize: 13.5,
+          cursor: "pointer",
+          outline: "none",
+          transition: "all .15s ease",
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          textAlign: "left",
+          color: cant > 0 ? TEAL_DEEP : "#475569",
+          fontWeight: cant > 0 ? 700 : 500,
+        }}
+      >
+        <span style={{ display: "inline-flex", alignItems: "center", color: cant > 0 ? TEAL : "#94a3b8", flexShrink: 0 }}>
+          {icon}
+        </span>
+        <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {etiqueta}
+        </span>
+        {cant > 0 && (
+          <span
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              minWidth: 20,
+              height: 20,
+              padding: "0 6px",
+              borderRadius: 999,
+              background: TEAL,
+              color: "#fff",
+              fontSize: 11,
+              fontWeight: 800,
+              lineHeight: 1,
+              flexShrink: 0,
+            }}
+          >
+            {cant}
+          </span>
+        )}
+        <ChevronDown
+          size={14}
+          style={{
+            color: cant > 0 ? TEAL_DEEP : "#94a3b8",
+            flexShrink: 0,
+            transition: "transform .2s ease",
+            transform: abierto ? "rotate(180deg)" : "rotate(0)",
+          }}
+        />
+      </button>
+
+      {abierto && (
+        <div
+          style={{
+            position: "absolute",
+            top: "calc(100% + 6px)",
+            left: 0,
+            right: 0,
+            zIndex: 12000,
+            background: "#fff",
+            borderRadius: 12,
+            border: `1px solid ${TEAL_MID}`,
+            boxShadow: "0 20px 50px -12px rgba(15,23,42,.25), 0 4px 12px -4px rgba(37,183,189,.18)",
+            overflow: "hidden",
+            animation: "ppm-fade-in .14s ease",
+            minWidth: 240,
+          }}
+        >
+          {/* Buscador interno + acciones */}
+          <div style={{ padding: 8, borderBottom: `1px solid #eef2f5`, display: "flex", gap: 6, alignItems: "center" }}>
+            <div style={{ position: "relative", flex: 1 }}>
+              <Search
+                size={12}
+                style={{
+                  position: "absolute",
+                  left: 9,
+                  top: "50%",
+                  transform: "translateY(-50%)",
+                  color: "#94a3b8",
+                  pointerEvents: "none",
+                }}
+              />
+              <input
+                autoFocus
+                type="text"
+                placeholder="Buscar…"
+                value={busca}
+                onChange={(e) => setBusca(e.target.value)}
+                className="ppm-input"
+                style={{
+                  width: "100%",
+                  height: 30,
+                  padding: "0 8px 0 28px",
+                  borderRadius: 7,
+                  border: `1px solid ${TEAL_MID}`,
+                  fontSize: 12.5,
+                  outline: "none",
+                  boxSizing: "border-box",
+                }}
+              />
+            </div>
+            {cant > 0 && (
+              <button
+                type="button"
+                onClick={() => onChange([])}
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  color: "#dc2626",
+                  cursor: "pointer",
+                  fontSize: 11,
+                  fontWeight: 700,
+                  padding: "0 6px",
+                  whiteSpace: "nowrap",
+                }}
+                title="Limpiar selección"
+              >
+                Limpiar
+              </button>
+            )}
+          </div>
+
+          <div style={{ maxHeight: 260, overflowY: "auto", padding: 4 }}>
+            {opcionesFiltradas.length === 0 ? (
+              <div style={{ padding: "14px 12px", textAlign: "center", color: "#94a3b8", fontSize: 12 }}>
+                Sin coincidencias
+              </div>
+            ) : (
+              opcionesFiltradas.map((op) => {
+                const activa = seleccionados.includes(op);
+                return (
+                  <button
+                    key={op}
+                    type="button"
+                    onClick={() => toggle(op)}
+                    className="ppm-opt"
+                    style={{
+                      width: "100%",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 9,
+                      padding: "7px 10px",
+                      borderRadius: 7,
+                      border: "none",
+                      background: activa ? TEAL_SOFT : "transparent",
+                      color: activa ? TEAL_DEEP : "#1a1d23",
+                      fontSize: 12.5,
+                      fontWeight: activa ? 700 : 500,
+                      cursor: "pointer",
+                      textAlign: "left",
+                      transition: "background .1s ease",
+                    }}
+                  >
+                    <span
+                      style={{
+                        width: 16,
+                        height: 16,
+                        borderRadius: 5,
+                        border: `1.5px solid ${activa ? TEAL : "#cbd5e1"}`,
+                        background: activa ? TEAL : "#fff",
+                        display: "inline-flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        flexShrink: 0,
+                        transition: "all .12s ease",
+                      }}
+                    >
+                      {activa && <Check size={11} color="#fff" strokeWidth={3.5} />}
+                    </span>
+                    <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {op}
+                    </span>
+                  </button>
+                );
+              })
+            )}
+          </div>
+
+          {/* Footer informativo */}
+          <div
+            style={{
+              padding: "6px 10px",
+              borderTop: "1px solid #eef2f5",
+              fontSize: 10.5,
+              color: "#94a3b8",
+              background: "#fafdfd",
+              fontWeight: 500,
+            }}
+          >
+            {opcionesFiltradas.length} {opcionesFiltradas.length === 1 ? "opción" : "opciones"}
+            {cant > 0 && ` · ${cant} seleccionada${cant === 1 ? "" : "s"}`}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Chip({ children, icon, onRemove }) {
   return (
     <span
@@ -601,5 +856,8 @@ const ESTILOS_PPM = `
 }
 .ppm-row:active {
   transform: scale(.998);
+}
+.ppm-opt:hover {
+  background: ${TEAL_SOFT} !important;
 }
 `;
