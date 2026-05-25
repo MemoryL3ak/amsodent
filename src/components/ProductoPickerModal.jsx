@@ -35,11 +35,30 @@ function precioPorLista(p, listado) {
   return Number(p?.[`lista${listado}`] || 0);
 }
 
-export default function ProductoPickerModal({ productos, onSelect, onClose, listadoInicial }) {
+// Texto descriptivo del tipo de compra que justifica el listado de precios.
+// El select de lista está bloqueado — la lista la determina el tipo de compra
+// de la cotización para evitar errores manuales.
+const ETIQUETA_TIPO_COMPRA = {
+  "Cliente particular":          { lista: "1", texto: "Cliente particular" },
+  "Compra ágil":                 { lista: "2", texto: "Compra ágil" },
+  "Compra directa":              { lista: "2", texto: "Compra directa" },
+  "Licitación 0 a 8 meses":      { lista: "2", texto: "Licitación 0 a 8 meses" },
+  "Licitación 9 a 24 meses":     { lista: "3", texto: "Licitación 9 a 24 meses" },
+};
+
+export default function ProductoPickerModal({
+  productos,
+  onSelect,
+  onClose,
+  listadoInicial,
+  tipoCompra,
+}) {
   const [busqueda, setBusqueda] = useState("");
   const [categoria, setCategoria] = useState("");
   const [marca, setMarca] = useState("");
-  const [listado, setListado] = useState(String(listadoInicial || "2"));
+  // El listado es READ-ONLY — viene del tipo de compra y no se puede cambiar.
+  const listado = String(listadoInicial || "2");
+  const infoTC = ETIQUETA_TIPO_COMPRA[tipoCompra] || null;
 
   const categorias = useMemo(
     () => [...new Set((productos || []).map((p) => p.categoria).filter(Boolean))].sort(),
@@ -259,30 +278,57 @@ export default function ProductoPickerModal({ productos, onSelect, onClose, list
               <option key={m} value={m}>{m}</option>
             ))}
           </select>
-          <select
-            value={listado}
-            onChange={(e) => setListado(e.target.value)}
-            title="Listado de precios"
-            className="ppm-select"
+          {/* Badge read-only del listado de precios — lo determina el tipo
+              de compra de la cotización, no se puede cambiar manualmente. */}
+          <div
+            title={
+              infoTC
+                ? `Lista de precios ${listado} (por tipo de compra: ${infoTC.texto})`
+                : `Lista de precios ${listado}`
+            }
             style={{
-              padding: "0 12px",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "0 14px",
               height: 40,
               borderRadius: 10,
-              border: `1.5px solid ${TEAL_MID}`,
-              fontSize: 13.5,
-              minWidth: 160,
-              background: "#fff",
-              cursor: "pointer",
-              outline: "none",
-              transition: "border-color .15s, box-shadow .15s",
-              fontWeight: 600,
+              border: `1.5px solid ${TEAL}`,
+              background: `linear-gradient(135deg, ${TEAL_SOFT} 0%, #d4f0f1 100%)`,
               color: TEAL_DEEP,
+              fontSize: 13,
+              fontWeight: 700,
+              minWidth: 160,
+              boxShadow: "0 1px 3px -1px rgba(37,183,189,.2)",
+              userSelect: "none",
             }}
           >
-            <option value="1">Lista de precios 1</option>
-            <option value="2">Lista de precios 2</option>
-            <option value="3">Lista de precios 3</option>
-          </select>
+            <span
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                width: 22,
+                height: 22,
+                borderRadius: 7,
+                background: TEAL,
+                color: "#fff",
+                fontSize: 11.5,
+                fontWeight: 800,
+                lineHeight: 1,
+              }}
+            >
+              L{listado}
+            </span>
+            <span style={{ display: "flex", flexDirection: "column", lineHeight: 1.15 }}>
+              <span style={{ fontSize: 12.5, fontWeight: 800 }}>Lista de precios {listado}</span>
+              {infoTC && (
+                <span style={{ fontSize: 10.5, opacity: 0.85, fontWeight: 500 }}>
+                  {infoTC.texto}
+                </span>
+              )}
+            </span>
+          </div>
         </div>
 
         {/* Chips de filtros activos */}
