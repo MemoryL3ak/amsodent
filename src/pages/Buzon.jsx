@@ -2445,6 +2445,8 @@ function ModalFirma({ onCerrar, setAviso }) {
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState("");
   const [firma, setFirma] = useState(null); // {html, personalizada, campos}
+  const [nombre, setNombre] = useState("");
+  const [email, setEmail] = useState("");
   const [cargo, setCargo] = useState("");
   const [celular, setCelular] = useState("");
 
@@ -2454,6 +2456,8 @@ function ModalFirma({ onCerrar, setAviso }) {
       try {
         const r = await api.get("/correos/firma");
         setFirma(r);
+        setNombre(r?.campos?.nombre || "");
+        setEmail(r?.campos?.email || "");
         setCargo(r?.campos?.cargo || "");
         setCelular(r?.campos?.celular || "");
       } catch (e) {
@@ -2468,7 +2472,7 @@ function ModalFirma({ onCerrar, setAviso }) {
     setGuardando(true);
     setError("");
     try {
-      const r = await api.post("/correos/firma/campos", { cargo, celular });
+      const r = await api.post("/correos/firma/campos", { nombre, email, cargo, celular });
       setFirma(r);
       setAviso?.({ tipo: "ok", texto: "Firma actualizada." });
       onCerrar();
@@ -2485,6 +2489,8 @@ function ModalFirma({ onCerrar, setAviso }) {
     try {
       const r = await api.post("/correos/firma/reset", {});
       setFirma(r);
+      setNombre(r?.campos?.nombre || "");
+      setEmail(r?.campos?.email || "");
       setCargo(r?.campos?.cargo || "");
       setCelular(r?.campos?.celular || "");
       setAviso?.({ tipo: "ok", texto: "Firma restablecida al diseño por defecto." });
@@ -2588,13 +2594,12 @@ function ModalFirma({ onCerrar, setAviso }) {
               <CampoFirma etiqueta="Nombre">
                 <input
                   type="text"
-                  value={firma?.campos?.nombre || ""}
-                  disabled
-                  style={{ ...inputFirma, background: "#f1f5f9", color: MUTED }}
+                  value={nombre}
+                  onChange={(e) => setNombre(e.target.value)}
+                  placeholder="Tu nombre como aparecerá en la firma"
+                  maxLength={120}
+                  style={inputFirma}
                 />
-                <span style={{ fontSize: 11, color: FAINT, marginTop: 4, display: "block" }}>
-                  Tu nombre se toma de tu perfil.
-                </span>
               </CampoFirma>
               <CampoFirma etiqueta="Cargo / Rol">
                 <input
@@ -2618,13 +2623,15 @@ function ModalFirma({ onCerrar, setAviso }) {
               </CampoFirma>
               <CampoFirma etiqueta="Correo">
                 <input
-                  type="text"
-                  value={firma?.campos?.email || ""}
-                  disabled
-                  style={{ ...inputFirma, background: "#f1f5f9", color: MUTED }}
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="correo@dominio.cl"
+                  maxLength={160}
+                  style={inputFirma}
                 />
                 <span style={{ fontSize: 11, color: FAINT, marginTop: 4, display: "block" }}>
-                  Tu correo se toma de tu cuenta conectada.
+                  Es solo para mostrar en la firma — no cambia tu cuenta de login.
                 </span>
               </CampoFirma>
 

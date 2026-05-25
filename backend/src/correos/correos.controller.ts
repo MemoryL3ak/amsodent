@@ -46,7 +46,7 @@ export class CorreosController {
   @UseGuards(AuthGuard)
   async setFirmaCampos(
     @Req() req: any,
-    @Body() body: { cargo?: string; celular?: string },
+    @Body() body: { cargo?: string; celular?: string; nombre?: string; email?: string },
   ) {
     return this.firmas.setFirmaCampos(idDe(req), body || {});
   }
