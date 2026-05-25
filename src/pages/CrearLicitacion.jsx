@@ -1820,6 +1820,7 @@ export default function CrearLicitacion() {
           onSelect={seleccionarProductoDesdePicker}
           onClose={() => setPickerIndex(null)}
           listadoInicial={listado}
+          tipoCompra={tipoCompra}
         />
       )}
 
