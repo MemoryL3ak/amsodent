@@ -150,6 +150,9 @@ export default function ChatEquipo({ onLicitacionRegistrada }) {
 
   // Salas
   const [salas, setSalas] = useState([]);
+  const [noLeidasPorSala, setNoLeidasPorSala] = useState({}); // { salaId: count }
+  const [leidoHastaPorSala, setLeidoHastaPorSala] = useState({}); // { salaId: iso }
+  const salaActivaIdRef = useRef(null);
   const [salaActivaId, setSalaActivaId] = useState(null);
   const [cargandoSalas, setCargandoSalas] = useState(true);
   const [miembrosPorSala, setMiembrosPorSala] = useState({}); // {salaId: [emails]}
@@ -208,13 +211,19 @@ export default function ChatEquipo({ onLicitacionRegistrada }) {
     let activo = true;
     (async () => {
       setCargandoSalas(true);
-      // Salas en las que el usuario es miembro
+      // Salas en las que el usuario es miembro (incluyendo el leido_hasta para
+      // poder calcular los mensajes no leídos por sala).
       const { data: miembrosYo } = await supabase
         .from("chat_sala_miembros")
-        .select("sala_id")
+        .select("sala_id, leido_hasta")
         .eq("email", yo.email);
 
       const ids = (miembrosYo || []).map((m) => m.sala_id);
+      const mapaLeido = {};
+      (miembrosYo || []).forEach((m) => {
+        mapaLeido[m.sala_id] = m.leido_hasta || new Date(0).toISOString();
+      });
+
       let salasData = [];
       if (ids.length > 0) {
         const { data } = await supabase
@@ -242,9 +251,26 @@ export default function ChatEquipo({ onLicitacionRegistrada }) {
         .select("id, email, nombre, rol")
         .order("nombre", { ascending: true });
 
+      // Contar no leídos por sala
+      const mapaNoLeidas = {};
+      await Promise.all(
+        ids.map(async (salaId) => {
+          const desde = mapaLeido[salaId] || new Date(0).toISOString();
+          const { count } = await supabase
+            .from("chat_mensajes")
+            .select("id", { count: "exact", head: true })
+            .eq("sala_id", salaId)
+            .gt("created_at", desde)
+            .neq("autor_email", yo.email); // los míos no cuentan
+          mapaNoLeidas[salaId] = count || 0;
+        }),
+      );
+
       if (!activo) return;
       setSalas(salasData);
       setMiembrosPorSala(mapaMiembros);
+      setLeidoHastaPorSala(mapaLeido);
+      setNoLeidasPorSala(mapaNoLeidas);
       setPerfiles(pf || []);
       const general = salasData.find((s) => s.es_general) || salasData[0];
       setSalaActivaId(general?.id || null);
@@ -254,6 +280,25 @@ export default function ChatEquipo({ onLicitacionRegistrada }) {
       activo = false;
     };
   }, [yo.email]);
+
+  /* ── Marcar sala como leída al abrirla ───────────────────────────── */
+  useEffect(() => {
+    salaActivaIdRef.current = salaActivaId;
+    if (!salaActivaId || !yo.email) return;
+    // Limpiar contador local al instante
+    setNoLeidasPorSala((prev) => ({ ...prev, [salaActivaId]: 0 }));
+    const ahora = new Date().toISOString();
+    setLeidoHastaPorSala((prev) => ({ ...prev, [salaActivaId]: ahora }));
+    // Persistir leido_hasta = now() en la DB
+    supabase
+      .from("chat_sala_miembros")
+      .update({ leido_hasta: ahora })
+      .eq("sala_id", salaActivaId)
+      .eq("email", yo.email)
+      .then(() => {
+        /* silencioso */
+      });
+  }, [salaActivaId, yo.email]);
 
   /* ── Cargar mensajes al cambiar sala ──────────────────────────────── */
   useEffect(() => {
@@ -412,6 +457,44 @@ export default function ChatEquipo({ onLicitacionRegistrada }) {
         // eslint-disable-next-line no-console
         console.log("[chat] estado canal miembros:", status, err || "");
       });
+    return () => {
+      supabase.removeChannel(canal);
+    };
+  }, [yo.email]);
+
+  /* ── Suscripción global a mensajes nuevos para contar no leídos ────── */
+  useEffect(() => {
+    if (!yo.email) return undefined;
+    const canal = supabase
+      .channel(`chat_mensajes_global_${yo.email}`)
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "chat_mensajes" },
+        (payload) => {
+          const m = payload?.new;
+          if (!m?.sala_id) return;
+          // Ignorar mis propios mensajes
+          if ((m.autor_email || "").toLowerCase() === yo.email) return;
+          // Si es la sala activa, marcar como leído al instante en vez de contar
+          if (m.sala_id === salaActivaIdRef.current) {
+            const ahora = new Date().toISOString();
+            setLeidoHastaPorSala((prev) => ({ ...prev, [m.sala_id]: ahora }));
+            supabase
+              .from("chat_sala_miembros")
+              .update({ leido_hasta: ahora })
+              .eq("sala_id", m.sala_id)
+              .eq("email", yo.email)
+              .then(() => {});
+            return;
+          }
+          // Si no es la activa, incrementar contador local
+          setNoLeidasPorSala((prev) => ({
+            ...prev,
+            [m.sala_id]: (prev[m.sala_id] || 0) + 1,
+          }));
+        },
+      )
+      .subscribe();
     return () => {
       supabase.removeChannel(canal);
     };
@@ -1100,6 +1183,7 @@ export default function ChatEquipo({ onLicitacionRegistrada }) {
                 salas.map((s) => {
                   const activa = s.id === salaActivaId;
                   const cantidad = (miembrosPorSala[s.id] || []).length;
+                  const noLeidas = noLeidasPorSala[s.id] || 0;
                   const esCreadorSala =
                     (s.creada_por || "").toLowerCase() === yo.email.toLowerCase();
                   const puedeEliminar = esCreadorSala && !s.es_general;
@@ -1145,10 +1229,33 @@ export default function ChatEquipo({ onLicitacionRegistrada }) {
                             letterSpacing: "-.005em",
                           }}
                         >
-                          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
+                          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0, fontWeight: noLeidas > 0 && !activa ? 800 : "inherit" }}>
                             {s.nombre}
                           </span>
                           {s.es_general && <span style={pillGeneral}>General</span>}
+                          {noLeidas > 0 && !activa && (
+                            <span
+                              style={{
+                                marginLeft: "auto",
+                                minWidth: 20,
+                                height: 20,
+                                padding: "0 6px",
+                                borderRadius: 999,
+                                background: "#dc2626",
+                                color: "#fff",
+                                fontSize: 11,
+                                fontWeight: 800,
+                                display: "inline-flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                lineHeight: 1,
+                                boxShadow: "0 2px 6px -1px rgba(220,38,38,.45)",
+                              }}
+                              title={`${noLeidas} mensaje${noLeidas === 1 ? "" : "s"} sin leer`}
+                            >
+                              {noLeidas > 99 ? "99+" : noLeidas}
+                            </span>
+                          )}
                         </span>
                         <span
                           style={{
