@@ -22,6 +22,33 @@ export class ChatService {
     return { ok: true, eliminados };
   }
 
+  // Notificación genérica del chat (sala eliminada, etc.). Inserta un row
+  // por cada destinatario. Bypassa RLS con service_role.
+  async notificarEvento(opts: {
+    tipo: string;
+    mensaje: string;
+    emails: string[];
+    link?: string;
+    metadata?: Record<string, unknown>;
+  }) {
+    const limpios = (opts.emails || [])
+      .map((e) => String(e || '').trim().toLowerCase())
+      .filter(Boolean);
+    if (limpios.length === 0) return { ok: true, creadas: 0 };
+    const rows = limpios.map((user_email) => ({
+      user_email,
+      tipo: opts.tipo,
+      mensaje: opts.mensaje,
+      link: opts.link || '/bitacora-cotizaciones',
+      metadata: opts.metadata || {},
+    }));
+    const { error } = await this.supabase.getClient().from('notificaciones').insert(rows);
+    if (error) {
+      this.logger.error(`No se pudo notificar evento ${opts.tipo}: ${error.message}`);
+    }
+    return { ok: true, creadas: rows.length };
+  }
+
   // Genera notificaciones para los usuarios recién agregados a una sala.
   // Llamado desde el frontend cuando se agregan miembros — usa service_role
   // para bypassar RLS de la tabla notificaciones.
