@@ -327,39 +327,41 @@ export default function ChatEquipo({ onLicitacionRegistrada }) {
   useEffect(() => {
     if (!yo.email) return undefined;
     const emailFiltro = `email=eq.${yo.email}`;
+    // eslint-disable-next-line no-console
+    console.log("[chat] suscribiéndose a cambios de miembros para", yo.email);
     const canal = supabase
       .channel(`chat_miembros_${yo.email}`)
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "chat_sala_miembros", filter: emailFiltro },
         async (payload) => {
+          // eslint-disable-next-line no-console
+          console.log("[chat] INSERT en chat_sala_miembros recibido", payload?.new);
           const salaId = payload?.new?.sala_id;
           if (!salaId) return;
-          // Si la sala ya está en mi lista (ej. yo la creé), solo refrescar miembros.
-          if (salas.some((s) => s.id === salaId)) {
-            const { data: miembros } = await supabase
-              .from("chat_sala_miembros")
-              .select("email")
-              .eq("sala_id", salaId);
+          // Traer la sala y los miembros — la lógica de "ya está" se resuelve
+          // con el setSalas funcional para evitar cerrar sobre `salas` viejo.
+          const { data: sala } = await supabase
+            .from("chat_salas")
+            .select("*")
+            .eq("id", salaId)
+            .maybeSingle();
+          const { data: miembros } = await supabase
+            .from("chat_sala_miembros")
+            .select("email")
+            .eq("sala_id", salaId);
+          if (!sala) {
+            // sala no accesible — solo actualizar miembros si ya la tengo
             setMiembrosPorSala((prev) => ({
               ...prev,
               [salaId]: (miembros || []).map((m) => m.email),
             }));
             return;
           }
-          // Si es una sala nueva: traerla, sumarla a la lista y avisar.
-          const { data: sala } = await supabase
-            .from("chat_salas")
-            .select("*")
-            .eq("id", salaId)
-            .maybeSingle();
-          if (!sala) return;
-          const { data: miembros } = await supabase
-            .from("chat_sala_miembros")
-            .select("email")
-            .eq("sala_id", salaId);
+          let eraNueva = false;
           setSalas((prev) => {
             if (prev.some((s) => s.id === sala.id)) return prev;
+            eraNueva = true;
             return [...prev, sala].sort((a, b) => {
               if (a.es_general !== b.es_general) return a.es_general ? -1 : 1;
               return (a.nombre || "").localeCompare(b.nombre || "");
@@ -369,18 +371,19 @@ export default function ChatEquipo({ onLicitacionRegistrada }) {
             ...prev,
             [sala.id]: (miembros || []).map((m) => m.email),
           }));
-          setAvisoSala({ nombre: sala.nombre, salaId: sala.id });
-          // Notificación nativa del navegador si el permiso ya fue concedido.
-          try {
-            if (typeof Notification !== "undefined" && Notification.permission === "granted") {
-              new Notification("Te agregaron a una sala de chat", {
-                body: sala.nombre || "Nueva sala disponible",
-                icon: "/favicon.ico",
-                tag: `chat-sala-${sala.id}`,
-              });
+          if (eraNueva) {
+            setAvisoSala({ nombre: sala.nombre, salaId: sala.id });
+            try {
+              if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+                new Notification("Te agregaron a una sala de chat", {
+                  body: sala.nombre || "Nueva sala disponible",
+                  icon: "/favicon.ico",
+                  tag: `chat-sala-${sala.id}`,
+                });
+              }
+            } catch {
+              // ignorar fallas de notificaciones
             }
-          } catch {
-            // ignorar fallas de notificaciones
           }
         },
       )
@@ -388,6 +391,8 @@ export default function ChatEquipo({ onLicitacionRegistrada }) {
         "postgres_changes",
         { event: "DELETE", schema: "public", table: "chat_sala_miembros", filter: emailFiltro },
         (payload) => {
+          // eslint-disable-next-line no-console
+          console.log("[chat] DELETE en chat_sala_miembros recibido", payload?.old);
           const salaId = payload?.old?.sala_id;
           if (!salaId) return;
           setSalas((prev) => prev.filter((s) => s.id !== salaId));
@@ -398,17 +403,18 @@ export default function ChatEquipo({ onLicitacionRegistrada }) {
           });
           setSalaActivaId((actual) => {
             if (actual !== salaId) return actual;
-            // si la sala activa se cerró para mí, saltar a la general u otra.
-            const otra = salas.find((s) => s.id !== salaId);
-            return otra?.id || null;
+            return null;
           });
         },
       )
-      .subscribe();
+      .subscribe((status, err) => {
+        // eslint-disable-next-line no-console
+        console.log("[chat] estado canal miembros:", status, err || "");
+      });
     return () => {
       supabase.removeChannel(canal);
     };
-  }, [yo.email, salas]);
+  }, [yo.email]);
 
   // Pedir permiso de notificación una sola vez al montar (no bloquea si lo deniegan)
   useEffect(() => {
