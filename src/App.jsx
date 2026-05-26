@@ -135,14 +135,10 @@ export default function App() {
             }
           />
 
-          {/* CHAT GRUPAL — solo admin */}
+          {/* CHAT GRUPAL — disponible para todos los autenticados */}
           <Route
             path="bitacora-cotizaciones"
-            element={
-              <RequireRole allow={["admin"]}>
-                <BitacoraCotizaciones />
-              </RequireRole>
-            }
+            element={<BitacoraCotizaciones />}
           />
 
           {/* BUZÓN DE CORREO — solo admin */}
