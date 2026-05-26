@@ -140,7 +140,7 @@ export default function SidebarLayout() {
 
   const comunicacionNav = [
     esAdmin && { to: "/buzon",                 icon: Mail,          label: "Mi Correo" },
-    esAdmin && { to: "/bitacora-cotizaciones", icon: MessagesSquare, label: "Chat Grupal" },
+    { to: "/bitacora-cotizaciones", icon: MessagesSquare, label: "Chat Grupal" },
   ].filter(Boolean);
 
   const reportNav = [
