@@ -15,6 +15,15 @@ function hoyLocalISO() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
+// Formatea fechas de DB (date o timestamptz) como dd-mm-yyyy sin pasar
+// por `new Date()`, que mete shifts de timezone.
+function formatearFechaCorta(fecha) {
+  if (!fecha) return "";
+  const s = String(fecha).slice(0, 10);
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return m ? `${m[3]}-${m[2]}-${m[1]}` : s;
+}
+
 function SLABadge({ fechaOc }) {
   if (!fechaOc) return null;
   const sla = calcularSLAGuiaDespacho(fechaOc, hoyLocalISO(), SLA_GUIA_DIAS_HABILES);
@@ -1271,7 +1280,7 @@ export default function Trazabilidad() {
                                   </div>
                                   <div style={{ color: "var(--text-muted)", fontSize: "11px" }}>
                                     {oc.fecha_oc
-                                      ? new Date(`${oc.fecha_oc}T00:00:00`).toLocaleDateString("es-CL")
+                                      ? formatearFechaCorta(oc.fecha_oc)
                                       : <span style={{ fontStyle: "italic", color: "#cbd5e1" }}>Sin fecha</span>}
                                   </div>
                                   {!tieneGuia && oc.fecha_oc && (
@@ -1346,7 +1355,7 @@ export default function Trazabilidad() {
                                   </div>
                                   <div style={{ color: "var(--text-muted)", fontSize: "11px" }}>
                                     {(guia.fecha_oc || guia.created_at)
-                                      ? new Date(`${(guia.fecha_oc || guia.created_at).slice(0, 10)}T00:00:00`).toLocaleDateString("es-CL")
+                                      ? formatearFechaCorta(guia.fecha_oc || guia.created_at)
                                       : ""}
                                   </div>
                                   {empresaTxt && (
@@ -1396,9 +1405,9 @@ export default function Trazabilidad() {
                               </div>
                               <div style={{ color: "var(--text-muted)", fontSize: "11px" }}>
                                 {factura.fecha_factura
-                                  ? new Date(`${factura.fecha_factura}T00:00:00`).toLocaleDateString("es-CL")
+                                  ? formatearFechaCorta(factura.fecha_factura)
                                   : factura.created_at
-                                  ? new Date(factura.created_at).toLocaleDateString("es-CL")
+                                  ? formatearFechaCorta(factura.created_at)
                                   : ""}
                               </div>
                             </div>
@@ -1438,9 +1447,9 @@ export default function Trazabilidad() {
                                   </div>
                                   <div style={{ color: "var(--text-muted)", fontSize: "11px" }}>
                                     {comprobante.fecha_oc
-                                      ? new Date(`${comprobante.fecha_oc}T00:00:00`).toLocaleDateString("es-CL")
+                                      ? formatearFechaCorta(comprobante.fecha_oc)
                                       : comprobante.created_at
-                                      ? new Date(comprobante.created_at).toLocaleDateString("es-CL")
+                                      ? formatearFechaCorta(comprobante.created_at)
                                       : ""}
                                   </div>
                                 </div>

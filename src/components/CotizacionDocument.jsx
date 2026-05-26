@@ -318,6 +318,12 @@ export function CotizacionDocument({ datos, items, logoSrc, marcaAguaSrc }) {
                   <InfoLine label="Fecha:" value={datos.fecha_emision} />
                   <InfoLine label="ID Licitación:" value={datos.id_licitacion} />
                 </View>
+                {datos.fecha_adjudicacion && (
+                  <View style={s.infoRow}>
+                    <InfoLine label="Fecha Adjudicación:" value={datos.fecha_adjudicacion} />
+                    <InfoLine label="" value="" />
+                  </View>
+                )}
 
                 {/* Datos del Cliente */}
                 <Text style={s.sectionTitle}>Datos del Cliente</Text>
