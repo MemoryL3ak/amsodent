@@ -144,6 +144,27 @@ function fechaHoyISO() {
   return `${y}-${m}-${day}`;
 }
 
+// Formatea una fecha guardada en DB (date o timestamptz) como dd-mm-yyyy
+// SIN pasar por `new Date()` — el constructor de Date introduce shifts de
+// timezone que pueden cambiar el día (e incluso "intercambiar" día y mes
+// si el formato no es ISO estricto). Toma los primeros 10 chars y los
+// reordena por string directamente.
+function formatearFechaCorta(fecha) {
+  if (!fecha) return "—";
+  const s = String(fecha).slice(0, 10);
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (m) return `${m[3]}-${m[2]}-${m[1]}`;
+  return s;
+}
+
+// Toma una fecha posiblemente timestamptz (ej "2026-05-15T03:00:00+00:00")
+// y la convierte a YYYY-MM-DD para usar con DateFilter.
+function aIsoFechaCorta(fecha) {
+  if (!fecha) return "";
+  const s = String(fecha).slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : "";
+}
+
 // Precio base según la lista activa. Lista 3 se usa para tipo de compra
 // "Licitación 9 a 24 meses". Si el producto tiene Lista 3 explícita la usamos;
 // si no, fallback al factor configurado (ver src/lib/listas.js).
@@ -1284,7 +1305,9 @@ export default function EditarLicitacion() {
     setDocEditando(doc);
     setDocEditNumero(doc.numero || "");
     setDocEditMonto(doc.monto != null ? String(doc.monto) : "");
-    setDocEditFechaOC(doc.fecha_oc || "");
+    // Si la DB retorna timestamptz ("2026-05-15T03:00:00+00:00"), DateFilter
+    // no puede parsearlo. Lo recortamos a YYYY-MM-DD.
+    setDocEditFechaOC(aIsoFechaCorta(doc.fecha_oc));
   }
 
   function cancelarEdicionDocumento() {
@@ -2305,12 +2328,35 @@ export default function EditarLicitacion() {
     setToast({ type: "info", message: "Generando PDF…" });
 
     try {
-      const fechaHoy = new Date().toISOString().slice(0, 10);
+      // Fecha de emisión = fecha ingresada en el comprobante de pago (si existe).
+      // Si no hay comprobante todavía, caemos a hoy.
+      const comprobantes = (documentos || []).filter(
+        (d) => d.tipo === "comprobante_pago" && d.fecha_oc,
+      );
+      const comprobanteMasReciente = comprobantes
+        .slice()
+        .sort((a, b) => String(b.fecha_oc).localeCompare(String(a.fecha_oc)))[0];
+      const fechaEmision = comprobanteMasReciente?.fecha_oc
+        ? formatearFechaCorta(comprobanteMasReciente.fecha_oc)
+        : formatearFechaCorta(new Date().toISOString().slice(0, 10));
+
+      // Fecha de adjudicación = fecha de la primera OC subida (la más antigua).
+      // Si no hay OC todavía, queda vacío y el PDF omite la línea.
+      const ocsConFecha = (documentos || []).filter(
+        (d) => d.tipo === "orden_compra" && d.fecha_oc,
+      );
+      const primeraOC = ocsConFecha
+        .slice()
+        .sort((a, b) => String(a.fecha_oc).localeCompare(String(b.fecha_oc)))[0];
+      const fechaAdjudicacion = primeraOC?.fecha_oc
+        ? formatearFechaCorta(primeraOC.fecha_oc)
+        : "";
 
       await generarPDFcotizacion({
         numero_licitacion: id,
         id_licitacion: idLicitacionInput,
-        fecha_emision: fechaHoy,
+        fecha_emision: fechaEmision,
+        fecha_adjudicacion: fechaAdjudicacion,
 
         nombre_entidad: nombreEntidad,
         rut_entidad: rutEntidad,
@@ -3927,7 +3973,7 @@ export default function EditarLicitacion() {
                           onChange={(e) => setDocEditFechaOC(e.target.value)}
                         />
                       ) : ["orden_compra", "guia_despacho", "factura_boleta", "comprobante_pago", "efectivo"].includes(doc.tipo) && doc.fecha_oc
-                        ? new Date(`${doc.fecha_oc}T00:00:00`).toLocaleDateString("es-CL")
+                        ? formatearFechaCorta(doc.fecha_oc)
                         : doc.created_at
                         ? new Date(doc.created_at).toLocaleString("es-CL")
                         : "-"}
