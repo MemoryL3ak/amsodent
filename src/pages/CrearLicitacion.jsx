@@ -1147,15 +1147,67 @@ export default function CrearLicitacion() {
   }
 
   // Selección de un producto desde el popup buscador.
+  // Selección de un producto desde el popup buscador. Usa el objeto producto
+  // directamente — no depende de productos.find() porque cuando el producto
+  // recién se creó, productos puede estar stale (race con setProductos).
   function seleccionarProductoDesdePicker(prod) {
     const idx = pickerIndex;
     setPickerIndex(null);
     if (idx == null || !prod) return;
-    const sku = String(prod.sku || "").trim();
-    if (sku) {
-      actualizarItem(idx, "sku", sku);
+
+    // Mantener el catálogo local actualizado para próximas selecciones.
+    setProductos((prev) => {
+      const existeId = prev.some((p) => p.id != null && p.id === prod.id);
+      const existeSku = prod.sku
+        ? prev.some((p) => String(p.sku || "").trim() === String(prod.sku).trim())
+        : false;
+      if (existeId || existeSku) return prev;
+      return [...prev, prod];
+    });
+
+    // Rellenar el ítem con los datos del prod recibido — NO usar
+    // actualizarItem(sku) ni (producto) porque hacen lookup que puede fallar
+    // si productos aún no se actualizó.
+    setItems((prev) => {
+      const copia = [...prev];
+      const item = { ...(copia[idx] || crearItemVacio()) };
+      item.sku = prod.sku ? String(prod.sku).trim() : "";
+      item.producto = prod.nombre || "";
+      item.categoria = prod.categoria || "";
+      item.formato = prod.formato || "";
+      item.precio = getPrecioBaseParaSKU(prod, listado, campaignPrices);
+      item.costo = Number(prod.costo ?? 0);
+      item.precioManual = false;
+      item.precioUnitarioStr = "";
+      item.costoManual = false;
+      item.costoStr = "";
+      const cantidad = Math.max(1, Number(item.cantidad || 1));
+      item.total = redondear(cantidad * (Number(item.precio || 0) + Number(fletePorUnidad || 0)));
+      copia[idx] = item;
+      return copia;
+    });
+  }
+
+  // Callback cuando se crea un producto desde el modal del picker.
+  // Se refresca la lista local agregando el nuevo producto y se muestra
+  // un toast informativo (especialmente útil cuando queda Pendiente Aprobación).
+  function handleProductoCreado(productoCreado, estadoFinal) {
+    if (!productoCreado) return;
+    setProductos((prev) => {
+      const existe = prev.some((p) => p.id != null && p.id === productoCreado.id);
+      return existe ? prev : [...prev, productoCreado];
+    });
+    if (estadoFinal === "Pendiente Aprobación") {
+      setToast({
+        type: "warning",
+        message:
+          'Producto creado en estado "Pendiente Aprobación" (margen < 15%). No se agregó al ítem — esperar aprobación de admin.',
+      });
     } else {
-      actualizarItem(idx, "producto", prod.nombre || "");
+      setToast({
+        type: "success",
+        message: `Producto "${productoCreado.nombre}" creado y agregado a la cotización.`,
+      });
     }
   }
 
@@ -1821,6 +1873,7 @@ export default function CrearLicitacion() {
           onClose={() => setPickerIndex(null)}
           listadoInicial={listado}
           tipoCompra={tipoCompra}
+          onProductoCreado={handleProductoCreado}
         />
       )}
 

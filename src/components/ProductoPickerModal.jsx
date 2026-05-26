@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Search, X, PackageSearch, Tag, Filter, Check, ChevronDown } from "lucide-react";
+import { Search, X, PackageSearch, Tag, Filter, Check, ChevronDown, Plus } from "lucide-react";
 import { calcularLista3 } from "../lib/listas";
+import CrearProductoModal from "./CrearProductoModal";
 
 // Popup buscador de productos para usar dentro de la cotización, así no hay
 // que abrir el módulo de Productos. Muestra el catálogo con filtros; al hacer
@@ -55,11 +56,13 @@ export default function ProductoPickerModal({
   onClose,
   listadoInicial,
   tipoCompra,
+  onProductoCreado,
 }) {
   const [busqueda, setBusqueda] = useState("");
   const [busquedaInput, setBusquedaInput] = useState(""); // input controlado (sin debounce)
   const [categoriasSel, setCategoriasSel] = useState([]); // array de strings
   const [marcasSel, setMarcasSel] = useState([]);
+  const [mostrarCrear, setMostrarCrear] = useState(false);
   // El listado es READ-ONLY — viene del tipo de compra y no se puede cambiar.
   const listado = String(listadoInicial || "2");
   const infoTC = ETIQUETA_TIPO_COMPRA[tipoCompra] || null;
@@ -204,25 +207,35 @@ export default function ProductoPickerModal({
               </div>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={() => onClose?.()}
-            className="ppm-close-btn"
-            style={{
-              background: "rgba(255,255,255,.18)",
-              border: "none",
-              color: "#fff",
-              cursor: "pointer",
-              padding: 7,
-              borderRadius: 9,
-              display: "inline-flex",
-              position: "relative",
-              transition: "background .15s ease, transform .15s ease",
-            }}
-            title="Cerrar (Esc)"
-          >
-            <X size={18} />
-          </button>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, position: "relative" }}>
+            <button
+              type="button"
+              onClick={() => setMostrarCrear(true)}
+              className="ppm-crear-btn"
+              title="Crear un nuevo producto"
+            >
+              <Plus size={14} strokeWidth={2.8} />
+              <span>Nuevo producto</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => onClose?.()}
+              className="ppm-close-btn"
+              style={{
+                background: "rgba(255,255,255,.18)",
+                border: "none",
+                color: "#fff",
+                cursor: "pointer",
+                padding: 7,
+                borderRadius: 9,
+                display: "inline-flex",
+                transition: "background .15s ease, transform .15s ease",
+              }}
+              title="Cerrar (Esc)"
+            >
+              <X size={18} />
+            </button>
+          </div>
         </div>
 
         {/* Barra de filtros */}
@@ -544,7 +557,29 @@ export default function ProductoPickerModal({
     </div>
   );
 
-  return createPortal(overlay, document.body);
+  return (
+    <>
+      {createPortal(overlay, document.body)}
+      {mostrarCrear && (
+        <CrearProductoModal
+          onClose={() => setMostrarCrear(false)}
+          onCreado={(productoCreado, estadoFinal) => {
+            setMostrarCrear(false);
+            // Si quedó Pendiente Aprobación → solo notificar, no agregar al ítem
+            // (no se puede usar hasta que admin lo apruebe).
+            if (estadoFinal === "Pendiente Aprobación") {
+              onProductoCreado?.(productoCreado, estadoFinal);
+              return;
+            }
+            // Producto válido: notificar al parent para refrescar el catálogo
+            // y seleccionar el producto recién creado en la cotización.
+            onProductoCreado?.(productoCreado, estadoFinal);
+            onSelect?.(productoCreado);
+          }}
+        />
+      )}
+    </>
+  );
 }
 
 function Th({ children, align = "left" }) {
@@ -887,6 +922,31 @@ const ESTILOS_PPM = `
   background: rgba(255,255,255,.3) !important;
   transform: scale(1.05);
 }
+.ppm-crear-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 34px; padding: 0 14px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, rgba(255,255,255,.98) 0%, rgba(255,255,255,.85) 100%);
+  color: ${TEAL_DEEP};
+  border: none; cursor: pointer;
+  font-size: 12.5px; font-weight: 800; letter-spacing: .02em;
+  box-shadow: 0 4px 12px -3px rgba(0,0,0,.25), inset 0 1px 0 rgba(255,255,255,.6);
+  transition: transform .15s ease, box-shadow .15s ease, background .15s ease;
+  position: relative;
+  overflow: hidden;
+}
+.ppm-crear-btn::before {
+  content: ""; position: absolute; inset: 0;
+  background: linear-gradient(120deg, transparent 30%, rgba(37,183,189,.18) 50%, transparent 70%);
+  transform: translateX(-100%);
+  transition: transform .55s ease;
+}
+.ppm-crear-btn:hover {
+  transform: translateY(-1px) scale(1.03);
+  box-shadow: 0 8px 20px -4px rgba(0,0,0,.32), inset 0 1px 0 rgba(255,255,255,.6);
+}
+.ppm-crear-btn:hover::before { transform: translateX(100%); }
+.ppm-crear-btn:active { transform: scale(.97); }
 .ppm-row {
   transition: background .12s ease, transform .12s ease, box-shadow .12s ease;
 }
