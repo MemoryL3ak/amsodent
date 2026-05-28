@@ -15,7 +15,9 @@ import { api } from "../lib/api";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import Toast from "../components/Toast";
 import ConfirmModal from "../components/ConfirmModal";
+import DateFilter from "../components/DateFilter";
 import Select, { components } from "react-select";
+import ProductoPickerModal from "../components/ProductoPickerModal";
 import { generarPDFcotizacion } from "../utils/generarPDFcotizacion";
 import { calcularLista3 } from "../lib/listas";
 import { useUnsavedChanges } from "../context/UnsavedChangesContext";
@@ -105,21 +107,6 @@ function parseMontoFlexible(value) {
   if (typeof value === "number") return Number.isFinite(value) ? value : 0;
   if (typeof value === "string") return parseMontoCL(value);
   return 0;
-}
-
-function isTipoOrdenCompra(value) {
-  const v = (value || "")
-    .toString()
-    .trim()
-    .toLowerCase()
-    .replace(/[_-]+/g, " ")
-    .replace(/\s+/g, " ");
-  return (
-    v === "orden compra" ||
-    v === "orden de compra" ||
-    v.includes("orden compra") ||
-    v.includes("orden de compra")
-  );
 }
 
 function formatPorcentajePresupuesto(pct) {
@@ -915,6 +902,8 @@ export default function EditarLicitacion() {
      PRODUCTOS / ÍTEMS
   ================================ */
   const [productos, setProductos] = useState([]);
+  // Índice del ítem para el que está abierto el buscador de catálogo (popup).
+  const [pickerIndex, setPickerIndex] = useState(null);
   const [items, setItems] = useState([
     {
       uid: generarUid(),
@@ -1191,6 +1180,9 @@ export default function EditarLicitacion() {
   }
 
   function getCostoParaItem(item) {
+    // Costo editado en la cotización (no modifica el producto). Si no se editó,
+    // se toma el costo del producto del catálogo.
+    if (item?.costo != null && item.costo !== "") return Number(item.costo || 0);
     const sku = String(item?.sku || "").trim();
     const prod =
       (sku
@@ -1231,6 +1223,8 @@ export default function EditarLicitacion() {
       mostrarObs: false,
       precioManual: false,
       precioUnitarioStr: "",
+      costoManual: false,
+      costoStr: "",
     };
   }
 
@@ -1414,6 +1408,10 @@ export default function EditarLicitacion() {
       return;
     }
     const montoGuia = parseMontoCL(docMonto);
+    if (tipo === "guia_despacho" && montoGuia <= 0) {
+      setToast({ type: "error", message: "Debes ingresar el monto neto de la guía." });
+      return;
+    }
 
     const esPdf =
       file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
@@ -1506,6 +1504,11 @@ export default function EditarLicitacion() {
         message: "Documento cargado correctamente.",
       });
       await cargarDocumentosLicitacion();
+      // Fase 1 correos: avisar al detector global para que revise si hay un
+      // correo pendiente (agradecimiento OC / envío de guía) recién generado.
+      if (tipo === "orden_compra" || tipo === "guia_despacho") {
+        window.dispatchEvent(new Event("correos:check"));
+      }
     } catch (e) {
       console.error("Error subiendo documento:", {
         code: e?.code,
@@ -2133,6 +2136,29 @@ export default function EditarLicitacion() {
     });
   }
 
+  // Costo editable por el admin — solo afecta a esta cotización (el margen),
+  // nunca modifica el costo del producto en el catálogo.
+  function actualizarCostoItem(index, valorStr) {
+    if (!esEditable) return;
+    const copia = [...items];
+    const item = { ...copia[index] };
+    item.costoStr = formatearCLDesdeString(valorStr);
+    item.costo = Math.max(0, parseMontoCL(item.costoStr));
+    item.costoManual = true;
+    copia[index] = item;
+    setItems(copia);
+  }
+
+  function finalizarEdicionCosto(index) {
+    setItems((prev) => {
+      const copia = [...prev];
+      const item = { ...copia[index] };
+      item.costoStr = "";
+      copia[index] = item;
+      return copia;
+    });
+  }
+
   useEffect(() => {
     if (!hydrated) return;
 
@@ -2171,17 +2197,21 @@ export default function EditarLicitacion() {
       }, 0),
     [items, productos]
   );
-  const montoConsumidoOCNeto = useMemo(
+  // Consumido = guías de despacho + facturas/boletas + efectivo (no la OC).
+  const montoConsumidoNeto = useMemo(
     () =>
       (documentos || [])
-        .filter((d) => isTipoOrdenCompra(d?.tipo))
+        .filter((d) => {
+          const t = (d?.tipo || "").toString();
+          return t === "guia_despacho" || t === "factura_boleta" || t === "efectivo";
+        })
         .reduce((acc, d) => acc + parseMontoFlexible(d?.monto), 0),
     [documentos]
   );
-  const montoConsumidoOC = calcularBrutoDesdeNeto(montoConsumidoOCNeto);
+  const montoConsumido = calcularBrutoDesdeNeto(montoConsumidoNeto);
   const montoPresupuesto = parseMontoCL(monto);
   const saldoPresupuesto = montoPresupuesto - totalConIVA;
-  const saldoPorConsumirResumen = Math.max(0, totalConIVA - montoConsumidoOC);
+  const saldoPorConsumirResumen = Math.max(0, totalConIVA - montoConsumido);
   const montoNetoOCFormulario = parseMontoCL(docMonto);
   const montoBrutoOCFormulario = calcularBrutoDesdeNeto(montoNetoOCFormulario);
 
@@ -2227,6 +2257,11 @@ export default function EditarLicitacion() {
 
       item.precioManual = false;
       item.precioUnitarioStr = "";
+
+      // Costo inicial desde el producto; el admin puede editarlo en la cotización.
+      item.costo = Number(prod.costo ?? 0);
+      item.costoManual = false;
+      item.costoStr = "";
     }
 
     const cantidad = Math.max(1, Number(item.cantidad || 1));
@@ -2236,6 +2271,70 @@ export default function EditarLicitacion() {
 
     copia[index] = item;
     setItems(copia);
+  }
+
+  // Selección desde el buscador de catálogo (popup). Rellena el ítem con el
+  // objeto producto recibido (no usa productos.find, que puede estar stale si
+  // el producto recién se creó). Replica la lógica de precios de actualizarItem.
+  function seleccionarProductoDesdePicker(prod) {
+    const idx = pickerIndex;
+    setPickerIndex(null);
+    if (idx == null || !prod || !esEditable) return;
+
+    setProductos((prev) => {
+      const existeId = prod.id != null && prev.some((p) => p.id === prod.id);
+      const existeSku = prod.sku
+        ? prev.some((p) => String(p.sku || "").trim() === String(prod.sku).trim())
+        : false;
+      if (existeId || existeSku) return prev;
+      return [...prev, prod];
+    });
+
+    setItems((prev) => {
+      const copia = [...prev];
+      const item = { ...(copia[idx] || crearItemVacio()) };
+      item.sku = prod.sku ? String(prod.sku).trim() : "";
+      item.producto = prod.nombre || "";
+      item.categoria = prod.categoria || "";
+      item.formato = prod.formato || "";
+
+      const sku = String(item.sku || "").trim();
+      const precioCampania = sku ? campaignPriceBySku.get(sku) : null;
+      item.precio =
+        precioCampania != null ? Number(precioCampania) : getPrecioPorListado(prod, listado);
+
+      item.precioManual = false;
+      item.precioUnitarioStr = "";
+      item.costo = Number(prod.costo ?? 0);
+      item.costoManual = false;
+      item.costoStr = "";
+
+      const cantidad = Math.max(1, Number(item.cantidad || 1));
+      item.total = redondear(cantidad * (Number(item.precio || 0) + Number(fletePorUnidad || 0)));
+      copia[idx] = item;
+      return copia;
+    });
+  }
+
+  // Producto creado desde el modal del picker: refresca el catálogo local.
+  function handleProductoCreado(productoCreado, estadoFinal) {
+    if (!productoCreado) return;
+    setProductos((prev) => {
+      const existe = productoCreado.id != null && prev.some((p) => p.id === productoCreado.id);
+      return existe ? prev : [...prev, productoCreado];
+    });
+    if (estadoFinal === "Pendiente Aprobación") {
+      setToast({
+        type: "warning",
+        message:
+          'Producto creado en estado "Pendiente Aprobación" (margen < 15%). No se agregó al ítem — esperar aprobación de admin.',
+      });
+    } else {
+      setToast({
+        type: "success",
+        message: `Producto "${productoCreado.nombre}" creado y agregado a la cotización.`,
+      });
+    }
   }
 
   function toggleObservacion(index) {
@@ -2411,7 +2510,7 @@ export default function EditarLicitacion() {
     if (!nombre) errores.push("Nombre Licitación");
     if (!fechaHoraCierre) errores.push("Fecha y Hora de Cierre");
     if (!monto) errores.push("Monto");
-    if (!tipoCliente) errores.push("Tipo de Cliente");
+    if (!tipoCliente) errores.push("Tipo de Cotización");
     if (!rutEntidad) errores.push("RUT Entidad");
     if (!nombreEntidad) errores.push("Nombre Entidad");
     if (tipoCompra !== "Cliente particular" && !departamento) errores.push("Departamento");
@@ -2728,6 +2827,17 @@ export default function EditarLicitacion() {
         />
       )}
 
+      {pickerIndex !== null && (
+        <ProductoPickerModal
+          productos={productos}
+          onSelect={seleccionarProductoDesdePicker}
+          onClose={() => setPickerIndex(null)}
+          listadoInicial={listado}
+          tipoCompra={tipoCompra}
+          onProductoCreado={handleProductoCreado}
+        />
+      )}
+
       <div className="page-header">
         <div>
           <h1 className="page-title">Edición de Cotizaciones #{idLicitacionInput}</h1>
@@ -2787,7 +2897,7 @@ export default function EditarLicitacion() {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              Tipo de Cliente *
+              Tipo de Cotización *
             </label>
             <select
               className={inputClass}
@@ -2817,7 +2927,7 @@ export default function EditarLicitacion() {
                 onClick={guardarSoloTipoCliente}
                 disabled={guardandoTipoCliente}
               >
-                {guardandoTipoCliente ? "Guardando..." : "Guardar Tipo de Cliente"}
+                {guardandoTipoCliente ? "Guardando..." : "Guardar Tipo de Cotización"}
               </button>
             )}
           </div>
@@ -3256,10 +3366,53 @@ export default function EditarLicitacion() {
                       </div>
 
                       {/* Producto */}
-                      <div className={esAdmin ? "md:col-span-6" : "md:col-span-7"}>
-                        <label className="block text-xs text-gray-600 mb-1">
-                          Producto *
-                        </label>
+                      <div className={esAdmin ? "md:col-span-4" : "md:col-span-7"}>
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="block text-xs text-gray-600">
+                            Producto *
+                          </label>
+                          {esEditable && (
+                            <button
+                              type="button"
+                              onClick={() => setPickerIndex(index)}
+                              title="Buscar producto en el catálogo"
+                              style={{
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: 5,
+                                padding: "3px 10px",
+                                borderRadius: 999,
+                                border: "1px solid #25b7bd",
+                                background: "#fff",
+                                color: "#178a8f",
+                                fontSize: 11,
+                                fontWeight: 700,
+                                cursor: "pointer",
+                                letterSpacing: ".02em",
+                                boxShadow: "0 1px 3px -1px rgba(37,183,189,.25)",
+                                transition: "all .15s cubic-bezier(.4, 0, .2, 1)",
+                              }}
+                              onMouseEnter={(e) => {
+                                e.currentTarget.style.background = "linear-gradient(135deg, #25b7bd 0%, #178a8f 100%)";
+                                e.currentTarget.style.color = "#fff";
+                                e.currentTarget.style.boxShadow = "0 3px 10px -2px rgba(37,183,189,.55)";
+                                e.currentTarget.style.transform = "translateY(-1px)";
+                              }}
+                              onMouseLeave={(e) => {
+                                e.currentTarget.style.background = "#fff";
+                                e.currentTarget.style.color = "#178a8f";
+                                e.currentTarget.style.boxShadow = "0 1px 3px -1px rgba(37,183,189,.25)";
+                                e.currentTarget.style.transform = "translateY(0)";
+                              }}
+                            >
+                              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round">
+                                <circle cx="11" cy="11" r="8"/>
+                                <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                              </svg>
+                              Buscar catálogo
+                            </button>
+                          )}
+                        </div>
                         <Select
                           options={opcionesProducto}
                           styles={customStyles}
@@ -3346,6 +3499,30 @@ export default function EditarLicitacion() {
                           disabled={!esEditable}
                         />
                       </div>
+
+                      {esAdmin && (
+                        <div className="md:col-span-2">
+                          <label className="block text-xs text-gray-600 mb-1">
+                            Costo
+                          </label>
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            className={`${inputClassH10} text-sm font-semibold`}
+                            value={
+                              (it.costoStr ?? "").toString() !== ""
+                                ? it.costoStr
+                                : formatearCLDesdeString(
+                                    String(Number(getCostoParaItem(it) || 0)),
+                                  )
+                            }
+                            onChange={(e) => actualizarCostoItem(index, e.target.value)}
+                            onBlur={() => finalizarEdicionCosto(index)}
+                            disabled={!esEditable}
+                            title="Costo solo para esta cotización — no modifica el producto"
+                          />
+                        </div>
+                      )}
 
                       {esAdmin && (
                         <div className="md:col-span-2">
@@ -3585,7 +3762,7 @@ export default function EditarLicitacion() {
                 Valor consumido
               </label>
               <div className="form-display form-display-value" style={{fontWeight:600}}>
-                ${montoConsumidoOC.toLocaleString("es-CL")}
+                ${montoConsumido.toLocaleString("es-CL")}
               </div>
             </div>
 
@@ -3688,11 +3865,10 @@ export default function EditarLicitacion() {
               </div>
               <div className="md:col-span-2">
                 <label className="block text-sm font-medium text-gray-700 mb-1">Fecha *</label>
-                <input
-                  type="date"
+                <DateFilter
                   className={`${inputClass} text-sm`}
                   value={docFechaOC}
-                  onChange={(e) => setDocFechaOC(e.target.value)}
+                  onChange={setDocFechaOC}
                   disabled={subiendoDoc}
                 />
               </div>
@@ -3714,11 +3890,10 @@ export default function EditarLicitacion() {
           {docTipo === "comprobante_pago" && (
             <div className="md:col-span-3">
               <label className="block text-sm font-medium text-gray-700 mb-1">Fecha *</label>
-              <input
-                type="date"
+              <DateFilter
                 className={`${inputClass} text-sm`}
                 value={docFechaOC}
-                onChange={(e) => setDocFechaOC(e.target.value)}
+                onChange={setDocFechaOC}
                 disabled={subiendoDoc}
               />
             </div>
@@ -3740,11 +3915,10 @@ export default function EditarLicitacion() {
               </div>
               <div className="md:col-span-2">
                 <label className="block text-sm font-medium text-gray-700 mb-1">Fecha OC *</label>
-                <input
-                  type="date"
+                <DateFilter
                   className={`${inputClass} text-sm`}
                   value={docFechaOC}
-                  onChange={(e) => setDocFechaOC(e.target.value)}
+                  onChange={setDocFechaOC}
                   disabled={subiendoDoc}
                 />
               </div>
@@ -3799,11 +3973,10 @@ export default function EditarLicitacion() {
               </div>
               <div className="md:col-span-3">
                 <label className="block text-sm font-medium text-gray-700 mb-1">Fecha *</label>
-                <input
-                  type="date"
+                <DateFilter
                   className={`${inputClass} text-sm`}
                   value={docFechaOC}
-                  onChange={(e) => setDocFechaOC(e.target.value)}
+                  onChange={setDocFechaOC}
                   disabled={subiendoDoc}
                 />
               </div>
@@ -3815,7 +3988,7 @@ export default function EditarLicitacion() {
         {docTipo === "guia_despacho" && (
           <div className="grid grid-cols-1 md:grid-cols-12 gap-4 mt-4">
             <div className="md:col-span-3">
-              <label className="block text-sm font-medium text-gray-700 mb-1">Monto Neto Guía</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Monto Neto Guía *</label>
               <input
                 type="text"
                 inputMode="numeric"
@@ -3965,12 +4138,10 @@ export default function EditarLicitacion() {
                     </td>
                     <td className="px-3 py-2 text-sm">
                       {editando && ["orden_compra", "factura_boleta", "comprobante_pago", "efectivo"].includes(doc.tipo) ? (
-                        <input
-                          type="date"
+                        <DateFilter
                           className="input text-sm"
-                          style={{ width: 140 }}
                           value={docEditFechaOC}
-                          onChange={(e) => setDocEditFechaOC(e.target.value)}
+                          onChange={setDocEditFechaOC}
                         />
                       ) : ["orden_compra", "guia_despacho", "factura_boleta", "comprobante_pago", "efectivo"].includes(doc.tipo) && doc.fecha_oc
                         ? formatearFechaCorta(doc.fecha_oc)
