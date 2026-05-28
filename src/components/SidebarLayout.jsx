@@ -157,7 +157,7 @@ export default function SidebarLayout() {
   const adminNav = [
     esAdmin && { to: "/usuarios",  icon: UserCog,  label: "Usuarios" },
     esAdmin && { to: "/monitoreo", icon: Activity, label: "Monitoreo de Usuarios" },
-    esAdmin && { to: "/monitoreo-stock", icon: PackageSearch, label: "Monitoreo Stock Clientes" },
+    (esAdmin || esVentasEspecial) && { to: "/monitoreo-stock", icon: PackageSearch, label: "Monitoreo Stock Clientes" },
   ].filter(Boolean);
 
   function NavGroup({ label, items }) {

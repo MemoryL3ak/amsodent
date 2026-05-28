@@ -156,11 +156,11 @@ export default function App() {
             }
           />
 
-          {/* MONITOREO DE STOCK DE CLIENTES — solo admin */}
+          {/* MONITOREO DE STOCK DE CLIENTES — admin y ventas_especial */}
           <Route
             path="monitoreo-stock"
             element={
-              <RequireRole allow={["admin"]}>
+              <RequireRole allow={["admin", "ventas_especial"]}>
                 <MonitoreoStockClientes />
               </RequireRole>
             }
