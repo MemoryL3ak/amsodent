@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
+import { supabase } from "../lib/supabase";
 import useAuth from "../hooks/useAuth";
 import Toast from "../components/Toast";
 import ConfirmModal from "../components/ConfirmModal";
@@ -84,6 +85,22 @@ export default function BitacoraCotizaciones() {
 
   useEffect(() => {
     cargar();
+  }, []);
+
+  // Realtime: refresca el registro al instante cuando se crea/edita/elimina
+  // una bitácora (p. ej. al registrar una licitación), sin recargar la página.
+  useEffect(() => {
+    const canal = supabase
+      .channel("bitacora-cotizaciones-cambios")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "bitacora_cotizaciones" },
+        () => { cargar(); },
+      )
+      .subscribe();
+    return () => {
+      try { supabase.removeChannel(canal); } catch { /* */ }
+    };
   }, []);
 
   function nombreUsuario(reg) {
@@ -247,7 +264,7 @@ export default function BitacoraCotizaciones() {
 
       {/* Tabla */}
       <div className="table-wrap" style={{ marginTop: 12 }}>
-        <div className="table-scroll">
+        <div className="table-scroll" style={{ maxHeight: "calc(100vh - 360px)", minHeight: 240 }}>
           <table className="data-table" style={{ tableLayout: "fixed", width: "100%" }}>
             <colgroup>
               <col style={{ width: 180 }} />

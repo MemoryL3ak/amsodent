@@ -26,7 +26,10 @@ import {
   UserPlus,
   Settings2,
   ChevronRight,
+  ChevronUp,
+  ChevronDown,
   Pencil,
+  Camera,
 } from "lucide-react";
 import { supabase } from "../lib/supabase";
 import { api } from "../lib/api";
@@ -125,6 +128,16 @@ function fmtDuracion(seg) {
   return `${m}:${String(r).padStart(2, "0")}`;
 }
 
+// Normaliza texto para búsquedas: minúsculas y sin tildes.
+function normalizarTexto(str) {
+  return (str ?? "")
+    .toString()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .trim();
+}
+
 function resumenMensaje(m) {
   if (!m) return "";
   if (m.tipo === "imagen") return "📷 Imagen";
@@ -158,11 +171,14 @@ export default function ChatEquipo({ onLicitacionRegistrada }) {
   const [miembrosPorSala, setMiembrosPorSala] = useState({}); // {salaId: [emails]}
   const [perfiles, setPerfiles] = useState([]);
   const [modalNuevaSala, setModalNuevaSala] = useState(false);
+  const [modalNuevoDirecto, setModalNuevoDirecto] = useState(false);
   const [modalMiembros, setModalMiembros] = useState(null); // sala
   const [sidebarAbierto, setSidebarAbierto] = useState(true);
+  const [subiendoAvatarSala, setSubiendoAvatarSala] = useState(false);
 
   // Mensajes y chat
   const [mensajes, setMensajes] = useState([]);
+  const [busquedaMsg, setBusquedaMsg] = useState("");
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState("");
   const [avisoSala, setAvisoSala] = useState(null); // { nombre, salaId }
@@ -192,6 +208,7 @@ export default function ChatEquipo({ onLicitacionRegistrada }) {
   const listaRef = useRef(null);
   const inputImagen = useRef(null);
   const inputPdf = useRef(null);
+  const inputAvatarSalaRef = useRef(null);
   const textareaRef = useRef(null);
   const canalLifecycleRef = useRef(null);
 
@@ -199,6 +216,102 @@ export default function ChatEquipo({ onLicitacionRegistrada }) {
     () => salas.find((s) => s.id === salaActivaId) || null,
     [salas, salaActivaId],
   );
+
+  const perfilesPorEmail = useMemo(() => {
+    const m = {};
+    (perfiles || []).forEach((p) => {
+      const e = (p?.email || "").trim().toLowerCase();
+      if (e) m[e] = p;
+    });
+    return m;
+  }, [perfiles]);
+
+  // Info de presentación de una sala: para directos muestra a la otra persona;
+  // para grupos, el nombre y el avatar (logo) de la sala.
+  const infoSala = useCallback(
+    (sala) => {
+      if (!sala) {
+        return { nombre: "Sala", avatarUrl: null, inicial: "#", fondo: avatarFondo("sala"), esDirecto: false };
+      }
+      if (sala.es_directo) {
+        const otroEmail =
+          (miembrosPorSala[sala.id] || []).find((e) => (e || "").toLowerCase() !== yo.email) || "";
+        const p = perfilesPorEmail[otroEmail.toLowerCase()];
+        const nombre = p?.nombre || otroEmail || "Mensaje directo";
+        return {
+          nombre,
+          avatarUrl: null,
+          inicial: inicial(p?.nombre, otroEmail),
+          fondo: avatarFondo(otroEmail || nombre),
+          esDirecto: true,
+          email: otroEmail,
+        };
+      }
+      return {
+        nombre: sala.nombre,
+        avatarUrl: sala.avatar_url || null,
+        inicial: (sala.nombre || "#").charAt(0).toUpperCase(),
+        fondo: avatarFondo(sala.nombre || sala.id),
+        esDirecto: false,
+      };
+    },
+    [miembrosPorSala, perfilesPorEmail, yo.email],
+  );
+
+  const salasGrupos = useMemo(() => salas.filter((s) => !s.es_directo), [salas]);
+  const salasDirectos = useMemo(
+    () =>
+      salas
+        .filter((s) => s.es_directo)
+        .sort((a, b) => infoSala(a).nombre.localeCompare(infoSala(b).nombre)),
+    [salas, infoSala],
+  );
+
+  const [indiceCoincidencia, setIndiceCoincidencia] = useState(0);
+  const nodosMensajeRef = useRef({});
+
+  // Limpia el buscador de mensajes al cambiar de sala.
+  useEffect(() => {
+    setBusquedaMsg("");
+  }, [salaActivaId]);
+
+  // IDs de mensajes que coinciden con la búsqueda, en orden. NO se ocultan los
+  // demás (estilo WhatsApp): se resaltan y se navega entre coincidencias.
+  const coincidenciasMsg = useMemo(() => {
+    const q = normalizarTexto(busquedaMsg);
+    if (!q) return [];
+    return mensajes
+      .filter((m) => {
+        const enTexto = normalizarTexto(m.texto || "").includes(q);
+        const enAutor = normalizarTexto(m.autor_nombre || m.autor_email || "").includes(q);
+        const enLic = normalizarTexto(m.licitacion_id || "").includes(q);
+        return enTexto || enAutor || enLic;
+      })
+      .map((m) => m.id);
+  }, [mensajes, busquedaMsg]);
+
+  const coincidenciasSet = useMemo(() => new Set(coincidenciasMsg), [coincidenciasMsg]);
+
+  // Al cambiar la búsqueda, enfocar la coincidencia más reciente (la última).
+  useEffect(() => {
+    setIndiceCoincidencia(coincidenciasMsg.length > 0 ? coincidenciasMsg.length - 1 : 0);
+  }, [busquedaMsg, coincidenciasMsg.length]);
+
+  // Desplazar la coincidencia activa a la vista.
+  useEffect(() => {
+    if (!busquedaMsg || coincidenciasMsg.length === 0) return;
+    const id = coincidenciasMsg[indiceCoincidencia];
+    const node = id != null ? nodosMensajeRef.current[id] : null;
+    if (node?.scrollIntoView) {
+      node.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }, [indiceCoincidencia, coincidenciasMsg, busquedaMsg]);
+
+  function irCoincidencia(delta) {
+    const n = coincidenciasMsg.length;
+    if (n === 0) return;
+    setIndiceCoincidencia((i) => (((i + delta) % n) + n) % n);
+  }
 
   const agregarMensaje = useCallback((m) => {
     if (!m?.id) return;
@@ -295,8 +408,11 @@ export default function ChatEquipo({ onLicitacionRegistrada }) {
       .update({ leido_hasta: ahora })
       .eq("sala_id", salaActivaId)
       .eq("email", yo.email)
-      .then(() => {
-        /* silencioso */
+      .then(({ error: e }) => {
+        if (e) {
+          // eslint-disable-next-line no-console
+          console.warn("[chat] no se pudo marcar la sala como leída:", e.message);
+        }
       });
   }, [salaActivaId, yo.email]);
 
@@ -484,7 +600,12 @@ export default function ChatEquipo({ onLicitacionRegistrada }) {
               .update({ leido_hasta: ahora })
               .eq("sala_id", m.sala_id)
               .eq("email", yo.email)
-              .then(() => {});
+              .then(({ error: e }) => {
+                if (e) {
+                  // eslint-disable-next-line no-console
+                  console.warn("[chat] no se pudo marcar la sala como leída:", e.message);
+                }
+              });
             return;
           }
           // Si no es la activa, incrementar contador local
@@ -678,6 +799,9 @@ export default function ChatEquipo({ onLicitacionRegistrada }) {
         primerNombre(respondiendoA.autor_nombre, respondiendoA.autor_email);
       fila.responde_a_texto = resumenMensaje(respondiendoA);
       fila.responde_a_tipo = respondiendoA.tipo;
+      if (respondiendoA.tipo === "imagen" && respondiendoA.adjunto_url) {
+        fila.responde_a_adjunto_url = respondiendoA.adjunto_url;
+      }
     }
     const { data, error: e } = await supabase
       .from("chat_mensajes")
@@ -1019,6 +1143,87 @@ export default function ChatEquipo({ onLicitacionRegistrada }) {
     }
   }
 
+  /* ── Mensajes directos 1-a-1 ──────────────────────────────────────── */
+  async function crearOAbrirDirecto(perfilOtro) {
+    const otroEmail = (perfilOtro?.email || "").trim().toLowerCase();
+    if (!otroEmail || otroEmail === yo.email) return;
+    // ¿Ya existe un directo con esta persona?
+    const existente = salas.find((s) => {
+      if (!s.es_directo) return false;
+      const ms = (miembrosPorSala[s.id] || []).map((e) => (e || "").toLowerCase());
+      return ms.length === 2 && ms.includes(yo.email) && ms.includes(otroEmail);
+    });
+    if (existente) {
+      setSalaActivaId(existente.id);
+      setModalNuevoDirecto(false);
+      return;
+    }
+    const { data: sala, error: e } = await supabase
+      .from("chat_salas")
+      .insert({
+        nombre: perfilOtro?.nombre || otroEmail,
+        creada_por: yo.email,
+        es_general: false,
+        es_directo: true,
+      })
+      .select()
+      .single();
+    if (e) throw e;
+    const filas = [
+      { sala_id: sala.id, email: yo.email },
+      { sala_id: sala.id, email: otroEmail },
+    ];
+    const { error: em } = await supabase.from("chat_sala_miembros").insert(filas);
+    if (em) throw em;
+    setSalas((prev) => [...prev, sala]);
+    setMiembrosPorSala((prev) => ({ ...prev, [sala.id]: [yo.email, otroEmail] }));
+    setSalaActivaId(sala.id);
+    setModalNuevoDirecto(false);
+    // Avisar al otro usuario para que el directo le aparezca al instante.
+    try {
+      await canalLifecycleRef.current?.send({
+        type: "broadcast",
+        event: "sala-creada",
+        payload: { salaId: sala.id, miembros: [yo.email, otroEmail] },
+      });
+    } catch {
+      // ignorar
+    }
+  }
+
+  /* ── Avatar (logo) de la sala ─────────────────────────────────────── */
+  async function subirAvatarSala(salaId, file) {
+    const url = await subirArchivo(file);
+    const { data, error: e } = await supabase
+      .from("chat_salas")
+      .update({ avatar_url: url })
+      .eq("id", salaId)
+      .select()
+      .maybeSingle();
+    if (e) throw e;
+    // Si RLS deniega el UPDATE, no hay error pero tampoco fila actualizada.
+    if (!data) {
+      throw new Error(
+        "No se pudo guardar la imagen. Falta ejecutar la migración del chat o no tienes permiso para esta sala.",
+      );
+    }
+    setSalas((prev) => prev.map((s) => (s.id === salaId ? { ...s, avatar_url: url } : s)));
+    return url;
+  }
+
+  async function elegirAvatarActiva(file) {
+    if (!file || !salaActivaId) return;
+    setSubiendoAvatarSala(true);
+    setError("");
+    try {
+      await subirAvatarSala(salaActivaId, file);
+    } catch (e) {
+      setError(e?.message || "No se pudo subir la imagen de la sala.");
+    } finally {
+      setSubiendoAvatarSala(false);
+    }
+  }
+
   /* ── Grabación de audio ───────────────────────────────────────────── */
   function arrancarTimerGrab() {
     clearInterval(timerRef.current);
@@ -1100,6 +1305,164 @@ export default function ChatEquipo({ onLicitacionRegistrada }) {
 
   /* ── Render ───────────────────────────────────────────────────────── */
   const miembrosActivos = miembrosPorSala[salaActivaId] || [];
+  const infoActiva = infoSala(salaActiva);
+  const esCreadorActiva = (salaActiva?.creada_por || "").toLowerCase() === yo.email;
+  const puedeEditarAvatarActiva =
+    !!salaActiva && !infoActiva.esDirecto && (esCreadorActiva || esAdmin);
+
+  function renderSala(s) {
+    const info = infoSala(s);
+    const activa = s.id === salaActivaId;
+    const cantidad = (miembrosPorSala[s.id] || []).length;
+    const noLeidas = noLeidasPorSala[s.id] || 0;
+    const esCreadorSala = (s.creada_por || "").toLowerCase() === yo.email.toLowerCase();
+    const puedeEliminar = esCreadorSala && !s.es_general;
+    const subtitulo = info.esDirecto
+      ? "Mensaje directo"
+      : `${cantidad} ${cantidad === 1 ? "miembro" : "miembros"}`;
+    return (
+      <div
+        key={s.id}
+        onClick={() => setSalaActivaId(s.id)}
+        className={`ch-sala${activa ? " ch-sala--activa" : ""}`}
+        style={{
+          ...salaItem,
+          background: activa ? TEAL_SOFTER : "transparent",
+          boxShadow: activa ? `inset 3px 0 0 ${TEAL}` : "none",
+          position: "relative",
+        }}
+      >
+        <AvatarSala info={info} size={38} />
+        <span style={{ minWidth: 0, flex: 1, textAlign: "left" }}>
+          <span
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              fontSize: 13.5,
+              fontWeight: activa || noLeidas > 0 ? 700 : 600,
+              color: activa ? TEAL_DARKER : INK,
+              letterSpacing: "-.005em",
+            }}
+          >
+            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
+              {info.nombre}
+            </span>
+            {s.es_general && <span style={pillGeneral}>General</span>}
+            {noLeidas > 0 && !activa && (
+              <span style={badgeNoLeidas} title={`${noLeidas} mensaje${noLeidas === 1 ? "" : "s"} sin leer`}>
+                {noLeidas > 99 ? "99+" : noLeidas}
+              </span>
+            )}
+          </span>
+          <span
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 4,
+              fontSize: 11,
+              color: activa ? TEAL : FAINT,
+              marginTop: 2,
+              fontWeight: 500,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {!info.esDirecto && <Users size={10} strokeWidth={2.4} />}
+            {subtitulo}
+          </span>
+        </span>
+        {puedeEliminar && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setMenuSalaId(menuSalaId === s.id ? null : s.id);
+            }}
+            title="Acciones"
+            style={{
+              width: 26,
+              height: 26,
+              borderRadius: 7,
+              border: "none",
+              background: menuSalaId === s.id ? "#e2e8f0" : "transparent",
+              color: MUTED,
+              cursor: "pointer",
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              flexShrink: 0,
+            }}
+          >
+            <MoreVertical size={14} />
+          </button>
+        )}
+        {menuSalaId === s.id && (
+          <>
+            <div
+              onClick={(e) => {
+                e.stopPropagation();
+                setMenuSalaId(null);
+              }}
+              style={{ position: "fixed", inset: 0, zIndex: 30 }}
+            />
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className="ch-menu"
+              style={{
+                position: "absolute",
+                top: "100%",
+                right: 6,
+                marginTop: 4,
+                zIndex: 31,
+                background: "#fff",
+                borderRadius: 10,
+                border: `1px solid ${BORDER}`,
+                boxShadow: "0 14px 32px -10px rgba(16,24,40,.28)",
+                padding: 5,
+                minWidth: 180,
+              }}
+            >
+              {!s.es_directo && (
+                <>
+                  <button
+                    type="button"
+                    className="ch-opcion"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setMenuSalaId(null);
+                      setModalMiembros(s);
+                    }}
+                    style={opcionMenuMini}
+                  >
+                    <UserPlus size={15} style={{ color: TEAL, flexShrink: 0 }} />
+                    <span style={{ fontSize: 13, fontWeight: 600, color: INK }}>Gestionar miembros</span>
+                  </button>
+                  <div style={{ height: 1, background: BORDER_SOFT, margin: "4px 6px" }} />
+                </>
+              )}
+              <button
+                type="button"
+                className="ch-opcion"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setMenuSalaId(null);
+                  eliminarSala(s);
+                }}
+                style={opcionMenuMini}
+              >
+                <Trash2 size={15} style={{ color: "#dc2626", flexShrink: 0 }} />
+                <span style={{ fontSize: 13, fontWeight: 600, color: "#dc2626" }}>
+                  {s.es_directo ? "Eliminar conversación" : "Eliminar sala"}
+                </span>
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div style={contenedor}>
@@ -1121,11 +1484,11 @@ export default function ChatEquipo({ onLicitacionRegistrada }) {
                   <MessageSquare size={15} color="#fff" strokeWidth={2.4} />
                 </div>
                 <div style={{ minWidth: 0 }}>
-                  <div style={{ fontWeight: 800, fontSize: 13.5, color: INK, letterSpacing: "-.01em" }}>
-                    Salas
+                  <div style={{ fontWeight: 800, fontSize: 14, color: INK, letterSpacing: "-.01em" }}>
+                    Mensajería
                   </div>
                   <div style={{ fontSize: 10.5, color: FAINT, fontWeight: 600, letterSpacing: ".03em", textTransform: "uppercase" }}>
-                    {salas.length} {salas.length === 1 ? "canal" : "canales"}
+                    Equipo Amsodent
                   </div>
                 </div>
               </div>
@@ -1161,11 +1524,11 @@ export default function ChatEquipo({ onLicitacionRegistrada }) {
                 <button
                   type="button"
                   className="ch-iconbtn ch-btn-nueva"
-                  onClick={() => setModalNuevaSala(true)}
-                  title="Nueva sala"
+                  onClick={() => setModalNuevoDirecto(true)}
+                  title="Nuevo mensaje directo"
                   style={btnNuevaSala}
                 >
-                  <Plus size={15} strokeWidth={2.6} />
+                  <UserPlus size={15} strokeWidth={2.6} />
                 </button>
               </div>
             </div>
@@ -1180,186 +1543,43 @@ export default function ChatEquipo({ onLicitacionRegistrada }) {
                   No estás en ninguna sala todavía. Crea una con el botón de arriba.
                 </div>
               ) : (
-                salas.map((s) => {
-                  const activa = s.id === salaActivaId;
-                  const cantidad = (miembrosPorSala[s.id] || []).length;
-                  const noLeidas = noLeidasPorSala[s.id] || 0;
-                  const esCreadorSala =
-                    (s.creada_por || "").toLowerCase() === yo.email.toLowerCase();
-                  const puedeEliminar = esCreadorSala && !s.es_general;
-                  return (
-                    <div
-                      key={s.id}
-                      onClick={() => setSalaActivaId(s.id)}
-                      className={`ch-sala${activa ? " ch-sala--activa" : ""}`}
-                      style={{
-                        ...salaItem,
-                        background: activa
-                          ? `linear-gradient(135deg, ${TEAL_SOFTER}, ${TEAL_SOFT})`
-                          : "transparent",
-                        boxShadow: activa
-                          ? `inset 3px 0 0 ${TEAL}, 0 1px 2px rgba(15,118,110,.08)`
-                          : "none",
-                        position: "relative",
-                      }}
+                <>
+                  <div style={seccionLabel}>
+                    <span>Salas</span>
+                    <button
+                      type="button"
+                      className="ch-iconbtn"
+                      onClick={() => setModalNuevaSala(true)}
+                      title="Nueva sala de grupo"
+                      style={btnSeccionAdd}
                     >
-                      <span
-                        style={{
-                          ...salaIcono,
-                          background: activa
-                            ? `linear-gradient(135deg, ${TEAL}, ${TEAL_LIGHT})`
-                            : "#eef2f5",
-                          color: activa ? "#fff" : MUTED,
-                          boxShadow: activa
-                            ? `0 3px 8px -2px ${TEAL}66`
-                            : "0 1px 2px rgba(16,24,40,.04)",
-                        }}
-                      >
-                        <Hash size={14} strokeWidth={2.6} />
-                      </span>
-                      <span style={{ minWidth: 0, flex: 1, textAlign: "left" }}>
-                        <span
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 6,
-                            fontSize: 13.5,
-                            fontWeight: activa ? 800 : 600,
-                            color: activa ? TEAL_DARKER : TEXT,
-                            letterSpacing: "-.005em",
-                          }}
-                        >
-                          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0, fontWeight: noLeidas > 0 && !activa ? 800 : "inherit" }}>
-                            {s.nombre}
-                          </span>
-                          {s.es_general && <span style={pillGeneral}>General</span>}
-                          {noLeidas > 0 && !activa && (
-                            <span
-                              style={{
-                                marginLeft: "auto",
-                                minWidth: 20,
-                                height: 20,
-                                padding: "0 6px",
-                                borderRadius: 999,
-                                background: "#dc2626",
-                                color: "#fff",
-                                fontSize: 11,
-                                fontWeight: 800,
-                                display: "inline-flex",
-                                alignItems: "center",
-                                justifyContent: "center",
-                                lineHeight: 1,
-                                boxShadow: "0 2px 6px -1px rgba(220,38,38,.45)",
-                              }}
-                              title={`${noLeidas} mensaje${noLeidas === 1 ? "" : "s"} sin leer`}
-                            >
-                              {noLeidas > 99 ? "99+" : noLeidas}
-                            </span>
-                          )}
-                        </span>
-                        <span
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 4,
-                            fontSize: 11,
-                            color: activa ? TEAL : FAINT,
-                            marginTop: 2,
-                            fontWeight: activa ? 600 : 500,
-                          }}
-                        >
-                          <Users size={10} strokeWidth={2.4} />
-                          {cantidad} {cantidad === 1 ? "miembro" : "miembros"}
-                        </span>
-                      </span>
-                      {puedeEliminar && (
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setMenuSalaId(menuSalaId === s.id ? null : s.id);
-                          }}
-                          title="Acciones de la sala"
-                          style={{
-                            width: 26,
-                            height: 26,
-                            borderRadius: 7,
-                            border: "none",
-                            background: menuSalaId === s.id ? "#e2e8f0" : "transparent",
-                            color: MUTED,
-                            cursor: "pointer",
-                            display: "inline-flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            flexShrink: 0,
-                          }}
-                        >
-                          <MoreVertical size={14} />
-                        </button>
-                      )}
-                      {menuSalaId === s.id && (
-                        <>
-                          <div
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setMenuSalaId(null);
-                            }}
-                            style={{ position: "fixed", inset: 0, zIndex: 30 }}
-                          />
-                          <div
-                            onClick={(e) => e.stopPropagation()}
-                            className="ch-menu"
-                            style={{
-                              position: "absolute",
-                              top: "100%",
-                              right: 6,
-                              marginTop: 4,
-                              zIndex: 31,
-                              background: "#fff",
-                              borderRadius: 10,
-                              border: `1px solid ${BORDER}`,
-                              boxShadow: "0 14px 32px -10px rgba(16,24,40,.28)",
-                              padding: 5,
-                              minWidth: 180,
-                            }}
-                          >
-                            <button
-                              type="button"
-                              className="ch-opcion"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setMenuSalaId(null);
-                                setModalMiembros(s);
-                              }}
-                              style={opcionMenuMini}
-                            >
-                              <UserPlus size={15} style={{ color: TEAL, flexShrink: 0 }} />
-                              <span style={{ fontSize: 13, fontWeight: 600, color: INK }}>
-                                Gestionar miembros
-                              </span>
-                            </button>
-                            <div style={{ height: 1, background: BORDER_SOFT, margin: "4px 6px" }} />
-                            <button
-                              type="button"
-                              className="ch-opcion"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setMenuSalaId(null);
-                                eliminarSala(s);
-                              }}
-                              style={opcionMenuMini}
-                            >
-                              <Trash2 size={15} style={{ color: "#dc2626", flexShrink: 0 }} />
-                              <span style={{ fontSize: 13, fontWeight: 600, color: "#dc2626" }}>
-                                Eliminar sala
-                              </span>
-                            </button>
-                          </div>
-                        </>
-                      )}
-                    </div>
-                  );
-                })
+                      <Plus size={14} strokeWidth={2.8} />
+                    </button>
+                  </div>
+                  {salasGrupos.length === 0 ? (
+                    <div style={seccionVacia}>Sin salas de grupo.</div>
+                  ) : (
+                    salasGrupos.map((s) => renderSala(s))
+                  )}
+
+                  <div style={{ ...seccionLabel, marginTop: 12 }}>
+                    <span>Mensajes directos</span>
+                    <button
+                      type="button"
+                      className="ch-iconbtn"
+                      onClick={() => setModalNuevoDirecto(true)}
+                      title="Nuevo mensaje directo"
+                      style={btnSeccionAdd}
+                    >
+                      <Plus size={14} strokeWidth={2.8} />
+                    </button>
+                  </div>
+                  {salasDirectos.length === 0 ? (
+                    <div style={seccionVacia}>Aún no tienes conversaciones directas.</div>
+                  ) : (
+                    salasDirectos.map((s) => renderSala(s))
+                  )}
+                </>
               )}
             </div>
           </>
@@ -1383,21 +1603,124 @@ export default function ChatEquipo({ onLicitacionRegistrada }) {
           >
             {sidebarAbierto ? <ChevronRight size={17} style={{ transform: "rotate(180deg)" }} /> : <ChevronRight size={17} />}
           </button>
-          <div style={avatarHeader}>
-            <Hash size={18} color="#fff" strokeWidth={2.6} />
-          </div>
+          {puedeEditarAvatarActiva ? (
+            <button
+              type="button"
+              className="ch-avatar-edit"
+              onClick={() => inputAvatarSalaRef.current?.click()}
+              disabled={subiendoAvatarSala}
+              title="Cambiar imagen de la sala"
+              style={{ position: "relative", border: "none", background: "transparent", padding: 0, cursor: "pointer", flexShrink: 0, lineHeight: 0, borderRadius: 12 }}
+            >
+              <AvatarSala info={infoActiva} size={40} />
+              <span
+                className="ch-avatar-edit-overlay"
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  borderRadius: 12,
+                  background: "rgba(15,23,42,.5)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  opacity: subiendoAvatarSala ? 1 : 0,
+                  transition: "opacity .15s ease",
+                }}
+              >
+                {subiendoAvatarSala ? (
+                  <Loader2 size={16} color="#fff" style={{ animation: "ch-spin 1s linear infinite" }} />
+                ) : (
+                  <Camera size={15} color="#fff" />
+                )}
+              </span>
+            </button>
+          ) : (
+            <AvatarSala info={infoActiva} size={40} />
+          )}
           <div style={{ minWidth: 0, flex: 1 }}>
             <div style={{ fontSize: 15, fontWeight: 800, color: INK, letterSpacing: "-.01em", display: "flex", alignItems: "center", gap: 8 }}>
-              {salaActiva?.nombre || "Sala"}
+              {infoActiva.nombre}
               {salaActiva?.es_general && <span style={pillGeneralHeader}>General</span>}
             </div>
             <div style={{ fontSize: 12, color: MUTED, display: "flex", alignItems: "center", gap: 6 }}>
-              <Users size={11} />
-              {miembrosActivos.length} {miembrosActivos.length === 1 ? "miembro" : "miembros"}
-              {salaActiva?.descripcion && <span style={{ color: FAINT }}>· {salaActiva.descripcion}</span>}
+              {infoActiva.esDirecto ? (
+                <>
+                  <span style={{ color: TEAL_LIGHT, fontWeight: 700 }}>●</span>
+                  Conversación directa
+                </>
+              ) : (
+                <>
+                  <Users size={11} />
+                  {miembrosActivos.length} {miembrosActivos.length === 1 ? "miembro" : "miembros"}
+                  {salaActiva?.descripcion && <span style={{ color: FAINT }}>· {salaActiva.descripcion}</span>}
+                </>
+              )}
             </div>
           </div>
-          {salaActiva && (
+          <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+            <div style={{ position: "relative" }}>
+              <Search size={14} style={{ position: "absolute", left: 9, top: "50%", transform: "translateY(-50%)", color: MUTED, pointerEvents: "none" }} />
+              <input
+                type="text"
+                value={busquedaMsg}
+                onChange={(e) => setBusquedaMsg(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") { e.preventDefault(); irCoincidencia(e.shiftKey ? 1 : -1); }
+                  if (e.key === "Escape") setBusquedaMsg("");
+                }}
+                placeholder="Buscar mensajes…"
+                style={{
+                  height: 34,
+                  width: 190,
+                  padding: busquedaMsg ? "0 28px" : "0 12px 0 28px",
+                  borderRadius: 9,
+                  border: "1px solid #e2e8f0",
+                  background: "#f8fafc",
+                  fontSize: 13,
+                  outline: "none",
+                  color: INK,
+                }}
+              />
+              {busquedaMsg && (
+                <button
+                  type="button"
+                  onClick={() => setBusquedaMsg("")}
+                  title="Limpiar búsqueda"
+                  style={{ position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: MUTED, padding: 2, display: "inline-flex" }}
+                >
+                  <X size={13} />
+                </button>
+              )}
+            </div>
+            {busquedaMsg && (
+              <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
+                <span style={{ fontSize: 12, color: MUTED, minWidth: 40, textAlign: "center", fontVariantNumeric: "tabular-nums" }}>
+                  {coincidenciasMsg.length === 0 ? "0/0" : `${indiceCoincidencia + 1}/${coincidenciasMsg.length}`}
+                </span>
+                <button
+                  type="button"
+                  className="ch-iconbtn"
+                  onClick={() => irCoincidencia(-1)}
+                  disabled={coincidenciasMsg.length === 0}
+                  title="Anterior (más antiguo)"
+                  style={{ ...btnCircularSm, background: "#eef1f5", color: MUTED, opacity: coincidenciasMsg.length === 0 ? 0.5 : 1 }}
+                >
+                  <ChevronUp size={16} />
+                </button>
+                <button
+                  type="button"
+                  className="ch-iconbtn"
+                  onClick={() => irCoincidencia(1)}
+                  disabled={coincidenciasMsg.length === 0}
+                  title="Siguiente (más reciente)"
+                  style={{ ...btnCircularSm, background: "#eef1f5", color: MUTED, opacity: coincidenciasMsg.length === 0 ? 0.5 : 1 }}
+                >
+                  <ChevronDown size={16} />
+                </button>
+              </div>
+            )}
+          </div>
+          {salaActiva && !infoActiva.esDirecto && (
             <button
               type="button"
               className="ch-iconbtn"
@@ -1461,8 +1784,23 @@ export default function ChatEquipo({ onLicitacionRegistrada }) {
                   prev.tipo !== "licitacion" &&
                   prev.tipo !== "sistema" &&
                   (prev.autor_email || "").toLowerCase() === (m.autor_email || "").toLowerCase();
+                const esCoincidencia = coincidenciasSet.has(m.id);
+                const esCoincidenciaActual = !!busquedaMsg && coincidenciasMsg[indiceCoincidencia] === m.id;
                 return (
-                  <div key={m.id}>
+                  <div
+                    key={m.id}
+                    ref={(el) => {
+                      if (el) nodosMensajeRef.current[m.id] = el;
+                      else delete nodosMensajeRef.current[m.id];
+                    }}
+                    style={
+                      esCoincidenciaActual
+                        ? { background: "rgba(245,158,11,.28)", borderRadius: 10, transition: "background .25s ease", scrollMarginTop: 16, scrollMarginBottom: 16 }
+                        : esCoincidencia
+                        ? { background: "rgba(253,224,71,.22)", borderRadius: 10, transition: "background .25s ease" }
+                        : undefined
+                    }
+                  >
                     {nuevoDia && <SeparadorDia iso={m.created_at} />}
                     <BurbujaMensaje
                       m={m}
@@ -1565,6 +1903,19 @@ export default function ChatEquipo({ onLicitacionRegistrada }) {
         {respondiendoA && !editandoMensajeId && (
           <div style={previewRespuesta}>
             <div style={{ width: 3, alignSelf: "stretch", background: TEAL, borderRadius: 3 }} />
+            {respondiendoA.tipo === "imagen" && respondiendoA.adjunto_url && (
+              <img
+                src={respondiendoA.adjunto_url}
+                alt=""
+                style={{
+                  width: 38,
+                  height: 38,
+                  borderRadius: 6,
+                  objectFit: "cover",
+                  flexShrink: 0,
+                }}
+              />
+            )}
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: 11.5, fontWeight: 700, color: TEAL_DEEP, marginBottom: 2 }}>
                 Respondiendo a {primerNombre(respondiendoA.autor_nombre, respondiendoA.autor_email)}
@@ -1831,6 +2182,17 @@ export default function ChatEquipo({ onLicitacionRegistrada }) {
           if (f) enviarArchivo(f, "pdf");
         }}
       />
+      <input
+        ref={inputAvatarSalaRef}
+        type="file"
+        accept="image/*"
+        style={{ display: "none" }}
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          e.target.value = "";
+          if (f) elegirAvatarActiva(f);
+        }}
+      />
 
       {modalLicitacion && (
         <ModalLicitacion
@@ -1845,6 +2207,14 @@ export default function ChatEquipo({ onLicitacionRegistrada }) {
           yoEmail={yo.email}
           onCerrar={() => setModalNuevaSala(false)}
           onCrear={crearSala}
+        />
+      )}
+      {modalNuevoDirecto && (
+        <ModalNuevoDirecto
+          perfiles={perfiles}
+          yoEmail={yo.email}
+          onCerrar={() => setModalNuevoDirecto(false)}
+          onAbrir={crearOAbrirDirecto}
         />
       )}
       {modalMiembros && (
@@ -1870,6 +2240,77 @@ export default function ChatEquipo({ onLicitacionRegistrada }) {
 }
 
 /* ── Subcomponentes ──────────────────────────────────────────────────── */
+
+// Avatar de una sala o conversación directa. Muestra la imagen (logo) si existe;
+// si no, la inicial de la persona (directos) o un ícono # de canal (grupos).
+function AvatarSala({ info, size = 38 }) {
+  const radio = Math.round(size * 0.3);
+  if (info?.avatarUrl) {
+    return (
+      <span
+        style={{
+          width: size,
+          height: size,
+          borderRadius: radio,
+          overflow: "hidden",
+          flexShrink: 0,
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          boxShadow: "0 1px 3px rgba(16,24,40,.18)",
+          background: "#ffffff",
+          border: "1px solid rgba(16,24,40,.08)",
+        }}
+      >
+        <img
+          src={info.avatarUrl}
+          alt=""
+          style={{ width: "100%", height: "100%", objectFit: "contain", objectPosition: "center", display: "block" }}
+        />
+      </span>
+    );
+  }
+  if (info?.esDirecto) {
+    return (
+      <span
+        style={{
+          width: size,
+          height: size,
+          borderRadius: "50%",
+          background: info.fondo,
+          color: "#fff",
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          fontWeight: 700,
+          fontSize: Math.round(size * 0.4),
+          flexShrink: 0,
+          boxShadow: "0 1px 3px rgba(16,24,40,.18)",
+        }}
+      >
+        {info.inicial}
+      </span>
+    );
+  }
+  return (
+    <span
+      style={{
+        width: size,
+        height: size,
+        borderRadius: radio,
+        background: `linear-gradient(135deg, ${TEAL}, ${TEAL_LIGHT})`,
+        color: "#fff",
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        flexShrink: 0,
+        boxShadow: `0 2px 6px -2px ${TEAL}77`,
+      }}
+    >
+      <Hash size={Math.round(size * 0.44)} strokeWidth={2.6} />
+    </span>
+  );
+}
 
 function SeparadorDia({ iso }) {
   return (
@@ -2054,6 +2495,9 @@ function BurbujaMensaje({
         {m.responde_a_id && (
           <div
             style={{
+              display: "flex",
+              gap: 8,
+              alignItems: "stretch",
               background: esMio ? "rgba(255,255,255,.16)" : "#f1f5f9",
               borderLeft: `3px solid ${esMio ? "rgba(255,255,255,.6)" : TEAL}`,
               borderRadius: 8,
@@ -2062,26 +2506,41 @@ function BurbujaMensaje({
               fontSize: 12,
             }}
           >
-            <div
-              style={{
-                fontWeight: 700,
-                color: esMio ? "rgba(255,255,255,.95)" : TEAL_DEEP,
-                marginBottom: 1,
-              }}
-            >
-              {m.responde_a_autor || "Mensaje"}
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div
+                style={{
+                  fontWeight: 700,
+                  color: esMio ? "rgba(255,255,255,.95)" : TEAL_DEEP,
+                  marginBottom: 1,
+                }}
+              >
+                {m.responde_a_autor || "Mensaje"}
+              </div>
+              <div
+                style={{
+                  color: esMio ? "rgba(255,255,255,.85)" : MUTED,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                  maxWidth: 280,
+                }}
+              >
+                {m.responde_a_texto || "—"}
+              </div>
             </div>
-            <div
-              style={{
-                color: esMio ? "rgba(255,255,255,.85)" : MUTED,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-                maxWidth: 280,
-              }}
-            >
-              {m.responde_a_texto || "—"}
-            </div>
+            {m.responde_a_tipo === "imagen" && m.responde_a_adjunto_url && (
+              <img
+                src={m.responde_a_adjunto_url}
+                alt=""
+                style={{
+                  width: 38,
+                  height: 38,
+                  borderRadius: 6,
+                  objectFit: "cover",
+                  flexShrink: 0,
+                }}
+              />
+            )}
           </div>
         )}
 
@@ -2895,6 +3354,138 @@ function ModalNuevaSala({ perfiles, yoEmail, onCerrar, onCrear }) {
   );
 }
 
+function ModalNuevoDirecto({ perfiles, yoEmail, onCerrar, onAbrir }) {
+  const [busqueda, setBusqueda] = useState("");
+  const [abriendo, setAbriendo] = useState("");
+  const [error, setError] = useState("");
+
+  const perfilesFiltrados = useMemo(() => {
+    const q = busqueda.trim().toLowerCase();
+    return perfiles
+      .filter((p) => p.email && p.email.toLowerCase() !== yoEmail)
+      .filter((p) => {
+        if (!q) return true;
+        return (
+          (p.nombre || "").toLowerCase().includes(q) ||
+          (p.email || "").toLowerCase().includes(q)
+        );
+      })
+      .sort((a, b) => (a.nombre || a.email).localeCompare(b.nombre || b.email));
+  }, [perfiles, busqueda, yoEmail]);
+
+  async function abrir(p) {
+    setAbriendo(p.email.toLowerCase());
+    setError("");
+    try {
+      await onAbrir(p);
+    } catch (e) {
+      setError(e?.message || "No se pudo abrir la conversación.");
+      setAbriendo("");
+    }
+  }
+
+  return createPortal(
+    <div
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget && !abriendo) onCerrar();
+      }}
+      style={overlayModal}
+    >
+      <div style={{ ...cajaModal, width: 460 }} className="ch-pop">
+        <div style={headerModal}>
+          <div style={{ display: "flex", alignItems: "center", gap: 9, fontWeight: 700, fontSize: 15 }}>
+            <UserPlus size={18} /> Nuevo mensaje directo
+          </div>
+          <button
+            type="button"
+            onClick={() => !abriendo && onCerrar()}
+            style={{ background: "rgba(255,255,255,.15)", border: "none", color: "#fff", cursor: "pointer", padding: 5, borderRadius: 8, display: "inline-flex" }}
+          >
+            <X size={17} />
+          </button>
+        </div>
+
+        <div style={{ padding: 20 }}>
+          <p style={{ margin: "0 0 14px", fontSize: 12.5, color: MUTED, lineHeight: 1.55 }}>
+            Selecciona a una persona para iniciar una conversación privada 1 a 1.
+          </p>
+          <div style={{ position: "relative", marginBottom: 10 }}>
+            <Search size={15} style={{ position: "absolute", left: 11, top: 12, color: FAINT }} />
+            <input
+              autoFocus
+              type="text"
+              value={busqueda}
+              onChange={(e) => setBusqueda(e.target.value)}
+              placeholder="Buscar por nombre o email…"
+              style={{ ...inputModal, paddingLeft: 34 }}
+              className="ch-input-modal"
+            />
+          </div>
+          <div className="ch-scroll" style={{ ...listaMiembros, maxHeight: 320 }}>
+            {perfilesFiltrados.length === 0 ? (
+              <div style={{ padding: 14, fontSize: 12.5, color: FAINT, textAlign: "center" }}>
+                No hay personas que coincidan.
+              </div>
+            ) : (
+              perfilesFiltrados.map((p) => {
+                const cargando = abriendo === p.email.toLowerCase();
+                return (
+                  <button
+                    key={p.email}
+                    type="button"
+                    onClick={() => abrir(p)}
+                    disabled={!!abriendo}
+                    className="ch-opcion"
+                    style={{ ...itemMiembro, opacity: abriendo && !cargando ? 0.5 : 1 }}
+                  >
+                    <span
+                      style={{
+                        width: 34,
+                        height: 34,
+                        borderRadius: "50%",
+                        background: avatarFondo(p.email),
+                        color: "#fff",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        fontWeight: 700,
+                        fontSize: 13,
+                        flexShrink: 0,
+                      }}
+                    >
+                      {inicial(p.nombre, p.email)}
+                    </span>
+                    <span style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
+                      <span style={{ display: "block", fontSize: 13, fontWeight: 700, color: INK, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {p.nombre || p.email}
+                      </span>
+                      <span style={{ display: "block", fontSize: 11, color: FAINT, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {p.email}
+                      </span>
+                    </span>
+                    {cargando ? (
+                      <Loader2 size={16} style={{ animation: "ch-spin 1s linear infinite", color: TEAL }} />
+                    ) : (
+                      <MessageSquare size={16} style={{ color: TEAL }} />
+                    )}
+                  </button>
+                );
+              })
+            )}
+          </div>
+
+          {error && (
+            <div style={{ ...errorModal, marginTop: 12 }}>
+              <AlertCircle size={15} /> {error}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 function ModalMiembros({ sala, miembros, perfiles, yoEmail, onCerrar, onAgregar, onEliminarSala }) {
   const [busqueda, setBusqueda] = useState("");
   const [seleccionados, setSeleccionados] = useState([]);
@@ -3306,6 +3897,7 @@ const ESTILOS = `
   .ch-scroll::-webkit-scrollbar-thumb { background: #cdd5db; border-radius: 8px; border: 2.5px solid transparent; background-clip: padding-box; }
   .ch-scroll::-webkit-scrollbar-thumb:hover { background: #9aa7b2; background-clip: padding-box; }
   .ch-bubble { transition: transform .14s ease, box-shadow .14s ease; }
+  .ch-avatar-edit:hover .ch-avatar-edit-overlay { opacity: 1 !important; }
 `;
 
 const contenedor = {
@@ -3324,7 +3916,7 @@ const contenedor = {
 const sidebarSalas = {
   display: "flex",
   flexDirection: "column",
-  background: BG_SIDEBAR,
+  background: "#ffffff",
   flexShrink: 0,
   overflow: "hidden",
   transition: "width .2s ease",
@@ -3372,10 +3964,60 @@ const btnNuevaSala = {
 const listaSalas = {
   flex: 1,
   overflowY: "auto",
-  padding: "8px 7px",
+  padding: "8px 7px 14px",
   display: "flex",
   flexDirection: "column",
   gap: 2,
+};
+
+const seccionLabel = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  padding: "6px 8px 4px",
+  fontSize: 10.5,
+  fontWeight: 800,
+  letterSpacing: ".07em",
+  textTransform: "uppercase",
+  color: FAINT,
+};
+
+const btnSeccionAdd = {
+  width: 22,
+  height: 22,
+  borderRadius: 7,
+  border: "none",
+  background: "#eef2f5",
+  color: TEAL,
+  cursor: "pointer",
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  flexShrink: 0,
+};
+
+const seccionVacia = {
+  padding: "4px 10px 8px",
+  fontSize: 11.5,
+  color: FAINT,
+  lineHeight: 1.45,
+};
+
+const badgeNoLeidas = {
+  marginLeft: "auto",
+  minWidth: 20,
+  height: 20,
+  padding: "0 6px",
+  borderRadius: 999,
+  background: "#dc2626",
+  color: "#fff",
+  fontSize: 11,
+  fontWeight: 800,
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  lineHeight: 1,
+  boxShadow: "0 2px 6px -1px rgba(220,38,38,.45)",
 };
 
 const salaItem = {
@@ -3465,12 +4107,10 @@ const zonaMensajes = {
   flex: 1,
   overflowY: "auto",
   padding: "16px 22px 18px",
-  background: BG_CHAT,
-  backgroundImage: `
-    radial-gradient(circle at 18% 8%, rgba(15,118,110,.06), transparent 42%),
-    radial-gradient(circle at 82% 92%, rgba(20,184,166,.05), transparent 42%),
-    radial-gradient(circle at 50% 50%, rgba(255,255,255,.4), transparent 60%)
-  `,
+  background: "#f6f8fb",
+  backgroundImage:
+    "radial-gradient(rgba(15,23,42,.035) 1px, transparent 1px)",
+  backgroundSize: "22px 22px",
 };
 
 const composer = {

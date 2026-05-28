@@ -290,6 +290,149 @@ body {
   background: linear-gradient(90deg, var(--primary-light, #d4f0f1) 0%, transparent 100%);
 }
 
+/* Grupo colapsable: header clickeable + slide animado */
+.nav-group-collapsible { padding-top: 6px; }
+.nav-group-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 10px 10px 8px;
+  margin: 0 0 4px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-family: var(--font);
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 1.4px;
+  text-transform: uppercase;
+  color: var(--primary-dark, #0e6e74);
+  border-radius: 8px;
+  text-align: left;
+  position: relative;
+  transition: background .15s ease, color .15s ease;
+}
+.nav-group-toggle:hover {
+  background: var(--primary-light, #d4f0f1);
+  color: var(--primary-dark, #0e6e74);
+}
+.nav-group-toggle-icon {
+  flex-shrink: 0;
+  opacity: .85;
+  transition: transform .25s cubic-bezier(.4, 0, .2, 1);
+}
+.nav-group-toggle:hover .nav-group-toggle-icon {
+  transform: scale(1.1) rotate(-5deg);
+}
+.nav-group-toggle-label {
+  flex: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  transition: opacity .2s ease, max-width .3s cubic-bezier(.4, 0, .2, 1);
+}
+.nav-group-chevron {
+  flex-shrink: 0;
+  opacity: .65;
+  transition: transform .28s cubic-bezier(.4, 0, .2, 1), opacity .15s;
+}
+.nav-group-collapsible.is-open .nav-group-chevron {
+  transform: rotate(0deg);
+}
+.nav-group-collapsible:not(.is-open) .nav-group-chevron {
+  transform: rotate(-90deg);
+}
+.nav-group-toggle:hover .nav-group-chevron { opacity: 1; }
+
+/* Indicador "hay una sub-ruta activa" — punto pulsante teal en el toggle.
+   Aparece siempre que algún hijo coincide con la ruta actual; sirve para
+   ubicar al usuario aunque cierre el dropdown. */
+.nav-group-active-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--primary, #25b7bd);
+  box-shadow: 0 0 0 3px rgba(37, 183, 189, .18);
+  flex-shrink: 0;
+  animation: nav-group-dot-pulse 1.6s ease-in-out infinite;
+}
+@keyframes nav-group-dot-pulse {
+  0%, 100% { box-shadow: 0 0 0 3px rgba(37, 183, 189, .18); }
+  50%      { box-shadow: 0 0 0 5px rgba(37, 183, 189, .08); }
+}
+
+/* Cuando el grupo está CERRADO pero hay un hijo activo: el header se ve
+   resaltado (fondo teal claro + barra lateral) para no perder contexto. */
+.nav-group-toggle.has-active-child {
+  background: linear-gradient(90deg, rgba(37, 183, 189, .14), rgba(37, 183, 189, .04));
+  color: var(--primary-dark, #0e6e74);
+}
+.nav-group-toggle.has-active-child::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 22%;
+  bottom: 22%;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--primary, #25b7bd);
+}
+
+/* Items con slide vertical animado. Usamos max-height en vez de grid 0fr —
+   el grid hack no contraía los items en algunos browsers. */
+/* Colapso con grid-template-rows 1fr→0fr: anima hacia la altura REAL del
+   contenido (no a un max-height fijo), evitando el "tiempo muerto" que hacía
+   sentir que el cierre se pegaba. El hijo interno lleva overflow:hidden. */
+.nav-group-items {
+  display: grid;
+  grid-template-rows: 1fr;
+  opacity: 1;
+  transition: grid-template-rows .26s cubic-bezier(.4, 0, .2, 1), opacity .2s ease, margin-top .22s ease;
+}
+.nav-group-items-inner {
+  overflow: hidden;
+  min-height: 0;
+}
+.nav-group-collapsible:not(.is-open) .nav-group-items {
+  grid-template-rows: 0fr;
+  opacity: 0;
+  margin-top: 0;
+  pointer-events: none;
+}
+
+/* Cuando el grupo está cerrado, eliminar el padding bottom del .nav-group
+   para que los grupos queden compactos. Mantener el toggle clickeable cómodo. */
+.nav-group-collapsible:not(.is-open) {
+  padding-bottom: 0;
+}
+.nav-group-collapsible:not(.is-open) + .nav-group {
+  padding-top: 6px;
+}
+
+/* En modo rail (sidebar colapsada) ocultar el label del toggle pero mostrar
+   el icono del grupo + chevron pequeño para mantener identidad visual. */
+.app-shell.is-collapsed .nav-group-toggle-label,
+.app-shell.is-collapsed .nav-group-chevron {
+  opacity: 0;
+  max-width: 0;
+  pointer-events: none;
+}
+.app-shell.is-collapsed .nav-group-toggle {
+  justify-content: center;
+  padding: 8px 0;
+  gap: 0;
+}
+.app-shell.is-collapsed .nav-group-collapsible:not(.is-open) .nav-group-items {
+  /* En rail siempre mostrar items para no perder navegación */
+  grid-template-rows: 1fr;
+  opacity: 1;
+  pointer-events: auto;
+  margin-top: 0;
+}
+.app-shell.is-collapsed .nav-group-collapsible:not(.is-open) {
+  padding-bottom: 6px;
+}
+
 .nav-item {
   display: flex;
   align-items: center;
@@ -342,6 +485,58 @@ body {
 
 .nav-item:hover .nav-icon { opacity: 1; }
 .nav-item.is-active .nav-icon { opacity: 1; }
+
+/* Badge de mensajes sin leer (Chat Grupal) en el ítem del menú */
+.nav-item-badge {
+  margin-left: auto;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #dc2626;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 6px -1px rgba(220, 38, 38, .45);
+  flex-shrink: 0;
+}
+
+/* En rail (sidebar colapsada) el badge se reduce a un punto sobre el ícono */
+.app-shell.is-collapsed .nav-item-badge {
+  position: absolute;
+  top: 5px;
+  right: 7px;
+  min-width: 9px;
+  width: 9px;
+  height: 9px;
+  padding: 0;
+  font-size: 0;
+  box-shadow: 0 0 0 2px #fff;
+}
+
+/* Badge en el encabezado del grupo cuando está cerrado (alerta no oculta) */
+.nav-group-unread-badge {
+  margin-left: 6px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #dc2626;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  box-shadow: 0 2px 6px -1px rgba(220, 38, 38, .45);
+}
+.app-shell.is-collapsed .nav-group-unread-badge { display: none; }
 
 /* Sidebar bottom: user */
 .sidebar-user {
@@ -412,6 +607,12 @@ body {
   flex-direction: column;
   min-height: 100vh;
   overflow-x: hidden;
+  /* Llenar el espacio restante junto al sidebar. Sin esto, el área principal
+     tomaba el ancho del contenido (se encogía cuando había poco que mostrar y
+     se ensanchaba con textos largos como el filtro de tipo de compra).
+     min-width:0 evita que contenido ancho (tablas) fuerce overflow horizontal. */
+  flex: 1;
+  min-width: 0;
 }
 
 /* ── Page wrapper ────────────────────────────────────────────── */
@@ -511,6 +712,17 @@ body {
 .stats-row .stat-card:nth-child(3)::after { background: var(--warning); }
 .stats-row .stat-card:nth-child(4)::after { background: var(--danger); }
 
+/* Variante de 5 tarjetas (ej. Trazabilidad): 5 en una fila en desktop, sin
+   dejar una suelta abajo. Responsivo a 3 y 2 columnas. */
+.stats-row.stats-5 { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.stats-row.stats-5 .stat-card:nth-child(5)::after { background: #6366f1; }
+@media (max-width: 1024px) {
+  .stats-row.stats-5 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 640px) {
+  .stats-row.stats-5 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
 .stat-label {
   font-size: 12px;
   font-weight: 600;
@@ -535,6 +747,16 @@ body {
   font-weight: 400;
 }
 
+/* Monto secundario dentro de una tarjeta KPI (ej. suma con IVA). */
+.stat-money {
+  margin-top: 6px;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1.1;
+  white-space: nowrap;
+}
+
 /* ── Filter bar ──────────────────────────────────────────────── */
 .filter-bar {
   background: var(--surface);
@@ -547,6 +769,7 @@ body {
   gap: 12px;
   align-items: flex-end;
 }
+
 
 /* Grid uniforme para barras con muchos filtros (cotizaciones) */
 .filter-bar.filter-bar-grid {
@@ -600,6 +823,19 @@ body {
 }
 
 .input::placeholder { color: var(--text-muted); }
+
+select.input {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  padding-right: 32px;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 16px;
+  cursor: pointer;
+  text-overflow: ellipsis;
+}
 
 .field {
   display: flex;
@@ -851,6 +1087,21 @@ body {
 .data-table tbody tr { transition: background .12s; }
 
 .data-table tbody tr:hover { background: #f5fefe; }
+
+/* Variante "ajustar al ancho": fuerza que TODAS las columnas quepan en pantalla
+   sin scroll horizontal. table-layout fijo respeta los anchos % de los <th>, el
+   padding se reduce y el texto puede partirse para no desbordar. */
+.data-table.table-fit { table-layout: fixed; width: 100%; }
+.data-table.table-fit th,
+.data-table.table-fit td {
+  padding-left: 9px;
+  padding-right: 9px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.data-table.table-fit td { font-size: 12.5px; }
+.data-table.table-fit th { padding-left: 9px; padding-right: 9px; }
 
 /* ── Badges ──────────────────────────────────────────────────── */
 .badge {
@@ -1238,15 +1489,127 @@ body {
 /* ── Responsive ──────────────────────────────────────────────── */
 @media (max-width: 1100px) {
   .app-shell { grid-template-columns: 1fr; }
-  .sidebar { display: none; }
-  .sidebar-toggle { display: none; }
+
+  /* Sidebar como cajón flotante (off-canvas drawer).
+     - Por defecto (no is-collapsed): cajón abierto, slide-in.
+     - is-collapsed: cajón cerrado, fuera de pantalla a la izquierda.
+     Notar que el comportamiento "rail" del desktop NO se usa en mobile:
+     el cajón siempre se muestra en ancho completo cuando está abierto. */
+  .sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: var(--sidebar-w) !important;
+    z-index: 1000;
+    transform: translateX(0);
+    transition: transform .28s cubic-bezier(.4, 0, .2, 1);
+    box-shadow: 0 0 36px rgba(15, 23, 42, .22);
+    display: flex;
+  }
+  .app-shell.is-collapsed .sidebar {
+    transform: translateX(-100%);
+  }
+
+  /* Cancela los estilos "rail" del desktop dentro del cajón —
+     en mobile mostramos siempre el sidebar completo cuando está abierto. */
+  .app-shell.is-collapsed .brand          { padding: 22px 18px 14px; }
+  .app-shell.is-collapsed .brand-logo     { width: 140px; }
+  .app-shell.is-collapsed .nav-group-label {
+    opacity: 1; height: auto; padding: 10px 8px 8px; margin: 0; pointer-events: auto;
+  }
+  .app-shell.is-collapsed .nav-group       { padding: 4px 10px 8px; }
+  .app-shell.is-collapsed .nav-item        { justify-content: flex-start; padding: 9px 12px; gap: 10px; }
+  .app-shell.is-collapsed .nav-item-label  { opacity: 1; max-width: 200px; }
+  .app-shell.is-collapsed .nav-icon        { width: 16px; height: 16px; }
+  .app-shell.is-collapsed .nav-item::after { display: none; }
+  .app-shell.is-collapsed .sidebar-user    { flex-direction: row; gap: 10px; padding: 14px; }
+  .app-shell.is-collapsed .user-info       { display: block; }
+  .app-shell.is-collapsed .sidebar-user .logout-btn { width: auto; height: auto; }
+  .app-shell.is-collapsed .nav-group-toggle-label { opacity: 1; max-width: 200px; }
+  .app-shell.is-collapsed .nav-group-chevron      { opacity: .65; }
+  .app-shell.is-collapsed .nav-group-collapsible:not(.is-open) .nav-group-items {
+    /* Restaura la lógica original colapsable dentro del grupo */
+    padding-bottom: 0;
+  }
+
+  /* Toggle = hamburguesa flotante anclada a la derecha del header del contenido,
+     siempre visible para abrir/cerrar el cajón. */
+  .sidebar-toggle {
+    display: inline-flex;
+    position: fixed;
+    top: 14px;
+    left: auto;
+    right: 14px;
+    width: 42px;
+    height: 42px;
+    z-index: 1101;
+    border-radius: 10px;
+    animation: none;
+  }
+  .app-shell.is-collapsed .sidebar-toggle {
+    left: auto;
+    right: 14px;
+  }
+  .sidebar-toggle svg { transform: rotate(0deg); }
+  .app-shell.is-collapsed .sidebar-toggle svg { transform: rotate(180deg); }
+
+  /* Backdrop oscurece el contenido cuando el cajón está abierto.
+     Click fuera no cierra automáticamente — el usuario usa el toggle —,
+     pero impide interactuar con el contenido detrás. */
+  .app-shell:not(.is-collapsed)::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, .42);
+    z-index: 999;
+    animation: appShellBackdropIn .2s ease;
+  }
+  @keyframes appShellBackdropIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  /* Aire arriba del contenido para que el hamburguesa flotante no tape títulos */
+  .content { padding-top: 56px; }
+
   .stats-row { grid-template-columns: 1fr 1fr; }
+}
+
+/* Tablet / móvil intermedio: el header de página y de tarjetas se apilan
+   para que el título y las acciones no colisionen. */
+@media (max-width: 900px) {
+  .page-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+  .page-actions { flex-wrap: wrap; }
+  .surface-header {
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  /* Seguridad: cualquier tabla ancha puede desplazarse horizontalmente
+     aunque no esté envuelta explícitamente en .table-scroll. */
+  .table-wrap { overflow-x: auto; }
 }
 
 @media (max-width: 640px) {
   .page { padding: 16px; }
-  .filter-bar { flex-direction: column; }
+  .page-title { font-size: 20px; }
+  .page-subtitle { font-size: 12px; }
+  .filter-bar { flex-direction: column; align-items: stretch; }
+  .filter-field { width: 100%; min-width: 0; }
   .stats-row { grid-template-columns: 1fr; }
+  .stat-value { font-size: 30px; }
+
+  /* En móvil las acciones de página se reparten el ancho y crecen el toque. */
+  .page-actions { width: 100%; }
+  .page-actions .btn { flex: 1 1 auto; justify-content: center; }
+
+  /* Tarjetas más compactas en pantallas chicas. */
+  .surface-body { padding: 16px; }
+  .stat-card { padding: 16px 16px 14px; }
 }
 
 /* React DatePicker — Trazabilidad custom (corporate look) */
@@ -1427,8 +1790,8 @@ body {
 /* Trazabilidad — refinamientos sutiles (hereda colores de .data-table th) */
 .trazabilidad-table thead th {
   vertical-align: middle !important;
-  padding-top: 14px !important;
-  padding-bottom: 14px !important;
+  padding-top: 11px !important;
+  padding-bottom: 11px !important;
 }
 .trazabilidad-table tbody tr {
   transition: background-color 0.15s ease;
@@ -1437,8 +1800,8 @@ body {
   transition: background-color 0.15s ease;
 }
 .trazabilidad-table tbody td {
-  padding-top: 12px !important;
-  padding-bottom: 12px !important;
+  padding-top: 8px !important;
+  padding-bottom: 8px !important;
   vertical-align: middle !important;
 }
 /* Acento sutil de marca en la primera celda de cada cotización (borde izquierdo) */
