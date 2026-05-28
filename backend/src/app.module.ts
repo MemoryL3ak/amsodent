@@ -17,6 +17,7 @@ import { NotificacionesModule } from './notificaciones/notificaciones.module';
 import { BitacoraModule } from './bitacora/bitacora.module';
 import { IaModule } from './ia/ia.module';
 import { ChatModule } from './chat/chat.module';
+import { StockClientesModule } from './stock-clientes/stock-clientes.module';
 
 @Module({
   imports: [
@@ -38,6 +39,7 @@ import { ChatModule } from './chat/chat.module';
     BitacoraModule,
     IaModule,
     ChatModule,
+    StockClientesModule,
   ],
 })
 export class AppModule {}

@@ -288,6 +288,7 @@ export class MailingsService {
     cuerpoTexto?: string;
     replyTo?: string;
     remitenteNombre?: string;
+    cc?: string[];
     attachments?: Array<{ filename: string; content: Buffer; contentType?: string }>;
   }): Promise<{ enviado: boolean; messageId?: string }> {
     const para = String(opts.para || '').trim().toLowerCase();
@@ -301,12 +302,17 @@ export class MailingsService {
       throw new BadRequestException('Falta el cuerpo del correo.');
     }
 
+    const cc = (Array.isArray(opts.cc) ? opts.cc : [])
+      .map((e) => String(e || '').trim().toLowerCase())
+      .filter((e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e));
+
     const transporter = this.getTransporter();
     const from = this.buildFrom({ remitenteNombre: opts.remitenteNombre } as SendBulkOptions);
 
     const info = await transporter.sendMail({
       from,
       to: para,
+      cc: cc.length > 0 ? cc : undefined,
       replyTo: opts.replyTo?.trim() || undefined,
       subject: opts.asunto.trim(),
       html: opts.cuerpoHtml,

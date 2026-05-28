@@ -49,6 +49,10 @@ import RequireRole from "./components/RequireRole";
 // COMUNICACIONES
 import Comunicaciones from "./pages/Comunicaciones";
 
+// PORTAL DE STOCK
+import PortalStockCliente from "./pages/PortalStockCliente";
+import MonitoreoStockClientes from "./pages/MonitoreoStockClientes";
+
 export default function App() {
   return (
     <BrowserRouter>
@@ -58,6 +62,7 @@ export default function App() {
         <Route path="/reset-password" element={<ResetPassword />} />
         <Route path="/sorteo" element={<SorteoRegistro />} />
         <Route path="/portal" element={<PortalCliente />} />
+        <Route path="/portal-cliente" element={<PortalStockCliente />} />
 
         {/* RUTAS PROTEGIDAS */}
         <Route
@@ -147,6 +152,16 @@ export default function App() {
             element={
               <RequireRole allow={["admin"]}>
                 <Buzon />
+              </RequireRole>
+            }
+          />
+
+          {/* MONITOREO DE STOCK DE CLIENTES — solo admin */}
+          <Route
+            path="monitoreo-stock"
+            element={
+              <RequireRole allow={["admin"]}>
+                <MonitoreoStockClientes />
               </RequireRole>
             }
           />

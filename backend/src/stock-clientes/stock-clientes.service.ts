@@ -1,0 +1,1073 @@
+import {
+  Injectable,
+  BadRequestException,
+  UnauthorizedException,
+  Logger,
+} from '@nestjs/common';
+import * as crypto from 'crypto';
+import { SupabaseService } from '../supabase/supabase.service';
+import { MailingsService } from '../mailings/mailings.service';
+import { CorreosService } from '../correos/correos.service';
+import {
+  plantillaAlertaStock,
+  plantillaSolicitudCotizacion,
+} from '../correos/correos.templates';
+
+const TOKEN_TTL_SECONDS = 12 * 60 * 60; // 12h
+
+export type SemaforoColor = 'verde' | 'amarillo' | 'rojo';
+
+export type ItemDeclaracion = {
+  nombre: string;
+  marca?: string | null;
+  unidad?: string | null;
+  stock_actual: number;
+  // Umbral crítico (rojo): stock_actual ≤ stock_minimo.
+  stock_minimo: number;
+  // Umbral de stock bajo (amarillo): stock_actual ≤ stock_alerta.
+  // Lo declara el cliente explícitamente por producto. Si no se declara,
+  // se usa el fallback de 1.5×stock_minimo.
+  stock_alerta?: number | null;
+  // Precio unitario declarado por el cliente (para valorizar su inventario).
+  precio_unitario?: number | null;
+  // Producto marcado como esencial para la operación del cliente. Independiente
+  // del semáforo: identifica importancia del producto, no nivel de stock.
+  es_critico?: boolean;
+  semaforo: SemaforoColor;
+};
+
+export type StockTokenPayload = {
+  rut: string;
+  razon_social: string;
+  exp: number;
+};
+
+function base64urlEncode(input: string | Buffer): string {
+  return Buffer.from(input)
+    .toString('base64')
+    .replace(/=/g, '')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_');
+}
+
+function base64urlDecodeToString(s: string): string {
+  return Buffer.from(s.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString();
+}
+
+// Normaliza un RUT chileno: minúsculas, sólo dígitos + 'k'.
+function normalizarRut(input: string): string {
+  return String(input || '')
+    .toLowerCase()
+    .replace(/[^0-9k]/g, '');
+}
+
+// Validación mínima de RUT chileno (formato + dígito verificador).
+function esRutValido(rutNorm: string): boolean {
+  if (!rutNorm || rutNorm.length < 2) return false;
+  const cuerpo = rutNorm.slice(0, -1);
+  const dv = rutNorm.slice(-1);
+  if (!/^\d+$/.test(cuerpo)) return false;
+
+  let suma = 0;
+  let multiplo = 2;
+  for (let i = cuerpo.length - 1; i >= 0; i--) {
+    suma += Number(cuerpo[i]) * multiplo;
+    multiplo = multiplo === 7 ? 2 : multiplo + 1;
+  }
+  const resto = 11 - (suma % 11);
+  const dvCalc = resto === 11 ? '0' : resto === 10 ? 'k' : String(resto);
+  return dv === dvCalc;
+}
+
+// Formatea el RUT normalizado en formato legible: 12.345.678-9
+function formatearRut(rutNorm: string): string {
+  if (!rutNorm) return '';
+  const cuerpo = rutNorm.slice(0, -1);
+  const dv = rutNorm.slice(-1).toUpperCase();
+  const conPuntos = cuerpo.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+  return `${conPuntos}-${dv}`;
+}
+
+// Calcula el color del semáforo según los umbrales declarados por el cliente.
+// - Rojo: stock actual ≤ stock_minimo (umbral crítico)
+// - Amarillo: stock actual ≤ stock_alerta (umbral de advertencia declarado)
+//   Si stock_alerta no se declaró, se cae al fallback 1.5×stock_minimo.
+// - Verde: por sobre el umbral de alerta.
+function calcularSemaforo(
+  actual: number,
+  minimo: number,
+  alerta?: number | null,
+): SemaforoColor {
+  const a = Number(actual) || 0;
+  const m = Number(minimo) || 0;
+  if (m <= 0) return 'verde';
+  if (a <= m) return 'rojo';
+
+  const alertaNum = alerta == null ? NaN : Number(alerta);
+  const umbralAmarillo =
+    Number.isFinite(alertaNum) && alertaNum > m ? alertaNum : m * 1.5;
+  if (a <= umbralAmarillo) return 'amarillo';
+  return 'verde';
+}
+
+@Injectable()
+export class StockClientesService {
+  private readonly logger = new Logger(StockClientesService.name);
+
+  constructor(
+    private supabase: SupabaseService,
+    private mailings: MailingsService,
+    private correos: CorreosService,
+  ) {}
+
+  private get secret(): string {
+    return (
+      process.env.PORTAL_STOCK_JWT_SECRET ||
+      process.env.PORTAL_JWT_SECRET ||
+      process.env.SUPABASE_SERVICE_ROLE_KEY ||
+      'dev-secret-stock'
+    );
+  }
+
+  // ── Token del portal de stock ─────────────────────────────────────────
+
+  private signToken(payload: Omit<StockTokenPayload, 'exp'>): string {
+    const exp = Math.floor(Date.now() / 1000) + TOKEN_TTL_SECONDS;
+    const full = { ...payload, exp };
+    const header = { alg: 'HS256', typ: 'JWT' };
+    const headerEnc = base64urlEncode(JSON.stringify(header));
+    const payloadEnc = base64urlEncode(JSON.stringify(full));
+    const signature = crypto
+      .createHmac('sha256', this.secret)
+      .update(`${headerEnc}.${payloadEnc}`)
+      .digest();
+    return `${headerEnc}.${payloadEnc}.${base64urlEncode(signature)}`;
+  }
+
+  verifyToken(token: string): StockTokenPayload | null {
+    if (!token || typeof token !== 'string') return null;
+    const parts = token.split('.');
+    if (parts.length !== 3) return null;
+    const [headerEnc, payloadEnc, sigEnc] = parts;
+    const expected = crypto
+      .createHmac('sha256', this.secret)
+      .update(`${headerEnc}.${payloadEnc}`)
+      .digest();
+    const got = Buffer.from(
+      sigEnc.replace(/-/g, '+').replace(/_/g, '/'),
+      'base64',
+    );
+    if (
+      expected.length !== got.length ||
+      !crypto.timingSafeEqual(expected, got)
+    ) {
+      return null;
+    }
+    try {
+      const payload = JSON.parse(base64urlDecodeToString(payloadEnc));
+      if (payload.exp && payload.exp < Math.floor(Date.now() / 1000)) {
+        return null;
+      }
+      return payload;
+    } catch {
+      return null;
+    }
+  }
+
+  // ── Verificación previa de RUT ────────────────────────────────────────
+
+  // Busca un cliente en el maestro de Amsodent (tabla `clientes`) cuyo RUT
+  // matchee con el normalizado provisto. El formato en BD puede variar
+  // (con/sin puntos, con/sin guión), así que normalizamos ambos lados.
+  private async buscarClientePorRut(
+    rutNorm: string,
+  ): Promise<{ id: number; rut: string; nombre: string; email?: string | null; telefono?: string | null } | null> {
+    const { data, error } = await this.supabase
+      .getClient()
+      .from('clientes')
+      .select('id, rut, nombre, email, telefono')
+      .range(0, 20000);
+    if (error) throw new BadRequestException(error.message);
+    const match = (data || []).find(
+      (c: any) => normalizarRut(c?.rut) === rutNorm,
+    );
+    return (match as any) || null;
+  }
+
+  // El cliente ingresa primero su RUT. Validamos contra el maestro de
+  // clientes de Amsodent: si el RUT no está registrado, no puede acceder.
+  // Si está registrado, devolvemos su razón social oficial (no la decide
+  // el cliente) y si necesita aceptar el acuerdo de confidencialidad.
+  async verificarRut(rut: string) {
+    const rutN = normalizarRut(rut);
+    if (!rutN) {
+      throw new BadRequestException('Debe ingresar su RUT.');
+    }
+    if (!esRutValido(rutN)) {
+      throw new BadRequestException('El RUT ingresado no es válido.');
+    }
+
+    const cliente = await this.buscarClientePorRut(rutN);
+    if (!cliente) {
+      throw new BadRequestException(
+        'Su RUT no se encuentra registrado en nuestros sistemas. Por favor contáctenos para activar el acceso al portal.',
+      );
+    }
+
+    // Estado en el portal de stock (para saber si ya aceptó el acuerdo)
+    const { data: portalCli, error: errPortal } = await this.supabase
+      .getClient()
+      .from('stock_clientes_portal')
+      .select('rut, acepto_acuerdo_en')
+      .eq('rut', rutN)
+      .maybeSingle();
+    if (errPortal) throw new BadRequestException(errPortal.message);
+
+    return {
+      rut: rutN,
+      rut_formateado: formatearRut(rutN),
+      existe: !!portalCli,
+      razon_social: cliente.nombre,
+      email: cliente.email || null,
+      telefono: cliente.telefono || null,
+      requiere_acuerdo: !portalCli?.acepto_acuerdo_en,
+    };
+  }
+
+  // ── Acceso del cliente ────────────────────────────────────────────────
+
+  async acceso(opts: {
+    rut: string;
+    acepto_acuerdo: boolean;
+    ip?: string | null;
+  }) {
+    const rutN = normalizarRut(opts.rut);
+    if (!rutN) {
+      throw new BadRequestException('Debe ingresar su RUT.');
+    }
+    if (!esRutValido(rutN)) {
+      throw new BadRequestException('El RUT ingresado no es válido.');
+    }
+
+    // El RUT DEBE existir en el maestro de clientes (no permitimos auto-alta).
+    const cliente = await this.buscarClientePorRut(rutN);
+    if (!cliente) {
+      throw new BadRequestException(
+        'Su RUT no se encuentra registrado en nuestros sistemas. Por favor contáctenos para activar el acceso al portal.',
+      );
+    }
+
+    const client = this.supabase.getClient();
+
+    // Estado actual en el portal de stock (acuerdo aceptado o no)
+    const { data: existente, error: errSel } = await client
+      .from('stock_clientes_portal')
+      .select('*')
+      .eq('rut', rutN)
+      .maybeSingle();
+    if (errSel) throw new BadRequestException(errSel.message);
+
+    const yaAcepto = !!existente?.acepto_acuerdo_en;
+
+    if (!yaAcepto && !opts.acepto_acuerdo) {
+      throw new BadRequestException(
+        'Debe aceptar el acuerdo de confidencialidad para continuar.',
+      );
+    }
+
+    // La razón social siempre viene del maestro de clientes — el portal
+    // no permite que el cliente la edite por su cuenta.
+    const razonSocial = String(cliente.nombre || '').trim();
+
+    const ahora = new Date().toISOString();
+    const payload: any = {
+      rut: rutN,
+      razon_social: razonSocial,
+      email: cliente.email || existente?.email || null,
+      telefono: cliente.telefono || existente?.telefono || null,
+      ultimo_acceso: ahora,
+      updated_at: ahora,
+    };
+
+    // Si nunca aceptó, marcamos aceptación ahora.
+    if (!yaAcepto && opts.acepto_acuerdo) {
+      payload.acepto_acuerdo_en = ahora;
+      payload.acepto_acuerdo_ip = opts.ip || null;
+    }
+
+    const { error: errUp } = await client
+      .from('stock_clientes_portal')
+      .upsert(payload, { onConflict: 'rut' });
+    if (errUp) throw new BadRequestException(errUp.message);
+
+    const token = this.signToken({ rut: rutN, razon_social: razonSocial });
+
+    return {
+      token,
+      cliente: {
+        rut: rutN,
+        rut_formateado: formatearRut(rutN),
+        razon_social: razonSocial,
+        primer_ingreso: !existente,
+      },
+    };
+  }
+
+  // ── Productos del cliente (persistentes entre sesiones) ───────────────
+
+  async listarProductos(rut: string) {
+    const rutN = normalizarRut(rut);
+    const { data, error } = await this.supabase
+      .getClient()
+      .from('stock_productos_cliente')
+      .select('*')
+      .eq('rut', rutN)
+      .eq('activo', true)
+      .order('nombre', { ascending: true });
+    if (error) throw new BadRequestException(error.message);
+
+    return (data || []).map((p: any) => ({
+      ...p,
+      marca: p.marca || null,
+      stock_actual: Number(p.stock_actual) || 0,
+      stock_minimo: Number(p.stock_minimo) || 0,
+      stock_alerta:
+        p.stock_alerta == null || p.stock_alerta === ''
+          ? null
+          : Number(p.stock_alerta),
+      precio_unitario:
+        p.precio_unitario == null || p.precio_unitario === ''
+          ? null
+          : Number(p.precio_unitario),
+      es_critico: !!p.es_critico,
+      semaforo: calcularSemaforo(
+        p.stock_actual,
+        p.stock_minimo,
+        p.stock_alerta,
+      ),
+    }));
+  }
+
+  // Guarda una declaración: actualiza la lista persistente del cliente
+  // y crea un snapshot. Si hay items en amarillo o rojo, notifica.
+  async crearDeclaracion(
+    payload: StockTokenPayload,
+    body: {
+      items: Array<{
+        nombre: string;
+        marca?: string;
+        unidad?: string;
+        stock_actual: number | string;
+        stock_minimo: number | string;
+        stock_alerta?: number | string | null;
+        precio_unitario?: number | string | null;
+        es_critico?: boolean;
+      }>;
+    },
+    meta: { ip?: string | null; user_agent?: string | null },
+  ) {
+    const rutN = normalizarRut(payload.rut);
+    if (!rutN) throw new UnauthorizedException('Sesión inválida.');
+
+    const items = Array.isArray(body?.items) ? body.items : [];
+    if (items.length === 0) {
+      throw new BadRequestException(
+        'Debe agregar al menos un producto antes de guardar la declaración.',
+      );
+    }
+
+    // Sanitiza y calcula semáforo de cada item
+    const itemsLimpios: ItemDeclaracion[] = items
+      .map((it) => {
+        const nombre = String(it?.nombre || '').trim().slice(0, 200);
+        const marca = String(it?.marca || '').trim().slice(0, 100) || null;
+        const unidad = String(it?.unidad || '').trim().slice(0, 50) || null;
+        const stock_actual = Number(it?.stock_actual) || 0;
+        const stock_minimo = Number(it?.stock_minimo) || 0;
+        const alertaRaw = it?.stock_alerta;
+        const alertaNum =
+          alertaRaw == null || alertaRaw === ''
+            ? null
+            : Number(alertaRaw);
+        const stock_alerta =
+          alertaNum != null && Number.isFinite(alertaNum) && alertaNum > 0
+            ? alertaNum
+            : null;
+        const precioRaw = it?.precio_unitario;
+        const precioNum =
+          precioRaw == null || precioRaw === '' ? null : Number(precioRaw);
+        const precio_unitario =
+          precioNum != null && Number.isFinite(precioNum) && precioNum >= 0
+            ? precioNum
+            : null;
+        const es_critico = it?.es_critico === true;
+        return {
+          nombre,
+          marca,
+          unidad,
+          stock_actual,
+          stock_minimo,
+          stock_alerta,
+          precio_unitario,
+          es_critico,
+          semaforo: calcularSemaforo(stock_actual, stock_minimo, stock_alerta),
+        };
+      })
+      .filter((it) => it.nombre.length > 0);
+
+    if (itemsLimpios.length === 0) {
+      throw new BadRequestException(
+        'Los productos deben tener un nombre válido.',
+      );
+    }
+
+    const totales = itemsLimpios.reduce(
+      (acc, it) => {
+        if (it.semaforo === 'rojo') acc.rojos += 1;
+        else if (it.semaforo === 'amarillo') acc.amarillos += 1;
+        else acc.verdes += 1;
+        return acc;
+      },
+      { verdes: 0, amarillos: 0, rojos: 0 },
+    );
+
+    const client = this.supabase.getClient();
+
+    // 1) Inserta snapshot de la declaración
+    const ahora = new Date().toISOString();
+    const { data: declaracion, error: errIns } = await client
+      .from('stock_declaraciones')
+      .insert({
+        rut: rutN,
+        razon_social: payload.razon_social || null,
+        fecha: ahora,
+        total_items: itemsLimpios.length,
+        total_verdes: totales.verdes,
+        total_amarillos: totales.amarillos,
+        total_rojos: totales.rojos,
+        items: itemsLimpios,
+        ip_address: meta.ip || null,
+        user_agent: meta.user_agent || null,
+      })
+      .select()
+      .single();
+    if (errIns) throw new BadRequestException(errIns.message);
+
+    // 2) Sincroniza la lista persistente del cliente. Para no perder los
+    //    productos previos si el insert falla (p. ej. por un cambio de
+    //    esquema), insertamos primero los nuevos y recién después borramos
+    //    los anteriores. El cliente puede renombrar libremente sus productos,
+    //    por eso reemplazamos toda la lista en vez de hacer matching por nombre.
+    const { data: previos } = await client
+      .from('stock_productos_cliente')
+      .select('id')
+      .eq('rut', rutN);
+    const idsPrevios = (previos || []).map((p: any) => p.id);
+
+    const productosRows = itemsLimpios.map((it) => ({
+      rut: rutN,
+      nombre: it.nombre,
+      marca: it.marca,
+      unidad: it.unidad,
+      stock_actual: it.stock_actual,
+      stock_minimo: it.stock_minimo,
+      stock_alerta: it.stock_alerta,
+      precio_unitario: it.precio_unitario,
+      es_critico: it.es_critico === true,
+      activo: true,
+      actualizado_at: ahora,
+    }));
+    const { error: errInsProd } = await client
+      .from('stock_productos_cliente')
+      .insert(productosRows);
+    if (errInsProd) {
+      // No borramos los previos: la lista persistente conserva su estado
+      // anterior y avisamos del problema en vez de perder datos en silencio.
+      this.logger.error(
+        `No se pudieron persistir productos del cliente: ${errInsProd.message}`,
+      );
+      throw new BadRequestException(
+        `No se pudo guardar la lista de productos: ${errInsProd.message}`,
+      );
+    }
+    if (idsPrevios.length > 0) {
+      const { error: errDel } = await client
+        .from('stock_productos_cliente')
+        .delete()
+        .in('id', idsPrevios);
+      if (errDel) {
+        this.logger.warn(
+          `No se pudieron limpiar productos previos del cliente: ${errDel.message}`,
+        );
+      }
+    }
+
+    // 3) Notificaciones si hay rojos o amarillos
+    if (totales.rojos > 0 || totales.amarillos > 0) {
+      await this.notificarDestinatarios({
+        rut: rutN,
+        razonSocial: payload.razon_social || '',
+        declaracionId: Number(declaracion?.id),
+        totales,
+        items: itemsLimpios,
+      });
+    }
+
+    return {
+      ok: true,
+      declaracion: {
+        id: declaracion?.id,
+        fecha: declaracion?.fecha,
+        total_items: itemsLimpios.length,
+        total_verdes: totales.verdes,
+        total_amarillos: totales.amarillos,
+        total_rojos: totales.rojos,
+      },
+    };
+  }
+
+  // ── Solicitud de cotización desde el portal ──────────────────────────
+
+  async crearSolicitudCotizacion(
+    payload: StockTokenPayload,
+    body: {
+      items: Array<{
+        nombre: string;
+        unidad?: string;
+        cantidad: number | string;
+      }>;
+      nota?: string;
+      contacto_nombre?: string;
+      contacto_email?: string;
+      contacto_telefono?: string;
+    },
+    meta: { ip?: string | null; user_agent?: string | null },
+  ) {
+    const rutN = normalizarRut(payload.rut);
+    if (!rutN) throw new UnauthorizedException('Sesión inválida.');
+
+    const itemsRaw = Array.isArray(body?.items) ? body.items : [];
+    const items = itemsRaw
+      .map((it) => {
+        const nombre = String(it?.nombre || '').trim().slice(0, 200);
+        const unidad = String(it?.unidad || '').trim().slice(0, 50) || null;
+        const cantidad = Number(it?.cantidad) || 0;
+        return { nombre, unidad, cantidad };
+      })
+      .filter((it) => it.nombre.length > 0 && it.cantidad > 0);
+
+    if (items.length === 0) {
+      throw new BadRequestException(
+        'Seleccione al menos un producto con cantidad mayor a cero para solicitar la cotización.',
+      );
+    }
+
+    const razonSocial = payload.razon_social || '';
+    const rutFmt = formatearRut(rutN);
+    const contactoNombre = String(body?.contacto_nombre || '').trim().slice(0, 160) || null;
+    const contactoEmail = String(body?.contacto_email || '').trim().toLowerCase() || null;
+    const contactoTelefono = String(body?.contacto_telefono || '').trim() || null;
+    const nota = String(body?.nota || '').trim().slice(0, 1000) || null;
+
+    const client = this.supabase.getClient();
+    const { data: solicitud, error } = await client
+      .from('stock_solicitudes_cotizacion')
+      .insert({
+        rut: rutN,
+        razon_social: razonSocial,
+        contacto_nombre: contactoNombre,
+        contacto_email: contactoEmail,
+        contacto_telefono: contactoTelefono,
+        nota,
+        items,
+        ip_address: meta.ip || null,
+        user_agent: meta.user_agent || null,
+      })
+      .select()
+      .single();
+    if (error) throw new BadRequestException(error.message);
+
+    // Notificaciones (campana + correo) a los destinatarios configurados
+    await this.notificarSolicitud({
+      rut: rutN,
+      razonSocial,
+      rutFmt,
+      solicitudId: Number(solicitud?.id),
+      items,
+      nota,
+      contactoNombre,
+      contactoEmail,
+      contactoTelefono,
+    });
+
+    return {
+      ok: true,
+      solicitud: {
+        id: solicitud?.id,
+        items: items.length,
+      },
+    };
+  }
+
+  private async notificarSolicitud(args: {
+    rut: string;
+    razonSocial: string;
+    rutFmt: string;
+    solicitudId: number;
+    items: Array<{ nombre: string; unidad: string | null; cantidad: number }>;
+    nota: string | null;
+    contactoNombre: string | null;
+    contactoEmail: string | null;
+    contactoTelefono: string | null;
+  }) {
+    const client = this.supabase.getClient();
+    const { data: destinatarios } = await client
+      .from('stock_destinatarios')
+      .select('user_email, recibe_campana, recibe_correo, activo')
+      .eq('activo', true);
+    const lista = (destinatarios || []).filter((d: any) => d?.user_email);
+    if (lista.length === 0) return;
+
+    const cliente = args.razonSocial || args.rutFmt;
+    const mensaje = `${cliente} solicita cotización por ${args.items.length} producto${args.items.length === 1 ? '' : 's'}.`;
+
+    // Campana
+    const rowsCampana = lista
+      .filter((d: any) => d.recibe_campana !== false)
+      .map((d: any) => ({
+        user_email: String(d.user_email).toLowerCase(),
+        tipo: 'stock_solicitud_cotizacion',
+        mensaje,
+        link: `/monitoreo-stock?solicitud=${args.solicitudId}`,
+        metadata: {
+          rut: args.rut,
+          rut_formateado: args.rutFmt,
+          razon_social: args.razonSocial,
+          solicitud_id: args.solicitudId,
+          total_items: args.items.length,
+        },
+      }));
+    if (rowsCampana.length > 0) {
+      const { error } = await client.from('notificaciones').insert(rowsCampana);
+      if (error) this.logger.warn(`Notificación campana (solicitud) falló: ${error.message}`);
+    }
+
+    // Correo
+    const destinatariosCorreo = lista
+      .filter((d: any) => d.recibe_correo !== false)
+      .map((d: any) => String(d.user_email).toLowerCase());
+    if (destinatariosCorreo.length === 0) return;
+
+    const enlaceBase = String(
+      process.env.APP_PUBLIC_URL || process.env.PUBLIC_APP_URL || '',
+    ).trim();
+    const enlace = enlaceBase
+      ? `${enlaceBase.replace(/\/+$/, '')}/monitoreo-stock?solicitud=${args.solicitudId}`
+      : undefined;
+
+    const { asunto, html } = plantillaSolicitudCotizacion({
+      razonSocial: args.razonSocial || args.rutFmt,
+      rutFmt: args.rutFmt,
+      contactoNombre: args.contactoNombre || undefined,
+      contactoEmail: args.contactoEmail || undefined,
+      contactoTelefono: args.contactoTelefono || undefined,
+      nota: args.nota || undefined,
+      items: args.items,
+      enlace,
+    });
+
+    for (const para of destinatariosCorreo) {
+      try {
+        await this.mailings.enviarUno({ para, asunto, cuerpoHtml: html });
+      } catch (e: any) {
+        this.logger.warn(`Correo de solicitud falló para ${para}: ${e?.message || e}`);
+      }
+    }
+  }
+
+  // Para el detalle del cliente en el dashboard admin: solicitudes del RUT.
+  // Cambia el estado de una solicitud (pendiente / respondida / cancelada).
+  // Se llama desde el dashboard admin cuando el equipo atiende o descarta
+  // una solicitud, o automáticamente al crear una cotización desde ella.
+  async actualizarEstadoSolicitud(id: number, estado: string) {
+    const estadosValidos = ['pendiente', 'respondida', 'cancelada'];
+    const estadoNorm = String(estado || '').toLowerCase().trim();
+    if (!estadosValidos.includes(estadoNorm)) {
+      throw new BadRequestException(
+        `Estado inválido. Debe ser uno de: ${estadosValidos.join(', ')}.`,
+      );
+    }
+    const update: any = { estado: estadoNorm };
+    if (estadoNorm === 'respondida') {
+      update.respondida_at = new Date().toISOString();
+    } else if (estadoNorm === 'pendiente') {
+      update.respondida_at = null;
+    }
+    const { data, error } = await this.supabase
+      .getClient()
+      .from('stock_solicitudes_cotizacion')
+      .update(update)
+      .eq('id', id)
+      .select()
+      .single();
+    if (error) throw new BadRequestException(error.message);
+    return data;
+  }
+
+  async listarSolicitudesPorRut(rut: string, limit = 50) {
+    const rutN = normalizarRut(rut);
+    if (!rutN) return [];
+    const { data, error } = await this.supabase
+      .getClient()
+      .from('stock_solicitudes_cotizacion')
+      .select(
+        'id, items, nota, contacto_nombre, contacto_email, contacto_telefono, estado, respondida_at, created_at',
+      )
+      .eq('rut', rutN)
+      .order('created_at', { ascending: false })
+      .limit(limit);
+    if (error) throw new BadRequestException(error.message);
+    return data || [];
+  }
+
+  async listarMisSolicitudes(rut: string, limit = 50) {
+    const rutN = normalizarRut(rut);
+    const { data, error } = await this.supabase
+      .getClient()
+      .from('stock_solicitudes_cotizacion')
+      .select(
+        'id, items, nota, contacto_nombre, contacto_email, contacto_telefono, estado, respondida_at, created_at',
+      )
+      .eq('rut', rutN)
+      .order('created_at', { ascending: false })
+      .limit(limit);
+    if (error) throw new BadRequestException(error.message);
+    return data || [];
+  }
+
+  async listarMisDeclaraciones(rut: string, limit = 30) {
+    const rutN = normalizarRut(rut);
+    const { data, error } = await this.supabase
+      .getClient()
+      .from('stock_declaraciones')
+      .select('id, fecha, total_items, total_verdes, total_amarillos, total_rojos, items')
+      .eq('rut', rutN)
+      .order('fecha', { ascending: false })
+      .limit(limit);
+    if (error) throw new BadRequestException(error.message);
+    return data || [];
+  }
+
+  // ── Admin: dashboard y destinatarios ──────────────────────────────────
+
+  async listarDeclaraciones(filtros: {
+    rut?: string;
+    razonSocial?: string;
+    desde?: string;
+    hasta?: string;
+    soloAlertas?: boolean;
+    limit?: number;
+  }) {
+    const client = this.supabase.getClient();
+    let q = client
+      .from('stock_declaraciones')
+      .select('*')
+      .order('fecha', { ascending: false })
+      .limit(Math.min(Math.max(Number(filtros.limit) || 200, 1), 1000));
+
+    if (filtros.rut) {
+      const rutN = normalizarRut(filtros.rut);
+      q = q.eq('rut', rutN);
+    }
+    if (filtros.razonSocial) {
+      // Substring case-insensitive sobre razon_social
+      q = q.ilike('razon_social', `%${filtros.razonSocial.trim()}%`);
+    }
+    if (filtros.desde) q = q.gte('fecha', filtros.desde);
+    if (filtros.hasta) q = q.lte('fecha', filtros.hasta);
+    if (filtros.soloAlertas) {
+      q = q.or('total_rojos.gt.0,total_amarillos.gt.0');
+    }
+
+    const { data, error } = await q;
+    if (error) throw new BadRequestException(error.message);
+    return data || [];
+  }
+
+  // Lista de clientes únicos que tienen al menos una declaración. Sirve para
+  // alimentar el autocompletado de los filtros del dashboard.
+  async listarClientesConDeclaraciones() {
+    const { data, error } = await this.supabase
+      .getClient()
+      .from('stock_declaraciones')
+      .select('rut, razon_social, fecha')
+      .order('fecha', { ascending: false })
+      .limit(5000);
+    if (error) throw new BadRequestException(error.message);
+
+    const mapa = new Map<string, { rut: string; razon_social: string; ultima_fecha: string }>();
+    (data || []).forEach((d: any) => {
+      const rut = String(d?.rut || '').trim();
+      if (!rut) return;
+      if (!mapa.has(rut)) {
+        mapa.set(rut, {
+          rut,
+          razon_social: String(d?.razon_social || '').trim(),
+          ultima_fecha: d?.fecha || '',
+        });
+      }
+    });
+    return Array.from(mapa.values()).map((c) => ({
+      ...c,
+      rut_formateado: formatearRut(c.rut),
+    }));
+  }
+
+  async listarClientesPortal() {
+    const { data, error } = await this.supabase
+      .getClient()
+      .from('stock_clientes_portal')
+      .select('rut, razon_social, email, telefono, ultimo_acceso, acepto_acuerdo_en')
+      .order('ultimo_acceso', { ascending: false });
+    if (error) throw new BadRequestException(error.message);
+    return (data || []).map((c: any) => ({
+      ...c,
+      rut_formateado: formatearRut(c.rut),
+    }));
+  }
+
+  async listarDestinatarios() {
+    const { data, error } = await this.supabase
+      .getClient()
+      .from('stock_destinatarios')
+      .select('*')
+      .order('user_email', { ascending: true });
+    if (error) throw new BadRequestException(error.message);
+    return data || [];
+  }
+
+  async upsertDestinatario(body: {
+    user_email: string;
+    recibe_campana?: boolean;
+    recibe_correo?: boolean;
+    activo?: boolean;
+  }) {
+    const email = String(body?.user_email || '').trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      throw new BadRequestException('El correo del destinatario no es válido.');
+    }
+    const row = {
+      user_email: email,
+      recibe_campana: body.recibe_campana ?? true,
+      recibe_correo: body.recibe_correo ?? true,
+      activo: body.activo ?? true,
+    };
+    const { data, error } = await this.supabase
+      .getClient()
+      .from('stock_destinatarios')
+      .upsert(row, { onConflict: 'user_email' })
+      .select()
+      .single();
+    if (error) throw new BadRequestException(error.message);
+    return data;
+  }
+
+  async eliminarDestinatario(id: number) {
+    const { error } = await this.supabase
+      .getClient()
+      .from('stock_destinatarios')
+      .delete()
+      .eq('id', id);
+    if (error) throw new BadRequestException(error.message);
+    return { ok: true };
+  }
+
+  // ── Catálogo Amsodent (ayuda de búsqueda en solicitud de cotización) ──
+
+  // Busca productos del catálogo maestro por nombre, SKU o marca. Lo usa el
+  // cliente desde el portal para agregar productos a una solicitud de
+  // cotización aunque no los tenga en su declaración de stock.
+  async buscarCatalogo(query: string, limit = 20) {
+    const q = String(query || '').trim();
+    if (q.length < 2) return [];
+    const patron = `%${q.replace(/[%_,]/g, ' ')}%`;
+    const { data, error } = await this.supabase
+      .getClient()
+      .from('productos')
+      .select('sku, nombre, marca, categoria')
+      .or(`nombre.ilike.${patron},sku.ilike.${patron},marca.ilike.${patron}`)
+      .limit(Math.min(Math.max(Number(limit) || 20, 1), 50));
+    if (error) throw new BadRequestException(error.message);
+    return (data || [])
+      .map((p: any) => ({
+        sku: p.sku || null,
+        nombre: String(p.nombre || '').trim(),
+        marca: p.marca || null,
+        categoria: p.categoria || null,
+      }))
+      .filter((p) => p.nombre.length > 0);
+  }
+
+  // ── Comunicación admin → cliente (correo) ─────────────────────────────
+
+  // Datos de contacto del cliente desde el maestro `clientes`, con respaldo en
+  // el registro del portal. Lo usa el dashboard admin para prellenar correo y
+  // teléfono al comunicarse con el cliente.
+  async obtenerContactoCliente(rut: string) {
+    const rutN = normalizarRut(rut);
+    if (!rutN) throw new BadRequestException('RUT inválido.');
+    const cliente = await this.buscarClientePorRut(rutN);
+    const { data: portal } = await this.supabase
+      .getClient()
+      .from('stock_clientes_portal')
+      .select('email, telefono, razon_social')
+      .eq('rut', rutN)
+      .maybeSingle();
+    return {
+      id: cliente?.id ?? null,
+      rut: rutN,
+      rut_formateado: formatearRut(rutN),
+      razon_social: cliente?.nombre || portal?.razon_social || '',
+      email: cliente?.email || portal?.email || null,
+      telefono: cliente?.telefono || portal?.telefono || null,
+    };
+  }
+
+  // Envía un correo de redacción libre al cliente. Sale desde la cuenta de
+  // correo conectada del usuario (su casilla queda en Enviados) y se anexa su
+  // firma. El destino se resuelve desde el maestro de clientes si no se
+  // entrega explícitamente.
+  async enviarComunicacionCliente(opts: {
+    userId?: string;
+    rut?: string;
+    para?: string;
+    cc?: string[];
+    asunto: string;
+    mensaje: string;
+  }) {
+    const asunto = String(opts?.asunto || '').trim();
+    const mensaje = String(opts?.mensaje || '').trim();
+    if (!asunto) throw new BadRequestException('Falta el asunto del correo.');
+    if (!mensaje) throw new BadRequestException('Falta el mensaje del correo.');
+
+    let para = String(opts?.para || '').trim().toLowerCase();
+    if (opts?.rut && !para) {
+      const contacto = await this.obtenerContactoCliente(opts.rut);
+      if (contacto.email) para = String(contacto.email).toLowerCase();
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(para)) {
+      throw new BadRequestException(
+        'No hay un correo de destino válido para este cliente. Indique uno manualmente.',
+      );
+    }
+
+    const res = await this.correos.enviarCorreoCliente(opts?.userId || '', {
+      para,
+      cc: Array.isArray(opts?.cc) ? opts.cc : [],
+      asunto,
+      mensaje,
+    });
+    return { ok: true, para, de: res?.de, modo: res?.modo };
+  }
+
+  // ── Notificaciones internas (campana + correo) ────────────────────────
+
+  private async notificarDestinatarios(args: {
+    rut: string;
+    razonSocial: string;
+    declaracionId: number;
+    totales: { verdes: number; amarillos: number; rojos: number };
+    items: ItemDeclaracion[];
+  }) {
+    const client = this.supabase.getClient();
+    const { data: destinatarios } = await client
+      .from('stock_destinatarios')
+      .select('user_email, recibe_campana, recibe_correo, activo')
+      .eq('activo', true);
+
+    const lista = (destinatarios || []).filter((d: any) => d?.user_email);
+    if (lista.length === 0) return;
+
+    const rutFmt = formatearRut(args.rut);
+    const cliente = args.razonSocial || rutFmt;
+    const esCritico = args.totales.rojos > 0;
+
+    // Mensaje natural para la campana — el frontend lo muestra como un solo
+    // bloque, así que armamos algo legible y accionable.
+    const partesAlerta: string[] = [];
+    if (args.totales.rojos > 0) {
+      partesAlerta.push(
+        `${args.totales.rojos} ${args.totales.rojos === 1 ? 'producto en nivel crítico' : 'productos en nivel crítico'}`,
+      );
+    }
+    if (args.totales.amarillos > 0) {
+      partesAlerta.push(
+        `${args.totales.amarillos} ${args.totales.amarillos === 1 ? 'producto cercano al mínimo' : 'productos cercanos al mínimo'}`,
+      );
+    }
+    const detalleAlerta = partesAlerta.join(' y ');
+
+    const mensajeCampana = esCritico
+      ? `${cliente} reportó ${detalleAlerta}. Coordinar reposición.`
+      : `${cliente} reportó ${detalleAlerta}.`;
+
+    // 1) Campana — fila en notificaciones para cada destinatario opt-in
+    const rowsCampana = lista
+      .filter((d: any) => d.recibe_campana !== false)
+      .map((d: any) => ({
+        user_email: String(d.user_email).toLowerCase(),
+        tipo: esCritico ? 'stock_critico' : 'stock_bajo',
+        mensaje: mensajeCampana,
+        link: `/monitoreo-stock?declaracion=${args.declaracionId}`,
+        metadata: {
+          rut: args.rut,
+          rut_formateado: rutFmt,
+          razon_social: args.razonSocial,
+          declaracion_id: args.declaracionId,
+          total_rojos: args.totales.rojos,
+          total_amarillos: args.totales.amarillos,
+          total_verdes: args.totales.verdes,
+          severidad: esCritico ? 'critico' : 'bajo',
+        },
+      }));
+
+    if (rowsCampana.length > 0) {
+      const { error } = await client.from('notificaciones').insert(rowsCampana);
+      if (error) this.logger.warn(`Notificación campana falló: ${error.message}`);
+    }
+
+    // 2) Correo a destinatarios opt-in
+    const destinatariosCorreo = lista
+      .filter((d: any) => d.recibe_correo !== false)
+      .map((d: any) => String(d.user_email).toLowerCase());
+
+    if (destinatariosCorreo.length === 0) return;
+
+    const enlaceMonitoreo = String(
+      process.env.APP_PUBLIC_URL || process.env.PUBLIC_APP_URL || '',
+    ).trim();
+    const enlace = enlaceMonitoreo
+      ? `${enlaceMonitoreo.replace(/\/+$/, '')}/monitoreo-stock?declaracion=${args.declaracionId}`
+      : undefined;
+
+    const { asunto, html } = plantillaAlertaStock({
+      razonSocial: args.razonSocial || rutFmt,
+      rutFmt,
+      totales: args.totales,
+      items: args.items,
+      enlace,
+    });
+
+    for (const para of destinatariosCorreo) {
+      try {
+        await this.mailings.enviarUno({
+          para,
+          asunto,
+          cuerpoHtml: html,
+        });
+      } catch (e: any) {
+        this.logger.warn(`Correo de alerta de stock falló para ${para}: ${e?.message || e}`);
+      }
+    }
+  }
+}
