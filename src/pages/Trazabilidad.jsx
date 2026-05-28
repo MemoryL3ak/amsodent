@@ -429,7 +429,12 @@ export default function Trazabilidad() {
     const docs = getDocsForLic(licId);
     const ocs = docs.filter((d) => d.tipo === "orden_compra");
     const guias = docs.filter((d) => d.tipo === "guia_despacho");
-    const facturas = docs.filter((d) => d.tipo === "factura");
+    // Incluye factura_boleta y efectivo (flujo Cliente Particular), no solo
+    // "factura". Si no, la columna "Factura / Boleta" mostraba "Pendiente"
+    // aunque la boleta estuviera cargada.
+    const facturas = docs.filter(
+      (d) => d.tipo === "factura" || d.tipo === "factura_boleta" || d.tipo === "efectivo",
+    );
 
     const cycles = [];
 
