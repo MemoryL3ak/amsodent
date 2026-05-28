@@ -23,12 +23,25 @@ import {
   MessagesSquare,
   Mail,
   ChevronLeft,
+  ChevronDown,
+  Clock,
+  MapPin,
+  Trophy,
+  BarChart3,
+  SlidersHorizontal,
+  Briefcase,
+  Truck,
+  Headphones,
+  Wrench,
+  Shield,
   PackageSearch,
+  Wallet,
 } from "lucide-react";
 import NotificacionesMenu from "./NotificacionesMenu";
 import RecordatoriosCorreo from "./RecordatoriosCorreo";
 import GoogleAuthSync from "./GoogleAuthSync";
 import DamarIAWidget from "./DamarIAWidget";
+import useChatNoLeidos from "../hooks/useChatNoLeidos";
 
 const ROLE_LABELS = {
   admin:                "Administrador",
@@ -50,7 +63,13 @@ export default function SidebarLayout() {
   const [perfil, setPerfil] = useState(null);
   const [colapsada, setColapsada] = useState(() => {
     try {
-      return localStorage.getItem("sidebar_collapsed") === "1";
+      const stored = localStorage.getItem("sidebar_collapsed");
+      if (stored !== null) return stored === "1";
+      // Sin preferencia guardada: cerrado en mobile (drawer), abierto en desktop.
+      if (typeof window !== "undefined" && window.matchMedia) {
+        return window.matchMedia("(max-width: 1100px)").matches;
+      }
+      return false;
     } catch {
       return false;
     }
@@ -116,6 +135,8 @@ export default function SidebarLayout() {
     window.location.href = "/login";
   }
 
+  const chatNoLeidos = useChatNoLeidos(perfil?.email);
+
   const rolNorm = (perfil?.rol || "").toString().trim().toLowerCase();
   const esAdmin = rolNorm === "admin";
   const esJefatura = ["jefe_ventas", "jefe ventas", "jefe-ventas", "jefe de ventas", "jefe_ventas_especial"].includes(rolNorm);
@@ -123,7 +144,8 @@ export default function SidebarLayout() {
   const esContabilidad = rolNorm === "contabilidad";
   const esVentas = rolNorm === "ventas" || rolNorm === "ventas_especial";
   const esVentasEspecial = rolNorm === "ventas_especial";
-  const puedeVerVentas = esAdmin || esJefatura || esVentas || esContabilidad;
+  // Resumen Comercial: solo admin + jefatura de ventas (no vendedores ni contabilidad).
+  const puedeVerResumenComercial = esAdmin || esJefatura;
   const puedeVerMetas = esAdmin || esJefatura || esVentas || esContabilidad;
 
   const comercialNav = [
@@ -135,49 +157,113 @@ export default function SidebarLayout() {
   ].filter(Boolean);
 
   const postVentaNav = [
-    (esAdmin || esJefatura || esContabilidad) && { to: "/trazabilidad",      icon: FileText,   label: "Trazabilidad" },
+    (esAdmin || esJefatura || esContabilidad || rolNorm === "ventas") && { to: "/trazabilidad",      icon: FileText,   label: "Trazabilidad" },
     (esAdmin || esJefeVentasEspecial || esContabilidad) && { to: "/seguimiento-pagos", icon: CreditCard, label: "Seguimiento de Pagos" },
+    (esAdmin || esJefeVentasEspecial || esContabilidad) && { to: "/cobranza", icon: Wallet, label: "Cobranza" },
   ].filter(Boolean);
 
   const comunicacionNav = [
     esAdmin && { to: "/buzon",                 icon: Mail,          label: "Mi Correo" },
-    { to: "/bitacora-cotizaciones", icon: MessagesSquare, label: "Chat Grupal" },
+    { to: "/bitacora-cotizaciones", icon: MessagesSquare, label: "Chat Grupal", badge: chatNoLeidos },
   ].filter(Boolean);
 
-  const reportNav = [
-    puedeVerVentas && { to: "/ventas", icon: TrendingUp, label: "Ventas" },
-    puedeVerMetas  && { to: "/metas",  icon: Target,     label: "Metas" },
-    (esAdmin || esJefatura || esContabilidad) && { to: "/metas-canal", icon: BarChart2, label: "Metas por Canal" },
+  const metasNav = [
+    puedeVerMetas && { to: "/metas", icon: Target, label: "Metas" },
+    (esAdmin || esJefatura || esContabilidad) && { to: "/metas-canal", icon: SlidersHorizontal, label: "Definición de Metas" },
+  ].filter(Boolean);
+
+  const reportesNav = [
+    puedeVerResumenComercial && { to: "/ventas", icon: TrendingUp, label: "Resumen Comercial" },
   ].filter(Boolean);
 
   const herramientasNav = [
     (esAdmin || esVentasEspecial) && { to: "/sorteo-registros", icon: Gift, label: "Sorteo" },
+    { to: "/marcaje", icon: Clock, label: "Marcar Asistencia" },
   ].filter(Boolean);
 
   const adminNav = [
-    esAdmin && { to: "/usuarios",  icon: UserCog,  label: "Usuarios" },
-    esAdmin && { to: "/monitoreo", icon: Activity, label: "Monitoreo de Usuarios" },
-    (esAdmin || esVentasEspecial) && { to: "/monitoreo-stock", icon: PackageSearch, label: "Monitoreo Stock Clientes" },
+    esAdmin && { to: "/usuarios",          icon: UserCog,  label: "Usuarios" },
+    esAdmin && { to: "/monitoreo",         icon: Activity, label: "Monitoreo de Usuarios" },
+    esAdmin && { to: "/monitoreo-marcajes", icon: MapPin,   label: "Monitoreo de Asistencia" },
+    (esAdmin || esVentasEspecial) && { to: "/monitoreo-stock",   icon: PackageSearch, label: "Monitoreo Stock Clientes" },
   ].filter(Boolean);
 
-  function NavGroup({ label, items }) {
+  function NavGroup({ label, items, collapsible, icon: GroupIcon, storageKey }) {
     if (items.length === 0) return null;
+
+    const algunActivo = items.some(({ to }) => isActive(to));
+
+    // Estado persistido en localStorage. Default abierto.
+    const [open, setOpen] = useState(() => {
+      if (!collapsible || !storageKey) return true;
+      try {
+        const stored = localStorage.getItem(storageKey);
+        return stored === null ? true : stored === "1";
+      } catch {
+        return true;
+      }
+    });
+
+    // `open` es la única fuente de verdad cuando es colapsable — respeta
+    // siempre el click del usuario. Si querés feedback visual cuando hay un
+    // hijo activo y el grupo está cerrado, lo damos con la clase
+    // `has-active-child` en el toggle (ver CSS).
+    const isOpen = !collapsible || open;
+
+    function toggle() {
+      if (!collapsible) return;
+      const next = !open;
+      setOpen(next);
+      if (storageKey) {
+        try { localStorage.setItem(storageKey, next ? "1" : "0"); } catch {}
+      }
+    }
+
+    const items_node = items.map(({ to, icon: Icon, label: itemLabel, badge }) => (
+      <Link
+        key={to}
+        to={to}
+        onClick={(e) => onNavClick(e, to)}
+        className={`nav-item ${isActive(to) ? "is-active" : ""}`}
+        data-label={itemLabel}
+        title={itemLabel}
+      >
+        <Icon size={16} className="nav-icon" />
+        <span className="nav-item-label">{itemLabel}</span>
+        {badge > 0 && <span className="nav-item-badge">{badge > 99 ? "99+" : badge}</span>}
+      </Link>
+    ));
+
+    const badgeTotal = items.reduce((acc, it) => acc + (it.badge || 0), 0);
+
+    if (!collapsible) {
+      return (
+        <div className="nav-group">
+          {label && <div className="nav-group-label">{label}</div>}
+          {items_node}
+        </div>
+      );
+    }
+
     return (
-      <div className="nav-group">
-        {label && <div className="nav-group-label">{label}</div>}
-        {items.map(({ to, icon: Icon, label: itemLabel }) => (
-          <Link
-            key={to}
-            to={to}
-            onClick={(e) => onNavClick(e, to)}
-            className={`nav-item ${isActive(to) ? "is-active" : ""}`}
-            data-label={itemLabel}
-            title={itemLabel}
-          >
-            <Icon size={16} className="nav-icon" />
-            <span className="nav-item-label">{itemLabel}</span>
-          </Link>
-        ))}
+      <div className={`nav-group nav-group-collapsible ${isOpen ? "is-open" : ""}`}>
+        <button
+          type="button"
+          className={`nav-group-toggle ${algunActivo && !isOpen ? "has-active-child" : ""}`}
+          onClick={toggle}
+          title={isOpen ? "Contraer" : "Expandir"}
+        >
+          {GroupIcon && <GroupIcon size={13} className="nav-group-toggle-icon" />}
+          <span className="nav-group-toggle-label">{label}</span>
+          {!isOpen && badgeTotal > 0 && (
+            <span className="nav-group-unread-badge">{badgeTotal > 99 ? "99+" : badgeTotal}</span>
+          )}
+          {algunActivo && <span className="nav-group-active-dot" aria-hidden />}
+          <ChevronDown size={12} strokeWidth={2.8} className="nav-group-chevron" />
+        </button>
+        <div className="nav-group-items">
+          <div className="nav-group-items-inner">{items_node}</div>
+        </div>
       </div>
     );
   }
@@ -212,13 +298,68 @@ export default function SidebarLayout() {
           </div>
         </div>
 
-        {/* Navigation */}
-        <NavGroup label="Comercial" items={comercialNav} />
-        {postVentaNav.length > 0 && <NavGroup label="Post-Venta" items={postVentaNav} />}
-        <NavGroup label="Comunicación" items={comunicacionNav} />
-        {reportNav.length > 0 && <NavGroup label="Reportes" items={reportNav} />}
-        {herramientasNav.length > 0 && <NavGroup label="Herramientas" items={herramientasNav} />}
-        {adminNav.length > 0 && <NavGroup label="Administración" items={adminNav} />}
+        {/* Navigation — todos los grupos son colapsables con persistencia */}
+        <NavGroup
+          label="Comercial"
+          items={comercialNav}
+          collapsible
+          icon={Briefcase}
+          storageKey="sidebar_group_comercial"
+        />
+        {postVentaNav.length > 0 && (
+          <NavGroup
+            label="Post-Venta"
+            items={postVentaNav}
+            collapsible
+            icon={Truck}
+            storageKey="sidebar_group_postventa"
+          />
+        )}
+        {comunicacionNav.length > 0 && (
+          <NavGroup
+            label="Comunicación"
+            items={comunicacionNav}
+            collapsible
+            icon={Headphones}
+            storageKey="sidebar_group_comunicacion"
+          />
+        )}
+        {metasNav.length > 0 && (
+          <NavGroup
+            label="Metas"
+            items={metasNav}
+            collapsible
+            icon={Trophy}
+            storageKey="sidebar_group_metas"
+          />
+        )}
+        {reportesNav.length > 0 && (
+          <NavGroup
+            label="Reportes"
+            items={reportesNav}
+            collapsible
+            icon={BarChart3}
+            storageKey="sidebar_group_reportes"
+          />
+        )}
+        {herramientasNav.length > 0 && (
+          <NavGroup
+            label="Herramientas"
+            items={herramientasNav}
+            collapsible
+            icon={Wrench}
+            storageKey="sidebar_group_herramientas"
+          />
+        )}
+        {adminNav.length > 0 && (
+          <NavGroup
+            label="Administración"
+            items={adminNav}
+            collapsible
+            icon={Shield}
+            storageKey="sidebar_group_admin"
+          />
+        )}
 
         {/* User section */}
         {perfil && (
