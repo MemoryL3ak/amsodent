@@ -178,7 +178,7 @@ export default function SidebarLayout() {
 
   const herramientasNav = [
     (esAdmin || esVentasEspecial) && { to: "/sorteo-registros", icon: Gift, label: "Sorteo" },
-    { to: "/marcaje", icon: Clock, label: "Marcar Asistencia" },
+    esAdmin && { to: "/marcaje", icon: Clock, label: "Marcar Asistencia" },
   ].filter(Boolean);
 
   const adminNav = [
