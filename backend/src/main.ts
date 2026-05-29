@@ -3,12 +3,12 @@ import * as dotenv from 'dotenv';
 
 // Cargar el .env de /backend de forma explícita, antes de importar AppModule.
 // Defensivo: independiza la carga de credenciales (ANTHROPIC_API_KEY, etc.)
-// del cwd con el que se haya invocado el proceso, en lugar de depender de la
-// resolución implícita de ConfigModule.
+// del cwd con el que se haya invocado el proceso.
 dotenv.config({ path: path.resolve(__dirname, '..', '.env') });
 
 import { NestFactory } from '@nestjs/core';
 import * as dns from 'dns';
+import { json, urlencoded } from 'express';
 import { AppModule } from './app.module';
 
 // Railway (y la mayoría de cloud providers chicos) sólo tienen IPv4 saliente.
@@ -18,7 +18,10 @@ import { AppModule } from './app.module';
 dns.setDefaultResultOrder('ipv4first');
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  // Desactivamos el body parser default (límite 100kb) para registrar el
+  // nuestro con un límite mayor — la firma de recepción del despacho viaja
+  // como PNG en base64 dentro de un JSON.
+  const app = await NestFactory.create(AppModule, { bodyParser: false });
 
   // Detrás de Railway (proxy) necesitamos confiar en X-Forwarded-For
   // para que req.ip y el rate limit del sorteo detecten la IP real del cliente.
@@ -33,6 +36,9 @@ async function bootstrap() {
       : true,
     credentials: true,
   });
+
+  app.use(json({ limit: '8mb' }));
+  app.use(urlencoded({ extended: true, limit: '8mb' }));
 
   app.setGlobalPrefix('api');
 

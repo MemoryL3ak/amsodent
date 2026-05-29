@@ -16,6 +16,63 @@ export class ProductosService {
     return data;
   }
 
+  // Campos cuyo llenado define una ficha técnica "completa".
+  private static readonly CAMPOS_FICHA = [
+    'presentacion',
+    'descripcion',
+    'composicion',
+    'uso_indicaciones',
+    'beneficios',
+    'modo_uso',
+    'almacenamiento',
+    'datos_clave',
+  ];
+
+  // Listado liviano para la grilla de administración: trae solo las columnas
+  // visibles + un booleano `ficha_completa` calculado en el servidor. Así se
+  // evita transferir los textos largos de la ficha técnica (descripción,
+  // composición, etc.), que es lo que hacía pesada la carga del catálogo.
+  async findAllList() {
+    const sel = [
+      'id',
+      'sku',
+      'nombre',
+      'marca',
+      'categoria',
+      'formato',
+      'estado',
+      'lista1',
+      'lista2',
+      'lista3',
+      ...ProductosService.CAMPOS_FICHA,
+    ].join(', ');
+
+    const { data, error } = await this.supabase
+      .getClient()
+      .from('productos')
+      .select(sel)
+      .range(0, 20000)
+      .order('id', { ascending: true });
+    if (error) throw new BadRequestException(error.message);
+
+    return (data || []).map((p: any) => ({
+      id: p.id,
+      sku: p.sku,
+      // `descripcion` sirve de respaldo cuando no hay nombre (igual que el front).
+      nombre: (p.nombre?.trim() || p.descripcion?.trim() || ''),
+      marca: p.marca,
+      categoria: p.categoria,
+      formato: p.formato,
+      estado: p.estado,
+      lista1: p.lista1,
+      lista2: p.lista2,
+      lista3: p.lista3,
+      ficha_completa: ProductosService.CAMPOS_FICHA.every(
+        (k) => String(p?.[k] ?? '').trim().length > 0,
+      ),
+    }));
+  }
+
   async findOne(id: number) {
     const { data, error } = await this.supabase
       .getClient()
@@ -27,7 +84,69 @@ export class ProductosService {
     return data;
   }
 
+  // ── Normalización de marca ────────────────────────────────────────────
+  // Recorta y colapsa espacios.
+  private normalizarTexto(s: any): string {
+    return String(s ?? '').trim().replace(/\s+/g, ' ');
+  }
+
+  // Devuelve la forma canónica de una marca: si ya existe una marca igual
+  // (ignorando mayúsculas/espacios) reutiliza la variante más usada; si no,
+  // deja la forma recortada. Evita crear duplicados como "solventum" vs
+  // "SOLVENTUM" al crear/editar un producto.
+  private async marcaCanonica(marca: any): Promise<string> {
+    const limpia = this.normalizarTexto(marca);
+    if (!limpia) return limpia;
+    const patron = limpia.replace(/[%_\\]/g, (m) => `\\${m}`);
+    const { data } = await this.supabase
+      .getClient()
+      .from('productos')
+      .select('marca')
+      .ilike('marca', patron)
+      .range(0, 50000);
+    const clave = limpia.toLowerCase();
+    const conteo = new Map<string, number>();
+    for (const r of data || []) {
+      const f = this.normalizarTexto((r as any).marca);
+      if (f && f.toLowerCase() === clave) conteo.set(f, (conteo.get(f) || 0) + 1);
+    }
+    let mejor = limpia;
+    let mejorN = 0;
+    for (const [f, n] of conteo) if (n > mejorN) { mejor = f; mejorN = n; }
+    return mejor;
+  }
+
+  // Mapa clave(minúsculas) → forma canónica para todas las marcas existentes.
+  // Se usa en la carga masiva para no consultar una vez por fila.
+  private async mapaMarcasCanonicas(): Promise<Map<string, string>> {
+    const { data } = await this.supabase
+      .getClient()
+      .from('productos')
+      .select('marca')
+      .range(0, 50000);
+    const porClave = new Map<string, Map<string, number>>();
+    for (const r of data || []) {
+      const f = this.normalizarTexto((r as any).marca);
+      if (!f) continue;
+      const k = f.toLowerCase();
+      if (!porClave.has(k)) porClave.set(k, new Map());
+      const m = porClave.get(k)!;
+      m.set(f, (m.get(f) || 0) + 1);
+    }
+    const canon = new Map<string, string>();
+    for (const [k, formas] of porClave) {
+      let mejor = '';
+      let mejorN = -1;
+      for (const [f, n] of formas) if (n > mejorN) { mejor = f; mejorN = n; }
+      canon.set(k, mejor);
+    }
+    return canon;
+  }
+
   async create(body: Record<string, any>) {
+    if (body && body.marca != null) {
+      body = { ...body, marca: await this.marcaCanonica(body.marca) };
+    }
     const { data, error } = await this.supabase
       .getClient()
       .from('productos')
@@ -66,6 +185,9 @@ export class ProductosService {
     const mapaSkuId = new Map<string, number>();
     (existentes || []).forEach((p: any) => mapaSkuId.set(p.sku, p.id));
 
+    // Mapa de marcas canónicas para no duplicar variantes al importar.
+    const canonMarcas = await this.mapaMarcasCanonicas();
+
     let creados = 0;
     let actualizados = 0;
     const errores: string[] = [];
@@ -88,6 +210,14 @@ export class ProductosService {
           if (v === undefined || v === null) continue;
           if (typeof v === 'string' && v.trim() === '') continue;
           limpio[k] = v;
+        }
+        // Unifica la marca con la canónica existente (o con la primera forma
+        // vista en este import, para que las marcas nuevas no se dupliquen).
+        if (typeof limpio.marca === 'string') {
+          const limpia = this.normalizarTexto(limpio.marca);
+          const k = limpia.toLowerCase();
+          if (!canonMarcas.has(k)) canonMarcas.set(k, limpia);
+          limpio.marca = canonMarcas.get(k) || limpia;
         }
         if (id) aActualizar.push({ id, body: limpio });
         else aInsertar.push({ ...limpio, sku });
@@ -118,6 +248,9 @@ export class ProductosService {
   }
 
   async update(id: number, body: Record<string, any>) {
+    if (body && body.marca != null) {
+      body = { ...body, marca: await this.marcaCanonica(body.marca) };
+    }
     const { data, error } = await this.supabase
       .getClient()
       .from('productos')

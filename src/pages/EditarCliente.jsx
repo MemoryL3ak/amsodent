@@ -22,10 +22,58 @@ export default function EditarCliente() {
   const [email, setEmail] = useState("");
   const [telefono, setTelefono] = useState("");
   const [condVenta, setCondVenta] = useState("");
+  const [vendedorAsignado, setVendedorAsignado] = useState("");
+
+  const [esAdmin, setEsAdmin] = useState(false);
+  const [vendedores, setVendedores] = useState([]);
 
   const comunasDisponibles = useMemo(() => {
     return (REGIONES_CHILE?.[region] ?? []);
   }, [region]);
+
+  // Rol (para saber si puede editar el vendedor asignado) + lista de vendedores.
+  useEffect(() => {
+    (async () => {
+      try {
+        const perfil = await api.get("/auth/profile");
+        const r = (perfil?.rol || "").toString().trim().toLowerCase();
+        setEsAdmin(r === "admin" || r === "administrador");
+      } catch { /* */ }
+      try {
+        const perfiles = await api.get("/usuarios/profiles");
+        setVendedores(perfiles || []);
+      } catch { /* */ }
+    })();
+  }, []);
+
+  const vendedoresMap = useMemo(() => {
+    const m = {};
+    (vendedores || []).forEach((p) => {
+      const e = (p?.email || "").trim().toLowerCase();
+      if (e) m[e] = (p?.nombre || "").trim();
+    });
+    return m;
+  }, [vendedores]);
+
+  const vendedorAsignadoNombre = useMemo(() => {
+    const e = (vendedorAsignado || "").trim().toLowerCase();
+    if (!e) return "Sin asignar";
+    return vendedoresMap[e] || vendedorAsignado;
+  }, [vendedorAsignado, vendedoresMap]);
+
+  const opcionesVendedores = useMemo(() => {
+    const roles = ["ventas", "ventas_especial", "jefe_ventas", "jefe_ventas_especial"];
+    const lista = (vendedores || [])
+      .filter((p) => roles.includes((p?.rol || "").toString().trim().toLowerCase()))
+      .map((p) => ({ value: (p?.email || "").trim().toLowerCase(), label: (p?.nombre || p?.email || "").trim() }))
+      .filter((o) => o.value);
+    // Asegura que el vendedor actual aparezca aunque su rol haya cambiado.
+    const actual = (vendedorAsignado || "").trim().toLowerCase();
+    if (actual && !lista.some((o) => o.value === actual)) {
+      lista.push({ value: actual, label: vendedoresMap[actual] || vendedorAsignado });
+    }
+    return lista.sort((a, b) => a.label.localeCompare(b.label));
+  }, [vendedores, vendedorAsignado, vendedoresMap]);
 
   /* ============================================================
      CARGAR CLIENTE
@@ -65,6 +113,7 @@ export default function EditarCliente() {
       setEmail((data.email || "").toString());
       setTelefono((data.telefono || "").toString());
       setCondVenta((data.condiciones_venta || "").toString());
+      setVendedorAsignado((data.vendedor_asignado || "").toString());
 
       setLoading(false);
 
@@ -102,7 +151,7 @@ export default function EditarCliente() {
     }
 
     try {
-      await api.put(`/clientes/${id}`, {
+      const payload = {
         tipo_cliente: tipoCliente,
         rut,
         nombre,
@@ -115,7 +164,12 @@ export default function EditarCliente() {
         email,
         telefono,
         condiciones_venta: condVenta,
-      });
+      };
+      // El vendedor asignado solo lo puede reasignar el administrador.
+      if (esAdmin) {
+        payload.vendedor_asignado = (vendedorAsignado || "").trim() || null;
+      }
+      await api.put(`/clientes/${id}`, payload);
 
       setToast({ type: "success", message: "Cliente actualizado correctamente" });
     } catch (error) {
@@ -252,6 +306,34 @@ export default function EditarCliente() {
                 <option value="30 días">30 días</option>
                 <option value="Contado">Contado</option>
               </select>
+            </div>
+
+            <div className="field">
+              <label className="field-label">Vendedor Asignado</label>
+              {esAdmin ? (
+                <select
+                  className="input"
+                  value={(vendedorAsignado || "").trim().toLowerCase()}
+                  onChange={(e) => setVendedorAsignado(e.target.value)}
+                >
+                  <option value="">Sin asignar</option>
+                  {opcionesVendedores.map((o) => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  className="input"
+                  style={{ background: "var(--bg)" }}
+                  readOnly
+                  value={vendedorAsignadoNombre}
+                />
+              )}
+              <p style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>
+                {esAdmin
+                  ? "Solo el administrador puede reasignar el vendedor."
+                  : "Asignado automáticamente al crear el cliente. Solo el administrador puede cambiarlo."}
+              </p>
             </div>
 
           </div>

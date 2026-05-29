@@ -42,6 +42,7 @@ export class ClientesService {
     telefono?: string;
     condiciones_venta?: string;
     tipo_cliente?: 'Cliente Particular' | 'Entidad Pública' | null;
+    vendedor_asignado?: string | null;
   }) {
     const { data, error } = await this.supabase
       .getClient()

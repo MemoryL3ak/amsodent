@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import Toast from "../components/Toast";
+import ConfirmModal from "../components/ConfirmModal";
 import ModalCrearUsuario from "../components/ModalCrearUsuario";
 import ModalEditarUsuario from "../components/ModalEditarUsuario";
 import ModalResetClave from "../components/ModalResetClave";
@@ -35,6 +36,7 @@ export default function ConfiguracionUsuarios() {
   const [modalCrear, setModalCrear]   = useState(false);
   const [modalEditar, setModalEditar] = useState(null);
   const [modalResetClave, setModalResetClave] = useState(null);
+  const [confirmEliminar, setConfirmEliminar] = useState(null);
 
   async function loadUsers() {
     setLoading(true);
@@ -58,8 +60,14 @@ export default function ConfiguracionUsuarios() {
     }
   }
 
-  async function eliminarUsuario(u) {
-    if (!confirm(`¿Eliminar al usuario "${u.nombre || u.email}"?`)) return;
+  function eliminarUsuario(u) {
+    setConfirmEliminar(u);
+  }
+
+  async function confirmarEliminarUsuario() {
+    const u = confirmEliminar;
+    setConfirmEliminar(null);
+    if (!u) return;
     try {
       await api.delete(`/usuarios/profiles/${u.id}`);
       setToast({ type: "success", message: "Usuario eliminado" });
@@ -72,6 +80,21 @@ export default function ConfiguracionUsuarios() {
   return (
     <div className="page">
       {toast && <Toast type={toast.type} message={toast.message} onClose={() => setToast(null)} />}
+
+      <ConfirmModal
+        open={confirmEliminar !== null}
+        title="¿Eliminar este usuario?"
+        message={
+          confirmEliminar
+            ? `Vas a eliminar a "${confirmEliminar.nombre || confirmEliminar.email}". Esta acción no se puede deshacer.`
+            : ""
+        }
+        confirmText="Eliminar usuario"
+        cancelText="Cancelar"
+        confirmTone="danger"
+        onConfirm={confirmarEliminarUsuario}
+        onCancel={() => setConfirmEliminar(null)}
+      />
 
       {/* HEADER */}
       <div className="page-header">

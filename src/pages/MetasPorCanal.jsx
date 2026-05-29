@@ -180,15 +180,15 @@ export default function MetasPorCanal() {
         if (ids.length > 0) {
           try {
             docsOcRows = await api.post("/licitaciones/documentos/filter", {
-              filter: { licitacion_ids: ids, tipo: ["orden_compra", "factura_boleta", "efectivo"] },
-              fields: "licitacion_id,monto,fecha_oc,created_at",
+              filter: { licitacion_ids: ids, tipo: ["orden_compra", "guia_despacho", "factura_boleta", "efectivo"] },
+              fields: "licitacion_id,tipo,monto,fecha_oc,created_at",
             }) || [];
           } catch (errDocsOc) {
             if (isMissingFechaOcColumnError(errDocsOc)) {
               try {
                 const docsOcNoFecha = await api.post("/licitaciones/documentos/filter", {
-                  filter: { licitacion_ids: ids, tipo: ["orden_compra", "factura_boleta", "efectivo"] },
-                  fields: "licitacion_id,monto,created_at",
+                  filter: { licitacion_ids: ids, tipo: ["orden_compra", "guia_despacho", "factura_boleta", "efectivo"] },
+                  fields: "licitacion_id,tipo,monto,created_at",
                 });
                 docsOcRows = (docsOcNoFecha || []).map((d) => ({ ...d, fecha_oc: null }));
               } catch (errDocsOcNoFecha) {
@@ -339,11 +339,14 @@ export default function MetasPorCanal() {
       if (id && email) licById.set(id, email);
     });
 
-    // Fecha de adjudicación por licitación = fecha de creación de la primera OC
+    // Fecha de adjudicación por licitación = primera OC (o primera factura/efectivo
+    // en Cliente Particular). La guía de despacho NO define la adjudicación.
     const primeraOcPorLic = new Map();
     (ocs || []).forEach((doc) => {
       const licId = Number(doc?.licitacion_id || 0);
       if (!licId) return;
+      const tipo = (doc?.tipo || "").toString();
+      if (tipo !== "orden_compra" && tipo !== "factura_boleta" && tipo !== "efectivo") return;
       const fechaDoc = toDateISO(doc?.fecha_oc) || toDateISO(doc?.created_at);
       if (!fechaDoc) return;
       const actual = primeraOcPorLic.get(licId);
@@ -356,6 +359,9 @@ export default function MetasPorCanal() {
       const email = licById.get(licId);
       if (!email) return;
       if (filtroVendedor && filtroVendedor !== email) return;
+      // Consumido = guías de despacho + facturas/boletas + efectivo (no la OC).
+      const tipo = (doc?.tipo || "").toString();
+      if (tipo !== "guia_despacho" && tipo !== "factura_boleta" && tipo !== "efectivo") return;
       const fechaAdj = primeraOcPorLic.get(licId);
       if (!fechaAdj || fechaAdj < metaPeriodo || fechaAdj > finPeriodo) return;
       avanceNetoPorVendedor[email] = Number(avanceNetoPorVendedor[email] || 0) + Number(doc?.monto || 0);
@@ -536,7 +542,7 @@ export default function MetasPorCanal() {
                     <tr>
                       <th>Canal</th>
                       <th style={{ textAlign: "right" }}>Meta Neta Canal</th>
-                      <th style={{ textAlign: "right" }}>Avance OC Neto</th>
+                      <th style={{ textAlign: "right" }}>Avance Neto</th>
                       <th style={{ textAlign: "right" }}>Cumplimiento</th>
                       <th style={{ textAlign: "right" }}>Brecha</th>
                     </tr>

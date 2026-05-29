@@ -16,7 +16,9 @@ import { PortalModule } from './portal/portal.module';
 import { NotificacionesModule } from './notificaciones/notificaciones.module';
 import { BitacoraModule } from './bitacora/bitacora.module';
 import { IaModule } from './ia/ia.module';
+import { DespachosModule } from './despachos/despachos.module';
 import { ChatModule } from './chat/chat.module';
+import { MarcajesModule } from './marcajes/marcajes.module';
 import { StockClientesModule } from './stock-clientes/stock-clientes.module';
 
 @Module({
@@ -38,7 +40,9 @@ import { StockClientesModule } from './stock-clientes/stock-clientes.module';
     NotificacionesModule,
     BitacoraModule,
     IaModule,
+    DespachosModule,
     ChatModule,
+    MarcajesModule,
     StockClientesModule,
   ],
 })

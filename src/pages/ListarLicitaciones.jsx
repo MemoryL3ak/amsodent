@@ -5,34 +5,37 @@ import * as XLSX from "xlsx";
 import useAuth from "../hooks/useAuth";
 import { ChevronDown, Download, ChevronRight } from "lucide-react";
 import Toast from "../components/Toast";
+import ConfirmModal from "../components/ConfirmModal";
 import DateFilter from "../components/DateFilter";
+import { useStickyState } from "../lib/useStickyState";
 
 export default function ListarLicitaciones() {
   const { user, rol, cargando } = useAuth();
   const [data, setData] = useState([]);
   const [usuariosMap, setUsuariosMap] = useState({});
   const [toast, setToast] = useState(null);
+  const [confirmEliminar, setConfirmEliminar] = useState(null); // id de cotización a eliminar
 
-  // Filtros
-  const [filtroFechaDesde,   setFiltroFechaDesde]   = useState("");
-  const [filtroFechaHasta,   setFiltroFechaHasta]   = useState("");
-  const [filtroAdjDesde,     setFiltroAdjDesde]     = useState("");
-  const [filtroAdjHasta,     setFiltroAdjHasta]     = useState("");
-  const [filtroIdLicitacion, setFiltroIdLicitacion] = useState("");
-  const [filtroNumeroCot,    setFiltroNumeroCot]    = useState("");
-  const [filtroMontoMin,     setFiltroMontoMin]     = useState("");
-  const [filtroComuna,       setFiltroComuna]       = useState("");
-  const [filtroCreadores,    setFiltroCreadores]    = useState([]);
-  const [filtroEstado,       setFiltroEstado]       = useState([]);
-  const [filtroTipoCompra,   setFiltroTipoCompra]   = useState([]);
+  // Filtros persistentes: se conservan al entrar a una cotización y volver atrás.
+  const [filtroFechaDesde,   setFiltroFechaDesde]   = useStickyState("cotizaciones.fechaDesde", "");
+  const [filtroFechaHasta,   setFiltroFechaHasta]   = useStickyState("cotizaciones.fechaHasta", "");
+  const [filtroAdjDesde,     setFiltroAdjDesde]     = useStickyState("cotizaciones.adjDesde", "");
+  const [filtroAdjHasta,     setFiltroAdjHasta]     = useStickyState("cotizaciones.adjHasta", "");
+  const [filtroIdLicitacion, setFiltroIdLicitacion] = useStickyState("cotizaciones.idLicitacion", "");
+  const [filtroNumeroCot,    setFiltroNumeroCot]    = useStickyState("cotizaciones.numeroCot", "");
+  const [filtroMontoMin,     setFiltroMontoMin]     = useStickyState("cotizaciones.montoMin", "");
+  const [filtroComuna,       setFiltroComuna]       = useStickyState("cotizaciones.comuna", "");
+  const [filtroCreadores,    setFiltroCreadores]    = useStickyState("cotizaciones.creadores", []);
+  const [filtroEstado,       setFiltroEstado]       = useStickyState("cotizaciones.estado", []);
+  const [filtroTipoCompra,   setFiltroTipoCompra]   = useStickyState("cotizaciones.tipoCompra", []);
 
   const [openCreadores, setOpenCreadores] = useState(false);
   const [openEstados,   setOpenEstados]   = useState(false);
   const [openTipoCompra, setOpenTipoCompra] = useState(false);
 
   // Orden
-  const [sortCol, setSortCol] = useState("id");
-  const [sortDir, setSortDir] = useState("desc");
+  const [sortCol, setSortCol] = useStickyState("cotizaciones.sortCol", "id");
+  const [sortDir, setSortDir] = useStickyState("cotizaciones.sortDir", "desc");
   function toggleSort(col) {
     if (sortCol === col) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
     else { setSortCol(col); setSortDir("desc"); }
@@ -59,7 +62,11 @@ export default function ListarLicitaciones() {
     if (cargando) return;
 
     try {
-      const licitaciones = await api.get("/licitaciones");
+      // Solo los campos que usa el listado: evita traer columnas pesadas
+      // (ítems de la cotización, etc.) que disparan el tamaño del payload.
+      const licitaciones = await api.get(
+        "/licitaciones/with-fields?fields=id,id_licitacion,fecha,comuna,total_con_iva,tipo_compra,estado,creado_por"
+      );
 
       let rows = licitaciones || [];
       const rolNorm   = (rol ?? "").toString().trim().toLowerCase();
@@ -68,28 +75,37 @@ export default function ListarLicitaciones() {
       if ((rolNorm === "ventas" || rolNorm === "ventas_especial") && emailUser)
         rows = rows.filter((l) => (l.creado_por || "").trim().toLowerCase() === emailUser);
 
-      // Fecha de adjudicación = fecha de creación de la primera OC de cada cotización
+      // Fecha de adjudicación = fecha de creación de la primera OC de cada cotización.
+      // Paralelizamos docs OC + perfiles: antes eran 2 roundtrips secuenciales.
       const ids = rows.map((l) => Number(l?.id)).filter((n) => Number.isFinite(n));
+      const emailsUnicos = Array.from(new Set(rows.map((l) => l.creado_por).filter(Boolean)));
+
+      const [docsOcRes, perfilesRes] = await Promise.allSettled([
+        ids.length > 0
+          ? api.post("/licitaciones/documentos/filter", {
+              filter: { licitacion_ids: ids, tipo: ["orden_compra", "factura_boleta", "efectivo"] },
+              fields: "licitacion_id,fecha_oc,created_at",
+            })
+          : Promise.resolve([]),
+        emailsUnicos.length > 0
+          ? api.post("/usuarios/profiles/by-emails", { emails: emailsUnicos })
+          : Promise.resolve([]),
+      ]);
+
       const primeraOcMap = {};
-      if (ids.length > 0) {
-        try {
-          const docsOc = await api.post("/licitaciones/documentos/filter", {
-            filter: { licitacion_ids: ids, tipo: ["orden_compra", "factura_boleta", "efectivo"] },
-            fields: "licitacion_id,fecha_oc,created_at",
-          });
-          (docsOc || []).forEach((d) => {
-            const licId = Number(d?.licitacion_id || 0);
-            if (!licId) return;
-            const raw = d?.fecha_oc || d?.created_at;
-            if (!raw) return;
-            const iso = String(raw).slice(0, 10);
-            if (!primeraOcMap[licId] || iso < primeraOcMap[licId]) {
-              primeraOcMap[licId] = iso;
-            }
-          });
-        } catch (errDocsOc) {
-          console.error("Error cargando OCs para fecha adjudicación:", errDocsOc);
-        }
+      if (docsOcRes.status === "fulfilled") {
+        (docsOcRes.value || []).forEach((d) => {
+          const licId = Number(d?.licitacion_id || 0);
+          if (!licId) return;
+          const raw = d?.fecha_oc || d?.created_at;
+          if (!raw) return;
+          const iso = String(raw).slice(0, 10);
+          if (!primeraOcMap[licId] || iso < primeraOcMap[licId]) {
+            primeraOcMap[licId] = iso;
+          }
+        });
+      } else {
+        console.error("Error cargando OCs para fecha adjudicación:", docsOcRes.reason);
       }
       rows = rows.map((l) => ({
         ...l,
@@ -98,16 +114,15 @@ export default function ListarLicitaciones() {
 
       setData(rows);
 
-      const emailsUnicos = Array.from(new Set(rows.map((l) => l.creado_por).filter(Boolean)));
-      if (emailsUnicos.length === 0) { setUsuariosMap({}); return; }
-
-      const perfiles = await api.post("/usuarios/profiles/by-emails", { emails: emailsUnicos });
-
       const mapa = {};
-      (perfiles || []).forEach((p) => {
-        const email = (p?.email || "").trim().toLowerCase();
-        if (email) mapa[email] = (p?.nombre || "").trim();
-      });
+      if (perfilesRes.status === "fulfilled") {
+        (perfilesRes.value || []).forEach((p) => {
+          const email = (p?.email || "").trim().toLowerCase();
+          if (email) mapa[email] = (p?.nombre || "").trim();
+        });
+      } else {
+        console.error("Error profiles:", perfilesRes.reason);
+      }
       setUsuariosMap(mapa);
     } catch (error) {
       console.error("Error licitaciones:", error);
@@ -233,26 +248,12 @@ export default function ListarLicitaciones() {
     perdidas:    dataFiltrada.filter((l) => l.estado === "Perdida").length,
   }), [dataFiltrada]);
 
-  // ── Resumen por vendedor ──────────────────────────────────────
-  const resumenPorVendedor = useMemo(() => {
-    const acc = new Map();
-    dataFiltrada.forEach((l) => {
-      const email = (l.creado_por || "").trim().toLowerCase();
-      if (!email) return;
-      acc.set(email, (acc.get(email) || 0) + 1);
-    });
-    return Array.from(acc.entries())
-      .map(([email, count]) => ({
-        email,
-        nombre: (usuariosMap[email] || "").trim() || "Sin nombre",
-        count,
-      }))
-      .sort((a, b) => b.count - a.count || a.nombre.localeCompare(b.nombre));
-  }, [dataFiltrada, usuariosMap]);
-
   // ── Exportar ──────────────────────────────────────────────────
   function exportarXLSX() {
-    if (dataFiltrada.length === 0) { alert("No hay datos para exportar."); return; }
+    if (dataFiltrada.length === 0) {
+      setToast({ type: "info", message: "No hay datos para exportar." });
+      return;
+    }
     const datosExport = dataFiltrada.map((l) => ({
       "N° Cotización": l.id,
       "ID Cotización": l.id_licitacion,
@@ -286,8 +287,14 @@ export default function ListarLicitaciones() {
     setToast({ type: "success", message: "Cotización aprobada." });
   }
 
-  async function eliminarCotizacion(id) {
-    if (!window.confirm("¿Estás seguro de que deseas eliminar esta cotización? Esta acción no se puede deshacer.")) return;
+  function eliminarCotizacion(id) {
+    setConfirmEliminar(id);
+  }
+
+  async function confirmarEliminarCotizacion() {
+    const id = confirmEliminar;
+    setConfirmEliminar(null);
+    if (!id) return;
 
     try {
       await api.delete(`/licitaciones/${id}`);
@@ -305,6 +312,17 @@ export default function ListarLicitaciones() {
       {toast && (
         <Toast type={toast.type} message={toast.message} onClose={() => setToast(null)} />
       )}
+
+      <ConfirmModal
+        open={confirmEliminar !== null}
+        title="¿Eliminar esta cotización?"
+        message="Esta acción no se puede deshacer. Se eliminará la cotización y todos sus documentos asociados."
+        confirmText="Eliminar cotización"
+        cancelText="Cancelar"
+        confirmTone="danger"
+        onConfirm={confirmarEliminarCotizacion}
+        onCancel={() => setConfirmEliminar(null)}
+      />
 
       {/* Page header */}
       <div className="page-header">
@@ -490,37 +508,6 @@ export default function ListarLicitaciones() {
           )}
         </div>
       </div>
-
-      {/* Resumen por vendedor */}
-      {(esAdmin || esJefatura) && resumenPorVendedor.length > 0 && (
-        <div className="surface" style={{ marginBottom: "16px" }}>
-          <div className="surface-header">
-            <h3 className="surface-title">Actividad por vendedor</h3>
-            <span style={{ fontSize: "12px", color: "var(--text-muted)" }}>según filtros activos</span>
-          </div>
-          <div style={{
-            padding: "14px 20px",
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fill, minmax(190px, 1fr))",
-            gap: "8px",
-          }}>
-            {resumenPorVendedor.map((r) => (
-              <div key={r.email} style={{
-                display: "flex", alignItems: "center", justifyContent: "space-between",
-                padding: "8px 12px", borderRadius: "var(--radius)",
-                border: "1px solid var(--border)", background: "var(--bg)",
-                fontSize: "13px",
-              }}>
-                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.nombre}</span>
-                <span style={{
-                  marginLeft: "10px", background: "var(--primary-light)", color: "var(--primary-dark)",
-                  borderRadius: "999px", padding: "2px 10px", fontWeight: 700, fontSize: "12px", flexShrink: 0,
-                }}>{r.count}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
 
       {/* Table */}
       <div className="table-wrap">

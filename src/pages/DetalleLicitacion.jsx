@@ -946,6 +946,10 @@ export default function EditarLicitacion() {
     if (docTipo === "guia_despacho") {
       return documentos.filter((d) => d.tipo === "orden_compra");
     }
+    // El comprobante de transferencia se asocia a la boleta/factura que paga.
+    if (docTipo === "comprobante_pago") {
+      return documentos.filter((d) => d.tipo === "factura_boleta");
+    }
     return [];
   }, [docTipo, documentos]);
 
@@ -1035,6 +1039,8 @@ export default function EditarLicitacion() {
       return;
     }
 
+    // Cliente particular: queda anexado al vendedor de la cotización.
+    const esParticular = (tipoCliente || "").toString().trim().toLowerCase() === "cliente particular";
     try {
       await api.post("/clientes", {
         rut: rutEntidad,
@@ -1049,6 +1055,7 @@ export default function EditarLicitacion() {
         telefono,
         condiciones_venta: condVenta,
         tipo_cliente: tipoCliente || null,
+        vendedor_asignado: esParticular ? ((vendedorCorreo || "").trim() || null) : null,
       });
     } catch (error) {
       console.error("Error creando cliente:", error);
@@ -1378,6 +1385,10 @@ export default function EditarLicitacion() {
       setToast({ type: "error", message: "Debes ingresar el monto neto del pago en efectivo." });
       return;
     }
+    if (tipo === "comprobante_pago" && montoNetoOrdenCompra <= 0) {
+      setToast({ type: "error", message: "Debes ingresar el monto neto del comprobante." });
+      return;
+    }
     const fechaOc = (docFechaOC || "").toString().trim();
     if (tipo === "orden_compra" && !fechaOc) {
       setToast({
@@ -1441,6 +1452,27 @@ export default function EditarLicitacion() {
       }
     }
 
+    if (tipo === "comprobante_pago" && !docDerivaDeId) {
+      setToast({
+        type: "error",
+        message: "Debes asociar el comprobante a la boleta o factura del pago.",
+      });
+      return;
+    }
+
+    if (tipo === "comprobante_pago") {
+      const docOrigen = documentos.find(
+        (d) => String(d.id) === String(docDerivaDeId)
+      );
+      if (!docOrigen || docOrigen.tipo !== "factura_boleta") {
+        setToast({
+          type: "error",
+          message: "El comprobante debe vincularse a una boleta o factura válida.",
+        });
+        return;
+      }
+    }
+
     setSubiendoDoc(true);
 
     try {
@@ -1462,7 +1494,7 @@ export default function EditarLicitacion() {
       const esFacturaBoleta = tipo === "factura_boleta";
       const esComprobantePago = tipo === "comprobante_pago";
       const esEfectivo = tipo === "efectivo";
-      const tieneMonto = tipo === "orden_compra" || esFacturaBoleta || esEfectivo;
+      const tieneMonto = tipo === "orden_compra" || esFacturaBoleta || esEfectivo || esComprobantePago;
       const tieneFecha = tipo === "orden_compra" || esGuia || esFacturaBoleta || esComprobantePago || esEfectivo;
 
       const payload = {
@@ -3886,17 +3918,75 @@ export default function EditarLicitacion() {
             </>
           )}
 
-          {/* Cliente particular — Comprobante de Transferencia: solo fecha */}
+          {/* Cliente particular — Comprobante de Transferencia: boleta/factura asociada + monto + fecha */}
           {docTipo === "comprobante_pago" && (
-            <div className="md:col-span-3">
-              <label className="block text-sm font-medium text-gray-700 mb-1">Fecha *</label>
-              <DateFilter
-                className={`${inputClass} text-sm`}
-                value={docFechaOC}
-                onChange={setDocFechaOC}
-                disabled={subiendoDoc}
-              />
-            </div>
+            <>
+              <div className="md:col-span-3">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Boleta / Factura asociada *</label>
+                <Select
+                  options={opcionesDerivaSelect}
+                  styles={{
+                    ...customStyles,
+                    control: (base, state) => ({
+                      ...customStyles.control(base, state),
+                      minHeight: "38px",
+                      height: "38px",
+                    }),
+                    valueContainer: (base) => ({
+                      ...customStyles.valueContainer(base),
+                      padding: "0 8px",
+                    }),
+                    indicatorsContainer: (base) => ({
+                      ...base,
+                      height: "38px",
+                    }),
+                  }}
+                  placeholder="Buscar boleta/factura"
+                  menuPortalTarget={document.body}
+                  isSearchable={true}
+                  filterOption={filtrarPorTerminos}
+                  isClearable={true}
+                  isDisabled={subiendoDoc}
+                  noOptionsMessage={() => "Sin boletas/facturas disponibles"}
+                  value={
+                    opcionesDerivaSelect.find((o) => o.value === String(docDerivaDeId)) || null
+                  }
+                  onChange={(op) => setDocDerivaDeId(op?.value || "")}
+                />
+              </div>
+              <div className="md:col-span-2">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Monto Neto *</label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  className={`${inputClass} text-sm`}
+                  value={docMonto}
+                  onChange={(e) => setDocMonto(formatearCLDesdeString(e.target.value))}
+                  placeholder="Ej: 1.250.000"
+                  disabled={subiendoDoc}
+                />
+              </div>
+              <div className="md:col-span-2">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Fecha *</label>
+                <DateFilter
+                  className={`${inputClass} text-sm`}
+                  value={docFechaOC}
+                  onChange={setDocFechaOC}
+                  disabled={subiendoDoc}
+                />
+              </div>
+              <div className="md:col-span-2">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Monto Bruto</label>
+                <input
+                  type="text"
+                  className={`${inputClass} text-sm bg-gray-100`}
+                  value={montoNetoOCFormulario > 0 ? `$${montoBrutoOCFormulario.toLocaleString("es-CL")}` : ""}
+                  placeholder="Neto x 1,19"
+                  readOnly
+                  disabled
+                />
+              </div>
+            </>
           )}
 
           {docTipo === "orden_compra" && (

@@ -258,6 +258,7 @@ export default function CrearProductoModal({ onClose, onCreado }) {
   const [modoUso, setModoUso] = useState("");
   const [almacenamiento, setAlmacenamiento] = useState("");
   const [datosClave, setDatosClave] = useState("");
+  const [linkReferencia, setLinkReferencia] = useState("");
   const [peso, setPeso] = useState("");
   const [alto, setAlto] = useState("");
   const [largo, setLargo] = useState("");
@@ -441,6 +442,7 @@ export default function CrearProductoModal({ onClose, onCreado }) {
         modo_uso: modoUso,
         almacenamiento,
         datos_clave: datosClave,
+        link_referencia: (linkReferencia || "").trim() || null,
         peso: Number(peso) || 0,
         alto: Number(alto) || 0,
         largo: Number(largo) || 0,
@@ -740,6 +742,20 @@ export default function CrearProductoModal({ onClose, onCreado }) {
                           onChange={(e) => setFormato(e.target.value)}
                           placeholder="Ej: Tubo 75 ml"
                         />
+                      </div>
+
+                      <div className="cpm-field cpm-col-span-2">
+                        <label>Link de referencia</label>
+                        <input
+                          className="cpm-input"
+                          type="url"
+                          value={linkReferencia}
+                          onChange={(e) => setLinkReferencia(e.target.value)}
+                          placeholder="https://… de dónde tomaste la información del producto"
+                        />
+                        <div className="cpm-hint">
+                          Una vez guardado, solo el administrador podrá modificar este link. No aparece en la ficha PDF.
+                        </div>
                       </div>
                     </div>
 

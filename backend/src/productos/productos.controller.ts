@@ -17,6 +17,11 @@ export class ProductosController {
     return this.productosService.findAll();
   }
 
+  @Get('list')
+  findAllList() {
+    return this.productosService.findAllList();
+  }
+
   @Get('campaign-prices')
   getCampaignPrices() {
     return this.productosService.getCampaignPrices();
