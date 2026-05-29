@@ -178,8 +178,15 @@ export default function App() {
             }
           />
 
-          {/* MARCAJE DE ASISTENCIA — todos los autenticados */}
-          <Route path="marcaje" element={<Marcaje />} />
+          {/* MARCAJE DE ASISTENCIA — solo admin */}
+          <Route
+            path="marcaje"
+            element={
+              <RequireRole allow={["admin"]}>
+                <Marcaje />
+              </RequireRole>
+            }
+          />
 
           {/* MONITOREO DE MARCAJES — solo admin */}
           <Route
