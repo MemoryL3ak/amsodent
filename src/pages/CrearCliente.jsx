@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
 import Toast from "../components/Toast";
 import { Link } from "react-router-dom";
@@ -17,8 +17,61 @@ export default function CrearCliente() {
   const [email, setEmail] = useState("");
   const [telefono, setTelefono] = useState("");
   const [condVenta, setCondVenta] = useState("30 días");
+  const [vendedorAsignado, setVendedorAsignado] = useState("");
+
+  const [userEmail, setUserEmail] = useState("");
+  const [esAdmin, setEsAdmin] = useState(false);
+  const [vendedores, setVendedores] = useState([]);
 
   const [toast, setToast] = useState(null);
+
+  const esParticular = tipoCliente === "Cliente Particular";
+
+  // Perfil del creador (para asignarlo por defecto) + lista de vendedores.
+  useEffect(() => {
+    (async () => {
+      try {
+        const perfil = await api.get("/auth/profile");
+        const e = (perfil?.email || "").trim();
+        const r = (perfil?.rol || "").toString().trim().toLowerCase();
+        setUserEmail(e);
+        setEsAdmin(r === "admin" || r === "administrador");
+        setVendedorAsignado(e.toLowerCase());
+      } catch { /* */ }
+      try {
+        const perfiles = await api.get("/usuarios/profiles");
+        setVendedores(perfiles || []);
+      } catch { /* */ }
+    })();
+  }, []);
+
+  const vendedoresMap = useMemo(() => {
+    const m = {};
+    (vendedores || []).forEach((p) => {
+      const e = (p?.email || "").trim().toLowerCase();
+      if (e) m[e] = (p?.nombre || "").trim();
+    });
+    return m;
+  }, [vendedores]);
+
+  const vendedorAsignadoNombre = useMemo(() => {
+    const e = (vendedorAsignado || "").trim().toLowerCase();
+    if (!e) return "Sin asignar";
+    return vendedoresMap[e] || vendedorAsignado;
+  }, [vendedorAsignado, vendedoresMap]);
+
+  const opcionesVendedores = useMemo(() => {
+    const roles = ["ventas", "ventas_especial", "jefe_ventas", "jefe_ventas_especial"];
+    const lista = (vendedores || [])
+      .filter((p) => roles.includes((p?.rol || "").toString().trim().toLowerCase()))
+      .map((p) => ({ value: (p?.email || "").trim().toLowerCase(), label: (p?.nombre || p?.email || "").trim() }))
+      .filter((o) => o.value);
+    const actual = (vendedorAsignado || "").trim().toLowerCase();
+    if (actual && !lista.some((o) => o.value === actual)) {
+      lista.push({ value: actual, label: vendedoresMap[actual] || vendedorAsignado });
+    }
+    return lista.sort((a, b) => a.label.localeCompare(b.label));
+  }, [vendedores, vendedorAsignado, vendedoresMap]);
 
   async function guardarCliente() {
     if (!tipoCliente || !rut || !nombre || !region || !comuna || !direccion || !contacto || !email || !condVenta) {
@@ -40,6 +93,8 @@ export default function CrearCliente() {
         email,
         telefono,
         condiciones_venta: condVenta,
+        // Cliente particular: queda anexado a un vendedor (por defecto, el creador).
+        vendedor_asignado: esParticular ? ((vendedorAsignado || "").trim() || null) : null,
       });
 
       setToast({ type: "success", message: "Cliente creado con éxito" });
@@ -61,6 +116,7 @@ export default function CrearCliente() {
     setEmail("");
     setTelefono("");
     setCondVenta("30 días");
+    setVendedorAsignado((userEmail || "").toLowerCase());
   }
 
   return (
@@ -187,6 +243,36 @@ export default function CrearCliente() {
                 <option value="Contado">Contado</option>
               </select>
             </div>
+
+            {esParticular && (
+              <div className="field">
+                <label className="field-label">Vendedor Asignado</label>
+                {esAdmin ? (
+                  <select
+                    className="input"
+                    value={(vendedorAsignado || "").trim().toLowerCase()}
+                    onChange={(e) => setVendedorAsignado(e.target.value)}
+                  >
+                    <option value="">Sin asignar</option>
+                    {opcionesVendedores.map((o) => (
+                      <option key={o.value} value={o.value}>{o.label}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    className="input"
+                    style={{ background: "var(--bg)" }}
+                    readOnly
+                    value={vendedorAsignadoNombre}
+                  />
+                )}
+                <p style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>
+                  {esAdmin
+                    ? "Por defecto se asigna a ti. Como admin puedes asignarlo a otro vendedor."
+                    : "Se te asigna automáticamente. Solo el administrador puede cambiarlo."}
+                </p>
+              </div>
+            )}
 
           </div>
 

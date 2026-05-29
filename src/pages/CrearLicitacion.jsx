@@ -625,7 +625,7 @@ function crearItemVacio() {
     producto: "",
     categoria: "",
     formato: "",
-    cantidad: 0,
+    cantidad: "", // vacío por defecto (no "0")
     precio: 0, // precio base (sin flete)
     costo: 0,
     total: 0,
@@ -727,6 +727,13 @@ export default function CrearLicitacion() {
     return r === "admin" || r === "administrador";
   }, [rol]);
 
+  // Solo admin y jefe_ventas_especial pueden cambiar las condiciones de venta
+  // cuando el cliente es Particular (el resto queda fijo en "Contado").
+  const puedeEditarCondVenta = useMemo(() => {
+    const r = (rol ?? "").toString().trim().toLowerCase();
+    return r === "admin" || r === "administrador" || r === "jefe_ventas_especial";
+  }, [rol]);
+
   const [mostrarEntidad, setMostrarEntidad] = useState(true);
 
   const [idLicitacionInput, setIdLicitacionInput] = useState("");
@@ -749,6 +756,16 @@ export default function CrearLicitacion() {
   const [email, setEmail] = useState("");
   const [telefono, setTelefono] = useState("");
   const [condVenta, setCondVenta] = useState("30 días");
+
+  const esParticular = tipoCliente.toLowerCase() === "cliente particular";
+
+  // Cliente Particular ⇒ "Contado" obligatorio para roles no autorizados.
+  // Admin / jefe_ventas_especial quedan libres de editarlo.
+  useEffect(() => {
+    if (esParticular && !puedeEditarCondVenta && condVenta !== "Contado") {
+      setCondVenta("Contado");
+    }
+  }, [esParticular, puedeEditarCondVenta, condVenta]);
 
   const [fleteEstimado, setFleteEstimado] = useState(0);
   const [tipoCompra, setTipoCompra] = useState("Compra ágil");
@@ -885,7 +902,7 @@ export default function CrearLicitacion() {
     }
   }, []);
 
-  /* GUARDAR BORRADOR */
+  /* GUARDAR BORRADOR (debounced — evita JSON.stringify enorme en cada tecla) */
   useEffect(() => {
     if (!hydrated) return;
 
@@ -914,7 +931,13 @@ export default function CrearLicitacion() {
       observaciones,
     };
 
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    const t = setTimeout(() => {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+      } catch {}
+    }, 400);
+
+    return () => clearTimeout(t);
   }, [
     hydrated,
     idLicitacionInput,
@@ -944,9 +967,11 @@ export default function CrearLicitacion() {
   /* CARGA DE PRODUCTOS */
   useEffect(() => {
     async function cargar() {
+      // Solo las columnas que usa el picker / cálculo de precios: evita traer
+      // las fichas técnicas (textos largos) que disparan el tamaño del payload.
       const { data } = await supabase
         .from("productos")
-        .select("*")
+        .select("id, sku, nombre, marca, categoria, formato, costo, lista1, lista2, lista3")
         .in("estado", ["Activo", "Transitorio"])
         .order("id")
         .limit(20000);
@@ -1146,7 +1171,6 @@ export default function CrearLicitacion() {
     setItems(copia);
   }
 
-  // Selección de un producto desde el popup buscador.
   // Selección de un producto desde el popup buscador. Usa el objeto producto
   // directamente — no depende de productos.find() porque cuando el producto
   // recién se creó, productos puede estar stale (race con setProductos).
@@ -1390,6 +1414,8 @@ export default function CrearLicitacion() {
       return;
     }
 
+    // Cliente particular: queda anexado al vendedor que lo crea (su email).
+    const esParticular = (tipoCliente || "").toString().trim().toLowerCase() === "cliente particular";
     try {
       await api.post("/clientes", {
         rut: rutEntidad,
@@ -1404,6 +1430,7 @@ export default function CrearLicitacion() {
         telefono,
         condiciones_venta: condVenta,
         tipo_cliente: tipoCliente || null,
+        vendedor_asignado: esParticular ? ((perfilEmail || "").trim() || null) : null,
       });
     } catch (error) {
       console.error("Error creando cliente:", error);
@@ -1471,7 +1498,7 @@ export default function CrearLicitacion() {
     if (!nombre) errores.push("Nombre Licitación");
     if (!fechaHoraCierre) errores.push("Fecha y Hora de Cierre");
     if (!monto) errores.push("Monto");
-    if (!tipoCliente) errores.push("Tipo de Cliente");
+    if (!tipoCliente) errores.push("Tipo de Cotización");
     if (!rutEntidad) errores.push("RUT Entidad");
     if (!nombreEntidad) errores.push("Nombre Entidad");
     // Punto 29: Departamento no es obligatorio cuando el tipo de compra es "Cliente particular".
@@ -1892,7 +1919,7 @@ export default function CrearLicitacion() {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              Tipo de Cliente *
+              Tipo de Cotización *
             </label>
             <select
               className="w-full rounded-md border border-gray-300 px-3 py-2"
@@ -1903,6 +1930,8 @@ export default function CrearLicitacion() {
                 if (nuevo.toLowerCase() === "cliente particular") {
                   setTipoCompra("Cliente particular");
                   setListado("1");
+                  // Cliente particular se asocia automáticamente a "Contado".
+                  setCondVenta("Contado");
                   // Para cliente particular el ID se asigna automáticamente: pedimos el preview.
                   setIdLicitacionInput("");
                   setIdPreviewLoading(true);
@@ -2197,14 +2226,20 @@ export default function CrearLicitacion() {
               Condiciones de Venta *
             </label>
             <select
-              className="w-full rounded-md border border-gray-300 px-3 py-2"
+              className="w-full rounded-md border border-gray-300 px-3 py-2 disabled:bg-gray-100 disabled:text-gray-500"
               value={condVenta}
               onChange={(e) => setCondVenta(e.target.value)}
+              disabled={esParticular && !puedeEditarCondVenta}
             >
               <option value="">Seleccione…</option>
               <option value="30 días">30 días</option>
               <option value="Contado">Contado</option>
             </select>
+            {esParticular && !puedeEditarCondVenta && (
+              <p className="text-[11px] text-gray-500 mt-1">
+                Cliente particular: condición fija en "Contado".
+              </p>
+            )}
           </div>
         </div>
         </div>

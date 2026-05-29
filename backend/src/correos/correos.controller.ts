@@ -13,6 +13,7 @@ import {
 import type { Response } from 'express';
 import { AuthGuard } from '../auth/auth.guard';
 import { AdminGuard } from '../auth/admin.guard';
+import { CobranzaGuard } from '../auth/cobranza.guard';
 import { CorreosService, TipoPlantilla } from './correos.service';
 import { FirmasService } from './firmas.service';
 
@@ -277,6 +278,35 @@ export class CorreosController {
       asunto: body.asunto,
       cuerpo: body.cuerpo,
       imagenes: Array.isArray(body.imagenes) ? body.imagenes : [],
+      adjuntos: Array.isArray(body.adjuntos) ? body.adjuntos : [],
+    });
+  }
+
+  // Correo de cobranza: mismo motor que el Buzón (CC + adjuntos) pero accesible
+  // para los roles de cobranza (admin / contabilidad / jefe_ventas_especial),
+  // no solo admin. Envía desde la cuenta conectada del usuario.
+  @Post('cobranza/enviar')
+  @UseGuards(CobranzaGuard)
+  async enviarCobranza(
+    @Req() req: any,
+    @Body()
+    body: {
+      para?: string;
+      cc?: string[];
+      asunto?: string;
+      cuerpo?: string;
+      adjuntos?: Array<{ url: string; nombre?: string; mime?: string }>;
+    },
+  ) {
+    if (!body?.para || !body?.asunto || !body?.cuerpo) {
+      throw new BadRequestException('Faltan datos del correo (para, asunto, cuerpo).');
+    }
+    return this.correos.enviarDesdeBuzon(idDe(req), {
+      para: body.para,
+      cc: Array.isArray(body.cc) ? body.cc : [],
+      asunto: body.asunto,
+      cuerpo: body.cuerpo,
+      imagenes: [],
       adjuntos: Array.isArray(body.adjuntos) ? body.adjuntos : [],
     });
   }

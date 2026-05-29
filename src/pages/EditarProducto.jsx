@@ -171,11 +171,15 @@ export default function EditarProducto() {
     lista1: 0,
     lista2: 0,
     lista3: 0,
+    link_referencia: "",
+    creado_por: "",
+    created_at: "",
   });
   const [imagenFile, setImagenFile] = useState(null);
   const [imagenPreview, setImagenPreview] = useState("");
   const [imagenDisplayUrl, setImagenDisplayUrl] = useState("");
   const [generandoFicha, setGenerandoFicha] = useState(false);
+  const [creadoPorNombre, setCreadoPorNombre] = useState("");
 
   /* ==========================================================
      Rol
@@ -352,6 +356,9 @@ export default function EditarProducto() {
         lista1: formatearCLDesdeString(String(data.lista1 ?? "")),
         lista2: formatearCLDesdeString(String(data.lista2 ?? "")),
         lista3: 0,
+        link_referencia: data.link_referencia ?? "",
+        creado_por: data.creado_por ?? "",
+        created_at: data.created_at ?? "",
       });
 
       setLoading(false);
@@ -359,6 +366,31 @@ export default function EditarProducto() {
 
     cargar();
   }, [id]);
+
+  // Resuelve el nombre del creador a partir de su email (creado_por).
+  useEffect(() => {
+    const email = (producto.creado_por || "").trim().toLowerCase();
+    if (!email) {
+      setCreadoPorNombre("");
+      return;
+    }
+    let alive = true;
+    (async () => {
+      try {
+        const perfiles = await api.post("/usuarios/profiles/by-emails", { emails: [email] });
+        if (!alive) return;
+        const p = (perfiles || []).find(
+          (x) => (x?.email || "").trim().toLowerCase() === email,
+        );
+        setCreadoPorNombre((p?.nombre || "").trim());
+      } catch {
+        if (alive) setCreadoPorNombre("");
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [producto.creado_por]);
 
   useEffect(() => {
     if (!imagenFile) {
@@ -602,6 +634,11 @@ export default function EditarProducto() {
 
     if (esAdmin || (esVentasOJefe && (esProductoTransitorio || esPendienteAprobacion))) {
       payload.costo = numFromCL(producto.costo);
+    }
+
+    // El link de referencia solo lo puede modificar el administrador.
+    if (esAdmin) {
+      payload.link_referencia = (producto.link_referencia || "").trim() || null;
     }
 
     try {
@@ -886,6 +923,36 @@ try {
                   <input className="input" value={producto.formato}
                     disabled={esVentasNoTransitorio}
                     onChange={(e) => setProducto((prev) => ({ ...prev, formato: e.target.value }))} />
+                </div>
+
+                <div>
+                  <label className="label">Creado por</label>
+                  <input className="input" style={{ background: "var(--bg)" }} readOnly
+                    value={creadoPorNombre || producto.creado_por || "—"} />
+                </div>
+
+                <div>
+                  <label className="label">Fecha de creación</label>
+                  <input className="input" style={{ background: "var(--bg)" }} readOnly
+                    value={producto.created_at ? new Date(producto.created_at).toLocaleString("es-CL") : "—"} />
+                </div>
+
+                <div className="md:col-span-2">
+                  <label className="label">Link de referencia</label>
+                  <input
+                    className="input"
+                    type="url"
+                    value={producto.link_referencia || ""}
+                    disabled={!esAdmin}
+                    style={!esAdmin ? { background: "var(--bg)" } : undefined}
+                    onChange={(e) => setProducto((prev) => ({ ...prev, link_referencia: e.target.value }))}
+                    placeholder="https://…"
+                  />
+                  <p style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4 }}>
+                    {esAdmin
+                      ? "Solo el administrador puede modificar este link. No aparece en la ficha PDF."
+                      : "Link de referencia (solo el administrador puede modificarlo). No aparece en la ficha PDF."}
+                  </p>
                 </div>
               </div>
             </div>

@@ -335,6 +335,53 @@ export class CorreosService {
     return { ...res, modo: 'smtp' as const, de: remitenteCompartido() };
   }
 
+  // Envía un correo de redacción libre a un cliente desde el portal de stock.
+  // Sale desde la casilla conectada del usuario (OAuth o DWD) y queda en sus
+  // Enviados; si no tiene cuenta conectada, cae al SMTP compartido. En ambos
+  // casos se anexa la firma del usuario.
+  async enviarCorreoCliente(
+    userId: string,
+    opts: { para: string; cc?: string[]; asunto: string; mensaje: string },
+  ) {
+    const para = String(opts.para || '').trim().toLowerCase();
+    if (!RE_EMAIL.test(para)) {
+      throw new BadRequestException('El destinatario no es un correo válido.');
+    }
+    const cc = (Array.isArray(opts.cc) ? opts.cc : [])
+      .map((e) => String(e || '').trim().toLowerCase())
+      .filter((e) => RE_EMAIL.test(e) && e !== para);
+    const asunto = String(opts.asunto || '').trim();
+    if (!asunto) throw new BadRequestException('Falta el asunto del correo.');
+    const mensaje = String(opts.mensaje || '').trim();
+    if (!mensaje) throw new BadRequestException('El mensaje no puede ir vacío.');
+
+    const uid = String(userId || '').trim();
+    const firmaHtml = uid ? await this.firmas.htmlParaEnviar(uid) : '';
+    const cuerpoHtml =
+      textoAHtml(mensaje) + (firmaHtml ? `<br><br>${firmaHtml}` : '');
+
+    const cuenta = uid ? await this.cuentaDeUsuario(uid) : null;
+    if (cuenta) {
+      const res = await this.gmailApi.enviarComo(this.credsDe(cuenta), {
+        remitente: cuenta.email,
+        para,
+        cc: cc.length > 0 ? cc : undefined,
+        asunto,
+        html: cuerpoHtml,
+      });
+      return { ...res, modo: 'gmail' as const, de: cuenta.email };
+    }
+
+    // Respaldo: cuenta SMTP compartida.
+    const res = await this.mailings.enviarUno({
+      para,
+      cc: cc.length > 0 ? cc : undefined,
+      asunto,
+      cuerpoHtml,
+    });
+    return { ...res, modo: 'smtp' as const, de: remitenteCompartido() };
+  }
+
   // ── Conexión OAuth de la cuenta de correo ─────────────────────────────
 
   private limpiarEstadosOAuth() {

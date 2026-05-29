@@ -22,13 +22,58 @@ export class LicitacionesService {
     return data;
   }
 
+  // Detecta una columna inexistente a partir del error de Postgres
+  // (código 42703 / "column ... does not exist"). Devuelve el nombre de la
+  // columna o null si el error es de otro tipo.
+  private columnaFaltante(error: any): string | null {
+    const msg = [error?.message, error?.details, error?.hint]
+      .filter(Boolean)
+      .join(' ');
+    if (error?.code !== '42703' && !/does not exist/i.test(msg)) return null;
+    const m = msg.match(/column\s+["']?([\w.]+)["']?\s+does not exist/i);
+    if (!m) return null;
+    const partes = m[1].split('.');
+    return partes[partes.length - 1];
+  }
+
   async findAllWithFields(fields: string) {
-    const { data, error } = await this.supabase.getClient()
-      .from('licitaciones')
-      .select(fields)
-      .range(0, 20000)
-      .order('id', { ascending: false });
+    const ejecutar = (sel: string) =>
+      this.supabase.getClient()
+        .from('licitaciones')
+        .select(sel)
+        .range(0, 20000)
+        .order('id', { ascending: false });
+
+    let { data, error } = await ejecutar(fields);
+
+    // Tolerar columnas inexistentes: si el frontend pide una columna que aún
+    // no existe (migración sin aplicar), la quitamos del select y reintentamos
+    // en lugar de romper toda la pantalla que consume este endpoint.
+    const omitidas: string[] = [];
+    let intentos = 0;
+    while (error && fields && fields !== '*' && intentos < 10) {
+      const faltante = this.columnaFaltante(error);
+      if (!faltante) break;
+      omitidas.push(faltante);
+      const restantes = fields
+        .split(',')
+        .map((f) => f.trim())
+        .filter((f) => f && !omitidas.includes(f));
+      if (restantes.length === 0) break;
+      ({ data, error } = await ejecutar(restantes.join(',')));
+      intentos++;
+    }
+
     if (error) throw new BadRequestException(error.message);
+
+    // Reponer las columnas omitidas como null para no romper el frontend.
+    if (omitidas.length > 0) {
+      return (data || []).map((row: any) => {
+        const out: any = { ...row };
+        for (const col of omitidas) if (!(col in out)) out[col] = null;
+        return out;
+      });
+    }
     return data;
   }
 
@@ -146,9 +191,13 @@ export class LicitacionesService {
 
   async getDocumentosByFilter(filter: Record<string, any>, fields?: string) {
     const buildQuery = (selectFields: string) => {
+      // range(0, 50000) — sin esto, Supabase trunca a 1000 filas y los
+      // documentos viejos "desaparecen" en pantallas que filtran por OC
+      // (ej: Listar Cotizaciones, Ventas, Trazabilidad).
       let query = this.supabase.getClient()
         .from('licitacion_documentos')
-        .select(selectFields);
+        .select(selectFields)
+        .range(0, 50000);
 
       for (const [key, value] of Object.entries(filter)) {
         if (key === 'licitacion_ids') {
@@ -189,6 +238,7 @@ export class LicitacionesService {
   }
 
   async createDocumento(body: Record<string, any>) {
+    let inserted: any = null;
     const { data, error } = await this.supabase.getClient()
       .from('licitacion_documentos')
       .insert([body])
@@ -215,11 +265,107 @@ export class LicitacionesService {
           .select('id')
           .single();
         if (e2) throw new BadRequestException(e2.message);
-        return d2;
+        inserted = d2;
+      } else {
+        throw new BadRequestException(error.message);
       }
-      throw new BadRequestException(error.message);
+    } else {
+      inserted = data;
     }
-    return data;
+
+    // Hook: aviso de correo pendiente al vendedor. No bloquea la subida.
+    try {
+      await this.notificarCorreoPendiente(inserted?.id, body);
+    } catch (e: any) {
+      console.error('[LicitacionesService] notificarCorreoPendiente falló:', e?.message || e);
+    }
+
+    return inserted;
+  }
+
+  // Crea una notificación para que el vendedor envíe un correo al cliente:
+  //  - primera OC de la cotización → correo de agradecimiento
+  //  - cualquier guía de despacho  → envío de guía al cliente
+  private async notificarCorreoPendiente(docId: number, body: Record<string, any>) {
+    const log = (m: string) => console.log(`[correos-hook] ${m}`);
+    if (!docId) {
+      log('sin docId — no se notifica');
+      return;
+    }
+    const tipo = String(body?.tipo || '');
+    const licitacionId = Number(body?.licitacion_id);
+    if (!licitacionId) {
+      log('sin licitacion_id — no se notifica');
+      return;
+    }
+
+    let tipoCorreo: 'oc_agradecimiento' | 'guia_despacho_enviar' | null = null;
+    if (tipo === 'orden_compra') {
+      // Solo la PRIMERA orden de compra de la cotización.
+      const { count } = await this.supabase.getClient()
+        .from('licitacion_documentos')
+        .select('id', { count: 'exact', head: true })
+        .eq('licitacion_id', licitacionId)
+        .eq('tipo', 'orden_compra');
+      if ((count || 0) > 1) {
+        log(`OC no es la primera (count=${count}) lic=${licitacionId} — no se notifica`);
+        return;
+      }
+      tipoCorreo = 'oc_agradecimiento';
+    } else if (tipo === 'guia_despacho') {
+      // Toda guía de despacho dispara el aviso, tenga o no N° de seguimiento.
+      tipoCorreo = 'guia_despacho_enviar';
+    } else {
+      log(`tipo "${tipo}" no dispara correo — no se notifica`);
+      return;
+    }
+
+    const { data: lic } = await this.supabase.getClient()
+      .from('licitaciones')
+      .select('id, nombre_entidad, vendedor_correo, creado_por')
+      .eq('id', licitacionId)
+      .maybeSingle();
+    if (!lic) {
+      log(`cotización ${licitacionId} no encontrada — no se notifica`);
+      return;
+    }
+
+    const destinatario = String(lic.vendedor_correo || lic.creado_por || '')
+      .trim()
+      .toLowerCase();
+    if (!destinatario) {
+      log(`cotización ${licitacionId} sin vendedor/creado_por — no se notifica`);
+      return;
+    }
+
+    const numero = String(body?.numero || '').trim();
+    const cliente = String(lic.nombre_entidad || 'el cliente').trim();
+    const mensaje =
+      tipoCorreo === 'oc_agradecimiento'
+        ? `Se cargó la primera orden de compra${numero ? ` ${numero}` : ''} de ${cliente}. Envía el correo de agradecimiento.`
+        : `Se cargó la guía de despacho${numero ? ` ${numero}` : ''} de ${cliente}. Envía la guía al cliente.`;
+
+    const { error } = await this.supabase.getClient()
+      .from('notificaciones')
+      .insert([
+        {
+          user_email: destinatario,
+          tipo: tipoCorreo,
+          mensaje,
+          link: `/detalle/${licitacionId}`,
+          metadata: {
+            licitacion_id: licitacionId,
+            documento_id: docId,
+            tipo_correo: tipoCorreo,
+            numero,
+          },
+        },
+      ]);
+    if (error) {
+      console.error('[correos-hook] ERROR insertando notificación:', error.message);
+    } else {
+      log(`notificación ${tipoCorreo} creada para ${destinatario} (lic=${licitacionId}, doc=${docId})`);
+    }
   }
 
   async updateDocumento(docId: number, body: Record<string, any>) {

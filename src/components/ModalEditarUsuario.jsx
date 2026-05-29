@@ -105,6 +105,22 @@ export default function ModalEditarUsuario({ user, close, onToast }) {
             </select>
           </div>
 
+          <div
+            style={{
+              padding: "10px 14px",
+              borderRadius: "var(--radius)",
+              background: "#f0f9ff",
+              border: "1px solid #bae6fd",
+              color: "#0369a1",
+              fontSize: "12px",
+              lineHeight: 1.5,
+            }}
+          >
+            La casilla de correo de cada vendedor ya no se configura aquí. Cada
+            usuario conecta su propia cuenta de Google desde el módulo{" "}
+            <strong>Mi Correo</strong>.
+          </div>
+
           {error && (
             <div style={{
               padding: "10px 14px", borderRadius: "var(--radius)",

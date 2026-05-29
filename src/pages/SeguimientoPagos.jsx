@@ -3,6 +3,7 @@ import { api } from "../lib/api";
 import { Link } from "react-router-dom";
 import useAuth from "../hooks/useAuth";
 import Toast from "../components/Toast";
+import ConfirmModal from "../components/ConfirmModal";
 import DateFilter from "../components/DateFilter";
 import { Eye, CheckCircle2, Circle, AlertTriangle, ArrowUpDown, ArrowUp, ArrowDown, Download, ChevronDown } from "lucide-react";
 
@@ -48,6 +49,10 @@ function fmtDateCL(d) {
   return d.toLocaleDateString("es-CL");
 }
 
+function fmtCLP(value) {
+  return `$${Number(value || 0).toLocaleString("es-CL")}`;
+}
+
 function semaforo(diasRestantes, pagada) {
   if (pagada) return { color: "#15803d", bg: "#dcfce7", label: "Pagada" };
   if (diasRestantes == null) return { color: "#6b7280", bg: "#f3f4f6", label: "Sin fecha" };
@@ -66,11 +71,14 @@ export default function SeguimientoPagos() {
   const [usuariosMap, setUsuariosMap] = useState({});
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState(null);
+  const [confirmDesmarcar, setConfirmDesmarcar] = useState(null);
 
   // Filtros
   const [filtroEstado, setFiltroEstado] = useState("todas");
   const [filtroEntidad, setFiltroEntidad] = useState("");
   const [filtroNumero, setFiltroNumero] = useState("");
+  const [filtroTipoCotizacion, setFiltroTipoCotizacion] = useState("");
+  const [filtroTipoCompra, setFiltroTipoCompra] = useState("");
   const [filtroFechaDesde, setFiltroFechaDesde] = useState("");
   const [filtroFechaHasta, setFiltroFechaHasta] = useState("");
 
@@ -113,13 +121,13 @@ export default function SeguimientoPagos() {
       try {
         // 1. Cotizaciones adjudicadas
         const lics = await api.get(
-          "/licitaciones/with-fields?fields=id,id_licitacion,nombre_entidad,fecha_adjudicada,total_con_iva,creado_por,condicion_venta,comuna"
+          "/licitaciones/with-fields?fields=id,id_licitacion,nombre_entidad,fecha_adjudicada,total_con_iva,creado_por,condicion_venta,comuna,tipo_compra,tipo_cliente"
         );
         let rows = (lics || []).filter((l) => l.estado === "Adjudicada" || l.estado == null);
 
         // Cotizaciones adjudicadas reales
         const licsAdj = await api.get(
-          "/licitaciones/with-fields?fields=id,id_licitacion,nombre_entidad,fecha_adjudicada,total_con_iva,creado_por,condicion_venta,comuna,estado"
+          "/licitaciones/with-fields?fields=id,id_licitacion,nombre_entidad,fecha_adjudicada,total_con_iva,creado_por,condicion_venta,comuna,estado,tipo_compra,tipo_cliente"
         );
         rows = (licsAdj || []).filter((l) => l.estado === "Adjudicada");
 
@@ -169,6 +177,26 @@ export default function SeguimientoPagos() {
     load();
   }, [cargando, rol, user?.email, reloadKey]);
 
+  // Tipos de compra disponibles (según las cotizaciones cargadas).
+  const tiposCompra = useMemo(() => {
+    const set = new Set();
+    Object.values(licMap || {}).forEach((l) => {
+      const t = (l?.tipo_compra || "").toString().trim();
+      if (t) set.add(t);
+    });
+    return [...set].sort();
+  }, [licMap]);
+
+  // Tipos de cotización disponibles (tipo_cliente: Entidad Pública / Cliente Particular).
+  const tiposCotizacion = useMemo(() => {
+    const set = new Set();
+    Object.values(licMap || {}).forEach((l) => {
+      const t = (l?.tipo_cliente || "").toString().trim();
+      if (t) set.add(t);
+    });
+    return [...set].sort();
+  }, [licMap]);
+
   // Filtros aplicados
   const facturasFiltradas = useMemo(() => {
     return facturas.filter((f) => {
@@ -177,6 +205,14 @@ export default function SeguimientoPagos() {
 
       const entidad = (lic.nombre_entidad || "").toLowerCase();
       if (filtroEntidad && !entidad.includes(filtroEntidad.toLowerCase())) return false;
+
+      if (filtroTipoCotizacion && (lic.tipo_cliente || "").toString().trim() !== filtroTipoCotizacion) {
+        return false;
+      }
+
+      if (filtroTipoCompra && (lic.tipo_compra || "").toString().trim() !== filtroTipoCompra) {
+        return false;
+      }
 
       if (filtroNumero) {
         const num = (f.numero || "").toString().toLowerCase();
@@ -198,7 +234,7 @@ export default function SeguimientoPagos() {
 
       return true;
     });
-  }, [facturas, licMap, filtroEntidad, filtroNumero, filtroFechaDesde, filtroFechaHasta, filtroEstado]);
+  }, [facturas, licMap, filtroEntidad, filtroNumero, filtroTipoCotizacion, filtroTipoCompra, filtroFechaDesde, filtroFechaHasta, filtroEstado]);
 
   // Ordenamiento
   const facturasOrdenadas = useMemo(() => {
@@ -318,22 +354,26 @@ export default function SeguimientoPagos() {
     }
   }
 
-  // Stats globales (de todas las facturas, no solo las filtradas)
+  // Stats globales (de todas las facturas, no solo las filtradas).
+  // Cada balde acumula también el monto con IVA (lic.total_con_iva).
   const stats = useMemo(() => {
     let total = 0, pagadas = 0, pendientes = 0, vencidas = 0, porVencer = 0;
+    let montoPagadas = 0, montoEnPlazo = 0, montoPorVencer = 0, montoVencidas = 0;
     facturas.forEach((f) => {
       const lic = licMap[f.licitacion_id];
       if (!lic) return;
+      const monto = Number(lic.total_con_iva || 0);
       total++;
-      if (f.pagada) { pagadas++; return; }
+      if (f.pagada) { pagadas++; montoPagadas += monto; return; }
       pendientes++;
       const plazo = plazoDias(lic.condicion_venta);
       const dias = diasEntre(f.fecha_factura);
       const diasRestantes = dias != null ? plazo - dias : null;
-      if (diasRestantes != null && diasRestantes < 0) vencidas++;
-      else if (diasRestantes != null && diasRestantes <= 5) porVencer++;
+      if (diasRestantes != null && diasRestantes < 0) { vencidas++; montoVencidas += monto; }
+      else if (diasRestantes != null && diasRestantes <= 5) { porVencer++; montoPorVencer += monto; }
+      else { montoEnPlazo += monto; }
     });
-    return { total, pagadas, pendientes, vencidas, porVencer };
+    return { total, pagadas, pendientes, vencidas, porVencer, montoPagadas, montoEnPlazo, montoPorVencer, montoVencidas };
   }, [facturas, licMap]);
 
   async function abrirDocumento(doc) {
@@ -387,8 +427,14 @@ export default function SeguimientoPagos() {
     }
   }
 
-  async function desmarcarPago(f) {
-    if (!confirm("¿Marcar esta factura como NO pagada?")) return;
+  function desmarcarPago(f) {
+    setConfirmDesmarcar(f);
+  }
+
+  async function confirmarDesmarcarPago() {
+    const f = confirmDesmarcar;
+    setConfirmDesmarcar(null);
+    if (!f) return;
     try {
       await api.put(`/licitaciones/documentos/${f.id}`, {
         pagada: false,
@@ -428,6 +474,17 @@ export default function SeguimientoPagos() {
   return (
     <div className="page">
       {toast && <Toast type={toast.type} message={toast.message} onClose={() => setToast(null)} />}
+
+      <ConfirmModal
+        open={confirmDesmarcar !== null}
+        title="¿Marcar esta factura como NO pagada?"
+        message="Se revertirá el estado del pago. Tendrás que volver a registrar la fecha y forma de pago si la marcas pagada de nuevo."
+        confirmText="Marcar como no pagada"
+        cancelText="Cancelar"
+        confirmTone="warning"
+        onConfirm={confirmarDesmarcarPago}
+        onCancel={() => setConfirmDesmarcar(null)}
+      />
 
       <div className="page-header" style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16 }}>
         <div>
@@ -480,29 +537,33 @@ export default function SeguimientoPagos() {
         </div>
       </div>
 
-      {/* Stats */}
+      {/* Stats — cantidad + monto con IVA por estado */}
       <div className="stats-row">
         <div className="stat-card">
           <div className="stat-label">Pagadas</div>
           <div className="stat-value" style={{ color: "var(--success)" }}>{stats.pagadas}</div>
-          <div className="stat-sub">facturas</div>
+          <div className="stat-money" style={{ color: "var(--success)" }}>{fmtCLP(stats.montoPagadas)}</div>
+          <div className="stat-sub">facturas · con IVA</div>
         </div>
         <div className="stat-card">
           <div className="stat-label">Pendientes</div>
           <div className="stat-value" style={{ color: "var(--primary)" }}>
             {Math.max(0, stats.pendientes - stats.porVencer - stats.vencidas)}
           </div>
-          <div className="stat-sub">aún en plazo</div>
+          <div className="stat-money" style={{ color: "var(--primary)" }}>{fmtCLP(stats.montoEnPlazo)}</div>
+          <div className="stat-sub">aún en plazo · con IVA</div>
         </div>
         <div className="stat-card">
           <div className="stat-label">Por vencer</div>
           <div className="stat-value" style={{ color: "var(--warning)" }}>{stats.porVencer}</div>
-          <div className="stat-sub">próximas a vencer</div>
+          <div className="stat-money" style={{ color: "var(--warning)" }}>{fmtCLP(stats.montoPorVencer)}</div>
+          <div className="stat-sub">próximas a vencer · con IVA</div>
         </div>
         <div className="stat-card">
           <div className="stat-label">Vencidas</div>
           <div className="stat-value" style={{ color: "var(--danger)" }}>{stats.vencidas}</div>
-          <div className="stat-sub">fuera de plazo</div>
+          <div className="stat-money" style={{ color: "var(--danger)" }}>{fmtCLP(stats.montoVencidas)}</div>
+          <div className="stat-sub">fuera de plazo · con IVA</div>
         </div>
       </div>
 
@@ -539,6 +600,32 @@ export default function SeguimientoPagos() {
           />
         </div>
         <div className="filter-field">
+          <label className="filter-label">Tipo de Cotización</label>
+          <select
+            className="input"
+            value={filtroTipoCotizacion}
+            onChange={(e) => setFiltroTipoCotizacion(e.target.value)}
+          >
+            <option value="">Todas</option>
+            {tiposCotizacion.map((t) => (
+              <option key={t} value={t}>{t}</option>
+            ))}
+          </select>
+        </div>
+        <div className="filter-field">
+          <label className="filter-label">Tipo de Compra</label>
+          <select
+            className="input"
+            value={filtroTipoCompra}
+            onChange={(e) => setFiltroTipoCompra(e.target.value)}
+          >
+            <option value="">Todos</option>
+            {tiposCompra.map((t) => (
+              <option key={t} value={t}>{t}</option>
+            ))}
+          </select>
+        </div>
+        <div className="filter-field">
           <label className="filter-label">Factura desde</label>
           <DateFilter value={filtroFechaDesde} onChange={setFiltroFechaDesde} placeholder="Desde" />
         </div>
@@ -563,7 +650,18 @@ export default function SeguimientoPagos() {
         }}
       >
         <div className="table-scroll" style={{ maxHeight: "calc(100vh - 360px)" }}>
-          <table className="data-table trazabilidad-table">
+          <table className="data-table trazabilidad-table table-fit">
+            <colgroup>
+              <col style={{ width: "19%" }} />
+              <col style={{ width: "10%" }} />
+              <col style={{ width: "9%" }} />
+              <col style={{ width: "11%" }} />
+              <col style={{ width: "8%" }} />
+              <col style={{ width: "11%" }} />
+              <col style={{ width: "12%" }} />
+              <col style={{ width: "9%" }} />
+              <col style={{ width: "11%" }} />
+            </colgroup>
             <thead>
               <tr>
                 <th onClick={() => toggleSort("entidad")} style={{ cursor: "pointer", userSelect: "none", textAlign: "left" }}>
@@ -713,7 +811,7 @@ export default function SeguimientoPagos() {
                       </td>
                       <td style={{ verticalAlign: "middle", textAlign: "right" }}>
                         {editando ? (
-                          <div style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 200, textAlign: "left" }}>
+                          <div style={{ display: "flex", flexDirection: "column", gap: 6, width: "100%", textAlign: "left" }}>
                             <DateFilter
                               value={fechaPago}
                               onChange={setFechaPago}

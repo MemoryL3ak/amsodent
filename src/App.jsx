@@ -37,17 +37,27 @@ import Metas from "./pages/Metas";
 import MetasPorCanal from "./pages/MetasPorCanal";
 import Trazabilidad from "./pages/Trazabilidad";
 import SeguimientoPagos from "./pages/SeguimientoPagos";
+import Cobranza from "./pages/Cobranza";
 import BitacoraCotizaciones from "./pages/BitacoraCotizaciones";
 import Buzon from "./pages/Buzon";
 
 // SORTEO
 import SorteoRegistro from "./pages/SorteoRegistro";
 import PortalCliente from "./pages/PortalCliente";
+import PortalDespachos from "./pages/PortalDespachos";
 import SorteoRegistros from "./pages/SorteoRegistros";
 import RequireRole from "./components/RequireRole";
 
 // COMUNICACIONES
 import Comunicaciones from "./pages/Comunicaciones";
+
+// MARCAJE
+import Marcaje from "./pages/Marcaje";
+import MonitoreoMarcajes from "./pages/MonitoreoMarcajes";
+
+// PORTAL DE STOCK
+import PortalStockCliente from "./pages/PortalStockCliente";
+import MonitoreoStockClientes from "./pages/MonitoreoStockClientes";
 
 export default function App() {
   return (
@@ -58,6 +68,8 @@ export default function App() {
         <Route path="/reset-password" element={<ResetPassword />} />
         <Route path="/sorteo" element={<SorteoRegistro />} />
         <Route path="/portal" element={<PortalCliente />} />
+        <Route path="/despachos" element={<PortalDespachos />} />
+        <Route path="/portal-cliente" element={<PortalStockCliente />} />
 
         {/* RUTAS PROTEGIDAS */}
         <Route
@@ -98,7 +110,7 @@ export default function App() {
           <Route
             path="trazabilidad"
             element={
-              <RequireRole allow={["admin", "jefe_ventas", "jefe_ventas_especial", "contabilidad"]}>
+              <RequireRole allow={["admin", "jefe_ventas", "jefe_ventas_especial", "contabilidad", "ventas"]}>
                 <Trazabilidad />
               </RequireRole>
             }
@@ -111,7 +123,22 @@ export default function App() {
               </RequireRole>
             }
           />
-          <Route path="ventas" element={<Ventas />} />
+          <Route
+            path="cobranza"
+            element={
+              <RequireRole allow={["admin", "jefe_ventas_especial", "contabilidad"]}>
+                <Cobranza />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="ventas"
+            element={
+              <RequireRole allow={["admin", "jefe_ventas", "jefe_ventas_especial"]}>
+                <Ventas />
+              </RequireRole>
+            }
+          />
           <Route path="metas" element={<Metas />} />
           <Route path="metas-canal" element={<MetasPorCanal />} />
 
@@ -147,6 +174,29 @@ export default function App() {
             element={
               <RequireRole allow={["admin"]}>
                 <Buzon />
+              </RequireRole>
+            }
+          />
+
+          {/* MARCAJE DE ASISTENCIA — todos los autenticados */}
+          <Route path="marcaje" element={<Marcaje />} />
+
+          {/* MONITOREO DE MARCAJES — solo admin */}
+          <Route
+            path="monitoreo-marcajes"
+            element={
+              <RequireRole allow={["admin"]}>
+                <MonitoreoMarcajes />
+              </RequireRole>
+            }
+          />
+
+          {/* MONITOREO DE STOCK DE CLIENTES — admin y ventas_especial */}
+          <Route
+            path="monitoreo-stock"
+            element={
+              <RequireRole allow={["admin", "ventas_especial"]}>
+                <MonitoreoStockClientes />
               </RequireRole>
             }
           />

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
 import useAuth from "../hooks/useAuth";
 import DateFilter from "../components/DateFilter";
-import { FileText, Trophy, TrendingUp, CircleDollarSign, Activity } from "lucide-react";
+import { FileText, Trophy, TrendingUp, CircleDollarSign, Truck } from "lucide-react";
 
 const ESTADOS_ORDEN = [
   "En espera",
@@ -58,12 +58,6 @@ function montoBrutoDesdeNeto(value) {
 function fmtPct(value) {
   if (!Number.isFinite(Number(value))) return "0%";
   return `${Number(value).toFixed(1)}%`;
-}
-
-function montoAdjPorVista({ consumido, pendiente, vista }) {
-  if (vista === "consumido") return Number(consumido || 0);
-  if (vista === "pendiente") return Number(pendiente || 0);
-  return Number(consumido || 0);
 }
 
 function isMissingMontoColumnError(error) {
@@ -133,25 +127,30 @@ export default function Ventas() {
   const [errorMsg, setErrorMsg] = useState("");
   const [licitaciones, setLicitaciones] = useState([]);
   const [montoOcByLicitacion, setMontoOcByLicitacion] = useState({});
+  const [ocNetoByLicitacion, setOcNetoByLicitacion] = useState({});
+  const [guiaNetoByLicitacion, setGuiaNetoByLicitacion] = useState({});
   const [usuariosMap, setUsuariosMap] = useState({});
   const [fechaDesde, setFechaDesde] = useState(inicioMesISO());
   const [fechaHasta, setFechaHasta] = useState(hoyISO());
   const [filtroVendedor, setFiltroVendedor] = useState("");
+  const [filtroTipoCliente, setFiltroTipoCliente] = useState("");
+  const [filtroTipoCompra, setFiltroTipoCompra] = useState("");
   const [filtroRegionResumen, setFiltroRegionResumen] = useState("");
   const [vistaAdjudicado, setVistaAdjudicado] = useState("ambos");
 
   const rolNorm = (rol || "").toString().trim().toLowerCase();
   const esAdmin = rolNorm === "admin" || rolNorm === "administrador";
   const esVentas = rolNorm === "ventas" || rolNorm === "ventas_especial";
-  const esJefatura =
-    esAdmin ||
+  // Acceso al Resumen Comercial: solo admin + jefatura de ventas.
+  // Los vendedores ven su propia gestión en /listar (ya filtrado por email).
+  const esJefeVentas =
     rolNorm === "jefe_ventas" ||
     rolNorm === "jefe ventas" ||
     rolNorm === "jefe-ventas" ||
     rolNorm === "jefe de ventas" ||
-    rolNorm === "jefe_ventas_especial" ||
-    rolNorm === "contabilidad";
-  const puedeVerVentas = esJefatura || esVentas;
+    rolNorm === "jefe_ventas_especial";
+  const esJefatura = esAdmin || esJefeVentas;
+  const puedeVerVentas = esAdmin || esJefeVentas;
 
   useEffect(() => {
     if (cargando) return;
@@ -171,7 +170,7 @@ export default function Ventas() {
       setErrorMsg("");
 
       try {
-        const lics = await api.get("/licitaciones/with-fields?fields=id,id_licitacion,fecha,fecha_adjudicada,estado,creado_por,monto,total_con_iva,total_sin_iva,comuna,region");
+        const lics = await api.get("/licitaciones/with-fields?fields=id,id_licitacion,fecha,fecha_adjudicada,estado,creado_por,monto,total_con_iva,total_sin_iva,comuna,region,tipo_cliente,tipo_compra");
 
         let rows = lics || [];
         const emailUser = (user?.email || "").trim().toLowerCase();
@@ -180,62 +179,80 @@ export default function Ventas() {
         }
 
         const ids = rows.map((l) => Number(l?.id)).filter((n) => Number.isFinite(n));
-        let montoOcMap = {};
-        if (ids.length > 0) {
-          try {
-            const docsOc = await api.post("/licitaciones/documentos/filter", {
-              filter: { licitacion_ids: ids, tipo: ["orden_compra", "factura_boleta", "efectivo"] },
-              fields: "licitacion_id,monto,fecha_oc,created_at",
-            });
+        const emails = Array.from(
+          new Set(rows.map((l) => (l.creado_por || "").trim().toLowerCase()).filter(Boolean))
+        );
 
-            const primeraOcMap = {};
-            (docsOc || []).forEach((d) => {
-              const licId = Number(d?.licitacion_id || 0);
-              if (!licId) return;
+        // Paralelizar: docs OC y perfiles no dependen entre sí (ambos dependen
+        // de rows) → en serie eran ~2 roundtrips, en paralelo es 1.
+        const [docsOcResult, perfilesResult] = await Promise.allSettled([
+          ids.length > 0
+            ? api.post("/licitaciones/documentos/filter", {
+                filter: { licitacion_ids: ids, tipo: ["orden_compra", "guia_despacho", "factura_boleta", "efectivo"] },
+                fields: "licitacion_id,tipo,monto,fecha_oc,created_at",
+              })
+            : Promise.resolve([]),
+          emails.length > 0
+            ? api.post("/usuarios/profiles/by-emails", { emails })
+            : Promise.resolve([]),
+        ]);
+
+        let montoOcMap = {};
+        let ocNetoMap = {};
+        let guiaNetoMap = {};
+        if (docsOcResult.status === "fulfilled") {
+          const docsOc = docsOcResult.value;
+          const primeraOcMap = {};
+          (docsOc || []).forEach((d) => {
+            const licId = Number(d?.licitacion_id || 0);
+            if (!licId) return;
+            const tipo = (d?.tipo || "").toString();
+            // Consumido = guías de despacho + facturas/boletas + efectivo.
+            if (tipo === "guia_despacho" || tipo === "factura_boleta" || tipo === "efectivo") {
               montoOcMap[licId] =
                 Number(montoOcMap[licId] || 0) +
                 montoBrutoDesdeNeto(Number(d?.monto || 0));
+            }
+            // Neto subido por tipo, para el KPI "OC sin despachar".
+            if (tipo === "orden_compra") {
+              ocNetoMap[licId] = Number(ocNetoMap[licId] || 0) + Number(d?.monto || 0);
+            }
+            if (tipo === "guia_despacho") {
+              guiaNetoMap[licId] = Number(guiaNetoMap[licId] || 0) + Number(d?.monto || 0);
+            }
+            // Fecha de adjudicación = primera OC (o primera factura/efectivo en Particular).
+            if (tipo === "orden_compra" || tipo === "factura_boleta" || tipo === "efectivo") {
               const fechaDoc = toDateISO(d?.fecha_oc) || toDateISO(d?.created_at);
               if (fechaDoc) {
                 if (!primeraOcMap[licId] || fechaDoc < primeraOcMap[licId]) {
                   primeraOcMap[licId] = fechaDoc;
                 }
               }
-            });
-            rows = rows.map((l) => ({
-              ...l,
-              fecha_adjudicacion: primeraOcMap[Number(l.id)] || null,
-            }));
-          } catch (errDocsOc) {
-            if (isMissingMontoColumnError(errDocsOc)) {
-              montoOcMap = {};
-            } else {
-              console.error("Error cargando montos OC:", errDocsOc);
             }
-          }
+          });
+          rows = rows.map((l) => ({
+            ...l,
+            fecha_adjudicacion: primeraOcMap[Number(l.id)] || null,
+          }));
+        } else if (!isMissingMontoColumnError(docsOcResult.reason)) {
+          console.error("Error cargando montos OC:", docsOcResult.reason);
         }
 
-        const emails = Array.from(
-          new Set(rows.map((l) => (l.creado_por || "").trim().toLowerCase()).filter(Boolean))
-        );
-
         let mapa = {};
-        if (emails.length > 0) {
-          try {
-            const perfiles = await api.post("/usuarios/profiles/by-emails", { emails });
-
-            (perfiles || []).forEach((p) => {
-              const email = (p?.email || "").trim().toLowerCase();
-              if (email) mapa[email] = (p?.nombre || "").trim();
-            });
-          } catch (errProfiles) {
-            console.error("Error profiles:", errProfiles);
-          }
+        if (perfilesResult.status === "fulfilled") {
+          (perfilesResult.value || []).forEach((p) => {
+            const email = (p?.email || "").trim().toLowerCase();
+            if (email) mapa[email] = (p?.nombre || "").trim();
+          });
+        } else {
+          console.error("Error profiles:", perfilesResult.reason);
         }
 
         if (!mounted) return;
         setLicitaciones(rows);
         setMontoOcByLicitacion(montoOcMap);
+        setOcNetoByLicitacion(ocNetoMap);
+        setGuiaNetoByLicitacion(guiaNetoMap);
         setUsuariosMap(mapa);
       } catch (e) {
         console.error("Error cargando ventas:", e);
@@ -243,6 +260,8 @@ export default function Ventas() {
           setErrorMsg("No se pudo cargar el resumen de ventas.");
           setLicitaciones([]);
           setMontoOcByLicitacion({});
+          setOcNetoByLicitacion({});
+          setGuiaNetoByLicitacion({});
           setUsuariosMap({});
         }
       } finally {
@@ -306,9 +325,19 @@ export default function Ventas() {
       const email = (l.creado_por || "").trim().toLowerCase();
       if (filtroVendedor && email !== filtroVendedor) return false;
 
+      if (filtroTipoCliente) {
+        const tc = (l.tipo_cliente || "").toString().trim().toLowerCase();
+        if (tc !== filtroTipoCliente.toLowerCase()) return false;
+      }
+
+      if (filtroTipoCompra) {
+        const tcomp = (l.tipo_compra || "").toString().trim();
+        if (tcomp !== filtroTipoCompra) return false;
+      }
+
       return true;
     });
-  }, [licitaciones, fechaDesde, fechaHasta, filtroVendedor]);
+  }, [licitaciones, fechaDesde, fechaHasta, filtroVendedor, filtroTipoCliente, filtroTipoCompra]);
 
   const resumenGeneral = useMemo(() => {
     const total = licitacionesFiltradas.length;
@@ -319,33 +348,20 @@ export default function Ventas() {
     const perdidas = licitacionesFiltradas.filter((l) => l.estado === "Perdida");
     const montoTotal = licitacionesFiltradas.reduce((acc, l) => acc + montoLicitacion(l), 0);
     const montoAdjudicado = adjudicadas.reduce((acc, l) => acc + montoLicitacion(l), 0);
-    const montoAdjudicadoConsumido = adjudicadas.reduce(
-      (acc, l) => acc + Number(montoOcByLicitacion[l.id] || 0),
-      0
-    );
-    const montoAdjudicadoPendiente = Math.max(0, montoAdjudicado - montoAdjudicadoConsumido);
-    const montoAdjudicadoVista = montoAdjPorVista({
-      consumido: montoAdjudicadoConsumido,
-      pendiente: montoAdjudicadoPendiente,
-      vista: vistaAdjudicado,
-    });
     const montoTotalNeto = montoNetoDesdeBruto(montoTotal);
     const montoAdjudicadoNeto = montoNetoDesdeBruto(montoAdjudicado);
-    const montoAdjudicadoConsumidoNeto = montoNetoDesdeBruto(montoAdjudicadoConsumido);
-    const montoAdjudicadoPendienteNeto = Math.max(
-      0,
-      montoAdjudicadoNeto - montoAdjudicadoConsumidoNeto
+
+    // KPI "OC sin despachar": neto de OC subidas − neto de guías de despacho subidas.
+    const totalOcNeto = licitacionesFiltradas.reduce(
+      (acc, l) => acc + Number(ocNetoByLicitacion[l.id] || 0),
+      0
     );
-    const montoAdjudicadoVistaNeto = montoAdjPorVista({
-      consumido: montoAdjudicadoConsumidoNeto,
-      pendiente: montoAdjudicadoPendienteNeto,
-      vista: vistaAdjudicado,
-    });
-    const montoAdjudicadoVistaBruto = montoAdjPorVista({
-      consumido: montoAdjudicadoConsumido,
-      pendiente: montoAdjudicadoPendiente,
-      vista: vistaAdjudicado,
-    });
+    const totalGuiaNeto = licitacionesFiltradas.reduce(
+      (acc, l) => acc + Number(guiaNetoByLicitacion[l.id] || 0),
+      0
+    );
+    const ocSinDespacharNeto = totalOcNeto - totalGuiaNeto;
+
     const ticketPromedio = total > 0 ? montoTotal / total : 0;
     const tasaAdjudicacion = total > 0 ? (adjudicadas.length / total) * 100 : 0;
 
@@ -356,19 +372,15 @@ export default function Ventas() {
       perdidas: perdidas.length,
       montoTotal,
       montoAdjudicado,
-      montoAdjudicadoConsumido,
-      montoAdjudicadoPendiente,
-      montoAdjudicadoVista,
       montoTotalNeto,
       montoAdjudicadoNeto,
-      montoAdjudicadoConsumidoNeto,
-      montoAdjudicadoPendienteNeto,
-      montoAdjudicadoVistaNeto,
-      montoAdjudicadoVistaBruto,
+      totalOcNeto,
+      totalGuiaNeto,
+      ocSinDespacharNeto,
       ticketPromedio,
       tasaAdjudicacion,
     };
-  }, [licitacionesFiltradas, montoOcByLicitacion, vistaAdjudicado]);
+  }, [licitacionesFiltradas, ocNetoByLicitacion, guiaNetoByLicitacion]);
 
   const resumenPorEstado = useMemo(() => {
     const total = licitacionesFiltradas.length || 1;
@@ -521,13 +533,6 @@ export default function Ventas() {
   const mostrarConsumido = vistaAdjudicado !== "pendiente";
   const mostrarPendiente = vistaAdjudicado !== "consumido";
 
-  const tituloMontoAdjVista =
-    vistaAdjudicado === "consumido"
-      ? "Adj. Consumido"
-      : vistaAdjudicado === "pendiente"
-      ? "Adj. Por consumir"
-      : "Adj. Operativo";
-
   const desdeMostrado = fechaDesde || "-";
   const hastaMostrado = fechaHasta || "-";
 
@@ -540,15 +545,15 @@ export default function Ventas() {
           <div style={{ display: "flex", flexWrap: "wrap", alignItems: "flex-start", justifyContent: "space-between", gap: "20px" }}>
             <div>
               <div style={{ fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.15em", color: "var(--primary)", fontWeight: 600, marginBottom: "6px" }}>
-                Ventas
+                Resumen Comercial
               </div>
-              <h1 className="page-title" style={{ marginBottom: "4px" }}>Resumen Comercial de Licitaciones</h1>
+              <h1 className="page-title" style={{ marginBottom: "4px" }}>Resumen Comercial</h1>
               <p style={{ fontSize: "13px", color: "var(--text-muted)", margin: 0 }}>
                 Vista general y por vendedor con métricas de adjudicación, montos y desempeño.
               </p>
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "12px", minWidth: "560px" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "12px", minWidth: "560px", flex: "1 1 600px" }}>
               <div className="field">
                 <label className="field-label">Fecha desde</label>
                 <DateFilter
@@ -581,6 +586,33 @@ export default function Ventas() {
                 </select>
               </div>
               <div className="field">
+                <label className="field-label">Tipo de Cliente</label>
+                <select
+                  className="input"
+                  value={filtroTipoCliente}
+                  onChange={(e) => setFiltroTipoCliente(e.target.value)}
+                >
+                  <option value="">Todos</option>
+                  <option value="Entidad Pública">Entidad Pública</option>
+                  <option value="Cliente Particular">Cliente Particular</option>
+                </select>
+              </div>
+              <div className="field">
+                <label className="field-label">Tipo de Compra</label>
+                <select
+                  className="input"
+                  value={filtroTipoCompra}
+                  onChange={(e) => setFiltroTipoCompra(e.target.value)}
+                >
+                  <option value="">Todos</option>
+                  <option value="Compra ágil">Compra ágil</option>
+                  <option value="Compra directa">Compra directa</option>
+                  <option value="Licitación 0 a 8 meses">Licitación 0 a 8 meses</option>
+                  <option value="Licitación 9 a 24 meses">Licitación 9 a 24 meses</option>
+                  <option value="Cliente particular">Cliente particular</option>
+                </select>
+              </div>
+              <div className="field" style={{ gridColumn: "span 2", minWidth: 220 }}>
                 <label className="field-label">Vista adjudicado</label>
                 <select
                   className="input"
@@ -630,9 +662,10 @@ export default function Ventas() {
           {/* KPI CARDS */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: "16px", marginBottom: "20px" }}>
             <KpiCard
-              title="Licitaciones"
-              value={resumenGeneral.total}
-              subtitle={`${resumenGeneral.pendientes} pendientes / ${resumenGeneral.perdidas} perdidas`}
+              title="Cotizaciones"
+              value={`${resumenGeneral.total} / ${resumenGeneral.adjudicadas}`}
+              subtitle="Realizadas / Adjudicadas"
+              minor={`${fmtPct(resumenGeneral.tasaAdjudicacion)} de adjudicación`}
               color="#0891b2"
               icon={FileText}
             />
@@ -659,18 +692,12 @@ export default function Ventas() {
               icon={CircleDollarSign}
             />
             <KpiCard
-              title={tituloMontoAdjVista}
-              value={fmtCLP(resumenGeneral.montoAdjudicadoVistaNeto)}
-              subtitle={
-                vistaAdjudicado === "consumido"
-                  ? `Por consumir (neto): ${fmtCLP(resumenGeneral.montoAdjudicadoPendienteNeto)}`
-                  : vistaAdjudicado === "pendiente"
-                  ? `Consumido (neto): ${fmtCLP(resumenGeneral.montoAdjudicadoConsumidoNeto)}`
-                  : `Consumido neto ${fmtCLP(resumenGeneral.montoAdjudicadoConsumidoNeto)} / Por consumir neto ${fmtCLP(resumenGeneral.montoAdjudicadoPendienteNeto)}`
-              }
-              minor={`Bruto: ${fmtCLP(resumenGeneral.montoAdjudicadoVistaBruto)}`}
+              title="Saldo por despachar"
+              value={fmtCLP(resumenGeneral.ocSinDespacharNeto)}
+              subtitle={`OC neto ${fmtCLP(resumenGeneral.totalOcNeto)} − Guías neto ${fmtCLP(resumenGeneral.totalGuiaNeto)}`}
+              minor="Neto de OC subidas menos neto de guías de despacho"
               color="#0d9488"
-              icon={Activity}
+              icon={Truck}
             />
           </div>
 

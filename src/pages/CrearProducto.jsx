@@ -190,6 +190,7 @@ export default function CrearProducto() {
   const [modoUso, setModoUso] = useState("");
   const [almacenamiento, setAlmacenamiento] = useState("");
   const [datosClave, setDatosClave] = useState("");
+  const [linkReferencia, setLinkReferencia] = useState("");
   const [peso, setPeso] = useState("");
   const [alto, setAlto] = useState("");
   const [largo, setLargo] = useState("");
@@ -399,6 +400,7 @@ export default function CrearProducto() {
       modo_uso: modoUso,
       almacenamiento,
       datos_clave: datosClave,
+      link_referencia: (linkReferencia || "").trim() || null,
       peso: Number(peso) || 0,
       alto: Number(alto) || 0,
       largo: Number(largo) || 0,
@@ -456,6 +458,7 @@ export default function CrearProducto() {
     setModoUso("");
     setAlmacenamiento("");
     setDatosClave("");
+    setLinkReferencia("");
     setPeso("");
     setAlto("");
     setLargo("");
@@ -746,6 +749,22 @@ export default function CrearProducto() {
                   value={datosClave}
                   onChange={(e) => setDatosClave(e.target.value)}
                 />
+              </div>
+
+              <div className="md:col-span-2">
+                <label className="block text-sm text-gray-600 mb-1">
+                  Link de referencia
+                </label>
+                <input
+                  type="url"
+                  className="w-full rounded-md border border-gray-300 bg-gray-50 px-3 py-2"
+                  value={linkReferencia}
+                  onChange={(e) => setLinkReferencia(e.target.value)}
+                  placeholder="https://… de dónde tomaste la información del producto"
+                />
+                <p className="text-[11px] text-gray-500 mt-1">
+                  Una vez guardado, solo el administrador podrá modificarlo. No aparece en la ficha PDF.
+                </p>
               </div>
             </div>
           </div>

@@ -67,6 +67,27 @@ function finMesISO(fechaMes) {
   return fin.toISOString().slice(0, 10);
 }
 
+// Cantidad de días del mes seleccionado (28-31).
+function diasEnMes(fechaMes) {
+  const base = fechaMes ? new Date(`${fechaMes}T00:00:00`) : new Date();
+  if (Number.isNaN(base.getTime())) return 30;
+  return new Date(base.getFullYear(), base.getMonth() + 1, 0).getDate();
+}
+
+// Días transcurridos del mes seleccionado: si es el mes en curso, el día de hoy;
+// si el mes ya terminó, el total de días; si es a futuro, 0.
+function diasTranscurridosMes(fechaMes) {
+  const base = fechaMes ? new Date(`${fechaMes}T00:00:00`) : new Date();
+  if (Number.isNaN(base.getTime())) return 0;
+  const hoy = new Date();
+  const total = new Date(base.getFullYear(), base.getMonth() + 1, 0).getDate();
+  const mismoMes = base.getFullYear() === hoy.getFullYear() && base.getMonth() === hoy.getMonth();
+  if (mismoMes) return Math.min(hoy.getDate(), total);
+  const inicioSel = new Date(base.getFullYear(), base.getMonth(), 1);
+  const inicioHoy = new Date(hoy.getFullYear(), hoy.getMonth(), 1);
+  return inicioSel < inicioHoy ? total : 0;
+}
+
 function toDateISO(value) {
   if (!value) return "";
   const s = String(value);
@@ -74,12 +95,6 @@ function toDateISO(value) {
   const d = new Date(s);
   if (Number.isNaN(d.getTime())) return "";
   return d.toISOString().slice(0, 10);
-}
-
-function tituloMes(fechaMes) {
-  const base = fechaMes ? new Date(`${fechaMes}T00:00:00`) : new Date();
-  if (Number.isNaN(base.getTime())) return "Mes actual";
-  return base.toLocaleDateString("es-CL", { month: "long", year: "numeric" });
 }
 
 function fmtCLP(value) {
@@ -246,14 +261,14 @@ export default function Metas() {
         if (ids.length > 0) {
           try {
             docsOcRows = await api.post("/licitaciones/documentos/filter", {
-              filter: { licitacion_ids: ids, tipo: ["orden_compra", "factura_boleta", "efectivo"] },
+              filter: { licitacion_ids: ids, tipo: ["orden_compra", "guia_despacho", "factura_boleta", "efectivo"] },
               fields: "licitacion_id,tipo,monto,fecha_oc,created_at",
             }) || [];
           } catch (errDocsOc) {
             if (isMissingFechaOcColumnError(errDocsOc)) {
               try {
                 const docsOcSinFecha = await api.post("/licitaciones/documentos/filter", {
-                  filter: { licitacion_ids: ids, tipo: ["orden_compra", "factura_boleta", "efectivo"] },
+                  filter: { licitacion_ids: ids, tipo: ["orden_compra", "guia_despacho", "factura_boleta", "efectivo"] },
                   fields: "licitacion_id,tipo,monto,created_at",
                 });
                 docsOcRows = (docsOcSinFecha || []).map((d) => ({ ...d, fecha_oc: null }));
@@ -438,11 +453,14 @@ export default function Metas() {
       if (id) tipoCompraByLicId.set(id, (l?.tipo_compra || "").toString().trim());
     });
 
-    // Fecha de adjudicación por licitación = fecha de creación de la primera OC
+    // Fecha de adjudicación por licitación = primera OC (o primera factura/efectivo
+    // en Cliente Particular). La guía de despacho NO define la adjudicación.
     const primeraOcPorLic = new Map();
     (ocs || []).forEach((doc) => {
       const licId = Number(doc?.licitacion_id || 0);
       if (!licId) return;
+      const tipo = (doc?.tipo || "").toString();
+      if (tipo !== "orden_compra" && tipo !== "factura_boleta" && tipo !== "efectivo") return;
       const fechaDoc = toDateISO(doc?.fecha_oc) || toDateISO(doc?.created_at);
       if (!fechaDoc) return;
       const actual = primeraOcPorLic.get(licId);
@@ -461,6 +479,10 @@ export default function Metas() {
       const email = licById.get(licId);
       if (!email) return;
       if (filtroVendedor && email !== filtroVendedor) return;
+
+      // Consumido = guías de despacho + facturas/boletas + efectivo (no la OC).
+      const tipo = (doc?.tipo || "").toString();
+      if (tipo !== "guia_despacho" && tipo !== "factura_boleta" && tipo !== "efectivo") return;
 
       const fechaAdj = primeraOcPorLic.get(licId);
       if (!fechaAdj) return;
@@ -572,6 +594,31 @@ export default function Metas() {
     if (!avanceMetas.length) return null;
     return [...avanceMetas].sort((a, b) => b.pctCumplimiento - a.pctCumplimiento)[0];
   }, [avanceMetas]);
+
+  const enMetaCount = useMemo(
+    () => avanceMetas.filter((r) => r.pctCumplimiento >= 100).length,
+    [avanceMetas],
+  );
+
+  // Brecha para la meta + ritmo esperado por día. La meta diaria se calcula
+  // dividiendo la meta del mes en 30 (criterio comercial), y el "esperado hoy"
+  // es esa meta diaria por los días transcurridos del mes.
+  const proyeccion = useMemo(() => {
+    const meta = Number(resumenMetas.metaNetaTotal || 0);
+    const avance = Number(resumenMetas.avanceNetoTotal || 0);
+    const falta = Math.max(0, meta - avance);
+    const pctLlevamos = meta > 0 ? (avance / meta) * 100 : 0;
+    const pctFalta = meta > 0 ? (falta / meta) * 100 : 0;
+
+    const diasMes = diasEnMes(metaPeriodo);
+    const diasTrans = diasTranscurridosMes(metaPeriodo);
+    const metaDiaria = meta / 30;
+    const esperadoHoy = Math.round(metaDiaria * diasTrans);
+    const pctRitmo = esperadoHoy > 0 ? (avance / esperadoHoy) * 100 : 0;
+    const faltaParaRitmo = Math.max(0, esperadoHoy - avance);
+
+    return { meta, avance, falta, pctLlevamos, pctFalta, diasMes, diasTrans, metaDiaria, esperadoHoy, pctRitmo, faltaParaRitmo };
+  }, [resumenMetas, metaPeriodo]);
 
   async function guardarMetas() {
     if (!puedeEditarMetas || guardandoMetas) return;
@@ -701,9 +748,9 @@ export default function Metas() {
       {/* PAGE HEADER */}
       <div className="page-header">
         <div>
-          <h1 className="page-title">Metas Comerciales por Vendedor</h1>
+          <h1 className="page-title">Metas Comerciales</h1>
           <p style={{ fontSize: "13px", color: "var(--text-muted)", margin: 0 }}>
-            El avance se calcula por fecha de OC del periodo, no por fecha de creación de licitación.
+            El avance se calcula con las guías de despacho del periodo (según fecha de adjudicación), no por fecha de creación de licitación.
           </p>
         </div>
       </div>
@@ -721,7 +768,7 @@ export default function Metas() {
             <div>
               <h3 className="surface-title">Control de Meta por Vendedor</h3>
               <p style={{ fontSize: "12px", color: "var(--text-muted)", margin: 0 }}>
-                Cálculo por consumo real de OC usando fecha de OC.
+                Cálculo por consumo real (guías de despacho) según fecha de adjudicación.
               </p>
             </div>
             <div style={{ display: "flex", alignItems: "flex-end", gap: "12px", flexWrap: "wrap" }}>
@@ -758,7 +805,7 @@ export default function Metas() {
 
           {/* KPI CARDS */}
           <div className="surface-body" style={{ borderBottom: "1px solid var(--border)" }}>
-            <div style={{ display: "grid", gridTemplateColumns: "1.2fr repeat(3, 1fr)", gap: "16px" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1.1fr) minmax(0,1.1fr) minmax(0,1.6fr)", gap: "16px" }}>
               <MetaGaugeCard
                 title="Cumplimiento Global"
                 value={fmtCLP(resumenMetas.avanceNetoTotal)}
@@ -766,44 +813,79 @@ export default function Metas() {
                 pct={resumenMetas.pctCumplimientoTotal}
               />
 
-              {/* Periodo */}
+              {/* Proyección de metas: cuánto falta para la meta del mes */}
               <div style={{ background: "var(--surface)", borderRadius: "var(--radius-lg)", border: "1px solid var(--border)", borderTop: "3px solid var(--primary)", padding: "16px 18px" }}>
-                <div style={{ fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.12em", color: "var(--text-muted)", fontWeight: 600 }}>Periodo</div>
-                <div style={{ fontSize: "17px", fontWeight: 700, color: "var(--primary-dark)", marginTop: "8px", textTransform: "capitalize" }}>{tituloMes(metaPeriodo)}</div>
-                <div style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "6px" }}>Corte: {metaPeriodo} a {finMesISO(metaPeriodo)}</div>
-              </div>
-
-              {/* Top Cumplimiento */}
-              <div style={{ background: "var(--surface)", borderRadius: "var(--radius-lg)", border: "1px solid var(--border)", borderTop: "3px solid var(--primary)", padding: "16px 18px" }}>
-                <div style={{ fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.12em", color: "var(--text-muted)", fontWeight: 600 }}>Top Cumplimiento</div>
-                <div style={{ fontSize: "15px", fontWeight: 700, color: "var(--text)", marginTop: "8px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {topCumplidorMetas?.nombre || "Sin datos"}
+                <div style={{ fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.12em", color: "var(--text-muted)", fontWeight: 600 }}>Proyección de metas</div>
+                <div style={{ fontSize: "22px", fontWeight: 700, color: "#b45309", marginTop: "8px", lineHeight: 1.2 }}>
+                  Faltan {fmtCLP(proyeccion.falta)}
                 </div>
-                <div style={{ marginTop: "6px" }}>
-                  <span style={{
-                    display: "inline-flex", alignItems: "center", padding: "2px 10px",
-                    borderRadius: "999px", fontSize: "12px", fontWeight: 600, border: "1px solid",
-                    color: colorCumplimiento(topCumplidorMetas?.pctCumplimiento || 0),
-                    borderColor: `${colorCumplimiento(topCumplidorMetas?.pctCumplimiento || 0)}40`,
-                    background: `${colorCumplimiento(topCumplidorMetas?.pctCumplimiento || 0)}12`,
-                  }}>
-                    {fmtPct(topCumplidorMetas?.pctCumplimiento || 0)}
-                  </span>
-                </div>
-              </div>
-
-              {/* Vendedores en Meta */}
-              <div style={{ background: "var(--surface)", borderRadius: "var(--radius-lg)", border: "1px solid var(--border)", borderTop: "3px solid var(--primary)", padding: "16px 18px" }}>
-                <div style={{ fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.12em", color: "var(--text-muted)", fontWeight: 600 }}>Vendedores en Meta</div>
-                <div style={{ fontSize: "22px", fontWeight: 700, color: "var(--text)", marginTop: "6px", lineHeight: 1.2 }}>
-                  <span style={{ color: "#15803d" }}>{avanceMetas.filter((r) => r.pctCumplimiento >= 100).length}</span>
-                  <span style={{ fontSize: "15px", color: "var(--text-muted)", fontWeight: 500 }}> / {avanceMetas.length}</span>
+                <div style={{ fontSize: "12px", color: "var(--text-muted)", marginTop: "4px" }}>
+                  {fmtPct(proyeccion.pctFalta)} de la meta aún por cubrir
                 </div>
                 <div style={{ marginTop: "10px", height: "6px", borderRadius: "3px", background: "rgba(40,174,177,0.12)", overflow: "hidden" }}>
-                  <div style={{
-                    height: "100%", borderRadius: "3px", background: "#16a34a",
-                    width: `${clamp(avanceMetas.length ? (avanceMetas.filter((r) => r.pctCumplimiento >= 100).length / avanceMetas.length) * 100 : 0, 0, 100)}%`,
-                  }} />
+                  <div style={{ height: "100%", borderRadius: "3px", background: barColorCumplimiento(proyeccion.pctLlevamos), width: `${clamp(proyeccion.pctLlevamos, 0, 100)}%` }} />
+                </div>
+                <div style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "6px" }}>
+                  Meta {fmtCLP(proyeccion.meta)} · llevamos {fmtPct(proyeccion.pctLlevamos)}
+                </div>
+              </div>
+
+              {/* Cumplimiento del equipo: top + en meta + ritmo por días del mes */}
+              <div style={{ background: "var(--surface)", borderRadius: "var(--radius-lg)", border: "1px solid var(--border)", borderTop: "3px solid var(--primary)", padding: "16px 18px", display: "flex", flexDirection: "column", gap: "12px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: "16px" }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.12em", color: "var(--text-muted)", fontWeight: 600 }}>Top Cumplimiento</div>
+                    <div style={{ fontSize: "14px", fontWeight: 700, color: "var(--text)", marginTop: "6px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {topCumplidorMetas?.nombre || "Sin datos"}
+                    </div>
+                    <div style={{ marginTop: "4px" }}>
+                      <span style={{
+                        display: "inline-flex", alignItems: "center", padding: "2px 10px",
+                        borderRadius: "999px", fontSize: "12px", fontWeight: 600, border: "1px solid",
+                        color: colorCumplimiento(topCumplidorMetas?.pctCumplimiento || 0),
+                        borderColor: `${colorCumplimiento(topCumplidorMetas?.pctCumplimiento || 0)}40`,
+                        background: `${colorCumplimiento(topCumplidorMetas?.pctCumplimiento || 0)}12`,
+                      }}>
+                        {fmtPct(topCumplidorMetas?.pctCumplimiento || 0)}
+                      </span>
+                    </div>
+                  </div>
+                  <div style={{ textAlign: "right", flexShrink: 0 }}>
+                    <div style={{ fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.12em", color: "var(--text-muted)", fontWeight: 600 }}>En Meta</div>
+                    <div style={{ fontSize: "22px", fontWeight: 700, marginTop: "6px", lineHeight: 1.2 }}>
+                      <span style={{ color: "#15803d" }}>{enMetaCount}</span>
+                      <span style={{ fontSize: "15px", color: "var(--text-muted)", fontWeight: 500 }}> / {avanceMetas.length}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ borderTop: "1px solid var(--border)" }} />
+
+                <div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: "8px" }}>
+                    <div style={{ fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.12em", color: "var(--text-muted)", fontWeight: 600 }}>Ritmo del mes</div>
+                    <div style={{ fontSize: "11px", color: "var(--text-muted)" }}>día {proyeccion.diasTrans} de {proyeccion.diasMes}</div>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginTop: "6px", gap: "8px" }}>
+                    <div style={{ fontSize: "13px", color: "var(--text)" }}>
+                      Esperado hoy <strong>{fmtCLP(proyeccion.esperadoHoy)}</strong>
+                    </div>
+                    <span style={{
+                      display: "inline-flex", alignItems: "center", padding: "2px 10px",
+                      borderRadius: "999px", fontSize: "12px", fontWeight: 600, border: "1px solid",
+                      color: colorCumplimiento(proyeccion.pctRitmo),
+                      borderColor: `${colorCumplimiento(proyeccion.pctRitmo)}40`,
+                      background: `${colorCumplimiento(proyeccion.pctRitmo)}12`,
+                    }}>
+                      {fmtPct(proyeccion.pctRitmo)}
+                    </span>
+                  </div>
+                  <div style={{ marginTop: "8px", height: "6px", borderRadius: "3px", background: "rgba(40,174,177,0.12)", overflow: "hidden" }}>
+                    <div style={{ height: "100%", borderRadius: "3px", background: barColorCumplimiento(proyeccion.pctRitmo), width: `${clamp(proyeccion.pctRitmo, 0, 100)}%` }} />
+                  </div>
+                  <div style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "6px" }}>
+                    Llevamos {fmtCLP(proyeccion.avance)}{proyeccion.faltaParaRitmo > 0 ? ` · falta ${fmtCLP(proyeccion.faltaParaRitmo)} para ir al día` : " · al día"}
+                  </div>
                 </div>
               </div>
             </div>
@@ -817,8 +899,8 @@ export default function Metas() {
                   <tr>
                     <th>Vendedor</th>
                     <th style={{ textAlign: "right" }}>Meta Neta</th>
-                    <th style={{ textAlign: "right" }}>Avance OC Neto</th>
-                    <th style={{ textAlign: "right" }}>Avance OC Bruto</th>
+                    <th style={{ textAlign: "right" }}>Avance Neto</th>
+                    <th style={{ textAlign: "right" }}>Avance Bruto</th>
                     <th>Progreso</th>
                     <th style={{ textAlign: "right" }}>Cumplimiento</th>
                     <th style={{ textAlign: "right" }}>Brecha</th>

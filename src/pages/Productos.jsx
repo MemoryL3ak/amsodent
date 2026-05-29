@@ -1,13 +1,24 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { supabase } from "../lib/supabase";
 import { api } from "../lib/api";
 import { Link } from "react-router-dom";
 import ConfirmModal from "../components/ConfirmModal";
 import Select from "react-select";
-import { FileDown, Upload, X, Download } from "lucide-react";
+import {
+  FileDown,
+  Upload,
+  X,
+  Download,
+  ChevronDown,
+  Ban,
+  RotateCcw,
+  Trash2,
+} from "lucide-react";
 import Toast from "../components/Toast";
 import { descargarFichaTecnica } from "../utils/generarFichaTecnica";
 import { calcularLista3 } from "../lib/listas";
+import { useStickyState } from "../lib/useStickyState";
 
 /* ============================================================
    HELPERS FILTRO PRODUCTO (TOKENS + NORMALIZACIÓN)
@@ -28,18 +39,224 @@ function contieneTodosLosTokens(texto, query) {
   return tokens.every((tok) => t.includes(tok));
 }
 
+// Campos que deben estar llenos para considerar la ficha técnica "completa".
+const CAMPOS_FICHA_TECNICA = [
+  "presentacion",
+  "descripcion",
+  "composicion",
+  "uso_indicaciones",
+  "beneficios",
+  "modo_uso",
+  "almacenamiento",
+  "datos_clave",
+];
+
+function fichaTecnicaCompleta(p) {
+  // El listado liviano (/productos/list) ya trae el booleano calculado en el
+  // servidor; si está presente lo usamos en vez de revisar los campos largos.
+  if (typeof p?.ficha_completa === "boolean") return p.ficha_completa;
+  return CAMPOS_FICHA_TECNICA.every(
+    (k) => String(p?.[k] ?? "").trim().length > 0,
+  );
+}
+
+// Menú desplegable de acciones (Inactivar / Eliminar) para roles con permiso.
+const ANCHO_MENU_ACC = 210;
+
+function MenuAccionesProducto({ producto, onToggleEstado, onEliminar }) {
+  const [abierto, setAbierto] = useState(false);
+  const [pos, setPos] = useState({ top: 0, left: 0 });
+  const btnRef = useRef(null);
+
+  const estadoRow = (producto.estado || (producto.sku ? "Activo" : "Transitorio")).toString();
+  const esInactivo = estadoRow === "Inactivo";
+  const bloqueado = estadoRow === "Transitorio" || estadoRow === "Pendiente Aprobación";
+
+  function alternar() {
+    if (abierto) {
+      setAbierto(false);
+      return;
+    }
+    const r = btnRef.current?.getBoundingClientRect();
+    if (r) {
+      const altoMenu = 104;
+      const abreArriba = r.bottom + altoMenu + 12 > window.innerHeight;
+      setPos({
+        top: abreArriba ? r.top - altoMenu - 6 : r.bottom + 6,
+        left: Math.max(8, r.right - ANCHO_MENU_ACC),
+      });
+    }
+    setAbierto(true);
+  }
+
+  useEffect(() => {
+    if (!abierto) return;
+    const cerrar = () => setAbierto(false);
+    window.addEventListener("scroll", cerrar, true);
+    window.addEventListener("resize", cerrar);
+    return () => {
+      window.removeEventListener("scroll", cerrar, true);
+      window.removeEventListener("resize", cerrar);
+    };
+  }, [abierto]);
+
+  return (
+    <>
+      <button
+        ref={btnRef}
+        type="button"
+        onClick={alternar}
+        title="Más acciones del producto"
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 5,
+          height: 30,
+          padding: "0 10px",
+          borderRadius: 7,
+          border: "1px solid",
+          borderColor: abierto ? "#0e7d83" : "#cbd5e1",
+          background: abierto ? "#e8f5f5" : "#fff",
+          color: abierto ? "#0e7d83" : "#475569",
+          fontSize: 12,
+          fontWeight: 600,
+          cursor: "pointer",
+          transition: "all .14s ease",
+        }}
+      >
+        Acciones
+        <ChevronDown
+          size={13}
+          style={{
+            transform: abierto ? "rotate(180deg)" : "none",
+            transition: "transform .15s ease",
+          }}
+        />
+      </button>
+
+      {abierto &&
+        createPortal(
+          <>
+            <div
+              onClick={() => setAbierto(false)}
+              style={{ position: "fixed", inset: 0, zIndex: 9000 }}
+            />
+            <div
+              style={{
+                position: "fixed",
+                top: pos.top,
+                left: pos.left,
+                width: ANCHO_MENU_ACC,
+                zIndex: 9001,
+                background: "#fff",
+                borderRadius: 12,
+                border: "1px solid #e8edf2",
+                boxShadow: "0 14px 36px -10px rgba(16,24,40,.34)",
+                padding: 6,
+                animation: "prodmenu-in .14s ease",
+              }}
+            >
+              <style>{`
+                @keyframes prodmenu-in { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+                .prodmenu-item { transition: background .12s ease; }
+                .prodmenu-item:hover:not(:disabled) { background: #f1f5f9; }
+                .prodmenu-item-danger:hover:not(:disabled) { background: #fef2f2; }
+              `}</style>
+
+              <button
+                type="button"
+                className="prodmenu-item"
+                disabled={bloqueado}
+                onClick={() => {
+                  setAbierto(false);
+                  onToggleEstado(producto);
+                }}
+                title={
+                  bloqueado
+                    ? "Los productos transitorios o pendientes no se pueden marcar manualmente"
+                    : undefined
+                }
+                style={itemMenuAcc(bloqueado)}
+              >
+                <span
+                  style={iconoMenuAcc(
+                    esInactivo ? "#15803d" : "#b45309",
+                    esInactivo ? "#dcfce7" : "#fef3c7",
+                  )}
+                >
+                  {esInactivo ? <RotateCcw size={15} /> : <Ban size={15} />}
+                </span>
+                {esInactivo ? "Activar producto" : "Inactivar producto"}
+              </button>
+
+              <button
+                type="button"
+                className="prodmenu-item prodmenu-item-danger"
+                onClick={() => {
+                  setAbierto(false);
+                  onEliminar(producto);
+                }}
+                style={{ ...itemMenuAcc(false), color: "#dc2626" }}
+              >
+                <span style={iconoMenuAcc("#dc2626", "#fee2e2")}>
+                  <Trash2 size={15} />
+                </span>
+                Eliminar producto
+              </button>
+            </div>
+          </>,
+          document.body,
+        )}
+    </>
+  );
+}
+
+function itemMenuAcc(disabled) {
+  return {
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    width: "100%",
+    padding: "8px 9px",
+    borderRadius: 8,
+    border: "none",
+    background: "transparent",
+    cursor: disabled ? "default" : "pointer",
+    fontSize: 13,
+    fontWeight: 600,
+    color: "#334155",
+    opacity: disabled ? 0.45 : 1,
+    textAlign: "left",
+  };
+}
+
+function iconoMenuAcc(color, fondo) {
+  return {
+    width: 28,
+    height: 28,
+    borderRadius: 8,
+    background: fondo,
+    color,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  };
+}
+
 export default function Productos() {
   const [productos, setProductos] = useState([]);
 
-  const [filtroSKU, setFiltroSKU] = useState("");
-  const [filtroProducto, setFiltroProducto] = useState("");
-  const [filtroCategoria, setFiltroCategoria] = useState("");
-  const [filtroMarcas, setFiltroMarcas] = useState([]);
-  const [filtroEstado, setFiltroEstado] = useState("");
-  const [ordenTabla, setOrdenTabla] = useState({ key: null, dir: "asc" });
+  // Filtros persistentes: se conservan al ir a un detalle y volver atrás.
+  const [filtroSKU, setFiltroSKU] = useStickyState("productos.filtroSKU", "");
+  const [filtroProducto, setFiltroProducto] = useStickyState("productos.filtroProducto", "");
+  const [filtroCategoria, setFiltroCategoria] = useStickyState("productos.filtroCategoria", "");
+  const [filtroMarcas, setFiltroMarcas] = useStickyState("productos.filtroMarcas", []);
+  const [filtroEstado, setFiltroEstado] = useStickyState("productos.filtroEstado", "");
+  const [ordenTabla, setOrdenTabla] = useStickyState("productos.ordenTabla", { key: null, dir: "asc" });
   // Qué lista de precios muestra la columna "Precio Unitario" (lista1 | lista2 | lista3).
   // Lista 3 NO está en la DB: es un valor calculado = lista2 * FACTOR_LISTA_3.
-  const [listaPrecio, setListaPrecio] = useState("lista1");
+  const [listaPrecio, setListaPrecio] = useStickyState("productos.listaPrecio", "lista1");
 
   function getPrecioPorLista(p, lista) {
     if (!p) return 0;
@@ -117,7 +334,7 @@ export default function Productos() {
   async function cargar() {
     let data;
     try {
-      data = await api.get("/productos");
+      data = await api.get("/productos/list");
     } catch (err) {
       console.error(err);
       return;
@@ -434,16 +651,16 @@ export default function Productos() {
       {/* TABLA */}
       <div className="table-wrap">
         <div className="table-scroll" style={{maxHeight: 760}}>
-          <table className="data-table" style={{tableLayout: "fixed", width: "100%"}}>
+          <table className="data-table" style={{tableLayout: "fixed", width: "100%", minWidth: 1340}}>
             <colgroup>
               <col style={{width: 110}} />   {/* SKU */}
-              <col />                         {/* Producto */}
+              <col style={{width: 300}} />   {/* Producto */}
               <col style={{width: 140}} />   {/* Marca */}
               <col style={{width: 140}} />   {/* Categoría */}
               <col style={{width: 100}} />   {/* Formato */}
               <col style={{width: 130}} />   {/* Precio Neto */}
               <col style={{width: 130}} />   {/* Precio Bruto */}
-              <col style={{width: 340}} />   {/* Acciones */}
+              <col style={{width: 290}} />   {/* Acciones */}
             </colgroup>
             <thead>
               <tr>
@@ -505,11 +722,14 @@ export default function Productos() {
               {productosFiltrados.map((p) => {
                 const precioNormal = getPrecioPorLista(p, listaPrecio);
                 const precioCampania = campaignPriceBySku.get(p.sku);
+                const fichaCompleta = fichaTecnicaCompleta(p);
 
                 return (
                   <tr key={p.id}>
                     <td style={{whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>{p.sku}</td>
-                    <td style={{whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}} title={p.nombre}>{p.nombre}</td>
+                    <td style={{whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}} title={p.nombre}>
+                      {p.nombre}
+                    </td>
                     <td style={{whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>{p.marca || "—"}</td>
                     <td style={{whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>{p.categoria}</td>
                     <td style={{whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>{p.formato}</td>
@@ -545,65 +765,38 @@ export default function Productos() {
                           onClick={() => descargarFicha(p)}
                           className="btn btn-ghost btn-sm"
                           disabled={generandoFichaId === p.id}
-                          title="Descargar ficha técnica en PDF"
+                          title={
+                            fichaCompleta
+                              ? "Producto destacado · tiene ficha técnica — descargar PDF"
+                              : "Descargar ficha técnica en PDF"
+                          }
+                          style={
+                            fichaCompleta
+                              ? {
+                                  background: "linear-gradient(135deg, #f59e0b, #f97316)",
+                                  color: "#fff",
+                                  borderColor: "#f59e0b",
+                                  fontWeight: 700,
+                                  boxShadow: "0 2px 9px -2px rgba(245,158,11,.7)",
+                                }
+                              : undefined
+                          }
                         >
                           <FileDown size={14} />
                           {generandoFichaId === p.id ? "Generando…" : "Ficha"}
                         </button>
-                        {puedeEditarProductoFila(p) ? (
-                          <>
-                            <Link
-                              to={`/productos/editar/${p.id}`}
-                              className="btn btn-secondary btn-sm"
-                            >
-                              Editar
-                            </Link>
-                            {(() => {
-                              const estadoRow = (p.estado || (p.sku ? "Activo" : "Transitorio")).toString();
-                              const esInactivo = estadoRow === "Inactivo";
-                              const bloqueado = estadoRow === "Transitorio" || estadoRow === "Pendiente Aprobación";
-                              return (
-                                <button
-                                  type="button"
-                                  onClick={() => toggleEstadoActivo(p)}
-                                  className="btn btn-sm"
-                                  disabled={bloqueado}
-                                  title={
-                                    bloqueado
-                                      ? "Productos transitorios o pendientes no se pueden marcar manualmente"
-                                      : esInactivo
-                                      ? "Reactivar este producto"
-                                      : "Marcar como Inactivo (no aparece en cotizaciones)"
-                                  }
-                                  style={{
-                                    background: esInactivo ? "#dcfce7" : "#fef3c7",
-                                    color: esInactivo ? "#15803d" : "#92400e",
-                                    borderColor: esInactivo ? "#86efac" : "#fcd34d",
-                                  }}
-                                >
-                                  {esInactivo ? "Activar" : "Inactivar"}
-                                </button>
-                              );
-                            })()}
-                            <button
-                              onClick={() => puedeEliminarProductos ? solicitarEliminacion(p) : undefined}
-                              className={puedeEliminarProductos ? "btn btn-danger btn-sm" : "btn btn-sm"}
-                              disabled={!puedeEliminarProductos}
-                              title={!puedeEliminarProductos ? "Tu rol no permite eliminar productos" : undefined}
-                              type="button"
-                            >
-                              Eliminar
-                            </button>
-                          </>
-                        ) : (
-                          <>
-                            <button type="button" className="btn btn-sm" disabled title="Tu rol no permite editar productos">
-                              Editar
-                            </button>
-                            <button type="button" className="btn btn-sm" disabled title="Tu rol no permite eliminar productos">
-                              Eliminar
-                            </button>
-                          </>
+                        <Link
+                          to={`/productos/editar/${p.id}`}
+                          className="btn btn-secondary btn-sm"
+                        >
+                          Editar
+                        </Link>
+                        {rolNorm !== "ventas" && (
+                          <MenuAccionesProducto
+                            producto={p}
+                            onToggleEstado={toggleEstadoActivo}
+                            onEliminar={solicitarEliminacion}
+                          />
                         )}
                       </div>
                     </td>

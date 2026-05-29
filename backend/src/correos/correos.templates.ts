@@ -247,6 +247,269 @@ export function plantillaAgradecimientoOC(
   };
 }
 
+export type ItemAlertaStock = {
+  nombre: string;
+  unidad?: string | null;
+  stock_actual: number;
+  stock_minimo: number;
+  semaforo: 'verde' | 'amarillo' | 'rojo';
+};
+
+export type DatosAlertaStock = {
+  razonSocial: string;
+  rutFmt: string;
+  totales: { rojos: number; amarillos: number; verdes: number };
+  items: ItemAlertaStock[];
+  enlace?: string; // URL opcional al monitoreo (admin)
+};
+
+// Plantilla para alertar a un usuario interno de Amsodent cuando un cliente
+// declara stock con productos en amarillo/rojo. Mantiene el mismo lenguaje
+// visual que las otras plantillas (header con logo, línea turquesa, footer).
+export function plantillaAlertaStock(datos: DatosAlertaStock): PlantillaResultado {
+  const esCritico = datos.totales.rojos > 0;
+  const razonSocial = String(datos.razonSocial || '').trim() || datos.rutFmt;
+  const totalAlertas = datos.totales.rojos + datos.totales.amarillos;
+
+  // Solo mostramos los productos con alerta (no inundar con verdes).
+  const itemsAlerta = datos.items.filter(
+    (it) => it.semaforo === 'rojo' || it.semaforo === 'amarillo',
+  );
+
+  const filasProductos = itemsAlerta
+    .map((it) => {
+      const cfg =
+        it.semaforo === 'rojo'
+          ? { color: '#b91c1c', bg: '#fee2e2', label: 'Crítico' }
+          : { color: '#b45309', bg: '#fef3c7', label: 'Bajo' };
+      const unidad = it.unidad ? ` · ${escapeHtml(String(it.unidad))}` : '';
+      return `<tr>
+        <td style="padding:11px 14px;border-bottom:1px solid ${C.bordeTenue};font-size:13px;color:${C.titulo};">
+          <strong>${escapeHtml(it.nombre)}</strong>
+          <span style="color:${C.tenue};font-size:11px;">${unidad}</span>
+        </td>
+        <td style="padding:11px 14px;border-bottom:1px solid ${C.bordeTenue};text-align:right;font-size:13px;color:${C.titulo};font-weight:700;">
+          ${escapeHtml(String(it.stock_actual))}
+        </td>
+        <td style="padding:11px 14px;border-bottom:1px solid ${C.bordeTenue};text-align:right;font-size:12px;color:${C.tenue};">
+          mín. ${escapeHtml(String(it.stock_minimo))}
+        </td>
+        <td style="padding:11px 14px;border-bottom:1px solid ${C.bordeTenue};text-align:center;">
+          <span style="display:inline-block;padding:3px 10px;border-radius:999px;background:${cfg.bg};color:${cfg.color};font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;">${cfg.label}</span>
+        </td>
+      </tr>`;
+    })
+    .join('');
+
+  // KPIs en tres pastillas (Crítico / Bajo / OK)
+  const pillCritico = `
+    <td width="33%" align="center" style="padding:0 6px;">
+      <table cellpadding="0" cellspacing="0" align="center" style="width:100%;">
+        <tr><td align="center" style="padding:16px 12px;background:#fee2e2;border-radius:12px;">
+          <div style="font-size:26px;font-weight:800;color:#b91c1c;line-height:1;">${datos.totales.rojos}</div>
+          <div style="font-size:10px;font-weight:700;color:#991b1b;text-transform:uppercase;letter-spacing:.7px;margin-top:6px;">Crítico</div>
+        </td></tr>
+      </table>
+    </td>`;
+  const pillBajo = `
+    <td width="33%" align="center" style="padding:0 6px;">
+      <table cellpadding="0" cellspacing="0" align="center" style="width:100%;">
+        <tr><td align="center" style="padding:16px 12px;background:#fef3c7;border-radius:12px;">
+          <div style="font-size:26px;font-weight:800;color:#b45309;line-height:1;">${datos.totales.amarillos}</div>
+          <div style="font-size:10px;font-weight:700;color:#92400e;text-transform:uppercase;letter-spacing:.7px;margin-top:6px;">Bajo</div>
+        </td></tr>
+      </table>
+    </td>`;
+  const pillOk = `
+    <td width="33%" align="center" style="padding:0 6px;">
+      <table cellpadding="0" cellspacing="0" align="center" style="width:100%;">
+        <tr><td align="center" style="padding:16px 12px;background:#dcfce7;border-radius:12px;">
+          <div style="font-size:26px;font-weight:800;color:#15803d;line-height:1;">${datos.totales.verdes}</div>
+          <div style="font-size:10px;font-weight:700;color:#166534;text-transform:uppercase;letter-spacing:.7px;margin-top:6px;">OK</div>
+        </td></tr>
+      </table>
+    </td>`;
+
+  const filasCliente = [
+    filaDato('🏢', 'Cliente', razonSocial),
+    filaDato('🪪', 'RUT', datos.rutFmt),
+    filaDato('📅', 'Recibida', fechaLarga(), true),
+  ].join('');
+
+  const cta = datos.enlace
+    ? `<table role="presentation" cellpadding="0" cellspacing="0" align="center" style="margin:6px auto 22px;">
+        <tr><td align="center" style="border-radius:10px;background:${C.acento};">
+          <a href="${escapeHtml(datos.enlace)}" target="_blank" style="display:inline-block;padding:12px 26px;color:#ffffff;font-size:14px;font-weight:700;text-decoration:none;border-radius:10px;letter-spacing:.2px;">
+            Abrir monitoreo de stock →
+          </a>
+        </td></tr>
+      </table>`
+    : '';
+
+  const tituloTxt = esCritico ? 'Cliente con stock crítico' : 'Cliente con stock bajo';
+  const subtitulo = esCritico
+    ? `${razonSocial} reportó productos en nivel crítico que requieren reposición.`
+    : `${razonSocial} reportó productos cercanos al mínimo.`;
+
+  const insigniaAlerta = `<table role="presentation" cellpadding="0" cellspacing="0" align="center" style="margin:0 auto 20px;">
+    <tr>
+      <td width="64" height="64" align="center" valign="middle"
+          style="width:64px;height:64px;background:${esCritico ? '#fee2e2' : '#fef3c7'};border-radius:50%;font-size:30px;line-height:64px;text-align:center;">
+        ${esCritico ? '🚨' : '⚠️'}
+      </td>
+    </tr>
+  </table>`;
+
+  const contenido = `
+    ${insigniaAlerta}
+    ${titulo(tituloTxt, subtitulo)}
+    ${tarjetaDatos('Datos del cliente', filasCliente)}
+    ${etiquetaSeccion('Resumen del semáforo')}
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:8px 0 24px;">
+      <tr>${pillCritico}${pillBajo}${pillOk}</tr>
+    </table>
+    ${
+      itemsAlerta.length > 0
+        ? `${etiquetaSeccion('Productos en alerta')}
+           <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:8px 0 22px;background:#ffffff;border:1px solid ${C.borde};border-radius:12px;overflow:hidden;">
+             <thead>
+               <tr style="background:${C.panel};">
+                 <th style="text-align:left;padding:10px 14px;font-size:11px;font-weight:700;color:${C.suave};text-transform:uppercase;letter-spacing:.5px;">Producto</th>
+                 <th style="text-align:right;padding:10px 14px;font-size:11px;font-weight:700;color:${C.suave};text-transform:uppercase;letter-spacing:.5px;">Stock</th>
+                 <th style="text-align:right;padding:10px 14px;font-size:11px;font-weight:700;color:${C.suave};text-transform:uppercase;letter-spacing:.5px;">Mínimo</th>
+                 <th style="text-align:center;padding:10px 14px;font-size:11px;font-weight:700;color:${C.suave};text-transform:uppercase;letter-spacing:.5px;">Estado</th>
+               </tr>
+             </thead>
+             <tbody>${filasProductos}</tbody>
+           </table>`
+        : ''
+    }
+    ${cta}
+    ${nota('🔔&nbsp;&nbsp;Esta alerta fue generada automáticamente cuando el cliente actualizó su gestión de stock desde el portal. Si necesitas reconfigurar quién recibe estas alertas, hazlo desde el monitoreo.')}
+  `;
+
+  const preheader = esCritico
+    ? `${razonSocial} reportó ${datos.totales.rojos} producto(s) en estado crítico.`
+    : `${razonSocial} reportó ${totalAlertas} producto(s) que requieren atención.`;
+
+  return {
+    asunto: esCritico
+      ? `[Stock crítico] ${razonSocial}`
+      : `[Stock bajo] ${razonSocial}`,
+    html: envolver({ preheader, contenido }),
+  };
+}
+
+export type ItemSolicitudCotizacion = {
+  nombre: string;
+  unidad?: string | null;
+  cantidad: number;
+};
+
+export type DatosSolicitudCotizacion = {
+  razonSocial: string;
+  rutFmt: string;
+  contactoNombre?: string;
+  contactoEmail?: string;
+  contactoTelefono?: string;
+  nota?: string;
+  items: ItemSolicitudCotizacion[];
+  enlace?: string;
+};
+
+// Plantilla para una solicitud de cotización enviada por un cliente desde
+// el portal de stock. Llega al equipo comercial con el detalle del pedido.
+export function plantillaSolicitudCotizacion(
+  datos: DatosSolicitudCotizacion,
+): PlantillaResultado {
+  const razonSocial = String(datos.razonSocial || '').trim() || datos.rutFmt;
+  const items = Array.isArray(datos.items) ? datos.items : [];
+
+  const filasProductos = items
+    .map((it) => {
+      const unidad = it.unidad ? ` · ${escapeHtml(String(it.unidad))}` : '';
+      return `<tr>
+        <td style="padding:11px 14px;border-bottom:1px solid ${C.bordeTenue};font-size:13px;color:${C.titulo};">
+          <strong>${escapeHtml(it.nombre)}</strong>
+          <span style="color:${C.tenue};font-size:11px;">${unidad}</span>
+        </td>
+        <td style="padding:11px 14px;border-bottom:1px solid ${C.bordeTenue};text-align:right;font-size:14px;color:${C.titulo};font-weight:800;">
+          ${escapeHtml(String(it.cantidad))}
+        </td>
+      </tr>`;
+    })
+    .join('');
+
+  const filasCliente = [
+    filaDato('🏢', 'Cliente', razonSocial),
+    filaDato('🪪', 'RUT', datos.rutFmt),
+    datos.contactoNombre
+      ? filaDato('🙋', 'Solicita', datos.contactoNombre)
+      : '',
+    datos.contactoEmail
+      ? filaDato('✉️', 'Correo', datos.contactoEmail)
+      : '',
+    datos.contactoTelefono
+      ? filaDato('📞', 'Teléfono', datos.contactoTelefono)
+      : '',
+    filaDato('📅', 'Fecha', fechaLarga(), true),
+  ]
+    .filter(Boolean)
+    .join('');
+
+  const notaHtml = datos.nota
+    ? nota(`💬&nbsp;&nbsp;<strong>Comentario del cliente:</strong><br/>${escapeHtml(datos.nota)}`)
+    : '';
+
+  const cta = datos.enlace
+    ? `<table role="presentation" cellpadding="0" cellspacing="0" align="center" style="margin:8px auto 22px;">
+        <tr><td align="center" style="border-radius:10px;background:${C.acento};">
+          <a href="${escapeHtml(datos.enlace)}" target="_blank" style="display:inline-block;padding:12px 26px;color:#ffffff;font-size:14px;font-weight:700;text-decoration:none;border-radius:10px;letter-spacing:.2px;">
+            Abrir en monitoreo →
+          </a>
+        </td></tr>
+      </table>`
+    : '';
+
+  const totalProductos = items.length;
+  const subtitulo = `${razonSocial} solicita cotización por ${totalProductos} producto${totalProductos === 1 ? '' : 's'}.`;
+
+  const insigniaSolicitud = `<table role="presentation" cellpadding="0" cellspacing="0" align="center" style="margin:0 auto 20px;">
+    <tr>
+      <td width="64" height="64" align="center" valign="middle"
+          style="width:64px;height:64px;background:${C.acentoSuave};border-radius:50%;font-size:30px;line-height:64px;text-align:center;">
+        🧾
+      </td>
+    </tr>
+  </table>`;
+
+  const contenido = `
+    ${insigniaSolicitud}
+    ${titulo('Nueva solicitud de cotización', subtitulo)}
+    ${tarjetaDatos('Datos del cliente', filasCliente)}
+    ${etiquetaSeccion('Productos solicitados')}
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:8px 0 22px;background:#ffffff;border:1px solid ${C.borde};border-radius:12px;overflow:hidden;">
+      <thead>
+        <tr style="background:${C.panel};">
+          <th style="text-align:left;padding:10px 14px;font-size:11px;font-weight:700;color:${C.suave};text-transform:uppercase;letter-spacing:.5px;">Producto</th>
+          <th style="text-align:right;padding:10px 14px;font-size:11px;font-weight:700;color:${C.suave};text-transform:uppercase;letter-spacing:.5px;">Cantidad</th>
+        </tr>
+      </thead>
+      <tbody>${filasProductos}</tbody>
+    </table>
+    ${notaHtml}
+    ${cta}
+  `;
+
+  return {
+    asunto: `Solicitud de cotización · ${razonSocial}`,
+    html: envolver({
+      preheader: `${razonSocial} solicita cotización por ${totalProductos} producto${totalProductos === 1 ? '' : 's'}.`,
+      contenido,
+    }),
+  };
+}
+
 export type DatosGuiaDespacho = {
   nombreCliente?: string;
   numeroOc?: string;
