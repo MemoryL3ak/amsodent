@@ -3,6 +3,7 @@ import { api } from "../lib/api";
 import { useNavigate } from "react-router-dom";
 import Toast from "../components/Toast";
 import { ChevronRight } from "lucide-react";
+import useAuth from "../hooks/useAuth";
 
 function formatearFecha(d) {
   if (!d) return "—";
@@ -13,6 +14,9 @@ function formatearFecha(d) {
 
 export default function CampanasProductos() {
   const navigate = useNavigate();
+  const { rol } = useAuth();
+  const rolNorm = (rol || "").toString().trim().toLowerCase();
+  const esAdmin = rolNorm === "admin" || rolNorm === "administrador";
   const [toast, setToast] = useState(null);
   const [loading, setLoading] = useState(true);
   const [campanas, setCampanas] = useState([]);
@@ -54,9 +58,11 @@ export default function CampanasProductos() {
           <button onClick={cargarCampanas} className="btn btn-secondary">
             Refrescar
           </button>
-          <button onClick={() => navigate("/campanas/nueva")} className="btn btn-primary">
-            + Nueva Campaña
-          </button>
+          {esAdmin && (
+            <button onClick={() => navigate("/campanas/nueva")} className="btn btn-primary">
+              + Nueva Campaña
+            </button>
+          )}
         </div>
       </div>
 

@@ -105,7 +105,14 @@ export default function App() {
 
           {/* CAMPAÑAS */}
           <Route path="campanas" element={<CampanasProductos />} />
-          <Route path="campanas/nueva" element={<CrearCampana />} />
+          <Route
+            path="campanas/nueva"
+            element={
+              <RequireRole allow={["admin"]}>
+                <CrearCampana />
+              </RequireRole>
+            }
+          />
           <Route path="campanas/editar/:id" element={<EditarCampana />} />
           <Route
             path="trazabilidad"
