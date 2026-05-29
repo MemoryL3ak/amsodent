@@ -3,8 +3,8 @@ import { supabase } from "../lib/supabase";
 import { useNavigate } from "react-router-dom";
 import Toast from "./Toast";
 
-const IDLE_LOGOUT_MS = 15 * 60 * 1000; // 15 min
-const IDLE_WARN_MS = 14 * 60 * 1000;   // aviso a los 14 min
+const IDLE_LOGOUT_MS = 30 * 60 * 1000; // 30 min
+const IDLE_WARN_MS = 29 * 60 * 1000;   // aviso a los 29 min
 const TICK_MS = 5 * 1000;             // cada 5s calculo activo/idle local
 const FLUSH_MS = 15 * 1000;           // heartbeat a BD cada 15s
 const ACTIVE_GRACE_MS = 60 * 1000;    // actividad reciente <= 60s => "activo"
@@ -149,7 +149,7 @@ export default function SessionTracker() {
         warnedRef.current = true;
         setToast({
           type: "error",
-          message: "Llevas 14 minutos de inactividad. Se cerrará sesión en 1 minuto.",
+          message: "Llevas 29 minutos de inactividad. Se cerrará sesión en 1 minuto.",
         });
       }
 
