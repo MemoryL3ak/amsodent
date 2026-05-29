@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { supabase } from "../lib/supabase";
 
-const DEFAULT_IDLE_MS = 15 * 60 * 1000; // ✅ 15 minutos de inactividad
+const DEFAULT_IDLE_MS = 30 * 60 * 1000; // ✅ 30 minutos de inactividad
 
 export function useAutoLogout({
   idleMs = DEFAULT_IDLE_MS,
