@@ -157,7 +157,7 @@ export default function SidebarLayout() {
   ].filter(Boolean);
 
   const postVentaNav = [
-    (esAdmin || esJefatura || esContabilidad || rolNorm === "ventas") && { to: "/trazabilidad",      icon: FileText,   label: "Trazabilidad" },
+    (esAdmin || esJefeVentasEspecial) && { to: "/trazabilidad",      icon: FileText,   label: "Trazabilidad" },
     (esAdmin || esJefeVentasEspecial || esContabilidad) && { to: "/seguimiento-pagos", icon: CreditCard, label: "Seguimiento de Pagos" },
     (esAdmin || esJefeVentasEspecial || esContabilidad) && { to: "/cobranza", icon: Wallet, label: "Cobranza" },
   ].filter(Boolean);
