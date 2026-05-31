@@ -88,7 +88,7 @@ const EJEMPLOS = [
   { texto: "Top 10 productos más cotizados",              icon: BarChart3, color: "#F59E0B" },
   { texto: "Monto adjudicado por vendedor este año",      icon: BarChart3, color: "#F59E0B" },
   { texto: "Cotizaciones por tipo de compra",             icon: BarChart3, color: "#F59E0B" },
-  { texto: "Damarita, cuéntame algo de ti ✨",            icon: Sparkles,  color: "#9333ea" },
+  { texto: "Damarita, ¿por qué eres tan crack? 💅",       icon: Sparkles,  color: "#9333ea" },
 ];
 
 /* ── Helpers ─────────────────────────────────────────────────────────── */
@@ -746,7 +746,7 @@ function Bienvenida({ onEjemplo, cargando }) {
       </h2>
       <p style={{ margin: "0 auto 16px", fontSize: 12.5, color: MUTED, lineHeight: 1.55 }}>
         Pregúntame lo que quieras de cotizaciones, productos, ventas o clientes.
-        Soy la mejor en lo mío 💅
+        Te lo saco al tiro y bien hecho, modestia aparte 💅😎
       </p>
       <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
         {EJEMPLOS.map(({ texto, icon: Icon, color }) => (
