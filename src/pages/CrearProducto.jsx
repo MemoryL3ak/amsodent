@@ -352,6 +352,7 @@ export default function CrearProducto() {
     if (!(nombre ?? "").toString().trim()) missing.push("Nombre del Producto");
     if (!(categoria ?? "").toString().trim()) missing.push("Categoría");
     if (!(formato ?? "").toString().trim()) missing.push("Formato");
+    if (!(linkReferencia ?? "").toString().trim()) missing.push("Link de referencia");
     if (!(presentacion ?? "").toString().trim()) missing.push("Presentación");
     if (!(descripcion ?? "").toString().trim()) missing.push("Descripción");
     if (!(composicion ?? "").toString().trim()) missing.push("Composición");
@@ -753,7 +754,7 @@ export default function CrearProducto() {
 
               <div className="md:col-span-2">
                 <label className="block text-sm text-gray-600 mb-1">
-                  Link de referencia
+                  Link de referencia *
                 </label>
                 <input
                   type="url"
@@ -763,7 +764,7 @@ export default function CrearProducto() {
                   placeholder="https://… de dónde tomaste la información del producto"
                 />
                 <p className="text-[11px] text-gray-500 mt-1">
-                  Una vez guardado, solo el administrador podrá modificarlo. No aparece en la ficha PDF.
+                  Obligatorio para todos los productos. Una vez guardado, solo el administrador podrá modificarlo. No aparece en la ficha PDF.
                 </p>
               </div>
             </div>
