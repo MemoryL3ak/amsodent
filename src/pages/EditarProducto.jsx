@@ -562,7 +562,6 @@ export default function EditarProducto() {
       esAdmin || (esVentasOJefe && (esProductoTransitorio || esPendienteAprobacion));
 
     const missing = [];
-    if (esAdmin && !(producto.link_referencia || "").toString().trim()) missing.push("Link de referencia");
     if (puedeVerCosto && !(numFromCL(producto.costo) > 0)) missing.push("Costo");
     if (!(numFromCL(producto.lista1) > 0)) {
       missing.push(esVentasOJefe ? "Precio Venta Neto 1" : "Listado de Precios 1");
@@ -939,7 +938,7 @@ try {
                 </div>
 
                 <div className="md:col-span-2">
-                  <label className="label">Link de referencia{esAdmin ? " *" : ""}</label>
+                  <label className="label">Link de referencia</label>
                   <input
                     className="input"
                     type="url"
@@ -951,7 +950,7 @@ try {
                   />
                   <p style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4 }}>
                     {esAdmin
-                      ? "Obligatorio. Solo el administrador puede modificar este link. No aparece en la ficha PDF."
+                      ? "Solo el administrador puede modificar este link. No aparece en la ficha PDF."
                       : "Link de referencia (solo el administrador puede modificarlo). No aparece en la ficha PDF."}
                   </p>
                 </div>
