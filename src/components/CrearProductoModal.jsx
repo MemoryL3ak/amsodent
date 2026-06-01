@@ -387,6 +387,7 @@ export default function CrearProductoModal({ onClose, onCreado }) {
     if (!nombre.trim()) missing.push("Nombre del producto");
     if (!categoria.trim()) missing.push("Categoría");
     if (!formato.trim()) missing.push("Formato");
+    if (!linkReferencia.trim()) missing.push("Link de referencia");
     if (!presentacion.trim()) missing.push("Presentación");
     if (!descripcion.trim()) missing.push("Descripción");
     if (!composicion.trim()) missing.push("Composición");
@@ -397,7 +398,7 @@ export default function CrearProductoModal({ onClose, onCreado }) {
     if (!(numFromCL(precios.lista2) > 0)) missing.push("Precio Lista 2");
 
     if (missing.length) {
-      const enGeneral = ["Nombre del producto", "Categoría", "Formato"].some((m) => missing.includes(m));
+      const enGeneral = ["Nombre del producto", "Categoría", "Formato", "Link de referencia"].some((m) => missing.includes(m));
       const enDetalle = ["Presentación", "Descripción", "Composición", "Uso/Indicaciones", "Beneficios"].some((m) => missing.includes(m));
       const enPrecios = ["Costo", "Precio Lista 1", "Precio Lista 2"].some((m) => missing.includes(m));
       setError({
@@ -745,7 +746,7 @@ export default function CrearProductoModal({ onClose, onCreado }) {
                       </div>
 
                       <div className="cpm-field cpm-col-span-2">
-                        <label>Link de referencia</label>
+                        <label>Link de referencia *</label>
                         <input
                           className="cpm-input"
                           type="url"
@@ -754,7 +755,7 @@ export default function CrearProductoModal({ onClose, onCreado }) {
                           placeholder="https://… de dónde tomaste la información del producto"
                         />
                         <div className="cpm-hint">
-                          Una vez guardado, solo el administrador podrá modificar este link. No aparece en la ficha PDF.
+                          Obligatorio para todos los productos. Una vez guardado, solo el administrador podrá modificarlo. No aparece en la ficha PDF.
                         </div>
                       </div>
                     </div>
