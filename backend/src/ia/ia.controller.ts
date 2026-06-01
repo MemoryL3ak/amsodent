@@ -27,7 +27,12 @@ export class IaController {
   @Post('consultar')
   @UseGuards(AdminGuard)
   async consultar(
-    @Body() body: { pregunta?: string },
+    @Body()
+    body: {
+      pregunta?: string;
+      historial?: { role?: string; content?: string }[];
+      usuario?: string;
+    },
     @Res() res: Response,
   ) {
     const pregunta = String(body?.pregunta || '').trim();
@@ -37,6 +42,13 @@ export class IaController {
     if (pregunta.length > 1000) {
       throw new BadRequestException('La pregunta es demasiado larga.');
     }
+
+    // Historial de conversación (memoria): saneamos y limitamos tamaño.
+    const historial = (Array.isArray(body?.historial) ? body.historial : [])
+      .filter((h) => h && (h.role === 'user' || h.role === 'assistant') && h.content)
+      .map((h) => ({ role: String(h.role), content: String(h.content || '') }))
+      .slice(-8);
+    const usuario = String(body?.usuario || '').trim().slice(0, 80);
 
     res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
     res.setHeader('Cache-Control', 'no-cache, no-transform');
@@ -49,7 +61,7 @@ export class IaController {
     };
 
     try {
-      await this.ia.consultarStream(pregunta, emit);
+      await this.ia.consultarStream(pregunta, emit, { historial, usuario });
     } catch (e: any) {
       emit({ tipo: 'error', mensaje: e?.message || 'Error desconocido.' });
     } finally {

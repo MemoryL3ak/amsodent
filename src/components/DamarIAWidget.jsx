@@ -7,6 +7,7 @@ import {
   Code2,
   Table2,
   ChevronDown,
+  ChevronRight,
   AlertCircle,
   BarChart3,
   X,
@@ -16,12 +17,49 @@ import {
 } from "lucide-react";
 import { api } from "../lib/api";
 import { supabase } from "../lib/supabase";
+import useAuth from "../hooks/useAuth";
 
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3001/api";
 
+// Retrato fijo de Damarita: se muestra cuando le piden una foto/imagen de sí
+// misma. Archivo estático en public/ (déjalo como public/damarita.png).
+const FOTO_DAMARITA = "/damarita.png";
+
+// Saludo según la hora local del usuario.
+function saludoPorHora() {
+  const h = new Date().getHours();
+  if (h < 12) return "Buenos días";
+  if (h < 20) return "Buenas tardes";
+  return "Buenas noches";
+}
+
+// Primer nombre del usuario (para saludo personalizado). Si viene un email,
+// toma la parte antes de la @ y la capitaliza.
+function primerNombre(valor) {
+  let s = String(valor || "").trim();
+  if (!s) return "";
+  if (s.includes("@")) s = s.split("@")[0].replace(/[._-]+/g, " ");
+  const tok = s.split(/\s+/)[0] || "";
+  return tok ? tok.charAt(0).toUpperCase() + tok.slice(1) : "";
+}
+
+// Detección de intención "muéstrame tu foto" — respaldo por si el modelo no
+// emite la etiqueta ##FOTO##. Apunta a peticiones sobre SU imagen, no a datos.
+function pideFotoDamarita(texto) {
+  const t = (texto || "").toLowerCase();
+  return (
+    /\b(selfie|retrato|fotito)\b/.test(t) ||
+    /\b(foto|imagen)\b.*(tuya|tuyo|de ti|de damarita|de damaris)/.test(t) ||
+    /\b(tu|una)\s+(foto|imagen|selfie)\b/.test(t) ||
+    /c[oó]mo\s+(eres|te ves|ser[ií]as)/.test(t) ||
+    /mu[eé]strate|mu[eé]strame.*(foto|imagen|cara|rostro|c[oó]mo)/.test(t) ||
+    /\btu\s+(cara|rostro|aspecto|apariencia)\b/.test(t)
+  );
+}
+
 // Llama al endpoint SSE /ia/consultar y entrega los eventos a medida que
 // llegan. El backend emite: { tipo: 'estado' | 'resumen-delta' | 'done' | 'error', ... }
-async function consultarStream(pregunta, onEvento) {
+async function consultarStream(pregunta, onEvento, opts = {}) {
   const { data } = await supabase.auth.getSession();
   const token = data?.session?.access_token || "";
   const res = await fetch(`${API_URL}/ia/consultar`, {
@@ -30,7 +68,11 @@ async function consultarStream(pregunta, onEvento) {
       "Content-Type": "application/json",
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
-    body: JSON.stringify({ pregunta }),
+    body: JSON.stringify({
+      pregunta,
+      historial: Array.isArray(opts.historial) ? opts.historial : [],
+      usuario: opts.usuario || "",
+    }),
   });
   if (!res.ok) {
     let mensaje = `Error ${res.status}`;
@@ -472,6 +514,8 @@ function RenderTexto({ texto }) {
 
 /* ── Widget principal ────────────────────────────────────────────────── */
 export default function DamarIAWidget() {
+  const { perfil } = useAuth();
+  const nombreUsuario = primerNombre(perfil?.nombre || perfil?.email || "");
   const [abierto, setAbierto] = useState(false);
   const [estado, setEstado] = useState(null);
   const [mensajes, setMensajes] = useState([]);
@@ -512,12 +556,32 @@ export default function DamarIAWidget() {
         rol: "ia",
         streaming: true,
         estado: "Pensando…",
+        pidioFoto: pideFotoDamarita(p),
         respuesta: { resumen: "", grafico: null, sql: "", datos: [] },
       },
     ]);
     setCargando(true);
+
+    // Historial de conversación (memoria): pares user→assistant ya completos,
+    // en orden, sin errores ni vacíos. Se mandan los últimos 8.
+    const historial = [];
+    for (let k = 0; k < mensajes.length - 1; k++) {
+      const a = mensajes[k];
+      const b = mensajes[k + 1];
+      if (a.rol === "user" && b.rol === "ia" && !b.error) {
+        const txt = (b.respuesta?.resumen || "").replace(/##\s*FOTO\s*##/gi, "").trim();
+        if (txt) {
+          historial.push({ role: "user", content: a.texto || "" });
+          historial.push({ role: "assistant", content: txt });
+        }
+      }
+    }
+    const historialReciente = historial.slice(-8);
+
     try {
-      await consultarStream(p, (evt) => {
+      await consultarStream(
+        p,
+        (evt) => {
         setMensajes((m) =>
           m.map((msg) => {
             if (msg.id !== iaId) return msg;
@@ -539,6 +603,7 @@ export default function DamarIAWidget() {
                 ...msg,
                 streaming: false,
                 estado: null,
+                sugerencias: Array.isArray(evt.sugerencias) ? evt.sugerencias : [],
                 respuesta: {
                   resumen:
                     typeof evt.resumen === "string"
@@ -560,7 +625,9 @@ export default function DamarIAWidget() {
             return msg;
           }),
         );
-      });
+        },
+        { historial: historialReciente, usuario: nombreUsuario },
+      );
     } catch (e) {
       setMensajes((m) =>
         m.map((msg) =>
@@ -653,14 +720,19 @@ export default function DamarIAWidget() {
                     <Loader2 size={24} style={{ animation: "dm-spin 1s linear infinite", color: AMARILLO }} />
                   </div>
                 ) : mensajes.length === 0 ? (
-                  <Bienvenida onEjemplo={(t) => enviar(t)} cargando={cargando} />
+                  <Bienvenida onEjemplo={(t) => enviar(t)} cargando={cargando} nombre={nombreUsuario} />
                 ) : (
                   <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
                     {mensajes.map((m) =>
                       m.rol === "user" ? (
                         <MensajeUsuario key={m.id} texto={m.texto} />
                       ) : (
-                        <MensajeDamarIA key={m.id} mensaje={m} />
+                        <MensajeDamarIA
+                          key={m.id}
+                          mensaje={m}
+                          onSugerencia={enviar}
+                          cargando={cargando}
+                        />
                       ),
                     )}
                     {/* La burbuja del IA ya muestra su propio estado de streaming. */}
@@ -710,7 +782,8 @@ export default function DamarIAWidget() {
 
 /* ── Subcomponentes ──────────────────────────────────────────────────── */
 
-function Bienvenida({ onEjemplo, cargando }) {
+function Bienvenida({ onEjemplo, cargando, nombre }) {
+  const saludo = saludoPorHora();
   return (
     <div style={{ textAlign: "center", padding: "14px 4px" }}>
       <div
@@ -741,11 +814,11 @@ function Bienvenida({ onEjemplo, cargando }) {
           fontFamily: '"Jost", system-ui, sans-serif',
         }}
       >
-        <span style={{ opacity: 0.85 }}>Hola, soy</span>
+        <span style={{ opacity: 0.85 }}>{saludo}{nombre ? `, ${nombre}` : ""}. Soy</span>
         <DamariaLogo size={20} primary={INK} accent={AMARILLO_OSC} />
       </h2>
       <p style={{ margin: "0 auto 16px", fontSize: 12.5, color: MUTED, lineHeight: 1.55 }}>
-        Pregúntame lo que quieras de cotizaciones, productos, ventas o clientes.
+        {nombre ? `${nombre}, pregúntame` : "Pregúntame"} lo que quieras de cotizaciones, productos, ventas, cobranza o clientes.
         Te lo saco al tiro y bien hecho, modestia aparte 💅😎
       </p>
       <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
@@ -815,7 +888,7 @@ function Pensando() {
   );
 }
 
-function MensajeDamarIA({ mensaje }) {
+function MensajeDamarIA({ mensaje, onSugerencia, cargando }) {
   return (
     <div style={{ display: "flex", gap: 9, alignItems: "flex-start", animation: "dm-in .2s ease" }}>
       <div style={avatarIA}>
@@ -842,6 +915,10 @@ function MensajeDamarIA({ mensaje }) {
             respuesta={mensaje.respuesta}
             streaming={Boolean(mensaje.streaming)}
             estado={mensaje.estado || null}
+            pidioFoto={Boolean(mensaje.pidioFoto)}
+            sugerencias={mensaje.sugerencias || []}
+            onSugerencia={onSugerencia}
+            cargando={cargando}
           />
         )}
       </div>
@@ -849,11 +926,18 @@ function MensajeDamarIA({ mensaje }) {
   );
 }
 
-function RespuestaDamarIA({ respuesta, streaming = false, estado = null }) {
+function RespuestaDamarIA({ respuesta, streaming = false, estado = null, pidioFoto = false, sugerencias = [], onSugerencia, cargando = false }) {
   const { resumen, grafico, sql, datos } = respuesta || {};
   const hayDatos = Array.isArray(datos) && datos.length > 0;
   const chartRef = useRef(null);
-  const sinResumenAun = streaming && !(resumen && resumen.trim().length > 0);
+  const [fotoError, setFotoError] = useState(false);
+  // La IA marca con ##FOTO## cuando quiere mostrar su retrato; como respaldo,
+  // también lo mostramos si el usuario claramente pidió su foto.
+  const textoCrudo = resumen || "";
+  const tieneTagFoto = /##\s*FOTO\s*##/i.test(textoCrudo);
+  const mostrarFoto = !streaming && (tieneTagFoto || pidioFoto);
+  const textoLimpio = textoCrudo.replace(/##\s*FOTO\s*##/gi, "").trim();
+  const sinResumenAun = streaming && !(textoLimpio && textoLimpio.trim().length > 0);
 
   return (
     <div>
@@ -877,7 +961,7 @@ function RespuestaDamarIA({ respuesta, streaming = false, estado = null }) {
         </div>
       ) : (
         <div style={{ fontSize: 13, lineHeight: 1.6, color: INK }}>
-          <RenderTexto texto={resumen || "Sin respuesta."} />
+          <RenderTexto texto={textoLimpio || "Sin respuesta."} />
           {streaming && (
             <span
               style={{
@@ -889,6 +973,43 @@ function RespuestaDamarIA({ respuesta, streaming = false, estado = null }) {
                 background: AMARILLO_OSC,
                 borderRadius: 1,
                 animation: "dm-caret 1s steps(2) infinite",
+              }}
+            />
+          )}
+        </div>
+      )}
+
+      {mostrarFoto && (
+        <div style={{ marginTop: 12, display: "flex", justifyContent: "center" }}>
+          {fotoError ? (
+            <div
+              style={{
+                width: 156,
+                height: 156,
+                borderRadius: "50%",
+                background: `radial-gradient(circle at 50% 42%, #fff8e6 0%, #fde68a 60%, ${AMARILLO_CLARO} 100%)`,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                border: `3px solid ${AMARILLO}`,
+                boxShadow: `0 8px 22px -8px ${AMARILLO}99`,
+              }}
+              title="Falta cargar la foto en public/damarita.png"
+            >
+              <SunflowerIcon size={84} petalColor={AMARILLO} centerColor={CAFE_CENTRO} />
+            </div>
+          ) : (
+            <img
+              src={FOTO_DAMARITA}
+              alt="Damarita"
+              onError={() => setFotoError(true)}
+              style={{
+                width: 156,
+                height: 156,
+                borderRadius: "50%",
+                objectFit: "cover",
+                border: `3px solid ${AMARILLO}`,
+                boxShadow: `0 8px 22px -8px ${AMARILLO}99`,
               }}
             />
           )}
@@ -938,6 +1059,29 @@ function RespuestaDamarIA({ respuesta, streaming = false, estado = null }) {
               <pre style={bloqueSql}>{sql}</pre>
             </Colapsable>
           )}
+        </div>
+      )}
+
+      {!streaming && Array.isArray(sugerencias) && sugerencias.length > 0 && (
+        <div style={{ marginTop: 12 }}>
+          <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: ".08em", textTransform: "uppercase", color: FAINT, marginBottom: 6, display: "flex", alignItems: "center", gap: 5 }}>
+            <Sparkles size={12} style={{ color: AMARILLO }} /> Seguir preguntando
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {sugerencias.map((s, i) => (
+              <button
+                key={i}
+                type="button"
+                className="dm-ejemplo"
+                disabled={cargando}
+                onClick={() => onSugerencia?.(s)}
+                style={{ ...chipEjemplo, padding: "8px 11px", fontSize: 12 }}
+              >
+                <ChevronRight size={13} style={{ color: AMARILLO_OSC, flexShrink: 0 }} />
+                {s}
+              </button>
+            ))}
+          </div>
         </div>
       )}
     </div>
