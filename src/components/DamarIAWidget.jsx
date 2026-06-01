@@ -25,6 +25,9 @@ const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3001/api";
 // misma. Archivo estático en public/ (déjalo como public/damarita.png).
 const FOTO_DAMARITA = "/damarita.png";
 
+// Retrato del creador de Damarita: se muestra cuando le piden ver a su creador.
+const FOTO_CREADOR = "/creador.png";
+
 // Saludo según la hora local del usuario.
 function saludoPorHora() {
   const h = new Date().getHours();
@@ -55,6 +58,16 @@ function pideFotoDamarita(texto) {
     /mu[eé]strate|mu[eé]strame.*(foto|imagen|cara|rostro|c[oó]mo)/.test(t) ||
     /\btu\s+(cara|rostro|aspecto|apariencia)\b/.test(t)
   );
+}
+
+// Detección de "muéstrame a tu creador": requiere mencionar al creador/persona
+// especial Y pedir verlo (foto/imagen/cómo es/muéstrame).
+function pideFotoCreador(texto) {
+  const t = (texto || "").toLowerCase();
+  const mencionaCreador =
+    /(creador|creadora|qui[eé]n te cre[oó]|te cre[oó]|persona especial|el de la "?a"?|tu (novio|amor|crush|pololo))/.test(t);
+  const pideVer = /(foto|imagen|selfie|retrato|mu[eé]stra|ver|c[oó]mo es|cara|rostro)/.test(t);
+  return mencionaCreador && pideVer;
 }
 
 // Llama al endpoint SSE /ia/consultar y entrega los eventos a medida que
@@ -557,6 +570,7 @@ export default function DamarIAWidget() {
         streaming: true,
         estado: "Pensando…",
         pidioFoto: pideFotoDamarita(p),
+        pidioFotoCreador: pideFotoCreador(p),
         respuesta: { resumen: "", grafico: null, sql: "", datos: [] },
       },
     ]);
@@ -916,6 +930,7 @@ function MensajeDamarIA({ mensaje, onSugerencia, cargando }) {
             streaming={Boolean(mensaje.streaming)}
             estado={mensaje.estado || null}
             pidioFoto={Boolean(mensaje.pidioFoto)}
+            pidioFotoCreador={Boolean(mensaje.pidioFotoCreador)}
             sugerencias={mensaje.sugerencias || []}
             onSugerencia={onSugerencia}
             cargando={cargando}
@@ -926,17 +941,23 @@ function MensajeDamarIA({ mensaje, onSugerencia, cargando }) {
   );
 }
 
-function RespuestaDamarIA({ respuesta, streaming = false, estado = null, pidioFoto = false, sugerencias = [], onSugerencia, cargando = false }) {
+function RespuestaDamarIA({ respuesta, streaming = false, estado = null, pidioFoto = false, pidioFotoCreador = false, sugerencias = [], onSugerencia, cargando = false }) {
   const { resumen, grafico, sql, datos } = respuesta || {};
   const hayDatos = Array.isArray(datos) && datos.length > 0;
   const chartRef = useRef(null);
   const [fotoError, setFotoError] = useState(false);
-  // La IA marca con ##FOTO## cuando quiere mostrar su retrato; como respaldo,
-  // también lo mostramos si el usuario claramente pidió su foto.
+  const [fotoCreadorError, setFotoCreadorError] = useState(false);
+  // La IA marca con ##FOTO## (su retrato) o ##FOTOCREADOR## (su creador) cuando
+  // quiere mostrar una imagen; como respaldo, también según la intención del usuario.
   const textoCrudo = resumen || "";
+  const tieneTagCreador = /##\s*FOTOCREADOR\s*##/i.test(textoCrudo);
   const tieneTagFoto = /##\s*FOTO\s*##/i.test(textoCrudo);
-  const mostrarFoto = !streaming && (tieneTagFoto || pidioFoto);
-  const textoLimpio = textoCrudo.replace(/##\s*FOTO\s*##/gi, "").trim();
+  const mostrarFotoCreador = !streaming && (tieneTagCreador || pidioFotoCreador);
+  const mostrarFoto = !streaming && !mostrarFotoCreador && (tieneTagFoto || pidioFoto);
+  const textoLimpio = textoCrudo
+    .replace(/##\s*FOTOCREADOR\s*##/gi, "")
+    .replace(/##\s*FOTO\s*##/gi, "")
+    .trim();
   const sinResumenAun = streaming && !(textoLimpio && textoLimpio.trim().length > 0);
 
   return (
@@ -1013,6 +1034,25 @@ function RespuestaDamarIA({ respuesta, streaming = false, estado = null, pidioFo
               }}
             />
           )}
+        </div>
+      )}
+
+      {mostrarFotoCreador && !fotoCreadorError && (
+        <div style={{ marginTop: 12, display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
+          <img
+            src={FOTO_CREADOR}
+            alt="Su creador"
+            onError={() => setFotoCreadorError(true)}
+            style={{
+              width: 156,
+              height: 156,
+              borderRadius: "50%",
+              objectFit: "cover",
+              border: "3px solid #ec4899",
+              boxShadow: "0 8px 22px -8px rgba(236,72,153,.6)",
+            }}
+          />
+          <div style={{ fontSize: 16, letterSpacing: 2 }}>💕🥰💕</div>
         </div>
       )}
 
