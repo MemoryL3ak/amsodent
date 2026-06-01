@@ -14,6 +14,7 @@ import {
   Ban,
   RotateCcw,
   Trash2,
+  AlertCircle,
 } from "lucide-react";
 import Toast from "../components/Toast";
 import { descargarFichaTecnica } from "../utils/generarFichaTecnica";
@@ -847,6 +848,7 @@ const COLUMNAS_PLANTILLA = ["sku", "nombre", "categoria", "marca", "formato", "c
 function CargaMasivaProductosModal({ onClose, onSuccess, onToast }) {
   const [archivo, setArchivo] = useState(null);
   const [filas, setFilas] = useState([]);
+  const [duplicados, setDuplicados] = useState([]);
   const [parsing, setParsing] = useState(false);
   const [enviando, setEnviando] = useState(false);
   const [resumen, setResumen] = useState(null);
@@ -855,6 +857,7 @@ function CargaMasivaProductosModal({ onClose, onSuccess, onToast }) {
     if (!file) return;
     setArchivo(file);
     setResumen(null);
+    setDuplicados([]);
     setParsing(true);
     try {
       const XLSX = await import("xlsx");
@@ -881,10 +884,22 @@ function CargaMasivaProductosModal({ onClose, onSuccess, onToast }) {
         return out;
       }).filter((r) => r.sku);
       setFilas(normalizadas);
+
+      // Detectar SKUs repetidos dentro del archivo: la base no permite SKU
+      // duplicado, y un solo repetido hace fallar el lote completo en el insert.
+      // Avisamos ANTES de enviar para que se corrija sin cargas a medias.
+      const conteo = new Map();
+      for (const r of normalizadas) {
+        const key = String(r.sku).trim().toUpperCase();
+        if (!conteo.has(key)) conteo.set(key, { sku: String(r.sku).trim(), nombres: [] });
+        conteo.get(key).nombres.push(r.nombre || "(sin nombre)");
+      }
+      setDuplicados([...conteo.values()].filter((x) => x.nombres.length > 1));
     } catch (e) {
       console.error(e);
       onToast?.({ type: "error", message: "No se pudo leer el archivo. ¿Es un .xlsx, .xls o .csv válido?" });
       setFilas([]);
+      setDuplicados([]);
     } finally {
       setParsing(false);
     }
@@ -908,6 +923,10 @@ function CargaMasivaProductosModal({ onClose, onSuccess, onToast }) {
 
   async function importar() {
     if (filas.length === 0) return;
+    if (duplicados.length > 0) {
+      onToast?.({ type: "error", message: "Hay SKU duplicados en el archivo. Corrígelos antes de importar." });
+      return;
+    }
     setEnviando(true);
     try {
       const res = await api.post("/productos/bulk-upsert", { rows: filas });
@@ -1008,6 +1027,28 @@ function CargaMasivaProductosModal({ onClose, onSuccess, onToast }) {
           </p>
         )}
 
+        {!parsing && duplicados.length > 0 && (
+          <div style={{ marginTop: 10, padding: "10px 12px", background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 8, fontSize: 13 }}>
+            <div style={{ color: "#b91c1c", fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>
+              <AlertCircle size={15} /> {duplicados.length} SKU{duplicados.length === 1 ? "" : "s"} duplicado{duplicados.length === 1 ? "" : "s"} en el archivo
+            </div>
+            <p style={{ margin: "6px 0 8px", color: "#7f1d1d" }}>
+              La base no permite SKU repetido. Corrige estos códigos en el archivo y vuelve a subirlo:
+            </p>
+            <ul style={{ margin: "0 0 0 18px", color: "#7f1d1d" }}>
+              {duplicados.slice(0, 20).map((d) => (
+                <li key={d.sku} style={{ marginBottom: 4 }}>
+                  <strong>{d.sku}</strong> ({d.nombres.length}×): {d.nombres.slice(0, 3).join(" · ")}
+                  {d.nombres.length > 3 ? " · …" : ""}
+                </li>
+              ))}
+            </ul>
+            {duplicados.length > 20 && (
+              <p style={{ margin: "6px 0 0", color: "#7f1d1d" }}>…y {duplicados.length - 20} más.</p>
+            )}
+          </div>
+        )}
+
         {resumen && (
           <div style={{ marginTop: 14, padding: "10px 12px", background: "#f1f5f9", borderRadius: 8, fontSize: 13 }}>
             <div>✅ Creados: <strong>{resumen.creados}</strong></div>
@@ -1035,7 +1076,8 @@ function CargaMasivaProductosModal({ onClose, onSuccess, onToast }) {
               type="button"
               className="btn btn-primary btn-sm"
               onClick={importar}
-              disabled={filas.length === 0 || enviando}
+              disabled={filas.length === 0 || enviando || duplicados.length > 0}
+              title={duplicados.length > 0 ? "Corrige los SKU duplicados antes de importar" : undefined}
             >
               {enviando ? "Importando…" : `Importar ${filas.length || ""}`}
             </button>
