@@ -801,6 +801,8 @@ export default function EditarLicitacion() {
   const [docEditNumero, setDocEditNumero] = useState("");
   const [docEditMonto, setDocEditMonto] = useState("");
   const [docEditFechaOC, setDocEditFechaOC] = useState("");
+  const [docEditFileName, setDocEditFileName] = useState("");
+  const [docEditTracking, setDocEditTracking] = useState("");
   const [guardandoDocEdit, setGuardandoDocEdit] = useState(false);
   const [aprobando, setAprobando] = useState(false);
   const [documentos, setDocumentos] = useState([]);
@@ -844,6 +846,11 @@ export default function EditarLicitacion() {
   const esAdmin = useMemo(() => {
     const r = (rol ?? "").toString().trim().toLowerCase();
     return r === "admin" || r === "administrador";
+  }, [rol]);
+  // Admin y jefe_ventas_especial pueden editar el nombre del documento y el N° de tracking.
+  const puedeEditarDocAvanzado = useMemo(() => {
+    const r = (rol ?? "").toString().trim().toLowerCase();
+    return r === "admin" || r === "administrador" || r === "jefe_ventas_especial";
   }, [rol]);
 
   /* ===============================
@@ -1309,6 +1316,8 @@ export default function EditarLicitacion() {
     // Si la DB retorna timestamptz ("2026-05-15T03:00:00+00:00"), DateFilter
     // no puede parsearlo. Lo recortamos a YYYY-MM-DD.
     setDocEditFechaOC(aIsoFechaCorta(doc.fecha_oc));
+    setDocEditFileName(doc.file_name || "");
+    setDocEditTracking(doc.n_seguimiento || "");
   }
 
   function cancelarEdicionDocumento() {
@@ -1316,6 +1325,8 @@ export default function EditarLicitacion() {
     setDocEditNumero("");
     setDocEditMonto("");
     setDocEditFechaOC("");
+    setDocEditFileName("");
+    setDocEditTracking("");
   }
 
   async function guardarEdicionDocumento() {
@@ -1332,6 +1343,14 @@ export default function EditarLicitacion() {
       };
       if (tiposConFechaOc.includes(docEditando.tipo) && docEditFechaOC) {
         payload.fecha_oc = docEditFechaOC;
+      }
+      // Admin y jefe_ventas_especial: pueden editar el nombre del documento y,
+      // en las guías de despacho, el N° de tracking.
+      if (puedeEditarDocAvanzado) {
+        payload.file_name = docEditFileName.trim() || null;
+        if (docEditando.tipo === "guia_despacho") {
+          payload.n_seguimiento = docEditTracking.trim() || null;
+        }
       }
       await api.put(`/licitaciones/documentos/${docEditando.id}`, payload);
       setToast({ type: "success", message: "Documento actualizado." });
@@ -4217,13 +4236,38 @@ export default function EditarLicitacion() {
                         : "-"}
                     </td>
                     <td className="px-3 py-2 text-sm">
-                      <div>{doc.file_name || "-"}</div>
-                      {doc.tipo === "guia_despacho" && (doc.empresa_despacho || doc.n_seguimiento) && (
-                        <div className="text-xs text-gray-500 mt-1">
-                          {doc.empresa_despacho || ""}
-                          {doc.empresa_despacho && doc.n_seguimiento ? " · " : ""}
-                          {doc.n_seguimiento ? `Tracking: ${doc.n_seguimiento}` : ""}
+                      {editando && puedeEditarDocAvanzado ? (
+                        <div className="flex flex-col gap-1">
+                          <input
+                            type="text"
+                            className="input text-sm"
+                            style={{ minWidth: 170 }}
+                            value={docEditFileName}
+                            onChange={(e) => setDocEditFileName(e.target.value)}
+                            placeholder="Nombre del documento"
+                          />
+                          {doc.tipo === "guia_despacho" && (
+                            <input
+                              type="text"
+                              className="input text-sm"
+                              style={{ minWidth: 170 }}
+                              value={docEditTracking}
+                              onChange={(e) => setDocEditTracking(e.target.value)}
+                              placeholder="N° de tracking"
+                            />
+                          )}
                         </div>
+                      ) : (
+                        <>
+                          <div>{doc.file_name || "-"}</div>
+                          {doc.tipo === "guia_despacho" && (doc.empresa_despacho || doc.n_seguimiento) && (
+                            <div className="text-xs text-gray-500 mt-1">
+                              {doc.empresa_despacho || ""}
+                              {doc.empresa_despacho && doc.n_seguimiento ? " · " : ""}
+                              {doc.n_seguimiento ? `Tracking: ${doc.n_seguimiento}` : ""}
+                            </div>
+                          )}
+                        </>
                       )}
                     </td>
                     <td className="px-3 py-2 text-sm">
