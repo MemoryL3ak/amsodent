@@ -459,10 +459,13 @@ export default function Productos() {
      LIMPIAR MARCAS NO VÁLIDAS CUANDO CAMBIA EL FILTRO PRODUCTO
   ============================================================ */
   useEffect(() => {
+    // No limpiar si los productos aún no cargan (marcasDisponibles vacío):
+    // si no, al volver a la pestaña se perdería el filtro de marca guardado.
+    if (productos.length === 0) return;
     setFiltroMarcas((prev) =>
       prev.filter((m) => marcasDisponibles.some((d) => d.value === m.value))
     );
-  }, [marcasDisponibles]);
+  }, [marcasDisponibles, productos.length]);
 
   const categoriasUnicas = [
     ...new Set(productos.map((p) => p.categoria).filter(Boolean)),
@@ -539,6 +542,48 @@ export default function Productos() {
   }
 
   /* ============================================================
+     EXPORTAR LISTADO (respeta los filtros activos)
+  ============================================================ */
+  async function exportarProductos() {
+    if (productosFiltrados.length === 0) {
+      setToast({ type: "info", message: "No hay productos para exportar con el filtro actual." });
+      return;
+    }
+    try {
+      const XLSX = await import("xlsx");
+      const puedeCosto = rolNorm === "admin" || rolNorm === "jefe_ventas";
+      const filas = productosFiltrados.map((p) => {
+        const estadoRow = (p.estado || (p.sku ? "Activo" : "Transitorio")).toString().trim();
+        const fila = {
+          SKU: p.sku || "",
+          Producto: p.nombre || "",
+          Marca: p.marca || "",
+          Categoría: p.categoria || "",
+          Formato: p.formato || "",
+          Estado: estadoRow,
+          "Lista 1": Number(p.lista1 ?? 0),
+          "Lista 2": Number(p.lista2 ?? 0),
+          "Lista 3": getPrecioPorLista(p, "lista3"),
+        };
+        if (puedeCosto) fila["Costo"] = Number(p.costo ?? 0);
+        return fila;
+      });
+      const ws = XLSX.utils.json_to_sheet(filas);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Productos");
+      const fecha = new Date().toISOString().slice(0, 10);
+      XLSX.writeFile(wb, `productos-${fecha}.xlsx`);
+      setToast({
+        type: "success",
+        message: `Exportados ${filas.length} producto${filas.length === 1 ? "" : "s"} (con el filtro actual).`,
+      });
+    } catch (e) {
+      console.error(e);
+      setToast({ type: "error", message: "No se pudo exportar el listado." });
+    }
+  }
+
+  /* ============================================================
      UI
   ============================================================ */
   if (perfilLoading) {
@@ -555,6 +600,15 @@ export default function Productos() {
       <div className="page-header">
         <h1 className="page-title">Productos</h1>
         <div className="btn-row">
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={exportarProductos}
+            style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
+            title="Descargar el listado en Excel (respeta los filtros actuales)"
+          >
+            <Download size={14} /> Exportar Excel
+          </button>
           {(rolNorm === "admin" || rolNorm === "jefe_ventas") && (
             <button
               type="button"
@@ -873,9 +927,12 @@ function CargaMasivaProductosModal({ onClose, onSuccess, onToast }) {
           if (!COLUMNAS_PLANTILLA.includes(key)) continue;
           let val = typeof v === "string" ? v.trim() : v;
           if (val === "" || val == null) continue;
-          // Campos numéricos: limpiar puntos de miles y comas decimales.
+          // Campos numéricos: quitar símbolos ($, espacios, NBSP, letras) y
+          // luego puntos de miles y comas decimales. Así "$23.482" → 23482.
           if (["costo", "lista1", "lista2"].includes(key)) {
-            const n = Number(String(val).replace(/\./g, "").replace(",", "."));
+            const limpioNum = String(val).replace(/[^\d.,-]/g, "");
+            if (limpioNum === "") continue;
+            const n = Number(limpioNum.replace(/\./g, "").replace(",", "."));
             if (!Number.isFinite(n)) continue;
             val = Math.round(n);
           }
