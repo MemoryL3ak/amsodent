@@ -163,7 +163,7 @@ export default function SidebarLayout() {
   ].filter(Boolean);
 
   const comunicacionNav = [
-    esAdmin && { to: "/buzon",                 icon: Mail,          label: "Mi Correo" },
+    (esAdmin || esJefeVentasEspecial) && { to: "/buzon",                 icon: Mail,          label: "Mi Correo" },
     { to: "/bitacora-cotizaciones", icon: MessagesSquare, label: "Chat Grupal", badge: chatNoLeidos },
   ].filter(Boolean);
 

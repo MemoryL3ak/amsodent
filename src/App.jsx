@@ -175,11 +175,11 @@ export default function App() {
             element={<BitacoraCotizaciones />}
           />
 
-          {/* BUZÓN DE CORREO — solo admin */}
+          {/* BUZÓN DE CORREO — admin y jefe_ventas_especial */}
           <Route
             path="buzon"
             element={
-              <RequireRole allow={["admin"]}>
+              <RequireRole allow={["admin", "jefe_ventas_especial"]}>
                 <Buzon />
               </RequireRole>
             }

@@ -12,7 +12,7 @@ import {
 } from '@nestjs/common';
 import type { Response } from 'express';
 import { AuthGuard } from '../auth/auth.guard';
-import { AdminGuard } from '../auth/admin.guard';
+import { BuzonGuard } from '../auth/buzon.guard';
 import { CobranzaGuard } from '../auth/cobranza.guard';
 import { CorreosService, TipoPlantilla } from './correos.service';
 import { FirmasService } from './firmas.service';
@@ -165,13 +165,13 @@ export class CorreosController {
   // ── Buzón del vendedor ────────────────────────────────────────────────
 
   @Get('buzon/estado')
-  @UseGuards(AdminGuard)
+  @UseGuards(BuzonGuard)
   async estadoBuzon(@Req() req: any) {
     return this.correos.estadoBuzon(idDe(req));
   }
 
   @Get('buzon')
-  @UseGuards(AdminGuard)
+  @UseGuards(BuzonGuard)
   async bandeja(
     @Req() req: any,
     @Query('carpeta') carpeta?: string,
@@ -198,7 +198,7 @@ export class CorreosController {
   }
 
   @Get('buzon/conteos')
-  @UseGuards(AdminGuard)
+  @UseGuards(BuzonGuard)
   async conteos(@Req() req: any) {
     return this.correos.contarCarpetas(idDe(req));
   }
@@ -206,7 +206,7 @@ export class CorreosController {
   // Acciones sobre un mensaje (marcar leído/no leído, archivar, papelera,
   // restaurar, marcar como no-spam, destacar/quitar destacado).
   @Post('buzon/mensaje/:id/accion')
-  @UseGuards(AdminGuard)
+  @UseGuards(BuzonGuard)
   async accionMensaje(
     @Req() req: any,
     @Param('id') id: string,
@@ -218,25 +218,25 @@ export class CorreosController {
 
   // ── Etiquetas custom (carpetas estilo Gmail) ──────────────────────────
   @Get('buzon/etiquetas')
-  @UseGuards(AdminGuard)
+  @UseGuards(BuzonGuard)
   async listarEtiquetas(@Req() req: any) {
     return this.correos.listarEtiquetas(idDe(req));
   }
 
   @Post('buzon/etiquetas')
-  @UseGuards(AdminGuard)
+  @UseGuards(BuzonGuard)
   async crearEtiqueta(@Req() req: any, @Body() body: { nombre?: string }) {
     return this.correos.crearEtiqueta(idDe(req), String(body?.nombre || ''));
   }
 
   @Post('buzon/etiquetas/:id/eliminar')
-  @UseGuards(AdminGuard)
+  @UseGuards(BuzonGuard)
   async eliminarEtiqueta(@Req() req: any, @Param('id') id: string) {
     return this.correos.eliminarEtiqueta(idDe(req), id);
   }
 
   @Post('buzon/mensaje/:id/etiqueta/:labelId/aplicar')
-  @UseGuards(AdminGuard)
+  @UseGuards(BuzonGuard)
   async aplicarEtiqueta(
     @Req() req: any,
     @Param('id') id: string,
@@ -246,7 +246,7 @@ export class CorreosController {
   }
 
   @Post('buzon/mensaje/:id/etiqueta/:labelId/quitar')
-  @UseGuards(AdminGuard)
+  @UseGuards(BuzonGuard)
   async quitarEtiqueta(
     @Req() req: any,
     @Param('id') id: string,
@@ -256,7 +256,7 @@ export class CorreosController {
   }
 
   @Post('buzon/enviar')
-  @UseGuards(AdminGuard)
+  @UseGuards(BuzonGuard)
   async enviarBuzon(
     @Req() req: any,
     @Body()
@@ -312,20 +312,20 @@ export class CorreosController {
   }
 
   @Get('buzon/destinatarios')
-  @UseGuards(AdminGuard)
+  @UseGuards(BuzonGuard)
   async destinatariosBuzon(@Req() req: any) {
     return this.correos.destinatariosBuzon(idDe(req));
   }
 
   @Get('buzon/mensaje/:id')
-  @UseGuards(AdminGuard)
+  @UseGuards(BuzonGuard)
   async mensaje(@Req() req: any, @Param('id') id: string) {
     if (!id) throw new BadRequestException('Falta el id del mensaje.');
     return this.correos.obtenerMensajeBuzon(idDe(req), id);
   }
 
   @Get('buzon/mensaje/:messageId/adjunto/:attachmentId')
-  @UseGuards(AdminGuard)
+  @UseGuards(BuzonGuard)
   async adjunto(
     @Req() req: any,
     @Res() res: Response,
