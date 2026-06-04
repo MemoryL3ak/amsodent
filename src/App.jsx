@@ -117,7 +117,7 @@ export default function App() {
           <Route
             path="trazabilidad"
             element={
-              <RequireRole allow={["admin", "jefe_ventas_especial"]}>
+              <RequireRole allow={["admin", "jefe_ventas_especial", "jefe_ventas"]}>
                 <Trazabilidad />
               </RequireRole>
             }
