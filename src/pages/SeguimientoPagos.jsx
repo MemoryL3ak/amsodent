@@ -66,6 +66,9 @@ export default function SeguimientoPagos() {
   const { user, rol, cargando } = useAuth();
   const rolNorm = (rol ?? "").toString().trim().toLowerCase();
   const esAdmin = rolNorm === "admin";
+  // Acceso al módulo: mismos roles que la ruta y el menú (admin, jefe de
+  // ventas especial y contabilidad). Los vendedores no acceden aquí.
+  const puedeVer = esAdmin || rolNorm === "jefe_ventas_especial" || rolNorm === "contabilidad";
   const [facturas, setFacturas] = useState([]);
   const [licMap, setLicMap] = useState({});
   const [usuariosMap, setUsuariosMap] = useState({});
@@ -459,12 +462,12 @@ export default function SeguimientoPagos() {
     );
   }
 
-  if (!cargando && !esAdmin) {
+  if (!cargando && !puedeVer) {
     return (
       <div className="page">
         <div className="surface">
           <div className="surface-body" style={{ color: "var(--danger)" }}>
-            Acceso restringido: esta sección es solo para administradores.
+            Acceso restringido: esta sección es para administración, jefatura de ventas especial y contabilidad.
           </div>
         </div>
       </div>
