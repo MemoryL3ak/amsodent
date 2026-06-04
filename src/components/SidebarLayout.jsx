@@ -141,6 +141,7 @@ export default function SidebarLayout() {
   const esAdmin = rolNorm === "admin";
   const esJefatura = ["jefe_ventas", "jefe ventas", "jefe-ventas", "jefe de ventas", "jefe_ventas_especial"].includes(rolNorm);
   const esJefeVentasEspecial = rolNorm === "jefe_ventas_especial";
+  const esJefeVentas = ["jefe_ventas", "jefe ventas", "jefe-ventas", "jefe de ventas"].includes(rolNorm);
   const esContabilidad = rolNorm === "contabilidad";
   const esVentas = rolNorm === "ventas" || rolNorm === "ventas_especial";
   const esVentasEspecial = rolNorm === "ventas_especial";
@@ -157,7 +158,7 @@ export default function SidebarLayout() {
   ].filter(Boolean);
 
   const postVentaNav = [
-    (esAdmin || esJefeVentasEspecial) && { to: "/trazabilidad",      icon: FileText,   label: "Trazabilidad" },
+    (esAdmin || esJefeVentasEspecial || esJefeVentas) && { to: "/trazabilidad",      icon: FileText,   label: "Trazabilidad" },
     (esAdmin || esJefeVentasEspecial || esContabilidad) && { to: "/seguimiento-pagos", icon: CreditCard, label: "Seguimiento de Pagos" },
     (esAdmin || esJefeVentasEspecial || esContabilidad) && { to: "/cobranza", icon: Wallet, label: "Cobranza" },
   ].filter(Boolean);
