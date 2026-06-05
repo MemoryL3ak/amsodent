@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Mail, Clock } from "lucide-react";
 import { api } from "../lib/api";
-import useAuth from "../hooks/useAuth";
 import CorreoComposer from "./CorreoComposer";
 
 // Detector global de correos pendientes (Fase 1 del sistema de correos).
@@ -14,28 +13,9 @@ import CorreoComposer from "./CorreoComposer";
 const POLL_MS = 45_000;
 const TIPOS_CORREO = ["oc_agradecimiento", "guia_despacho_enviar"];
 
-// Horas desde que se creó la notificación. UNA VEZ cumplido este plazo el
-// recordatorio se vuelve firme: ya NO se puede posponer (sin botón "Posponer"),
-// para forzar el envío del correo al cliente. Antes de cumplirse, se puede
-// posponer/cerrar libremente.
-const HORAS_FIRME = 24;
-
-function horasDesdeCreacion(notif) {
-  const ts = notif?.creado_at || notif?.created_at || notif?.fecha;
-  if (!ts) return Infinity; // sin fecha → permitimos posponer (no trabar)
-  const t = new Date(ts).getTime();
-  if (Number.isNaN(t)) return Infinity;
-  return (Date.now() - t) / 3_600_000;
-}
-
-// El correo de agradecimiento de la OC se puede posponer/cerrar mientras no se
-// cumplan 24 h; al cumplirse, queda firme (sin "Posponer") hasta que se envíe.
-// La guía de despacho siempre se puede posponer. El admin SIEMPRE puede posponer.
-function puedePosponer(notif, esAdmin) {
-  if (esAdmin) return true;
-  if (notif?.tipo !== "oc_agradecimiento") return true;
-  return horasDesdeCreacion(notif) < HORAS_FIRME;
-}
+// El popup de recordatorios (correo de agradecimiento de la OC y guía de
+// despacho) SIEMPRE permite posponer/cerrar, sin importar el tiempo transcurrido
+// ni el rol del usuario.
 
 const TITULOS = {
   oc_agradecimiento: "Correo de agradecimiento pendiente",
@@ -48,8 +28,6 @@ const LABEL_ENVIAR = {
 };
 
 export default function RecordatoriosCorreo() {
-  const { rol } = useAuth();
-  const esAdmin = (rol ?? "").toString().trim().toLowerCase() === "admin";
   const [pendientes, setPendientes] = useState([]);
   const [composer, setComposer] = useState(null);
   const descartadasRef = useRef(new Set());
@@ -123,18 +101,11 @@ export default function RecordatoriosCorreo() {
   }
 
   function cerrarComposer() {
-    // Cerrar sin enviar. Si la notificación aún NO cumple 24 h, la posponemos
-    // 2 h (snooze). Si ya es "firme" (cumplió 24 h), NO se pospone: el recordatorio
-    // vuelve a aparecer de inmediato hasta que se envíe el correo.
+    // Cerrar sin enviar siempre pospone 2 h (snooze): el recordatorio vuelve a
+    // aparecer más tarde hasta que se envíe el correo al cliente.
     const notifId = composer?.notifId;
     setComposer(null);
     if (!notifId) return;
-    const notif = pendientes.find((n) => n.id === notifId);
-    if (notif && !puedePosponer(notif, esAdmin)) {
-      // firme: solo refrescamos para que el recordatorio reaparezca
-      setTimeout(fetchPendientes, 200);
-      return;
-    }
     masTarde(notifId);
   }
 
@@ -151,8 +122,6 @@ export default function RecordatoriosCorreo() {
   }
 
   if (!actual) return null;
-
-  const firme = !puedePosponer(actual, esAdmin);
 
   const popup = (
     <div
@@ -217,25 +186,6 @@ export default function RecordatoriosCorreo() {
           <p style={{ margin: 0, color: "var(--text)", fontSize: 14, lineHeight: 1.55 }}>
             {actual.mensaje}
           </p>
-          {firme && (
-            <div
-              style={{
-                marginTop: 14,
-                display: "flex",
-                gap: 8,
-                alignItems: "flex-start",
-                background: "var(--warning-bg)",
-                border: "1px solid var(--warning)",
-                borderRadius: "var(--radius)",
-                padding: "10px 12px",
-              }}
-            >
-              <Clock size={15} style={{ color: "var(--warning)", flexShrink: 0, marginTop: 1 }} />
-              <span style={{ color: "#854d0e", fontSize: 12.5, lineHeight: 1.5 }}>
-                Ya se cumplieron 24 horas: este recordatorio se mantendrá hasta que envíes el correo al cliente.
-              </span>
-            </div>
-          )}
         </div>
 
         {/* Footer */}
@@ -249,27 +199,25 @@ export default function RecordatoriosCorreo() {
             background: "var(--bg)",
           }}
         >
-          {!firme && (
-            <button
-              type="button"
-              onClick={() => masTarde(actual.id)}
-              style={{
-                padding: "9px 16px",
-                borderRadius: "var(--radius)",
-                border: "1px solid var(--border-strong)",
-                background: "var(--surface)",
-                color: "var(--text)",
-                fontWeight: 600,
-                fontSize: 13.5,
-                cursor: "pointer",
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 6,
-              }}
-            >
-              <Clock size={14} /> Posponer
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={() => masTarde(actual.id)}
+            style={{
+              padding: "9px 16px",
+              borderRadius: "var(--radius)",
+              border: "1px solid var(--border-strong)",
+              background: "var(--surface)",
+              color: "var(--text)",
+              fontWeight: 600,
+              fontSize: 13.5,
+              cursor: "pointer",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+            }}
+          >
+            <Clock size={14} /> Posponer
+          </button>
           <button
             type="button"
             onClick={() => abrirComposer(actual)}
