@@ -318,6 +318,46 @@ export default function ChatEquipo({ onLicitacionRegistrada }) {
     setMensajes((prev) => (prev.some((x) => x.id === m.id) ? prev : [...prev, m]));
   }, []);
 
+  // Trae los mensajes de la sala desde la base y los aplica al estado.
+  //  - merge=false (carga inicial): reemplaza el listado completo.
+  //  - merge=true  (ponerse al día): agrega los que falten sin duplicar, para
+  //    recuperar mensajes que el realtime no entregó (reconexión, pestaña en
+  //    segundo plano, microcorte de red). Es lo que evita el "no aparece y luego
+  //    sí aparece" al recargar.
+  const sincronizarSala = useCallback(async (salaId, { merge = false } = {}) => {
+    if (!salaId) return;
+    const { data, error: e } = await supabase
+      .from("chat_mensajes")
+      .select("*")
+      .eq("sala_id", salaId)
+      .order("created_at", { ascending: true })
+      .limit(300);
+    // Si el usuario cambió de sala mientras cargaba, descartamos el resultado.
+    if (salaActivaIdRef.current !== salaId) return;
+    if (e) {
+      if (!merge) setError(e.message || "No se pudo cargar el chat.");
+      return;
+    }
+    if (!merge) {
+      setMensajes(data || []);
+      setError("");
+      return;
+    }
+    setMensajes((prev) => {
+      if (!data || data.length === 0) return prev;
+      const porId = new Map(prev.map((x) => [x.id, x]));
+      let hayNuevos = false;
+      for (const x of data) {
+        if (!porId.has(x.id)) hayNuevos = true;
+        porId.set(x.id, { ...porId.get(x.id), ...x });
+      }
+      if (!hayNuevos) return prev; // nada que agregar → evita re-render y saltos
+      return Array.from(porId.values()).sort((a, b) =>
+        String(a.created_at).localeCompare(String(b.created_at)),
+      );
+    });
+  }, []);
+
   /* ── Cargar salas, perfiles, miembros ─────────────────────────────── */
   useEffect(() => {
     if (!yo.email) return;
@@ -428,24 +468,13 @@ export default function ChatEquipo({ onLicitacionRegistrada }) {
     setMenuMensajeId(null);
     (async () => {
       setCargando(true);
-      const { data, error: e } = await supabase
-        .from("chat_mensajes")
-        .select("*")
-        .eq("sala_id", salaActivaId)
-        .order("created_at", { ascending: true })
-        .limit(300);
-      if (!activo) return;
-      if (e) setError(e.message || "No se pudo cargar el chat.");
-      else {
-        setMensajes(data || []);
-        setError("");
-      }
-      setCargando(false);
+      await sincronizarSala(salaActivaId, { merge: false });
+      if (activo) setCargando(false);
     })();
     return () => {
       activo = false;
     };
-  }, [salaActivaId]);
+  }, [salaActivaId, sincronizarSala]);
 
   /* ── Suscripción en tiempo real (filtrada por sala) ───────────────── */
   useEffect(() => {
@@ -479,11 +508,33 @@ export default function ChatEquipo({ onLicitacionRegistrada }) {
           setMensajes((prev) => prev.filter((x) => x.id !== id));
         },
       )
-      .subscribe();
+      .subscribe((status) => {
+        // Al suscribir (y en cada reconexión, que vuelve a emitir SUBSCRIBED)
+        // nos ponemos al día por si se perdieron INSERT durante el corte o en
+        // el hueco entre la carga inicial y la suscripción.
+        if (status === "SUBSCRIBED") sincronizarSala(salaActivaId, { merge: true });
+      });
     return () => {
       supabase.removeChannel(canal);
     };
-  }, [salaActivaId, agregarMensaje]);
+  }, [salaActivaId, agregarMensaje, sincronizarSala]);
+
+  /* ── Ponerse al día al volver a la pestaña/ventana ────────────────────
+     Si el equipo estuvo en segundo plano o suspendido, el socket de realtime
+     pudo perder mensajes. Al recuperar el foco refrescamos la sala activa. */
+  useEffect(() => {
+    const alVolver = () => {
+      if (document.visibilityState === "visible" && salaActivaIdRef.current) {
+        sincronizarSala(salaActivaIdRef.current, { merge: true });
+      }
+    };
+    document.addEventListener("visibilitychange", alVolver);
+    window.addEventListener("focus", alVolver);
+    return () => {
+      document.removeEventListener("visibilitychange", alVolver);
+      window.removeEventListener("focus", alVolver);
+    };
+  }, [sincronizarSala]);
 
   /* ── Suscripción realtime: me agregaron / removieron de una sala ──── */
   useEffect(() => {
