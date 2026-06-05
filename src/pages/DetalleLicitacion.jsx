@@ -653,7 +653,9 @@ const DOC_TIPOS = {
   factura: "Factura",
   factura_boleta: "Factura o Boleta",
   comprobante_pago: "Comprobante de Transferencia",
+  webpay: "Webpay",
   efectivo: "Efectivo",
+  info_despacho: "Información de Despacho",
 };
 const DOC_BUCKET_BY_TIPO = {
   orden_compra: "orden-compra",
@@ -661,7 +663,9 @@ const DOC_BUCKET_BY_TIPO = {
   factura: "factura",
   factura_boleta: "factura",
   comprobante_pago: "factura",
+  webpay: "factura",
   efectivo: "factura",
+  // info_despacho: sin archivo (no lleva bucket).
 };
 
 /* ============================================================
@@ -816,6 +820,7 @@ export default function EditarLicitacion() {
   const [docDerivaDeId, setDocDerivaDeId] = useState("");
   const [docEmpresa, setDocEmpresa] = useState("Starken");
   const [docNumSeguimiento, setDocNumSeguimiento] = useState("");
+  const [docUrl, setDocUrl] = useState(""); // Webpay: link al comprobante
   const [docFile, setDocFile] = useState(null);
   const [subiendoDoc, setSubiendoDoc] = useState(false);
 
@@ -832,6 +837,7 @@ export default function EditarLicitacion() {
   const [estado, setEstado] = useState("En espera");
   const [estadoActualDB, setEstadoActualDB] = useState("En espera");
   const [fechaAdjudicada, setFechaAdjudicada] = useState(null);
+  const [fechaCreacionLic, setFechaCreacionLic] = useState(null);
   const [margenAprobado, setMargenAprobado] = useState(false);
   const [tipoCompra, setTipoCompra] = useState("Compra ágil");
   const [montoAdicionalOC, setMontoAdicionalOC] = useState("");
@@ -880,8 +886,9 @@ export default function EditarLicitacion() {
   // IMPORTANTE: este efecto debe declararse DESPUÉS de useState(tipoCompra) para
   // evitar "Cannot access 'tipoCompra' before initialization" en producción.
   useEffect(() => {
+    const tiposParticular = ["factura_boleta", "comprobante_pago", "webpay", "efectivo", "info_despacho"];
     if (tipoCompra === "Cliente particular") {
-      if (docTipo !== "factura_boleta" && docTipo !== "comprobante_pago") {
+      if (!tiposParticular.includes(docTipo)) {
         setDocTipo("factura_boleta");
       }
     } else {
@@ -1375,13 +1382,67 @@ export default function EditarLicitacion() {
     if (subiendoDoc) return;
     setToast(null);
 
+    const tipo = String(docTipo || "").trim();
+
+    // Información de despacho (Cliente Particular): no lleva archivo; solo
+    // empresa + N° de seguimiento (interno → correlativo automático AMSO).
+    if (tipo === "info_despacho") {
+      const empresa = (docEmpresa || "").trim();
+      if (!empresa) {
+        setToast({ type: "error", message: "Debes seleccionar la empresa de despacho." });
+        return;
+      }
+      const esInterno = empresa === "Despacho interno";
+      setSubiendoDoc(true);
+      try {
+        // Documento adjunto OPCIONAL.
+        let bucket = null, storagePath = null, fileName = null, mimeType = null, sizeBytes = null;
+        const file = docFile;
+        if (file) {
+          bucket = "factura";
+          const ext = (file.name.split(".").pop() || "pdf").toLowerCase();
+          const safeName = normalizarNombreArchivo(file.name.replace(/\.[^.]+$/, ""));
+          const fn = `${Date.now()}-${Math.random().toString(36).slice(2)}-${safeName}.${ext}`;
+          storagePath = `${id}/${fn}`;
+          const formData = new FormData();
+          formData.append("file", file);
+          await api.postForm(`/licitaciones/storage/upload?bucket=${encodeURIComponent(bucket)}&path=${encodeURIComponent(storagePath)}`, formData);
+          fileName = file.name;
+          mimeType = file.type || "application/octet-stream";
+          sizeBytes = Number(file.size || 0);
+        }
+        await api.post("/licitaciones/documentos", {
+          licitacion_id: Number(id),
+          tipo: "info_despacho",
+          empresa_despacho: empresa,
+          n_seguimiento: esInterno ? null : ((docNumSeguimiento || "").trim() || null),
+          bucket,
+          storage_path: storagePath,
+          file_name: fileName,
+          mime_type: mimeType,
+          size_bytes: sizeBytes,
+        });
+        setDocEmpresa("Starken");
+        setDocNumSeguimiento("");
+        setDocFile(null);
+        if (fileInputRef.current) fileInputRef.current.value = "";
+        setToast({ type: "success", message: "Información de despacho registrada." });
+        await cargarDocumentosLicitacion();
+      } catch (e) {
+        console.error("Error registrando info de despacho:", e);
+        setToast({ type: "error", message: "No se pudo registrar la información de despacho." });
+      } finally {
+        setSubiendoDoc(false);
+      }
+      return;
+    }
+
     const file = docFile;
     if (!file) {
       setToast({ type: "error", message: "Debes seleccionar un PDF." });
       return;
     }
 
-    const tipo = String(docTipo || "").trim();
     const bucket = DOC_BUCKET_BY_TIPO[tipo];
     if (!bucket) {
       setToast({ type: "error", message: "Tipo de documento inválido." });
@@ -1404,7 +1465,7 @@ export default function EditarLicitacion() {
       setToast({ type: "error", message: "Debes ingresar el monto neto del pago en efectivo." });
       return;
     }
-    if (tipo === "comprobante_pago" && montoNetoOrdenCompra <= 0) {
+    if ((tipo === "comprobante_pago" || tipo === "webpay") && montoNetoOrdenCompra <= 0) {
       setToast({ type: "error", message: "Debes ingresar el monto neto del comprobante." });
       return;
     }
@@ -1420,7 +1481,7 @@ export default function EditarLicitacion() {
       setToast({ type: "error", message: "Debes ingresar la fecha de la factura o boleta." });
       return;
     }
-    if (tipo === "comprobante_pago" && !fechaOc) {
+    if ((tipo === "comprobante_pago" || tipo === "webpay") && !fechaOc) {
       setToast({ type: "error", message: "Debes ingresar la fecha del comprobante." });
       return;
     }
@@ -1471,7 +1532,7 @@ export default function EditarLicitacion() {
       }
     }
 
-    if (tipo === "comprobante_pago" && !docDerivaDeId) {
+    if ((tipo === "comprobante_pago" || tipo === "webpay") && !docDerivaDeId) {
       setToast({
         type: "error",
         message: "Debes asociar el comprobante a la boleta o factura del pago.",
@@ -1479,7 +1540,7 @@ export default function EditarLicitacion() {
       return;
     }
 
-    if (tipo === "comprobante_pago") {
+    if (tipo === "comprobante_pago" || tipo === "webpay") {
       const docOrigen = documentos.find(
         (d) => String(d.id) === String(docDerivaDeId)
       );
@@ -1512,9 +1573,10 @@ export default function EditarLicitacion() {
       const esDespachoInterno = empresaGuia === "Despacho interno";
       const esFacturaBoleta = tipo === "factura_boleta";
       const esComprobantePago = tipo === "comprobante_pago";
+      const esWebpay = tipo === "webpay";
       const esEfectivo = tipo === "efectivo";
-      const tieneMonto = tipo === "orden_compra" || esFacturaBoleta || esEfectivo || esComprobantePago;
-      const tieneFecha = tipo === "orden_compra" || esGuia || esFacturaBoleta || esComprobantePago || esEfectivo;
+      const tieneMonto = tipo === "orden_compra" || esFacturaBoleta || esEfectivo || esComprobantePago || esWebpay;
+      const tieneFecha = tipo === "orden_compra" || esGuia || esFacturaBoleta || esComprobantePago || esWebpay || esEfectivo;
 
       const payload = {
         licitacion_id: Number(id),
@@ -1525,6 +1587,7 @@ export default function EditarLicitacion() {
         deriva_de_id: docDerivaDeId ? Number(docDerivaDeId) : null,
         empresa_despacho: esGuia ? empresaGuia : null,
         n_seguimiento: esGuia && !esDespachoInterno ? ((docNumSeguimiento || "").trim() || null) : null,
+        url: esWebpay ? ((docUrl || "").trim() || null) : null,
         bucket,
         storage_path: storagePath,
         file_name: file.name,
@@ -1548,6 +1611,7 @@ export default function EditarLicitacion() {
       setDocDerivaDeId("");
       setDocEmpresa("Starken");
       setDocNumSeguimiento("");
+      setDocUrl("");
       setDocFile(null);
       if (fileInputRef.current) fileInputRef.current.value = "";
       setToast({
@@ -1855,6 +1919,7 @@ export default function EditarLicitacion() {
     setEstado(lic.estado || "En espera");
     setEstadoActualDB(lic.estado || "En espera");
     setFechaAdjudicada(lic.fecha_adjudicada || null);
+    setFechaCreacionLic(lic.fecha || lic.created_at || null);
     setMargenAprobado(Boolean(lic.margen_aprobado));
     setTipoCompra(lic.tipo_compra || "Compra ágil");
 
@@ -2041,6 +2106,7 @@ export default function EditarLicitacion() {
       setEstado(lic.estado || "En espera");
       setEstadoActualDB(lic.estado || "En espera");
       setFechaAdjudicada(lic.fecha_adjudicada || null);
+    setFechaCreacionLic(lic.fecha || lic.created_at || null);
       setMargenAprobado(Boolean(lic.margen_aprobado));
       setTipoCompra(lic.tipo_compra || "Compra ágil");
 
@@ -2498,7 +2564,19 @@ export default function EditarLicitacion() {
       const primeraOC = ocsConFecha
         .slice()
         .sort((a, b) => String(a.fecha_oc).localeCompare(String(b.fecha_oc)))[0];
-      const fechaAdjudicacion = primeraOC?.fecha_oc
+      // Fecha de creación de la cotización (cuando se ingresó al sistema).
+      const fechaCreacion = fechaCreacionLic
+        ? formatearFechaCorta(String(fechaCreacionLic).slice(0, 10))
+        : "";
+
+      // Cliente particular no tiene OC: su fecha de adjudicación = fecha de
+      // creación de la cotización.
+      const esParticularPdf = (tipoCliente || tipoClienteGuardado || "")
+        .toLowerCase()
+        .includes("particular");
+      const fechaAdjudicacion = esParticularPdf
+        ? fechaCreacion
+        : primeraOC?.fecha_oc
         ? formatearFechaCorta(primeraOC.fecha_oc)
         : "";
 
@@ -2506,6 +2584,7 @@ export default function EditarLicitacion() {
         numero_licitacion: id,
         id_licitacion: idLicitacionInput,
         fecha_emision: fechaEmision,
+        fecha_creacion: fechaCreacion,
         fecha_adjudicacion: fechaAdjudicacion,
 
         nombre_entidad: nombreEntidad,
@@ -3871,7 +3950,9 @@ export default function EditarLicitacion() {
                 <>
                   <option value="factura_boleta">Factura o Boleta</option>
                   <option value="comprobante_pago">Comprobante de Transferencia</option>
+                  <option value="webpay">Webpay</option>
                   <option value="efectivo">Efectivo</option>
+                  <option value="info_despacho">Información de Despacho</option>
                 </>
               ) : (
                 <>
@@ -3882,22 +3963,25 @@ export default function EditarLicitacion() {
             </select>
           </div>
 
-          <div className="md:col-span-3">
-            <label className="block text-sm font-medium text-gray-700 mb-1">Número</label>
-            <input
-              className={`${inputClass} text-sm`}
-              value={docNumero}
-              onChange={(e) => setDocNumero(e.target.value)}
-              placeholder={
-                docTipo === "orden_compra" ? "Ej: OC-2026-001" :
-                docTipo === "factura_boleta" ? "Ej: FB-2026-001" :
-                docTipo === "comprobante_pago" ? "Ej: TRX-2026-001" :
-                docTipo === "efectivo" ? "Ej: EFE-2026-001" :
-                "Ej: GD-2026-001"
-              }
-              disabled={subiendoDoc}
-            />
-          </div>
+          {docTipo !== "info_despacho" && (
+            <div className="md:col-span-3">
+              <label className="block text-sm font-medium text-gray-700 mb-1">Número</label>
+              <input
+                className={`${inputClass} text-sm`}
+                value={docNumero}
+                onChange={(e) => setDocNumero(e.target.value)}
+                placeholder={
+                  docTipo === "orden_compra" ? "Ej: OC-2026-001" :
+                  docTipo === "factura_boleta" ? "Ej: FB-2026-001" :
+                  docTipo === "comprobante_pago" ? "Ej: TRX-2026-001" :
+                  docTipo === "webpay" ? "Ej: WP-2026-001" :
+                  docTipo === "efectivo" ? "Ej: EFE-2026-001" :
+                  "Ej: GD-2026-001"
+                }
+                disabled={subiendoDoc}
+              />
+            </div>
+          )}
 
           {/* Cliente particular — Factura/Boleta y Efectivo: mismos campos (monto + fecha) */}
           {(docTipo === "factura_boleta" || docTipo === "efectivo") && (
@@ -3937,8 +4021,8 @@ export default function EditarLicitacion() {
             </>
           )}
 
-          {/* Cliente particular — Comprobante de Transferencia: boleta/factura asociada + monto + fecha */}
-          {docTipo === "comprobante_pago" && (
+          {/* Cliente particular — Comprobante de Transferencia / Webpay: boleta/factura asociada + monto + fecha (+ URL en Webpay) */}
+          {(docTipo === "comprobante_pago" || docTipo === "webpay") && (
             <>
               <div className="md:col-span-3">
                 <label className="block text-sm font-medium text-gray-700 mb-1">Boleta / Factura asociada *</label>
@@ -4005,6 +4089,63 @@ export default function EditarLicitacion() {
                   disabled
                 />
               </div>
+              {docTipo === "webpay" && (
+                <div className="md:col-span-12">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">URL del comprobante (Webpay)</label>
+                  <input
+                    type="url"
+                    className={`${inputClass} text-sm`}
+                    value={docUrl}
+                    onChange={(e) => setDocUrl(e.target.value)}
+                    placeholder="https://… (link al voucher Webpay)"
+                    disabled={subiendoDoc}
+                  />
+                </div>
+              )}
+            </>
+          )}
+
+          {/* Cliente particular — Información de Despacho: empresa + N° seguimiento (sin archivo) */}
+          {docTipo === "info_despacho" && (
+            <>
+              <div className="md:col-span-3">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Empresa *</label>
+                <select
+                  className={`${inputClass} text-sm`}
+                  value={docEmpresa}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    setDocEmpresa(next);
+                    if (next === "Despacho interno") setDocNumSeguimiento("");
+                  }}
+                  disabled={subiendoDoc}
+                >
+                  <option value="Starken">Starken</option>
+                  <option value="Blue Express">Blue Express</option>
+                  <option value="Despacho interno">Despacho interno</option>
+                  <option value="Otro">Otro</option>
+                </select>
+              </div>
+              {docEmpresa !== "Despacho interno" && (
+                <div className="md:col-span-6">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">N° Seguimiento</label>
+                  <input
+                    type="text"
+                    className={`${inputClass} text-sm`}
+                    value={docNumSeguimiento}
+                    onChange={(e) => setDocNumSeguimiento(e.target.value)}
+                    placeholder="Código de tracking del courier"
+                    disabled={subiendoDoc}
+                  />
+                </div>
+              )}
+              {docEmpresa === "Despacho interno" && (
+                <div className="md:col-span-6 flex items-end">
+                  <p className="text-xs text-gray-500">
+                    Se generará automáticamente un N° de seguimiento interno (AMSO…) al guardar.
+                  </p>
+                </div>
+              )}
             </>
           )}
 
@@ -4145,7 +4286,9 @@ export default function EditarLicitacion() {
         {/* Línea 3: PDF + Botón agregar */}
         <div className="grid grid-cols-1 md:grid-cols-12 gap-4 mt-4 items-end">
           <div className="md:col-span-9">
-            <label className="block text-sm font-medium text-gray-700 mb-1">PDF *</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              {docTipo === "info_despacho" ? "Documento (opcional)" : "PDF *"}
+            </label>
             <input
               ref={fileInputRef}
               type="file"
@@ -4161,7 +4304,7 @@ export default function EditarLicitacion() {
                 onClick={() => fileInputRef.current?.click()}
                 disabled={subiendoDoc}
               >
-                Seleccionar PDF
+                {docTipo === "info_despacho" ? "Adjuntar documento" : "Seleccionar PDF"}
               </button>
               <span className="text-sm text-gray-500 truncate">
                 {docFile ? docFile.name : "Sin archivo"}

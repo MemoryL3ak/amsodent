@@ -33,6 +33,7 @@ import CampanasProductos from "./pages/CampanasProductos";
 import CrearCampana from "./pages/CrearCampana";
 import EditarCampana from "./pages/EditarCampana";
 import Ventas from "./pages/Ventas";
+import CotizacionesPorVendedor from "./pages/CotizacionesPorVendedor";
 import Metas from "./pages/Metas";
 import MetasPorCanal from "./pages/MetasPorCanal";
 import Trazabilidad from "./pages/Trazabilidad";
@@ -58,6 +59,11 @@ import MonitoreoMarcajes from "./pages/MonitoreoMarcajes";
 // PORTAL DE STOCK
 import PortalStockCliente from "./pages/PortalStockCliente";
 import MonitoreoStockClientes from "./pages/MonitoreoStockClientes";
+import AccesoPortalClientes from "./pages/AccesoPortalClientes";
+// DESPACHOS INTERNOS / CHOFERES
+import DespachosChoferes from "./pages/DespachosChoferes";
+import TrackingChoferes from "./pages/TrackingChoferes";
+import PortalChofer from "./pages/PortalChofer";
 
 export default function App() {
   return (
@@ -70,6 +76,7 @@ export default function App() {
         <Route path="/portal" element={<PortalCliente />} />
         <Route path="/despachos" element={<PortalDespachos />} />
         <Route path="/portal-cliente" element={<PortalStockCliente />} />
+        <Route path="/portal-chofer" element={<PortalChofer />} />
 
         {/* RUTAS PROTEGIDAS */}
         <Route
@@ -139,10 +146,34 @@ export default function App() {
             }
           />
           <Route
+            path="despachos-choferes"
+            element={
+              <RequireRole allow={["admin"]}>
+                <DespachosChoferes />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="tracking-choferes"
+            element={
+              <RequireRole allow={["admin"]}>
+                <TrackingChoferes />
+              </RequireRole>
+            }
+          />
+          <Route
             path="ventas"
             element={
               <RequireRole allow={["admin", "jefe_ventas", "jefe_ventas_especial"]}>
                 <Ventas />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="cotizaciones-vendedor"
+            element={
+              <RequireRole allow={["admin", "jefe_ventas", "jefe_ventas_especial"]}>
+                <CotizacionesPorVendedor />
               </RequireRole>
             }
           />
@@ -211,6 +242,16 @@ export default function App() {
             element={
               <RequireRole allow={["admin", "ventas_especial"]}>
                 <MonitoreoStockClientes />
+              </RequireRole>
+            }
+          />
+
+          {/* ACCESO AL PORTAL DEL CLIENTE — solo admin */}
+          <Route
+            path="portal-accesos"
+            element={
+              <RequireRole allow={["admin"]}>
+                <AccesoPortalClientes />
               </RequireRole>
             }
           />

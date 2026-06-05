@@ -22,10 +22,17 @@ export default function EditarCliente() {
   const [email, setEmail] = useState("");
   const [telefono, setTelefono] = useState("");
   const [condVenta, setCondVenta] = useState("");
+  const [condVentaOriginal, setCondVentaOriginal] = useState("");
   const [vendedorAsignado, setVendedorAsignado] = useState("");
 
   const [esAdmin, setEsAdmin] = useState(false);
+  const [esJefeVentasEspecial, setEsJefeVentasEspecial] = useState(false);
   const [vendedores, setVendedores] = useState([]);
+
+  const esParticular = tipoCliente === "Cliente Particular";
+  // "30 días" en cliente particular: solo admin y jefe_ventas_especial.
+  const puede30dias = esAdmin || esJefeVentasEspecial;
+  const bloquea30 = esParticular && !puede30dias;
 
   const comunasDisponibles = useMemo(() => {
     return (REGIONES_CHILE?.[region] ?? []);
@@ -38,6 +45,7 @@ export default function EditarCliente() {
         const perfil = await api.get("/auth/profile");
         const r = (perfil?.rol || "").toString().trim().toLowerCase();
         setEsAdmin(r === "admin" || r === "administrador");
+        setEsJefeVentasEspecial(r === "jefe_ventas_especial");
       } catch { /* */ }
       try {
         const perfiles = await api.get("/usuarios/profiles");
@@ -113,6 +121,7 @@ export default function EditarCliente() {
       setEmail((data.email || "").toString());
       setTelefono((data.telefono || "").toString());
       setCondVenta((data.condiciones_venta || "").toString());
+      setCondVentaOriginal((data.condiciones_venta || "").toString());
       setVendedorAsignado((data.vendedor_asignado || "").toString());
 
       setLoading(false);
@@ -147,6 +156,13 @@ export default function EditarCliente() {
   async function guardarCambios() {
     if (!tipoCliente || !rut || !nombre || !region || !comuna || !direccion || !contacto || !email) {
       setToast({ type: "error", message: "Debes completar todos los campos obligatorios." });
+      return;
+    }
+
+    // Bloquear asignar "30 días" a un particular si no es admin/jefatura especial.
+    // (Si ya venía con "30 días" puesto por un admin, se respeta).
+    if (bloquea30 && condVenta === "30 días" && condVentaOriginal !== "30 días") {
+      setToast({ type: "error", message: "Solo el administrador o jefatura de ventas especial pueden asignar '30 días' a un cliente particular." });
       return;
     }
 
@@ -303,9 +319,14 @@ export default function EditarCliente() {
                 onChange={(e) => setCondVenta(e.target.value)}
               >
                 <option value="">Seleccione…</option>
-                <option value="30 días">30 días</option>
+                <option value="30 días" disabled={bloquea30 && condVentaOriginal !== "30 días"}>30 días</option>
                 <option value="Contado">Contado</option>
               </select>
+              {bloquea30 && condVentaOriginal !== "30 días" && (
+                <p style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>
+                  La condición "30 días" para clientes particulares solo puede asignarla el administrador o la jefatura de ventas especial.
+                </p>
+              )}
             </div>
 
             <div className="field">

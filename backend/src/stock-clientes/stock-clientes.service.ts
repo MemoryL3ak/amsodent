@@ -11,14 +11,18 @@ import { CorreosService } from '../correos/correos.service';
 import {
   plantillaAlertaStock,
   plantillaSolicitudCotizacion,
+  plantillaBienvenidaPortal,
 } from '../correos/correos.templates';
 
 const TOKEN_TTL_SECONDS = 12 * 60 * 60; // 12h
+const RE_EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export type SemaforoColor = 'verde' | 'amarillo' | 'rojo';
 
 export type ItemDeclaracion = {
   nombre: string;
+  // SKU/código opcional que el cliente asocia al producto.
+  sku?: string | null;
   marca?: string | null;
   unidad?: string | null;
   stock_actual: number;
@@ -108,6 +112,71 @@ function calcularSemaforo(
     Number.isFinite(alertaNum) && alertaNum > m ? alertaNum : m * 1.5;
   if (a <= umbralAmarillo) return 'amarillo';
   return 'verde';
+}
+
+// ── Contraseñas del portal ──────────────────────────────────────────────
+// Usamos scrypt del módulo `crypto` (sin dependencias nativas). El hash se
+// guarda como `scrypt$<saltHex>$<hashHex>`.
+function hashPassword(plain: string): string {
+  const salt = crypto.randomBytes(16);
+  const hash = crypto.scryptSync(String(plain), salt, 64);
+  return `scrypt$${salt.toString('hex')}$${hash.toString('hex')}`;
+}
+
+// Política de contraseña del portal del cliente: mínimo 8 caracteres, con al
+// menos una mayúscula, una minúscula y un número. Devuelve un mensaje de error
+// si no cumple, o null si es válida.
+function validarPasswordPortal(plain: string): string | null {
+  const pw = String(plain || '');
+  if (pw.length < 8)
+    return 'La contraseña debe tener al menos 8 caracteres.';
+  if (!/[A-Z]/.test(pw))
+    return 'La contraseña debe incluir al menos una letra mayúscula.';
+  if (!/[a-z]/.test(pw))
+    return 'La contraseña debe incluir al menos una letra minúscula.';
+  if (!/[0-9]/.test(pw))
+    return 'La contraseña debe incluir al menos un número.';
+  return null;
+}
+
+function verifyPassword(plain: string, stored?: string | null): boolean {
+  if (!stored) return false;
+  const parts = String(stored).split('$');
+  if (parts.length !== 3 || parts[0] !== 'scrypt') return false;
+  try {
+    const salt = Buffer.from(parts[1], 'hex');
+    const expected = Buffer.from(parts[2], 'hex');
+    const got = crypto.scryptSync(String(plain), salt, expected.length);
+    return (
+      expected.length === got.length && crypto.timingSafeEqual(expected, got)
+    );
+  } catch {
+    return false;
+  }
+}
+
+// Traduce la vigencia elegida por el admin a una fecha de expiración.
+// '1m' → +1 mes, '3m' → +3 meses, 'indefinido' → sin expiración (null).
+function calcularExpira(vigencia: string): {
+  vigencia: '1m' | '3m' | 'indefinido';
+  expira: string | null;
+} {
+  const v = String(vigencia || '').trim();
+  if (v === 'indefinido') return { vigencia: 'indefinido', expira: null };
+  if (v === '1m' || v === '3m') {
+    const d = new Date();
+    d.setMonth(d.getMonth() + (v === '1m' ? 1 : 3));
+    return { vigencia: v, expira: d.toISOString() };
+  }
+  throw new BadRequestException(
+    'Vigencia inválida. Use 1m, 3m o indefinido.',
+  );
+}
+
+function vigenciaTexto(vigencia?: string | null): string {
+  if (vigencia === '1m') return '1 mes';
+  if (vigencia === '3m') return '3 meses';
+  return 'Acceso indefinido';
 }
 
 @Injectable()
@@ -234,83 +303,476 @@ export class StockClientesService {
     };
   }
 
-  // ── Acceso del cliente ────────────────────────────────────────────────
+  // ── Acceso del cliente (RUT + contraseña) ─────────────────────────────
 
-  async acceso(opts: {
-    rut: string;
-    acepto_acuerdo: boolean;
-    ip?: string | null;
-  }) {
+  // Login con RUT y contraseña. El acceso debe estar habilitado por el admin
+  // y vigente (no expirado). Devuelve el token del portal e indica si el
+  // cliente debe cambiar su clave (temporal) o aceptar el acuerdo.
+  async login(opts: { rut: string; password: string; ip?: string | null }) {
     const rutN = normalizarRut(opts.rut);
-    if (!rutN) {
-      throw new BadRequestException('Debe ingresar su RUT.');
-    }
+    const password = String(opts.password || '');
+    if (!rutN) throw new BadRequestException('Debe ingresar su RUT.');
     if (!esRutValido(rutN)) {
       throw new BadRequestException('El RUT ingresado no es válido.');
     }
+    if (!password) throw new BadRequestException('Debe ingresar su contraseña.');
 
-    // El RUT DEBE existir en el maestro de clientes (no permitimos auto-alta).
+    // El RUT debe existir en el maestro de clientes.
     const cliente = await this.buscarClientePorRut(rutN);
     if (!cliente) {
-      throw new BadRequestException(
-        'Su RUT no se encuentra registrado en nuestros sistemas. Por favor contáctenos para activar el acceso al portal.',
-      );
+      throw new UnauthorizedException('RUT o contraseña incorrectos.');
     }
 
     const client = this.supabase.getClient();
-
-    // Estado actual en el portal de stock (acuerdo aceptado o no)
-    const { data: existente, error: errSel } = await client
+    const { data: portal, error } = await client
       .from('stock_clientes_portal')
       .select('*')
       .eq('rut', rutN)
       .maybeSingle();
-    if (errSel) throw new BadRequestException(errSel.message);
+    if (error) throw new BadRequestException(error.message);
 
-    const yaAcepto = !!existente?.acepto_acuerdo_en;
-
-    if (!yaAcepto && !opts.acepto_acuerdo) {
-      throw new BadRequestException(
-        'Debe aceptar el acuerdo de confidencialidad para continuar.',
+    if (!portal || !portal.acceso_habilitado) {
+      throw new UnauthorizedException(
+        'Su acceso al portal no está habilitado. Contáctese con su ejecutivo de Amsodent para activarlo.',
       );
     }
-
-    // La razón social siempre viene del maestro de clientes — el portal
-    // no permite que el cliente la edite por su cuenta.
-    const razonSocial = String(cliente.nombre || '').trim();
-
-    const ahora = new Date().toISOString();
-    const payload: any = {
-      rut: rutN,
-      razon_social: razonSocial,
-      email: cliente.email || existente?.email || null,
-      telefono: cliente.telefono || existente?.telefono || null,
-      ultimo_acceso: ahora,
-      updated_at: ahora,
-    };
-
-    // Si nunca aceptó, marcamos aceptación ahora.
-    if (!yaAcepto && opts.acepto_acuerdo) {
-      payload.acepto_acuerdo_en = ahora;
-      payload.acepto_acuerdo_ip = opts.ip || null;
+    if (
+      portal.acceso_expira &&
+      new Date(portal.acceso_expira).getTime() < Date.now()
+    ) {
+      throw new UnauthorizedException(
+        'Su acceso al portal expiró. Contáctese con su ejecutivo de Amsodent para renovarlo.',
+      );
+    }
+    if (!verifyPassword(password, portal.password_hash)) {
+      throw new UnauthorizedException('RUT o contraseña incorrectos.');
     }
 
-    const { error: errUp } = await client
+    const razonSocial =
+      String(cliente.nombre || portal.razon_social || '').trim();
+    const ahora = new Date().toISOString();
+    await client
       .from('stock_clientes_portal')
-      .upsert(payload, { onConflict: 'rut' });
-    if (errUp) throw new BadRequestException(errUp.message);
+      .update({ ultimo_acceso: ahora, updated_at: ahora })
+      .eq('rut', rutN);
 
     const token = this.signToken({ rut: rutN, razon_social: razonSocial });
-
     return {
       token,
       cliente: {
         rut: rutN,
         rut_formateado: formatearRut(rutN),
         razon_social: razonSocial,
-        primer_ingreso: !existente,
+        debe_cambiar_clave: !!portal.password_temporal,
+        requiere_acuerdo: !portal.acepto_acuerdo_en,
       },
     };
+  }
+
+  // Cambio de clave del cliente autenticado (incluye el cambio obligatorio
+  // del primer ingreso). Marca la clave como definitiva.
+  async cambiarClave(rut: string, passwordNueva: string) {
+    const rutN = normalizarRut(rut);
+    const nueva = String(passwordNueva || '');
+    const errPw = validarPasswordPortal(nueva);
+    if (errPw) throw new BadRequestException(errPw);
+    const ahora = new Date().toISOString();
+    const { error } = await this.supabase
+      .getClient()
+      .from('stock_clientes_portal')
+      .update({
+        password_hash: hashPassword(nueva),
+        password_temporal: false,
+        password_actualizada_en: ahora,
+        updated_at: ahora,
+      })
+      .eq('rut', rutN);
+    if (error) throw new BadRequestException(error.message);
+    return { ok: true };
+  }
+
+  // Marca el acuerdo de confidencialidad como aceptado (cliente autenticado).
+  async aceptarAcuerdo(rut: string, ip?: string | null) {
+    const rutN = normalizarRut(rut);
+    const client = this.supabase.getClient();
+    const { data: portal } = await client
+      .from('stock_clientes_portal')
+      .select('acepto_acuerdo_en')
+      .eq('rut', rutN)
+      .maybeSingle();
+    const ahora = new Date().toISOString();
+    const patch: any = { updated_at: ahora };
+    if (!portal?.acepto_acuerdo_en) {
+      patch.acepto_acuerdo_en = ahora;
+      patch.acepto_acuerdo_ip = ip || null;
+    }
+    const { error } = await client
+      .from('stock_clientes_portal')
+      .update(patch)
+      .eq('rut', rutN);
+    if (error) throw new BadRequestException(error.message);
+    return { ok: true };
+  }
+
+  // El cliente solicita recuperar su clave: deja una solicitud para que el
+  // equipo de soporte la atienda (regenerando la clave). No revela si el RUT
+  // tiene o no acceso, para no filtrar información.
+  async solicitarRecuperacion(opts: {
+    rut: string;
+    contacto_nombre?: string;
+    contacto_email?: string;
+    contacto_telefono?: string;
+    mensaje?: string;
+    ip?: string | null;
+    user_agent?: string | null;
+  }) {
+    const rutN = normalizarRut(opts.rut);
+    if (!rutN || !esRutValido(rutN)) {
+      throw new BadRequestException('Debe ingresar un RUT válido.');
+    }
+    const email = String(opts.contacto_email || '').trim().toLowerCase();
+    const telefono = String(opts.contacto_telefono || '').trim();
+    if (!email && !telefono) {
+      throw new BadRequestException(
+        'Indique un correo o teléfono de contacto para poder responderle.',
+      );
+    }
+    if (email && !RE_EMAIL.test(email)) {
+      throw new BadRequestException('El correo de contacto no es válido.');
+    }
+
+    const cliente = await this.buscarClientePorRut(rutN);
+    const { error } = await this.supabase
+      .getClient()
+      .from('stock_recuperacion_solicitudes')
+      .insert({
+        rut: rutN,
+        razon_social: cliente?.nombre || null,
+        contacto_nombre: String(opts.contacto_nombre || '').trim() || null,
+        contacto_email: email || null,
+        contacto_telefono: telefono || null,
+        mensaje: String(opts.mensaje || '').trim() || null,
+        ip_address: opts.ip || null,
+        user_agent: opts.user_agent || null,
+      });
+    if (error) throw new BadRequestException(error.message);
+    return { ok: true };
+  }
+
+  // ── Administración del acceso al portal ───────────────────────────────
+
+  // Lista los clientes con registro en el portal y su estado de acceso.
+  // El correo/razón social se resuelven SIEMPRE contra el maestro de
+  // clientes (en vivo), no contra el snapshot guardado en el portal, para
+  // reflejar ediciones recientes del cliente.
+  async listarAccesos() {
+    const client = this.supabase.getClient();
+    const { data, error } = await client
+      .from('stock_clientes_portal')
+      .select(
+        'rut, razon_social, email, telefono, acceso_habilitado, acceso_vigencia, acceso_expira, acceso_habilitado_en, acceso_habilitado_por, password_temporal, ultimo_acceso, acepto_acuerdo_en',
+      )
+      .order('acceso_habilitado_en', { ascending: false, nullsFirst: false });
+    if (error) throw new BadRequestException(error.message);
+
+    // Maestro de clientes para enriquecer con datos vigentes.
+    const { data: maestro } = await client
+      .from('clientes')
+      .select('rut, nombre, email, telefono')
+      .range(0, 20000);
+    const mapa = new Map<string, any>();
+    (maestro || []).forEach((m: any) => mapa.set(normalizarRut(m?.rut), m));
+
+    return (data || []).map((c: any) => {
+      const m = mapa.get(normalizarRut(c.rut));
+      return {
+        ...c,
+        razon_social: m?.nombre || c.razon_social,
+        email: m?.email || c.email,
+        telefono: m?.telefono || c.telefono,
+        rut_formateado: formatearRut(normalizarRut(c.rut)),
+        // Acceso vigente = habilitado y no expirado.
+        vigente:
+          !!c.acceso_habilitado &&
+          (!c.acceso_expira ||
+            new Date(c.acceso_expira).getTime() >= Date.now()),
+      };
+    });
+  }
+
+  // Búsqueda en el maestro de clientes para habilitar nuevos accesos (por
+  // nombre o RUT). El formato del RUT en BD varía, así que normalizamos.
+  async buscarClientesParaAcceso(query: string) {
+    const q = String(query || '').trim();
+    if (q.length < 2) return [];
+    const ql = q.toLowerCase();
+    const qRut = normalizarRut(q);
+    const { data, error } = await this.supabase
+      .getClient()
+      .from('clientes')
+      .select('id, rut, nombre, email, telefono')
+      .range(0, 20000);
+    if (error) throw new BadRequestException(error.message);
+    return (data || [])
+      .filter((c: any) => {
+        const nombre = String(c?.nombre || '').toLowerCase();
+        const rutN = normalizarRut(c?.rut);
+        return nombre.includes(ql) || (qRut.length >= 2 && rutN.includes(qRut));
+      })
+      .slice(0, 20)
+      .map((c: any) => {
+        const rutN = normalizarRut(c?.rut);
+        return {
+          id: c.id,
+          rut: rutN,
+          rut_formateado: formatearRut(rutN),
+          nombre: c.nombre,
+          email: c.email || null,
+          telefono: c.telefono || null,
+        };
+      });
+  }
+
+  // Habilita el acceso al portal para un cliente: fija contraseña temporal,
+  // vigencia y envía el correo de bienvenida con la clave y el paso a paso.
+  async habilitarAcceso(opts: {
+    rut: string;
+    password: string;
+    vigencia: string;
+    adminEmail?: string | null;
+  }) {
+    const rutN = normalizarRut(opts.rut);
+    if (!rutN || !esRutValido(rutN)) {
+      throw new BadRequestException('El RUT ingresado no es válido.');
+    }
+    const password = String(opts.password || '');
+    const errPw = validarPasswordPortal(password);
+    if (errPw) throw new BadRequestException(errPw);
+    const cliente = await this.buscarClientePorRut(rutN);
+    if (!cliente) {
+      throw new BadRequestException(
+        'El RUT no existe en el maestro de clientes. Cree el cliente antes de habilitar el acceso.',
+      );
+    }
+    const { vigencia, expira } = calcularExpira(opts.vigencia);
+    const ahora = new Date().toISOString();
+    const client = this.supabase.getClient();
+    const { data: existente } = await client
+      .from('stock_clientes_portal')
+      .select('email, telefono')
+      .eq('rut', rutN)
+      .maybeSingle();
+
+    const razonSocial = String(cliente.nombre || '').trim();
+    const email = cliente.email || existente?.email || null;
+    const payload: any = {
+      rut: rutN,
+      razon_social: razonSocial,
+      email,
+      telefono: cliente.telefono || existente?.telefono || null,
+      acceso_habilitado: true,
+      password_hash: hashPassword(password),
+      password_temporal: true,
+      password_actualizada_en: ahora,
+      acceso_vigencia: vigencia,
+      acceso_expira: expira,
+      acceso_habilitado_en: ahora,
+      acceso_habilitado_por: opts.adminEmail || null,
+      updated_at: ahora,
+    };
+    const { error } = await client
+      .from('stock_clientes_portal')
+      .upsert(payload, { onConflict: 'rut' });
+    if (error) throw new BadRequestException(error.message);
+
+    const correo = await this.enviarCorreoBienvenida({
+      rut: rutN,
+      razonSocial,
+      email,
+      passwordTemporal: password,
+      vigencia,
+      expira,
+    });
+
+    return {
+      ok: true,
+      rut: rutN,
+      rut_formateado: formatearRut(rutN),
+      correo_enviado: correo.enviado,
+      correo_destino: correo.para,
+    };
+  }
+
+  // Deshabilita el acceso (sin borrar el registro ni la clave).
+  async deshabilitarAcceso(rut: string) {
+    const rutN = normalizarRut(rut);
+    const { error } = await this.supabase
+      .getClient()
+      .from('stock_clientes_portal')
+      .update({ acceso_habilitado: false, updated_at: new Date().toISOString() })
+      .eq('rut', rutN);
+    if (error) throw new BadRequestException(error.message);
+    return { ok: true };
+  }
+
+  // Regenera una clave temporal nueva (recuperación de clave). Opcionalmente
+  // reenvía el correo y resuelve la solicitud de recuperación asociada.
+  async regenerarClave(opts: {
+    rut: string;
+    password: string;
+    adminEmail?: string | null;
+    reenviar_correo?: boolean;
+    recuperacion_id?: number;
+  }) {
+    const rutN = normalizarRut(opts.rut);
+    if (!rutN) throw new BadRequestException('RUT inválido.');
+    const password = String(opts.password || '');
+    const errPw = validarPasswordPortal(password);
+    if (errPw) throw new BadRequestException(errPw);
+    const client = this.supabase.getClient();
+    const { data: portal, error: errSel } = await client
+      .from('stock_clientes_portal')
+      .select('razon_social, email, acceso_vigencia, acceso_expira')
+      .eq('rut', rutN)
+      .maybeSingle();
+    if (errSel) throw new BadRequestException(errSel.message);
+    if (!portal) {
+      throw new BadRequestException(
+        'Este cliente no tiene acceso al portal. Habilítelo primero.',
+      );
+    }
+
+    const ahora = new Date().toISOString();
+    const { error } = await client
+      .from('stock_clientes_portal')
+      .update({
+        password_hash: hashPassword(password),
+        password_temporal: true,
+        password_actualizada_en: ahora,
+        updated_at: ahora,
+      })
+      .eq('rut', rutN);
+    if (error) throw new BadRequestException(error.message);
+
+    let correo = { enviado: false, para: null as string | null };
+    if (opts.reenviar_correo !== false) {
+      correo = await this.enviarCorreoBienvenida({
+        rut: rutN,
+        razonSocial: portal.razon_social,
+        email: portal.email,
+        passwordTemporal: password,
+        vigencia: portal.acceso_vigencia || 'indefinido',
+        expira: portal.acceso_expira || null,
+      });
+    }
+
+    if (opts.recuperacion_id) {
+      await client
+        .from('stock_recuperacion_solicitudes')
+        .update({
+          estado: 'resuelta',
+          resuelta_at: ahora,
+          resuelta_por: opts.adminEmail || null,
+        })
+        .eq('id', opts.recuperacion_id);
+    }
+
+    return {
+      ok: true,
+      correo_enviado: correo.enviado,
+      correo_destino: correo.para,
+    };
+  }
+
+  // Solicitudes de recuperación de clave para la bandeja del admin.
+  async listarRecuperaciones(estado?: string) {
+    let q = this.supabase
+      .getClient()
+      .from('stock_recuperacion_solicitudes')
+      .select('*')
+      .order('created_at', { ascending: false });
+    if (estado === 'pendiente' || estado === 'resuelta') {
+      q = q.eq('estado', estado);
+    }
+    const { data, error } = await q;
+    if (error) throw new BadRequestException(error.message);
+    return (data || []).map((r: any) => ({
+      ...r,
+      rut_formateado: formatearRut(normalizarRut(r.rut)),
+    }));
+  }
+
+  async resolverRecuperacion(id: number, adminEmail?: string | null) {
+    const { error } = await this.supabase
+      .getClient()
+      .from('stock_recuperacion_solicitudes')
+      .update({
+        estado: 'resuelta',
+        resuelta_at: new Date().toISOString(),
+        resuelta_por: adminEmail || null,
+      })
+      .eq('id', id);
+    if (error) throw new BadRequestException(error.message);
+    return { ok: true };
+  }
+
+  // Envía el correo de bienvenida (clave temporal + período + paso a paso).
+  // Sale por el SMTP del sistema (no depende del Gmail del admin). Si el
+  // cliente no tiene correo válido, no falla la habilitación: solo avisa.
+  private async enviarCorreoBienvenida(opts: {
+    rut: string;
+    razonSocial?: string | null;
+    email?: string | null;
+    passwordTemporal: string;
+    vigencia: string;
+    expira: string | null;
+  }): Promise<{ enviado: boolean; para: string | null }> {
+    const rutN = normalizarRut(opts.rut);
+    let para = String(opts.email || '').trim().toLowerCase();
+    if (!para) {
+      const cli = await this.buscarClientePorRut(rutN);
+      para = String(cli?.email || '').trim().toLowerCase();
+    }
+    if (!RE_EMAIL.test(para)) {
+      this.logger.warn(
+        `Bienvenida portal: cliente ${rutN} sin correo válido; no se envió.`,
+      );
+      return { enviado: false, para: null };
+    }
+
+    const base = String(
+      process.env.APP_PUBLIC_URL ||
+        process.env.PUBLIC_APP_URL ||
+        process.env.FRONTEND_URL ||
+        'http://localhost:5173',
+    ).replace(/\/+$/, '');
+    const urlPortal = `${base}/portal-cliente`;
+    const expiraTexto = opts.expira
+      ? new Date(opts.expira).toLocaleDateString('es-CL', {
+          day: 'numeric',
+          month: 'long',
+          year: 'numeric',
+        })
+      : '';
+
+    const { asunto, html } = plantillaBienvenidaPortal({
+      razonSocial: String(opts.razonSocial || '').trim() || formatearRut(rutN),
+      rutFmt: formatearRut(rutN),
+      passwordTemporal: opts.passwordTemporal,
+      vigenciaTexto: vigenciaTexto(opts.vigencia),
+      expiraTexto,
+      urlPortal,
+    });
+
+    try {
+      await this.mailings.enviarUno({ para, asunto, cuerpoHtml: html });
+      return { enviado: true, para };
+    } catch (e: any) {
+      this.logger.warn(
+        `Bienvenida portal falló para ${para}: ${e?.message || e}`,
+      );
+      return { enviado: false, para };
+    }
   }
 
   // ── Productos del cliente (persistentes entre sesiones) ───────────────
@@ -355,6 +817,7 @@ export class StockClientesService {
     body: {
       items: Array<{
         nombre: string;
+        sku?: string;
         marca?: string;
         unidad?: string;
         stock_actual: number | string;
@@ -380,6 +843,7 @@ export class StockClientesService {
     const itemsLimpios: ItemDeclaracion[] = items
       .map((it) => {
         const nombre = String(it?.nombre || '').trim().slice(0, 200);
+        const sku = String(it?.sku || '').trim().slice(0, 80) || null;
         const marca = String(it?.marca || '').trim().slice(0, 100) || null;
         const unidad = String(it?.unidad || '').trim().slice(0, 50) || null;
         const stock_actual = Number(it?.stock_actual) || 0;
@@ -403,6 +867,7 @@ export class StockClientesService {
         const es_critico = it?.es_critico === true;
         return {
           nombre,
+          sku,
           marca,
           unidad,
           stock_actual,
@@ -467,6 +932,7 @@ export class StockClientesService {
     const productosRows = itemsLimpios.map((it) => ({
       rut: rutN,
       nombre: it.nombre,
+      sku: it.sku ?? null,
       marca: it.marca,
       unidad: it.unidad,
       stock_actual: it.stock_actual,
@@ -477,9 +943,20 @@ export class StockClientesService {
       activo: true,
       actualizado_at: ahora,
     }));
-    const { error: errInsProd } = await client
+    let { error: errInsProd } = await client
       .from('stock_productos_cliente')
       .insert(productosRows);
+    // Si la columna `sku` aún no existe (migración pendiente), reintenta sin
+    // ella para no bloquear la declaración.
+    if (
+      errInsProd &&
+      (errInsProd.code === '42703' || /sku/i.test(errInsProd.message || ''))
+    ) {
+      const rowsSinSku = productosRows.map(({ sku, ...resto }) => resto);
+      ({ error: errInsProd } = await client
+        .from('stock_productos_cliente')
+        .insert(rowsSinSku));
+    }
     if (errInsProd) {
       // No borramos los previos: la lista persistente conserva su estado
       // anterior y avisamos del problema en vez de perder datos en silencio.

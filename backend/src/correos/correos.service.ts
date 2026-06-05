@@ -294,6 +294,7 @@ export class CorreosService {
   async enviar(opts: {
     licitacionId: number;
     para: string;
+    cc?: string[];
     asunto: string;
     cuerpoHtml: string;
     adjuntarDocumentoId?: number | null;
@@ -301,6 +302,13 @@ export class CorreosService {
     const lic = await this.getLicitacion(Number(opts.licitacionId));
     const vendedorCorreo = this.correoVendedor(lic);
     const cuenta = await this.cuentaDeVendedor(lic);
+
+    // "Copia a": correos válidos, sin duplicar el destinatario principal.
+    const paraNorm = String(opts.para || '').trim().toLowerCase();
+    const cc = (Array.isArray(opts.cc) ? opts.cc : [])
+      .map((e) => String(e || '').trim().toLowerCase())
+      .filter((e) => RE_EMAIL.test(e) && e !== paraNorm);
+    const ccArg = cc.length > 0 ? cc : undefined;
 
     const attachments: Array<{ filename: string; content: Buffer; contentType?: string }> = [];
     if (opts.adjuntarDocumentoId) {
@@ -317,6 +325,7 @@ export class CorreosService {
       const res = await this.gmailApi.enviarComo(this.credsDe(cuenta), {
         remitente,
         para: opts.para,
+        cc: ccArg,
         asunto: opts.asunto,
         html: opts.cuerpoHtml,
         attachments,
@@ -327,6 +336,7 @@ export class CorreosService {
     // Respaldo: cuenta SMTP compartida, con responder-a hacia el vendedor.
     const res = await this.mailings.enviarUno({
       para: opts.para,
+      cc: ccArg,
       asunto: opts.asunto,
       cuerpoHtml: opts.cuerpoHtml,
       replyTo: vendedorCorreo || undefined,

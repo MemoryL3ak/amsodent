@@ -141,4 +141,44 @@ export class MetasService {
     if (error) throw new BadRequestException(error.message);
     return { deleted: true };
   }
+
+  // equipo_meta_cotizaciones — meta mensual (customizable) de cotizaciones
+  // ingresadas del equipo completo. Default 900 si no hay fila.
+  async getMetaCotizaciones(periodo: string) {
+    const client = this.supabase.getClient();
+    const { data, error } = await client
+      .from('equipo_meta_cotizaciones')
+      .select('periodo,meta')
+      .eq('periodo', periodo)
+      .maybeSingle();
+    if (error) throw new BadRequestException(error.message);
+    if (data) return { periodo: data.periodo, meta: Number(data.meta) || 900 };
+
+    // Fallback: arrastrar la meta del último periodo con datos.
+    const periodoFallback = await this.getUltimoPeriodoAnterior(
+      'equipo_meta_cotizaciones',
+      periodo,
+    );
+    if (periodoFallback) {
+      const { data: prev } = await client
+        .from('equipo_meta_cotizaciones')
+        .select('meta')
+        .eq('periodo', periodoFallback)
+        .maybeSingle();
+      if (prev) return { periodo, meta: Number(prev.meta) || 900 };
+    }
+    return { periodo, meta: 900 };
+  }
+
+  async upsertMetaCotizaciones(periodo: string, meta: number) {
+    const valor = Number.isFinite(Number(meta)) ? Math.max(0, Math.round(Number(meta))) : 900;
+    const { error } = await this.supabase.getClient()
+      .from('equipo_meta_cotizaciones')
+      .upsert(
+        { periodo, meta: valor, updated_at: new Date().toISOString() },
+        { onConflict: 'periodo' },
+      );
+    if (error) throw new BadRequestException(error.message);
+    return { ok: true, periodo, meta: valor };
+  }
 }

@@ -1823,3 +1823,9 @@ select.input {
 .trazabilidad-table tbody tr:hover td:first-child::before {
   opacity: 1;
 }
+
+/* Autocompletado de Google Places: el dropdown se monta en <body>; subimos su
+   z-index para que no quede tapado por los modales (overlay z-index 1000+). */
+.pac-container {
+  z-index: 12000 !important;
+}

@@ -125,6 +125,38 @@ function filaDato(icono: string, etiqueta: string, valor: string, ultima = false
   </tr>`;
 }
 
+// URL de seguimiento según la empresa de despacho. Devuelve '' si no hay
+// rastreo en línea (ej. despacho interno / otro).
+function urlTracking(empresa: string, codigo: string): string {
+  const cod = encodeURIComponent(String(codigo || '').trim());
+  if (!cod) return '';
+  const e = String(empresa || '').toLowerCase();
+  if (e.includes('starken')) return `https://www.starken.cl/seguimiento?codigo=${cod}`;
+  if (e.includes('blue')) return `https://www.blue.cl/seguimiento/?n_seguimiento=${cod}`;
+  return '';
+}
+
+// Igual que filaDato, pero el valor es un enlace clickeable (para el N° de
+// seguimiento que redirige al tracking del courier). Si no hay href, cae a
+// texto plano.
+function filaDatoLink(
+  icono: string,
+  etiqueta: string,
+  valor: string,
+  href: string,
+  ultima = false,
+): string {
+  const borde = ultima ? '' : `border-bottom:1px solid ${C.bordeTenue};`;
+  const valorHtml = href
+    ? `<a href="${escapeHtml(href)}" target="_blank" rel="noopener" style="color:${C.acentoOsc};font-weight:700;text-decoration:underline;">${escapeHtml(valor)}</a>`
+    : escapeHtml(valor);
+  return `<tr>
+    <td style="padding:12px 0;${borde}width:28px;font-size:16px;vertical-align:middle;">${icono}</td>
+    <td style="padding:12px 0;${borde}color:${C.suave};font-size:12px;text-transform:uppercase;letter-spacing:.5px;vertical-align:middle;width:44%;">${escapeHtml(etiqueta)}</td>
+    <td style="padding:12px 0;${borde}font-size:15px;font-weight:700;text-align:right;vertical-align:middle;">${valorHtml}</td>
+  </tr>`;
+}
+
 // Tarjeta de datos: panel claro con borde y título de sección turquesa.
 function tarjetaDatos(titulo: string, filas: string): string {
   return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:6px 0 24px;background:${C.panel};border:1px solid ${C.borde};border-radius:12px;">
@@ -227,7 +259,7 @@ export function plantillaAgradecimientoOC(
     ${titulo('¡Gracias por tu orden de compra!', 'Recibimos tu pedido y ya estamos trabajando en él.')}
     <p style="margin:0 0 14px;">Estimado(a) <strong>${escapeHtml(cliente)}</strong>,</p>
     <p style="margin:0 0 20px;color:${C.suave};">
-      Queremos agradecerte por confiar en <strong style="color:${C.texto};">AMSODENT</strong>.
+      Queremos agradecer por confiar en <strong style="color:${C.texto};">Amsodent Medical</strong>.
       Tu orden de compra fue recibida correctamente y entró en proceso. A continuación
       te dejamos el detalle y el estado de tu pedido.
     </p>
@@ -534,11 +566,12 @@ export function plantillaGuiaDespacho(
   const vCorreo = String(datos.vendedorCorreo || '').trim();
   const vCelular = String(datos.vendedorCelular || '').trim();
 
+  const trackingUrl = urlTracking(empresa, seguimiento);
   const filasArr = [
     numeroOc ? filaDato('📋', 'N° Orden de Compra', numeroOc) : '',
     numeroGuia ? filaDato('📄', 'N° Guía de Despacho', numeroGuia) : '',
     empresa ? filaDato('🚚', 'Empresa de despacho', empresa) : '',
-    seguimiento ? filaDato('🔎', 'N° de seguimiento', seguimiento) : '',
+    seguimiento ? filaDatoLink('🔎', 'N° de seguimiento', seguimiento, trackingUrl) : '',
   ].filter(Boolean);
   const filas = filasArr
     .map((f, i) =>
@@ -559,7 +592,11 @@ export function plantillaGuiaDespacho(
     ${tarjetaDatos('Datos del despacho', filas)}
     ${etiquetaSeccion('Estado del pedido')}
     ${pasos(2)}
-    ${nota('📎&nbsp;&nbsp;Adjuntamos la guía de despacho en PDF. Ante cualquier consulta sobre el envío, puedes responder directamente a este correo.')}
+    ${nota(
+      trackingUrl
+        ? '🔎&nbsp;&nbsp;Haz clic en el N° de seguimiento para ver el estado de tu envío en línea. Adjuntamos además la guía de despacho en PDF y puedes responder a este correo ante cualquier consulta.'
+        : '📎&nbsp;&nbsp;Adjuntamos la guía de despacho en PDF. Ante cualquier consulta sobre el envío, puedes responder directamente a este correo.',
+    )}
     ${firma(vendedor, vCorreo, vCelular)}`;
 
   return {
@@ -567,6 +604,164 @@ export function plantillaGuiaDespacho(
     asunto: numeroOc || 'Guía de Despacho de tu pedido',
     html: envolver({
       preheader: `Tu pedido${numeroOc ? ` (OC N° ${numeroOc})` : ''} fue despachado. Revisa el seguimiento.`,
+      contenido,
+    }),
+  };
+}
+
+// Botón principal (CTA) turquesa centrado.
+function botonCta(texto: string, href: string): string {
+  if (!href) return '';
+  return `<table role="presentation" cellpadding="0" cellspacing="0" align="center" style="margin:6px auto 24px;">
+    <tr><td align="center" style="border-radius:10px;background:${C.acento};">
+      <a href="${escapeHtml(href)}" target="_blank" rel="noopener" style="display:inline-block;padding:13px 30px;color:#ffffff;font-size:14px;font-weight:700;text-decoration:none;border-radius:10px;letter-spacing:.2px;">
+        ${escapeHtml(texto)} →
+      </a>
+    </td></tr>
+  </table>`;
+}
+
+// Lista numerada de pasos (paso a paso de acceso).
+function listaPasos(items: string[]): string {
+  const filas = items
+    .map(
+      (txt, i) => `<tr>
+        <td valign="top" style="width:30px;padding:7px 0;">
+          <table role="presentation" cellpadding="0" cellspacing="0"><tr>
+            <td width="24" height="24" align="center" valign="middle"
+                style="width:24px;height:24px;background:${C.acentoSuave};color:${C.acentoOsc};border-radius:50%;font-size:12px;font-weight:800;line-height:24px;text-align:center;">${i + 1}</td>
+          </tr></table>
+        </td>
+        <td valign="middle" style="padding:7px 0 7px 12px;color:${C.texto};font-size:14px;line-height:1.55;">${txt}</td>
+      </tr>`,
+    )
+    .join('');
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:4px 0 22px;">${filas}</table>`;
+}
+
+export type DatosBienvenidaPortal = {
+  razonSocial: string;
+  rutFmt: string;
+  passwordTemporal: string;
+  // Texto legible del período: "1 mes", "3 meses", "Acceso indefinido".
+  vigenciaTexto: string;
+  // Fecha de expiración legible (vacío si es indefinido).
+  expiraTexto?: string;
+  urlPortal: string;
+};
+
+// Correo de bienvenida cuando el admin habilita el acceso al Portal del
+// Cliente (stock). Entrega la clave temporal, el período de acceso y el
+// paso a paso para ingresar.
+export function plantillaBienvenidaPortal(
+  datos: DatosBienvenidaPortal,
+): PlantillaResultado {
+  const razonSocial = String(datos.razonSocial || '').trim() || datos.rutFmt;
+  const clave = String(datos.passwordTemporal || '').trim();
+  const url = String(datos.urlPortal || '').trim();
+
+  const filasAcceso = [
+    filaDato('🪪', 'RUT de acceso', datos.rutFmt),
+    filaDato('🔑', 'Clave temporal', clave),
+    filaDato('🗓️', 'Vigencia del acceso', datos.vigenciaTexto),
+    datos.expiraTexto
+      ? filaDato('⏳', 'Acceso válido hasta', datos.expiraTexto, true)
+      : filaDato('♾️', 'Sin fecha de término', 'Acceso indefinido', true),
+  ]
+    .filter(Boolean)
+    .join('');
+
+  const pasosAcceso = [
+    `Ingrese al portal desde el botón de abajo${url ? '' : ' (le compartiremos el enlace)'}.`,
+    `Escriba su <strong>RUT</strong> y la <strong>clave temporal</strong> indicada en este correo.`,
+    `Por seguridad, el sistema le pedirá <strong>cambiar la clave</strong> en su primer ingreso.`,
+    `Acepte el acuerdo de confidencialidad y comience a declarar su stock y a solicitar cotizaciones.`,
+  ];
+
+  const contenido = `
+    ${insignia('👋')}
+    ${titulo('Bienvenido al Portal del Cliente', 'Ya tiene acceso para gestionar su stock con Amsodent.')}
+    <p style="margin:0 0 14px;">Estimado(a) <strong>${escapeHtml(razonSocial)}</strong>,</p>
+    <p style="margin:0 0 20px;color:${C.suave};">
+      Habilitamos su acceso al <strong style="color:${C.texto};">Portal del Cliente</strong> de
+      Amsodent Medical. Desde ahí podrá declarar el stock de su empresa, recibir alertas
+      cuando un producto se acerque al mínimo y solicitar cotizaciones de reposición.
+    </p>
+    ${tarjetaDatos('Sus datos de acceso', filasAcceso)}
+    ${botonCta('Ingresar al portal', url)}
+    ${etiquetaSeccion('Cómo acceder, paso a paso')}
+    ${listaPasos(pasosAcceso)}
+    ${nota('🔒&nbsp;&nbsp;Por su seguridad, no comparta esta clave. Si no solicitó este acceso o necesita ayuda, responda a este correo y le asistiremos.')}
+  `;
+
+  return {
+    asunto: 'Acceso habilitado · Portal del Cliente Amsodent',
+    html: envolver({
+      preheader: `Su acceso al Portal del Cliente está habilitado (${datos.vigenciaTexto}). Clave temporal incluida.`,
+      contenido,
+    }),
+  };
+}
+
+export type DatosBienvenidaChofer = {
+  nombre: string;
+  rutFmt: string;
+  passwordTemporal: string;
+  // Texto legible del período: "1 mes", "3 meses", "Acceso indefinido".
+  vigenciaTexto: string;
+  // Fecha de expiración legible (vacío si es indefinido).
+  expiraTexto?: string;
+  urlPortal: string;
+};
+
+// Correo de bienvenida cuando el admin habilita el acceso del chofer al Portal
+// de Despachos. Entrega la clave temporal, el período y el paso a paso (incluye
+// activar la ubicación para el tracking en ruta).
+export function plantillaBienvenidaChofer(
+  datos: DatosBienvenidaChofer,
+): PlantillaResultado {
+  const nombre = String(datos.nombre || '').trim() || datos.rutFmt;
+  const clave = String(datos.passwordTemporal || '').trim();
+  const url = String(datos.urlPortal || '').trim();
+
+  const filasAcceso = [
+    filaDato('🪪', 'RUT de acceso', datos.rutFmt),
+    filaDato('🔑', 'Clave temporal', clave),
+    filaDato('🗓️', 'Vigencia del acceso', datos.vigenciaTexto),
+    datos.expiraTexto
+      ? filaDato('⏳', 'Acceso válido hasta', datos.expiraTexto, true)
+      : filaDato('♾️', 'Sin fecha de término', 'Acceso indefinido', true),
+  ]
+    .filter(Boolean)
+    .join('');
+
+  const pasosAcceso = [
+    `Ingresa al portal desde el botón de abajo${url ? '' : ' (te compartiremos el enlace)'}.`,
+    `Escribe tu <strong>RUT</strong> y la <strong>clave temporal</strong> indicada en este correo.`,
+    `Por seguridad, el sistema te pedirá <strong>cambiar la clave</strong> en tu primer ingreso.`,
+    `Acepta el permiso de <strong>ubicación</strong> para que podamos seguir tus despachos mientras estás en ruta.`,
+  ];
+
+  const contenido = `
+    ${insignia('🚚')}
+    ${titulo('Bienvenido al Portal de Despachos', 'Revisa tus viajes asignados y comparte tu ubicación en ruta.')}
+    <p style="margin:0 0 14px;">Hola <strong>${escapeHtml(nombre)}</strong>,</p>
+    <p style="margin:0 0 20px;color:${C.suave};">
+      Habilitamos tu acceso al <strong style="color:${C.texto};">Portal de Despachos</strong> de
+      Amsodent Medical. Desde ahí podrás ver los despachos y viajes que tienes asignados,
+      actualizar su estado (en ruta, entregado) y reportar tu ubicación en tiempo real.
+    </p>
+    ${tarjetaDatos('Tus datos de acceso', filasAcceso)}
+    ${botonCta('Ingresar al portal', url)}
+    ${etiquetaSeccion('Cómo ingresar, paso a paso')}
+    ${listaPasos(pasosAcceso)}
+    ${nota('🔒&nbsp;&nbsp;Por tu seguridad, no compartas esta clave. Si no solicitaste este acceso o necesitas ayuda, responde a este correo y te asistiremos.')}
+  `;
+
+  return {
+    asunto: 'Acceso habilitado · Portal de Despachos Amsodent',
+    html: envolver({
+      preheader: `Tu acceso al Portal de Despachos está habilitado (${datos.vigenciaTexto}). Clave temporal incluida.`,
       contenido,
     }),
   };

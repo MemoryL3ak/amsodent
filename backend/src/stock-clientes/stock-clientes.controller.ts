@@ -32,23 +32,57 @@ export class StockClientesController {
     return await this.stockClientes.verificarRut(body?.rut);
   }
 
-  @Post('acceso')
-  async acceso(
+  // Login del cliente con RUT + contraseña.
+  @Post('login')
+  async login(
     @Req() req: any,
-    @Body()
-    body: {
-      rut: string;
-      razon_social?: string;
-      email?: string;
-      telefono?: string;
-      acepto_acuerdo: boolean;
-    },
+    @Body() body: { rut: string; password: string },
   ) {
     const ip =
       req?.headers?.['x-forwarded-for']?.toString().split(',')[0]?.trim() ||
       req?.ip ||
       null;
-    return await this.stockClientes.acceso({ ...body, ip });
+    return await this.stockClientes.login({ ...body, ip });
+  }
+
+  // Solicitud de recuperación de clave (el cliente no está autenticado).
+  @Post('recuperacion')
+  async solicitarRecuperacion(@Req() req: any, @Body() body: any) {
+    const ip =
+      req?.headers?.['x-forwarded-for']?.toString().split(',')[0]?.trim() ||
+      req?.ip ||
+      null;
+    const userAgent = req?.headers?.['user-agent'] || null;
+    return await this.stockClientes.solicitarRecuperacion({
+      ...body,
+      ip,
+      user_agent: userAgent,
+    });
+  }
+
+  // Cambio de clave del cliente autenticado (incluye el cambio obligatorio
+  // del primer ingreso).
+  @UseGuards(StockPortalGuard)
+  @Post('cambiar-clave')
+  async cambiarClave(
+    @Req() req: any,
+    @Body() body: { password_nueva: string },
+  ) {
+    return await this.stockClientes.cambiarClave(
+      req.stockPortal.rut,
+      body?.password_nueva,
+    );
+  }
+
+  // Aceptación del acuerdo de confidencialidad (cliente autenticado).
+  @UseGuards(StockPortalGuard)
+  @Post('aceptar-acuerdo')
+  async aceptarAcuerdo(@Req() req: any) {
+    const ip =
+      req?.headers?.['x-forwarded-for']?.toString().split(',')[0]?.trim() ||
+      req?.ip ||
+      null;
+    return await this.stockClientes.aceptarAcuerdo(req.stockPortal.rut, ip);
   }
 
   // ============================================================
@@ -215,5 +249,75 @@ export class StockClientesController {
   @Delete('destinatarios/:id')
   async eliminarDestinatario(@Param('id', ParseIntPipe) id: number) {
     return await this.stockClientes.eliminarDestinatario(id);
+  }
+
+  // ============================================================
+  // Admin — habilitación de acceso al portal y recuperaciones
+  // ============================================================
+  @UseGuards(AdminGuard)
+  @Get('accesos')
+  async listarAccesos() {
+    return await this.stockClientes.listarAccesos();
+  }
+
+  // Búsqueda en el maestro de clientes para habilitar un acceso nuevo.
+  @UseGuards(AdminGuard)
+  @Get('accesos/buscar-cliente')
+  async buscarClienteParaAcceso(@Query('q') q: string) {
+    return await this.stockClientes.buscarClientesParaAcceso(q);
+  }
+
+  @UseGuards(AdminGuard)
+  @Post('accesos/habilitar')
+  async habilitarAcceso(
+    @Req() req: any,
+    @Body() body: { rut: string; password: string; vigencia: string },
+  ) {
+    return await this.stockClientes.habilitarAcceso({
+      ...body,
+      adminEmail: req?.user?.email || null,
+    });
+  }
+
+  @UseGuards(AdminGuard)
+  @Post('accesos/deshabilitar')
+  async deshabilitarAcceso(@Body() body: { rut: string }) {
+    return await this.stockClientes.deshabilitarAcceso(body?.rut);
+  }
+
+  @UseGuards(AdminGuard)
+  @Post('accesos/regenerar-clave')
+  async regenerarClave(
+    @Req() req: any,
+    @Body()
+    body: {
+      rut: string;
+      password: string;
+      reenviar_correo?: boolean;
+      recuperacion_id?: number;
+    },
+  ) {
+    return await this.stockClientes.regenerarClave({
+      ...body,
+      adminEmail: req?.user?.email || null,
+    });
+  }
+
+  @UseGuards(AdminGuard)
+  @Get('recuperaciones')
+  async listarRecuperaciones(@Query('estado') estado?: string) {
+    return await this.stockClientes.listarRecuperaciones(estado);
+  }
+
+  @UseGuards(AdminGuard)
+  @Put('recuperaciones/:id/resolver')
+  async resolverRecuperacion(
+    @Req() req: any,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return await this.stockClientes.resolverRecuperacion(
+      id,
+      req?.user?.email || null,
+    );
   }
 }

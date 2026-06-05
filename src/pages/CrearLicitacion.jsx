@@ -739,6 +739,7 @@ export default function CrearLicitacion() {
   const [idLicitacionInput, setIdLicitacionInput] = useState("");
   const [nombre, setNombre] = useState("");
   const [fechaHoraCierre, setFechaHoraCierre] = useState("");
+  const [fechaPublicacionResultados, setFechaPublicacionResultados] = useState("");
   const [monto, setMonto] = useState(""); // string formateado "1.234.567"
   const [listado, setListado] = useState("2"); // derivado de tipoCompra: "Compra ágil" → lista 2
 
@@ -1496,7 +1497,11 @@ export default function CrearLicitacion() {
     // Para cliente particular el ID se genera automáticamente (igual al id interno) — no validamos.
     if (!esClienteParticular && !idLicitacionInput) errores.push("ID Licitación");
     if (!nombre) errores.push("Nombre Licitación");
-    if (!fechaHoraCierre) errores.push("Fecha y Hora de Cierre");
+    // Cliente particular no lleva fecha/hora de cierre.
+    if (!esClienteParticular && !fechaHoraCierre) errores.push("Fecha y Hora de Cierre");
+    // Licitaciones exigen fecha de publicación de resultados.
+    const esLicitacionTipo = tipoCompra === "Licitación 0 a 8 meses" || tipoCompra === "Licitación 9 a 24 meses";
+    if (esLicitacionTipo && !fechaPublicacionResultados) errores.push("Fecha de publicación de resultados");
     if (!monto) errores.push("Monto");
     if (!tipoCliente) errores.push("Tipo de Cotización");
     if (!rutEntidad) errores.push("RUT Entidad");
@@ -1636,7 +1641,8 @@ export default function CrearLicitacion() {
         lic = await api.post("/licitaciones", {
             id_licitacion: idLicitacionParaInsert,
             nombre,
-            fecha_hora_cierre: fechaHoraCierre,
+            fecha_hora_cierre: esClienteParticular ? null : (fechaHoraCierre || null),
+            fecha_publicacion_resultados: fechaPublicacionResultados || null,
             monto: parseMontoCL(monto),
             lista_precios: Number(listado),
 
@@ -1995,17 +2001,19 @@ export default function CrearLicitacion() {
             />
           </div>
 
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Fecha y Hora de Cierre *
-            </label>
-            <input
-              type="datetime-local"
-              className="w-full rounded-md border border-gray-300 px-3 py-2"
-              value={fechaHoraCierre}
-              onChange={(e) => setFechaHoraCierre(e.target.value)}
-            />
-          </div>
+          {!(tipoCliente.toLowerCase() === "cliente particular" || tipoCompra === "Cliente particular") && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Fecha y Hora de Cierre *
+              </label>
+              <input
+                type="datetime-local"
+                className="w-full rounded-md border border-gray-300 px-3 py-2"
+                value={fechaHoraCierre}
+                onChange={(e) => setFechaHoraCierre(e.target.value)}
+              />
+            </div>
+          )}
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -2054,6 +2062,20 @@ export default function CrearLicitacion() {
               Cliente particular usa Lista 1, Licitación 9 a 24 meses usa Lista 3 (Lista 2 × 1.08); el resto usa Lista 2.
             </p>
           </div>
+
+          {(tipoCompra === "Licitación 0 a 8 meses" || tipoCompra === "Licitación 9 a 24 meses") && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Fecha de publicación de resultados *
+              </label>
+              <input
+                type="date"
+                className="w-full rounded-md border border-gray-300 px-3 py-2"
+                value={fechaPublicacionResultados}
+                onChange={(e) => setFechaPublicacionResultados(e.target.value)}
+              />
+            </div>
+          )}
         </div>
         </div>
       </div>

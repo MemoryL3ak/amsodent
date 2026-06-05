@@ -25,6 +25,7 @@ export default function CorreoComposer({
   const [enviado, setEnviado] = useState(false);
 
   const [para, setPara] = useState("");
+  const [cc, setCc] = useState("");
   const [asunto, setAsunto] = useState("");
   const [cuerpoHtml, setCuerpoHtml] = useState("");
   const [replyTo, setReplyTo] = useState("");
@@ -74,11 +75,22 @@ export default function CorreoComposer({
       setError("El asunto no puede estar vacío.");
       return;
     }
+    // "Copia a": separa por coma, punto y coma o espacios y valida cada correo.
+    const ccLista = (cc || "")
+      .split(/[,;\s]+/)
+      .map((e) => e.trim())
+      .filter(Boolean);
+    const ccInvalido = ccLista.find((e) => !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e));
+    if (ccInvalido) {
+      setError(`Hay un correo inválido en "Copia a": ${ccInvalido}`);
+      return;
+    }
     setEnviando(true);
     try {
       await api.post("/correos/enviar", {
         licitacionId,
         para: destinatario,
+        cc: ccLista,
         asunto: asunto.trim(),
         cuerpoHtml,
         adjuntarDocumentoId: adjuntarDocumentoId ?? null,
@@ -129,7 +141,7 @@ export default function CorreoComposer({
             alignItems: "center",
             justifyContent: "space-between",
             padding: "14px 18px",
-            background: "#0e7490",
+            background: "linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%)",
             color: "#fff",
           }}
         >
@@ -180,7 +192,7 @@ export default function CorreoComposer({
                   </span>
                 </div>
                 {modoEnvio === "gmail" ? (
-                  <p style={{ fontSize: 12, color: "#0e7490", margin: "5px 0 0" }}>
+                  <p style={{ fontSize: 12, color: "var(--primary-dark)", margin: "5px 0 0" }}>
                     Se enviará desde la casilla del vendedor; las respuestas del cliente le llegarán directamente.
                   </p>
                 ) : (
@@ -204,6 +216,15 @@ export default function CorreoComposer({
                   style={inputStyle}
                 />
               </Campo>
+              <Campo etiqueta="Copia a (CC) — opcional">
+                <input
+                  type="text"
+                  value={cc}
+                  onChange={(e) => setCc(e.target.value)}
+                  placeholder="copia1@correo.cl, copia2@correo.cl"
+                  style={inputStyle}
+                />
+              </Campo>
               <Campo etiqueta="Asunto">
                 <input
                   type="text"
@@ -216,7 +237,7 @@ export default function CorreoComposer({
                 <p
                   style={{
                     fontSize: 13,
-                    color: "#0e7490",
+                    color: "var(--primary-dark)",
                     margin: "0 0 10px",
                     display: "flex",
                     alignItems: "center",
@@ -298,7 +319,7 @@ export default function CorreoComposer({
                 padding: "9px 18px",
                 borderRadius: 8,
                 border: "none",
-                background: enviando ? "#94a3b8" : "#0e7490",
+                background: enviando ? "#94a3b8" : "linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%)",
                 color: "#fff",
                 fontWeight: 700,
                 cursor: enviando ? "default" : "pointer",
@@ -329,7 +350,7 @@ export default function CorreoComposer({
                 padding: "9px 18px",
                 borderRadius: 8,
                 border: "none",
-                background: "#0e7490",
+                background: "linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%)",
                 color: "#fff",
                 fontWeight: 700,
                 cursor: "pointer",

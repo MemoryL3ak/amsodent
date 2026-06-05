@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
 import useAuth from "../hooks/useAuth";
 import DateFilter from "../components/DateFilter";
-import { FileText, Trophy, TrendingUp, CircleDollarSign, Truck } from "lucide-react";
+import { FileText, Trophy, TrendingUp, CircleDollarSign, Truck, Package, Lock } from "lucide-react";
 
 const ESTADOS_ORDEN = [
   "En espera",
@@ -129,6 +129,7 @@ export default function Ventas() {
   const [montoOcByLicitacion, setMontoOcByLicitacion] = useState({});
   const [ocNetoByLicitacion, setOcNetoByLicitacion] = useState({});
   const [guiaNetoByLicitacion, setGuiaNetoByLicitacion] = useState({});
+  const [facturaNetoByLicitacion, setFacturaNetoByLicitacion] = useState({});
   const [usuariosMap, setUsuariosMap] = useState({});
   const [fechaDesde, setFechaDesde] = useState(inicioMesISO());
   const [fechaHasta, setFechaHasta] = useState(hoyISO());
@@ -170,7 +171,7 @@ export default function Ventas() {
       setErrorMsg("");
 
       try {
-        const lics = await api.get("/licitaciones/with-fields?fields=id,id_licitacion,fecha,fecha_adjudicada,estado,creado_por,monto,total_con_iva,total_sin_iva,comuna,region,tipo_cliente,tipo_compra");
+        const lics = await api.get("/licitaciones/with-fields?fields=id,id_licitacion,fecha,fecha_adjudicada,estado,creado_por,monto,total_con_iva,total_sin_iva,comuna,region,tipo_cliente,tipo_compra,ciclo_cerrado,monto_forzado");
 
         let rows = lics || [];
         const emailUser = (user?.email || "").trim().toLowerCase();
@@ -200,6 +201,7 @@ export default function Ventas() {
         let montoOcMap = {};
         let ocNetoMap = {};
         let guiaNetoMap = {};
+        let facturaNetoMap = {};
         if (docsOcResult.status === "fulfilled") {
           const docsOc = docsOcResult.value;
           const primeraOcMap = {};
@@ -219,6 +221,10 @@ export default function Ventas() {
             }
             if (tipo === "guia_despacho") {
               guiaNetoMap[licId] = Number(guiaNetoMap[licId] || 0) + Number(d?.monto || 0);
+            }
+            // Facturas/boletas (real vendido del Cliente Particular).
+            if (tipo === "factura_boleta") {
+              facturaNetoMap[licId] = Number(facturaNetoMap[licId] || 0) + Number(d?.monto || 0);
             }
             // Fecha de adjudicación = primera OC (o primera factura/efectivo en Particular).
             if (tipo === "orden_compra" || tipo === "factura_boleta" || tipo === "efectivo") {
@@ -253,6 +259,7 @@ export default function Ventas() {
         setMontoOcByLicitacion(montoOcMap);
         setOcNetoByLicitacion(ocNetoMap);
         setGuiaNetoByLicitacion(guiaNetoMap);
+        setFacturaNetoByLicitacion(facturaNetoMap);
         setUsuariosMap(mapa);
       } catch (e) {
         console.error("Error cargando ventas:", e);
@@ -262,6 +269,7 @@ export default function Ventas() {
           setMontoOcByLicitacion({});
           setOcNetoByLicitacion({});
           setGuiaNetoByLicitacion({});
+          setFacturaNetoByLicitacion({});
           setUsuariosMap({});
         }
       } finally {
@@ -362,6 +370,38 @@ export default function Ventas() {
     );
     const ocSinDespacharNeto = totalOcNeto - totalGuiaNeto;
 
+    // ── Tarjetas Resumen Comercial (definiciones del negocio) ──────────────
+    const esParticular = (l) =>
+      (l.tipo_cliente || "").toString().toLowerCase().includes("particular");
+
+    // 1) Monto adjudicado = suma de las OC adjuntas en el periodo (neto).
+    const adjudicadoOcNeto = totalOcNeto;
+
+    // 2) Real vendido: Pública = guías de despacho; Particular = facturas/boletas.
+    const realVendidoPublicaNeto = licitacionesFiltradas.reduce(
+      (acc, l) => acc + (esParticular(l) ? 0 : Number(guiaNetoByLicitacion[l.id] || 0)),
+      0,
+    );
+    const realVendidoParticularNeto = licitacionesFiltradas.reduce(
+      (acc, l) => acc + (esParticular(l) ? Number(facturaNetoByLicitacion[l.id] || 0) : 0),
+      0,
+    );
+    const realVendidoNeto = realVendidoPublicaNeto + realVendidoParticularNeto;
+
+    // 3) Pendiente por despachar = OC − guías, SOLO de ciclos NO forzados.
+    const pendienteDespacharNeto = licitacionesFiltradas.reduce((acc, l) => {
+      if (l.ciclo_cerrado) return acc;
+      const oc = Number(ocNetoByLicitacion[l.id] || 0);
+      const guia = Number(guiaNetoByLicitacion[l.id] || 0);
+      return acc + Math.max(0, oc - guia);
+    }, 0);
+
+    // 4) Monto total forzado a cierre = suma de lo capturado al cerrar ciclo.
+    const totalForzadoNeto = licitacionesFiltradas.reduce(
+      (acc, l) => acc + (l.ciclo_cerrado ? Number(l.monto_forzado || 0) : 0),
+      0,
+    );
+
     const ticketPromedio = total > 0 ? montoTotal / total : 0;
     const tasaAdjudicacion = total > 0 ? (adjudicadas.length / total) * 100 : 0;
 
@@ -377,10 +417,16 @@ export default function Ventas() {
       totalOcNeto,
       totalGuiaNeto,
       ocSinDespacharNeto,
+      adjudicadoOcNeto,
+      realVendidoPublicaNeto,
+      realVendidoParticularNeto,
+      realVendidoNeto,
+      pendienteDespacharNeto,
+      totalForzadoNeto,
       ticketPromedio,
       tasaAdjudicacion,
     };
-  }, [licitacionesFiltradas, ocNetoByLicitacion, guiaNetoByLicitacion]);
+  }, [licitacionesFiltradas, ocNetoByLicitacion, guiaNetoByLicitacion, facturaNetoByLicitacion]);
 
   const resumenPorEstado = useMemo(() => {
     const total = licitacionesFiltradas.length || 1;
@@ -659,45 +705,39 @@ export default function Ventas() {
         </div>
       ) : (
         <>
-          {/* KPI CARDS */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: "16px", marginBottom: "20px" }}>
+          {/* KPI CARDS — Despacho y cierre */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "16px", marginBottom: "20px" }}>
             <KpiCard
-              title="Cotizaciones"
-              value={`${resumenGeneral.total} / ${resumenGeneral.adjudicadas}`}
-              subtitle="Realizadas / Adjudicadas"
-              minor={`${fmtPct(resumenGeneral.tasaAdjudicacion)} de adjudicación`}
-              color="#0891b2"
-              icon={FileText}
-            />
-            <KpiCard
-              title="Adjudicadas"
-              value={resumenGeneral.adjudicadas}
-              color="#16a34a"
-              icon={Trophy}
-            />
-            <KpiCard
-              title="Monto Total"
-              value={fmtCLP(resumenGeneral.montoTotalNeto)}
-              subtitle="Neto"
-              minor={`Bruto: ${fmtCLP(resumenGeneral.montoTotal)}`}
-              color="#475569"
-              icon={TrendingUp}
-            />
-            <KpiCard
-              title="Monto Adjudicado"
-              value={fmtCLP(resumenGeneral.montoAdjudicadoNeto)}
-              subtitle="Neto"
-              minor={`Bruto: ${fmtCLP(resumenGeneral.montoAdjudicado)}`}
+              title="Monto Adjudicado (OC)"
+              value={fmtCLP(resumenGeneral.adjudicadoOcNeto)}
+              subtitle="Neto · suma de OC del periodo"
+              minor={`Bruto: ${fmtCLP(montoBrutoDesdeNeto(resumenGeneral.adjudicadoOcNeto))}`}
               color="#d97706"
               icon={CircleDollarSign}
             />
             <KpiCard
-              title="Saldo por despachar"
-              value={fmtCLP(resumenGeneral.ocSinDespacharNeto)}
-              subtitle={`OC neto ${fmtCLP(resumenGeneral.totalOcNeto)} − Guías neto ${fmtCLP(resumenGeneral.totalGuiaNeto)}`}
-              minor="Neto de OC subidas menos neto de guías de despacho"
-              color="#0d9488"
+              title="Real Vendido"
+              value={fmtCLP(resumenGeneral.realVendidoNeto)}
+              subtitle={`Bruto: ${fmtCLP(montoBrutoDesdeNeto(resumenGeneral.realVendidoNeto))}`}
+              minor={`Pública ${fmtCLP(resumenGeneral.realVendidoPublicaNeto)} · Particular ${fmtCLP(resumenGeneral.realVendidoParticularNeto)}`}
+              color="#16a34a"
               icon={Truck}
+            />
+            <KpiCard
+              title="Pendiente por Despachar"
+              value={fmtCLP(resumenGeneral.pendienteDespacharNeto)}
+              subtitle="Neto · OC − guías (ciclos abiertos)"
+              minor={`Bruto: ${fmtCLP(montoBrutoDesdeNeto(resumenGeneral.pendienteDespacharNeto))}`}
+              color="#0d9488"
+              icon={Package}
+            />
+            <KpiCard
+              title="Forzado a Cierre"
+              value={fmtCLP(resumenGeneral.totalForzadoNeto)}
+              subtitle="Neto · no se despacha (cierre forzado)"
+              minor={`Bruto: ${fmtCLP(montoBrutoDesdeNeto(resumenGeneral.totalForzadoNeto))}`}
+              color="#dc2626"
+              icon={Lock}
             />
           </div>
 

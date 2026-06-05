@@ -20,6 +20,8 @@ import { DespachosModule } from './despachos/despachos.module';
 import { ChatModule } from './chat/chat.module';
 import { MarcajesModule } from './marcajes/marcajes.module';
 import { StockClientesModule } from './stock-clientes/stock-clientes.module';
+import { RecordatoriosModule } from './recordatorios/recordatorios.module';
+import { ChoferesModule } from './choferes/choferes.module';
 
 @Module({
   imports: [
@@ -44,6 +46,8 @@ import { StockClientesModule } from './stock-clientes/stock-clientes.module';
     ChatModule,
     MarcajesModule,
     StockClientesModule,
+    RecordatoriosModule,
+    ChoferesModule,
   ],
 })
 export class AppModule {}

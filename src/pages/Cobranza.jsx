@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
 import { api } from "../lib/api";
 import { supabase } from "../lib/supabase";
@@ -16,6 +17,9 @@ import {
   Loader2,
   History,
   AlertTriangle,
+  MapPin,
+  ChevronDown,
+  Check,
 } from "lucide-react";
 
 /* ── Helpers de fechas/plazos (mismo criterio que Seguimiento de Pagos) ── */
@@ -48,6 +52,11 @@ function fmtCLP(value) {
   return `$${Number(value || 0).toLocaleString("es-CL")}`;
 }
 
+// Los montos de documentos se guardan NETOS; el monto a cobrar es con IVA.
+function brutoDesdeNeto(neto) {
+  return Math.round(Number(neto || 0) * 1.19);
+}
+
 function fmtDateCL(d) {
   if (!d) return "—";
   if (typeof d === "string") return new Date(`${d}T00:00:00`).toLocaleDateString("es-CL");
@@ -71,10 +80,121 @@ const ESTADOS_COBRANZA = [
 ];
 const ESTADO_MAP = Object.fromEntries(ESTADOS_COBRANZA.map((e) => [e.value, e]));
 
+/* ── Dropdown custom de estado de cobranza (pill de color + menú con portal) ── */
+function EstadoCobranzaDropdown({ value, onChange, disabled }) {
+  const [open, setOpen] = useState(false);
+  const [coords, setCoords] = useState(null);
+  const btnRef = useRef(null);
+  const actual = ESTADO_MAP[value] || ESTADOS_COBRANZA[0];
+
+  function toggle() {
+    if (disabled) return;
+    if (!open && btnRef.current) {
+      const r = btnRef.current.getBoundingClientRect();
+      setCoords({ left: r.left, top: r.bottom + 4, width: r.width });
+    }
+    setOpen((o) => !o);
+  }
+
+  useEffect(() => {
+    if (!open) return;
+    const close = () => setOpen(false);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("resize", close);
+    return () => {
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("resize", close);
+    };
+  }, [open]);
+
+  return (
+    <>
+      <button
+        ref={btnRef}
+        type="button"
+        onClick={toggle}
+        disabled={disabled}
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 6,
+          height: 30,
+          padding: "0 10px",
+          borderRadius: 999,
+          border: `1.5px solid ${actual.color}40`,
+          background: actual.bg,
+          color: actual.color,
+          fontSize: 12,
+          fontWeight: 700,
+          cursor: disabled ? "default" : "pointer",
+          whiteSpace: "nowrap",
+        }}
+      >
+        <span style={{ width: 8, height: 8, borderRadius: "50%", background: actual.color, flexShrink: 0 }} />
+        {actual.label}
+        {!disabled && <ChevronDown size={13} style={{ opacity: 0.7 }} />}
+      </button>
+      {open && coords && createPortal(
+        <>
+          <div onMouseDown={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 11000 }} />
+          <div
+            style={{
+              position: "fixed",
+              left: coords.left,
+              top: coords.top,
+              minWidth: Math.max(190, coords.width),
+              zIndex: 11001,
+              background: "var(--surface)",
+              border: "1px solid var(--border)",
+              borderRadius: 10,
+              boxShadow: "var(--shadow-lg)",
+              padding: 4,
+            }}
+          >
+            {ESTADOS_COBRANZA.map((op) => {
+              const sel = op.value === value;
+              return (
+                <button
+                  key={op.value}
+                  type="button"
+                  onClick={() => { onChange(op.value); setOpen(false); }}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    width: "100%",
+                    textAlign: "left",
+                    padding: "8px 10px",
+                    border: "none",
+                    background: sel ? `${op.color}14` : "transparent",
+                    color: "var(--text)",
+                    fontSize: 12.5,
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    borderRadius: 6,
+                  }}
+                  onMouseEnter={(e) => { if (!sel) e.currentTarget.style.background = "var(--bg)"; }}
+                  onMouseLeave={(e) => { if (!sel) e.currentTarget.style.background = "transparent"; }}
+                >
+                  <span style={{ width: 8, height: 8, borderRadius: "50%", background: op.color, flexShrink: 0 }} />
+                  <span style={{ flex: 1 }}>{op.label}</span>
+                  {sel && <Check size={13} style={{ color: op.color }} />}
+                </button>
+              );
+            })}
+          </div>
+        </>,
+        document.body,
+      )}
+    </>
+  );
+}
+
 const TIPOS_GESTION = [
   { value: "llamada", label: "Llamada", icon: Phone, color: "#0d9488" },
   { value: "correo", label: "Correo", icon: Mail, color: "#1d4ed8" },
   { value: "whatsapp", label: "WhatsApp", icon: MessageCircle, color: "#15803d" },
+  { value: "visita_terreno", label: "Visita a terreno", icon: MapPin, color: "#7c3aed" },
   { value: "nota", label: "Nota", icon: StickyNote, color: "#b45309" },
 ];
 const TIPO_GESTION_MAP = Object.fromEntries(TIPOS_GESTION.map((t) => [t.value, t]));
@@ -89,17 +209,29 @@ export default function Cobranza() {
   const yoNombre = perfil?.nombre || user?.email || "Usuario";
 
   const [facturas, setFacturas] = useState([]);
+  const [ocs, setOcs] = useState([]); // órdenes de compra (para filtro OC y monto de factura pública)
+  const [guiasPorLic, setGuiasPorLic] = useState({}); // licitacion_id → guía de despacho
   const [licMap, setLicMap] = useState({});
   const [estadosMap, setEstadosMap] = useState({}); // documento_id -> { estado, ... }
   const [gestionesPorDoc, setGestionesPorDoc] = useState({}); // documento_id -> [gestiones]
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState(null);
 
-  // Filtros
+  // Pestañas
+  const [tab, setTab] = useState("vencidas"); // "vencidas" | "historial"
+
+  // Filtros (Vencidas)
   const [filtroEntidad, setFiltroEntidad] = useState("");
   const [filtroNumero, setFiltroNumero] = useState("");
+  const [filtroOC, setFiltroOC] = useState("");
+  const [filtroCotId, setFiltroCotId] = useState("");
   const [filtroTipoCotizacion, setFiltroTipoCotizacion] = useState("");
   const [filtroEstado, setFiltroEstado] = useState("");
+
+  // Filtros (Historial de gestiones)
+  const [hEntidad, setHEntidad] = useState("");
+  const [hNumero, setHNumero] = useState("");
+  const [hTipo, setHTipo] = useState("");
 
   // Modales
   const [modalGestion, setModalGestion] = useState(null); // { doc, lic }
@@ -124,8 +256,10 @@ export default function Cobranza() {
 
         const ids = rows.map((l) => l.id);
         let docs = [];
+        let ordenes = [];
+        const guiasMap = {};
         if (ids.length > 0) {
-          const [fact, boletas] = await Promise.all([
+          const [fact, boletas, guias, ocsResp] = await Promise.all([
             api.post("/licitaciones/documentos/filter", {
               filter: { licitacion_ids: ids, tipo: "factura" },
               fields: "*",
@@ -134,8 +268,25 @@ export default function Cobranza() {
               filter: { licitacion_ids: ids, tipo: "factura_boleta" },
               fields: "*",
             }),
+            api.post("/licitaciones/documentos/filter", {
+              filter: { licitacion_ids: ids, tipo: "guia_despacho" },
+              fields: "*",
+            }),
+            api.post("/licitaciones/documentos/filter", {
+              filter: { licitacion_ids: ids, tipo: "orden_compra" },
+              fields: "*",
+            }),
           ]);
           docs = [...(fact || []), ...(boletas || [])];
+          ordenes = ocsResp || [];
+          // Última guía de despacho por cotización (para auto-adjuntar al correo).
+          (guias || []).forEach((g) => {
+            const lid = g.licitacion_id;
+            const prev = guiasMap[lid];
+            const fa = String(g.fecha_oc || g.created_at || "");
+            const fp = prev ? String(prev.fecha_oc || prev.created_at || "") : "";
+            if (!prev || fa > fp) guiasMap[lid] = g;
+          });
         }
 
         // Estados y gestiones de cobranza (Supabase directo, con RLS).
@@ -147,6 +298,8 @@ export default function Cobranza() {
         if (!activo) return;
         setLicMap(mapa);
         setFacturas(docs);
+        setOcs(ordenes);
+        setGuiasPorLic(guiasMap);
 
         const em = {};
         (estados || []).forEach((e) => { em[e.documento_id] = e; });
@@ -189,6 +342,38 @@ export default function Cobranza() {
       });
   }, [facturas, licMap]);
 
+  // OC por documento (resolver deriva_de_id) y por cotización (filtro + monto).
+  const ocById = useMemo(() => {
+    const m = {};
+    ocs.forEach((o) => { m[o.id] = o; });
+    return m;
+  }, [ocs]);
+
+  const ocPorLic = useMemo(() => {
+    const m = {};
+    ocs.forEach((o) => {
+      const k = String(o.licitacion_id);
+      if (!m[k]) m[k] = [];
+      m[k].push(o);
+    });
+    return m;
+  }, [ocs]);
+
+  // Monto a cobrar (con IVA) tomado de la FACTURA, no de la cotización:
+  //  - particular: factura_boleta.monto (neto) → bruto
+  //  - pública: la factura deriva de una OC; si no, suma de OC de la cotización
+  //  - fallback final: total con IVA de la cotización
+  const montoFacturaBruto = useCallback((f, lic) => {
+    const neto = Number(f?.monto || 0);
+    if (neto > 0) return brutoDesdeNeto(neto);
+    const ocDeriva = f?.deriva_de_id != null ? ocById[f.deriva_de_id] : null;
+    if (ocDeriva && Number(ocDeriva.monto) > 0) return brutoDesdeNeto(ocDeriva.monto);
+    const ocsLic = ocPorLic[String(f?.licitacion_id)] || [];
+    const sumaOc = ocsLic.reduce((acc, o) => acc + Number(o.monto || 0), 0);
+    if (sumaOc > 0) return brutoDesdeNeto(sumaOc);
+    return Number(lic?.total_con_iva || 0) || 0;
+  }, [ocById, ocPorLic]);
+
   const tiposCotizacion = useMemo(() => {
     const set = new Set();
     Object.values(licMap || {}).forEach((l) => {
@@ -204,6 +389,18 @@ export default function Cobranza() {
       if (!lic) return false;
       if (filtroEntidad && !(lic.nombre_entidad || "").toLowerCase().includes(filtroEntidad.toLowerCase())) return false;
       if (filtroNumero && !(f.numero || "").toString().toLowerCase().includes(filtroNumero.toLowerCase())) return false;
+      if (filtroCotId) {
+        const q = filtroCotId.trim().toLowerCase();
+        const idTxt = `${lic.id ?? ""}`.toLowerCase();
+        const idLicTxt = `${lic.id_licitacion || ""}`.toLowerCase();
+        if (!idTxt.includes(q) && !idLicTxt.includes(q)) return false;
+      }
+      if (filtroOC) {
+        const q = filtroOC.trim().toLowerCase();
+        const ocsLic = ocPorLic[String(f.licitacion_id)] || [];
+        const match = ocsLic.some((o) => (o.numero || "").toString().toLowerCase().includes(q));
+        if (!match) return false;
+      }
       if (filtroTipoCotizacion && (lic.tipo_cliente || "").toString().trim() !== filtroTipoCotizacion) return false;
       if (filtroEstado) {
         const est = estadosMap[String(f.id)]?.estado || "sin_gestion";
@@ -211,20 +408,43 @@ export default function Cobranza() {
       }
       return true;
     });
-  }, [vencidas, licMap, filtroEntidad, filtroNumero, filtroTipoCotizacion, filtroEstado, estadosMap]);
+  }, [vencidas, licMap, filtroEntidad, filtroNumero, filtroCotId, filtroOC, ocPorLic, filtroTipoCotizacion, filtroEstado, estadosMap]);
 
   const stats = useMemo(() => {
     let monto = 0, sinGestion = 0, enGestion = 0, comprometido = 0;
     vencidas.forEach((f) => {
       const lic = licMap[f.licitacion_id];
-      monto += Number(lic?.total_con_iva || 0);
+      monto += montoFacturaBruto(f, lic);
       const est = estadosMap[String(f.id)]?.estado || "sin_gestion";
       if (est === "sin_gestion") sinGestion++;
       else if (est === "en_gestion") enGestion++;
       else if (est === "comprometido") comprometido++;
     });
     return { cantidad: vencidas.length, monto, sinGestion, enGestion, comprometido };
-  }, [vencidas, licMap, estadosMap]);
+  }, [vencidas, licMap, estadosMap, montoFacturaBruto]);
+
+  // Historial: todas las gestiones registradas (cualquier cotización), filtrables.
+  const historial = useMemo(() => {
+    const todas = Object.values(gestionesPorDoc).flat();
+    todas.sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")));
+    const ent = hEntidad.trim().toLowerCase();
+    const num = hNumero.trim().toLowerCase();
+    return todas.filter((g) => {
+      const lic = licMap[g.licitacion_id];
+      if (ent) {
+        const txt = `${lic?.nombre_entidad || ""} ${lic?.id ?? ""} ${lic?.id_licitacion || ""}`.toLowerCase();
+        if (!txt.includes(ent)) return false;
+      }
+      if (num && !(g.numero || "").toString().toLowerCase().includes(num)) return false;
+      if (hTipo && g.tipo !== hTipo) return false;
+      return true;
+    });
+  }, [gestionesPorDoc, licMap, hEntidad, hNumero, hTipo]);
+
+  const totalGestiones = useMemo(
+    () => Object.values(gestionesPorDoc).reduce((acc, arr) => acc + arr.length, 0),
+    [gestionesPorDoc],
+  );
 
   async function abrirDocumento(doc) {
     if (!doc?.bucket || !doc?.storage_path) {
@@ -316,11 +536,60 @@ export default function Cobranza() {
         <div>
           <h1 className="page-title">Cobranza</h1>
           <p className="page-subtitle">
-            Gestión de facturas y boletas vencidas — {filtradas.length} de {vencidas.length}
+            {tab === "vencidas"
+              ? `Gestión de facturas y boletas vencidas — ${filtradas.length} de ${vencidas.length}`
+              : `Historial de gestiones registradas — ${historial.length} de ${totalGestiones}`}
           </p>
         </div>
       </div>
 
+      {/* Pestañas */}
+      <div style={{ display: "flex", gap: 4, borderBottom: "1px solid var(--border)", marginBottom: 16 }}>
+        {[
+          { id: "vencidas", label: "Gestión de cobranza", count: vencidas.length },
+          { id: "historial", label: "Historial de gestiones", count: totalGestiones },
+        ].map((t) => {
+          const activo = tab === t.id;
+          return (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => setTab(t.id)}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 7,
+                padding: "10px 16px",
+                border: "none",
+                background: "none",
+                cursor: "pointer",
+                fontSize: 13.5,
+                fontWeight: 700,
+                color: activo ? "var(--primary-dark)" : "var(--text-muted)",
+                borderBottom: `2.5px solid ${activo ? "var(--primary)" : "transparent"}`,
+                marginBottom: -1,
+              }}
+            >
+              {t.label}
+              <span
+                style={{
+                  fontSize: 11,
+                  fontWeight: 700,
+                  padding: "1px 8px",
+                  borderRadius: 999,
+                  background: activo ? "var(--primary-light)" : "var(--bg)",
+                  color: activo ? "var(--primary-dark)" : "var(--text-muted)",
+                }}
+              >
+                {t.count}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      {tab === "vencidas" && (
+      <>
       {/* KPIs */}
       <div className="stats-row">
         <div className="stat-card">
@@ -351,6 +620,14 @@ export default function Cobranza() {
         <div className="filter-field">
           <label className="filter-label">Entidad / Cliente</label>
           <input type="text" className="input" placeholder="Buscar…" value={filtroEntidad} onChange={(e) => setFiltroEntidad(e.target.value)} />
+        </div>
+        <div className="filter-field">
+          <label className="filter-label">N° / ID Cotización</label>
+          <input type="text" className="input" placeholder="N° o ID licitación…" value={filtroCotId} onChange={(e) => setFiltroCotId(e.target.value)} />
+        </div>
+        <div className="filter-field">
+          <label className="filter-label">N° Orden de Compra</label>
+          <input type="text" className="input" placeholder="Buscar OC…" value={filtroOC} onChange={(e) => setFiltroOC(e.target.value)} />
         </div>
         <div className="filter-field">
           <label className="filter-label">N° Factura / Boleta</label>
@@ -451,7 +728,7 @@ export default function Cobranza() {
                         <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{fmtDateCL(f.fecha_factura)}</div>
                       </td>
                       <td style={{ verticalAlign: "middle", textAlign: "right", fontWeight: 600, whiteSpace: "nowrap" }}>
-                        {lic.total_con_iva ? fmtCLP(lic.total_con_iva) : "—"}
+                        {(() => { const m = montoFacturaBruto(f, lic); return m > 0 ? fmtCLP(m) : "—"; })()}
                       </td>
                       <td style={{ verticalAlign: "middle" }}>
                         <div style={{ color: "#1f2937", fontWeight: 500 }}>{fmtDateCL(venc)}</div>
@@ -460,23 +737,10 @@ export default function Cobranza() {
                         </div>
                       </td>
                       <td style={{ verticalAlign: "middle" }}>
-                        <select
-                          className="input"
+                        <EstadoCobranzaDropdown
                           value={estado}
-                          onChange={(e) => cambiarEstado(f, lic, e.target.value)}
-                          style={{
-                            height: 30,
-                            fontSize: 12,
-                            fontWeight: 600,
-                            color: ESTADO_MAP[estado]?.color,
-                            background: ESTADO_MAP[estado]?.bg,
-                            border: "none",
-                            borderRadius: 8,
-                            padding: "0 6px",
-                          }}
-                        >
-                          {ESTADOS_COBRANZA.map((op) => <option key={op.value} value={op.value} style={{ color: "#1f2937", background: "#fff" }}>{op.label}</option>)}
-                        </select>
+                          onChange={(v) => cambiarEstado(f, lic, v)}
+                        />
                       </td>
                       <td style={{ verticalAlign: "middle" }}>
                         {ultima ? (
@@ -515,6 +779,112 @@ export default function Cobranza() {
           </table>
         </div>
       </div>
+      </>
+      )}
+
+      {tab === "historial" && (
+      <>
+        {/* Filtros del historial */}
+        <div className="filter-bar">
+          <div className="filter-field">
+            <label className="filter-label">Cotización / Entidad</label>
+            <input type="text" className="input" placeholder="N° cotización, ID o entidad…" value={hEntidad} onChange={(e) => setHEntidad(e.target.value)} />
+          </div>
+          <div className="filter-field">
+            <label className="filter-label">N° Factura / Boleta</label>
+            <input type="text" className="input" placeholder="Buscar N°…" value={hNumero} onChange={(e) => setHNumero(e.target.value)} />
+          </div>
+          <div className="filter-field">
+            <label className="filter-label">Tipo de gestión</label>
+            <select className="input" value={hTipo} onChange={(e) => setHTipo(e.target.value)}>
+              <option value="">Todas</option>
+              {TIPOS_GESTION.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+            </select>
+          </div>
+        </div>
+
+        {/* Tabla del historial */}
+        <div className="table-wrap" style={{ marginTop: 12 }}>
+          <div className="table-scroll" style={{ maxHeight: "calc(100vh - 360px)", minHeight: 240 }}>
+            <table className="data-table table-fit">
+              <colgroup>
+                <col style={{ width: "14%" }} />
+                <col style={{ width: "24%" }} />
+                <col style={{ width: "12%" }} />
+                <col style={{ width: "13%" }} />
+                <col style={{ width: "37%" }} />
+              </colgroup>
+              <thead>
+                <tr>
+                  <th style={{ textAlign: "left" }}>Fecha</th>
+                  <th style={{ textAlign: "left" }}>Cotización / Cliente</th>
+                  <th style={{ textAlign: "left" }}>Factura / Boleta</th>
+                  <th style={{ textAlign: "left" }}>Tipo</th>
+                  <th style={{ textAlign: "left" }}>Detalle</th>
+                </tr>
+              </thead>
+              <tbody>
+                {historial.length === 0 ? (
+                  <tr>
+                    <td colSpan="5" style={{ textAlign: "center", padding: "60px 0", color: "var(--text-muted)" }}>
+                      No hay gestiones con los filtros aplicados.
+                    </td>
+                  </tr>
+                ) : (
+                  historial.map((g) => {
+                    const lic = licMap[g.licitacion_id];
+                    const meta = TIPO_GESTION_MAP[g.tipo];
+                    const I = meta?.icon || StickyNote;
+                    return (
+                      <tr key={g.id}>
+                        <td style={{ verticalAlign: "top", whiteSpace: "nowrap", fontSize: 12, color: "var(--text-muted)" }}>
+                          {fmtFechaHora(g.created_at)}
+                        </td>
+                        <td style={{ verticalAlign: "top" }}>
+                          {lic ? (
+                            <>
+                              <Link to={`/detalle/${lic.id}`} className="table-link" style={{ fontWeight: 600 }}>#{lic.id}</Link>
+                              {lic.id_licitacion && <span style={{ color: "var(--text-muted)", fontSize: 11, marginLeft: 6 }}>{lic.id_licitacion}</span>}
+                              <div style={{ fontSize: 12.5, color: "#1f2937", marginTop: 2 }}>{lic.nombre_entidad || "—"}</div>
+                            </>
+                          ) : (
+                            <span style={{ color: "var(--text-muted)", fontSize: 12 }}>Cotización #{g.licitacion_id}</span>
+                          )}
+                        </td>
+                        <td style={{ verticalAlign: "top", fontSize: 13, color: "#1f2937" }}>{g.numero || "S/N"}</td>
+                        <td style={{ verticalAlign: "top" }}>
+                          <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12.5, fontWeight: 600, color: meta?.color || "#1f2937" }}>
+                            <I size={13} /> {meta?.label || g.tipo}
+                          </span>
+                        </td>
+                        <td style={{ verticalAlign: "top" }}>
+                          {g.tipo === "correo" && (
+                            <div style={{ fontSize: 11.5, color: "var(--text-muted)", marginBottom: 2 }}>
+                              Para: {g.correo_para || "—"}{g.correo_cc?.length ? ` · CC: ${g.correo_cc.join(", ")}` : ""}
+                              {g.adjuntos?.length ? ` · ${g.adjuntos.length} adjunto(s)` : ""}
+                            </div>
+                          )}
+                          {(g.correo_asunto || g.detalle) ? (
+                            <div style={{ fontSize: 13, color: "#475569", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                              {g.correo_asunto ? <strong>{g.correo_asunto}</strong> : null}
+                              {g.correo_asunto && g.detalle ? " — " : ""}
+                              {g.detalle}
+                            </div>
+                          ) : (
+                            <span style={{ color: "var(--text-muted)", fontSize: 12 }}>—</span>
+                          )}
+                          <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 3 }}>{g.creado_por_nombre || g.creado_por_email}</div>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </>
+      )}
 
       {modalGestion && (
         <ModalGestion
@@ -532,6 +902,7 @@ export default function Cobranza() {
         <ModalCorreo
           doc={modalCorreo.doc}
           lic={modalCorreo.lic}
+          guia={guiasPorLic[modalCorreo.lic?.id] || null}
           onCerrar={() => setModalCorreo(null)}
           onEnviado={(msg) => { setToast({ type: "success", message: msg }); setModalCorreo(null); }}
           onError={(msg) => setToast({ type: "error", message: msg })}
@@ -577,7 +948,7 @@ function ModalGestion({ doc, lic, gestiones, onCerrar, onRegistrar, onEnviarCorr
 
           {/* Registrar nueva gestión */}
           <div style={{ border: "1px solid var(--border)", borderRadius: 10, padding: 14, marginBottom: 18 }}>
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+            <div style={{ display: "flex", gap: 6, flexWrap: "nowrap", marginBottom: 10 }}>
               {TIPOS_GESTION.map((t) => {
                 const activo = tipo === t.value;
                 const I = t.icon;
@@ -587,15 +958,17 @@ function ModalGestion({ doc, lic, gestiones, onCerrar, onRegistrar, onEnviarCorr
                     type="button"
                     onClick={() => setTipo(t.value)}
                     style={{
-                      display: "inline-flex", alignItems: "center", gap: 6,
-                      padding: "6px 12px", borderRadius: 8, cursor: "pointer",
+                      display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 5,
+                      padding: "6px 10px", borderRadius: 8, cursor: "pointer",
                       border: `1.5px solid ${activo ? t.color : "var(--border)"}`,
                       background: activo ? `${t.color}14` : "#fff",
                       color: activo ? t.color : "var(--text-muted)",
-                      fontWeight: 600, fontSize: 12.5,
+                      fontWeight: 600, fontSize: 12,
+                      whiteSpace: "nowrap", flexShrink: 0,
                     }}
+                    title={t.label}
                   >
-                    <I size={14} /> {t.label}
+                    <I size={14} style={{ flexShrink: 0 }} /> {t.label}
                   </button>
                 );
               })}
@@ -676,7 +1049,7 @@ function ModalGestion({ doc, lic, gestiones, onCerrar, onRegistrar, onEnviarCorr
 }
 
 /* ── Modal: redactar y enviar correo de cobranza ────────────────────── */
-function ModalCorreo({ doc, lic, onCerrar, onEnviado, onError, registrarGestion }) {
+function ModalCorreo({ doc, lic, guia, onCerrar, onEnviado, onError, registrarGestion }) {
   const vencDias = (() => {
     const d = diasEntre(doc.fecha_factura);
     return d != null ? plazoDias(lic?.condicion_venta) - d : null;
@@ -694,6 +1067,33 @@ function ModalCorreo({ doc, lic, onCerrar, onEnviado, onError, registrarGestion 
   const [adjuntos, setAdjuntos] = useState([]); // [{url,nombre,mime}]
   const [subiendo, setSubiendo] = useState(false);
   const [enviando, setEnviando] = useState(false);
+
+  // Auto-adjuntar la factura y la guía de despacho de la cotización (removibles).
+  useEffect(() => {
+    let activo = true;
+    async function adjuntoDesdeDoc(d) {
+      if (!d?.bucket || !d?.storage_path) return null;
+      try {
+        const data = await api.get(
+          `/licitaciones/storage/signed-url?bucket=${encodeURIComponent(d.bucket)}&path=${encodeURIComponent(d.storage_path)}`,
+        );
+        if (!data?.signedUrl) return null;
+        return { url: data.signedUrl, nombre: d.file_name || `${d.tipo || "documento"}.pdf`, mime: d.mime_type || "application/pdf" };
+      } catch { return null; }
+    }
+    (async () => {
+      const pre = [];
+      const aFactura = await adjuntoDesdeDoc(doc);
+      if (aFactura) pre.push(aFactura);
+      if (guia) {
+        const aGuia = await adjuntoDesdeDoc(guia);
+        if (aGuia) pre.push(aGuia);
+      }
+      if (activo && pre.length) setAdjuntos((prev) => [...pre, ...prev]);
+    })();
+    return () => { activo = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function onFiles(files) {
     if (!files?.length) return;

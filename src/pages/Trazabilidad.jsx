@@ -88,6 +88,53 @@ function buildTrackingUrl(empresa, nSeguimiento) {
   return builder ? builder(codigo) : "";
 }
 
+// Contenido de la celda "Tracking Envío": empresa + N° seguimiento (link al
+// courier si aplica). Sirve tanto para guía pública como para info de despacho.
+function TrackingEnvioContenido({ empresa, nSeguimiento }) {
+  const empresaTxt = String(empresa || "").trim();
+  const cod = String(nSeguimiento || "").trim();
+  if (!empresaTxt && !cod) return <span style={{ color: "var(--text-muted)" }}>—</span>;
+  const url = buildTrackingUrl(empresaTxt, cod);
+  return (
+    <div>
+      {empresaTxt && (
+        <div style={{ color: "#1f2937", fontWeight: 500, fontSize: 12 }}>{empresaTxt}</div>
+      )}
+      {cod && (
+        url ? (
+          <a
+            href={url}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={() => {
+              if (navigator?.clipboard) navigator.clipboard.writeText(cod).catch(() => {});
+            }}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 4,
+              marginTop: 3,
+              padding: "3px 8px",
+              borderRadius: 6,
+              backgroundColor: "#ea580c",
+              color: "#fff",
+              fontSize: 11,
+              fontWeight: 600,
+              textDecoration: "none",
+              lineHeight: 1,
+            }}
+            title={`Abrir tracking ${empresaTxt} (${cod})`}
+          >
+            <Truck size={12} /> {cod}
+          </a>
+        ) : (
+          <div style={{ color: "var(--text-muted)", fontSize: 11, marginTop: 2 }}>{cod}</div>
+        )
+      )}
+    </div>
+  );
+}
+
 /* ============================================================
    Helpers
 ============================================================ */
@@ -352,6 +399,8 @@ export default function Trazabilidad() {
   const [filtroFechaHasta, setFiltroFechaHasta] = useStickyState("trazabilidad.fechaHasta", "");
   const [filtroTipoCotizacion, setFiltroTipoCotizacion] = useStickyState("trazabilidad.tipoCotizacion", "");
   const [filtroTipoCompra, setFiltroTipoCompra] = useStickyState("trazabilidad.tipoCompra", []);
+  // Estado de ciclo: preparacion | entregado | forzado (cierre forzado).
+  const [filtroEstadoCiclo, setFiltroEstadoCiclo] = useStickyState("trazabilidad.estadoCiclo", "");
   const [openTipoCompra, setOpenTipoCompra] = useState(false);
   const [openDescargar, setOpenDescargar] = useState(false);
   // Filtro de documentos: match EXACTO. Sin selección → cotizaciones sin ningún
@@ -431,6 +480,16 @@ export default function Trazabilidad() {
   const esSoloClienteParticular =
     (filtroTipoCotizacion || "").toLowerCase().includes("particular");
 
+  // Cliente Particular seleccionado en el filtro "Tipo de Compra": en ese flujo
+  // el documento es "Factura / Boleta". Mostramos el filtro por N° de
+  // Factura/Boleta y ocultamos el de N° Factura estándar.
+  const esCompraParticular = (filtroTipoCompra || []).some((t) =>
+    (t || "").toLowerCase().includes("particular"),
+  );
+  // El filtro de número pasa a "N° Factura / Boleta" cuando se está en el flujo
+  // de cliente particular, ya sea por Tipo de Cotización o por Tipo de Compra.
+  const mostrarFacturaBoleta = esSoloClienteParticular || esCompraParticular;
+
   const rolNorm = (rol ?? "").toString().trim().toLowerCase();
   const esAdmin = rolNorm === "admin";
   const esVentas = rolNorm === "ventas";
@@ -468,7 +527,7 @@ export default function Trazabilidad() {
       // Cotizaciones adjudicadas
       let rows;
       try {
-        const licitaciones = await api.get("/licitaciones/with-fields?fields=id,id_licitacion,nombre,nombre_entidad,estado,fecha_adjudicada,total_con_iva,total_sin_iva,creado_por,comuna,tipo_compra,tipo_cliente,estado_entrega,ciclo_cerrado");
+        const licitaciones = await api.get("/licitaciones/with-fields?fields=id,id_licitacion,nombre,nombre_entidad,estado,fecha_adjudicada,total_con_iva,total_sin_iva,creado_por,comuna,tipo_compra,tipo_cliente,estado_entrega,ciclo_cerrado,monto_forzado");
         rows = (licitaciones || []).filter((l) => l.estado === "Adjudicada");
       } catch (error) {
         console.error("Error cargando cotizaciones:", error);
@@ -562,6 +621,15 @@ export default function Trazabilidad() {
         if (!filtroTipoCompra.includes(tipoRow)) return false;
       }
 
+      // Filtro por estado de ciclo (preparación / entregado / cierre forzado)
+      if (filtroEstadoCiclo) {
+        const cerrado = !!l.ciclo_cerrado;
+        const entrega = (l.estado_entrega || "Preparación").toString();
+        if (filtroEstadoCiclo === "forzado" && !cerrado) return false;
+        if (filtroEstadoCiclo === "entregado" && (cerrado || entrega !== "Entregado")) return false;
+        if (filtroEstadoCiclo === "preparacion" && (cerrado || entrega === "Entregado")) return false;
+      }
+
       // Filtro por documentos — match EXACTO sobre {OC, Guía, Factura}.
       // Sin selección → cotizaciones sin ningún documento de esos tres tipos.
       // Con selección → cotizaciones cuyo conjunto de tipos coincida exactamente.
@@ -610,7 +678,7 @@ export default function Trazabilidad() {
 
       return true;
     });
-  }, [data, filtroId, filtroEntidad, filtroVendedor, filtroOC, filtroFactura, filtroFechaDesde, filtroFechaHasta, filtroTipoCotizacion, filtroTipoCompra, flagOc, flagGuia, flagFactura, usuariosMap, documentosMap]);
+  }, [data, filtroId, filtroEntidad, filtroVendedor, filtroOC, filtroFactura, filtroFechaDesde, filtroFechaHasta, filtroTipoCotizacion, filtroTipoCompra, filtroEstadoCiclo, flagOc, flagGuia, flagFactura, usuariosMap, documentosMap]);
 
   /* ── Ordenamiento ──────────────────────────────────────────── */
   function toggleSort(col) {
@@ -636,24 +704,34 @@ export default function Trazabilidad() {
 
   async function cambiarCicloCerrado(licId, valor) {
     let anterior;
+    let anteriorMonto;
+    // Al FORZAR el cierre capturamos el monto neto por consumir (OC − guías) en
+    // este instante; al reabrir lo anulamos.
+    const lic = data.find((l) => l.id === licId);
+    const montoForzado = valor && lic ? Math.max(0, montoPorConsumir(lic).porConsumir) : null;
     setData((prev) =>
       prev.map((l) => {
         if (l.id === licId) {
           anterior = l.ciclo_cerrado;
-          return { ...l, ciclo_cerrado: valor };
+          anteriorMonto = l.monto_forzado;
+          return { ...l, ciclo_cerrado: valor, monto_forzado: montoForzado };
         }
         return l;
       }),
     );
     try {
-      await api.put(`/licitaciones/${licId}`, { ciclo_cerrado: valor });
+      await api.put(`/licitaciones/${licId}`, { ciclo_cerrado: valor, monto_forzado: montoForzado });
       setToast({
         type: "success",
-        message: valor ? "Ciclo cerrado." : "Ciclo reabierto.",
+        message: valor
+          ? `Ciclo cerrado. Monto forzado: $${Number(montoForzado || 0).toLocaleString("es-CL")}`
+          : "Ciclo reabierto.",
       });
     } catch {
       setData((prev) =>
-        prev.map((l) => (l.id === licId ? { ...l, ciclo_cerrado: anterior } : l)),
+        prev.map((l) =>
+          l.id === licId ? { ...l, ciclo_cerrado: anterior, monto_forzado: anteriorMonto } : l,
+        ),
       );
       setToast({ type: "error", message: "No se pudo actualizar el ciclo." });
     }
@@ -852,6 +930,10 @@ export default function Trazabilidad() {
   }
   function getGuias(licId) {
     return getDocsForLic(licId).filter((d) => d.tipo === "guia_despacho");
+  }
+  // Información de despacho del Cliente Particular (empresa + N° seguimiento).
+  function getInfoDespacho(licId) {
+    return getDocsForLic(licId).filter((d) => d.tipo === "info_despacho")[0] || null;
   }
   function getFacturas(licId) {
     // Cliente particular: una "factura/boleta" y un pago en "efectivo" son
@@ -1307,11 +1389,13 @@ export default function Trazabilidad() {
             />
           </div>
           <div>
-            <label className="filter-label">N° Factura</label>
+            <label className="filter-label">
+              {mostrarFacturaBoleta ? "N° Factura / Boleta" : "N° Factura"}
+            </label>
             <input
               type="text"
               className="input"
-              placeholder="Buscar N° Factura..."
+              placeholder={mostrarFacturaBoleta ? "Buscar N° Factura/Boleta..." : "Buscar N° Factura..."}
               value={filtroFactura}
               onChange={(e) => setFiltroFactura(e.target.value)}
               style={{ width: "100%" }}
@@ -1413,10 +1497,25 @@ export default function Trazabilidad() {
           </div>
 
           <div>
+            <label className="filter-label">Estado de ciclo</label>
+            <select
+              className="input"
+              value={filtroEstadoCiclo}
+              onChange={(e) => setFiltroEstadoCiclo(e.target.value)}
+              style={{ width: "100%", height: 36 }}
+            >
+              <option value="">Todos</option>
+              <option value="preparacion">En preparación</option>
+              <option value="entregado">Entregado</option>
+              <option value="forzado">Cierre forzado</option>
+            </select>
+          </div>
+
+          <div>
             <label className="filter-label">Filtrar por documentos (match exacto)</label>
             <div style={{ display: "flex", gap: 6 }}>
               {[
-                { key: "oc", label: "Orden de Compra", value: flagOc, set: setFlagOc, color: "#1d4ed8", bg: "#dbeafe" },
+                { key: "oc", label: "OC", value: flagOc, set: setFlagOc, color: "#1d4ed8", bg: "#dbeafe" },
                 { key: "guia", label: "Guía", value: flagGuia, set: setFlagGuia, color: "#b45309", bg: "#fef3c7" },
                 { key: "factura", label: esSoloClienteParticular ? "Factura / Boleta" : "Factura", value: flagFactura, set: setFlagFactura, color: "#15803d", bg: "#dcfce7" },
               ]
@@ -1442,6 +1541,9 @@ export default function Trazabilidad() {
                     transition: "all 0.15s ease",
                     justifyContent: "center",
                     height: 36,
+                    whiteSpace: "nowrap",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
                   }}
                 >
                   {value && <span style={{ fontSize: 11, lineHeight: 1 }}>✓</span>}
@@ -1452,7 +1554,7 @@ export default function Trazabilidad() {
           </div>
 
           <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "end" }}>
-            {(filtroId || filtroEntidad || filtroVendedor || filtroOC || filtroFactura || filtroFechaDesde || filtroFechaHasta || filtroTipoCotizacion || filtroTipoCompra.length > 0 || flagOc || flagGuia || flagFactura) ? (
+            {(filtroId || filtroEntidad || filtroVendedor || filtroOC || filtroFactura || filtroFechaDesde || filtroFechaHasta || filtroTipoCotizacion || filtroTipoCompra.length > 0 || filtroEstadoCiclo || flagOc || flagGuia || flagFactura) ? (
               <button
                 type="button"
                 className="btn btn-secondary btn-sm"
@@ -1467,6 +1569,7 @@ export default function Trazabilidad() {
                   setFiltroFechaHasta("");
                   setFiltroTipoCotizacion("");
                   setFiltroTipoCompra([]);
+                  setFiltroEstadoCiclo("");
                   setFlagOc(false);
                   setFlagGuia(false);
                   setFlagFactura(false);
@@ -1507,7 +1610,7 @@ export default function Trazabilidad() {
                   style={{ cursor: "pointer", userSelect: "none", textAlign: "right", width: "11%" }}
                 >
                   <span style={{ display: "inline-flex", alignItems: "center", gap: 4, justifyContent: "flex-end" }}>
-                    Monto por consumir <SortIcon col="monto" />
+                    Saldo por pagar <SortIcon col="monto" />
                   </span>
                 </th>
                 {!esSoloClienteParticular && (
@@ -1522,13 +1625,14 @@ export default function Trazabilidad() {
                 {esSoloClienteParticular && (
                   <th style={{ width: "18%", textAlign: "left" }}>Comprobante</th>
                 )}
-                <th style={{ textAlign: "right", width: esSoloClienteParticular ? "18%" : "21%" }}>Acción</th>
+                <th style={{ width: esSoloClienteParticular ? "16%" : "13%", textAlign: "left" }}>Tracking Envío</th>
+                <th style={{ textAlign: "right", width: esSoloClienteParticular ? "16%" : "16%" }}>Acción</th>
               </tr>
             </thead>
             <tbody>
               {dataFiltrada.length === 0 ? (
                 <tr>
-                  <td colSpan={esSoloClienteParticular ? 5 : 6} style={{ textAlign: "center", padding: "60px 0", color: "var(--text-muted)" }}>
+                  <td colSpan={esSoloClienteParticular ? 6 : 7} style={{ textAlign: "center", padding: "60px 0", color: "var(--text-muted)" }}>
                     No hay cotizaciones adjudicadas que coincidan con los filtros.
                   </td>
                 </tr>
@@ -1735,67 +1839,26 @@ export default function Trazabilidad() {
                               backgroundColor: hoverGuia ? hoverBg : undefined,
                             }}
                           >
-                            {guia ? (() => {
-                              const trackingUrl = buildTrackingUrl(guia.empresa_despacho, guia.n_seguimiento);
-                              const empresaTxt = (guia.empresa_despacho || "").trim();
-                              const esInterno = empresaTxt.toLowerCase() === "despacho interno";
-                              return (
-                                <div>
-                                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                                    <span style={{ fontWeight: 500, color: "#1f2937" }}>{guia.numero || "S/N"}</span>
-                                    <button
-                                      type="button"
-                                      onClick={() => abrirDocumento(guia)}
-                                      style={{ background: "none", border: "none", cursor: "pointer", color: "var(--primary)", padding: 0 }}
-                                      title="Ver PDF"
-                                    >
-                                      <Eye size={13} />
-                                    </button>
-                                    {trackingUrl && (
-                                      <a
-                                        href={trackingUrl}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        onClick={() => {
-                                          if (navigator?.clipboard && guia.n_seguimiento) {
-                                            navigator.clipboard.writeText(String(guia.n_seguimiento)).catch(() => {});
-                                          }
-                                        }}
-                                        style={{
-                                          display: "inline-flex",
-                                          alignItems: "center",
-                                          gap: 4,
-                                          padding: "3px 8px",
-                                          borderRadius: 6,
-                                          backgroundColor: "#ea580c",
-                                          color: "#ffffff",
-                                          fontSize: 11,
-                                          fontWeight: 600,
-                                          textDecoration: "none",
-                                          lineHeight: 1,
-                                          boxShadow: "0 1px 2px rgba(234,88,12,.3)",
-                                        }}
-                                        title={`Abrir tracking ${empresaTxt} (${guia.n_seguimiento}) — número copiado al portapapeles`}
-                                      >
-                                        <Truck size={12} />
-                                        Tracking
-                                      </a>
-                                    )}
-                                  </div>
-                                  <div style={{ color: "var(--text-muted)", fontSize: "11px" }}>
-                                    {(guia.fecha_oc || guia.created_at)
-                                      ? formatearFechaCorta(guia.fecha_oc || guia.created_at)
-                                      : ""}
-                                  </div>
-                                  {empresaTxt && (
-                                    <div style={{ color: "var(--text-muted)", fontSize: "10px", marginTop: 2 }}>
-                                      {empresaTxt}
-                                      {!esInterno && guia.n_seguimiento ? ` · ${guia.n_seguimiento}` : ""}
-                                    </div>
-                                  )}
+                            {guia ? (
+                              <div>
+                                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                  <span style={{ fontWeight: 500, color: "#1f2937" }}>{guia.numero || "S/N"}</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => abrirDocumento(guia)}
+                                    style={{ background: "none", border: "none", cursor: "pointer", color: "var(--primary)", padding: 0 }}
+                                    title="Ver PDF"
+                                  >
+                                    <Eye size={13} />
+                                  </button>
                                 </div>
-                              );
-                            })() : (
+                                <div style={{ color: "var(--text-muted)", fontSize: "11px" }}>
+                                  {(guia.fecha_oc || guia.created_at)
+                                    ? formatearFechaCorta(guia.fecha_oc || guia.created_at)
+                                    : ""}
+                                </div>
+                              </div>
+                            ) : (
                               <span style={{ color: "var(--text-muted)" }}>—</span>
                             )}
                           </td>
@@ -1893,6 +1956,21 @@ export default function Trazabilidad() {
                           );
                         })()}
 
+                        {/* Tracking Envío — guía (pública) o info de despacho (particular) */}
+                        {!esSoloClienteParticular && firstOfGuia && (
+                          <td rowSpan={guiaSpan} style={{ verticalAlign: "middle", borderLeft: "1px solid #e5e7eb" }}>
+                            <TrackingEnvioContenido empresa={guia?.empresa_despacho} nSeguimiento={guia?.n_seguimiento} />
+                          </td>
+                        )}
+                        {esSoloClienteParticular && isFirstRow && (() => {
+                          const info = getInfoDespacho(lic.id);
+                          return (
+                            <td rowSpan={cycles.length} style={{ verticalAlign: "middle", borderLeft: "1px solid #e5e7eb" }}>
+                              <TrackingEnvioContenido empresa={info?.empresa_despacho} nSeguimiento={info?.n_seguimiento} />
+                            </td>
+                          );
+                        })()}
+
                         {/* Acción - solo en la primera fila */}
                         {isFirstRow && (
                           <td
@@ -1940,7 +2018,7 @@ export default function Trazabilidad() {
                                   style={{ flex: 1, width: "100%", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6 }}
                                   onClick={() => cambiarCicloCerrado(lic.id, true)}
                                 >
-                                  <Check size={14} /> Cerrar ciclo
+                                  <Check size={14} /> Forzar Cierre
                                 </button>
                               )
                             )}
