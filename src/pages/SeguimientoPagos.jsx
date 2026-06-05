@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { Link } from "react-router-dom";
 import useAuth from "../hooks/useAuth";
@@ -12,6 +12,7 @@ const FORMAS_PAGO = [
   { value: "cheque", label: "Cheque" },
   { value: "vale_vista", label: "Vale Vista" },
   { value: "efectivo", label: "Efectivo" },
+  { value: "factoring", label: "Factoring" },
 ];
 
 function diasEntre(fechaIso) {
@@ -53,6 +54,10 @@ function fmtCLP(value) {
   return `$${Number(value || 0).toLocaleString("es-CL")}`;
 }
 
+function esClienteParticular(lic) {
+  return (lic?.tipo_cliente || "").toString().toLowerCase().includes("particular");
+}
+
 function semaforo(diasRestantes, pagada) {
   if (pagada) return { color: "#15803d", bg: "#dcfce7", label: "Pagada" };
   if (diasRestantes == null) return { color: "#6b7280", bg: "#f3f4f6", label: "Sin fecha" };
@@ -70,6 +75,7 @@ export default function SeguimientoPagos() {
   // ventas especial y contabilidad). Los vendedores no acceden aquí.
   const puedeVer = esAdmin || rolNorm === "jefe_ventas_especial" || rolNorm === "contabilidad";
   const [facturas, setFacturas] = useState([]);
+  const [comprobantesMap, setComprobantesMap] = useState({});
   const [licMap, setLicMap] = useState({});
   const [usuariosMap, setUsuariosMap] = useState({});
   const [loading, setLoading] = useState(true);
@@ -82,8 +88,20 @@ export default function SeguimientoPagos() {
   const [filtroNumero, setFiltroNumero] = useState("");
   const [filtroTipoCotizacion, setFiltroTipoCotizacion] = useState("");
   const [filtroTipoCompra, setFiltroTipoCompra] = useState("");
-  const [filtroFechaDesde, setFiltroFechaDesde] = useState("");
-  const [filtroFechaHasta, setFiltroFechaHasta] = useState("");
+  // Tipo de pago: selección múltiple (forma_pago). Vacío = todas.
+  const [filtroFormaPago, setFiltroFormaPago] = useState([]);
+  const [openFormaPago, setOpenFormaPago] = useState(false);
+  const formaPagoRef = useRef(null);
+
+  useEffect(() => {
+    const onClickOutside = (e) => {
+      if (formaPagoRef.current && !formaPagoRef.current.contains(e.target)) {
+        setOpenFormaPago(false);
+      }
+    };
+    document.addEventListener("mousedown", onClickOutside);
+    return () => document.removeEventListener("mousedown", onClickOutside);
+  }, []);
 
   // Ordenamiento
   const [sortCol, setSortCol] = useState("vencimiento");
@@ -112,6 +130,11 @@ export default function SeguimientoPagos() {
 
   const [reloadKey, setReloadKey] = useState(0);
   const recargar = () => setReloadKey((k) => k + 1);
+
+  // Actualiza un solo registro en memoria (sin refetch ni pantalla de carga).
+  function actualizarFacturaLocal(id, cambios) {
+    setFacturas((prev) => prev.map((f) => (f.id === id ? { ...f, ...cambios } : f)));
+  }
 
   // Punto 36: dropdown descarga reporte
   const [openDescargar, setOpenDescargar] = useState(false);
@@ -147,14 +170,29 @@ export default function SeguimientoPagos() {
         // 2. Facturas de esas cotizaciones
         const ids = rows.map((l) => l.id);
         let allFacturas = [];
+        const compMap = {};
         if (ids.length > 0) {
           const docs = await api.post("/licitaciones/documentos/filter", {
-            filter: { licitacion_ids: ids, tipo: "factura" },
+            // Factura (Entidad Pública), Factura/Boleta (Cliente Particular) y
+            // el comprobante de pago (fecha + monto del pago del particular).
+            filter: { licitacion_ids: ids, tipo: ["factura", "factura_boleta", "comprobante_pago"] },
             fields: "*",
           });
-          allFacturas = docs || [];
+          (docs || []).forEach((d) => {
+            if (d.tipo === "factura" || d.tipo === "factura_boleta") {
+              allFacturas.push(d);
+            } else if (d.tipo === "comprobante_pago") {
+              // Nos quedamos con el comprobante más reciente por cotización.
+              const lid = d.licitacion_id;
+              const fa = String(d.fecha_oc || d.created_at || "");
+              const prev = compMap[lid];
+              const fp = prev ? String(prev.fecha_oc || prev.created_at || "") : "";
+              if (!prev || fa > fp) compMap[lid] = d;
+            }
+          });
         }
         setFacturas(allFacturas);
+        setComprobantesMap(compMap);
 
         // 3. Vendedores
         const emails = Array.from(new Set(rows.map((l) => l.creado_por).filter(Boolean)));
@@ -217,14 +255,16 @@ export default function SeguimientoPagos() {
         return false;
       }
 
+
       if (filtroNumero) {
         const num = (f.numero || "").toString().toLowerCase();
         if (!num.includes(filtroNumero.toLowerCase())) return false;
       }
 
-      const fechaRef = f.fecha_factura || (f.created_at ? f.created_at.slice(0, 10) : "");
-      if (filtroFechaDesde && fechaRef && fechaRef < filtroFechaDesde) return false;
-      if (filtroFechaHasta && fechaRef && fechaRef > filtroFechaHasta) return false;
+      // Tipo de pago (forma_pago): solo aplica a facturas con forma registrada.
+      if (filtroFormaPago.length > 0) {
+        if (!f.forma_pago || !filtroFormaPago.includes(f.forma_pago)) return false;
+      }
 
       const plazo = plazoDias(lic.condicion_venta);
       const dias = diasEntre(f.fecha_factura);
@@ -237,7 +277,7 @@ export default function SeguimientoPagos() {
 
       return true;
     });
-  }, [facturas, licMap, filtroEntidad, filtroNumero, filtroTipoCotizacion, filtroTipoCompra, filtroFechaDesde, filtroFechaHasta, filtroEstado]);
+  }, [facturas, licMap, filtroEntidad, filtroNumero, filtroTipoCotizacion, filtroTipoCompra, filtroFormaPago, filtroEstado]);
 
   // Ordenamiento
   const facturasOrdenadas = useMemo(() => {
@@ -362,12 +402,17 @@ export default function SeguimientoPagos() {
   const stats = useMemo(() => {
     let total = 0, pagadas = 0, pendientes = 0, vencidas = 0, porVencer = 0;
     let montoPagadas = 0, montoEnPlazo = 0, montoPorVencer = 0, montoVencidas = 0;
+    let factoringCount = 0, montoFactoring = 0;
     facturas.forEach((f) => {
       const lic = licMap[f.licitacion_id];
       if (!lic) return;
       const monto = Number(lic.total_con_iva || 0);
       total++;
-      if (f.pagada) { pagadas++; montoPagadas += monto; return; }
+      if (f.pagada) {
+        pagadas++; montoPagadas += monto;
+        if (f.forma_pago === "factoring") { factoringCount++; montoFactoring += monto; }
+        return;
+      }
       pendientes++;
       const plazo = plazoDias(lic.condicion_venta);
       const dias = diasEntre(f.fecha_factura);
@@ -376,7 +421,7 @@ export default function SeguimientoPagos() {
       else if (diasRestantes != null && diasRestantes <= 5) { porVencer++; montoPorVencer += monto; }
       else { montoEnPlazo += monto; }
     });
-    return { total, pagadas, pendientes, vencidas, porVencer, montoPagadas, montoEnPlazo, montoPorVencer, montoVencidas };
+    return { total, pagadas, pendientes, vencidas, porVencer, montoPagadas, montoEnPlazo, montoPorVencer, montoVencidas, factoringCount, montoFactoring };
   }, [facturas, licMap]);
 
   async function abrirDocumento(doc) {
@@ -419,14 +464,38 @@ export default function SeguimientoPagos() {
         fecha_pago: fechaPago,
         forma_pago: formaPago,
       });
+      actualizarFacturaLocal(f.id, { pagada: true, fecha_pago: fechaPago, forma_pago: formaPago });
       setToast({ type: "success", message: "Pago registrado." });
       cancelarPago();
-      recargar();
     } catch (e) {
       console.error(e);
       setToast({ type: "error", message: "Error al registrar el pago." });
     } finally {
       setGuardando(false);
+    }
+  }
+
+  // Cliente Particular: marcado simple (sin pedir fecha ni forma). La fecha de
+  // pago se toma de la fecha del comprobante/documento adjuntado.
+  async function marcarPagadaParticular(f) {
+    // La fecha de pago del particular es la del comprobante de pago adjuntado.
+    const comp = comprobantesMap[f.licitacion_id];
+    const fecha =
+      (comp?.fecha_oc ? String(comp.fecha_oc).slice(0, 10) : "") ||
+      f.fecha_factura ||
+      (f.fecha_oc ? String(f.fecha_oc).slice(0, 10) : "") ||
+      (f.created_at ? String(f.created_at).slice(0, 10) : new Date().toISOString().slice(0, 10));
+    try {
+      await api.put(`/licitaciones/documentos/${f.id}`, {
+        pagada: true,
+        fecha_pago: fecha,
+        forma_pago: null,
+      });
+      actualizarFacturaLocal(f.id, { pagada: true, fecha_pago: fecha, forma_pago: null });
+      setToast({ type: "success", message: "Pago registrado." });
+    } catch (e) {
+      console.error(e);
+      setToast({ type: "error", message: "Error al registrar el pago." });
     }
   }
 
@@ -444,8 +513,8 @@ export default function SeguimientoPagos() {
         fecha_pago: null,
         forma_pago: null,
       });
+      actualizarFacturaLocal(f.id, { pagada: false, fecha_pago: null, forma_pago: null });
       setToast({ type: "success", message: "Pago desmarcado." });
-      recargar();
     } catch (e) {
       setToast({ type: "error", message: "Error desmarcando el pago." });
     }
@@ -541,7 +610,7 @@ export default function SeguimientoPagos() {
       </div>
 
       {/* Stats — cantidad + monto con IVA por estado */}
-      <div className="stats-row">
+      <div className="stats-row stats-5">
         <div className="stat-card">
           <div className="stat-label">Pagadas</div>
           <div className="stat-value" style={{ color: "var(--success)" }}>{stats.pagadas}</div>
@@ -568,6 +637,12 @@ export default function SeguimientoPagos() {
           <div className="stat-money" style={{ color: "var(--danger)" }}>{fmtCLP(stats.montoVencidas)}</div>
           <div className="stat-sub">fuera de plazo · con IVA</div>
         </div>
+        <div className="stat-card">
+          <div className="stat-label">Factoring</div>
+          <div className="stat-value" style={{ color: "#7c3aed" }}>{stats.factoringCount}</div>
+          <div className="stat-money" style={{ color: "#7c3aed" }}>{fmtCLP(stats.montoFactoring)}</div>
+          <div className="stat-sub">pagadas por factoring · con IVA</div>
+        </div>
       </div>
 
       {/* Filtros */}
@@ -593,11 +668,11 @@ export default function SeguimientoPagos() {
           />
         </div>
         <div className="filter-field">
-          <label className="filter-label">N° Factura</label>
+          <label className="filter-label">N° Factura / Boleta</label>
           <input
             type="text"
             className="input"
-            placeholder="Buscar N°..."
+            placeholder="Buscar N° factura o boleta..."
             value={filtroNumero}
             onChange={(e) => setFiltroNumero(e.target.value)}
           />
@@ -628,18 +703,48 @@ export default function SeguimientoPagos() {
             ))}
           </select>
         </div>
-        <div className="filter-field">
-          <label className="filter-label">Factura desde</label>
-          <DateFilter value={filtroFechaDesde} onChange={setFiltroFechaDesde} placeholder="Desde" />
-        </div>
-        <div className="filter-field">
-          <label className="filter-label">Factura hasta</label>
-          <DateFilter
-            value={filtroFechaHasta}
-            onChange={setFiltroFechaHasta}
-            placeholder="Hasta"
-            minDate={filtroFechaDesde ? new Date(`${filtroFechaDesde}T00:00:00`) : null}
-          />
+        <div className="filter-field" style={{ position: "relative" }} ref={formaPagoRef}>
+          <label className="filter-label">Tipo de Pago</label>
+          <button
+            type="button"
+            className="dropdown-trigger input"
+            onClick={() => setOpenFormaPago((v) => !v)}
+            style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}
+          >
+            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {filtroFormaPago.length === 0
+                ? "Todos"
+                : FORMAS_PAGO.filter((fp) => filtroFormaPago.includes(fp.value)).map((fp) => fp.label).join(", ")}
+            </span>
+            <ChevronDown size={14} style={{ flexShrink: 0, opacity: 0.6 }} />
+          </button>
+          {openFormaPago && (
+            <div className="dropdown-menu" style={{ zIndex: 40 }}>
+              <div className="dropdown-menu-header">
+                <button className="btn btn-sm btn-secondary" onClick={() => setFiltroFormaPago(FORMAS_PAGO.map((fp) => fp.value))}>
+                  Todos
+                </button>
+                <button className="btn btn-sm btn-secondary" onClick={() => setFiltroFormaPago([])}>
+                  Limpiar
+                </button>
+              </div>
+              <div className="dropdown-menu-body">
+                {FORMAS_PAGO.map((fp) => (
+                  <label key={fp.value} className="dropdown-option">
+                    <input
+                      type="checkbox"
+                      checked={filtroFormaPago.includes(fp.value)}
+                      onChange={(e) => {
+                        if (e.target.checked) setFiltroFormaPago((prev) => [...prev, fp.value]);
+                        else setFiltroFormaPago((prev) => prev.filter((x) => x !== fp.value));
+                      }}
+                    />
+                    {fp.label}
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -719,6 +824,13 @@ export default function SeguimientoPagos() {
                   const sem = semaforo(diasRestantes, f.pagada);
                   const editando = pagandoId === f.id;
                   const fechaVenc = calcularFechaVencimiento(f.fecha_factura, lic.condicion_venta);
+                  const particular = esClienteParticular(lic);
+                  // Cliente Particular: fecha y monto del pago = comprobante de pago.
+                  const comprobante = comprobantesMap[lic.id];
+                  const fechaPagoMostrar = particular
+                    ? (comprobante?.fecha_oc ? String(comprobante.fecha_oc).slice(0, 10) : f.fecha_pago)
+                    : f.fecha_pago;
+                  const montoParticular = comprobante?.monto != null ? comprobante.monto : f.monto;
 
                   return (
                     <tr key={f.id}>
@@ -734,9 +846,26 @@ export default function SeguimientoPagos() {
                         <div style={{ fontWeight: 500, fontSize: "13px", color: "#1f2937", marginTop: 2 }}>
                           {lic.nombre_entidad || "—"}
                         </div>
-                        {lic.comuna && (
-                          <div style={{ color: "var(--text-muted)", fontSize: "11px" }}>{lic.comuna}</div>
-                        )}
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 3 }}>
+                          <span
+                            style={{
+                              display: "inline-block",
+                              padding: "1px 8px",
+                              borderRadius: "999px",
+                              fontSize: "10px",
+                              fontWeight: 700,
+                              textTransform: "uppercase",
+                              letterSpacing: ".4px",
+                              color: particular ? "#6d28d9" : "#0369a1",
+                              background: particular ? "#ede9fe" : "#e0f2fe",
+                            }}
+                          >
+                            {particular ? "Particular" : "Pública"}
+                          </span>
+                          {lic.comuna && (
+                            <span style={{ color: "var(--text-muted)", fontSize: "11px" }}>{lic.comuna}</span>
+                          )}
+                        </div>
                       </td>
                       <td style={{ verticalAlign: "middle" }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -781,28 +910,43 @@ export default function SeguimientoPagos() {
                         {lic.total_con_iva ? `$${Number(lic.total_con_iva).toLocaleString("es-CL")}` : "—"}
                       </td>
                       <td style={{ verticalAlign: "middle" }}>
-                        <span
-                          style={{
-                            display: "inline-flex",
-                            alignItems: "center",
-                            gap: 4,
-                            padding: "3px 10px",
-                            borderRadius: "999px",
-                            fontSize: "11px",
-                            fontWeight: 600,
-                            color: sem.color,
-                            backgroundColor: sem.bg,
-                          }}
-                        >
-                          {!f.pagada && diasRestantes != null && diasRestantes <= 5 && <AlertTriangle size={11} />}
-                          {sem.label}
-                        </span>
+                        {particular && !f.pagada ? (
+                          <span style={{ color: "var(--text-muted)" }}>—</span>
+                        ) : (
+                          <span
+                            style={{
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: 4,
+                              padding: "3px 10px",
+                              borderRadius: "999px",
+                              fontSize: "11px",
+                              fontWeight: 600,
+                              color: sem.color,
+                              backgroundColor: sem.bg,
+                            }}
+                          >
+                            {!f.pagada && diasRestantes != null && diasRestantes <= 5 && <AlertTriangle size={11} />}
+                            {sem.label}
+                          </span>
+                        )}
                       </td>
                       <td style={{ verticalAlign: "middle" }}>
-                        {f.pagada ? (
+                        {particular ? (
+                          // Particular: mostramos fecha y monto del comprobante de
+                          // pago aunque la factura/boleta no esté marcada pagada.
+                          <div>
+                            <div style={{ color: f.pagada ? "#15803d" : "#1f2937", fontWeight: 500, fontSize: "12px" }}>
+                              {fechaPagoMostrar ? new Date(`${fechaPagoMostrar}T00:00:00`).toLocaleDateString("es-CL") : "—"}
+                            </div>
+                            <div style={{ color: "var(--text-muted)", fontSize: "11px" }}>
+                              {montoParticular != null ? fmtCLP(montoParticular) : "—"}
+                            </div>
+                          </div>
+                        ) : f.pagada ? (
                           <div>
                             <div style={{ color: "#15803d", fontWeight: 500, fontSize: "12px" }}>
-                              {f.fecha_pago ? new Date(`${f.fecha_pago}T00:00:00`).toLocaleDateString("es-CL") : "—"}
+                              {fechaPagoMostrar ? new Date(`${fechaPagoMostrar}T00:00:00`).toLocaleDateString("es-CL") : "—"}
                             </div>
                             <div style={{ color: "var(--text-muted)", fontSize: "11px" }}>
                               {FORMAS_PAGO.find((x) => x.value === f.forma_pago)?.label || f.forma_pago || "—"}
@@ -848,6 +992,14 @@ export default function SeguimientoPagos() {
                             title="Desmarcar pago"
                           >
                             <CheckCircle2 size={13} style={{ color: "#15803d", marginRight: 4 }} /> Desmarcar
+                          </button>
+                        ) : particular ? (
+                          <button
+                            type="button"
+                            onClick={() => marcarPagadaParticular(f)}
+                            className="btn btn-primary btn-sm"
+                          >
+                            <Circle size={12} style={{ marginRight: 4 }} /> Marcar pagada
                           </button>
                         ) : (
                           <button

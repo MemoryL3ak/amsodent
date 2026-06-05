@@ -28,8 +28,8 @@ import {
   ExternalLink,
 } from "lucide-react";
 
-const TEAL = "#0f766e";
-const TEAL_LIGHT = "#25b7bd";
+const TEAL = "#1e9295"; // var --primary-dark
+const TEAL_LIGHT = "#28aeb1"; // var --primary (primary de la plataforma)
 
 function hoyISO() {
   return new Date().toISOString().slice(0, 10);
@@ -97,7 +97,7 @@ function tiempoRelativo(iso) {
 // Paleta de gradientes para los avatares — distribuye colores según el RUT
 // para que cada cliente tenga su propio "look" estable entre visitas.
 const AVATAR_GRADIENTES = [
-  ["#0f766e", "#25b7bd"],
+  ["#1e9295", "#28aeb1"],
   ["#1e40af", "#3b82f6"],
   ["#6d28d9", "#a78bfa"],
   ["#be185d", "#ec4899"],
@@ -1841,13 +1841,13 @@ const styles = {
     padding: "9px 14px",
     borderRadius: 8,
     cursor: "pointer",
-    boxShadow: "0 6px 14px rgba(15,118,110,0.20)",
+    boxShadow: "0 6px 14px rgba(40,174,177,0.20)",
   },
   btnFiltrar: {
     display: "inline-flex",
     alignItems: "center",
     gap: 6,
-    background: TEAL,
+    background: TEAL_LIGHT,
     color: "#fff",
     border: "none",
     fontSize: 13,
@@ -2277,7 +2277,7 @@ const styles = {
     fontWeight: 700,
     borderRadius: 999,
     cursor: "pointer",
-    boxShadow: "0 6px 14px rgba(15,118,110,0.22)",
+    boxShadow: "0 6px 14px rgba(40,174,177,0.22)",
     transition: "transform .15s ease, box-shadow .2s ease",
   },
 

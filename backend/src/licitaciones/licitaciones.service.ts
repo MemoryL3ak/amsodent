@@ -105,8 +105,25 @@ export class LicitacionesService {
       .insert([body])
       .select()
       .single();
-    if (error) throw new BadRequestException(error.message);
-    return data;
+    if (!error) return data;
+
+    // Tolerar columnas aún no migradas (ej. fecha_publicacion_resultados):
+    // reintentamos quitando la columna que falta para no romper la creación.
+    const msg = [error.message, (error as any).details, (error as any).hint]
+      .filter(Boolean).join(' ').toLowerCase();
+    const bodyWithout = { ...body };
+    let removed = false;
+    if (msg.includes('fecha_publicacion_resultados')) { delete bodyWithout.fecha_publicacion_resultados; removed = true; }
+    if (removed) {
+      const { data: d2, error: e2 } = await this.supabase.getClient()
+        .from('licitaciones')
+        .insert([bodyWithout])
+        .select()
+        .single();
+      if (e2) throw new BadRequestException(e2.message);
+      return d2;
+    }
+    throw new BadRequestException(error.message);
   }
 
   async update(id: number, body: Record<string, any>) {
@@ -239,6 +256,24 @@ export class LicitacionesService {
 
   async createDocumento(body: Record<string, any>) {
     let inserted: any = null;
+
+    // Despacho interno → correlativo automático AMSO0000001 (cuando no se
+    // ingresó un N° de seguimiento manual). Aplica a guía de despacho (pública)
+    // e información de despacho (cliente particular).
+    if (
+      (body.tipo === 'guia_despacho' || body.tipo === 'info_despacho') &&
+      String(body.empresa_despacho || '').trim().toLowerCase() === 'despacho interno' &&
+      !String(body.n_seguimiento || '').trim()
+    ) {
+      try {
+        const { data: corr, error: corrErr } = await this.supabase.getClient()
+          .rpc('siguiente_correlativo_despacho');
+        if (!corrErr && corr) body.n_seguimiento = corr;
+      } catch {
+        // si falla la secuencia, el documento se guarda sin correlativo
+      }
+    }
+
     const { data, error } = await this.supabase.getClient()
       .from('licitacion_documentos')
       .insert([body])
@@ -258,6 +293,7 @@ export class LicitacionesService {
       if (msg.includes('forma_pago')) { delete bodyWithout.forma_pago; removed = true; }
       if (msg.includes('empresa_despacho')) { delete bodyWithout.empresa_despacho; removed = true; }
       if (msg.includes('n_seguimiento')) { delete bodyWithout.n_seguimiento; removed = true; }
+      if (msg.includes('url')) { delete bodyWithout.url; removed = true; }
       if (removed) {
         const { data: d2, error: e2 } = await this.supabase.getClient()
           .from('licitacion_documentos')

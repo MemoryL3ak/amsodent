@@ -85,6 +85,7 @@ export class CorreosController {
     body: {
       licitacionId?: number;
       para?: string;
+      cc?: string[];
       asunto?: string;
       cuerpoHtml?: string;
       adjuntarDocumentoId?: number | null;
@@ -98,6 +99,7 @@ export class CorreosController {
     return this.correos.enviar({
       licitacionId: Number(body.licitacionId),
       para: body.para,
+      cc: Array.isArray(body.cc) ? body.cc : [],
       asunto: body.asunto,
       cuerpoHtml: body.cuerpoHtml,
       adjuntarDocumentoId: body.adjuntarDocumentoId ?? null,

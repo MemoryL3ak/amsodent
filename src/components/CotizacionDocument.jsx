@@ -245,10 +245,10 @@ function ItemRow({ item }) {
   );
 }
 
-function InfoLine({ label, value }) {
+function InfoLine({ label, value, labelWidth }) {
   return (
     <View style={s.infoCol}>
-      <Text style={s.infoLabel}>{label}</Text>
+      <Text style={[s.infoLabel, labelWidth ? { width: labelWidth } : null]}>{label}</Text>
       <Text style={s.infoValue}>{value || ""}</Text>
     </View>
   );
@@ -312,18 +312,16 @@ export function CotizacionDocument({ datos, items, logoSrc, marcaAguaSrc }) {
 
             {isFirst && (
               <>
-                {/* Fecha + ID licitación */}
-                <Text style={s.sectionTitle}>Fecha de Emisión</Text>
+                {/* Fechas: creación de la cotización + adjudicación */}
+                <Text style={s.sectionTitle}>Fechas</Text>
                 <View style={s.infoRow}>
-                  <InfoLine label="Fecha:" value={datos.fecha_emision} />
+                  <InfoLine label="Fecha de creación:" value={datos.fecha_creacion || datos.fecha_emision} labelWidth={115} />
                   <InfoLine label="ID Licitación:" value={datos.id_licitacion} />
                 </View>
-                {datos.fecha_adjudicacion && (
-                  <View style={s.infoRow}>
-                    <InfoLine label="Fecha Adjudicación:" value={datos.fecha_adjudicacion} />
-                    <InfoLine label="" value="" />
-                  </View>
-                )}
+                <View style={s.infoRow}>
+                  <InfoLine label="Fecha de adjudicación:" value={datos.fecha_adjudicacion || "—"} labelWidth={115} />
+                  <InfoLine label="" value="" />
+                </View>
 
                 {/* Datos del Cliente */}
                 <Text style={s.sectionTitle}>Datos del Cliente</Text>

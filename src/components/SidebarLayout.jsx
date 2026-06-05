@@ -36,9 +36,11 @@ import {
   Shield,
   PackageSearch,
   Wallet,
+  KeyRound,
 } from "lucide-react";
 import NotificacionesMenu from "./NotificacionesMenu";
 import RecordatoriosCorreo from "./RecordatoriosCorreo";
+import RecordatoriosCierre from "./RecordatoriosCierre";
 import GoogleAuthSync from "./GoogleAuthSync";
 import DamarIAWidget from "./DamarIAWidget";
 import useChatNoLeidos from "../hooks/useChatNoLeidos";
@@ -175,6 +177,7 @@ export default function SidebarLayout() {
 
   const reportesNav = [
     puedeVerResumenComercial && { to: "/ventas", icon: TrendingUp, label: "Resumen Comercial" },
+    puedeVerResumenComercial && { to: "/cotizaciones-vendedor", icon: BarChart3, label: "Cotizaciones por Vendedor" },
   ].filter(Boolean);
 
   const herramientasNav = [
@@ -182,11 +185,20 @@ export default function SidebarLayout() {
     esAdmin && { to: "/marcaje", icon: Clock, label: "Marcar Asistencia" },
   ].filter(Boolean);
 
+  const logisticaNav = [
+    esAdmin && { to: "/despachos-choferes", icon: Truck, label: "Despachos y Choferes" },
+    esAdmin && { to: "/tracking-choferes", icon: MapPin, label: "Tracking en Vivo" },
+  ].filter(Boolean);
+
+  const portalClienteNav = [
+    (esAdmin || esVentasEspecial) && { to: "/monitoreo-stock", icon: PackageSearch, label: "Monitoreo Stock Clientes" },
+    esAdmin && { to: "/portal-accesos", icon: KeyRound, label: "Acceso Portal Clientes" },
+  ].filter(Boolean);
+
   const adminNav = [
     esAdmin && { to: "/usuarios",          icon: UserCog,  label: "Usuarios" },
     esAdmin && { to: "/monitoreo",         icon: Activity, label: "Monitoreo de Usuarios" },
     esAdmin && { to: "/monitoreo-marcajes", icon: MapPin,   label: "Monitoreo de Asistencia" },
-    (esAdmin || esVentasEspecial) && { to: "/monitoreo-stock",   icon: PackageSearch, label: "Monitoreo Stock Clientes" },
   ].filter(Boolean);
 
   function NavGroup({ label, items, collapsible, icon: GroupIcon, storageKey }) {
@@ -275,6 +287,7 @@ export default function SidebarLayout() {
       <PresenceTracker />
       <GoogleAuthSync />
       <RecordatoriosCorreo />
+      <RecordatoriosCierre />
       {esAdmin && <DamarIAWidget />}
 
       <button
@@ -350,6 +363,24 @@ export default function SidebarLayout() {
             collapsible
             icon={Wrench}
             storageKey="sidebar_group_herramientas"
+          />
+        )}
+        {logisticaNav.length > 0 && (
+          <NavGroup
+            label="Logística"
+            items={logisticaNav}
+            collapsible
+            icon={Truck}
+            storageKey="sidebar_group_logistica"
+          />
+        )}
+        {portalClienteNav.length > 0 && (
+          <NavGroup
+            label="Portal del Cliente"
+            items={portalClienteNav}
+            collapsible
+            icon={PackageSearch}
+            storageKey="sidebar_group_portal_cliente"
           />
         )}
         {adminNav.length > 0 && (

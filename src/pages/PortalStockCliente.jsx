@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   ShieldCheck,
   UserCog,
@@ -28,6 +29,11 @@ import {
   Instagram,
   MessageCircle,
   Globe,
+  Eye,
+  EyeOff,
+  KeyRound,
+  Upload,
+  Download,
 } from "lucide-react";
 
 import { descargarCSV, descargarReportePDF } from "../lib/reporteStock";
@@ -35,6 +41,9 @@ import { descargarCSV, descargarReportePDF } from "../lib/reporteStock";
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3001/api";
 const TOKEN_KEY = "portal_stock_token";
 const CLIENTE_KEY = "portal_stock_cliente";
+// Pasos pendientes tras el login (cambiar clave temporal / aceptar acuerdo),
+// para retomar el flujo correcto si el cliente recarga la página.
+const PENDIENTE_KEY = "portal_stock_pendiente";
 
 const TEAL = "#0f766e";
 const TEAL_LIGHT = "#25b7bd";
@@ -125,12 +134,17 @@ export default function PortalStockCliente() {
   const [toast, setToast] = useState(null);
 
   // Pantallas:
-  //   'login'       → cliente solo ingresa RUT
-  //   'acuerdo'     → cliente nuevo o que aún no aceptó: ve acuerdo + razón social
-  //   'declaracion' → ya autenticado, trabajando con su stock
-  const [paso, setPaso] = useState(() => (token ? "declaracion" : "login"));
-  // Datos devueltos por /verificar-rut, pendientes de aceptar acuerdo.
-  const [datosPendientes, setDatosPendientes] = useState(null);
+  //   'login'         → cliente ingresa RUT + contraseña
+  //   'cambiar_clave' → primer ingreso: debe cambiar la clave temporal
+  //   'acuerdo'       → aún no acepta el acuerdo de confidencialidad
+  //   'declaracion'   → ya autenticado, trabajando con su stock
+  const [paso, setPaso] = useState(() => {
+    if (!token) return "login";
+    const p = safeJSON(localStorage.getItem(PENDIENTE_KEY)) || {};
+    if (p.cambiar) return "cambiar_clave";
+    if (p.acuerdo) return "acuerdo";
+    return "declaracion";
+  });
 
   useEffect(() => {
     if (toast) {
@@ -139,51 +153,52 @@ export default function PortalStockCliente() {
     }
   }, [toast]);
 
-  function loginExitoso(tok, cli) {
+  // Guarda la sesión y enruta según los pasos pendientes (cambiar clave o
+  // aceptar acuerdo). El token se persiste de inmediato porque las pantallas
+  // de cambio de clave/acuerdo son llamadas autenticadas.
+  function iniciarSesion(tok, cli) {
+    const pendiente = {
+      cambiar: !!cli?.debe_cambiar_clave,
+      acuerdo: !!cli?.requiere_acuerdo,
+    };
     localStorage.setItem(TOKEN_KEY, tok);
     localStorage.setItem(CLIENTE_KEY, JSON.stringify(cli));
+    localStorage.setItem(PENDIENTE_KEY, JSON.stringify(pendiente));
     setToken(tok);
     setCliente(cli);
-    setDatosPendientes(null);
+    if (pendiente.cambiar) setPaso("cambiar_clave");
+    else if (pendiente.acuerdo) setPaso("acuerdo");
+    else {
+      localStorage.removeItem(PENDIENTE_KEY);
+      setPaso("declaracion");
+    }
+  }
+
+  // Avanza tras completar el cambio de clave obligatorio.
+  function claveCambiada() {
+    const p = safeJSON(localStorage.getItem(PENDIENTE_KEY)) || {};
+    p.cambiar = false;
+    localStorage.setItem(PENDIENTE_KEY, JSON.stringify(p));
+    if (p.acuerdo) setPaso("acuerdo");
+    else {
+      localStorage.removeItem(PENDIENTE_KEY);
+      setPaso("declaracion");
+    }
+  }
+
+  // Avanza tras aceptar el acuerdo de confidencialidad.
+  function acuerdoAceptado() {
+    localStorage.removeItem(PENDIENTE_KEY);
     setPaso("declaracion");
   }
 
   function cerrarSesion() {
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(CLIENTE_KEY);
+    localStorage.removeItem(PENDIENTE_KEY);
     setToken("");
     setCliente(null);
-    setDatosPendientes(null);
     setPaso("login");
-  }
-
-  // Tras verificar el RUT decidimos si el cliente puede pasar directo a la
-  // declaración (ya aceptó antes) o debe pasar por el acuerdo + razón social.
-  async function handleRutVerificado(datos) {
-    if (datos.existe && !datos.requiere_acuerdo) {
-      try {
-        const res = await apiRequest("/stock-clientes/acceso", {
-          method: "POST",
-          body: JSON.stringify({
-            rut: datos.rut,
-            acepto_acuerdo: true,
-          }),
-        });
-        if (res?.token) {
-          loginExitoso(res.token, res.cliente);
-          return;
-        }
-      } catch (e) {
-        setToast({
-          type: "error",
-          mensaje: e?.message || "No pudimos iniciar la sesión.",
-        });
-        return;
-      }
-    }
-    // Cliente nuevo o que aún no aceptó: pasa por el acuerdo.
-    setDatosPendientes(datos);
-    setPaso("acuerdo");
   }
 
   return (
@@ -221,21 +236,24 @@ export default function PortalStockCliente() {
         <main style={styles.main} data-portal-main>
           {paso === "login" && (
             <div style={styles.loginViewport}>
-              <PantallaLogin
-                onVerificado={handleRutVerificado}
+              <PantallaLogin onLogin={iniciarSesion} setToast={setToast} />
+            </div>
+          )}
+          {paso === "cambiar_clave" && (
+            <div style={styles.loginViewport}>
+              <PantallaCambiarClave
+                cliente={cliente}
+                onListo={claveCambiada}
                 setToast={setToast}
               />
             </div>
           )}
-          {paso === "acuerdo" && datosPendientes && (
+          {paso === "acuerdo" && cliente && (
             <div style={styles.loginViewport}>
               <PantallaAcuerdo
-                datos={datosPendientes}
-                onAceptar={loginExitoso}
-                onVolver={() => {
-                  setDatosPendientes(null);
-                  setPaso("login");
-                }}
+                cliente={cliente}
+                onAceptar={acuerdoAceptado}
+                onVolver={cerrarSesion}
                 setToast={setToast}
               />
             </div>
@@ -278,7 +296,7 @@ export default function PortalStockCliente() {
 /* ──────────────────────────────────────────────────────────────────────
    PASO 2 — Acuerdo de confidencialidad (+ razón social si es 1er ingreso)
    ────────────────────────────────────────────────────────────────────── */
-function PantallaAcuerdo({ datos, onAceptar, onVolver, setToast }) {
+function PantallaAcuerdo({ cliente, onAceptar, onVolver, setToast }) {
   const [aceptado, setAceptado] = useState(false);
   const [enviando, setEnviando] = useState(false);
   const [error, setError] = useState("");
@@ -291,18 +309,11 @@ function PantallaAcuerdo({ datos, onAceptar, onVolver, setToast }) {
     }
     setEnviando(true);
     try {
-      const res = await apiRequest("/stock-clientes/acceso", {
+      await apiRequest("/stock-clientes/aceptar-acuerdo", {
         method: "POST",
-        body: JSON.stringify({
-          rut: datos.rut,
-          acepto_acuerdo: true,
-        }),
+        body: JSON.stringify({}),
       });
-      if (res?.token) {
-        onAceptar(res.token, res.cliente);
-      } else {
-        setError("No pudimos completar el ingreso.");
-      }
+      onAceptar();
     } catch (e) {
       setError(e?.message || "No pudimos completar el ingreso.");
     } finally {
@@ -339,8 +350,8 @@ function PantallaAcuerdo({ datos, onAceptar, onVolver, setToast }) {
 
         {/* Identidad confirmada contra el maestro de clientes */}
         <div style={styles.identidadConfirmada}>
-          <div style={styles.identidadEmpresa}>{datos.razon_social}</div>
-          <div style={styles.identidadRut}>{datos.rut_formateado}</div>
+          <div style={styles.identidadEmpresa}>{cliente?.razon_social}</div>
+          <div style={styles.identidadRut}>{cliente?.rut_formateado}</div>
         </div>
 
         <div style={styles.acuerdoLista}>
@@ -419,12 +430,15 @@ function BloqueAcuerdo({ icono: Icon, titulo, texto }) {
 }
 
 /* ──────────────────────────────────────────────────────────────────────
-   PASO 1 — Login: cliente ingresa solo su RUT
+   PASO 1 — Login: cliente ingresa RUT + contraseña
    ────────────────────────────────────────────────────────────────────── */
-function PantallaLogin({ onVerificado, setToast }) {
+function PantallaLogin({ onLogin, setToast }) {
   const [rut, setRut] = useState("");
+  const [password, setPassword] = useState("");
+  const [verClave, setVerClave] = useState(false);
   const [enviando, setEnviando] = useState(false);
   const [error, setError] = useState("");
+  const [mostrarRecuperar, setMostrarRecuperar] = useState(false);
 
   async function continuar(e) {
     e?.preventDefault?.();
@@ -435,16 +449,24 @@ function PantallaLogin({ onVerificado, setToast }) {
       setError("Debe ingresar su RUT.");
       return;
     }
+    if (!password) {
+      setError("Debe ingresar su contraseña.");
+      return;
+    }
 
     setEnviando(true);
     try {
-      const res = await apiRequest("/stock-clientes/verificar-rut", {
+      const res = await apiRequest("/stock-clientes/login", {
         method: "POST",
-        body: JSON.stringify({ rut: rutLimpio }),
+        body: JSON.stringify({ rut: rutLimpio, password }),
       });
-      onVerificado(res);
+      if (res?.token) {
+        onLogin(res.token, res.cliente);
+      } else {
+        setError("No pudimos iniciar la sesión.");
+      }
     } catch (e) {
-      setError(e?.message || "No pudimos verificar su RUT.");
+      setError(e?.message || "No pudimos iniciar la sesión.");
     } finally {
       setEnviando(false);
     }
@@ -522,7 +544,7 @@ function PantallaLogin({ onVerificado, setToast }) {
           </div>
           <h2 style={styles.loginTitulo}>Acceso del cliente</h2>
           <p style={styles.loginSub}>
-            Ingrese el RUT de su empresa para continuar.
+            Ingrese el RUT de su empresa y su contraseña para continuar.
           </p>
 
           <form onSubmit={continuar} style={styles.form}>
@@ -531,7 +553,7 @@ function PantallaLogin({ onVerificado, setToast }) {
               <input
                 type="text"
                 inputMode="text"
-                autoComplete="off"
+                autoComplete="username"
                 placeholder="12.345.678-9"
                 value={formatearRutVisual(rut)}
                 onChange={(e) => setRut(e.target.value)}
@@ -539,6 +561,30 @@ function PantallaLogin({ onVerificado, setToast }) {
                 disabled={enviando}
                 autoFocus
               />
+            </label>
+
+            <label style={styles.label}>
+              Contraseña
+              <div style={{ position: "relative" }}>
+                <input
+                  type={verClave ? "text" : "password"}
+                  autoComplete="current-password"
+                  placeholder="Su contraseña"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  style={{ ...styles.input, paddingRight: 44 }}
+                  disabled={enviando}
+                />
+                <button
+                  type="button"
+                  onClick={() => setVerClave((v) => !v)}
+                  aria-label={verClave ? "Ocultar contraseña" : "Mostrar contraseña"}
+                  style={styles.verClaveBtn}
+                  tabIndex={-1}
+                >
+                  {verClave ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+              </div>
             </label>
 
             {error && <div style={styles.errorBox}>{error}</div>}
@@ -549,9 +595,26 @@ function PantallaLogin({ onVerificado, setToast }) {
               disabled={enviando}
               className="btn-guardar-shine"
             >
-              {enviando ? "Verificando…" : "Continuar"}
+              {enviando ? "Ingresando…" : "Ingresar"}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setMostrarRecuperar(true)}
+              style={styles.linkRecuperar}
+              disabled={enviando}
+            >
+              ¿Olvidó su contraseña?
             </button>
           </form>
+
+          {mostrarRecuperar && (
+            <ModalRecuperar
+              rutInicial={rut}
+              onCerrar={() => setMostrarRecuperar(false)}
+              setToast={setToast}
+            />
+          )}
 
           <div style={styles.loginPie}>
             <ShieldCheck size={12} /> Conexión cifrada · Acuerdo de
@@ -560,6 +623,338 @@ function PantallaLogin({ onVerificado, setToast }) {
         </div>
       </section>
     </div>
+  );
+}
+
+/* ──────────────────────────────────────────────────────────────────────
+   PASO 1.5 — Cambio obligatorio de clave (primer ingreso / clave temporal)
+   ────────────────────────────────────────────────────────────────────── */
+// Política de contraseña del portal: mínimo 8 caracteres, con al menos una
+// mayúscula, una minúscula y un número. Debe coincidir con la validación del
+// backend (stock-clientes.service: validarPasswordPortal).
+const REGLAS_CLAVE = [
+  { test: (s) => s.length >= 8, label: "Al menos 8 caracteres" },
+  { test: (s) => /[A-Z]/.test(s), label: "Una letra mayúscula" },
+  { test: (s) => /[a-z]/.test(s), label: "Una letra minúscula" },
+  { test: (s) => /[0-9]/.test(s), label: "Un número" },
+];
+function claveCumplePolitica(s) {
+  return REGLAS_CLAVE.every((r) => r.test(String(s || "")));
+}
+
+function PantallaCambiarClave({ cliente, onListo, setToast }) {
+  const [clave, setClave] = useState("");
+  const [confirmar, setConfirmar] = useState("");
+  const [ver, setVer] = useState(false);
+  const [enviando, setEnviando] = useState(false);
+  const [error, setError] = useState("");
+
+  async function guardar(e) {
+    e?.preventDefault?.();
+    setError("");
+    if (!claveCumplePolitica(clave)) {
+      setError("La contraseña no cumple los requisitos de seguridad indicados.");
+      return;
+    }
+    if (clave !== confirmar) {
+      setError("Las contraseñas no coinciden.");
+      return;
+    }
+    setEnviando(true);
+    try {
+      await apiRequest("/stock-clientes/cambiar-clave", {
+        method: "POST",
+        body: JSON.stringify({ password_nueva: clave }),
+      });
+      setToast({
+        type: "success",
+        titulo: "Contraseña actualizada",
+        mensaje: "Su nueva contraseña quedó guardada.",
+      });
+      onListo();
+    } catch (e) {
+      setError(e?.message || "No pudimos actualizar la contraseña.");
+    } finally {
+      setEnviando(false);
+    }
+  }
+
+  return (
+    <div style={styles.acuerdoWrap} className="anim-fade-up">
+      <div style={{ display: "flex", justifyContent: "center", marginBottom: 22 }}>
+        <div style={styles.brandMark} className="anim-chip">
+          <img
+            src="https://amsodentmedical.cl/wp-content/uploads/2025/12/Amsodent-1.png"
+            alt="Amsodent Medical"
+            style={styles.brandMarkLogo}
+          />
+          <span style={styles.brandMarkDivider} aria-hidden />
+          <div style={styles.brandMarkInfo}>
+            <span style={styles.brandMarkEyebrow}>Portal del Cliente</span>
+            <span style={styles.brandMarkSub}>Seguridad de su cuenta</span>
+          </div>
+        </div>
+      </div>
+
+      <div style={{ ...styles.acuerdoCard, maxWidth: 460 }}>
+        <div style={styles.acuerdoIcon}>
+          <KeyRound size={26} />
+        </div>
+        <h1 style={styles.acuerdoTitulo}>Cree su nueva contraseña</h1>
+        <p style={styles.acuerdoSub}>
+          Por su seguridad, debe reemplazar la contraseña temporal que le
+          entregamos por una de su elección antes de continuar.
+        </p>
+
+        <form onSubmit={guardar} style={{ ...styles.form, marginTop: 4 }}>
+          <label style={styles.label}>
+            Nueva contraseña
+            <div style={{ position: "relative" }}>
+              <input
+                type={ver ? "text" : "password"}
+                autoComplete="new-password"
+                placeholder="Mínimo 8 caracteres"
+                value={clave}
+                onChange={(e) => setClave(e.target.value)}
+                style={{ ...styles.input, paddingRight: 44 }}
+                disabled={enviando}
+                autoFocus
+              />
+              <button
+                type="button"
+                onClick={() => setVer((v) => !v)}
+                aria-label={ver ? "Ocultar contraseña" : "Mostrar contraseña"}
+                style={styles.verClaveBtn}
+                tabIndex={-1}
+              >
+                {ver ? <EyeOff size={16} /> : <Eye size={16} />}
+              </button>
+            </div>
+          </label>
+
+          {/* Requisitos de seguridad — se marcan en verde a medida que se cumplen */}
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "1fr 1fr",
+              gap: "6px 14px",
+              padding: "12px 14px",
+              background: "#f8fafc",
+              border: "1px solid #e2e8f0",
+              borderRadius: 12,
+              marginTop: -2,
+            }}
+          >
+            {REGLAS_CLAVE.map((r) => {
+              const ok = r.test(clave);
+              return (
+                <div
+                  key={r.label}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 7,
+                    fontSize: 12.5,
+                    color: ok ? "#15803d" : "#94a3b8",
+                    fontWeight: ok ? 600 : 500,
+                    transition: "color .15s ease",
+                  }}
+                >
+                  {ok ? (
+                    <CheckCircle2 size={15} />
+                  ) : (
+                    <span
+                      style={{
+                        width: 13,
+                        height: 13,
+                        borderRadius: "50%",
+                        border: "2px solid #cbd5e1",
+                        flexShrink: 0,
+                      }}
+                    />
+                  )}
+                  {r.label}
+                </div>
+              );
+            })}
+          </div>
+
+          <label style={styles.label}>
+            Repita la contraseña
+            <input
+              type={ver ? "text" : "password"}
+              autoComplete="new-password"
+              placeholder="Repita la nueva contraseña"
+              value={confirmar}
+              onChange={(e) => setConfirmar(e.target.value)}
+              style={styles.input}
+              disabled={enviando}
+            />
+          </label>
+
+          {error && <div style={styles.errorBox}>{error}</div>}
+
+          <button
+            type="submit"
+            style={{ ...styles.btnPrimario, marginTop: 6 }}
+            disabled={enviando}
+            className="btn-guardar-shine"
+          >
+            {enviando ? "Guardando…" : "Guardar y continuar"}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+/* ──────────────────────────────────────────────────────────────────────
+   Modal — Solicitud de recuperación de clave (contacto con soporte)
+   ────────────────────────────────────────────────────────────────────── */
+function ModalRecuperar({ rutInicial, onCerrar, setToast }) {
+  const [rut, setRut] = useState(rutInicial || "");
+  const [nombre, setNombre] = useState("");
+  const [email, setEmail] = useState("");
+  const [telefono, setTelefono] = useState("");
+  const [mensaje, setMensaje] = useState("");
+  const [enviando, setEnviando] = useState(false);
+  const [error, setError] = useState("");
+
+  async function enviar(e) {
+    e?.preventDefault?.();
+    setError("");
+    const rutLimpio = String(rut || "").replace(/[^0-9kK]/g, "").toLowerCase();
+    if (!rutLimpio) {
+      setError("Indique su RUT.");
+      return;
+    }
+    if (!email.trim() && !telefono.trim()) {
+      setError("Indique un correo o teléfono para poder responderle.");
+      return;
+    }
+    setEnviando(true);
+    try {
+      await apiRequest("/stock-clientes/recuperacion", {
+        method: "POST",
+        body: JSON.stringify({
+          rut: rutLimpio,
+          contacto_nombre: nombre.trim(),
+          contacto_email: email.trim(),
+          contacto_telefono: telefono.trim(),
+          mensaje: mensaje.trim(),
+        }),
+      });
+      onCerrar();
+      setToast({
+        type: "success",
+        titulo: "Solicitud enviada",
+        mensaje:
+          "Recibimos su solicitud. Nuestro equipo de soporte se contactará para restablecer su clave.",
+      });
+    } catch (e) {
+      setError(e?.message || "No pudimos enviar su solicitud.");
+    } finally {
+      setEnviando(false);
+    }
+  }
+
+  // Se renderiza con portal al <body> para que el overlay (position: fixed)
+  // cubra el viewport completo y NO quede confinado/recortado por la tarjeta
+  // de login, que tiene transform (animación cardFloat) + overflow:hidden.
+  return createPortal(
+    <div style={styles.modalOverlay} onClick={onCerrar}>
+      <div
+        style={styles.modalRecuperar}
+        className="anim-fade-up"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button
+          type="button"
+          onClick={onCerrar}
+          style={styles.modalCerrar}
+          aria-label="Cerrar"
+        >
+          <X size={18} />
+        </button>
+
+        <div style={styles.acuerdoIcon}>
+          <HelpCircle size={22} />
+        </div>
+        <h2 style={styles.loginTitulo}>Recuperar contraseña</h2>
+        <p style={styles.loginSub}>
+          Déjenos sus datos y nuestro equipo de soporte le ayudará a restablecer
+          su acceso.
+        </p>
+
+        <form onSubmit={enviar} style={styles.form}>
+          <label style={styles.label}>
+            RUT
+            <input
+              type="text"
+              placeholder="12.345.678-9"
+              value={formatearRutVisual(rut)}
+              onChange={(e) => setRut(e.target.value)}
+              style={styles.input}
+              disabled={enviando}
+            />
+          </label>
+          <label style={styles.label}>
+            Nombre de contacto
+            <input
+              type="text"
+              placeholder="Su nombre"
+              value={nombre}
+              onChange={(e) => setNombre(e.target.value)}
+              style={styles.input}
+              disabled={enviando}
+            />
+          </label>
+          <label style={styles.label}>
+            Correo
+            <input
+              type="email"
+              placeholder="correo@empresa.cl"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              style={styles.input}
+              disabled={enviando}
+            />
+          </label>
+          <label style={styles.label}>
+            Teléfono
+            <input
+              type="tel"
+              placeholder="+56 9 1234 5678"
+              value={telefono}
+              onChange={(e) => setTelefono(formatearTelefonoCL(e.target.value))}
+              style={styles.input}
+              disabled={enviando}
+            />
+          </label>
+          <label style={styles.label}>
+            Mensaje (opcional)
+            <textarea
+              placeholder="Cuéntenos brevemente su situación…"
+              value={mensaje}
+              onChange={(e) => setMensaje(e.target.value)}
+              style={{ ...styles.input, minHeight: 70, resize: "vertical" }}
+              disabled={enviando}
+            />
+          </label>
+
+          {error && <div style={styles.errorBox}>{error}</div>}
+
+          <button
+            type="submit"
+            style={{ ...styles.btnPrimario, marginTop: 4 }}
+            disabled={enviando}
+          >
+            {enviando ? "Enviando…" : "Enviar solicitud"}
+          </button>
+        </form>
+      </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -599,12 +994,15 @@ function FeatureItem({ icono: Icono, titulo, texto, delay = 0 }) {
 function PantallaDeclaracion({ cliente, setToast }) {
   const [tab, setTab] = useState("declaracion"); // "declaracion" | "solicitudes"
   const [items, setItems] = useState([]);
+  // Copia del último estado guardado/cargado, para "Cancelar cambios".
+  const [baseline, setBaseline] = useState([]);
   const [historial, setHistorial] = useState([]);
   const [solicitudes, setSolicitudes] = useState([]);
   const [cargando, setCargando] = useState(true);
   const [cargandoSolicitudes, setCargandoSolicitudes] = useState(false);
   const [guardando, setGuardando] = useState(false);
   const [mostrarSolicitud, setMostrarSolicitud] = useState(false);
+  const [mostrarCargaMasiva, setMostrarCargaMasiva] = useState(false);
 
   async function cargarSolicitudes() {
     setCargandoSolicitudes(true);
@@ -632,19 +1030,22 @@ function PantallaDeclaracion({ cliente, setToast }) {
         setSolicitudes(Array.isArray(solics) ? solics : []);
         const lista = Array.isArray(productos) ? productos : [];
         if (lista.length === 0) {
-          setItems([crearItemVacio()]);
+          const vacio = [crearItemVacio()];
+          setItems(vacio);
+          setBaseline(vacio.map((o) => ({ ...o })));
         } else {
-          setItems(
-            lista.map((p) => ({
-              nombre: p.nombre,
-              marca: p.marca || "",
-              unidad: p.unidad || "",
-              stock_actual: p.stock_actual ?? "",
-              stock_bajo: p.stock_alerta ?? "",
-              stock_minimo: p.stock_minimo ?? "",
-              precio_unitario: p.precio_unitario ?? "",
-            })),
-          );
+          const mapeados = lista.map((p) => ({
+            nombre: p.nombre,
+            sku: p.sku || "",
+            marca: p.marca || "",
+            unidad: p.unidad || "",
+            stock_actual: p.stock_actual ?? "",
+            stock_bajo: p.stock_alerta ?? "",
+            stock_minimo: p.stock_minimo ?? "",
+            precio_unitario: p.precio_unitario ?? "",
+          }));
+          setItems(mapeados);
+          setBaseline(mapeados.map((o) => ({ ...o })));
         }
         setHistorial(Array.isArray(decls) ? decls : []);
       } catch (e) {
@@ -665,6 +1066,7 @@ function PantallaDeclaracion({ cliente, setToast }) {
   function crearItemVacio() {
     return {
       nombre: "",
+      sku: "",
       marca: "",
       unidad: "",
       stock_actual: "",
@@ -689,6 +1091,39 @@ function PantallaDeclaracion({ cliente, setToast }) {
   function eliminarItem(idx) {
     setItems((prev) => (prev.length === 1 ? [crearItemVacio()] : prev.filter((_, i) => i !== idx)));
   }
+
+  // Descarta los cambios no guardados y vuelve al último estado guardado.
+  function revertirCambios() {
+    setItems(baseline.length ? baseline.map((o) => ({ ...o })) : [crearItemVacio()]);
+  }
+
+  // Carga masiva: incorpora a la tabla los productos leídos de un archivo.
+  // Si `reemplazar` es true sustituye la lista; si no, los agrega al final
+  // (descartando las filas vacías actuales). El cliente revisa y luego guarda.
+  function cargarMasivo(filasNuevas, reemplazar) {
+    const nuevas = (filasNuevas || []).map((f) => ({ ...crearItemVacio(), ...f }));
+    if (nuevas.length === 0) return;
+    setItems((prev) => {
+      if (reemplazar) return nuevas;
+      const actuales = prev.filter(
+        (it) => String(it.nombre || "").trim() || String(it.sku || "").trim(),
+      );
+      const combinadas = [...actuales, ...nuevas];
+      return combinadas.length ? combinadas : [crearItemVacio()];
+    });
+    setMostrarCargaMasiva(false);
+    setToast({
+      type: "success",
+      titulo: "Productos cargados",
+      mensaje: `Se agregaron ${nuevas.length} producto${nuevas.length === 1 ? "" : "s"} a la tabla. Revise y presione "Guardar stock".`,
+    });
+  }
+
+  // Hay cambios pendientes si la tabla difiere del último estado guardado.
+  const hayCambios = useMemo(
+    () => JSON.stringify(items) !== JSON.stringify(baseline),
+    [items, baseline],
+  );
 
   const { totales, itemsCriticos, itemsBajos } = useMemo(() => {
     const tot = { total: 0, verdes: 0, amarillos: 0, rojos: 0, valor: 0 };
@@ -726,6 +1161,7 @@ function PantallaDeclaracion({ cliente, setToast }) {
           Number.isFinite(precioNum) && precioNum >= 0 ? precioNum : null;
         return {
           nombre: String(it.nombre || "").trim(),
+          sku: String(it.sku || "").trim() || undefined,
           marca: String(it.marca || "").trim() || undefined,
           unidad: String(it.unidad || "").trim() || undefined,
           stock_actual: Number(it.stock_actual) || 0,
@@ -757,6 +1193,8 @@ function PantallaDeclaracion({ cliente, setToast }) {
           ? `Avisaremos al equipo: ${totalAlertas} producto${totalAlertas === 1 ? "" : "s"} requieren atención.`
           : "Todos sus productos están por sobre el mínimo declarado.",
       });
+      // El estado guardado pasa a ser la nueva línea base para "Cancelar cambios".
+      setBaseline(items.map((o) => ({ ...o })));
       // refresca el historial
       const decls = await apiRequest("/stock-clientes/mis-declaraciones").catch(() => []);
       setHistorial(Array.isArray(decls) ? decls : []);
@@ -790,7 +1228,7 @@ function PantallaDeclaracion({ cliente, setToast }) {
     const headers = [
       "Producto",
       "Marca",
-      "Unidad",
+      "Formato",
       "Stock actual",
       "Stock bajo",
       "Stock crítico",
@@ -847,7 +1285,7 @@ function PantallaDeclaracion({ cliente, setToast }) {
       headers: [
         "Producto",
         "Marca",
-        "Unidad",
+        "Formato",
         "Stock actual",
         "Stock bajo",
         "Stock crítico",
@@ -993,7 +1431,7 @@ function PantallaDeclaracion({ cliente, setToast }) {
       <div style={styles.declCard}>
         <div style={styles.declCardHeader}>
           <div>
-            <div style={styles.declTitulo}>Listado de productos</div>
+            <div style={styles.declTitulo}>Inventario Clínica</div>
             <div style={styles.declSub}>
               Declare su stock actual y los umbrales de stock bajo y crítico. El
               semáforo se calcula automáticamente.
@@ -1005,8 +1443,16 @@ function PantallaDeclaracion({ cliente, setToast }) {
               onImprimir={imprimirReporte}
               disabled={itemsCriticos.length + itemsBajos.length === 0}
             />
-            <button onClick={agregarItem} style={styles.btnSecundario} className="btn-hover">
-              <Plus size={14} /> Agregar producto
+            <button
+              onClick={() => setMostrarCargaMasiva(true)}
+              style={styles.btnSecundarioOutline}
+              className="btn-hover"
+              title="Cargar varios productos desde un archivo Excel o CSV"
+            >
+              <Upload size={15} /> Carga masiva
+            </button>
+            <button onClick={agregarItem} style={styles.btnSecundarioOutline} className="btn-hover">
+              <Plus size={15} /> Agregar producto
             </button>
           </div>
         </div>
@@ -1015,38 +1461,39 @@ function PantallaDeclaracion({ cliente, setToast }) {
           <table style={styles.tabla}>
             <thead>
               <tr>
-                <th style={{ ...styles.th, minWidth: 200 }}>Producto</th>
-                <th style={{ ...styles.th, minWidth: 110 }}>Marca</th>
-                <th style={{ ...styles.th, minWidth: 80 }}>Unidad</th>
-                <th style={{ ...styles.th, minWidth: 95, textAlign: "right" }}>
+                <th style={{ ...styles.th, minWidth: 78 }} title="Código o SKU del producto (opcional).">SKU</th>
+                <th style={{ ...styles.th, minWidth: 150 }}>Producto</th>
+                <th style={{ ...styles.th, minWidth: 88 }}>Marca</th>
+                <th style={{ ...styles.th, minWidth: 64 }}>Formato</th>
+                <th style={{ ...styles.th, minWidth: 60, textAlign: "right" }}>
                   Stock actual
                 </th>
                 <th
-                  style={{ ...styles.th, minWidth: 95, textAlign: "right" }}
+                  style={{ ...styles.th, minWidth: 60, textAlign: "right" }}
                   title="Si el stock actual queda en o por debajo de este valor, se marca como bajo (amarillo)."
                 >
                   Stock bajo
                 </th>
                 <th
-                  style={{ ...styles.th, minWidth: 95, textAlign: "right" }}
+                  style={{ ...styles.th, minWidth: 60, textAlign: "right" }}
                   title="Si el stock actual queda en o por debajo de este valor, se marca como crítico (rojo)."
                 >
                   Stock crítico
                 </th>
                 <th
-                  style={{ ...styles.th, minWidth: 110, textAlign: "right" }}
+                  style={{ ...styles.th, minWidth: 76, textAlign: "right" }}
                   title="Precio unitario de referencia para valorizar su inventario."
                 >
                   Precio unit.
                 </th>
                 <th
-                  style={{ ...styles.th, minWidth: 110, textAlign: "right" }}
+                  style={{ ...styles.th, minWidth: 72, textAlign: "right" }}
                   title="Stock actual × precio unitario."
                 >
                   Total
                 </th>
-                <th style={{ ...styles.th, minWidth: 90, textAlign: "center" }}>Semáforo</th>
-                <th style={{ ...styles.th, width: 50 }} />
+                <th style={{ ...styles.th, minWidth: 76, textAlign: "center" }}>Semáforo</th>
+                <th style={{ ...styles.th, width: 34 }} />
               </tr>
             </thead>
             <tbody>
@@ -1084,6 +1531,15 @@ function PantallaDeclaracion({ cliente, setToast }) {
                     <td style={styles.td}>
                       <input
                         type="text"
+                        value={it.sku}
+                        onChange={(e) => actualizarItem(idx, "sku", e.target.value)}
+                        placeholder="Código…"
+                        style={styles.cellInput}
+                      />
+                    </td>
+                    <td style={styles.td}>
+                      <input
+                        type="text"
                         value={it.nombre}
                         onChange={(e) => actualizarItem(idx, "nombre", e.target.value)}
                         placeholder="Ej: Resina compuesta A2"
@@ -1104,7 +1560,7 @@ function PantallaDeclaracion({ cliente, setToast }) {
                         type="text"
                         value={it.unidad}
                         onChange={(e) => actualizarItem(idx, "unidad", e.target.value)}
-                        placeholder="caja, unidad…"
+                        placeholder="Ej: caja, frasco, set…"
                         style={styles.cellInput}
                       />
                     </td>
@@ -1253,6 +1709,18 @@ function PantallaDeclaracion({ cliente, setToast }) {
               <FileSpreadsheet size={15} />
               Solicitar cotización
             </button>
+            {hayCambios && (
+              <button
+                onClick={revertirCambios}
+                disabled={guardando}
+                style={styles.btnSecundario}
+                className="btn-hover"
+                title="Descartar los cambios no guardados"
+              >
+                <X size={15} />
+                Cancelar cambios
+              </button>
+            )}
             <button
               onClick={guardar}
               disabled={guardando}
@@ -1265,6 +1733,14 @@ function PantallaDeclaracion({ cliente, setToast }) {
           </div>
         </div>
       </div>
+      )}
+
+      {mostrarCargaMasiva && (
+        <ModalCargaMasivaStock
+          onCerrar={() => setMostrarCargaMasiva(false)}
+          onCargar={cargarMasivo}
+          setToast={setToast}
+        />
       )}
 
       {mostrarSolicitud && (
@@ -1731,6 +2207,88 @@ const solStyles = {
 // a (stock_minimo - stock_actual) si está negativo, o cero. El cliente
 // ajusta, agrega contacto opcional y un comentario, y envía. El backend
 // envía correo + campana a los destinatarios configurados.
+// Buscador sobre el catálogo PERSONAL del cliente (sus productos declarados).
+// Filtra en memoria por nombre, marca o SKU. Permite agregar a la cotización
+// cualquiera de sus productos, no solo los que están bajos o críticos.
+function BuscadorMiCatalogo({ productos, onAgregar }) {
+  const [q, setQ] = useState("");
+  const [abierto, setAbierto] = useState(false);
+
+  const disponibles = useMemo(
+    () => (productos || []).filter((p) => String(p.nombre || "").trim().length > 0),
+    [productos],
+  );
+
+  const resultados = useMemo(() => {
+    const term = q.trim().toLowerCase();
+    const base = term.length < 1
+      ? disponibles
+      : disponibles.filter((p) =>
+          [p.nombre, p.marca, p.sku]
+            .filter(Boolean)
+            .some((v) => String(v).toLowerCase().includes(term)),
+        );
+    return base.slice(0, 30);
+  }, [q, disponibles]);
+
+  if (disponibles.length === 0) return null;
+
+  return (
+    <div style={{ position: "relative" }}>
+      <label style={{ ...modalStyles.label, marginBottom: 4 }}>
+        Agregar de mi catálogo
+      </label>
+      <div style={{ position: "relative" }}>
+        <Search
+          size={15}
+          style={{
+            position: "absolute",
+            left: 12,
+            top: "50%",
+            transform: "translateY(-50%)",
+            color: "#94a3b8",
+            pointerEvents: "none",
+          }}
+        />
+        <input
+          type="text"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          onFocus={() => setAbierto(true)}
+          onBlur={() => setTimeout(() => setAbierto(false), 150)}
+          placeholder="Buscar entre mis productos declarados…"
+          style={{ ...modalStyles.input, paddingLeft: 36 }}
+          autoComplete="off"
+        />
+      </div>
+      {abierto && resultados.length > 0 && (
+        <div style={modalStyles.catalogoDropdown}>
+          {resultados.map((p, idx) => (
+            <button
+              type="button"
+              key={`${p.nombre}-${idx}`}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => {
+                onAgregar(p);
+                setQ("");
+                setAbierto(false);
+              }}
+              style={modalStyles.catalogoItem}
+            >
+              <span style={{ fontWeight: 600, color: "#0f172a", fontSize: 13 }}>
+                {p.nombre}
+              </span>
+              <span style={{ fontSize: 11, color: "#94a3b8", marginTop: 1 }}>
+                {[p.marca, p.sku, p.unidad].filter(Boolean).join(" · ") || "Mi catálogo"}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Buscador con autocompletado sobre el catálogo Amsodent. Debounce de 300ms.
 function BuscadorCatalogo({ onAgregar }) {
   const [q, setQ] = useState("");
@@ -1765,7 +2323,7 @@ function BuscadorCatalogo({ onAgregar }) {
   return (
     <div style={{ position: "relative" }}>
       <label style={{ ...modalStyles.label, marginBottom: 4 }}>
-        Agregar producto del catálogo{" "}
+        Buscar en catálogo Amsodent{" "}
         <span style={modalStyles.opt}>(opcional)</span>
       </label>
       <div style={{ position: "relative" }}>
@@ -1898,6 +2456,41 @@ function ModalSolicitudCotizacion({
       },
     ]);
   }
+  // Agrega un producto desde el catálogo PERSONAL del cliente (sus productos
+  // declarados, incluso los que están en verde y no se preseleccionan).
+  function agregarMiCatalogo(prod) {
+    setFilas((prev) => {
+      const existe = prev.some(
+        (f) =>
+          f.nombre.trim().toLowerCase() ===
+          String(prod.nombre || "").trim().toLowerCase(),
+      );
+      if (existe) {
+        setToast({ type: "warning", mensaje: "Ese producto ya está en la lista." });
+        return prev;
+      }
+      const actual = Number(prod.stock_actual) || 0;
+      const minimo = Number(prod.stock_minimo) || 0;
+      const sem = semaforoColor(actual, minimo, prod.stock_bajo);
+      const referencia =
+        Number(prod.stock_bajo) > 0 ? Number(prod.stock_bajo) : minimo * 1.5;
+      const sugerida = Math.max(0, Math.ceil(referencia - actual));
+      return [
+        ...prev,
+        {
+          nombre: String(prod.nombre || "").trim(),
+          marca: prod.marca || "",
+          unidad: prod.unidad || "",
+          stock_actual: actual,
+          stock_minimo: minimo,
+          sem,
+          origen: "mi_catalogo",
+          incluir: true,
+          cantidad: sugerida > 0 ? sugerida : 1,
+        },
+      ];
+    });
+  }
   function agregarDelCatalogo(prod) {
     setFilas((prev) => {
       // Evita duplicar un producto ya presente (por nombre).
@@ -1988,8 +2581,8 @@ function ModalSolicitudCotizacion({
             <div style={modalStyles.eyebrow}>Cotización</div>
             <div style={modalStyles.titulo}>Solicitar cotización</div>
             <div style={modalStyles.sub}>
-              Preseleccionamos sus productos en estado bajo o crítico. Ajuste las
-              cantidades y agregue otros desde el catálogo si lo necesita.
+              Preseleccionamos sus productos bajos o críticos. Agregue otros desde
+              su catálogo y, si lo necesita, búsquelos en el catálogo Amsodent.
             </div>
           </div>
           <button onClick={onCerrar} style={modalStyles.btnCerrar} title="Cerrar">
@@ -1998,7 +2591,10 @@ function ModalSolicitudCotizacion({
         </div>
 
         <div style={modalStyles.body}>
-          <BuscadorCatalogo onAgregar={agregarDelCatalogo} />
+          <div style={{ display: "grid", gap: 10 }}>
+            <BuscadorMiCatalogo productos={productos} onAgregar={agregarMiCatalogo} />
+            <BuscadorCatalogo onAgregar={agregarDelCatalogo} />
+          </div>
 
           <div style={modalStyles.listaHeader}>
             <span style={modalStyles.listaTitulo}>
@@ -2093,8 +2689,10 @@ function ModalSolicitudCotizacion({
                             </div>
                             <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 2 }}>
                               {f.origen === "catalogo"
-                                ? `Del catálogo${f.marca ? ` · ${f.marca}` : ""}`
-                                : `Stock actual: ${f.stock_actual}`}
+                                ? `Catálogo Amsodent${f.marca ? ` · ${f.marca}` : ""}`
+                                : f.origen === "mi_catalogo"
+                                  ? `Mi catálogo · stock actual: ${f.stock_actual}`
+                                  : `Stock actual: ${f.stock_actual}`}
                             </div>
                           </>
                         )}
@@ -2213,6 +2811,274 @@ function ModalSolicitudCotizacion({
     </div>
   );
 }
+
+/* ──────────────────────────────────────────────────────────────────────
+   Modal — Carga masiva de productos al stock
+   Lee un archivo .xlsx/.xls/.csv y llena la tabla en memoria. El cliente
+   revisa y luego presiona "Guardar stock" (misma carga de siempre).
+   ────────────────────────────────────────────────────────────────────── */
+// Encabezados aceptados → campo interno. Se normalizan (minúsculas, sin tildes).
+const CARGA_ALIASES = {
+  sku: "sku", codigo: "sku", code: "sku",
+  producto: "nombre", nombre: "nombre", "nombre del producto": "nombre", descripcion: "nombre",
+  marca: "marca",
+  unidad: "unidad", "unidad de medida": "unidad", um: "unidad",
+  "stock actual": "stock_actual", stock_actual: "stock_actual", actual: "stock_actual", stock: "stock_actual", cantidad: "stock_actual",
+  "stock bajo": "stock_bajo", stock_bajo: "stock_bajo", bajo: "stock_bajo",
+  "stock critico": "stock_minimo", stock_critico: "stock_minimo", critico: "stock_minimo",
+  "stock minimo": "stock_minimo", minimo: "stock_minimo", "stock mínimo": "stock_minimo",
+  precio: "precio_unitario", "precio unitario": "precio_unitario", precio_unitario: "precio_unitario", valor: "precio_unitario",
+};
+const CARGA_COLUMNAS = ["sku", "producto", "marca", "unidad", "stock_actual", "stock_bajo", "stock_critico", "precio"];
+
+function normalizarEncabezado(k) {
+  return String(k || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "");
+}
+
+// Parsea un número en formato chileno ("$12.500", "1.234,5") → 12500 / 1234.5.
+function parsearNumeroCarga(v) {
+  if (v == null || v === "") return "";
+  const limpio = String(v).replace(/[^\d.,-]/g, "");
+  if (limpio === "") return "";
+  const n = Number(limpio.replace(/\./g, "").replace(",", "."));
+  return Number.isFinite(n) ? n : "";
+}
+
+function ModalCargaMasivaStock({ onCerrar, onCargar, setToast }) {
+  const [archivo, setArchivo] = useState(null);
+  const [filas, setFilas] = useState([]);
+  const [omitidas, setOmitidas] = useState(0);
+  const [parsing, setParsing] = useState(false);
+  const [reemplazar, setReemplazar] = useState(false);
+
+  async function manejarArchivo(file) {
+    if (!file) return;
+    setArchivo(file);
+    setParsing(true);
+    setFilas([]);
+    setOmitidas(0);
+    try {
+      const XLSX = await import("xlsx");
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: "array" });
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const raw = XLSX.utils.sheet_to_json(sheet, { defval: "", raw: false });
+      let sinNombre = 0;
+      const numericos = ["stock_actual", "stock_bajo", "stock_minimo", "precio_unitario"];
+      const parsed = raw.map((row) => {
+        const item = {
+          sku: "", nombre: "", marca: "", unidad: "",
+          stock_actual: "", stock_bajo: "", stock_minimo: "", precio_unitario: "",
+        };
+        for (const [k, v] of Object.entries(row)) {
+          const campo = CARGA_ALIASES[normalizarEncabezado(k)];
+          if (!campo) continue;
+          if (numericos.includes(campo)) item[campo] = parsearNumeroCarga(v);
+          else item[campo] = typeof v === "string" ? v.trim() : v ?? "";
+        }
+        return item;
+      });
+      const validas = parsed.filter((it) => {
+        const ok = String(it.nombre || "").trim().length > 0;
+        if (!ok) sinNombre += 1;
+        return ok;
+      });
+      setFilas(validas);
+      setOmitidas(sinNombre);
+      if (validas.length === 0) {
+        setToast({
+          type: "warning",
+          mensaje: "No se encontraron productos con nombre. Revise que el archivo tenga la columna \"producto\".",
+        });
+      }
+    } catch (e) {
+      console.error(e);
+      setToast({ type: "error", mensaje: "No se pudo leer el archivo. ¿Es un .xlsx, .xls o .csv válido?" });
+      setFilas([]);
+      setOmitidas(0);
+    } finally {
+      setParsing(false);
+    }
+  }
+
+  async function descargarPlantilla() {
+    try {
+      const XLSX = await import("xlsx");
+      const ejemplo = [
+        {
+          sku: "EJ-001", producto: "Resina compuesta A2", marca: "3M", unidad: "caja",
+          stock_actual: 12, stock_bajo: 6, stock_critico: 3, precio: 18900,
+        },
+      ];
+      const ws = XLSX.utils.json_to_sheet(ejemplo, { header: CARGA_COLUMNAS });
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Stock");
+      XLSX.writeFile(wb, "plantilla_stock.xlsx");
+    } catch (e) {
+      console.error(e);
+      setToast({ type: "error", mensaje: "No se pudo generar la plantilla." });
+    }
+  }
+
+  return (
+    <div style={modalStyles.overlay} onClick={onCerrar}>
+      <div style={{ ...modalStyles.card, maxWidth: 560 }} onClick={(e) => e.stopPropagation()}>
+        <div style={modalStyles.header}>
+          <div style={modalStyles.headerIcono}>
+            <Upload size={20} />
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={modalStyles.eyebrow}>Stock</div>
+            <div style={modalStyles.titulo}>Carga masiva de productos</div>
+            <div style={modalStyles.sub}>
+              Suba un archivo Excel o CSV. Los productos se cargan en la tabla
+              para que los revise y luego presione “Guardar stock”.
+            </div>
+          </div>
+          <button onClick={onCerrar} style={modalStyles.btnCerrar} title="Cerrar">
+            <X size={18} />
+          </button>
+        </div>
+
+        <div style={modalStyles.body}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
+            <span style={{ fontSize: 12.5, color: "#64748b" }}>
+              Columnas: SKU, producto, marca, unidad, stock_actual, stock_bajo,
+              stock_critico, precio.
+            </span>
+            <button type="button" onClick={descargarPlantilla} style={cargaStyles.btnPlantilla}>
+              <Download size={14} /> Descargar plantilla
+            </button>
+          </div>
+
+          <label style={cargaStyles.dropzone}>
+            <input
+              type="file"
+              accept=".xlsx,.xls,.csv"
+              onChange={(e) => manejarArchivo(e.target.files?.[0])}
+              style={{ display: "none" }}
+            />
+            <FileSpreadsheet size={26} style={{ color: TEAL }} />
+            <span style={{ fontWeight: 600, color: "#0f172a", fontSize: 13.5 }}>
+              {archivo ? archivo.name : "Haga clic para elegir un archivo"}
+            </span>
+            <span style={{ fontSize: 11.5, color: "#94a3b8" }}>.xlsx, .xls o .csv</span>
+          </label>
+
+          {parsing && (
+            <div style={{ marginTop: 14, fontSize: 13, color: "#64748b", textAlign: "center" }}>
+              Leyendo archivo…
+            </div>
+          )}
+
+          {!parsing && filas.length > 0 && (
+            <div style={cargaStyles.resumen}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, color: "#15803d", fontWeight: 700, fontSize: 14 }}>
+                <CheckCircle2 size={17} />
+                {filas.length} producto{filas.length === 1 ? "" : "s"} listo{filas.length === 1 ? "" : "s"} para cargar
+              </div>
+              {omitidas > 0 && (
+                <div style={{ display: "flex", alignItems: "center", gap: 7, color: "#b45309", fontSize: 12.5, marginTop: 6 }}>
+                  <AlertTriangle size={14} />
+                  {omitidas} fila{omitidas === 1 ? "" : "s"} sin nombre de producto se omitirá{omitidas === 1 ? "" : "n"}.
+                </div>
+              )}
+              <label style={cargaStyles.checkbox}>
+                <input
+                  type="checkbox"
+                  checked={reemplazar}
+                  onChange={(e) => setReemplazar(e.target.checked)}
+                  style={{ width: 15, height: 15, cursor: "pointer" }}
+                />
+                Reemplazar los productos actuales de la tabla (si no, se agregan al final).
+              </label>
+            </div>
+          )}
+        </div>
+
+        <div style={modalStyles.footer}>
+          <div style={modalStyles.resumen}>
+            {filas.length > 0 && (
+              <span>
+                <strong style={{ color: "#0f172a" }}>{filas.length}</strong> para cargar
+              </span>
+            )}
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button type="button" onClick={onCerrar} style={modalStyles.btnGhost}>
+              Cancelar
+            </button>
+            <button
+              type="button"
+              onClick={() => onCargar(filas, reemplazar)}
+              disabled={filas.length === 0 || parsing}
+              style={{
+                ...modalStyles.btnEnviar,
+                opacity: filas.length === 0 || parsing ? 0.5 : 1,
+                cursor: filas.length === 0 || parsing ? "not-allowed" : "pointer",
+              }}
+              className="btn-guardar-shine"
+            >
+              <Upload size={14} />
+              Cargar a la tabla
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const cargaStyles = {
+  btnPlantilla: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 6,
+    background: "#fff",
+    color: TEAL,
+    border: `1.5px solid ${TEAL}30`,
+    fontSize: 12.5,
+    fontWeight: 600,
+    padding: "7px 13px",
+    borderRadius: 999,
+    cursor: "pointer",
+  },
+  dropzone: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 7,
+    padding: "26px 18px",
+    border: "2px dashed #cbd5e1",
+    borderRadius: 14,
+    cursor: "pointer",
+    background: "#f8fafc",
+    textAlign: "center",
+    transition: "border-color .15s ease, background .15s ease",
+  },
+  resumen: {
+    marginTop: 16,
+    padding: "14px 16px",
+    background: "#f0fdf4",
+    border: "1px solid #bbf7d0",
+    borderRadius: 12,
+  },
+  checkbox: {
+    display: "flex",
+    alignItems: "center",
+    gap: 9,
+    marginTop: 12,
+    fontSize: 12.5,
+    color: "#475569",
+    cursor: "pointer",
+    lineHeight: 1.4,
+  },
+};
 
 const modalStyles = {
   overlay: {
@@ -3509,6 +4375,7 @@ const styles = {
     fontSize: 14,
     color: "#0f172a",
     outline: "none",
+    boxSizing: "border-box",
     transition: "border .15s, box-shadow .15s",
   },
   errorBox: {
@@ -3518,6 +4385,71 @@ const styles = {
     border: "1px solid #fecaca",
     borderRadius: 8,
     fontSize: 13,
+  },
+  verClaveBtn: {
+    position: "absolute",
+    right: 8,
+    top: "50%",
+    transform: "translateY(-50%)",
+    background: "transparent",
+    border: "none",
+    color: "#94a3b8",
+    cursor: "pointer",
+    padding: 6,
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  linkRecuperar: {
+    background: "transparent",
+    border: "none",
+    color: TEAL,
+    fontSize: 13,
+    fontWeight: 600,
+    cursor: "pointer",
+    marginTop: 2,
+    padding: 4,
+    alignSelf: "center",
+  },
+  modalOverlay: {
+    position: "fixed",
+    inset: 0,
+    background: "rgba(15,23,42,0.72)",
+    backdropFilter: "blur(6px)",
+    WebkitBackdropFilter: "blur(6px)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 16,
+    zIndex: 1000,
+  },
+  modalRecuperar: {
+    position: "relative",
+    width: "100%",
+    maxWidth: 440,
+    maxHeight: "90vh",
+    overflowY: "auto",
+    scrollbarWidth: "thin",
+    background: "#fff",
+    borderRadius: 18,
+    padding: "26px 24px 22px",
+    boxShadow: "0 24px 60px rgba(15,23,42,0.28)",
+    textAlign: "center",
+  },
+  modalCerrar: {
+    position: "absolute",
+    top: 14,
+    right: 14,
+    background: "#f1f5f9",
+    border: "none",
+    borderRadius: 9,
+    width: 32,
+    height: 32,
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    color: "#64748b",
+    cursor: "pointer",
   },
 
   // Declaración
@@ -3680,12 +4612,12 @@ const styles = {
   tabla: { width: "100%", borderCollapse: "collapse", minWidth: 720 },
   th: {
     textAlign: "left",
-    padding: "12px 16px",
-    fontSize: 10.5,
+    padding: "10px 8px",
+    fontSize: 10,
     fontWeight: 700,
     color: "#64748b",
     textTransform: "uppercase",
-    letterSpacing: 0.8,
+    letterSpacing: 0.4,
     background: "linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%)",
     borderBottom: "1px solid #e2e8f0",
   },
@@ -3693,7 +4625,7 @@ const styles = {
     transition: "background .15s ease, transform .15s ease",
   },
   td: {
-    padding: "11px 16px",
+    padding: "9px 8px",
     borderBottom: "1px solid #f1f5f9",
     fontSize: 13,
     color: "#0f172a",
@@ -3703,8 +4635,8 @@ const styles = {
     width: "100%",
     border: "1px solid transparent",
     background: "transparent",
-    padding: "7px 10px",
-    fontSize: 13.5,
+    padding: "6px 7px",
+    fontSize: 13,
     color: "#0f172a",
     borderRadius: 8,
     outline: "none",

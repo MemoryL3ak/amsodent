@@ -57,4 +57,15 @@ export class MetasController {
   deleteMetasCanalPartes(@Query('periodo') periodo: string) {
     return this.metasService.deleteMetasCanalPartes(periodo);
   }
+
+  // Meta mensual de cotizaciones ingresadas del equipo (customizable)
+  @Get('cotizaciones-equipo')
+  getMetaCotizaciones(@Query('periodo') periodo: string) {
+    return this.metasService.getMetaCotizaciones(periodo);
+  }
+
+  @Post('cotizaciones-equipo')
+  upsertMetaCotizaciones(@Body() body: { periodo: string; meta: number }) {
+    return this.metasService.upsertMetaCotizaciones(body.periodo, body.meta);
+  }
 }

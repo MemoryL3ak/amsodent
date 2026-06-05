@@ -21,11 +21,15 @@ export default function CrearCliente() {
 
   const [userEmail, setUserEmail] = useState("");
   const [esAdmin, setEsAdmin] = useState(false);
+  const [esJefeVentasEspecial, setEsJefeVentasEspecial] = useState(false);
   const [vendedores, setVendedores] = useState([]);
 
   const [toast, setToast] = useState(null);
 
   const esParticular = tipoCliente === "Cliente Particular";
+  // "30 días" en cliente particular: solo admin y jefe_ventas_especial.
+  const puede30dias = esAdmin || esJefeVentasEspecial;
+  const bloquea30 = esParticular && !puede30dias;
 
   // Perfil del creador (para asignarlo por defecto) + lista de vendedores.
   useEffect(() => {
@@ -36,6 +40,7 @@ export default function CrearCliente() {
         const r = (perfil?.rol || "").toString().trim().toLowerCase();
         setUserEmail(e);
         setEsAdmin(r === "admin" || r === "administrador");
+        setEsJefeVentasEspecial(r === "jefe_ventas_especial");
         setVendedorAsignado(e.toLowerCase());
       } catch { /* */ }
       try {
@@ -44,6 +49,13 @@ export default function CrearCliente() {
       } catch { /* */ }
     })();
   }, []);
+
+  // Si el usuario no puede asignar "30 días" a un particular, fuerza "Contado".
+  useEffect(() => {
+    if (bloquea30 && condVenta === "30 días") {
+      setCondVenta("Contado");
+    }
+  }, [bloquea30, condVenta]);
 
   const vendedoresMap = useMemo(() => {
     const m = {};
@@ -76,6 +88,11 @@ export default function CrearCliente() {
   async function guardarCliente() {
     if (!tipoCliente || !rut || !nombre || !region || !comuna || !direccion || !contacto || !email || !condVenta) {
       setToast({ type: "error", message: "Debes completar todos los campos obligatorios." });
+      return;
+    }
+
+    if (bloquea30 && condVenta === "30 días") {
+      setToast({ type: "error", message: "Solo el administrador o jefatura de ventas especial pueden asignar '30 días' a un cliente particular." });
       return;
     }
 
@@ -239,9 +256,14 @@ export default function CrearCliente() {
                 onChange={(e) => setCondVenta(e.target.value)}
               >
                 <option value="">Seleccione…</option>
-                <option value="30 días">30 días</option>
+                {!bloquea30 && <option value="30 días">30 días</option>}
                 <option value="Contado">Contado</option>
               </select>
+              {bloquea30 && (
+                <p style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>
+                  La condición "30 días" para clientes particulares solo puede asignarla el administrador o la jefatura de ventas especial.
+                </p>
+              )}
             </div>
 
             {esParticular && (
