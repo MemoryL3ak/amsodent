@@ -1,16 +1,14 @@
 import {
   CanActivate,
   ExecutionContext,
-  ForbiddenException,
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
 
-// Valida token + verifica que el perfil tenga acceso a "Mi Correo" (el buzón):
-// admin o jefe_ventas_especial.
-const ROLES_BUZON = new Set(['admin', 'administrador', 'jefe_ventas_especial']);
-
+// Valida token de "Mi Correo" (el buzón). El buzón está habilitado para TODOS
+// los roles: cada usuario conecta y ve su propia casilla. Solo se exige estar
+// autenticado y tener perfil.
 @Injectable()
 export class BuzonGuard implements CanActivate {
   constructor(private supabase: SupabaseService) {}
@@ -46,9 +44,6 @@ export class BuzonGuard implements CanActivate {
     }
 
     const rol = String(perfil?.rol || '').trim().toLowerCase();
-    if (!ROLES_BUZON.has(rol)) {
-      throw new ForbiddenException('Acceso restringido al buzón de correo.');
-    }
 
     request.user = user;
     request.userRol = rol;
