@@ -551,9 +551,9 @@ export default function Productos() {
     }
     try {
       const XLSX = await import("xlsx");
-      const puedeCosto = rolNorm === "admin" || rolNorm === "jefe_ventas";
       const filas = productosFiltrados.map((p) => {
         const estadoRow = (p.estado || (p.sku ? "Activo" : "Transitorio")).toString().trim();
+        // El costo se incluye siempre en el export, para todos los roles.
         const fila = {
           SKU: p.sku || "",
           Producto: p.nombre || "",
@@ -561,11 +561,11 @@ export default function Productos() {
           Categoría: p.categoria || "",
           Formato: p.formato || "",
           Estado: estadoRow,
+          Costo: Number(p.costo ?? 0),
           "Lista 1": Number(p.lista1 ?? 0),
           "Lista 2": Number(p.lista2 ?? 0),
           "Lista 3": getPrecioPorLista(p, "lista3"),
         };
-        if (puedeCosto) fila["Costo"] = Number(p.costo ?? 0);
         return fila;
       });
       const ws = XLSX.utils.json_to_sheet(filas);
