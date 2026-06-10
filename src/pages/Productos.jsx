@@ -551,9 +551,25 @@ export default function Productos() {
     }
     try {
       const XLSX = await import("xlsx");
+      // El listado liviano (/productos/list) puede no traer el costo según la
+      // versión del backend desplegada. Si falta, lo traemos del endpoint
+      // completo /productos (que ya devuelve costo) para que el export no
+      // muestre 0. El costo se incluye siempre, para todos los roles.
+      const faltaCosto = productosFiltrados.every((p) => p.costo == null);
+      const costoPorId = {};
+      if (faltaCosto) {
+        try {
+          const full = await api.get("/productos");
+          (full || []).forEach((fp) => {
+            costoPorId[fp.id] = Number(fp.costo ?? 0);
+          });
+        } catch (e) {
+          console.error("No se pudo obtener el costo para el export:", e);
+        }
+      }
       const filas = productosFiltrados.map((p) => {
         const estadoRow = (p.estado || (p.sku ? "Activo" : "Transitorio")).toString().trim();
-        // El costo se incluye siempre en el export, para todos los roles.
+        const costo = faltaCosto ? costoPorId[p.id] ?? 0 : Number(p.costo ?? 0);
         const fila = {
           SKU: p.sku || "",
           Producto: p.nombre || "",
@@ -561,7 +577,7 @@ export default function Productos() {
           Categoría: p.categoria || "",
           Formato: p.formato || "",
           Estado: estadoRow,
-          Costo: Number(p.costo ?? 0),
+          Costo: costo,
           "Lista 1": Number(p.lista1 ?? 0),
           "Lista 2": Number(p.lista2 ?? 0),
           "Lista 3": getPrecioPorLista(p, "lista3"),
