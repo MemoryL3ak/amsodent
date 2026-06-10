@@ -41,6 +41,7 @@ export class ProductosService {
       'categoria',
       'formato',
       'estado',
+      'costo',
       'lista1',
       'lista2',
       'lista3',
