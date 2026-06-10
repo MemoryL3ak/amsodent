@@ -600,15 +600,17 @@ export default function Productos() {
       <div className="page-header">
         <h1 className="page-title">Productos</h1>
         <div className="btn-row">
-          <button
-            type="button"
-            className="btn btn-secondary"
-            onClick={exportarProductos}
-            style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
-            title="Descargar el listado en Excel (respeta los filtros actuales)"
-          >
-            <Download size={14} /> Exportar Excel
-          </button>
+          {(rolNorm === "admin" || rolNorm === "jefe_ventas") && (
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={exportarProductos}
+              style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
+              title="Descargar el listado en Excel (respeta los filtros actuales)"
+            >
+              <Download size={14} /> Exportar Excel
+            </button>
+          )}
           {(rolNorm === "admin" || rolNorm === "jefe_ventas") && (
             <button
               type="button"
