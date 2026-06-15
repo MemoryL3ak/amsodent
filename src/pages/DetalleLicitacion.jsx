@@ -1428,6 +1428,8 @@ export default function EditarLicitacion() {
         if (fileInputRef.current) fileInputRef.current.value = "";
         setToast({ type: "success", message: "Información de despacho registrada." });
         await cargarDocumentosLicitacion();
+        // Avisar al detector de correos para levantar el popup de agradecimiento.
+        window.dispatchEvent(new Event("correos:check"));
       } catch (e) {
         console.error("Error registrando info de despacho:", e);
         setToast({ type: "error", message: "No se pudo registrar la información de despacho." });
