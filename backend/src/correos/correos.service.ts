@@ -29,7 +29,15 @@ type PlantillaPreparada = {
   nombreCliente: string;
   // Documento cuyo PDF se sugiere adjuntar (la guía, para el envío de guía).
   adjuntarDocumentoId: number | null;
+  // Copia (CC) sugerida por defecto en el editor de correo.
+  cc: string[];
 };
+
+// Copia por defecto en los correos transaccionales (agradecimiento y guía).
+const CC_POR_DEFECTO = ['ventas@amsodentmedical.cl', 'admin@amsodentmedical.cl'];
+
+// Tamaño máximo por adjunto adicional subido por el usuario (10 MB).
+const MAX_ADJUNTO_BYTES = 10 * 1024 * 1024;
 
 // Modo de acceso a Gmail para un usuario:
 //  - 'oauth': el usuario conectó manualmente su Google y guardamos su refresh_token
@@ -228,6 +236,7 @@ export class CorreosService {
       delegacionActiva: puedeGmail,
       replyTo: vendedorCorreo,
       nombreCliente,
+      cc: CC_POR_DEFECTO,
     };
 
     if (tipo === 'oc_agradecimiento') {
@@ -298,6 +307,7 @@ export class CorreosService {
     asunto: string;
     cuerpoHtml: string;
     adjuntarDocumentoId?: number | null;
+    adjuntos?: Array<{ filename: string; contentBase64: string; mime?: string }>;
   }) {
     const lic = await this.getLicitacion(Number(opts.licitacionId));
     const vendedorCorreo = this.correoVendedor(lic);
@@ -314,6 +324,23 @@ export class CorreosService {
     if (opts.adjuntarDocumentoId) {
       const adjunto = await this.descargarAdjunto(Number(opts.adjuntarDocumentoId));
       if (adjunto) attachments.push(adjunto);
+    }
+    // Adjuntos adicionales subidos por el usuario (base64 desde el editor).
+    for (const a of Array.isArray(opts.adjuntos) ? opts.adjuntos : []) {
+      const b64 = String(a?.contentBase64 || '').trim();
+      if (!b64) continue;
+      const filename = String(a?.filename || 'adjunto').trim() || 'adjunto';
+      let content: Buffer;
+      try {
+        content = Buffer.from(b64, 'base64');
+      } catch {
+        continue;
+      }
+      if (content.length === 0 || content.length > MAX_ADJUNTO_BYTES) {
+        this.logger.warn(`Adjunto "${filename}" omitido (vacío o supera el límite).`);
+        continue;
+      }
+      attachments.push({ filename, content, contentType: a?.mime || undefined });
     }
 
     // Si el vendedor tiene Gmail disponible (OAuth conectado o DWD), el

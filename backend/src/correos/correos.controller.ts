@@ -89,6 +89,7 @@ export class CorreosController {
       asunto?: string;
       cuerpoHtml?: string;
       adjuntarDocumentoId?: number | null;
+      adjuntos?: Array<{ filename: string; contentBase64: string; mime?: string }>;
     },
   ) {
     if (!body?.licitacionId || !body?.para || !body?.asunto || !body?.cuerpoHtml) {
@@ -103,6 +104,7 @@ export class CorreosController {
       asunto: body.asunto,
       cuerpoHtml: body.cuerpoHtml,
       adjuntarDocumentoId: body.adjuntarDocumentoId ?? null,
+      adjuntos: Array.isArray(body.adjuntos) ? body.adjuntos : [],
     });
   }
 
