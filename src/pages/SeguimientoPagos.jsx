@@ -515,13 +515,25 @@ export default function SeguimientoPagos() {
       return;
     }
     setGuardando(true);
+    // Días de atraso = fecha de pago − fecha de vencimiento (fecha factura + plazo).
+    // Se guarda para analizar después cuánto se demora cada cliente en pagar.
+    const lic = licMap[f.licitacion_id];
+    const venc = calcularFechaVencimiento(f.fecha_factura, lic?.condicion_venta);
+    let diasAtraso = null;
+    if (venc && fechaPago) {
+      const fp = new Date(`${fechaPago}T00:00:00`);
+      if (!Number.isNaN(fp.getTime())) {
+        diasAtraso = Math.round((fp.getTime() - venc.getTime()) / (1000 * 60 * 60 * 24));
+      }
+    }
     try {
       await api.put(`/licitaciones/documentos/${f.id}`, {
         pagada: true,
         fecha_pago: fechaPago,
         forma_pago: formaPago,
+        dias_atraso_pago: diasAtraso,
       });
-      actualizarFacturaLocal(f.id, { pagada: true, fecha_pago: fechaPago, forma_pago: formaPago });
+      actualizarFacturaLocal(f.id, { pagada: true, fecha_pago: fechaPago, forma_pago: formaPago, dias_atraso_pago: diasAtraso });
       setToast({ type: "success", message: "Pago registrado." });
       cancelarPago();
     } catch (e) {
@@ -638,8 +650,9 @@ export default function SeguimientoPagos() {
         pagada: false,
         fecha_pago: null,
         forma_pago: null,
+        dias_atraso_pago: null,
       });
-      actualizarFacturaLocal(f.id, { pagada: false, fecha_pago: null, forma_pago: null });
+      actualizarFacturaLocal(f.id, { pagada: false, fecha_pago: null, forma_pago: null, dias_atraso_pago: null });
       setToast({ type: "success", message: "Pago desmarcado." });
     } catch (e) {
       setToast({ type: "error", message: "Error desmarcando el pago." });
