@@ -67,6 +67,13 @@ export class RecordatoriosService implements OnModuleInit {
   }
 
   // ── Cierre próximo (3 h y 1 h antes de fecha_hora_cierre) ───────────────
+  // Solo aplica a LICITACIONES (no a compras ágiles/directas ni particulares):
+  // son las únicas con fecha y hora de cierre real de postulación.
+  private static readonly TIPOS_LICITACION = [
+    'Licitación 0 a 8 meses',
+    'Licitación 9 a 24 meses',
+  ];
+
   private async recordatoriosCierre() {
     const client = this.supabase.getClient();
     const { data, error } = await client
@@ -75,6 +82,7 @@ export class RecordatoriosService implements OnModuleInit {
         'id, nombre, nombre_entidad, creado_por, vendedor_correo, fecha_hora_cierre, recordatorio_cierre_3h_at, recordatorio_cierre_1h_at',
       )
       .in('estado', ['En espera', 'Pendiente Aprobación'])
+      .in('tipo_compra', RecordatoriosService.TIPOS_LICITACION)
       .eq('postulada', false)
       .not('fecha_hora_cierre', 'is', null);
     if (error) {

@@ -4403,7 +4403,7 @@ export default function EditarLicitacion() {
                       ) : (
                         <>
                           <div>{doc.file_name || "-"}</div>
-                          {doc.tipo === "guia_despacho" && (doc.empresa_despacho || doc.n_seguimiento) && (
+                          {(doc.tipo === "guia_despacho" || doc.tipo === "info_despacho") && (doc.empresa_despacho || doc.n_seguimiento) && (
                             <div className="text-xs text-gray-500 mt-1">
                               {doc.empresa_despacho || ""}
                               {doc.empresa_despacho && doc.n_seguimiento ? " · " : ""}
