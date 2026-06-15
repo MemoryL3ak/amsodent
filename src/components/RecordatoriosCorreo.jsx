@@ -11,7 +11,7 @@ import CorreoComposer from "./CorreoComposer";
 // (lo dispara DetalleLicitacion tras subir una OC o guía).
 
 const POLL_MS = 45_000;
-const TIPOS_CORREO = ["oc_agradecimiento", "guia_despacho_enviar"];
+const TIPOS_CORREO = ["oc_agradecimiento", "guia_despacho_enviar", "info_despacho_agradecimiento"];
 
 // El popup de recordatorios (correo de agradecimiento de la OC y guía de
 // despacho) SIEMPRE permite posponer/cerrar, sin importar el tiempo transcurrido
@@ -20,11 +20,13 @@ const TIPOS_CORREO = ["oc_agradecimiento", "guia_despacho_enviar"];
 const TITULOS = {
   oc_agradecimiento: "Correo de agradecimiento pendiente",
   guia_despacho_enviar: "Guía de despacho por enviar",
+  info_despacho_agradecimiento: "Correo de agradecimiento pendiente",
 };
 
 const LABEL_ENVIAR = {
   oc_agradecimiento: "Enviar ahora",
   guia_despacho_enviar: "Enviar notificación al cliente",
+  info_despacho_agradecimiento: "Enviar ahora",
 };
 
 export default function RecordatoriosCorreo() {

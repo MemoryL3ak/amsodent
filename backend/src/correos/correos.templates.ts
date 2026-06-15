@@ -613,6 +613,67 @@ export function plantillaGuiaDespacho(
   };
 }
 
+export type DatosAgradecimientoInfoDespacho = {
+  nombreCliente: string;
+  numeroFactura: string;
+  numeroCotizacion: string;
+  empresaDespacho?: string;
+  numeroSeguimiento?: string;
+  vendedorNombre?: string;
+  vendedorCorreo?: string;
+  vendedorCelular?: string;
+};
+
+// Agradecimiento al cliente particular con la información de despacho.
+// Asunto: "Factura {n} - Cotización {n}".
+export function plantillaAgradecimientoInfoDespacho(
+  datos: DatosAgradecimientoInfoDespacho,
+): PlantillaResultado {
+  const cliente = String(datos.nombreCliente || '').trim() || 'Estimado cliente';
+  const numeroFactura = String(datos.numeroFactura || '').trim();
+  const numeroCotizacion = String(datos.numeroCotizacion || '').trim();
+  const empresa = String(datos.empresaDespacho || '').trim();
+  const seguimiento = String(datos.numeroSeguimiento || '').trim();
+  const vendedor = String(datos.vendedorNombre || '').trim() || 'Equipo AMSODENT';
+  const vCorreo = String(datos.vendedorCorreo || '').trim();
+  const vCelular = String(datos.vendedorCelular || '').trim();
+
+  const filasArr = [
+    numeroFactura ? filaDato('🧾', 'N° Factura', numeroFactura) : '',
+    numeroCotizacion ? filaDato('📋', 'N° Cotización', numeroCotizacion) : '',
+    empresa ? filaDato('🚚', 'Empresa de despacho', empresa) : '',
+    seguimiento ? filaDato('🔎', 'N° de seguimiento', seguimiento) : '',
+    filaDato('📅', 'Fecha', fechaLarga(), true),
+  ].filter(Boolean);
+  const filas = filasArr
+    .map((f, i) =>
+      i === filasArr.length - 1
+        ? f.replace(new RegExp(`border-bottom:1px solid ${C.bordeTenue};`, 'g'), '')
+        : f,
+    )
+    .join('');
+
+  const contenido = `
+    ${insignia(`<span style="color:${C.acentoOsc};font-weight:700;">✓</span>`)}
+    ${titulo('¡Gracias por tu compra!', 'Te confirmamos los datos del despacho de tu pedido.')}
+    <p style="margin:0 0 14px;">Estimado(a) <strong>${escapeHtml(cliente)}</strong>,</p>
+    <p style="margin:0 0 20px;color:${C.suave};">
+      Agradecemos tu compra en <strong style="color:${C.texto};">Amsodent Medical</strong>.
+      A continuación te dejamos el detalle del despacho de tu pedido.
+    </p>
+    ${tarjetaDatos('Detalle del despacho', filas)}
+    ${nota('💬&nbsp;&nbsp;Ante cualquier consulta sobre tu pedido o su entrega, puedes responder directamente a este correo.')}
+    ${firma(vendedor, vCorreo, vCelular)}`;
+
+  return {
+    asunto: `Factura ${numeroFactura || 'S/N'} - Cotización ${numeroCotizacion || 'S/N'}`,
+    html: envolver({
+      preheader: `Gracias por tu compra. Factura ${numeroFactura || ''} · Cotización ${numeroCotizacion || ''}.`,
+      contenido,
+    }),
+  };
+}
+
 // Botón principal (CTA) turquesa centrado.
 function botonCta(texto: string, href: string): string {
   if (!href) return '';

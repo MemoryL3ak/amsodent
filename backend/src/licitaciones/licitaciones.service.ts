@@ -361,7 +361,11 @@ export class LicitacionesService {
       return;
     }
 
-    let tipoCorreo: 'oc_agradecimiento' | 'guia_despacho_enviar' | null = null;
+    let tipoCorreo:
+      | 'oc_agradecimiento'
+      | 'guia_despacho_enviar'
+      | 'info_despacho_agradecimiento'
+      | null = null;
     if (tipo === 'orden_compra') {
       // Solo la PRIMERA orden de compra de la cotización.
       const { count } = await this.supabase.getClient()
@@ -377,6 +381,10 @@ export class LicitacionesService {
     } else if (tipo === 'guia_despacho') {
       // Toda guía de despacho dispara el aviso, tenga o no N° de seguimiento.
       tipoCorreo = 'guia_despacho_enviar';
+    } else if (tipo === 'info_despacho') {
+      // Cliente particular: al cargar la info de despacho, agradecimiento con
+      // los datos del despacho.
+      tipoCorreo = 'info_despacho_agradecimiento';
     } else {
       log(`tipo "${tipo}" no dispara correo — no se notifica`);
       return;
@@ -405,7 +413,9 @@ export class LicitacionesService {
     const mensaje =
       tipoCorreo === 'oc_agradecimiento'
         ? `Se cargó la primera orden de compra${numero ? ` ${numero}` : ''} de ${cliente}. Envía el correo de agradecimiento.`
-        : `Se cargó la guía de despacho${numero ? ` ${numero}` : ''} de ${cliente}. Envía la guía al cliente.`;
+        : tipoCorreo === 'info_despacho_agradecimiento'
+          ? `Se cargó la información de despacho de ${cliente}. Envía el correo de agradecimiento al cliente.`
+          : `Se cargó la guía de despacho${numero ? ` ${numero}` : ''} de ${cliente}. Envía la guía al cliente.`;
 
     const { error } = await this.supabase.getClient()
       .from('notificaciones')

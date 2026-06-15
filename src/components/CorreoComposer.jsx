@@ -10,6 +10,7 @@ import { api } from "../lib/api";
 const TITULOS = {
   oc_agradecimiento: "Correo de agradecimiento",
   guia_despacho_enviar: "Envío de guía de despacho",
+  info_despacho_agradecimiento: "Correo de agradecimiento",
 };
 
 export default function CorreoComposer({

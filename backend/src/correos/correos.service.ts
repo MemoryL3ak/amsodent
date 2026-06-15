@@ -7,9 +7,13 @@ import { FirmasService } from './firmas.service';
 import {
   plantillaAgradecimientoOC,
   plantillaGuiaDespacho,
+  plantillaAgradecimientoInfoDespacho,
 } from './correos.templates';
 
-export type TipoPlantilla = 'oc_agradecimiento' | 'guia_despacho_enviar';
+export type TipoPlantilla =
+  | 'oc_agradecimiento'
+  | 'guia_despacho_enviar'
+  | 'info_despacho_agradecimiento';
 
 const RE_EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -273,6 +277,39 @@ export class CorreosService {
         vendedorCelular,
       });
       return { ...base, asunto, cuerpoHtml: html, adjuntarDocumentoId: doc.id };
+    }
+
+    if (tipo === 'info_despacho_agradecimiento') {
+      // Cliente particular: agradecimiento con la info de despacho. Asunto
+      // "Factura {n} - Cotización {n}".
+      const { data: facDoc } = await this.supabase
+        .getClient()
+        .from('licitacion_documentos')
+        .select('numero, created_at')
+        .eq('licitacion_id', licitacionId)
+        .in('tipo', ['factura_boleta', 'factura'])
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      const numeroFactura = String(facDoc?.numero || '').trim();
+      const numeroCotizacion = String(lic.id_licitacion || lic.id || '').trim();
+      const { asunto, html } = plantillaAgradecimientoInfoDespacho({
+        nombreCliente,
+        numeroFactura,
+        numeroCotizacion,
+        empresaDespacho: doc.empresa_despacho || '',
+        numeroSeguimiento: doc.n_seguimiento || '',
+        vendedorNombre,
+        vendedorCorreo,
+        vendedorCelular,
+      });
+      // La info de despacho puede no tener archivo; solo adjuntamos si existe.
+      return {
+        ...base,
+        asunto,
+        cuerpoHtml: html,
+        adjuntarDocumentoId: doc.bucket && doc.storage_path ? doc.id : null,
+      };
     }
 
     throw new BadRequestException(`Tipo de plantilla no soportado: ${tipo}`);
