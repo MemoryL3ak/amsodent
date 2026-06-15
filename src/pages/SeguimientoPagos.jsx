@@ -433,7 +433,10 @@ export default function SeguimientoPagos() {
     facturas.forEach((f) => {
       const lic = licMap[f.licitacion_id];
       if (!lic) return;
-      const monto = Number(lic.total_con_iva || 0);
+      // Monto de cada KPI = valor de la OC (suma de órdenes de compra de la
+      // cotización), con fallback al total con IVA cuando no hay OC.
+      const oc = Number(montoOcMap[f.licitacion_id] || 0);
+      const monto = oc > 0 ? oc : Number(lic.total_con_iva || 0);
       total++;
       if (f.pagada) {
         pagadas++; montoPagadas += monto;
@@ -444,14 +447,12 @@ export default function SeguimientoPagos() {
       const plazo = plazoDias(lic.condicion_venta);
       const dias = diasEntre(f.fecha_factura);
       const diasRestantes = dias != null ? plazo - dias : null;
-      // KPI Vencidas: considera el monto de la factura (si está registrado),
-      // con fallback al total con IVA de la cotización.
-      if (diasRestantes != null && diasRestantes < 0) { vencidas++; montoVencidas += Number(f.monto) || monto; }
+      if (diasRestantes != null && diasRestantes < 0) { vencidas++; montoVencidas += monto; }
       else if (diasRestantes != null && diasRestantes <= 5) { porVencer++; montoPorVencer += monto; }
       else { montoEnPlazo += monto; }
     });
     return { total, pagadas, pendientes, vencidas, porVencer, montoPagadas, montoEnPlazo, montoPorVencer, montoVencidas, factoringCount, montoFactoring };
-  }, [facturas, licMap]);
+  }, [facturas, licMap, montoOcMap]);
 
   async function abrirDocumento(doc) {
     if (!doc?.bucket || !doc?.storage_path) return;
@@ -653,7 +654,7 @@ export default function SeguimientoPagos() {
           <div className="stat-label">Pagadas</div>
           <div className="stat-value" style={{ color: "var(--success)" }}>{stats.pagadas}</div>
           <div className="stat-money" style={{ color: "var(--success)" }}>{fmtCLP(stats.montoPagadas)}</div>
-          <div className="stat-sub">facturas · con IVA</div>
+          <div className="stat-sub">facturas · valor OC</div>
         </div>
         <div className="stat-card">
           <div className="stat-label">Pendientes</div>
@@ -661,25 +662,25 @@ export default function SeguimientoPagos() {
             {Math.max(0, stats.pendientes - stats.porVencer - stats.vencidas)}
           </div>
           <div className="stat-money" style={{ color: "var(--primary)" }}>{fmtCLP(stats.montoEnPlazo)}</div>
-          <div className="stat-sub">aún en plazo · con IVA</div>
+          <div className="stat-sub">aún en plazo · valor OC</div>
         </div>
         <div className="stat-card">
           <div className="stat-label">Por vencer</div>
           <div className="stat-value" style={{ color: "var(--warning)" }}>{stats.porVencer}</div>
           <div className="stat-money" style={{ color: "var(--warning)" }}>{fmtCLP(stats.montoPorVencer)}</div>
-          <div className="stat-sub">próximas a vencer · con IVA</div>
+          <div className="stat-sub">próximas a vencer · valor OC</div>
         </div>
         <div className="stat-card">
           <div className="stat-label">Vencidas</div>
           <div className="stat-value" style={{ color: "var(--danger)" }}>{stats.vencidas}</div>
           <div className="stat-money" style={{ color: "var(--danger)" }}>{fmtCLP(stats.montoVencidas)}</div>
-          <div className="stat-sub">fuera de plazo · monto factura</div>
+          <div className="stat-sub">fuera de plazo · valor OC</div>
         </div>
         <div className="stat-card">
           <div className="stat-label">Factoring</div>
           <div className="stat-value" style={{ color: "#7c3aed" }}>{stats.factoringCount}</div>
           <div className="stat-money" style={{ color: "#7c3aed" }}>{fmtCLP(stats.montoFactoring)}</div>
-          <div className="stat-sub">pagadas por factoring · con IVA</div>
+          <div className="stat-sub">pagadas por factoring · valor OC</div>
         </div>
       </div>
 
