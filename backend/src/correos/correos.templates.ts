@@ -133,6 +133,10 @@ function urlTracking(empresa: string, codigo: string): string {
   const e = String(empresa || '').toLowerCase();
   if (e.includes('starken')) return `https://www.starken.cl/seguimiento?codigo=${cod}`;
   if (e.includes('blue')) return `https://www.blue.cl/seguimiento/?n_seguimiento=${cod}`;
+  if (e.includes('chilexpress') || e.includes('chile express'))
+    return `https://www.chilexpress.cl/seguimiento?ots=${cod}`;
+  if (e.includes('correos')) return `https://seguimientoenlinea.correos.cl/?envio=${cod}`;
+  if (e.includes('pullman')) return `https://pullmancargo.cl/seguimiento?documento=${cod}`;
   return '';
 }
 

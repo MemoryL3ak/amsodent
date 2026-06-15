@@ -32,6 +32,46 @@ export default function CorreoComposer({
   const [de, setDe] = useState("");
   const [modoEnvio, setModoEnvio] = useState("smtp");
   const [adjuntarDocumentoId, setAdjuntarDocumentoId] = useState(null);
+  // Archivos adicionales que adjunta el usuario: { filename, mime, size, contentBase64 }.
+  const [adjuntos, setAdjuntos] = useState([]);
+
+  const MAX_ADJUNTO = 10 * 1024 * 1024; // 10 MB por archivo
+
+  function archivoABase64(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const res = String(reader.result || "");
+        resolve(res.includes(",") ? res.split(",")[1] : res);
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function onElegirArchivos(e) {
+    const files = Array.from(e.target.files || []);
+    e.target.value = ""; // permite re-seleccionar el mismo archivo
+    for (const f of files) {
+      if (f.size > MAX_ADJUNTO) {
+        setError(`"${f.name}" supera el límite de 10 MB.`);
+        continue;
+      }
+      try {
+        const contentBase64 = await archivoABase64(f);
+        setAdjuntos((prev) => [
+          ...prev,
+          { filename: f.name, mime: f.type || "application/octet-stream", size: f.size, contentBase64 },
+        ]);
+      } catch {
+        setError(`No se pudo leer "${f.name}".`);
+      }
+    }
+  }
+
+  function quitarAdjunto(idx) {
+    setAdjuntos((prev) => prev.filter((_, i) => i !== idx));
+  }
 
   useEffect(() => {
     let activo = true;
@@ -46,6 +86,8 @@ export default function CorreoComposer({
         );
         if (!activo) return;
         setPara(r?.para || "");
+        // Copia por defecto sugerida por el backend (ventas@/admin@). Editable.
+        setCc((Array.isArray(r?.cc) ? r.cc : []).join(", "));
         setAsunto(r?.asunto || "");
         setCuerpoHtml(r?.cuerpoHtml || "");
         setReplyTo(r?.replyTo || "");
@@ -94,6 +136,11 @@ export default function CorreoComposer({
         asunto: asunto.trim(),
         cuerpoHtml,
         adjuntarDocumentoId: adjuntarDocumentoId ?? null,
+        adjuntos: adjuntos.map((a) => ({
+          filename: a.filename,
+          contentBase64: a.contentBase64,
+          mime: a.mime,
+        })),
       });
       setEnviado(true);
       if (onSent) onSent();
@@ -248,6 +295,54 @@ export default function CorreoComposer({
                 </p>
               ) : null}
 
+              {/* Adjuntos adicionales (cualquier archivo) */}
+              <Campo etiqueta="Adjuntos adicionales — opcional">
+                <label style={adjuntarBtnStyle}>
+                  <Paperclip size={14} /> Agregar archivos
+                  <input
+                    type="file"
+                    multiple
+                    onChange={onElegirArchivos}
+                    style={{ display: "none" }}
+                  />
+                </label>
+                {adjuntos.length > 0 && (
+                  <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 6 }}>
+                    {adjuntos.map((a, i) => (
+                      <div key={i} style={adjuntoFilaStyle}>
+                        <span
+                          style={{
+                            fontSize: 13,
+                            color: "#0f172a",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          📎 {a.filename}{" "}
+                          <span style={{ color: "#94a3b8", fontSize: 11 }}>({fmtTamano(a.size)})</span>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => quitarAdjunto(i)}
+                          title="Quitar"
+                          style={{
+                            background: "transparent",
+                            border: "none",
+                            color: "#ef4444",
+                            cursor: "pointer",
+                            display: "inline-flex",
+                            padding: 2,
+                          }}
+                        >
+                          <X size={15} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </Campo>
+
               <div style={{ fontSize: 12, color: "#64748b", margin: "4px 0 6px", fontWeight: 600 }}>
                 Vista previa del correo
               </div>
@@ -377,6 +472,38 @@ const inputStyle = {
   outline: "none",
   boxSizing: "border-box",
 };
+
+const adjuntarBtnStyle = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 6,
+  padding: "7px 12px",
+  borderRadius: 8,
+  border: "1px dashed #94a3b8",
+  background: "#f8fafc",
+  color: "#334155",
+  fontSize: 13,
+  fontWeight: 600,
+  cursor: "pointer",
+};
+
+const adjuntoFilaStyle = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: 8,
+  padding: "6px 10px",
+  borderRadius: 8,
+  border: "1px solid #e2e8f0",
+  background: "#fff",
+};
+
+function fmtTamano(bytes) {
+  const n = Number(bytes) || 0;
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 const readonlyStyle = {
   width: "100%",
