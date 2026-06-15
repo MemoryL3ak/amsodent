@@ -495,9 +495,18 @@ export default function SeguimientoPagos() {
     }
   }
 
-  // Cliente Particular: marcado simple (sin pedir fecha ni forma). La fecha de
-  // pago se toma de la fecha del comprobante/documento adjuntado.
-  async function marcarPagadaParticular(f) {
+  // Cliente Particular: "Validar Pago" comprueba que la factura esté cubierta por
+  // los comprobantes (transferencia + webpay + efectivo). Si el saldo llega a 0
+  // (o menos), se marca como pagada; si aún queda saldo, no se valida.
+  async function validarPagoParticular(f) {
+    const lic = licMap[f.licitacion_id] || {};
+    const facturaMonto = Number(f.monto) || Number(lic.total_con_iva) || 0;
+    const pagado = Number(comprobantesSumMap[f.licitacion_id] || 0);
+    const saldo = Math.round(facturaMonto - pagado);
+    if (saldo > 0) {
+      setToast({ type: "info", message: `Aún queda saldo por pagar: ${fmtCLP(saldo)}. No se puede validar el pago.` });
+      return;
+    }
     // La fecha de pago del particular es la del comprobante de pago adjuntado.
     const comp = comprobantesMap[f.licitacion_id];
     const fecha =
@@ -512,10 +521,10 @@ export default function SeguimientoPagos() {
         forma_pago: null,
       });
       actualizarFacturaLocal(f.id, { pagada: true, fecha_pago: fecha, forma_pago: null });
-      setToast({ type: "success", message: "Pago registrado." });
+      setToast({ type: "success", message: "Pago validado y registrado." });
     } catch (e) {
       console.error(e);
-      setToast({ type: "error", message: "Error al registrar el pago." });
+      setToast({ type: "error", message: "Error al validar el pago." });
     }
   }
 
@@ -1040,10 +1049,11 @@ export default function SeguimientoPagos() {
                         ) : particular ? (
                           <button
                             type="button"
-                            onClick={() => marcarPagadaParticular(f)}
+                            onClick={() => validarPagoParticular(f)}
                             className="btn btn-primary btn-sm"
+                            title="Valida que los comprobantes cubran la factura (saldo 0)"
                           >
-                            <Circle size={12} style={{ marginRight: 4 }} /> Marcar pagada
+                            <CheckCircle2 size={13} style={{ marginRight: 4 }} /> Validar Pago
                           </button>
                         ) : (
                           <button
