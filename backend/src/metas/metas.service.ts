@@ -102,11 +102,14 @@ export class MetasService {
   }
 
   // vendedor_metas_canal_partes_mensuales
+  // Seleccionamos '*' (en vez de columnas explícitas) para tolerar entornos
+  // donde la columna meta_cantidad aún no fue migrada: si no existe, llega
+  // undefined y el frontend la trata como 0.
   async getMetasCanalPartes(periodo: string) {
     const client = this.supabase.getClient();
     const { data, error } = await client
       .from('vendedor_metas_canal_partes_mensuales')
-      .select('vendedor_email,canal_base,meta_neto')
+      .select('*')
       .eq('periodo', periodo);
     if (error) throw new BadRequestException(error.message);
     if (data && data.length > 0) return data;
@@ -119,7 +122,7 @@ export class MetasService {
     if (!periodoFallback) return [];
     const { data: prev, error: e2 } = await client
       .from('vendedor_metas_canal_partes_mensuales')
-      .select('vendedor_email,canal_base,meta_neto')
+      .select('*')
       .eq('periodo', periodoFallback);
     if (e2) throw new BadRequestException(e2.message);
     return prev || [];
