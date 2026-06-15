@@ -1502,7 +1502,7 @@ export default function CrearLicitacion() {
     // Licitaciones exigen fecha de publicación de resultados.
     const esLicitacionTipo = tipoCompra === "Licitación 0 a 8 meses" || tipoCompra === "Licitación 9 a 24 meses";
     if (esLicitacionTipo && !fechaPublicacionResultados) errores.push("Fecha de publicación de resultados");
-    if (!monto) errores.push("Monto");
+    if (!esClienteParticular && !monto) errores.push("Monto");
     if (!tipoCliente) errores.push("Tipo de Cotización");
     if (!rutEntidad) errores.push("RUT Entidad");
     if (!nombreEntidad) errores.push("Nombre Entidad");
@@ -2015,19 +2015,21 @@ export default function CrearLicitacion() {
             </div>
           )}
 
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Monto Presupuesto *
-            </label>
-            <input
-              type="text"
-              inputMode="numeric"
-              className="w-full rounded-md border border-gray-300 px-3 py-2"
-              value={monto}
-              onChange={(e) => setMonto(formatearCLDesdeString(e.target.value))}
-              placeholder=""
-            />
-          </div>
+          {!esParticular && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Monto Presupuesto *
+              </label>
+              <input
+                type="text"
+                inputMode="numeric"
+                className="w-full rounded-md border border-gray-300 px-3 py-2"
+                value={monto}
+                onChange={(e) => setMonto(formatearCLDesdeString(e.target.value))}
+                placeholder=""
+              />
+            </div>
+          )}
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -2679,18 +2681,20 @@ export default function CrearLicitacion() {
               </div>
             </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                % Presupuesto
-              </label>
-              <div
-                className={`form-display form-display-value ${colorPresupuesto}`}
-              >
-                {porcentajePresupuesto > 0
-                  ? formatPorcentajePresupuesto(porcentajePresupuesto)
-                  : "0%"}
+            {!esParticular && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  % Presupuesto
+                </label>
+                <div
+                  className={`form-display form-display-value ${colorPresupuesto}`}
+                >
+                  {porcentajePresupuesto > 0
+                    ? formatPorcentajePresupuesto(porcentajePresupuesto)
+                    : "0%"}
+                </div>
               </div>
-            </div>
+            )}
           </div>
         </div>
         </div>
