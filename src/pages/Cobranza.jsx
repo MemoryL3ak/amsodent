@@ -903,6 +903,13 @@ export default function Cobranza() {
           doc={modalCorreo.doc}
           lic={modalCorreo.lic}
           guia={guiasPorLic[modalCorreo.lic?.id] || null}
+          numeroOC={(() => {
+            const d = modalCorreo.doc;
+            const ocDeriva = d?.deriva_de_id != null ? ocById[d.deriva_de_id] : null;
+            if (ocDeriva?.numero) return ocDeriva.numero;
+            const ocsLic = ocPorLic[String(d?.licitacion_id)] || [];
+            return ocsLic.map((o) => o.numero).filter(Boolean).join(", ");
+          })()}
           onCerrar={() => setModalCorreo(null)}
           onEnviado={(msg) => { setToast({ type: "success", message: msg }); setModalCorreo(null); }}
           onError={(msg) => setToast({ type: "error", message: msg })}
@@ -1049,18 +1056,25 @@ function ModalGestion({ doc, lic, gestiones, onCerrar, onRegistrar, onEnviarCorr
 }
 
 /* ── Modal: redactar y enviar correo de cobranza ────────────────────── */
-function ModalCorreo({ doc, lic, guia, onCerrar, onEnviado, onError, registrarGestion }) {
+function ModalCorreo({ doc, lic, guia, numeroOC, onCerrar, onEnviado, onError, registrarGestion }) {
   const vencDias = (() => {
     const d = diasEntre(doc.fecha_factura);
     return d != null ? plazoDias(lic?.condicion_venta) - d : null;
   })();
   const diasVencida = vencDias != null ? Math.abs(vencDias) : null;
 
+  // Asunto/referencia según el tipo de cliente:
+  //  - Entidad pública: OC concatenada con el N° de factura.
+  //  - Cliente particular: N° factura - N° cotización.
+  const esParticular = (lic?.tipo_cliente || "").toLowerCase().includes("particular");
+  const asuntoInicial = esParticular
+    ? `Factura ${doc.numero || "S/N"} - Cotización ${lic?.id_licitacion || lic?.id || ""}`.trim()
+    : `${numeroOC ? `OC ${numeroOC} - ` : ""}Factura ${doc.numero || "S/N"}`.trim();
+
   const [para, setPara] = useState("");
-  const [cc, setCc] = useState("");
-  const [asunto, setAsunto] = useState(
-    `Cobranza factura ${doc.numero || ""} - ${lic?.nombre_entidad || ""}`.trim(),
-  );
+  // Copia por defecto a Jeremías y Benjamín (Alarcón).
+  const [cc, setCc] = useState("jer.consorcio@gmail.com, benja.alarcon.z@gmail.com");
+  const [asunto, setAsunto] = useState(asuntoInicial);
   const [cuerpo, setCuerpo] = useState(
     `Estimados,\n\nJunto con saludar, nos contactamos para recordar el pago de la factura N° ${doc.numero || ""} por un monto de ${fmtCLP(lic?.total_con_iva)}, ${diasVencida != null ? `actualmente con ${diasVencida} días de atraso` : "que se encuentra vencida"}.\n\nAgradeceremos regularizar el pago a la brevedad o indicarnos una fecha estimada.\n\nQuedamos atentos.\nSaludos cordiales.`,
   );
