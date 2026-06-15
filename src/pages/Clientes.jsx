@@ -14,6 +14,7 @@ export default function Clientes() {
   const [filtroRut, setFiltroRut] = useState("");
   const [filtroNombre, setFiltroNombre] = useState("");
   const [filtroRegion, setFiltroRegion] = useState("");
+  const [filtroTipo, setFiltroTipo] = useState("");
 
   const [modalOpen, setModalOpen] = useState(false);
   const [clienteAEliminar, setClienteAEliminar] = useState(null);
@@ -79,10 +80,12 @@ export default function Clientes() {
     const matchRut = c.rut.toLowerCase().includes(filtroRut.toLowerCase());
     const matchNombre = c.nombre.toLowerCase().includes(filtroNombre.toLowerCase());
     const matchRegion = filtroRegion ? c.region === filtroRegion : true;
-    return matchRut && matchNombre && matchRegion;
+    const matchTipo = filtroTipo ? (c.tipo_cliente || "") === filtroTipo : true;
+    return matchRut && matchNombre && matchRegion && matchTipo;
   });
 
   const regionesUnicas = [...new Set(clientes.map((c) => c.region).filter(Boolean))];
+  const tiposUnicos = [...new Set(clientes.map((c) => c.tipo_cliente).filter(Boolean))];
 
   /* ============================================================
      ELIMINACIÓN
@@ -154,6 +157,20 @@ export default function Clientes() {
             <option value="">Todas las Regiones</option>
             {regionesUnicas.map((r) => (
               <option key={r} value={r}>{r}</option>
+            ))}
+          </select>
+        </div>
+
+        <div className="filter-field">
+          <label className="filter-label">Tipo de cliente</label>
+          <select
+            className="input"
+            value={filtroTipo}
+            onChange={(e) => setFiltroTipo(e.target.value)}
+          >
+            <option value="">Todos los tipos</option>
+            {tiposUnicos.map((t) => (
+              <option key={t} value={t}>{t}</option>
             ))}
           </select>
         </div>

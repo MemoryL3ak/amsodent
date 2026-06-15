@@ -198,6 +198,9 @@ const TIPOS_GESTION = [
   { value: "nota", label: "Nota", icon: StickyNote, color: "#b45309" },
 ];
 const TIPO_GESTION_MAP = Object.fromEntries(TIPOS_GESTION.map((t) => [t.value, t]));
+// Tipos disponibles para registrar/ filtrar (sin "Nota"). El MAP conserva "nota"
+// para seguir mostrando gestiones antiguas de ese tipo.
+const TIPOS_GESTION_SEL = TIPOS_GESTION.filter((t) => t.value !== "nota");
 
 const ROLES_COBRANZA = ["admin", "administrador", "contabilidad", "jefe_ventas_especial"];
 
@@ -248,7 +251,7 @@ export default function Cobranza() {
       setLoading(true);
       try {
         const licsAdj = await api.get(
-          "/licitaciones/with-fields?fields=id,id_licitacion,nombre_entidad,fecha_adjudicada,total_con_iva,creado_por,condicion_venta,comuna,estado,tipo_compra,tipo_cliente",
+          "/licitaciones/with-fields?fields=id,id_licitacion,nombre_entidad,rut_entidad,fecha_adjudicada,total_con_iva,creado_por,condicion_venta,comuna,estado,tipo_compra,tipo_cliente",
         );
         const rows = (licsAdj || []).filter((l) => l.estado === "Adjudicada");
         const mapa = {};
@@ -798,7 +801,7 @@ export default function Cobranza() {
             <label className="filter-label">Tipo de gestión</label>
             <select className="input" value={hTipo} onChange={(e) => setHTipo(e.target.value)}>
               <option value="">Todas</option>
-              {TIPOS_GESTION.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+              {TIPOS_GESTION_SEL.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
             </select>
           </div>
         </div>
@@ -846,6 +849,7 @@ export default function Cobranza() {
                               <Link to={`/detalle/${lic.id}`} className="table-link" style={{ fontWeight: 600 }}>#{lic.id}</Link>
                               {lic.id_licitacion && <span style={{ color: "var(--text-muted)", fontSize: 11, marginLeft: 6 }}>{lic.id_licitacion}</span>}
                               <div style={{ fontSize: 12.5, color: "#1f2937", marginTop: 2 }}>{lic.nombre_entidad || "—"}</div>
+                              <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 1 }}>RUT: {lic.rut_entidad || "—"}</div>
                             </>
                           ) : (
                             <span style={{ color: "var(--text-muted)", fontSize: 12 }}>Cotización #{g.licitacion_id}</span>
@@ -956,7 +960,7 @@ function ModalGestion({ doc, lic, gestiones, onCerrar, onRegistrar, onEnviarCorr
           {/* Registrar nueva gestión */}
           <div style={{ border: "1px solid var(--border)", borderRadius: 10, padding: 14, marginBottom: 18 }}>
             <div style={{ display: "flex", gap: 6, flexWrap: "nowrap", marginBottom: 10 }}>
-              {TIPOS_GESTION.map((t) => {
+              {TIPOS_GESTION_SEL.map((t) => {
                 const activo = tipo === t.value;
                 const I = t.icon;
                 return (
