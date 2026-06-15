@@ -1,11 +1,21 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { api } from "../lib/api";
 import { Link } from "react-router-dom";
 import useAuth from "../hooks/useAuth";
 import Toast from "../components/Toast";
 import ConfirmModal from "../components/ConfirmModal";
 import DateFilter from "../components/DateFilter";
-import { Eye, CheckCircle2, Circle, AlertTriangle, ArrowUpDown, ArrowUp, ArrowDown, Download, ChevronDown } from "lucide-react";
+import { Eye, CheckCircle2, Circle, AlertTriangle, ArrowUpDown, ArrowUp, ArrowDown, Download, ChevronDown, Upload } from "lucide-react";
+
+// Normaliza el nombre de archivo para el storage (sin acentos ni símbolos).
+function normalizarNombreArchivo(nombre) {
+  const base = (nombre || "")
+    .replace(/[^a-zA-Z0-9-_]+/g, "_")
+    .replace(/_+/g, "_").replace(/^_|_$/g, "")
+    .toLowerCase();
+  return base || "archivo";
+}
 
 const FORMAS_PAGO = [
   { value: "transferencia", label: "Transferencia" },
@@ -86,6 +96,14 @@ export default function SeguimientoPagos() {
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState(null);
   const [confirmDesmarcar, setConfirmDesmarcar] = useState(null);
+
+  // Subida de voucher (comprobante de transferencia) desde esta pantalla.
+  const [voucherFor, setVoucherFor] = useState(null); // factura (f) a la que se vincula
+  const [vFile, setVFile] = useState(null);
+  const [vMonto, setVMonto] = useState("");
+  const [vFecha, setVFecha] = useState("");
+  const [vNumero, setVNumero] = useState("");
+  const [subiendoVoucher, setSubiendoVoucher] = useState(false);
 
   // Filtros
   const [filtroEstado, setFiltroEstado] = useState("todas");
@@ -540,6 +558,66 @@ export default function SeguimientoPagos() {
 
   function desmarcarPago(f) {
     setConfirmDesmarcar(f);
+  }
+
+  // ── Voucher (comprobante de transferencia) ───────────────────────────────
+  function abrirVoucher(f) {
+    setVoucherFor(f);
+    setVFile(null);
+    setVMonto("");
+    setVFecha(new Date().toISOString().slice(0, 10));
+    setVNumero("");
+  }
+  function cerrarVoucher() {
+    setVoucherFor(null);
+    setVFile(null);
+    setVMonto("");
+    setVFecha("");
+    setVNumero("");
+  }
+  async function subirVoucher(e) {
+    e?.preventDefault?.();
+    if (!voucherFor || subiendoVoucher) return;
+    if (!vFile) { setToast({ type: "error", message: "Selecciona el archivo del comprobante." }); return; }
+    const montoNum = Math.round(Number(String(vMonto).replace(/[^\d]/g, "")) || 0);
+    if (montoNum <= 0) { setToast({ type: "error", message: "Ingresa el monto del comprobante." }); return; }
+    if (!vFecha) { setToast({ type: "error", message: "Ingresa la fecha del comprobante." }); return; }
+    setSubiendoVoucher(true);
+    const bucket = "factura";
+    const ext = (vFile.name.split(".").pop() || "pdf").toLowerCase();
+    const safe = normalizarNombreArchivo(vFile.name.replace(/\.[^.]+$/, ""));
+    const storagePath = `${voucherFor.licitacion_id}/${Date.now()}-${Math.random().toString(36).slice(2)}-${safe}.${ext}`;
+    try {
+      const fd = new FormData();
+      fd.append("file", vFile);
+      await api.postForm(`/licitaciones/storage/upload?bucket=${bucket}&path=${encodeURIComponent(storagePath)}`, fd);
+      try {
+        await api.post("/licitaciones/documentos", {
+          licitacion_id: Number(voucherFor.licitacion_id),
+          tipo: "comprobante_pago",
+          numero: (vNumero || "").trim() || null,
+          monto: montoNum,
+          fecha_oc: vFecha,
+          deriva_de_id: Number(voucherFor.id),
+          bucket,
+          storage_path: storagePath,
+          file_name: vFile.name,
+          mime_type: vFile.type || "application/pdf",
+          size_bytes: Number(vFile.size || 0),
+        });
+      } catch (insErr) {
+        try { await api.delete(`/licitaciones/storage/file?bucket=${bucket}&path=${encodeURIComponent(storagePath)}`); } catch { /* */ }
+        throw insErr;
+      }
+      setToast({ type: "success", message: "Comprobante de transferencia cargado." });
+      cerrarVoucher();
+      recargar();
+    } catch (err) {
+      console.error(err);
+      setToast({ type: "error", message: "No se pudo cargar el comprobante." });
+    } finally {
+      setSubiendoVoucher(false);
+    }
   }
 
   async function confirmarDesmarcarPago() {
@@ -1011,6 +1089,28 @@ export default function SeguimientoPagos() {
                             <div style={{ color: "var(--text-muted)", fontSize: "11px" }}>
                               {montoParticular != null ? fmtCLP(montoParticular) : "—"}
                             </div>
+                            <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap" }}>
+                              <button
+                                type="button"
+                                onClick={() => abrirVoucher(f)}
+                                className="btn btn-secondary btn-sm"
+                                style={{ display: "inline-flex", alignItems: "center", gap: 4 }}
+                                title="Subir comprobante de transferencia"
+                              >
+                                <Upload size={12} /> Subir voucher
+                              </button>
+                              {comprobante?.bucket && comprobante?.storage_path && (
+                                <button
+                                  type="button"
+                                  onClick={() => abrirDocumento(comprobante)}
+                                  className="btn btn-secondary btn-sm"
+                                  style={{ display: "inline-flex", alignItems: "center", gap: 4 }}
+                                  title="Ver comprobante"
+                                >
+                                  <Eye size={12} /> Ver
+                                </button>
+                              )}
+                            </div>
                           </div>
                         ) : f.pagada ? (
                           <div>
@@ -1089,6 +1189,51 @@ export default function SeguimientoPagos() {
           </table>
         </div>
       </div>
+
+      {voucherFor && createPortal(
+        <div
+          onClick={cerrarVoucher}
+          style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,.55)", zIndex: 11000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+        >
+          <form
+            onClick={(e) => e.stopPropagation()}
+            onSubmit={subirVoucher}
+            style={{ width: 420, maxWidth: "100%", background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", overflow: "hidden", boxShadow: "var(--shadow-lg)" }}
+          >
+            <div style={{ padding: "16px 20px", borderBottom: "1px solid var(--border)" }}>
+              <strong style={{ fontSize: 15 }}>Subir comprobante de transferencia</strong>
+              <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 2 }}>
+                Factura {voucherFor.numero || "S/N"} · {licMap[voucherFor.licitacion_id]?.nombre_entidad || ""}
+              </div>
+            </div>
+            <div style={{ padding: "16px 20px", display: "flex", flexDirection: "column", gap: 12 }}>
+              <label style={{ fontSize: 13, fontWeight: 600 }}>
+                Archivo
+                <input type="file" accept="image/*,application/pdf" onChange={(e) => setVFile(e.target.files?.[0] || null)} style={{ display: "block", marginTop: 4, fontSize: 13 }} />
+              </label>
+              <label style={{ fontSize: 13, fontWeight: 600 }}>
+                Monto
+                <input type="text" inputMode="numeric" className="input" value={vMonto} onChange={(e) => setVMonto(e.target.value.replace(/[^\d]/g, ""))} placeholder="0" style={{ marginTop: 4 }} />
+              </label>
+              <label style={{ fontSize: 13, fontWeight: 600 }}>
+                Fecha del comprobante
+                <div style={{ marginTop: 4 }}>
+                  <DateFilter value={vFecha} onChange={setVFecha} placeholder="Fecha" />
+                </div>
+              </label>
+              <label style={{ fontSize: 13, fontWeight: 600 }}>
+                N° / referencia (opcional)
+                <input type="text" className="input" value={vNumero} onChange={(e) => setVNumero(e.target.value)} placeholder="N° operación, banco…" style={{ marginTop: 4 }} />
+              </label>
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, padding: "14px 20px", borderTop: "1px solid var(--border)", background: "var(--bg)" }}>
+              <button type="button" onClick={cerrarVoucher} disabled={subiendoVoucher} className="btn btn-secondary">Cancelar</button>
+              <button type="submit" disabled={subiendoVoucher} className="btn btn-primary">{subiendoVoucher ? "Subiendo…" : "Subir comprobante"}</button>
+            </div>
+          </form>
+        </div>,
+        document.body
+      )}
     </div>
   );
 }
