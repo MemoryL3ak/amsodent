@@ -76,6 +76,9 @@ export default function SeguimientoPagos() {
   const puedeVer = esAdmin || rolNorm === "jefe_ventas_especial" || rolNorm === "contabilidad";
   const [facturas, setFacturas] = useState([]);
   const [comprobantesMap, setComprobantesMap] = useState({});
+  // Suma de comprobantes (transferencia/comprobante, webpay y efectivo) por
+  // cotización; sirve para el saldo por pagar del cliente particular.
+  const [comprobantesSumMap, setComprobantesSumMap] = useState({});
   const [licMap, setLicMap] = useState({});
   const [usuariosMap, setUsuariosMap] = useState({});
   const [loading, setLoading] = useState(true);
@@ -171,19 +174,28 @@ export default function SeguimientoPagos() {
         const ids = rows.map((l) => l.id);
         let allFacturas = [];
         const compMap = {};
+        const compSum = {};
         if (ids.length > 0) {
           const docs = await api.post("/licitaciones/documentos/filter", {
-            // Factura (Entidad Pública), Factura/Boleta (Cliente Particular) y
-            // el comprobante de pago (fecha + monto del pago del particular).
-            filter: { licitacion_ids: ids, tipo: ["factura", "factura_boleta", "comprobante_pago"] },
+            // Factura (Entidad Pública), Factura/Boleta (Cliente Particular) y los
+            // comprobantes de pago del particular (transferencia/comprobante, webpay
+            // y efectivo) para fecha, monto pagado y saldo por pagar.
+            filter: {
+              licitacion_ids: ids,
+              tipo: ["factura", "factura_boleta", "comprobante_pago", "webpay", "efectivo"],
+            },
             fields: "*",
           });
           (docs || []).forEach((d) => {
             if (d.tipo === "factura" || d.tipo === "factura_boleta") {
               allFacturas.push(d);
-            } else if (d.tipo === "comprobante_pago") {
-              // Nos quedamos con el comprobante más reciente por cotización.
-              const lid = d.licitacion_id;
+              return;
+            }
+            // Comprobantes de pago: acumulamos el monto pagado por cotización.
+            const lid = d.licitacion_id;
+            compSum[lid] = (compSum[lid] || 0) + Number(d.monto || 0);
+            if (d.tipo === "comprobante_pago") {
+              // Para la columna "Pago" nos quedamos con el comprobante más reciente.
               const fa = String(d.fecha_oc || d.created_at || "");
               const prev = compMap[lid];
               const fp = prev ? String(prev.fecha_oc || prev.created_at || "") : "";
@@ -193,6 +205,7 @@ export default function SeguimientoPagos() {
         }
         setFacturas(allFacturas);
         setComprobantesMap(compMap);
+        setComprobantesSumMap(compSum);
 
         // 3. Vendedores
         const emails = Array.from(new Set(rows.map((l) => l.creado_por).filter(Boolean)));
@@ -348,6 +361,10 @@ export default function SeguimientoPagos() {
       else if (restantes < 0) estado = "Vencida";
       else if (restantes <= 5) estado = "Por vencer";
       else estado = "En plazo";
+      const particular = esClienteParticular(lic);
+      const facturaMonto = Number(f.monto) || Number(lic.total_con_iva) || 0;
+      const pagadoParticular = Number(comprobantesSumMap[lic.id] || 0);
+      const saldoParticular = particular ? Math.round(facturaMonto - pagadoParticular) : "";
       return {
         "ID Cotización": lic.id_licitacion || lic.id || "",
         "Cliente": lic.nombre_entidad || "",
@@ -356,6 +373,7 @@ export default function SeguimientoPagos() {
         "Vencimiento": venc ? venc.toISOString().slice(0, 10) : "",
         "Condición Venta": lic.condicion_venta || "",
         "Monto": Number(lic.total_con_iva ?? 0),
+        "Saldo por pagar (particular)": saldoParticular,
         "Estado": estado,
         "Pagada": f.pagada ? "Sí" : "No",
         "Fecha Pago": fmtFecha(f.fecha_pago),
@@ -417,7 +435,9 @@ export default function SeguimientoPagos() {
       const plazo = plazoDias(lic.condicion_venta);
       const dias = diasEntre(f.fecha_factura);
       const diasRestantes = dias != null ? plazo - dias : null;
-      if (diasRestantes != null && diasRestantes < 0) { vencidas++; montoVencidas += monto; }
+      // KPI Vencidas: considera el monto de la factura (si está registrado),
+      // con fallback al total con IVA de la cotización.
+      if (diasRestantes != null && diasRestantes < 0) { vencidas++; montoVencidas += Number(f.monto) || monto; }
       else if (diasRestantes != null && diasRestantes <= 5) { porVencer++; montoPorVencer += monto; }
       else { montoEnPlazo += monto; }
     });
@@ -635,7 +655,7 @@ export default function SeguimientoPagos() {
           <div className="stat-label">Vencidas</div>
           <div className="stat-value" style={{ color: "var(--danger)" }}>{stats.vencidas}</div>
           <div className="stat-money" style={{ color: "var(--danger)" }}>{fmtCLP(stats.montoVencidas)}</div>
-          <div className="stat-sub">fuera de plazo · con IVA</div>
+          <div className="stat-sub">fuera de plazo · monto factura</div>
         </div>
         <div className="stat-card">
           <div className="stat-label">Factoring</div>
@@ -760,14 +780,15 @@ export default function SeguimientoPagos() {
         <div className="table-scroll" style={{ maxHeight: "calc(100vh - 360px)" }}>
           <table className="data-table trazabilidad-table table-fit">
             <colgroup>
-              <col style={{ width: "19%" }} />
+              <col style={{ width: "17%" }} />
+              <col style={{ width: "9%" }} />
+              <col style={{ width: "8%" }} />
+              <col style={{ width: "10%" }} />
+              <col style={{ width: "7%" }} />
               <col style={{ width: "10%" }} />
               <col style={{ width: "9%" }} />
               <col style={{ width: "11%" }} />
               <col style={{ width: "8%" }} />
-              <col style={{ width: "11%" }} />
-              <col style={{ width: "12%" }} />
-              <col style={{ width: "9%" }} />
               <col style={{ width: "11%" }} />
             </colgroup>
             <thead>
@@ -798,6 +819,9 @@ export default function SeguimientoPagos() {
                     Monto <SortIcon col="monto" />
                   </span>
                 </th>
+                <th style={{ textAlign: "right" }} title="Solo cliente particular: factura menos comprobantes (transferencia + webpay + efectivo)">
+                  Saldo por pagar
+                </th>
                 <th onClick={() => toggleSort("estado")} style={{ cursor: "pointer", userSelect: "none", textAlign: "left" }}>
                   <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
                     Estado <SortIcon col="estado" />
@@ -810,7 +834,7 @@ export default function SeguimientoPagos() {
             <tbody>
               {facturasOrdenadas.length === 0 ? (
                 <tr>
-                  <td colSpan="9" style={{ textAlign: "center", padding: "60px 0", color: "var(--text-muted)" }}>
+                  <td colSpan="10" style={{ textAlign: "center", padding: "60px 0", color: "var(--text-muted)" }}>
                     No hay facturas que coincidan con los filtros.
                   </td>
                 </tr>
@@ -908,6 +932,26 @@ export default function SeguimientoPagos() {
                       </td>
                       <td style={{ verticalAlign: "middle", textAlign: "right", fontWeight: 600, whiteSpace: "nowrap" }}>
                         {lic.total_con_iva ? `$${Number(lic.total_con_iva).toLocaleString("es-CL")}` : "—"}
+                      </td>
+                      <td style={{ verticalAlign: "middle", textAlign: "right" }}>
+                        {particular ? (() => {
+                          // Saldo por pagar (solo particular): factura menos la suma de
+                          // comprobantes (transferencia + webpay + efectivo).
+                          const facturaMonto = Number(f.monto) || Number(lic.total_con_iva) || 0;
+                          const pagado = Number(comprobantesSumMap[lic.id] || 0);
+                          const saldo = Math.round(facturaMonto - pagado);
+                          const color = saldo > 0 ? "#b45309" : saldo < 0 ? "#dc2626" : "#16a34a";
+                          return (
+                            <div>
+                              <div style={{ fontWeight: 600, color, whiteSpace: "nowrap" }}>{fmtCLP(saldo)}</div>
+                              <div style={{ fontSize: 11, color: "var(--text-muted)", whiteSpace: "nowrap" }}>
+                                Pagado {fmtCLP(pagado)}
+                              </div>
+                            </div>
+                          );
+                        })() : (
+                          <span style={{ color: "var(--text-muted)" }}>—</span>
+                        )}
                       </td>
                       <td style={{ verticalAlign: "middle" }}>
                         {particular && !f.pagada ? (

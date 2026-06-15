@@ -1,10 +1,15 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
 import { Link } from "react-router-dom";
 import ConfirmModal from "../components/ConfirmModal";
+import useAuth from "../hooks/useAuth";
 
 export default function Clientes() {
   const [clientes, setClientes] = useState([]);
+  const [vendedores, setVendedores] = useState([]);
+
+  const { rol } = useAuth();
+  const esAdmin = ["admin", "administrador"].includes((rol || "").trim().toLowerCase());
 
   const [filtroRut, setFiltroRut] = useState("");
   const [filtroNombre, setFiltroNombre] = useState("");
@@ -38,6 +43,34 @@ export default function Clientes() {
   useEffect(() => {
     cargar();
   }, []);
+
+  // El vendedor asignado solo se muestra al admin; cargamos los perfiles para
+  // poder mostrar el nombre en vez del correo.
+  useEffect(() => {
+    if (!esAdmin) return;
+    api
+      .get("/usuarios/profiles")
+      .then((p) => setVendedores(p || []))
+      .catch(() => {});
+  }, [esAdmin]);
+
+  const vendedoresMap = useMemo(() => {
+    const m = {};
+    (vendedores || []).forEach((p) => {
+      const e = (p?.email || "").trim().toLowerCase();
+      if (e) m[e] = (p?.nombre || "").trim();
+    });
+    return m;
+  }, [vendedores]);
+
+  const esClienteParticular = (c) =>
+    (c?.tipo_cliente || "").toString().toLowerCase().includes("particular");
+
+  const nombreVendedor = (email) => {
+    const e = (email || "").trim().toLowerCase();
+    if (!e) return "Sin asignar";
+    return vendedoresMap[e] || email;
+  };
 
   /* ============================================================
      FILTROS
@@ -137,6 +170,7 @@ export default function Clientes() {
               <col style={{ width: 180 }} />
               <col style={{ width: 150 }} />
               <col style={{ width: 180 }} />
+              {esAdmin && <col style={{ width: 170 }} />}
               <col style={{ width: 180 }} />
             </colgroup>
             <thead>
@@ -147,6 +181,7 @@ export default function Clientes() {
                 <th>Región</th>
                 <th>Comuna</th>
                 <th>Contacto</th>
+                {esAdmin && <th>Vendedor asignado</th>}
                 <th style={{ textAlign: "right" }}>Acción</th>
               </tr>
             </thead>
@@ -160,6 +195,15 @@ export default function Clientes() {
                   <td style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.region}</td>
                   <td style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.comuna}</td>
                   <td style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={c.contacto}>{c.contacto}</td>
+                  {esAdmin && (
+                    <td style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {esClienteParticular(c) ? (
+                        <span title={c.vendedor_asignado || ""}>{nombreVendedor(c.vendedor_asignado)}</span>
+                      ) : (
+                        <span style={{ color: "var(--text-muted)" }}>—</span>
+                      )}
+                    </td>
+                  )}
                   <td style={{ textAlign: "right" }}>
                     <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", flexWrap: "nowrap" }}>
                       <Link
@@ -182,7 +226,7 @@ export default function Clientes() {
 
               {clientesFiltrados.length === 0 && (
                 <tr>
-                  <td colSpan="7" style={{ textAlign: "center", padding: "60px 0", color: "var(--text-muted)" }}>
+                  <td colSpan={esAdmin ? 8 : 7} style={{ textAlign: "center", padding: "60px 0", color: "var(--text-muted)" }}>
                     No hay clientes que coincidan con el filtro.
                   </td>
                 </tr>

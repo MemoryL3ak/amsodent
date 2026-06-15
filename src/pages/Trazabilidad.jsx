@@ -1610,7 +1610,7 @@ export default function Trazabilidad() {
                   style={{ cursor: "pointer", userSelect: "none", textAlign: "right", width: "11%" }}
                 >
                   <span style={{ display: "inline-flex", alignItems: "center", gap: 4, justifyContent: "flex-end" }}>
-                    Saldo por pagar <SortIcon col="monto" />
+                    Saldo por consumir <SortIcon col="monto" />
                   </span>
                 </th>
                 {!esSoloClienteParticular && (
