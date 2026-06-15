@@ -79,6 +79,8 @@ export default function SeguimientoPagos() {
   // Suma de comprobantes (transferencia/comprobante, webpay y efectivo) por
   // cotización; sirve para el saldo por pagar del cliente particular.
   const [comprobantesSumMap, setComprobantesSumMap] = useState({});
+  // Suma de órdenes de compra por cotización (monto a cobrar de la columna Monto).
+  const [montoOcMap, setMontoOcMap] = useState({});
   const [licMap, setLicMap] = useState({});
   const [usuariosMap, setUsuariosMap] = useState({});
   const [loading, setLoading] = useState(true);
@@ -175,24 +177,30 @@ export default function SeguimientoPagos() {
         let allFacturas = [];
         const compMap = {};
         const compSum = {};
+        const ocSum = {};
         if (ids.length > 0) {
           const docs = await api.post("/licitaciones/documentos/filter", {
-            // Factura (Entidad Pública), Factura/Boleta (Cliente Particular) y los
-            // comprobantes de pago del particular (transferencia/comprobante, webpay
-            // y efectivo) para fecha, monto pagado y saldo por pagar.
+            // Orden de compra (monto a cobrar), factura (Entidad Pública),
+            // factura/boleta (Cliente Particular) y los comprobantes de pago del
+            // particular (transferencia/comprobante, webpay y efectivo).
             filter: {
               licitacion_ids: ids,
-              tipo: ["factura", "factura_boleta", "comprobante_pago", "webpay", "efectivo"],
+              tipo: ["orden_compra", "factura", "factura_boleta", "comprobante_pago", "webpay", "efectivo"],
             },
             fields: "*",
           });
           (docs || []).forEach((d) => {
+            const lid = d.licitacion_id;
             if (d.tipo === "factura" || d.tipo === "factura_boleta") {
               allFacturas.push(d);
               return;
             }
+            if (d.tipo === "orden_compra") {
+              // Monto de la cotización a efectos de pago = suma de sus OC.
+              ocSum[lid] = (ocSum[lid] || 0) + Number(d.monto || 0);
+              return;
+            }
             // Comprobantes de pago: acumulamos el monto pagado por cotización.
-            const lid = d.licitacion_id;
             compSum[lid] = (compSum[lid] || 0) + Number(d.monto || 0);
             if (d.tipo === "comprobante_pago") {
               // Para la columna "Pago" nos quedamos con el comprobante más reciente.
@@ -206,6 +214,7 @@ export default function SeguimientoPagos() {
         setFacturas(allFacturas);
         setComprobantesMap(compMap);
         setComprobantesSumMap(compSum);
+        setMontoOcMap(ocSum);
 
         // 3. Vendedores
         const emails = Array.from(new Set(rows.map((l) => l.creado_por).filter(Boolean)));
@@ -372,7 +381,7 @@ export default function SeguimientoPagos() {
         "Fecha Factura": fmtFecha(f.fecha_factura),
         "Vencimiento": venc ? venc.toISOString().slice(0, 10) : "",
         "Condición Venta": lic.condicion_venta || "",
-        "Monto": Number(lic.total_con_iva ?? 0),
+        "Monto": (Number(montoOcMap[lic.id] || 0) || Number(lic.total_con_iva ?? 0)),
         "Saldo por pagar (particular)": saldoParticular,
         "Estado": estado,
         "Pagada": f.pagada ? "Sí" : "No",
@@ -940,7 +949,13 @@ export default function SeguimientoPagos() {
                         {lic.condicion_venta || "—"}
                       </td>
                       <td style={{ verticalAlign: "middle", textAlign: "right", fontWeight: 600, whiteSpace: "nowrap" }}>
-                        {lic.total_con_iva ? `$${Number(lic.total_con_iva).toLocaleString("es-CL")}` : "—"}
+                        {(() => {
+                          // Monto = valor de la OC (suma de órdenes de compra de la
+                          // cotización). Si no hay OC, cae al total con IVA.
+                          const oc = Number(montoOcMap[lic.id] || 0);
+                          const m = oc > 0 ? oc : Number(lic.total_con_iva || 0);
+                          return m > 0 ? `$${m.toLocaleString("es-CL")}` : "—";
+                        })()}
                       </td>
                       <td style={{ verticalAlign: "middle", textAlign: "right" }}>
                         {particular ? (() => {
