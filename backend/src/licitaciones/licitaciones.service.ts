@@ -441,12 +441,35 @@ export class LicitacionesService {
   }
 
   async updateDocumento(docId: number, body: Record<string, any>) {
-    const { data, error } = await this.supabase.getClient()
-      .from('licitacion_documentos')
-      .update(body)
-      .eq('id', docId)
-      .select()
-      .single();
+    const intentar = (payload: Record<string, any>) =>
+      this.supabase.getClient()
+        .from('licitacion_documentos')
+        .update(payload)
+        .eq('id', docId)
+        .select()
+        .single();
+
+    let { data, error } = await intentar(body);
+
+    // Si falla por una columna opcional aún no migrada (dias_atraso_pago,
+    // columnas de factoring), la quitamos del payload y reintentamos.
+    if (error) {
+      const msg = [error.message, (error as any).details, (error as any).hint]
+        .filter(Boolean).join(' ').toLowerCase();
+      const opcionales = [
+        'dias_atraso_pago',
+        'factoring_empresa',
+        'factoring_comision_pct',
+        'factoring_vencimiento',
+      ];
+      const aQuitar = opcionales.filter((c) => msg.includes(c));
+      if (aQuitar.length) {
+        const limpio = { ...body };
+        aQuitar.forEach((c) => delete limpio[c]);
+        ({ data, error } = await intentar(limpio));
+      }
+    }
+
     if (error) throw new BadRequestException(error.message);
     return data;
   }
