@@ -207,7 +207,16 @@ export class LicitacionesService {
   }
 
   async getDocumentosByFilter(filter: Record<string, any>, fields?: string) {
-    const buildQuery = (selectFields: string) => {
+    // Troceamos licitacion_ids en lotes: un IN(...) con cientos de IDs genera
+    // una URL/headers gigante que desborda el límite de undici
+    // (UND_ERR_HEADERS_OVERFLOW → "TypeError: fetch failed"). Con ~2000+
+    // licitaciones la consulta sin trocear falla por completo.
+    const CHUNK = 150;
+    const ids = Array.isArray(filter?.licitacion_ids)
+      ? (filter.licitacion_ids as any[])
+      : null;
+
+    const buildQuery = (selectFields: string, idsChunk: any[] | null) => {
       // range(0, 50000) — sin esto, Supabase trunca a 1000 filas y los
       // documentos viejos "desaparecen" en pantallas que filtran por OC
       // (ej: Listar Cotizaciones, Ventas, Trazabilidad).
@@ -218,7 +227,7 @@ export class LicitacionesService {
 
       for (const [key, value] of Object.entries(filter)) {
         if (key === 'licitacion_ids') {
-          query = query.in('licitacion_id', value as number[]);
+          query = query.in('licitacion_id', (idsChunk ?? value) as any[]);
         } else if (Array.isArray(value)) {
           // Permite { tipo: ['orden_compra', 'factura_boleta'] } → IN
           query = query.in(key, value as any[]);
@@ -229,7 +238,24 @@ export class LicitacionesService {
       return query;
     };
 
-    const { data, error } = await buildQuery(fields || '*');
+    // Ejecuta la consulta troceando licitacion_ids cuando hay muchos IDs.
+    // Los lotes corren en paralelo para no penalizar el tiempo de respuesta.
+    const runAll = async (selectFields: string) => {
+      if (!ids || ids.length <= CHUNK) {
+        return await buildQuery(selectFields, ids);
+      }
+      const chunks: any[][] = [];
+      for (let i = 0; i < ids.length; i += CHUNK) chunks.push(ids.slice(i, i + CHUNK));
+      const results = await Promise.all(chunks.map((c) => buildQuery(selectFields, c)));
+      const merged: any[] = [];
+      for (const { data, error } of results) {
+        if (error) return { data: null as any, error };
+        if (data) merged.push(...(data as any[]));
+      }
+      return { data: merged, error: null as any };
+    };
+
+    const { data, error } = await runAll(fields || '*');
 
     // If the query fails due to missing column (e.g. fecha_oc), retry without it
     if (error) {
@@ -243,7 +269,7 @@ export class LicitacionesService {
           .filter((f) => f !== 'fecha_oc')
           .join(',');
 
-        const { data: fallbackData, error: fallbackError } = await buildQuery(fallbackFields);
+        const { data: fallbackData, error: fallbackError } = await runAll(fallbackFields);
         if (fallbackError) throw new BadRequestException(fallbackError.message);
         return (fallbackData || []).map((d: any) => ({ ...d, fecha_oc: null }));
       }
