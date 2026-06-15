@@ -208,6 +208,9 @@ export default function Metas() {
   const [metasDraftMap, setMetasDraftMap] = useState({});
   const [metasSplitDraftMap, setMetasSplitDraftMap] = useState({});
   const [metasDetalleMap, setMetasDetalleMap] = useState({});
+  // Meta de cantidad (ventas adjudicadas) por canal_base: email -> { canal_base: n }
+  const [metasCantidadMap, setMetasCantidadMap] = useState({});
+  const [cantidadDraftMap, setCantidadDraftMap] = useState({});
   const [canalPorVendedorMap, setCanalPorVendedorMap] = useState({});
   const [metaPeriodo, setMetaPeriodo] = useState(inicioMesISO());
   const [filtroVendedor, setFiltroVendedor] = useState("");
@@ -357,6 +360,8 @@ export default function Metas() {
         setMetasDraftMap({});
         setMetasSplitDraftMap({});
         setMetasDetalleMap({});
+        setMetasCantidadMap({});
+        setCantidadDraftMap({});
         return;
       }
 
@@ -368,6 +373,7 @@ export default function Metas() {
       });
 
       const detalleMapa = {};
+      const cantidadMapa = {};
       if (!detalleError) {
         (detalleData || []).forEach((row) => {
           const email = (row?.vendedor_email || "").trim().toLowerCase();
@@ -375,6 +381,8 @@ export default function Metas() {
           if (!email || !canalBase) return;
           detalleMapa[email] = detalleMapa[email] || {};
           detalleMapa[email][canalBase] = Math.max(0, Number(row?.meta_neto || 0));
+          cantidadMapa[email] = cantidadMapa[email] || {};
+          cantidadMapa[email][canalBase] = Math.max(0, Number(row?.meta_cantidad || 0));
         });
       } else if (!isMissingMetaDetalleTableError(detalleError)) {
         console.error("Error cargando detalle de metas por canal:", detalleError);
@@ -384,6 +392,8 @@ export default function Metas() {
       setMetasDraftMap(mapa);
       setMetasSplitDraftMap({});
       setMetasDetalleMap(detalleMapa);
+      setMetasCantidadMap(cantidadMapa);
+      setCantidadDraftMap({});
     }
 
     cargarMetas();
@@ -497,6 +507,20 @@ export default function Metas() {
       }
     });
 
+    // Cantidad de ventas adjudicadas del periodo (1 por cotización), separadas en
+    // Particular vs Mercado según la fecha de adjudicación (1ª OC/factura/efectivo).
+    const cantidadParticular = {};
+    const cantidadMercado = {};
+    primeraOcPorLic.forEach((fechaAdj, licId) => {
+      const email = licById.get(licId);
+      if (!email) return;
+      if (filtroVendedor && email !== filtroVendedor) return;
+      if (!fechaAdj || fechaAdj < metaPeriodo || fechaAdj > finPeriodo) return;
+      const esParticular = (tipoCompraByLicId.get(licId) || "") === "Cliente particular";
+      if (esParticular) cantidadParticular[email] = Number(cantidadParticular[email] || 0) + 1;
+      else cantidadMercado[email] = Number(cantidadMercado[email] || 0) + 1;
+    });
+
     return opcionesVendedores
       .filter((v) => !filtroVendedor || v.value === filtroVendedor)
       .map((v) => {
@@ -505,6 +529,9 @@ export default function Metas() {
         const avanceParticular = Number(consumidoParticular[email] || 0);
         const avanceMercado = Number(consumidoMercado[email] || 0);
         const avanceNeto = avanceParticular + avanceMercado;
+        const avanceCantParticular = Number(cantidadParticular[email] || 0);
+        const avanceCantMercado = Number(cantidadMercado[email] || 0);
+        const avanceCantTotal = avanceCantParticular + avanceCantMercado;
         const canal = normalizeCanal(canalPorVendedorMap[email] || "");
         const splitCfg = canalSplitConfig(canal);
 
@@ -547,6 +574,10 @@ export default function Metas() {
             secondAvanceBruto: montoBrutoDesdeNeto(avanceSecond),
             secondBrecha: Math.max(0, metaSecond - avanceSecond),
             secondPct: metaSecond > 0 ? (avanceSecond / metaSecond) * 100 : 0,
+            firstCantAvance:
+              splitCfg.firstKey === "vendedor_terreno" ? avanceCantParticular : avanceCantMercado,
+            secondCantAvance:
+              splitCfg.secondKey === "vendedor_terreno" ? avanceCantParticular : avanceCantMercado,
           };
         }
 
@@ -560,6 +591,9 @@ export default function Metas() {
           brechaNeto: Math.max(0, metaNeto - avanceNeto),
           pctCumplimiento: metaNeto > 0 ? (avanceNeto / metaNeto) * 100 : 0,
           avanceBruto: montoBrutoDesdeNeto(avanceNeto),
+          avanceCantParticular,
+          avanceCantMercado,
+          avanceCantTotal,
           split,
         };
       })
@@ -645,13 +679,26 @@ export default function Metas() {
         await api.post("/metas/mensuales", { rows: upserts });
       }
 
-      const emailsAll = entries.map(([email]) => email).filter(Boolean);
+      // Cantidad de la celda: draft si fue editada, si no la guardada.
+      const getCant = (email, canalBase) => {
+        const draft = cantidadDraftMap[email];
+        if (draft && draft[canalBase] != null) return Math.max(0, Number(draft[canalBase]) || 0);
+        const saved = metasCantidadMap[email] || {};
+        return Math.max(0, Number(saved[canalBase] || 0));
+      };
+
+      const metaPorEmail = Object.fromEntries(entries);
+      // Unión de vendedores con meta en monto y/o en cantidad editada.
+      const emailsAll = Array.from(
+        new Set([...entries.map(([email]) => email), ...Object.keys(cantidadDraftMap)])
+      )
+        .map((e) => String(e).trim().toLowerCase())
+        .filter(Boolean);
+
       const detalleUpserts = [];
 
-      entries.forEach(([email, meta]) => {
-        const metaTotal = Math.max(0, Number(meta || 0));
-        if (!email || metaTotal <= 0) return;
-
+      emailsAll.forEach((email) => {
+        const metaTotal = Math.max(0, Number(metaPorEmail[email] || 0));
         const canalAsignado = normalizeCanal(canalPorVendedorMap[email] || "");
         const splitCfg = canalSplitConfig(canalAsignado);
         const splitDraft = metasSplitDraftMap[email];
@@ -665,10 +712,15 @@ export default function Metas() {
             ? Math.max(0, Number(splitDraft[splitCfg.secondKey] ?? 0))
             : Math.max(0, Number(splitSaved[splitCfg.secondKey] ?? Math.max(0, metaTotal - first)));
           const fixedSecond = Math.max(0, metaTotal - first);
-          detalleUpserts.push(
-            { vendedor_email: email, periodo: metaPeriodo, canal_base: splitCfg.firstKey, meta_neto: first },
-            { vendedor_email: email, periodo: metaPeriodo, canal_base: splitCfg.secondKey, meta_neto: splitDraft ? second : fixedSecond }
-          );
+          const secondNeto = splitDraft ? second : fixedSecond;
+          const firstCant = getCant(email, splitCfg.firstKey);
+          const secondCant = getCant(email, splitCfg.secondKey);
+          if (metaTotal > 0 || first > 0 || secondNeto > 0 || firstCant > 0 || secondCant > 0) {
+            detalleUpserts.push(
+              { vendedor_email: email, periodo: metaPeriodo, canal_base: splitCfg.firstKey, meta_neto: first, meta_cantidad: firstCant },
+              { vendedor_email: email, periodo: metaPeriodo, canal_base: splitCfg.secondKey, meta_neto: secondNeto, meta_cantidad: secondCant }
+            );
+          }
           return;
         }
 
@@ -681,12 +733,15 @@ export default function Metas() {
             ? canalAsignado
             : "";
 
-        if (canalBase) {
+        if (!canalBase) return;
+        const cant = getCant(email, canalBase);
+        if (metaTotal > 0 || cant > 0) {
           detalleUpserts.push({
             vendedor_email: email,
             periodo: metaPeriodo,
             canal_base: canalBase,
             meta_neto: metaTotal,
+            meta_cantidad: cant,
           });
         }
       });
@@ -716,14 +771,19 @@ export default function Metas() {
       setMetasMap(nuevoMapa);
       setMetasDraftMap(nuevoMapa);
       const nuevoDetalle = {};
+      const nuevoCantidad = {};
       detalleUpserts.forEach((row) => {
         const email = (row?.vendedor_email || "").trim().toLowerCase();
         const canal = normalizeCanal(row?.canal_base);
         if (!email || !canal) return;
         nuevoDetalle[email] = nuevoDetalle[email] || {};
         nuevoDetalle[email][canal] = Number(row?.meta_neto || 0);
+        nuevoCantidad[email] = nuevoCantidad[email] || {};
+        nuevoCantidad[email][canal] = Number(row?.meta_cantidad || 0);
       });
       setMetasDetalleMap(nuevoDetalle);
+      setMetasCantidadMap(nuevoCantidad);
+      setCantidadDraftMap({});
       setMetasInfoMsg("Metas guardadas correctamente.");
     } catch (e) {
       console.error("Error guardando metas:", e);
@@ -899,6 +959,7 @@ export default function Metas() {
                   <tr>
                     <th>Vendedor</th>
                     <th style={{ textAlign: "right" }}>Meta Neta</th>
+                    <th style={{ textAlign: "right" }}>Meta (cantidad)</th>
                     <th style={{ textAlign: "right" }}>Avance Neto</th>
                     <th style={{ textAlign: "right" }}>Avance Bruto</th>
                     <th>Progreso</th>
@@ -919,6 +980,23 @@ export default function Metas() {
                     const splitSecond = splitDraft
                       ? Math.max(0, Number(splitDraft[splitCfg?.secondKey] ?? 0))
                       : Math.max(0, Number(splitSaved[splitCfg?.secondKey] ?? (splitCfg ? Math.max(0, totalMetaDraft - Math.floor(totalMetaDraft / 2)) : 0)));
+                    // Meta de cantidad por canal_base (draft si fue editada; si no, guardada).
+                    const cantSaved = metasCantidadMap[r.email] || {};
+                    const cantDraft = cantidadDraftMap[r.email] || {};
+                    const cantFor = (key) => {
+                      if (!key) return 0;
+                      const d = cantDraft[key];
+                      return Math.max(0, Number((d != null ? d : cantSaved[key]) || 0));
+                    };
+                    const singleCanalBase = splitCfg ? "" : normalizeCanal(r.canal);
+                    const onCantChange = (key, raw) => {
+                      if (!key) return;
+                      const v = Math.max(0, parseInt(String(raw || "").replace(/\D/g, "") || "0", 10));
+                      setCantidadDraftMap((prev) => {
+                        const cur = prev[r.email] || { ...(metasCantidadMap[r.email] || {}) };
+                        return { ...prev, [r.email]: { ...cur, [key]: v } };
+                      });
+                    };
                     return (
                       <tr key={r.email}>
                         <td>
@@ -975,6 +1053,55 @@ export default function Metas() {
                               }}
                               className="input" style={{ textAlign: "right", width: "176px" }}
                             />
+                          )}
+                        </td>
+                        <td style={{ textAlign: "right" }}>
+                          {splitCfg ? (
+                            <div style={{ display: "flex", flexDirection: "column", gap: "8px", alignItems: "flex-end", width: "150px", marginLeft: "auto" }}>
+                              <div style={{ width: "100%" }}>
+                                <div style={{ fontSize: "10px", color: "var(--text-muted)", marginBottom: "4px" }}>{splitCfg.firstLabel}</div>
+                                <input
+                                  type="text" inputMode="numeric"
+                                  value={cantFor(splitCfg.firstKey) || ""}
+                                  placeholder="0"
+                                  disabled={!puedeEditarMetas}
+                                  onChange={(e) => onCantChange(splitCfg.firstKey, e.target.value)}
+                                  className="input" style={{ textAlign: "right", width: "100%" }}
+                                />
+                                <div style={{ marginTop: "2px", fontSize: "11px", color: "var(--text-muted)" }}>
+                                  {r.split?.firstCantAvance ?? 0} adjudicadas
+                                </div>
+                              </div>
+                              <div style={{ width: "100%" }}>
+                                <div style={{ fontSize: "10px", color: "var(--text-muted)", marginBottom: "4px" }}>{splitCfg.secondLabel}</div>
+                                <input
+                                  type="text" inputMode="numeric"
+                                  value={cantFor(splitCfg.secondKey) || ""}
+                                  placeholder="0"
+                                  disabled={!puedeEditarMetas}
+                                  onChange={(e) => onCantChange(splitCfg.secondKey, e.target.value)}
+                                  className="input" style={{ textAlign: "right", width: "100%" }}
+                                />
+                                <div style={{ marginTop: "2px", fontSize: "11px", color: "var(--text-muted)" }}>
+                                  {r.split?.secondCantAvance ?? 0} adjudicadas
+                                </div>
+                              </div>
+                            </div>
+                          ) : (
+                            <div style={{ width: "120px", marginLeft: "auto" }}>
+                              <input
+                                type="text" inputMode="numeric"
+                                value={cantFor(singleCanalBase) || ""}
+                                placeholder="0"
+                                disabled={!puedeEditarMetas || !singleCanalBase}
+                                onChange={(e) => onCantChange(singleCanalBase, e.target.value)}
+                                className="input" style={{ textAlign: "right", width: "100%" }}
+                                title={!singleCanalBase ? "Asigna un canal al vendedor para definir la meta de cantidad" : undefined}
+                              />
+                              <div style={{ marginTop: "4px", fontSize: "11px", color: "var(--text-muted)" }}>
+                                {r.avanceCantTotal} adjudicadas
+                              </div>
+                            </div>
                           )}
                         </td>
                         {r.split ? (
@@ -1097,7 +1224,7 @@ export default function Metas() {
                   })}
                   {avanceMetas.length === 0 && (
                     <tr>
-                      <td colSpan="7" style={{ textAlign: "center", padding: "40px 0", color: "var(--text-muted)" }}>
+                      <td colSpan="8" style={{ textAlign: "center", padding: "40px 0", color: "var(--text-muted)" }}>
                         No hay vendedores o metas para el filtro/periodo seleccionado.
                       </td>
                     </tr>
