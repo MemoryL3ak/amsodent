@@ -17,6 +17,16 @@ function normalizarNombreArchivo(nombre) {
   return base || "archivo";
 }
 
+// Monto (neto) de una cotización para pagos = suma de sus OC (que se guardan
+// netas). Sin OC, cae al neto de la cotización (total_sin_iva, o total_con_iva/1.19).
+function montoNetoPago(ocSum, lic) {
+  const oc = Number(ocSum || 0);
+  if (oc > 0) return oc;
+  const sinIva = Number(lic?.total_sin_iva || 0);
+  if (sinIva > 0) return sinIva;
+  return Math.round(Number(lic?.total_con_iva || 0) / 1.19);
+}
+
 const FORMAS_PAGO = [
   { value: "transferencia", label: "Transferencia" },
   { value: "cheque", label: "Cheque" },
@@ -170,13 +180,13 @@ export default function SeguimientoPagos() {
       try {
         // 1. Cotizaciones adjudicadas
         const lics = await api.get(
-          "/licitaciones/with-fields?fields=id,id_licitacion,nombre_entidad,fecha_adjudicada,total_con_iva,creado_por,condicion_venta,comuna,tipo_compra,tipo_cliente"
+          "/licitaciones/with-fields?fields=id,id_licitacion,nombre_entidad,fecha_adjudicada,total_con_iva,total_sin_iva,creado_por,condicion_venta,comuna,tipo_compra,tipo_cliente"
         );
         let rows = (lics || []).filter((l) => l.estado === "Adjudicada" || l.estado == null);
 
         // Cotizaciones adjudicadas reales
         const licsAdj = await api.get(
-          "/licitaciones/with-fields?fields=id,id_licitacion,nombre_entidad,fecha_adjudicada,total_con_iva,creado_por,condicion_venta,comuna,estado,tipo_compra,tipo_cliente"
+          "/licitaciones/with-fields?fields=id,id_licitacion,nombre_entidad,fecha_adjudicada,total_con_iva,total_sin_iva,creado_por,condicion_venta,comuna,estado,tipo_compra,tipo_cliente"
         );
         rows = (licsAdj || []).filter((l) => l.estado === "Adjudicada");
 
@@ -399,7 +409,7 @@ export default function SeguimientoPagos() {
         "Fecha Factura": fmtFecha(f.fecha_factura),
         "Vencimiento": venc ? venc.toISOString().slice(0, 10) : "",
         "Condición Venta": lic.condicion_venta || "",
-        "Monto": (Number(montoOcMap[lic.id] || 0) || Number(lic.total_con_iva ?? 0)),
+        "Monto": montoNetoPago(montoOcMap[lic.id], lic),
         "Saldo por pagar (particular)": saldoParticular,
         "Estado": estado,
         "Pagada": f.pagada ? "Sí" : "No",
@@ -451,10 +461,9 @@ export default function SeguimientoPagos() {
     facturas.forEach((f) => {
       const lic = licMap[f.licitacion_id];
       if (!lic) return;
-      // Monto de cada KPI = valor de la OC (suma de órdenes de compra de la
-      // cotización), con fallback al total con IVA cuando no hay OC.
-      const oc = Number(montoOcMap[f.licitacion_id] || 0);
-      const monto = oc > 0 ? oc : Number(lic.total_con_iva || 0);
+      // Monto de cada KPI = valor neto de la OC (suma de OC), con fallback al
+      // neto de la cotización cuando no hay OC.
+      const monto = montoNetoPago(montoOcMap[f.licitacion_id], lic);
       total++;
       if (f.pagada) {
         pagadas++; montoPagadas += monto;
@@ -732,7 +741,7 @@ export default function SeguimientoPagos() {
           <div className="stat-label">Pagadas</div>
           <div className="stat-value" style={{ color: "var(--success)" }}>{stats.pagadas}</div>
           <div className="stat-money" style={{ color: "var(--success)" }}>{fmtCLP(stats.montoPagadas)}</div>
-          <div className="stat-sub">facturas · valor OC</div>
+          <div className="stat-sub">facturas · valor OC neto</div>
         </div>
         <div className="stat-card">
           <div className="stat-label">Pendientes</div>
@@ -740,25 +749,25 @@ export default function SeguimientoPagos() {
             {Math.max(0, stats.pendientes - stats.porVencer - stats.vencidas)}
           </div>
           <div className="stat-money" style={{ color: "var(--primary)" }}>{fmtCLP(stats.montoEnPlazo)}</div>
-          <div className="stat-sub">aún en plazo · valor OC</div>
+          <div className="stat-sub">aún en plazo · valor OC neto</div>
         </div>
         <div className="stat-card">
           <div className="stat-label">Por vencer</div>
           <div className="stat-value" style={{ color: "var(--warning)" }}>{stats.porVencer}</div>
           <div className="stat-money" style={{ color: "var(--warning)" }}>{fmtCLP(stats.montoPorVencer)}</div>
-          <div className="stat-sub">próximas a vencer · valor OC</div>
+          <div className="stat-sub">próximas a vencer · valor OC neto</div>
         </div>
         <div className="stat-card">
           <div className="stat-label">Vencidas</div>
           <div className="stat-value" style={{ color: "var(--danger)" }}>{stats.vencidas}</div>
           <div className="stat-money" style={{ color: "var(--danger)" }}>{fmtCLP(stats.montoVencidas)}</div>
-          <div className="stat-sub">fuera de plazo · valor OC</div>
+          <div className="stat-sub">fuera de plazo · valor OC neto</div>
         </div>
         <div className="stat-card">
           <div className="stat-label">Factoring</div>
           <div className="stat-value" style={{ color: "#7c3aed" }}>{stats.factoringCount}</div>
           <div className="stat-money" style={{ color: "#7c3aed" }}>{fmtCLP(stats.montoFactoring)}</div>
-          <div className="stat-sub">pagadas por factoring · valor OC</div>
+          <div className="stat-sub">pagadas por factoring · valor OC neto</div>
         </div>
       </div>
 
@@ -1029,10 +1038,8 @@ export default function SeguimientoPagos() {
                       </td>
                       <td style={{ verticalAlign: "middle", textAlign: "right", fontWeight: 600, whiteSpace: "nowrap" }}>
                         {(() => {
-                          // Monto = valor de la OC (suma de órdenes de compra de la
-                          // cotización). Si no hay OC, cae al total con IVA.
-                          const oc = Number(montoOcMap[lic.id] || 0);
-                          const m = oc > 0 ? oc : Number(lic.total_con_iva || 0);
+                          // Monto = valor neto de la OC (suma de OC). Sin OC, neto de la cotización.
+                          const m = montoNetoPago(montoOcMap[lic.id], lic);
                           return m > 0 ? `$${m.toLocaleString("es-CL")}` : "—";
                         })()}
                       </td>
