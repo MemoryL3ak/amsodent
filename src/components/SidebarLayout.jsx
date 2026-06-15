@@ -37,6 +37,7 @@ import {
   PackageSearch,
   Wallet,
   KeyRound,
+  Landmark,
 } from "lucide-react";
 import NotificacionesMenu from "./NotificacionesMenu";
 import RecordatoriosCorreo from "./RecordatoriosCorreo";
@@ -163,6 +164,7 @@ export default function SidebarLayout() {
     (esAdmin || esJefeVentasEspecial || esJefeVentas) && { to: "/trazabilidad",      icon: FileText,   label: "Trazabilidad" },
     (esAdmin || esJefeVentasEspecial || esContabilidad) && { to: "/seguimiento-pagos", icon: CreditCard, label: "Seguimiento de Pagos" },
     (esAdmin || esJefeVentasEspecial || esContabilidad) && { to: "/cobranza", icon: Wallet, label: "Cobranza" },
+    (esAdmin || esJefeVentasEspecial) && { to: "/factoring", icon: Landmark, label: "Factoring" },
   ].filter(Boolean);
 
   const comunicacionNav = [
