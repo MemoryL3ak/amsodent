@@ -39,6 +39,7 @@ import MetasPorCanal from "./pages/MetasPorCanal";
 import Trazabilidad from "./pages/Trazabilidad";
 import SeguimientoPagos from "./pages/SeguimientoPagos";
 import Cobranza from "./pages/Cobranza";
+import Factoring from "./pages/Factoring";
 import BitacoraCotizaciones from "./pages/BitacoraCotizaciones";
 import Buzon from "./pages/Buzon";
 
@@ -142,6 +143,14 @@ export default function App() {
             element={
               <RequireRole allow={["admin", "jefe_ventas_especial", "contabilidad"]}>
                 <Cobranza />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="factoring"
+            element={
+              <RequireRole allow={["admin", "jefe_ventas_especial"]}>
+                <Factoring />
               </RequireRole>
             }
           />
