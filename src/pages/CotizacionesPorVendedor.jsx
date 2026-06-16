@@ -157,21 +157,20 @@ export default function CotizacionesPorVendedor() {
     return () => { mounted = false; };
   }, [cargando, puedeVer]);
 
-  // Cargar la meta del periodo seleccionado
+  // Meta del equipo = suma de la "Meta (cantidad)" de cada vendedor definida en
+  // la sección Metas (no se ingresa a mano). Metas guarda el periodo como 'YYYY-MM-01'.
   useEffect(() => {
     if (cargando || !puedeVer || !periodo) return;
     let mounted = true;
     (async () => {
       try {
-        const res = await api.get(`/metas/cotizaciones-equipo?periodo=${periodo}`);
+        const rows = await api.get(`/metas/canal-partes?periodo=${periodo}-01`);
         if (!mounted) return;
-        const m = Number(res?.meta);
-        const valor = Number.isFinite(m) && m > 0 ? m : META_DEFECTO;
-        setMeta(valor);
-        setMetaInput(String(valor));
+        const total = (rows || []).reduce((acc, r) => acc + Number(r?.meta_cantidad || 0), 0);
+        setMeta(total);
       } catch (e) {
-        console.error("Error cargando meta:", e);
-        if (mounted) { setMeta(META_DEFECTO); setMetaInput(String(META_DEFECTO)); }
+        console.error("Error cargando meta del equipo:", e);
+        if (mounted) setMeta(0);
       }
     })();
     return () => { mounted = false; };
@@ -317,56 +316,15 @@ export default function CotizacionesPorVendedor() {
         <>
           {/* KPI CARDS */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "16px", marginBottom: "20px" }}>
-            {/* Meta del equipo (editable) */}
+            {/* Meta del equipo = suma de "Meta (cantidad)" por vendedor (sección Metas) */}
             <KpiCard title="Meta del Equipo" color="#6366f1" icon={Target}>
-              {editandoMeta ? (
-                <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                  <input
-                    type="number"
-                    min="0"
-                    className="input"
-                    style={{ width: "100px", fontSize: "20px", fontWeight: 700, padding: "4px 8px" }}
-                    value={metaInput}
-                    onChange={(e) => setMetaInput(e.target.value)}
-                    autoFocus
-                  />
-                  <button
-                    className="btn btn-sm"
-                    style={{ padding: "4px 8px", background: "#16a34a", color: "#fff", border: "none", borderRadius: "6px" }}
-                    onClick={guardarMeta}
-                    disabled={guardandoMeta}
-                    title="Guardar"
-                  >
-                    <Check size={15} />
-                  </button>
-                  <button
-                    className="btn btn-sm"
-                    style={{ padding: "4px 8px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: "6px" }}
-                    onClick={() => { setEditandoMeta(false); setMetaInput(String(meta)); }}
-                    disabled={guardandoMeta}
-                    title="Cancelar"
-                  >
-                    <X size={15} />
-                  </button>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                <div style={{ fontSize: "26px", fontWeight: 700, color: "var(--text)", lineHeight: 1 }}>
+                  {meta.toLocaleString("es-CL")}
                 </div>
-              ) : (
-                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                  <div style={{ fontSize: "26px", fontWeight: 700, color: "var(--text)", lineHeight: 1 }}>
-                    {meta.toLocaleString("es-CL")}
-                  </div>
-                  {esAdmin && (
-                    <button
-                      onClick={() => { setMetaInput(String(meta)); setEditandoMeta(true); }}
-                      style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", padding: "2px", display: "flex" }}
-                      title="Editar meta"
-                    >
-                      <Pencil size={14} />
-                    </button>
-                  )}
-                </div>
-              )}
+              </div>
               <div style={{ fontSize: "12px", color: "var(--text-muted)", marginTop: "6px" }}>
-                Cotizaciones ingresadas · {nombreMes(periodo)}
+                Suma de metas por vendedor · {nombreMes(periodo)}
               </div>
             </KpiCard>
 
