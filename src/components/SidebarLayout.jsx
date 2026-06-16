@@ -38,6 +38,7 @@ import {
   Wallet,
   KeyRound,
   Landmark,
+  LayoutDashboard,
 } from "lucide-react";
 import NotificacionesMenu from "./NotificacionesMenu";
 import RecordatoriosCorreo from "./RecordatoriosCorreo";
@@ -178,6 +179,7 @@ export default function SidebarLayout() {
   ].filter(Boolean);
 
   const reportesNav = [
+    puedeVerResumenComercial && { to: "/panel-indicadores", icon: LayoutDashboard, label: "Panel de Indicadores" },
     puedeVerResumenComercial && { to: "/ventas", icon: TrendingUp, label: "Resumen Comercial" },
     puedeVerResumenComercial && { to: "/cotizaciones-vendedor", icon: BarChart3, label: "Cotizaciones por Vendedor" },
   ].filter(Boolean);

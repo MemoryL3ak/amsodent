@@ -34,6 +34,7 @@ import CrearCampana from "./pages/CrearCampana";
 import EditarCampana from "./pages/EditarCampana";
 import Ventas from "./pages/Ventas";
 import CotizacionesPorVendedor from "./pages/CotizacionesPorVendedor";
+import PanelIndicadores from "./pages/PanelIndicadores";
 import Metas from "./pages/Metas";
 import MetasPorCanal from "./pages/MetasPorCanal";
 import Trazabilidad from "./pages/Trazabilidad";
@@ -183,6 +184,14 @@ export default function App() {
             element={
               <RequireRole allow={["admin", "jefe_ventas", "jefe_ventas_especial"]}>
                 <CotizacionesPorVendedor />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="panel-indicadores"
+            element={
+              <RequireRole allow={["admin", "jefe_ventas", "jefe_ventas_especial"]}>
+                <PanelIndicadores />
               </RequireRole>
             }
           />
