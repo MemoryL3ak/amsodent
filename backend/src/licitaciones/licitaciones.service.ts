@@ -157,6 +157,32 @@ export class LicitacionesService {
     return data;
   }
 
+  // Items de varias licitaciones a la vez (para agregaciones tipo "ventas por
+  // categoría" en el panel). Trocea licitacion_ids para no desbordar headers.
+  async getItemsByFilter(licitacionIds: number[], fields?: string) {
+    const ids = Array.isArray(licitacionIds) ? licitacionIds : [];
+    if (!ids.length) return [];
+    const CHUNK = 150;
+    const sel = fields || '*';
+    const chunks: number[][] = [];
+    for (let i = 0; i < ids.length; i += CHUNK) chunks.push(ids.slice(i, i + CHUNK));
+    const results = await Promise.all(
+      chunks.map((chunk) =>
+        this.supabase.getClient()
+          .from('items_licitacion')
+          .select(sel)
+          .in('licitacion_id', chunk)
+          .range(0, 50000),
+      ),
+    );
+    const merged: any[] = [];
+    for (const { data, error } of results) {
+      if (error) throw new BadRequestException(error.message);
+      if (data) merged.push(...(data as any[]));
+    }
+    return merged;
+  }
+
   async upsertItems(items: any[]) {
     const { data, error } = await this.supabase.getClient()
       .from('items_licitacion')

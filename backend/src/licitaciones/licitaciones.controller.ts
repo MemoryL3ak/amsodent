@@ -67,6 +67,11 @@ export class LicitacionesController {
     return this.licitacionesService.upsertItems(body.items);
   }
 
+  @Post('items/filter')
+  getItemsByFilter(@Body() body: { licitacion_ids: number[]; fields?: string }) {
+    return this.licitacionesService.getItemsByFilter(body.licitacion_ids, body.fields);
+  }
+
   @Put('items/:itemId')
   updateItem(@Param('itemId', ParseIntPipe) itemId: number, @Body() body: any) {
     return this.licitacionesService.updateItem(itemId, body);
