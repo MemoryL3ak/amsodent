@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
 import useAuth from "../hooks/useAuth";
-import { Target, ClipboardList, TrendingUp, Users, Pencil, Check, X } from "lucide-react";
+import DateFilter from "../components/DateFilter";
+import { Target, ClipboardList, TrendingUp, Users } from "lucide-react";
 
 // Estados que NO cuentan como cotización "ingresada" para la meta del equipo.
 const ESTADOS_NO_CUENTAN = ["Descartada", "Desierta"];
@@ -27,6 +28,35 @@ function nombreMes(periodo) {
   const d = new Date(y, (m || 1) - 1, 1);
   const txt = d.toLocaleDateString("es-CL", { month: "long", year: "numeric" });
   return txt.charAt(0).toUpperCase() + txt.slice(1);
+}
+
+function inicioMesActualISO() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
+}
+function hoyISO() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+// Meses 'YYYY-MM' cubiertos por el rango [desde, hasta].
+function mesesEntre(desde, hasta) {
+  if (!desde || !hasta) return [];
+  let [y, m] = desde.slice(0, 7).split("-").map(Number);
+  const [hy, hm] = hasta.slice(0, 7).split("-").map(Number);
+  const out = [];
+  while (y < hy || (y === hy && m <= hm)) {
+    out.push(`${y}-${String(m).padStart(2, "0")}`);
+    m++; if (m > 12) { m = 1; y++; }
+  }
+  return out;
+}
+function fmtFechaCorta(iso) {
+  if (!iso) return "";
+  return new Date(`${String(iso).slice(0, 10)}T00:00:00`).toLocaleDateString("es-CL");
+}
+// 'todos' | 'publico' | 'particular' → ¿es particular?
+function esLicParticular(l) {
+  return (l?.tipo_cliente || "").toLowerCase().includes("particular");
 }
 
 function fmtPct(value) {
@@ -83,13 +113,12 @@ export default function CotizacionesPorVendedor() {
   const [errorMsg, setErrorMsg] = useState("");
   const [licitaciones, setLicitaciones] = useState([]);
   const [usuariosMap, setUsuariosMap] = useState({});
-  const [periodo, setPeriodo] = useState(mesActualISO());
+  const [desde, setDesde] = useState(inicioMesActualISO());
+  const [hasta, setHasta] = useState(hoyISO());
+  const [tipoFiltro, setTipoFiltro] = useState("todos"); // todos | publico | particular
 
-  // Meta del equipo (mensual, customizable)
-  const [meta, setMeta] = useState(META_DEFECTO);
-  const [editandoMeta, setEditandoMeta] = useState(false);
-  const [metaInput, setMetaInput] = useState(String(META_DEFECTO));
-  const [guardandoMeta, setGuardandoMeta] = useState(false);
+  // Meta del equipo = suma de "Meta (cantidad)" por vendedor (derivada de Metas).
+  const [meta, setMeta] = useState(0);
 
   const rolNorm = (rol || "").toString().trim().toLowerCase();
   const esAdmin = rolNorm === "admin" || rolNorm === "administrador";
@@ -157,16 +186,27 @@ export default function CotizacionesPorVendedor() {
     return () => { mounted = false; };
   }, [cargando, puedeVer]);
 
-  // Meta del equipo = suma de la "Meta (cantidad)" de cada vendedor definida en
-  // la sección Metas (no se ingresa a mano). Metas guarda el periodo como 'YYYY-MM-01'.
+  // Meta del equipo = suma de la "Meta (cantidad)" por vendedor (sección Metas),
+  // sobre los meses del rango y filtrada por tipo (canal_base):
+  //   particular → canal_base 'vendedor_terreno'; público → el resto.
+  // Metas guarda el periodo como 'YYYY-MM-01'.
   useEffect(() => {
-    if (cargando || !puedeVer || !periodo) return;
+    if (cargando || !puedeVer || !desde || !hasta) return;
     let mounted = true;
     (async () => {
       try {
-        const rows = await api.get(`/metas/canal-partes?periodo=${periodo}-01`);
+        const meses = mesesEntre(desde, hasta);
+        const results = await Promise.all(
+          meses.map((mk) => api.get(`/metas/canal-partes?periodo=${mk}-01`).catch(() => []))
+        );
         if (!mounted) return;
-        const total = (rows || []).reduce((acc, r) => acc + Number(r?.meta_cantidad || 0), 0);
+        let total = 0;
+        results.flat().forEach((r) => {
+          const esParticular = (r?.canal_base || "") === "vendedor_terreno";
+          if (tipoFiltro === "particular" && !esParticular) return;
+          if (tipoFiltro === "publico" && esParticular) return;
+          total += Number(r?.meta_cantidad || 0);
+        });
         setMeta(total);
       } catch (e) {
         console.error("Error cargando meta del equipo:", e);
@@ -174,30 +214,20 @@ export default function CotizacionesPorVendedor() {
       }
     })();
     return () => { mounted = false; };
-  }, [cargando, puedeVer, periodo]);
+  }, [cargando, puedeVer, desde, hasta, tipoFiltro]);
 
-  async function guardarMeta() {
-    const valor = Math.max(0, Math.round(Number(metaInput) || 0));
-    setGuardandoMeta(true);
-    try {
-      await api.post("/metas/cotizaciones-equipo", { periodo, meta: valor });
-      setMeta(valor);
-      setEditandoMeta(false);
-    } catch (e) {
-      console.error("Error guardando meta:", e);
-      alert("No se pudo guardar la meta. Intenta nuevamente.");
-    } finally {
-      setGuardandoMeta(false);
-    }
-  }
-
-  // Cotizaciones ingresadas en el periodo (por fecha de creación = `fecha`)
+  // Cotizaciones ingresadas en el rango (por fecha de creación = `fecha`)
   const cotizacionesPeriodo = useMemo(() => {
     return licitaciones.filter((l) => {
       const f = toDateISO(l.fecha);
-      return f && f.slice(0, 7) === periodo;
+      if (!f) return false;
+      if (desde && f < desde) return false;
+      if (hasta && f > hasta) return false;
+      if (tipoFiltro === "particular" && !esLicParticular(l)) return false;
+      if (tipoFiltro === "publico" && esLicParticular(l)) return false;
+      return true;
     });
-  }, [licitaciones, periodo]);
+  }, [licitaciones, desde, hasta, tipoFiltro]);
 
   // Agrupación por vendedor
   const resumenVendedores = useMemo(() => {
@@ -277,14 +307,23 @@ export default function CotizacionesPorVendedor() {
               </p>
             </div>
 
-            <div className="field" style={{ minWidth: "220px" }}>
-              <label className="field-label">Periodo (mes)</label>
-              <input
-                type="month"
-                className="input"
-                value={periodo}
-                onChange={(e) => setPeriodo(e.target.value || mesActualISO())}
-              />
+            <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", alignItems: "flex-end" }}>
+              <div className="field" style={{ margin: 0 }}>
+                <label className="field-label">Desde</label>
+                <DateFilter value={desde} onChange={(v) => setDesde(v || "")} placeholder="Desde" />
+              </div>
+              <div className="field" style={{ margin: 0 }}>
+                <label className="field-label">Hasta</label>
+                <DateFilter value={hasta} onChange={(v) => setHasta(v || "")} placeholder="Hasta" />
+              </div>
+              <div className="field" style={{ margin: 0, minWidth: "180px" }}>
+                <label className="field-label">Tipo de cotización</label>
+                <select className="input" value={tipoFiltro} onChange={(e) => setTipoFiltro(e.target.value)}>
+                  <option value="todos">Todas</option>
+                  <option value="publico">Mercado Público</option>
+                  <option value="particular">Particular</option>
+                </select>
+              </div>
             </div>
           </div>
 
@@ -294,7 +333,7 @@ export default function CotizacionesPorVendedor() {
               border: "1px solid var(--border)", background: "var(--bg)",
               padding: "3px 12px", fontSize: "12px", color: "var(--text-muted)",
             }}>
-              {nombreMes(periodo)} · No cuentan para la meta los estados Descartada y Desierta
+              {fmtFechaCorta(desde)} – {fmtFechaCorta(hasta)} · {tipoFiltro === "publico" ? "Mercado Público" : tipoFiltro === "particular" ? "Particular" : "Todas"} · No cuentan los estados Descartada y Desierta
             </span>
           </div>
         </div>
@@ -324,7 +363,7 @@ export default function CotizacionesPorVendedor() {
                 </div>
               </div>
               <div style={{ fontSize: "12px", color: "var(--text-muted)", marginTop: "6px" }}>
-                Suma de metas por vendedor · {nombreMes(periodo)}
+                Suma de metas por vendedor (sección Metas)
               </div>
             </KpiCard>
 
@@ -445,7 +484,7 @@ export default function CotizacionesPorVendedor() {
                     {resumenVendedores.length === 0 && (
                       <tr>
                         <td colSpan={8} style={{ textAlign: "center", padding: "40px 0", color: "var(--text-muted)" }}>
-                          No hay cotizaciones ingresadas en {nombreMes(periodo)}.
+                          No hay cotizaciones ingresadas en el rango seleccionado.
                         </td>
                       </tr>
                     )}
