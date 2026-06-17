@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../lib/api";
 import useAuth from "../hooks/useAuth";
 import Toast from "../components/Toast";
@@ -577,13 +577,22 @@ export default function MonitoreoMarcajes() {
               </div>
               <div>
                 <label style={lblM}>Dirección</label>
-                <input
-                  type="text"
-                  className="mm-input"
+                <BuscadorDireccion
                   value={oficinaEdit.direccion || ""}
-                  onChange={(e) => setOficinaEdit((o) => ({ ...o, direccion: e.target.value }))}
-                  placeholder="Ej: Av. Providencia 1234, Santiago"
+                  disabled={guardandoOficina}
+                  onChange={(v) => setOficinaEdit((o) => ({ ...o, direccion: v }))}
+                  onPick={({ direccion, lat, lng }) =>
+                    setOficinaEdit((o) => ({
+                      ...o,
+                      direccion,
+                      latitud: Number.isFinite(lat) ? lat : o.latitud,
+                      longitud: Number.isFinite(lng) ? lng : o.longitud,
+                    }))
+                  }
                 />
+                <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 4 }}>
+                  Escribe la dirección y elígela de la lista; se completan latitud y longitud automáticamente.
+                </div>
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                 <div>
@@ -735,3 +744,97 @@ const ESTILOS_MM = `
 .mm-btn-ghost:hover { background: ${TEAL_SOFT}; color: ${TEAL_DEEP}; border-color: ${TEAL_MID}; }
 .mm-btn-danger:hover { background: #fee2e2; color: ${ROJO}; border-color: #fecaca; }
 `;
+
+/* Buscador de dirección con autocompletado (OpenStreetMap / Nominatim, gratis y
+   sin API key). Al elegir una sugerencia entrega dirección + latitud + longitud,
+   para no ingresar direcciones ni coordenadas incorrectas. Si la búsqueda falla,
+   el campo sigue permitiendo escribir a mano. */
+function BuscadorDireccion({ value, onChange, onPick, disabled }) {
+  const [q, setQ] = useState(value || "");
+  const [sug, setSug] = useState([]);
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const skipRef = useRef(false);
+  const boxRef = useRef(null);
+
+  useEffect(() => { setQ(value || ""); }, [value]);
+
+  useEffect(() => {
+    if (skipRef.current) { skipRef.current = false; return; }
+    const term = (q || "").trim();
+    if (term.length < 4) { setSug([]); return; }
+    let activo = true;
+    const t = setTimeout(async () => {
+      setLoading(true);
+      try {
+        const url =
+          "https://nominatim.openstreetmap.org/search?format=jsonv2&addressdetails=1" +
+          `&countrycodes=cl&limit=6&q=${encodeURIComponent(term)}`;
+        const res = await fetch(url, { headers: { "Accept-Language": "es" } });
+        const data = await res.json();
+        if (activo) { setSug(Array.isArray(data) ? data : []); setOpen(true); }
+      } catch {
+        if (activo) setSug([]);
+      } finally {
+        if (activo) setLoading(false);
+      }
+    }, 450);
+    return () => { activo = false; clearTimeout(t); };
+  }, [q]);
+
+  useEffect(() => {
+    const h = (e) => { if (boxRef.current && !boxRef.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", h);
+    return () => document.removeEventListener("mousedown", h);
+  }, []);
+
+  function elegir(s) {
+    skipRef.current = true;
+    setQ(s.display_name);
+    setSug([]);
+    setOpen(false);
+    onPick({ direccion: s.display_name, lat: Number(s.lat), lng: Number(s.lon) });
+  }
+
+  return (
+    <div ref={boxRef} style={{ position: "relative" }}>
+      <input
+        type="text"
+        className="mm-input"
+        value={q}
+        disabled={disabled}
+        autoComplete="off"
+        placeholder="Escribe y elige la dirección…"
+        onChange={(e) => { setQ(e.target.value); onChange(e.target.value); }}
+        onFocus={() => { if (sug.length) setOpen(true); }}
+      />
+      {loading && (
+        <div style={{ position: "absolute", right: 10, top: 9, fontSize: 11, color: "#94a3b8" }}>Buscando…</div>
+      )}
+      {open && sug.length > 0 && (
+        <div style={{
+          position: "absolute", zIndex: 60, top: "calc(100% + 4px)", left: 0, right: 0,
+          background: "#fff", border: "1px solid #e2e8f0", borderRadius: 8,
+          boxShadow: "0 8px 24px rgba(15,23,42,.12)", maxHeight: 220, overflowY: "auto",
+        }}>
+          {sug.map((s) => (
+            <button
+              key={s.place_id}
+              type="button"
+              onClick={() => elegir(s)}
+              style={{
+                display: "block", width: "100%", textAlign: "left", padding: "8px 10px",
+                background: "transparent", border: "none", borderBottom: "1px solid #f1f5f9",
+                cursor: "pointer", fontSize: 12.5, color: "#334155", lineHeight: 1.35,
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = "#f8fafc")}
+              onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+            >
+              {s.display_name}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
