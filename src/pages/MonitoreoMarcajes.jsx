@@ -708,7 +708,8 @@ export default function MonitoreoMarcajes() {
                   placeholder="Selecciona trabajadores…"
                   noOptionsMessage={() => "Sin trabajadores"}
                   menuPortalTarget={document.body}
-                  styles={{ menuPortal: (base) => ({ ...base, zIndex: 9999 }) }}
+                  menuPosition="fixed"
+                  styles={{ menuPortal: (base) => ({ ...base, zIndex: 12000 }) }}
                   isDisabled={guardandoOficina}
                 />
                 <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 4 }}>
