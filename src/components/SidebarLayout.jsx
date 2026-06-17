@@ -174,8 +174,8 @@ export default function SidebarLayout() {
   ].filter(Boolean);
 
   const metasNav = [
-    puedeVerMetas && { to: "/metas", icon: Target, label: "Metas" },
-    (esAdmin || esJefatura || esContabilidad) && { to: "/metas-canal", icon: SlidersHorizontal, label: "Definición de Metas" },
+    puedeVerMetas && { to: "/metas", icon: Target, label: "Definición de metas" },
+    (esAdmin || esJefatura || esContabilidad) && { to: "/metas-canal", icon: SlidersHorizontal, label: "Resumen canales" },
   ].filter(Boolean);
 
   const reportesNav = [

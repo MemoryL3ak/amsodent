@@ -501,7 +501,7 @@ export default function MetasPorCanal() {
       {/* PAGE HEADER */}
       <div className="page-header">
         <div>
-          <h1 className="page-title">Meta por Canal y Meta Global</h1>
+          <h1 className="page-title">Resumen canales</h1>
           <p style={{ fontSize: "13px", color: "var(--text-muted)", margin: 0 }}>
             Meta por canal calculada automáticamente desde la meta de cada vendedor asignado.
           </p>

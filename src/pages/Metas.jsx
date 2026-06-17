@@ -808,7 +808,7 @@ export default function Metas() {
       {/* PAGE HEADER */}
       <div className="page-header">
         <div>
-          <h1 className="page-title">Metas Comerciales</h1>
+          <h1 className="page-title">Definición de metas</h1>
           <p style={{ fontSize: "13px", color: "var(--text-muted)", margin: 0 }}>
             El avance se calcula con las guías de despacho del periodo (según fecha de adjudicación), no por fecha de creación de licitación.
           </p>
