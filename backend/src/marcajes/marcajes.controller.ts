@@ -132,4 +132,20 @@ export class MarcajesController {
   async eliminarOficina(@Param('id', ParseIntPipe) id: number) {
     return await this.marcajes.eliminarOficina(id);
   }
+
+  // Trabajadores asignados a una oficina.
+  @UseGuards(AdminGuard)
+  @Get('oficinas/:id/trabajadores')
+  async trabajadoresDeOficina(@Param('id', ParseIntPipe) id: number) {
+    return await this.marcajes.trabajadoresDeOficina(id);
+  }
+
+  @UseGuards(AdminGuard)
+  @Put('oficinas/:id/trabajadores')
+  async setTrabajadoresOficina(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { emails?: string[] },
+  ) {
+    return await this.marcajes.setTrabajadoresOficina(id, Array.isArray(body?.emails) ? body.emails : []);
+  }
 }

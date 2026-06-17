@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import Select from "react-select";
 import { api } from "../lib/api";
 import useAuth from "../hooks/useAuth";
 import Toast from "../components/Toast";
@@ -64,6 +65,11 @@ export default function MonitoreoMarcajes() {
   const [oficinas, setOficinas] = useState([]);
   const [oficinaEdit, setOficinaEdit] = useState(null); // null | "new" | row
   const [guardandoOficina, setGuardandoOficina] = useState(false);
+  const [trabajadores, setTrabajadores] = useState([]); // perfiles para asignar a oficinas
+
+  useEffect(() => {
+    api.get("/usuarios/profiles").then((d) => setTrabajadores(d || [])).catch(() => {});
+  }, []);
 
   // ============================================================
   // Cargar marcajes
@@ -129,7 +135,21 @@ export default function MonitoreoMarcajes() {
       longitud: "",
       radio_metros: 200,
       activa: true,
+      trabajadores: [],
     });
+  }
+
+  // Editar oficina existente: cargamos sus trabajadores asignados.
+  function editarOficina(o) {
+    setOficinaEdit({ ...o, trabajadores: [] });
+    api
+      .get(`/marcajes/oficinas/${o.id}/trabajadores`)
+      .then((emails) =>
+        setOficinaEdit((prev) =>
+          prev && prev.id === o.id ? { ...prev, trabajadores: Array.isArray(emails) ? emails : [] } : prev,
+        ),
+      )
+      .catch(() => {});
   }
 
   async function guardarOficina() {
@@ -152,10 +172,22 @@ export default function MonitoreoMarcajes() {
     }
     setGuardandoOficina(true);
     try {
+      let oficinaId = oficinaEdit.id;
       if (oficinaEdit.id) {
         await api.put(`/marcajes/oficinas/${oficinaEdit.id}`, payload);
       } else {
-        await api.post(`/marcajes/oficinas`, payload);
+        const creada = await api.post(`/marcajes/oficinas`, payload);
+        oficinaId = creada?.id;
+      }
+      // Persistir los trabajadores asignados (tolerante si la tabla no está migrada).
+      if (oficinaId) {
+        try {
+          await api.put(`/marcajes/oficinas/${oficinaId}/trabajadores`, {
+            emails: oficinaEdit.trabajadores || [],
+          });
+        } catch (errT) {
+          console.error("No se pudieron guardar los trabajadores asignados:", errT);
+        }
       }
       setOficinaEdit(null);
       await cargarOficinas();
@@ -336,7 +368,7 @@ export default function MonitoreoMarcajes() {
                     </span>
                   </td>
                   <td style={{ ...tdS, textAlign: "right" }}>
-                    <button type="button" onClick={() => setOficinaEdit({ ...o })} className="mm-btn-ghost" title="Editar">
+                    <button type="button" onClick={() => editarOficina(o)} className="mm-btn-ghost" title="Editar">
                       <Pencil size={13} />
                     </button>
                     <button type="button" onClick={() => eliminarOficina(o.id)} className="mm-btn-ghost mm-btn-danger" title="Eliminar">
@@ -658,6 +690,29 @@ export default function MonitoreoMarcajes() {
                     <option value="1">Activa</option>
                     <option value="0">Inactiva</option>
                   </select>
+                </div>
+              </div>
+              <div>
+                <label style={lblM}>Trabajadores que marcan aquí</label>
+                <Select
+                  isMulti
+                  options={trabajadores.map((t) => ({
+                    value: (t.email || "").trim().toLowerCase(),
+                    label: t.nombre ? `${t.nombre} (${t.email})` : t.email,
+                  }))}
+                  value={(oficinaEdit.trabajadores || []).map((em) => {
+                    const t = trabajadores.find((x) => (x.email || "").trim().toLowerCase() === em);
+                    return { value: em, label: t?.nombre ? `${t.nombre} (${t.email})` : em };
+                  })}
+                  onChange={(ops) => setOficinaEdit((o) => ({ ...o, trabajadores: (ops || []).map((x) => x.value) }))}
+                  placeholder="Selecciona trabajadores…"
+                  noOptionsMessage={() => "Sin trabajadores"}
+                  menuPortalTarget={document.body}
+                  styles={{ menuPortal: (base) => ({ ...base, zIndex: 9999 }) }}
+                  isDisabled={guardandoOficina}
+                />
+                <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 4 }}>
+                  Solo estos trabajadores quedarán dentro de radio al marcar en esta oficina. Si un trabajador no tiene oficina asignada, su marca queda fuera de radio.
                 </div>
               </div>
               <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 6 }}>

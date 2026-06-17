@@ -145,6 +145,61 @@ export class MarcajesService {
     return data;
   }
 
+  // ── Trabajadores asignados a una oficina ────────────────────────────────
+  async trabajadoresDeOficina(oficinaId: number): Promise<string[]> {
+    const { data, error } = await this.supabase
+      .getClient()
+      .from('marcaje_oficina_trabajadores')
+      .select('trabajador_email')
+      .eq('oficina_id', oficinaId);
+    if (error) throw new BadRequestException(error.message);
+    return (data || []).map((r) => r.trabajador_email);
+  }
+
+  async setTrabajadoresOficina(oficinaId: number, emails: string[]) {
+    const client = this.supabase.getClient();
+    const limpios = Array.from(
+      new Set(
+        (emails || [])
+          .map((e) => String(e || '').trim().toLowerCase())
+          .filter(Boolean),
+      ),
+    );
+    const { error: delErr } = await client
+      .from('marcaje_oficina_trabajadores')
+      .delete()
+      .eq('oficina_id', oficinaId);
+    if (delErr) throw new BadRequestException(delErr.message);
+    if (limpios.length) {
+      const rows = limpios.map((email) => ({ oficina_id: oficinaId, trabajador_email: email }));
+      const { error: insErr } = await client
+        .from('marcaje_oficina_trabajadores')
+        .insert(rows);
+      if (insErr) throw new BadRequestException(insErr.message);
+    }
+    return { ok: true, count: limpios.length };
+  }
+
+  // Oficinas asignadas a un trabajador. `migrada=false` si la tabla aún no existe
+  // (entorno sin migrar) → el llamador debe caer al comportamiento previo.
+  private async asignacionTrabajador(
+    email: string,
+  ): Promise<{ migrada: boolean; ids: number[] }> {
+    const e = String(email || '').trim().toLowerCase();
+    if (!e) return { migrada: true, ids: [] };
+    try {
+      const { data, error } = await this.supabase
+        .getClient()
+        .from('marcaje_oficina_trabajadores')
+        .select('oficina_id')
+        .eq('trabajador_email', e);
+      if (error) return { migrada: false, ids: [] };
+      return { migrada: true, ids: (data || []).map((r) => Number(r.oficina_id)) };
+    } catch {
+      return { migrada: false, ids: [] };
+    }
+  }
+
   async eliminarOficina(id: number) {
     const { error } = await this.supabase
       .getClient()
@@ -188,13 +243,27 @@ export class MarcajesService {
 
     // Calcular distancia a la oficina más cercana y flag de fuera de radio.
     const oficinas = await this.listarOficinas();
-    const activas = oficinas.filter((o) => o.activa);
+    let activas = oficinas.filter((o) => o.activa);
+
+    // Restringir a las oficinas asignadas al trabajador. Modo estricto: si la
+    // feature está migrada y el trabajador no tiene oficinas válidas asignadas,
+    // su marca queda fuera de radio.
+    const asignacion = await this.asignacionTrabajador(email);
+    let sinOficinaValida = false;
+    if (asignacion.migrada) {
+      const permitidas = new Set(asignacion.ids);
+      activas = activas.filter((o) => permitidas.has(Number(o.id)));
+      if (activas.length === 0) sinOficinaValida = true;
+    }
 
     let oficinaId: number | null = null;
     let distanciaM: number | null = null;
     let fueraDeRadio = false;
 
-    if (
+    if (sinOficinaValida) {
+      // Trabajador sin oficina asignada (o sus oficinas están inactivas).
+      fueraDeRadio = true;
+    } else if (
       Number.isFinite(Number(body?.latitud)) &&
       Number.isFinite(Number(body?.longitud)) &&
       activas.length > 0
