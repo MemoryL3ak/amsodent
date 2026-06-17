@@ -124,6 +124,7 @@ export default function MonitoreoMarcajes() {
     setOficinaEdit({
       id: null,
       nombre: "",
+      direccion: "",
       latitud: "",
       longitud: "",
       radio_metros: 200,
@@ -135,6 +136,7 @@ export default function MonitoreoMarcajes() {
     if (!oficinaEdit) return;
     const payload = {
       nombre: oficinaEdit.nombre,
+      direccion: oficinaEdit.direccion || "",
       latitud: Number(oficinaEdit.latitud),
       longitud: Number(oficinaEdit.longitud),
       radio_metros: Number(oficinaEdit.radio_metros),
@@ -306,6 +308,7 @@ export default function MonitoreoMarcajes() {
                 <tr key={o.id} style={{ borderTop: "1px solid #f1f5f9" }}>
                   <td style={tdS}>
                     <div style={{ fontWeight: 700, color: "#0f172a" }}>{o.nombre}</div>
+                    {o.direccion ? <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>{o.direccion}</div> : null}
                   </td>
                   <td style={tdS}>
                     <a
@@ -570,6 +573,16 @@ export default function MonitoreoMarcajes() {
                   value={oficinaEdit.nombre}
                   onChange={(e) => setOficinaEdit((o) => ({ ...o, nombre: e.target.value }))}
                   placeholder="Ej: Oficina central"
+                />
+              </div>
+              <div>
+                <label style={lblM}>Dirección</label>
+                <input
+                  type="text"
+                  className="mm-input"
+                  value={oficinaEdit.direccion || ""}
+                  onChange={(e) => setOficinaEdit((o) => ({ ...o, direccion: e.target.value }))}
+                  placeholder="Ej: Av. Providencia 1234, Santiago"
                 />
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
