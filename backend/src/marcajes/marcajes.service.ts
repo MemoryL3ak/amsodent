@@ -15,6 +15,7 @@ export interface CrearMarcajeDto {
 export interface OficinaRow {
   id: number;
   nombre: string;
+  direccion?: string | null;
   latitud: number;
   longitud: number;
   radio_metros: number;
@@ -101,6 +102,7 @@ export class MarcajesService {
   async crearOficina(body: Partial<OficinaRow>) {
     const payload = {
       nombre: String(body?.nombre || '').trim() || 'Sin nombre',
+      direccion: String(body?.direccion || '').trim() || null,
       latitud: Number(body?.latitud),
       longitud: Number(body?.longitud),
       radio_metros: Math.max(10, Number(body?.radio_metros || 200)),
@@ -109,12 +111,14 @@ export class MarcajesService {
     if (!Number.isFinite(payload.latitud) || !Number.isFinite(payload.longitud)) {
       throw new BadRequestException('Latitud y longitud deben ser números válidos');
     }
-    const { data, error } = await this.supabase
-      .getClient()
-      .from('marcaje_oficinas')
-      .insert(payload)
-      .select()
-      .single();
+    const insertar = (p: Record<string, any>) =>
+      this.supabase.getClient().from('marcaje_oficinas').insert(p).select().single();
+    let { data, error } = await insertar(payload);
+    // Tolerancia: si la columna direccion no está migrada, reintentar sin ella.
+    if (error && /direccion/i.test([error.message, (error as any).details, (error as any).hint].filter(Boolean).join(' '))) {
+      const { direccion, ...sinDir } = payload;
+      ({ data, error } = await insertar(sinDir));
+    }
     if (error) throw new BadRequestException(error.message);
     return data;
   }
@@ -122,19 +126,20 @@ export class MarcajesService {
   async actualizarOficina(id: number, body: Partial<OficinaRow>) {
     const payload: Record<string, any> = { updated_at: new Date().toISOString() };
     if (body?.nombre != null) payload.nombre = String(body.nombre).trim();
+    if (body?.direccion != null) payload.direccion = String(body.direccion).trim() || null;
     if (body?.latitud != null) payload.latitud = Number(body.latitud);
     if (body?.longitud != null) payload.longitud = Number(body.longitud);
     if (body?.radio_metros != null)
       payload.radio_metros = Math.max(10, Number(body.radio_metros));
     if (body?.activa != null) payload.activa = Boolean(body.activa);
 
-    const { data, error } = await this.supabase
-      .getClient()
-      .from('marcaje_oficinas')
-      .update(payload)
-      .eq('id', id)
-      .select()
-      .single();
+    const actualizar = (p: Record<string, any>) =>
+      this.supabase.getClient().from('marcaje_oficinas').update(p).eq('id', id).select().single();
+    let { data, error } = await actualizar(payload);
+    if (error && /direccion/i.test([error.message, (error as any).details, (error as any).hint].filter(Boolean).join(' '))) {
+      const { direccion, ...sinDir } = payload;
+      ({ data, error } = await actualizar(sinDir));
+    }
     if (error) throw new BadRequestException(error.message);
     if (!data) throw new NotFoundException('Oficina no encontrada');
     return data;
