@@ -425,7 +425,7 @@ export default function Trazabilidad() {
   const [facturaNumero, setFacturaNumero] = useState("");
   const [facturaFecha, setFacturaFecha] = useState("");
   const [facturaFile, setFacturaFile] = useState(null);
-  const [facturaGuiaId, setFacturaGuiaId] = useState("");
+  const [facturaGuiaIds, setFacturaGuiaIds] = useState([]); // factura puede asociarse a varias guías
   const [guiaEmpresa, setGuiaEmpresa] = useState("Starken");
   const [guiaSeguimiento, setGuiaSeguimiento] = useState("");
   const [guiaOcId, setGuiaOcId] = useState("");
@@ -811,6 +811,11 @@ export default function Trazabilidad() {
 
     const cycles = [];
 
+    // Una factura puede estar asociada a varias guías (guias_ids) además de su
+    // guía principal (deriva_de_id). Aparece bajo cada guía vinculada.
+    const facturaEnGuia = (f, gId) =>
+      f.deriva_de_id === gId || (Array.isArray(f.guias_ids) && f.guias_ids.includes(gId));
+
     // Para cada OC (con índice de grupo), busca guías derivadas, y para cada guía las facturas
     ocs.forEach((oc, ocIdx) => {
       const ocGroup = ocIdx; // índice del grupo de OC
@@ -824,7 +829,7 @@ export default function Trazabilidad() {
         }
       } else {
         guiasDeOc.forEach((g) => {
-          const facturasDeGuia = facturas.filter((f) => f.deriva_de_id === g.id);
+          const facturasDeGuia = facturas.filter((f) => facturaEnGuia(f, g.id));
           if (facturasDeGuia.length === 0) {
             cycles.push({ oc, guia: g, factura: null, ocGroup });
           } else {
@@ -839,7 +844,7 @@ export default function Trazabilidad() {
     const guiasUsadas = new Set(cycles.map((c) => c.guia?.id).filter(Boolean));
     for (const g of guias) {
       if (guiasUsadas.has(g.id)) continue;
-      const facturasDeGuia = facturas.filter((f) => f.deriva_de_id === g.id);
+      const facturasDeGuia = facturas.filter((f) => facturaEnGuia(f, g.id));
       if (facturasDeGuia.length === 0) {
         cycles.push({ oc: null, guia: g, factura: null, ocGroup: huerfanoGroup });
       } else {
@@ -1051,7 +1056,7 @@ export default function Trazabilidad() {
     setFacturaNumero("");
     setFacturaFecha(new Date().toISOString().slice(0, 10));
     setFacturaFile(null);
-    setFacturaGuiaId("");
+    setFacturaGuiaIds([]);
     setGuiaEmpresa("Starken");
     setGuiaSeguimiento("");
     setGuiaOcId("");
@@ -1063,7 +1068,7 @@ export default function Trazabilidad() {
     setFacturaNumero("");
     setFacturaFecha("");
     setFacturaFile(null);
-    setFacturaGuiaId("");
+    setFacturaGuiaIds([]);
     setGuiaEmpresa("Starken");
     setGuiaSeguimiento("");
     setGuiaOcId("");
@@ -1099,12 +1104,15 @@ export default function Trazabilidad() {
         setToast({ type: "error", message: "Debes ingresar la fecha de la guía." });
         return;
       }
-    } else if (facturaGuiaId) {
-      // Factura: la guía es opcional; si la seleccionan, validamos que sea válida.
+    } else if (facturaGuiaIds.length > 0) {
+      // Factura: las guías son opcionales; si seleccionan, validamos que sean válidas.
       const guias = getGuias(uploadingFor);
-      const docOrigen = guias.find((d) => String(d.id) === String(facturaGuiaId));
-      if (!docOrigen || docOrigen.tipo !== "guia_despacho") {
-        setToast({ type: "error", message: "La guía de despacho seleccionada no es válida." });
+      const todasValidas = facturaGuiaIds.every((gid) => {
+        const docOrigen = guias.find((d) => String(d.id) === String(gid));
+        return docOrigen && docOrigen.tipo === "guia_despacho";
+      });
+      if (!todasValidas) {
+        setToast({ type: "error", message: "Alguna guía de despacho seleccionada no es válida." });
         return;
       }
     }
@@ -1146,7 +1154,9 @@ export default function Trazabilidad() {
             monto: null,
             fecha_oc: null,
             fecha_factura: facturaFecha || null,
-            deriva_de_id: facturaGuiaId ? Number(facturaGuiaId) : null,
+            // deriva_de_id = primera guía (compatibilidad); guias_ids = todas.
+            deriva_de_id: facturaGuiaIds[0] ? Number(facturaGuiaIds[0]) : null,
+            guias_ids: facturaGuiaIds.length ? facturaGuiaIds.map(Number) : null,
             bucket,
             storage_path: storagePath,
             file_name: file.name,
@@ -2099,26 +2109,25 @@ export default function Trazabilidad() {
                                 ) : (
                                   guias.length > 0 && (
                                     <Select
+                                      isMulti
                                       options={guias.map((g) => ({
                                         value: String(g.id),
                                         label: `Guía${g.numero ? ` - ${g.numero}` : ""}`,
                                       }))}
                                       styles={customSelectStyles}
-                                      placeholder="Guía (opcional)..."
+                                      placeholder="Guía(s) (opcional)..."
                                       menuPortalTarget={document.body}
                                       isSearchable
                                       isClearable
                                       isDisabled={subiendoFactura}
                                       noOptionsMessage={() => "Sin guías"}
-                                      value={
-                                        guias
-                                          .map((g) => ({
-                                            value: String(g.id),
-                                            label: `Guía${g.numero ? ` - ${g.numero}` : ""}`,
-                                          }))
-                                          .find((o) => o.value === String(facturaGuiaId)) || null
-                                      }
-                                      onChange={(op) => setFacturaGuiaId(op?.value || "")}
+                                      value={guias
+                                        .map((g) => ({
+                                          value: String(g.id),
+                                          label: `Guía${g.numero ? ` - ${g.numero}` : ""}`,
+                                        }))
+                                        .filter((o) => facturaGuiaIds.includes(o.value))}
+                                      onChange={(ops) => setFacturaGuiaIds((ops || []).map((o) => o.value))}
                                     />
                                   )
                                 )}
