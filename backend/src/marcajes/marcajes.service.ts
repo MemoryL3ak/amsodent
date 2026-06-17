@@ -315,12 +315,23 @@ export class MarcajesService {
       ip_address: (body?.ip_address || '').toString().slice(0, 60) || null,
     };
 
-    const { data, error } = await this.supabase
-      .getClient()
-      .from('marcajes')
-      .insert(payload)
-      .select()
-      .single();
+    const insertar = (p: any) =>
+      this.supabase.getClient().from('marcajes').insert(p).select().single();
+
+    let { data, error } = await insertar(payload);
+    // Tolerancia: si la columna direccion no está migrada en la tabla marcajes,
+    // reintentar sin ella (el marcaje no debe fallar por no poder guardar la dirección).
+    if (
+      error &&
+      /direccion/i.test(
+        [error.message, (error as any).details, (error as any).hint]
+          .filter(Boolean)
+          .join(' '),
+      )
+    ) {
+      const { direccion: _omit, ...sinDir } = payload;
+      ({ data, error } = await insertar(sinDir));
+    }
     if (error) throw new BadRequestException(error.message);
     return data;
   }
