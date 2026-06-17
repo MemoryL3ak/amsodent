@@ -260,6 +260,7 @@ export default function ListarLicitaciones() {
       Fecha:           l.fecha ? l.fecha.slice(0, 10) : "",
       Comuna:          l.comuna || "",
       Estado:          l.estado || "",
+      "Monto Total":   Number(l.total_con_iva) || 0,
       "Creado por":    (usuariosMap[(l.creado_por || "").trim().toLowerCase()] || "").trim(),
     }));
     const ws = XLSX.utils.json_to_sheet(datosExport);
