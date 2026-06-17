@@ -346,6 +346,7 @@ export class LicitacionesService {
       if (msg.includes('empresa_despacho')) { delete bodyWithout.empresa_despacho; removed = true; }
       if (msg.includes('n_seguimiento')) { delete bodyWithout.n_seguimiento; removed = true; }
       if (msg.includes('url')) { delete bodyWithout.url; removed = true; }
+      if (msg.includes('guias_ids')) { delete bodyWithout.guias_ids; removed = true; }
       if (removed) {
         const { data: d2, error: e2 } = await this.supabase.getClient()
           .from('licitacion_documentos')
