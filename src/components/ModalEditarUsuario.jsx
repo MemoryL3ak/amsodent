@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { supabase } from "../lib/supabase";
+import { api } from "../lib/api";
 
 const ROLES = [
   { value: "admin",                label: "Administrador" },
@@ -16,6 +17,38 @@ export default function ModalEditarUsuario({ user, close, onToast }) {
   const [saving, setSaving] = useState(false);
   const [error,  setError]  = useState("");
 
+  // Oficinas de marcaje asignadas al usuario.
+  const [oficinas, setOficinas] = useState([]);
+  const [oficinaIds, setOficinaIds] = useState([]);
+  const [cargandoOf, setCargandoOf] = useState(true);
+
+  useEffect(() => {
+    let cancel = false;
+    (async () => {
+      setCargandoOf(true);
+      try {
+        const [ofs, asig] = await Promise.all([
+          api.get("/marcajes/oficinas").catch(() => []),
+          user.email
+            ? api.get(`/marcajes/oficinas-trabajador?email=${encodeURIComponent(user.email)}`).catch(() => ({ ids: [] }))
+            : Promise.resolve({ ids: [] }),
+        ]);
+        if (cancel) return;
+        setOficinas(Array.isArray(ofs) ? ofs : []);
+        setOficinaIds(Array.isArray(asig?.ids) ? asig.ids.map(Number) : []);
+      } finally {
+        if (!cancel) setCargandoOf(false);
+      }
+    })();
+    return () => { cancel = true; };
+  }, [user.email]);
+
+  function toggleOficina(id) {
+    setOficinaIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+    );
+  }
+
   async function guardar() {
     setError("");
     if (!nombre.trim()) { setError("El nombre es obligatorio."); return; }
@@ -26,15 +59,28 @@ export default function ModalEditarUsuario({ user, close, onToast }) {
       .update({ nombre: nombre.trim(), rol })
       .eq("id", user.id);
 
-    setSaving(false);
-
     if (e) {
+      setSaving(false);
       setError("Error al guardar los cambios.");
       console.error(e);
-    } else {
-      onToast?.({ type: "success", message: "Usuario actualizado correctamente." });
-      close();
+      return;
     }
+
+    // Guardar oficinas de marcaje asignadas.
+    if (user.email) {
+      try {
+        await api.put("/marcajes/oficinas-trabajador", {
+          email: user.email,
+          oficina_ids: oficinaIds,
+        });
+      } catch (errOf) {
+        console.warn("No se pudieron guardar las oficinas:", errOf?.message);
+      }
+    }
+
+    setSaving(false);
+    onToast?.({ type: "success", message: "Usuario actualizado correctamente." });
+    close();
   }
 
   return (
@@ -103,6 +149,36 @@ export default function ModalEditarUsuario({ user, close, onToast }) {
                 <option key={r.value} value={r.value}>{r.label}</option>
               ))}
             </select>
+          </div>
+
+          {/* Oficinas de marcaje asignadas */}
+          <div className="field">
+            <label className="field-label">Oficinas de marcaje</label>
+            {cargandoOf ? (
+              <div style={{ fontSize: 12.5, color: "var(--text-muted)" }}>Cargando oficinas…</div>
+            ) : oficinas.length === 0 ? (
+              <div style={{ fontSize: 12.5, color: "var(--text-muted)" }}>
+                No hay oficinas registradas. Créalas en «Monitoreo de Asistencia».
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 180, overflowY: "auto", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "8px 10px" }}>
+                {oficinas.map((o) => (
+                  <label key={o.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, cursor: "pointer", color: "var(--text)" }}>
+                    <input
+                      type="checkbox"
+                      checked={oficinaIds.includes(Number(o.id))}
+                      onChange={() => toggleOficina(Number(o.id))}
+                      disabled={saving}
+                    />
+                    <span>
+                      {o.nombre}
+                      {o.direccion ? <span style={{ color: "var(--text-muted)", fontSize: 11.5 }}> · {o.direccion}</span> : null}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            )}
+            <div className="field-hint">El usuario solo podrá marcar asistencia en las oficinas seleccionadas.</div>
           </div>
 
           <div

@@ -20,6 +20,7 @@ import {
   MapPin,
   ChevronDown,
   Check,
+  Download,
 } from "lucide-react";
 
 /* ── Helpers de fechas/plazos (mismo criterio que Seguimiento de Pagos) ── */
@@ -241,6 +242,7 @@ export default function Cobranza() {
   const [modalCorreo, setModalCorreo] = useState(null); // { doc, lic }
 
   const [reloadKey, setReloadKey] = useState(0);
+  const [openDescargar, setOpenDescargar] = useState(false);
   const recargar = () => setReloadKey((k) => k + 1);
 
   useEffect(() => {
@@ -449,6 +451,70 @@ export default function Cobranza() {
     [gestionesPorDoc],
   );
 
+  // ── Reporte de cobranza (facturas vencidas filtradas, con N° de OC) ──
+  function construirFilasReporte() {
+    return filtradas.map((f) => {
+      const lic = licMap[f.licitacion_id] || {};
+      const ocsLic = ocPorLic[String(f.licitacion_id)] || [];
+      const numerosOC = Array.from(
+        new Set(ocsLic.map((o) => String(o.numero || "").trim()).filter(Boolean))
+      ).join(", ");
+      const dias = diasEntre(f.fecha_factura);
+      const diasVencida = dias != null ? dias - plazoDias(lic.condicion_venta) : "";
+      const est = estadosMap[String(f.id)]?.estado || "sin_gestion";
+      const gestiones = gestionesPorDoc[String(f.id)] || [];
+      const ultima = gestiones[0];
+      return {
+        "ID Cotización": lic.id_licitacion || lic.id || "",
+        "Cliente": lic.nombre_entidad || "",
+        "RUT": lic.rut_entidad || "",
+        "Tipo Cliente": lic.tipo_cliente || "",
+        "N° OC": numerosOC,
+        "N° Factura / Boleta": f.numero || "",
+        "Fecha Factura": (f.fecha_factura || "").toString().slice(0, 10),
+        "Condición Venta": lic.condicion_venta || "",
+        "Monto (con IVA)": Math.round(montoFacturaBruto(f, lic)),
+        "Días Vencida": diasVencida,
+        "Estado Gestión": (ESTADO_MAP[est] || ESTADOS_COBRANZA[0]).label,
+        "Última Gestión": ultima ? (TIPO_GESTION_MAP[ultima.tipo]?.label || ultima.tipo || "") : "",
+        "Fecha Última Gestión": (ultima?.created_at || "").toString().slice(0, 10),
+      };
+    });
+  }
+
+  async function descargarReporte(formato) {
+    const filas = construirFilasReporte();
+    if (filas.length === 0) {
+      setToast({ type: "info", message: "No hay facturas en el filtro actual para exportar." });
+      return;
+    }
+    const ts = new Date().toISOString().slice(0, 10);
+    const nombreArchivo = `cobranza_${ts}`;
+    try {
+      const XLSX = await import("xlsx");
+      const ws = XLSX.utils.json_to_sheet(filas);
+      if (formato === "xlsx") {
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "Cobranza");
+        XLSX.writeFile(wb, `${nombreArchivo}.xlsx`);
+      } else {
+        const csv = XLSX.utils.sheet_to_csv(ws, { FS: ";" });
+        const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" });
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        link.download = `${nombreArchivo}.csv`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(link.href);
+      }
+      setToast({ type: "success", message: `Reporte ${formato.toUpperCase()} generado.` });
+    } catch (err) {
+      console.error(err);
+      setToast({ type: "error", message: "No se pudo generar el reporte." });
+    }
+  }
+
   async function abrirDocumento(doc) {
     if (!doc?.bucket || !doc?.storage_path) {
       setToast({ type: "error", message: "Este documento no tiene archivo asociado." });
@@ -535,7 +601,7 @@ export default function Cobranza() {
     <div className="page">
       {toast && <Toast type={toast.type} message={toast.message} onClose={() => setToast(null)} />}
 
-      <div className="page-header">
+      <div className="page-header" style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
         <div>
           <h1 className="page-title">Cobranza</h1>
           <p className="page-subtitle">
@@ -544,6 +610,30 @@ export default function Cobranza() {
               : `Historial de gestiones registradas — ${historial.length} de ${totalGestiones}`}
           </p>
         </div>
+        {tab === "vencidas" && (
+          <div style={{ position: "relative" }}>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => setOpenDescargar((v) => !v)}
+              onBlur={() => setTimeout(() => setOpenDescargar(false), 150)}
+            >
+              <Download size={14} /> Descargar reporte <ChevronDown size={14} />
+            </button>
+            {openDescargar && (
+              <div style={{ position: "absolute", right: 0, top: "calc(100% + 4px)", background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--radius)", boxShadow: "0 8px 24px rgba(0,0,0,.12)", zIndex: 50, minWidth: 160, overflow: "hidden" }}>
+                <button type="button" className="dropdown-item" style={{ display: "block", width: "100%", textAlign: "left", padding: "9px 14px", border: "none", background: "none", cursor: "pointer", fontSize: 13 }}
+                  onMouseDown={(e) => { e.preventDefault(); setOpenDescargar(false); descargarReporte("xlsx"); }}>
+                  Excel (.xlsx)
+                </button>
+                <button type="button" className="dropdown-item" style={{ display: "block", width: "100%", textAlign: "left", padding: "9px 14px", border: "none", background: "none", cursor: "pointer", fontSize: 13, borderTop: "1px solid var(--border)" }}
+                  onMouseDown={(e) => { e.preventDefault(); setOpenDescargar(false); descargarReporte("csv"); }}>
+                  CSV (.csv)
+                </button>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Pestañas */}

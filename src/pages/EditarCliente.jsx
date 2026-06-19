@@ -30,8 +30,8 @@ export default function EditarCliente() {
   const [vendedores, setVendedores] = useState([]);
 
   const esParticular = tipoCliente === "Cliente Particular";
-  // "30 días" en cliente particular: solo admin y jefe_ventas_especial.
-  const puede30dias = esAdmin || esJefeVentasEspecial;
+  // Crédito "30 días" en cliente particular: solo el administrador puede autorizarlo.
+  const puede30dias = esAdmin;
   const bloquea30 = esParticular && !puede30dias;
 
   const comunasDisponibles = useMemo(() => {
@@ -162,7 +162,7 @@ export default function EditarCliente() {
     // Bloquear asignar "30 días" a un particular si no es admin/jefatura especial.
     // (Si ya venía con "30 días" puesto por un admin, se respeta).
     if (bloquea30 && condVenta === "30 días" && condVentaOriginal !== "30 días") {
-      setToast({ type: "error", message: "Solo el administrador o jefatura de ventas especial pueden asignar '30 días' a un cliente particular." });
+      setToast({ type: "error", message: "Solo el administrador puede autorizar el crédito de '30 días' a un cliente particular." });
       return;
     }
 
@@ -324,7 +324,7 @@ export default function EditarCliente() {
               </select>
               {bloquea30 && condVentaOriginal !== "30 días" && (
                 <p style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>
-                  La condición "30 días" para clientes particulares solo puede asignarla el administrador o la jefatura de ventas especial.
+                  El crédito "30 días" para clientes particulares solo puede autorizarlo el administrador.
                 </p>
               )}
             </div>

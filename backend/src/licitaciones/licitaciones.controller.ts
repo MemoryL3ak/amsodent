@@ -41,8 +41,9 @@ export class LicitacionesController {
   }
 
   @Put(':id')
-  update(@Param('id', ParseIntPipe) id: number, @Body() body: any) {
-    return this.licitacionesService.update(id, body);
+  update(@Param('id', ParseIntPipe) id: number, @Body() body: any, @Req() req: any) {
+    const aprobadorEmail = (req?.user?.email || '').toLowerCase();
+    return this.licitacionesService.update(id, body, aprobadorEmail);
   }
 
   @Delete(':id')

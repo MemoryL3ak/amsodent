@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import Select from "react-select";
 import { api } from "../lib/api";
 import useAuth from "../hooks/useAuth";
 import MonthCalendarPicker from "../components/MonthCalendarPicker";
@@ -144,7 +145,7 @@ export default function MetasPorCanal() {
   const [metasInfoMsg, setMetasInfoMsg] = useState("");
   const [guardando, setGuardando] = useState(false);
   const [metaPeriodo, setMetaPeriodo] = useState(monthStartISO());
-  const [filtroVendedor, setFiltroVendedor] = useState("");
+  const [filtroVendedor, setFiltroVendedor] = useState([]); // emails seleccionados (multiselección)
 
   const [licitaciones, setLicitaciones] = useState([]);
   const [ocs, setOcs] = useState([]);
@@ -358,7 +359,7 @@ export default function MetasPorCanal() {
       const licId = Number(doc?.licitacion_id || 0);
       const email = licById.get(licId);
       if (!email) return;
-      if (filtroVendedor && filtroVendedor !== email) return;
+      if (filtroVendedor.length && !filtroVendedor.includes(email)) return;
       // Consumido = guías de despacho + facturas/boletas + efectivo (no la OC).
       const tipo = (doc?.tipo || "").toString();
       if (tipo !== "guia_despacho" && tipo !== "factura_boleta" && tipo !== "efectivo") return;
@@ -368,9 +369,13 @@ export default function MetasPorCanal() {
     });
 
     return opcionesVendedores
-      .filter((v) => !filtroVendedor || v.value === filtroVendedor)
+      .filter((v) => !filtroVendedor.length || filtroVendedor.includes(v.value))
       .map((v) => {
-        const canal = normalizeCanal(canalPorVendedorDraftMap[v.value] || canalPorVendedorMap[v.value] || "");
+        // Respetar un draft vacío ("" = Sin canal). Sin `hasOwnProperty`, el `||`
+        // caería al canal guardado y la selección "Sin canal" se revertiría sola.
+        const tieneDraft = Object.prototype.hasOwnProperty.call(canalPorVendedorDraftMap, v.value);
+        const canalRaw = tieneDraft ? canalPorVendedorDraftMap[v.value] : (canalPorVendedorMap[v.value] || "");
+        const canal = normalizeCanal(canalRaw);
         const metaNeto = Math.max(0, Number(metasVendedorMap[v.value] || 0));
         const avanceNeto = Number(avanceNetoPorVendedor[v.value] || 0);
         const metaDetalle = metasDetalleVendedorMap[v.value] || {};
@@ -602,19 +607,20 @@ export default function MetasPorCanal() {
                   <label className="field-label">Mes de evaluación</label>
                   <MonthCalendarPicker value={metaPeriodo} onChange={setMetaPeriodo} />
                 </div>
-                <div className="field" style={{ margin: 0 }}>
+                <div className="field" style={{ margin: 0, minWidth: 260 }}>
                   <label className="field-label">Vendedor</label>
-                  <select
-                    className="input"
-                    value={filtroVendedor}
-                    onChange={(e) => setFiltroVendedor(e.target.value)}
-                    style={{ minWidth: "160px" }}
-                  >
-                    <option value="">Todos</option>
-                    {opcionesVendedores.map((op) => (
-                      <option key={op.value} value={op.value}>{op.label}</option>
-                    ))}
-                  </select>
+                  <Select
+                    isMulti
+                    options={opcionesVendedores}
+                    value={opcionesVendedores.filter((op) => filtroVendedor.includes(op.value))}
+                    onChange={(sel) => setFiltroVendedor((sel || []).map((s) => s.value))}
+                    placeholder="Todos los vendedores…"
+                    noOptionsMessage={() => "Sin vendedores"}
+                    classNamePrefix="rs"
+                    menuPortalTarget={typeof document !== "undefined" ? document.body : undefined}
+                    menuPosition="fixed"
+                    styles={{ menuPortal: (base) => ({ ...base, zIndex: 12000 }), container: (base) => ({ ...base, minWidth: 260 }) }}
+                  />
                 </div>
               </div>
             </div>

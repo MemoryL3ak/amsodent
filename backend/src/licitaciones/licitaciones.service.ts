@@ -1,9 +1,17 @@
-import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
+import { Injectable, BadRequestException, NotFoundException, Logger } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
+import { MailingsService } from '../mailings/mailings.service';
 
 @Injectable()
 export class LicitacionesService {
-  constructor(private supabase: SupabaseService) {}
+  private readonly logger = new Logger('Licitaciones');
+  // Aprobador "dueño" del flujo: si él mismo aprueba, no se le notifica.
+  private static readonly JEREMIAS = 'jer.consorcio@gmail.com';
+
+  constructor(
+    private supabase: SupabaseService,
+    private mailings: MailingsService,
+  ) {}
 
   async findAll(filters?: { estado?: string; creado_por?: string; id_licitacion?: string; exclude_id?: string }) {
     let query = this.supabase.getClient()
@@ -126,15 +134,106 @@ export class LicitacionesService {
     throw new BadRequestException(error.message);
   }
 
-  async update(id: number, body: Record<string, any>) {
-    const { data, error } = await this.supabase.getClient()
-      .from('licitaciones')
-      .update(body)
-      .eq('id', id)
-      .select()
-      .single();
+  async update(id: number, body: Record<string, any>, aprobadorEmail?: string) {
+    const client = this.supabase.getClient();
+
+    // Estado previo para detectar una aprobación (Pendiente Aprobación → otro).
+    let estadoPrevio: string | null = null;
+    try {
+      const { data: prev } = await client
+        .from('licitaciones')
+        .select('estado')
+        .eq('id', id)
+        .single();
+      estadoPrevio = prev?.estado || null;
+    } catch { /* no bloquear el update */ }
+
+    const ejecutar = (payload: Record<string, any>) =>
+      client.from('licitaciones').update(payload).eq('id', id).select().single();
+
+    // Tolerar columnas aún no migradas (motivo_descarte, comentario_descarte, etc.):
+    // si la columna no existe, se quita del payload y se reintenta.
+    const payload = { ...body };
+    let res = await ejecutar(payload);
+    let intentos = 0;
+    while (res.error && intentos < 6) {
+      const msg = [res.error.message, (res.error as any).details, (res.error as any).hint]
+        .filter(Boolean)
+        .join(' ');
+      const falt = this.columnaFaltante(res.error);
+      const m2 = msg.match(/'([\w.]+)' column/i) || msg.match(/column\s+["']?([\w.]+)["']?/i);
+      const col = falt || (m2 ? m2[1].split('.').pop() : null);
+      if (!col || !(col in payload)) break;
+      delete payload[col];
+      res = await ejecutar(payload);
+      intentos++;
+    }
+    const { data, error } = res;
     if (error) throw new BadRequestException(error.message);
+
+    // Punto 18: si un usuario distinto a Jeremías aprueba (la cotización deja de
+    // estar "Pendiente Aprobación"), se le notifica por correo con el detalle.
+    try {
+      const aprobada =
+        estadoPrevio === 'Pendiente Aprobación' &&
+        body?.estado &&
+        body.estado !== 'Pendiente Aprobación';
+      if (aprobada) await this.notificarAprobacion(data, aprobadorEmail);
+    } catch (e: any) {
+      this.logger.warn(`no se pudo notificar aprobación: ${e?.message || e}`);
+    }
     return data;
+  }
+
+  private async notificarAprobacion(lic: any, aprobadorEmail?: string) {
+    const client = this.supabase.getClient();
+    const aprob = String(aprobadorEmail || '').trim().toLowerCase();
+    // Si aprueba el propio Jeremías (o no hay aprobador identificado), no se notifica.
+    if (!aprob || aprob === LicitacionesService.JEREMIAS) return;
+
+    let aprobadorNombre = aprobadorEmail || 'Usuario';
+    try {
+      const { data } = await client
+        .from('profiles')
+        .select('nombre')
+        .ilike('email', aprob)
+        .maybeSingle();
+      if (data?.nombre) aprobadorNombre = data.nombre;
+    } catch { /* sin nombre */ }
+
+    const nombreCot = lic.nombre || lic.nombre_entidad || `#${lic.id}`;
+    const idCot = lic.id_licitacion || lic.id;
+    const monto = Number(lic.total_con_iva || lic.monto || 0);
+    const montoTxt = `$${monto.toLocaleString('es-CL')}`;
+    const vendedor = lic.vendedor_nombre || lic.creado_por || '—';
+
+    const asunto = `✅ Cotización aprobada por ${aprobadorNombre}: ${nombreCot}`;
+    const html =
+      `<p>La cotización <strong>${nombreCot}</strong> (ID ${idCot}) fue <strong>aprobada</strong> por ` +
+      `<strong>${aprobadorNombre}</strong> (${aprobadorEmail}).</p>` +
+      `<ul>` +
+      `<li>Entidad / cliente: ${lic.nombre_entidad || '—'}</li>` +
+      `<li>Tipo de compra: ${lic.tipo_compra || '—'}</li>` +
+      `<li>Monto total (con IVA): ${montoTxt}</li>` +
+      `<li>Vendedor: ${vendedor}</li>` +
+      `<li>Estado actual: ${lic.estado || '—'}</li>` +
+      `</ul>`;
+    const mensaje = `${aprobadorNombre} aprobó la cotización "${nombreCot}" (ID ${idCot}).`;
+
+    try {
+      await client.from('notificaciones').insert([
+        {
+          user_email: LicitacionesService.JEREMIAS,
+          tipo: 'cotizacion_aprobada',
+          mensaje,
+          link: `/detalle/${lic.id}`,
+          metadata: { licitacion_id: lic.id, aprobador_email: aprobadorEmail, aprobador_nombre: aprobadorNombre },
+        },
+      ]);
+    } catch (e: any) {
+      this.logger.warn(`no se pudo crear notificación de aprobación: ${e?.message || e}`);
+    }
+    await this.mailings.enviarUno({ para: LicitacionesService.JEREMIAS, asunto, cuerpoHtml: html });
   }
 
   async remove(id: number) {

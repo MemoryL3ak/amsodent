@@ -19,6 +19,7 @@ import EditarProducto from "./pages/EditarProducto";
 
 // CLIENTES
 import Clientes from "./pages/Clientes";
+import BitacoraActividades from "./pages/BitacoraActividades";
 import CrearCliente from "./pages/CrearCliente";
 import EditarCliente from "./pages/EditarCliente";
 
@@ -103,6 +104,7 @@ export default function App() {
 
           {/* CLIENTES */}
           <Route path="clientes" element={<Clientes />} />
+          <Route path="bitacora-actividades" element={<BitacoraActividades />} />
           <Route path="clientes/nuevo" element={<CrearCliente />} />
           <Route path="clientes/editar/:id" element={<EditarCliente />} />
 

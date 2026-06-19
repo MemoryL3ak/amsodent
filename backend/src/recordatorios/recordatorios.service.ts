@@ -29,6 +29,7 @@ export class RecordatoriosService implements OnModuleInit {
     try {
       await this.recordatoriosCierre();
       await this.recordatoriosResultados();
+      await this.recordatoriosFactoring();
     } catch (e: any) {
       this.logger.warn(`fallo en recordatorios: ${e?.message || e}`);
     } finally {
@@ -172,6 +173,83 @@ export class RecordatoriosService implements OnModuleInit {
         `<p>La cotización <strong>${nombreCot}</strong> tenía publicación de resultados hace al menos un día.</p><p>Revisa el portal y actualiza el estado de la cotización.</p>`,
       );
       await client.from('licitaciones').update({ recordatorio_resultados_at: new Date().toISOString() }).eq('id', lic.id);
+    }
+  }
+
+  // ── Factoring por vencer (1 semana antes de factoring_vencimiento) ───────
+  // Avisa por notificación y correo a contabilidad/jefatura cuando faltan 7 días
+  // o menos para el vencimiento del factoring. Marca factoring_recordatorio_at
+  // para no reenviar. Si la columna no está migrada, el SELECT falla y salimos
+  // sin enviar nada (evita reenvíos en bucle).
+  private static readonly FACTORING_AVISO = [
+    'jer.consorcio@gmail.com',
+    'benja.alarcon.z@gmail.com',
+  ];
+
+  private async recordatoriosFactoring() {
+    const client = this.supabase.getClient();
+    const { data, error } = await client
+      .from('licitacion_documentos')
+      .select(
+        'id, licitacion_id, numero, monto, factoring_empresa, factoring_vencimiento, factoring_recordatorio_at',
+      )
+      .in('tipo', ['factura', 'factura_boleta'])
+      .eq('forma_pago', 'factoring')
+      .not('factoring_vencimiento', 'is', null)
+      .is('factoring_recordatorio_at', null);
+    if (error) {
+      this.logger.warn(`factoring: ${error.message}`);
+      return;
+    }
+    if (!data?.length) return;
+
+    const licIds = [...new Set((data as any[]).map((d) => d.licitacion_id).filter(Boolean))];
+    const licMap: Record<number, any> = {};
+    if (licIds.length) {
+      const { data: lics } = await client
+        .from('licitaciones')
+        .select('id, id_licitacion, nombre_entidad')
+        .in('id', licIds);
+      (lics || []).forEach((l: any) => { licMap[l.id] = l; });
+    }
+
+    const hoy = new Date();
+    hoy.setHours(0, 0, 0, 0);
+    for (const doc of data as any[]) {
+      const venc = new Date(`${String(doc.factoring_vencimiento).slice(0, 10)}T00:00:00`);
+      if (Number.isNaN(venc.getTime())) continue;
+      const dias = Math.round((venc.getTime() - hoy.getTime()) / 86_400_000);
+      if (dias > 7) continue; // todavía falta más de una semana
+
+      const lic = licMap[doc.licitacion_id] || {};
+      const entidad = lic.nombre_entidad || `#${doc.licitacion_id}`;
+      const fechaTxt = String(doc.factoring_vencimiento).slice(0, 10);
+      const empresa = doc.factoring_empresa || 'sin empresa';
+      const numero = doc.numero || 'S/N';
+      const cuando =
+        dias < 0 ? `venció hace ${Math.abs(dias)} día(s)`
+        : dias === 0 ? 'vence hoy'
+        : `vence en ${dias} día(s)`;
+      const asunto = `🏦 Factoring por vencer: factura ${numero} (${entidad})`;
+      const html =
+        `<p>El plazo de factoring de la factura <strong>${numero}</strong> de <strong>${entidad}</strong> ${cuando} (<strong>${fechaTxt}</strong>).</p>` +
+        `<p>Empresa de factoring: <strong>${empresa}</strong>.</p>`;
+      const mensaje = `Factoring de la factura ${numero} (${entidad}) ${cuando} — vence ${fechaTxt}.`;
+
+      for (const email of RecordatoriosService.FACTORING_AVISO) {
+        await this.crearNotificacion({
+          email,
+          tipo: 'factoring_por_vencer',
+          mensaje,
+          licitacionId: doc.licitacion_id,
+          metadata: { documento_id: doc.id, vencimiento: fechaTxt },
+        });
+        await this.enviarCorreo(email, asunto, html);
+      }
+      await client
+        .from('licitacion_documentos')
+        .update({ factoring_recordatorio_at: new Date().toISOString() })
+        .eq('id', doc.id);
     }
   }
 }

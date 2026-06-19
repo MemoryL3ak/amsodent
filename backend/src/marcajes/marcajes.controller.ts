@@ -148,4 +148,20 @@ export class MarcajesController {
   ) {
     return await this.marcajes.setTrabajadoresOficina(id, Array.isArray(body?.emails) ? body.emails : []);
   }
+
+  // Asignación inversa: oficinas de un trabajador (desde el panel de Usuarios).
+  @UseGuards(AdminGuard)
+  @Get('oficinas-trabajador')
+  async oficinasDeTrabajador(@Query('email') email: string) {
+    return { ids: await this.marcajes.oficinasDeTrabajador(email) };
+  }
+
+  @UseGuards(AdminGuard)
+  @Put('oficinas-trabajador')
+  async setOficinasTrabajador(@Body() body: { email?: string; oficina_ids?: number[] }) {
+    return await this.marcajes.setOficinasTrabajador(
+      body?.email || '',
+      Array.isArray(body?.oficina_ids) ? body.oficina_ids : [],
+    );
+  }
 }
