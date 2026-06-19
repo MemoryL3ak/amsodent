@@ -261,10 +261,10 @@ export class ActividadesService {
     if (body.todo_el_dia !== undefined) setCompartido('todo_el_dia', Boolean(body.todo_el_dia));
     if (body.hora_inicio !== undefined) setCompartido('hora_inicio', body.todo_el_dia ? null : body.hora_inicio || null);
     if (body.hora_fin !== undefined) setCompartido('hora_fin', body.todo_el_dia ? null : body.hora_fin || null);
-    if (body.participantes !== undefined) setCompartido('participantes', Array.isArray(body.participantes) ? body.participantes : []);
     if (body.adjuntos !== undefined) setCompartido('adjuntos', Array.isArray(body.adjuntos) ? body.adjuntos : []);
     // estado: solo en la fila propia (cada participante lleva el suyo).
     if (body.estado !== undefined) patch.estado = (body.estado || 'pendiente').trim();
+    // participantes se reconcilia aparte (crea/borra filas), no como campo simple.
 
     const data = await this.actualizarConTolerancia(patch, (q) => q.eq('id', id));
 
@@ -273,7 +273,104 @@ export class ActividadesService {
       const patchGrupo = { ...compartidos, updated_at: new Date().toISOString() };
       await this.actualizarConTolerancia(patchGrupo, (q) => q.eq('grupo_id', fila.grupo_id).neq('id', id));
     }
+
+    // Reconciliar participantes de la reunión: crear filas para los nuevos
+    // (copiando los datos compartidos y el enlace de Meet) y borrar las de
+    // quienes se quitaron, para que la URL del Meet le aparezca a todos.
+    if (body.participantes !== undefined) {
+      await this.reconciliarParticipantes(user, id, fila.grupo_id || null, body);
+    }
     return data[0];
+  }
+
+  // Sincroniza las filas de una reunión grupal con la lista de participantes
+  // enviada desde la plataforma. La fila editada (id) es la del usuario actual.
+  private async reconciliarParticipantes(
+    user: Usuario,
+    id: number,
+    grupoIdActual: string | null,
+    body: any,
+  ) {
+    const client = this.supabase.getClient();
+    const selfEmail = (user?.email || '').toLowerCase();
+    const { nombre: selfNombre } = await this.datosPerfil(user);
+
+    // Lista objetivo = usuario actual + participantes enviados (sin duplicar).
+    const objetivo = new Map<string, string>();
+    objetivo.set(selfEmail, selfNombre || selfEmail);
+    const recibidos = Array.isArray(body.participantes) ? body.participantes : [];
+    for (const p of recibidos) {
+      const e = String(p?.email || '').toLowerCase();
+      if (e) objetivo.set(e, p?.nombre || e);
+    }
+
+    // Si no queda nadie más que el propio usuario y la actividad no es grupal,
+    // no hay nada que reconciliar (sigue siendo una actividad individual).
+    if (objetivo.size <= 1 && !grupoIdActual) return;
+
+    // Traer las filas actuales (grupo completo o la fila individual).
+    const sel = grupoIdActual
+      ? client.from('actividades_cliente').select('*').eq('grupo_id', grupoIdActual)
+      : client.from('actividades_cliente').select('*').eq('id', id);
+    const { data: filasActuales, error: errSel } = await sel;
+    if (errSel || !Array.isArray(filasActuales) || filasActuales.length === 0) return;
+
+    // Plantilla con los campos compartidos (incluye meet_url/evento_google_id).
+    const plantilla: any = filasActuales.find((f: any) => Number(f.id) === Number(id)) || filasActuales[0];
+    const grupoId = grupoIdActual || randomUUID();
+    const participantesJson = Array.from(objetivo.entries()).map(([email, nombre]) => ({ email, nombre }));
+
+    const existentes = new Map<string, any>();
+    for (const f of filasActuales) existentes.set(String(f.user_email || '').toLowerCase(), f);
+
+    // 1) Crear filas para los participantes nuevos (copiando datos + Meet).
+    const nuevas: any[] = [];
+    for (const [email, nombre] of objetivo.entries()) {
+      if (existentes.has(email)) continue;
+      nuevas.push({
+        cliente_id: plantilla.cliente_id ?? null,
+        cliente_nombre: plantilla.cliente_nombre ?? null,
+        titulo: plantilla.titulo,
+        tipo: plantilla.tipo,
+        motivo: plantilla.motivo ?? null,
+        licitacion_id: plantilla.licitacion_id ?? null,
+        comentario: plantilla.comentario ?? null,
+        fecha: plantilla.fecha,
+        hora_inicio: plantilla.hora_inicio ?? null,
+        hora_fin: plantilla.hora_fin ?? null,
+        todo_el_dia: Boolean(plantilla.todo_el_dia),
+        estado: 'pendiente',
+        adjuntos: Array.isArray(plantilla.adjuntos) ? plantilla.adjuntos : [],
+        grupo_id: grupoId,
+        participantes: participantesJson,
+        meet_url: plantilla.meet_url ?? null,
+        evento_google_id: plantilla.evento_google_id ?? null,
+        user_email: email,
+        user_nombre: nombre,
+      });
+    }
+    if (nuevas.length) await this.insertarFilas(nuevas);
+
+    // 2) Borrar filas de quienes ya no son participantes.
+    const aBorrar = [...existentes.entries()]
+      .filter(([email]) => !objetivo.has(email))
+      .map(([, f]) => Number(f.id));
+    if (aBorrar.length) {
+      await client.from('actividades_cliente').delete().in('id', aBorrar);
+    }
+
+    // 3) Actualizar grupo_id + lista de participantes en todas las filas vigentes.
+    await this.actualizarConTolerancia(
+      { grupo_id: grupoId, participantes: participantesJson },
+      (q) => q.eq('grupo_id', grupoId),
+    );
+    // La fila editada puede no tener grupo_id aún (era individual): asígnalo.
+    if (!grupoIdActual) {
+      await this.actualizarConTolerancia(
+        { grupo_id: grupoId, participantes: participantesJson },
+        (q) => q.eq('id', id),
+      );
+    }
   }
 
   async eliminar(user: Usuario, id: number) {
