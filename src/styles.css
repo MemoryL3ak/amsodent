@@ -723,6 +723,17 @@ body {
   .stats-row.stats-5 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
+/* Variante de 6 tarjetas (ej. Seguimiento de Pagos con notas de crédito). */
+.stats-row.stats-6 { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+.stats-row.stats-6 .stat-card:nth-child(5)::after { background: #6366f1; }
+.stats-row.stats-6 .stat-card:nth-child(6)::after { background: #0ea5e9; }
+@media (max-width: 1200px) {
+  .stats-row.stats-6 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 640px) {
+  .stats-row.stats-6 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
 .stat-label {
   font-size: 12px;
   font-weight: 600;
@@ -738,6 +749,19 @@ body {
   color: var(--text);
   line-height: 1;
   letter-spacing: -1px;
+}
+
+/* Valor KPI cuyo dato principal es un monto: mismo tamaño que el resto de
+   KPIs, pero con cifras tabulares y reducción suave para montos largos que
+   no caben en el ancho de la tarjeta (evita que se vean desalineados). */
+.stat-value-money {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+@media (max-width: 1280px) {
+  .stat-value-money { font-size: 30px; }
 }
 
 .stat-sub {

@@ -39,6 +39,7 @@ import {
   KeyRound,
   Landmark,
   LayoutDashboard,
+  CalendarDays,
 } from "lucide-react";
 import NotificacionesMenu from "./NotificacionesMenu";
 import RecordatoriosCorreo from "./RecordatoriosCorreo";
@@ -157,6 +158,7 @@ export default function SidebarLayout() {
     { to: "/listar",      icon: ClipboardList, label: "Cotizaciones" },
     { to: "/crear",       icon: FilePlus,      label: "Nueva Cotización" },
     { to: "/clientes",    icon: Users,         label: "Clientes" },
+    { to: "/bitacora-actividades", icon: CalendarDays, label: "Bitácora actividades" },
     { to: "/productos",   icon: Package,       label: "Productos" },
     { to: "/campanas",    icon: Megaphone,     label: "Campañas" },
   ].filter(Boolean);

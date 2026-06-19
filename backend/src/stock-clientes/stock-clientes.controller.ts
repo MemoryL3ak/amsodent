@@ -90,14 +90,45 @@ export class StockClientesController {
   // ============================================================
   @UseGuards(StockPortalGuard)
   @Get('mis-productos')
-  async misProductos(@Req() req: any) {
-    return await this.stockClientes.listarProductos(req.stockPortal.rut);
+  async misProductos(@Req() req: any, @Query('sucursal_id') sucursalId?: string) {
+    return await this.stockClientes.listarProductos(
+      req.stockPortal.rut,
+      sucursalId ? Number(sucursalId) : null,
+    );
   }
 
   @UseGuards(StockPortalGuard)
   @Get('mis-declaraciones')
-  async misDeclaraciones(@Req() req: any) {
-    return await this.stockClientes.listarMisDeclaraciones(req.stockPortal.rut);
+  async misDeclaraciones(@Req() req: any, @Query('sucursal_id') sucursalId?: string) {
+    return await this.stockClientes.listarMisDeclaraciones(
+      req.stockPortal.rut,
+      sucursalId ? Number(sucursalId) : null,
+    );
+  }
+
+  // Sucursales del cliente (catálogos por dirección).
+  @UseGuards(StockPortalGuard)
+  @Get('mis-sucursales')
+  async misSucursales(@Req() req: any) {
+    return await this.stockClientes.listarSucursales(req.stockPortal.rut);
+  }
+
+  @UseGuards(StockPortalGuard)
+  @Post('sucursales')
+  async crearSucursal(@Req() req: any, @Body() body: any) {
+    return await this.stockClientes.crearSucursal(req.stockPortal.rut, body);
+  }
+
+  @UseGuards(StockPortalGuard)
+  @Put('sucursales/:id')
+  async actualizarSucursal(@Req() req: any, @Param('id', ParseIntPipe) id: number, @Body() body: any) {
+    return await this.stockClientes.actualizarSucursal(req.stockPortal.rut, id, body);
+  }
+
+  @UseGuards(StockPortalGuard)
+  @Delete('sucursales/:id')
+  async eliminarSucursal(@Req() req: any, @Param('id', ParseIntPipe) id: number) {
+    return await this.stockClientes.eliminarSucursal(req.stockPortal.rut, id);
   }
 
   @UseGuards(StockPortalGuard)
@@ -132,6 +163,30 @@ export class StockClientesController {
       req.stockPortal,
       body,
       { ip, user_agent: userAgent },
+    );
+  }
+
+  // Cotización vinculada a una solicitud (estado + datos para el PDF).
+  @UseGuards(StockPortalGuard)
+  @Get('mis-solicitudes/:id/cotizacion')
+  async miCotizacion(@Req() req: any, @Param('id', ParseIntPipe) id: number) {
+    return await this.stockClientes.cotizacionDeSolicitud(id, req.stockPortal.rut);
+  }
+
+  // Hilo de mensajes (cliente).
+  @UseGuards(StockPortalGuard)
+  @Get('mis-solicitudes/:id/mensajes')
+  async misMensajes(@Req() req: any, @Param('id', ParseIntPipe) id: number) {
+    return await this.stockClientes.listarMensajes(id, { rut: req.stockPortal.rut });
+  }
+
+  @UseGuards(StockPortalGuard)
+  @Post('mis-solicitudes/:id/mensajes')
+  async crearMiMensaje(@Req() req: any, @Param('id', ParseIntPipe) id: number, @Body() body: { mensaje: string }) {
+    return await this.stockClientes.crearMensaje(
+      id,
+      { mensaje: body?.mensaje, autorTipo: 'cliente', autorNombre: req.stockPortal.razon_social || null },
+      { rut: req.stockPortal.rut },
     );
   }
 
@@ -187,6 +242,13 @@ export class StockClientesController {
     return await this.stockClientes.listarSolicitudesPorRut(rut);
   }
 
+  // Sucursales de un cliente (para el detalle/monitoreo admin).
+  @UseGuards(AuthGuard)
+  @Get('sucursales-por-rut')
+  async listarSucursalesPorRut(@Query('rut') rut: string) {
+    return await this.stockClientes.listarSucursalesPorRut(rut);
+  }
+
   @UseGuards(AuthGuard)
   @Put('solicitudes/:id/estado')
   async actualizarEstadoSolicitud(
@@ -194,6 +256,38 @@ export class StockClientesController {
     @Body() body: { estado: string },
   ) {
     return await this.stockClientes.actualizarEstadoSolicitud(id, body?.estado);
+  }
+
+  // Vincula la solicitud con la cotización creada a partir de ella.
+  @UseGuards(AuthGuard)
+  @Put('solicitudes/:id/vincular')
+  async vincularSolicitud(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { licitacion_id: number },
+  ) {
+    return await this.stockClientes.vincularLicitacion(id, Number(body?.licitacion_id));
+  }
+
+  // Hilo de mensajes (equipo).
+  @UseGuards(AuthGuard)
+  @Get('solicitudes/:id/mensajes')
+  async mensajesSolicitud(@Param('id', ParseIntPipe) id: number) {
+    return await this.stockClientes.listarMensajes(id, {});
+  }
+
+  @UseGuards(AuthGuard)
+  @Post('solicitudes/:id/mensajes')
+  async crearMensajeEquipo(
+    @Req() req: any,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { mensaje: string },
+  ) {
+    const email = (req?.user?.email || '').toLowerCase();
+    return await this.stockClientes.crearMensaje(
+      id,
+      { mensaje: body?.mensaje, autorTipo: 'equipo', autorEmail: email, autorNombre: email },
+      {},
+    );
   }
 
   // Datos de contacto del cliente (correo/teléfono) para comunicarse desde el

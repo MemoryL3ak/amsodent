@@ -2,6 +2,8 @@ import {
   Injectable,
   BadRequestException,
   UnauthorizedException,
+  NotFoundException,
+  ForbiddenException,
   Logger,
 } from '@nestjs/common';
 import * as crypto from 'crypto';
@@ -777,15 +779,129 @@ export class StockClientesService {
 
   // ── Productos del cliente (persistentes entre sesiones) ───────────────
 
-  async listarProductos(rut: string) {
+  // ── Sucursales del cliente (catálogos de stock por dirección) ──────────
+  // Lista las sucursales activas. Si el cliente no tiene ninguna, crea una
+  // "Casa Matriz" por defecto para que siempre exista al menos una.
+  async listarSucursales(rut: string) {
     const rutN = normalizarRut(rut);
+    if (!rutN) return [];
+    const client = this.supabase.getClient();
+    const { data, error } = await client
+      .from('stock_sucursales')
+      .select('*')
+      .eq('rut', rutN)
+      .eq('activo', true)
+      .order('created_at', { ascending: true });
+    if (error) throw new BadRequestException(error.message);
+    if (data && data.length > 0) return data;
+    // Sin sucursales → crear Casa Matriz por defecto.
+    const { data: nueva, error: errIns } = await client
+      .from('stock_sucursales')
+      .insert({ rut: rutN, nombre: 'Casa Matriz' })
+      .select()
+      .single();
+    if (errIns) throw new BadRequestException(errIns.message);
+    return [nueva];
+  }
+
+  async crearSucursal(
+    rut: string,
+    body: { nombre?: string; direccion?: string; comuna?: string },
+  ) {
+    const rutN = normalizarRut(rut);
+    if (!rutN) throw new UnauthorizedException('Sesión inválida.');
+    const nombre = String(body?.nombre || '').trim().slice(0, 160);
+    if (!nombre) throw new BadRequestException('El nombre de la sucursal es obligatorio.');
     const { data, error } = await this.supabase
+      .getClient()
+      .from('stock_sucursales')
+      .insert({
+        rut: rutN,
+        nombre,
+        direccion: String(body?.direccion || '').trim().slice(0, 300) || null,
+        comuna: String(body?.comuna || '').trim().slice(0, 120) || null,
+      })
+      .select()
+      .single();
+    if (error) throw new BadRequestException(error.message);
+    return data;
+  }
+
+  async actualizarSucursal(
+    rut: string,
+    id: number,
+    body: { nombre?: string; direccion?: string; comuna?: string },
+  ) {
+    const rutN = normalizarRut(rut);
+    const client = this.supabase.getClient();
+    const { data: suc } = await client
+      .from('stock_sucursales')
+      .select('id, rut')
+      .eq('id', id)
+      .maybeSingle();
+    if (!suc) throw new NotFoundException('Sucursal no encontrada.');
+    if (normalizarRut(suc.rut) !== rutN) throw new ForbiddenException('No autorizado.');
+    const patch: any = {};
+    if (body?.nombre !== undefined) {
+      const n = String(body.nombre || '').trim().slice(0, 160);
+      if (!n) throw new BadRequestException('El nombre de la sucursal es obligatorio.');
+      patch.nombre = n;
+    }
+    if (body?.direccion !== undefined) patch.direccion = String(body.direccion || '').trim().slice(0, 300) || null;
+    if (body?.comuna !== undefined) patch.comuna = String(body.comuna || '').trim().slice(0, 120) || null;
+    const { data, error } = await client
+      .from('stock_sucursales')
+      .update(patch)
+      .eq('id', id)
+      .select()
+      .single();
+    if (error) throw new BadRequestException(error.message);
+    return data;
+  }
+
+  async eliminarSucursal(rut: string, id: number) {
+    const rutN = normalizarRut(rut);
+    const client = this.supabase.getClient();
+    const { data: suc } = await client
+      .from('stock_sucursales')
+      .select('id, rut')
+      .eq('id', id)
+      .maybeSingle();
+    if (!suc) throw new NotFoundException('Sucursal no encontrada.');
+    if (normalizarRut(suc.rut) !== rutN) throw new ForbiddenException('No autorizado.');
+    // Baja lógica para conservar el histórico de declaraciones de la sucursal.
+    const { error } = await client
+      .from('stock_sucursales')
+      .update({ activo: false })
+      .eq('id', id);
+    if (error) throw new BadRequestException(error.message);
+    return { ok: true };
+  }
+
+  // Sucursales por RUT para el dashboard admin (incluye inactivas).
+  async listarSucursalesPorRut(rut: string) {
+    const rutN = normalizarRut(rut);
+    if (!rutN) return [];
+    const { data, error } = await this.supabase
+      .getClient()
+      .from('stock_sucursales')
+      .select('*')
+      .eq('rut', rutN)
+      .order('created_at', { ascending: true });
+    if (error) throw new BadRequestException(error.message);
+    return data || [];
+  }
+
+  async listarProductos(rut: string, sucursalId?: number | null) {
+    const rutN = normalizarRut(rut);
+    let q = this.supabase
       .getClient()
       .from('stock_productos_cliente')
       .select('*')
       .eq('rut', rutN)
-      .eq('activo', true)
-      .order('nombre', { ascending: true });
+      .eq('activo', true);
+    if (sucursalId) q = q.eq('sucursal_id', sucursalId);
+    const { data, error } = await q.order('nombre', { ascending: true });
     if (error) throw new BadRequestException(error.message);
 
     return (data || []).map((p: any) => ({
@@ -815,6 +931,7 @@ export class StockClientesService {
   async crearDeclaracion(
     payload: StockTokenPayload,
     body: {
+      sucursal_id?: number | string | null;
       items: Array<{
         nombre: string;
         sku?: string;
@@ -831,6 +948,13 @@ export class StockClientesService {
   ) {
     const rutN = normalizarRut(payload.rut);
     if (!rutN) throw new UnauthorizedException('Sesión inválida.');
+
+    // Sucursal destino: la del body o, si no vino, la Casa Matriz por defecto.
+    let sucursalId = body?.sucursal_id ? Number(body.sucursal_id) : null;
+    if (!sucursalId) {
+      const sucs = await this.listarSucursales(rutN);
+      sucursalId = sucs?.[0]?.id ?? null;
+    }
 
     const items = Array.isArray(body?.items) ? body.items : [];
     if (items.length === 0) {
@@ -904,6 +1028,7 @@ export class StockClientesService {
       .from('stock_declaraciones')
       .insert({
         rut: rutN,
+        sucursal_id: sucursalId,
         razon_social: payload.razon_social || null,
         fecha: ahora,
         total_items: itemsLimpios.length,
@@ -923,14 +1048,20 @@ export class StockClientesService {
     //    esquema), insertamos primero los nuevos y recién después borramos
     //    los anteriores. El cliente puede renombrar libremente sus productos,
     //    por eso reemplazamos toda la lista en vez de hacer matching por nombre.
-    const { data: previos } = await client
+    // Scope al catálogo de ESTA sucursal para no tocar el de las demás.
+    let previosQuery = client
       .from('stock_productos_cliente')
       .select('id')
       .eq('rut', rutN);
+    previosQuery = sucursalId
+      ? previosQuery.eq('sucursal_id', sucursalId)
+      : previosQuery.is('sucursal_id', null);
+    const { data: previos } = await previosQuery;
     const idsPrevios = (previos || []).map((p: any) => p.id);
 
     const productosRows = itemsLimpios.map((it) => ({
       rut: rutN,
+      sucursal_id: sucursalId,
       nombre: it.nombre,
       sku: it.sku ?? null,
       marca: it.marca,
@@ -1017,11 +1148,18 @@ export class StockClientesService {
       contacto_nombre?: string;
       contacto_email?: string;
       contacto_telefono?: string;
+      sucursal_id?: number | string | null;
     },
     meta: { ip?: string | null; user_agent?: string | null },
   ) {
     const rutN = normalizarRut(payload.rut);
     if (!rutN) throw new UnauthorizedException('Sesión inválida.');
+
+    let sucursalId = body?.sucursal_id ? Number(body.sucursal_id) : null;
+    if (!sucursalId) {
+      const sucs = await this.listarSucursales(rutN);
+      sucursalId = sucs?.[0]?.id ?? null;
+    }
 
     const itemsRaw = Array.isArray(body?.items) ? body.items : [];
     const items = itemsRaw
@@ -1051,6 +1189,7 @@ export class StockClientesService {
       .from('stock_solicitudes_cotizacion')
       .insert({
         rut: rutN,
+        sucursal_id: sucursalId,
         razon_social: razonSocial,
         contacto_nombre: contactoNombre,
         contacto_email: contactoEmail,
@@ -1191,6 +1330,198 @@ export class StockClientesService {
     return data;
   }
 
+  // Vincula una solicitud con la cotización (licitación) creada a partir de ella.
+  async vincularLicitacion(solicitudId: number, licitacionId: number) {
+    const { data, error } = await this.supabase
+      .getClient()
+      .from('stock_solicitudes_cotizacion')
+      .update({ licitacion_id: licitacionId, estado: 'respondida', respondida_at: new Date().toISOString() })
+      .eq('id', solicitudId)
+      .select()
+      .single();
+    if (error) throw new BadRequestException(error.message);
+    return data;
+  }
+
+  // Datos de la cotización vinculada a una solicitud, listos para el PDF del
+  // portal (generarPDFcotizacion). Si se pasa rutScope, valida pertenencia.
+  async cotizacionDeSolicitud(solicitudId: number, rutScope?: string) {
+    const client = this.supabase.getClient();
+    const { data: sol } = await client
+      .from('stock_solicitudes_cotizacion')
+      .select('id, rut, licitacion_id')
+      .eq('id', solicitudId)
+      .maybeSingle();
+    if (!sol) throw new NotFoundException('Solicitud no encontrada.');
+    if (rutScope && normalizarRut(sol.rut) !== normalizarRut(rutScope)) {
+      throw new ForbiddenException('No autorizado.');
+    }
+    if (!sol.licitacion_id) return { cotizacion: null, datos: null };
+    const { data: lic } = await client.from('licitaciones').select('*').eq('id', sol.licitacion_id).maybeSingle();
+    if (!lic) return { cotizacion: null, datos: null };
+    const { data: items } = await client
+      .from('items_licitacion')
+      .select('*')
+      .eq('licitacion_id', lic.id)
+      .order('orden', { ascending: true });
+    const fmt = (n: any) => Number(n || 0).toLocaleString('es-CL');
+    const datos = {
+      numero_licitacion: lic.id,
+      id_licitacion: lic.id_licitacion || '',
+      fecha_creacion: String(lic.created_at || '').slice(0, 10),
+      fecha_adjudicacion: lic.fecha_adjudicada || '',
+      nombre_entidad: lic.nombre_entidad || '',
+      rut_entidad: lic.rut_entidad || '',
+      direccion: lic.direccion || '',
+      comuna: lic.comuna || '',
+      contacto: lic.contacto || '',
+      email: lic.email || '',
+      telefono: lic.telefono || '',
+      condicion_venta: lic.condicion_venta || '',
+      vendedor_nombre: lic.vendedor_nombre || '',
+      vendedor_celular: lic.vendedor_celular || '',
+      vendedor_correo: lic.vendedor_correo || '',
+      observaciones: lic.observaciones || '',
+      items: (items || []).map((it: any, i: number) => ({
+        n: i + 1,
+        sku: String(it.sku || '').trim(),
+        producto: it.producto || '',
+        formato: it.formato || '',
+        cantidad: it.cantidad,
+        precio_unitario: fmt(it.valor_unitario),
+        total: fmt(it.total),
+        observacion: it.observacion || '',
+      })),
+      afecto: fmt(lic.total_sin_iva),
+      iva: fmt(lic.total_iva),
+      total_con_iva: fmt(lic.total_con_iva),
+    };
+    return {
+      cotizacion: { id: lic.id, id_licitacion: lic.id_licitacion, estado: lic.estado },
+      datos,
+    };
+  }
+
+  // ── Hilo de mensajes cliente ↔ equipo ────────────────────────────────
+  async listarMensajes(solicitudId: number, opts: { rut?: string }) {
+    const client = this.supabase.getClient();
+    const { data: sol } = await client
+      .from('stock_solicitudes_cotizacion')
+      .select('id, rut')
+      .eq('id', solicitudId)
+      .maybeSingle();
+    if (!sol) throw new NotFoundException('Solicitud no encontrada.');
+    if (opts.rut && normalizarRut(sol.rut) !== normalizarRut(opts.rut)) {
+      throw new ForbiddenException('No autorizado.');
+    }
+    const { data, error } = await client
+      .from('stock_cotizacion_mensajes')
+      .select('*')
+      .eq('solicitud_id', solicitudId)
+      .order('created_at', { ascending: true });
+    if (error) throw new BadRequestException(error.message);
+    // Marca como leídos los mensajes del otro lado.
+    const lado = opts.rut ? 'cliente' : 'equipo';
+    const col = lado === 'cliente' ? 'leido_cliente' : 'leido_equipo';
+    const otro = lado === 'cliente' ? 'equipo' : 'cliente';
+    await client
+      .from('stock_cotizacion_mensajes')
+      .update({ [col]: true })
+      .eq('solicitud_id', solicitudId)
+      .eq('autor_tipo', otro)
+      .eq(col, false);
+    return data || [];
+  }
+
+  async crearMensaje(
+    solicitudId: number,
+    payload: { mensaje: string; autorTipo: 'cliente' | 'equipo'; autorEmail?: string; autorNombre?: string },
+    opts: { rut?: string },
+  ) {
+    const client = this.supabase.getClient();
+    const { data: sol } = await client
+      .from('stock_solicitudes_cotizacion')
+      .select('id, rut, razon_social, contacto_email, licitacion_id')
+      .eq('id', solicitudId)
+      .maybeSingle();
+    if (!sol) throw new NotFoundException('Solicitud no encontrada.');
+    if (opts.rut && normalizarRut(sol.rut) !== normalizarRut(opts.rut)) {
+      throw new ForbiddenException('No autorizado.');
+    }
+    const texto = String(payload.mensaje || '').trim().slice(0, 2000);
+    if (!texto) throw new BadRequestException('El mensaje no puede estar vacío.');
+    const fila = {
+      solicitud_id: solicitudId,
+      autor_tipo: payload.autorTipo,
+      autor_email: payload.autorEmail || null,
+      autor_nombre: payload.autorNombre || null,
+      mensaje: texto,
+      leido_cliente: payload.autorTipo === 'cliente',
+      leido_equipo: payload.autorTipo === 'equipo',
+    };
+    const { data, error } = await client
+      .from('stock_cotizacion_mensajes')
+      .insert(fila)
+      .select()
+      .single();
+    if (error) throw new BadRequestException(error.message);
+    try { await this.notificarMensaje(sol, payload.autorTipo, texto, payload.autorNombre); } catch (e: any) {
+      this.logger.warn(`Notificación de mensaje falló: ${e?.message || e}`);
+    }
+    return data;
+  }
+
+  private async notificarMensaje(
+    sol: any,
+    autorTipo: 'cliente' | 'equipo',
+    texto: string,
+    autorNombre?: string,
+  ) {
+    const client = this.supabase.getClient();
+    const cliente = sol.razon_social || formatearRut(normalizarRut(sol.rut));
+    if (autorTipo === 'cliente') {
+      // Cliente → equipo (destinatarios configurados).
+      const { data: dest } = await client
+        .from('stock_destinatarios')
+        .select('user_email, recibe_campana, recibe_correo, activo')
+        .eq('activo', true);
+      const lista = (dest || []).filter((d: any) => d?.user_email);
+      const mensaje = `${cliente} envió un mensaje sobre su cotización (solicitud #${sol.id}).`;
+      const rowsCampana = lista
+        .filter((d: any) => d.recibe_campana !== false)
+        .map((d: any) => ({
+          user_email: String(d.user_email).toLowerCase(),
+          tipo: 'stock_cotizacion_mensaje',
+          mensaje,
+          link: `/monitoreo-stock?solicitud=${sol.id}`,
+          metadata: { solicitud_id: sol.id },
+        }));
+      if (rowsCampana.length) await client.from('notificaciones').insert(rowsCampana);
+      const correos = lista.filter((d: any) => d.recibe_correo !== false).map((d: any) => String(d.user_email).toLowerCase());
+      for (const para of correos) {
+        try {
+          await this.mailings.enviarUno({
+            para,
+            asunto: `💬 ${cliente} respondió sobre su cotización`,
+            cuerpoHtml: `<p><strong>${cliente}</strong> escribió respecto a su cotización (solicitud #${sol.id}):</p><blockquote>${texto}</blockquote><p>Ingresa al monitoreo de stock para responder.</p>`,
+          });
+        } catch { /* */ }
+      }
+    } else {
+      // Equipo → cliente (correo al contacto de la solicitud).
+      const para = String(sol.contacto_email || '').trim().toLowerCase();
+      if (para) {
+        try {
+          await this.mailings.enviarUno({
+            para,
+            asunto: 'Amsodent · Actualización de su cotización',
+            cuerpoHtml: `<p>${autorNombre || 'El equipo de Amsodent'} le escribió respecto a su cotización:</p><blockquote>${texto}</blockquote><p>Ingrese a su portal para ver el detalle y responder.</p>`,
+          });
+        } catch { /* */ }
+      }
+    }
+  }
+
   async listarSolicitudesPorRut(rut: string, limit = 50) {
     const rutN = normalizarRut(rut);
     if (!rutN) return [];
@@ -1198,13 +1529,13 @@ export class StockClientesService {
       .getClient()
       .from('stock_solicitudes_cotizacion')
       .select(
-        'id, items, nota, contacto_nombre, contacto_email, contacto_telefono, estado, respondida_at, created_at',
+        'id, items, nota, contacto_nombre, contacto_email, contacto_telefono, estado, respondida_at, created_at, licitacion_id',
       )
       .eq('rut', rutN)
       .order('created_at', { ascending: false })
       .limit(limit);
     if (error) throw new BadRequestException(error.message);
-    return data || [];
+    return await this.enriquecerSolicitudes(data || [], 'equipo');
   }
 
   async listarMisSolicitudes(rut: string, limit = 50) {
@@ -1213,24 +1544,63 @@ export class StockClientesService {
       .getClient()
       .from('stock_solicitudes_cotizacion')
       .select(
-        'id, items, nota, contacto_nombre, contacto_email, contacto_telefono, estado, respondida_at, created_at',
+        'id, items, nota, contacto_nombre, contacto_email, contacto_telefono, estado, respondida_at, created_at, licitacion_id',
       )
       .eq('rut', rutN)
       .order('created_at', { ascending: false })
       .limit(limit);
     if (error) throw new BadRequestException(error.message);
-    return data || [];
+    return await this.enriquecerSolicitudes(data || [], 'cliente');
   }
 
-  async listarMisDeclaraciones(rut: string, limit = 30) {
+  // Agrega a cada solicitud su cotización vinculada (id/estado) y la cantidad de
+  // mensajes no leídos por el lado que consulta (cliente o equipo).
+  private async enriquecerSolicitudes(rows: any[], lado: 'cliente' | 'equipo') {
+    if (!rows.length) return rows;
+    const client = this.supabase.getClient();
+    const licIds = [...new Set(rows.map((r) => r.licitacion_id).filter(Boolean))];
+    const licMap: Record<number, any> = {};
+    if (licIds.length) {
+      const { data: lics } = await client
+        .from('licitaciones')
+        .select('id, id_licitacion, estado')
+        .in('id', licIds);
+      (lics || []).forEach((l: any) => { licMap[l.id] = l; });
+    }
+    // Mensajes no leídos por el lado consultante (mensajes del otro lado sin leer).
+    const solIds = rows.map((r) => r.id);
+    const noLeidos: Record<number, number> = {};
+    if (solIds.length) {
+      const col = lado === 'cliente' ? 'leido_cliente' : 'leido_equipo';
+      const otro = lado === 'cliente' ? 'equipo' : 'cliente';
+      const { data: msgs } = await client
+        .from('stock_cotizacion_mensajes')
+        .select('solicitud_id')
+        .in('solicitud_id', solIds)
+        .eq('autor_tipo', otro)
+        .eq(col, false);
+      (msgs || []).forEach((m: any) => {
+        noLeidos[m.solicitud_id] = (noLeidos[m.solicitud_id] || 0) + 1;
+      });
+    }
+    return rows.map((r) => ({
+      ...r,
+      cotizacion: r.licitacion_id && licMap[r.licitacion_id]
+        ? { id: licMap[r.licitacion_id].id, id_licitacion: licMap[r.licitacion_id].id_licitacion, estado: licMap[r.licitacion_id].estado }
+        : null,
+      mensajes_no_leidos: noLeidos[r.id] || 0,
+    }));
+  }
+
+  async listarMisDeclaraciones(rut: string, sucursalId?: number | null, limit = 30) {
     const rutN = normalizarRut(rut);
-    const { data, error } = await this.supabase
+    let q = this.supabase
       .getClient()
       .from('stock_declaraciones')
-      .select('id, fecha, total_items, total_verdes, total_amarillos, total_rojos, items')
-      .eq('rut', rutN)
-      .order('fecha', { ascending: false })
-      .limit(limit);
+      .select('id, fecha, total_items, total_verdes, total_amarillos, total_rojos, items, sucursal_id')
+      .eq('rut', rutN);
+    if (sucursalId) q = q.eq('sucursal_id', sucursalId);
+    const { data, error } = await q.order('fecha', { ascending: false }).limit(limit);
     if (error) throw new BadRequestException(error.message);
     return data || [];
   }

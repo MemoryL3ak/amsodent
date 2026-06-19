@@ -40,6 +40,13 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 
+// Correos autorizados a aprobar cotizaciones (además del administrador).
+const APROBADORES_AUTORIZADOS = [
+  "benja.alarcon.z@gmail.com",
+  "diego.cruz@bvan.cl",
+  "ventas@amsodentmedical.cl",
+];
+
 /* ============================================================
    TOOLTIP SOLO PARA PRODUCTO (NO TOCA EL INPUT DEL SELECT)
 ============================================================ */
@@ -849,10 +856,18 @@ export default function EditarLicitacion() {
   const [vendedorCorreo, setVendedorCorreo] = useState("");
 
   const [rol, setRol] = useState(null);
+  const [miCorreo, setMiCorreo] = useState("");
   const esAdmin = useMemo(() => {
     const r = (rol ?? "").toString().trim().toLowerCase();
     return r === "admin" || r === "administrador";
   }, [rol]);
+  // Aprobación de cotizaciones: además del administrador, ciertos correos están
+  // autorizados a aprobar (sin darles el resto de permisos de admin).
+  const puedeAprobar = useMemo(() => {
+    if (esAdmin) return true;
+    const e = (miCorreo || "").trim().toLowerCase();
+    return APROBADORES_AUTORIZADOS.includes(e);
+  }, [esAdmin, miCorreo]);
   // Admin y jefe_ventas_especial pueden editar el nombre del documento y el N° de tracking.
   const puedeEditarDocAvanzado = useMemo(() => {
     const r = (rol ?? "").toString().trim().toLowerCase();
@@ -876,6 +891,10 @@ export default function EditarLicitacion() {
   const [motivoPerdida, setMotivoPerdida] = useState("");
   const [motivoPerdidaOtro, setMotivoPerdidaOtro] = useState("");
   const [modalMotivoPerdidaOpen, setModalMotivoPerdidaOpen] = useState(false);
+  // Descarte: motivo (Presupuesto / Quiebre stock) + comentario obligatorio.
+  const [motivoDescarte, setMotivoDescarte] = useState("");
+  const [comentarioDescarte, setComentarioDescarte] = useState("");
+  const [modalMotivoDescarteOpen, setModalMotivoDescarteOpen] = useState(false);
   // Estado "candidato": al cambiar el select a Perdida, retenemos el cambio hasta que el modal
   // confirme. Si el usuario cancela el modal, restauramos el estado anterior.
   const estadoPrevioRef = useRef("En espera");
@@ -1118,6 +1137,7 @@ export default function EditarLicitacion() {
         if (!profile) return;
 
         setRol(profile.rol ?? null);
+        setMiCorreo(profile.email || "");
 
         setVendedorCorreo((prev) => prev || profile.email || "");
         setVendedorNombre(
@@ -1178,7 +1198,7 @@ export default function EditarLicitacion() {
   }
 
   async function aprobarLicitacion() {
-    if (!esAdmin) return;
+    if (!puedeAprobar) return;
     if (aprobando || guardando || generandoPDF || eliminando) return;
     if (estado !== "Pendiente Aprobación") return;
 
@@ -1684,6 +1704,8 @@ export default function EditarLicitacion() {
       setObservaciones(data.observaciones || "");
       setMotivoPerdida(data.motivoPerdida || "");
       setMotivoPerdidaOtro(data.motivoPerdidaOtro || "");
+      setMotivoDescarte(data.motivoDescarte || "");
+      setComentarioDescarte(data.comentarioDescarte || "");
 
       setVendedorNombre(data.vendedorNombre || "");
       setVendedorCelular(data.vendedorCelular || "");
@@ -1944,6 +1966,8 @@ export default function EditarLicitacion() {
     setObservaciones(lic.observaciones || "");
     setMotivoPerdida(lic.motivo_perdida || "");
     setMotivoPerdidaOtro(lic.motivo_perdida_otro || "");
+    setMotivoDescarte(lic.motivo_descarte || "");
+    setComentarioDescarte(lic.comentario_descarte || "");
 
     setVendedorNombre(lic.vendedor_nombre || "");
     setVendedorCelular(lic.vendedor_celular || "");
@@ -2131,6 +2155,8 @@ export default function EditarLicitacion() {
       setObservaciones(lic.observaciones || "");
       setMotivoPerdida(lic.motivo_perdida || "");
       setMotivoPerdidaOtro(lic.motivo_perdida_otro || "");
+      setMotivoDescarte(lic.motivo_descarte || "");
+      setComentarioDescarte(lic.comentario_descarte || "");
 
       setVendedorNombre(lic.vendedor_nombre || "");
       setVendedorCelular(lic.vendedor_celular || "");
@@ -2805,6 +2831,10 @@ export default function EditarLicitacion() {
             estadoFinal === "Perdida" && motivoPerdida === "Otro"
               ? motivoPerdidaOtro || null
               : null,
+
+          // Descarte: motivo + comentario (solo si el estado final es Descartada).
+          motivo_descarte: estadoFinal === "Descartada" ? motivoDescarte || null : null,
+          comentario_descarte: estadoFinal === "Descartada" ? comentarioDescarte || null : null,
         });
       } catch (errUpdate) {
         console.error(errUpdate);
@@ -2992,7 +3022,7 @@ export default function EditarLicitacion() {
           >
             Duplicar
           </button>
-          {esAdmin && estado === "Pendiente Aprobación" && (
+          {puedeAprobar && estado === "Pendiente Aprobación" && (
             <button
               type="button"
               onClick={aprobarLicitacion}
@@ -3171,10 +3201,20 @@ export default function EditarLicitacion() {
                   setModalMotivoPerdidaOpen(true);
                   return;
                 }
+                // Al pasar a Descartada exigimos motivo + comentario vía modal.
+                if (next === "Descartada" && estado !== "Descartada") {
+                  estadoPrevioRef.current = estado;
+                  setModalMotivoDescarteOpen(true);
+                  return;
+                }
                 // Si saliendo de Perdida, limpiamos motivo para no persistir datos colgando.
                 if (estado === "Perdida" && next !== "Perdida") {
                   setMotivoPerdida("");
                   setMotivoPerdidaOtro("");
+                }
+                if (estado === "Descartada" && next !== "Descartada") {
+                  setMotivoDescarte("");
+                  setComentarioDescarte("");
                 }
                 setEstado(next);
               }}
@@ -3230,6 +3270,52 @@ export default function EditarLicitacion() {
                       border: "1px solid #fca5a5",
                       borderRadius: 6,
                       color: "#b91c1c",
+                      cursor: "pointer",
+                      fontSize: 11,
+                      fontWeight: 600,
+                      padding: "4px 10px",
+                    }}
+                  >
+                    Editar
+                  </button>
+                )}
+              </div>
+            )}
+            {estado === "Descartada" && motivoDescarte && (
+              <div
+                style={{
+                  marginTop: 8,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 8,
+                  padding: "8px 10px",
+                  background: "#faf5ff",
+                  border: "1px solid #e9d5ff",
+                  borderRadius: 8,
+                }}
+              >
+                <div style={{ display: "flex", flexDirection: "column", lineHeight: 1.25, minWidth: 0 }}>
+                  <span style={{ fontSize: 10, fontWeight: 600, color: "#7e22ce", textTransform: "uppercase", letterSpacing: 0.4 }}>
+                    Motivo de descarte
+                  </span>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: "#581c87" }}>{motivoDescarte}</span>
+                  {comentarioDescarte && (
+                    <span title={comentarioDescarte} style={{ fontSize: 12, color: "#6b21a8", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {comentarioDescarte}
+                    </span>
+                  )}
+                </div>
+                {puedeEditarEstado && (
+                  <button
+                    type="button"
+                    onClick={() => setModalMotivoDescarteOpen(true)}
+                    style={{
+                      flexShrink: 0,
+                      background: "transparent",
+                      border: "1px solid #d8b4fe",
+                      borderRadius: 6,
+                      color: "#7e22ce",
                       cursor: "pointer",
                       fontSize: 11,
                       fontWeight: 600,
@@ -4647,6 +4733,20 @@ export default function EditarLicitacion() {
           }}
         />
       )}
+
+      {modalMotivoDescarteOpen && (
+        <ModalMotivoDescarte
+          motivoActual={motivoDescarte}
+          comentarioActual={comentarioDescarte}
+          onCancel={() => setModalMotivoDescarteOpen(false)}
+          onConfirm={(nuevoMotivo, nuevoComentario) => {
+            setMotivoDescarte(nuevoMotivo);
+            setComentarioDescarte(nuevoComentario);
+            if (estado !== "Descartada") setEstado("Descartada");
+            setModalMotivoDescarteOpen(false);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -4756,6 +4856,110 @@ function ModalMotivoPerdida({ motivoActual, otroActual, onCancel, onConfirm }) {
             type="button"
             className="btn btn-primary btn-sm"
             disabled={!seleccion || (seleccion === "Otro" && !otro.trim())}
+            onClick={confirmar}
+          >
+            Confirmar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ============================================================
+   Modal: motivo de descarte (Presupuesto / Quiebre stock) + comentario obligatorio
+============================================================ */
+function ModalMotivoDescarte({ motivoActual, comentarioActual, onCancel, onConfirm }) {
+  const [seleccion, setSeleccion] = useState(motivoActual || "");
+  const [comentario, setComentario] = useState(comentarioActual || "");
+
+  const opciones = ["Presupuesto", "Quiebre stock"];
+  const valido = Boolean(seleccion) && comentario.trim().length > 0;
+
+  function confirmar() {
+    if (!valido) return;
+    onConfirm(seleccion, comentario.trim());
+  }
+
+  return (
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(15,23,42,0.45)",
+        zIndex: 9999,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 16,
+      }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onCancel();
+      }}
+    >
+      <div
+        style={{
+          background: "var(--surface, #fff)",
+          borderRadius: 10,
+          padding: "20px 22px",
+          width: "min(440px, 100%)",
+          boxShadow: "0 20px 50px rgba(0,0,0,0.25)",
+        }}
+      >
+        <h3 style={{ margin: 0, fontSize: 16, fontWeight: 600 }}>Motivo de descarte</h3>
+        <p style={{ fontSize: 12, color: "var(--text-muted, #64748b)", margin: "6px 0 14px" }}>
+          Selecciona el motivo y agrega un comentario (obligatorio).
+        </p>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {opciones.map((op) => (
+            <label
+              key={op}
+              style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14, cursor: "pointer" }}
+            >
+              <input
+                type="radio"
+                name="motivo_descarte"
+                value={op}
+                checked={seleccion === op}
+                onChange={() => setSeleccion(op)}
+              />
+              {op}
+            </label>
+          ))}
+        </div>
+
+        <div style={{ marginTop: 14 }}>
+          <label style={{ fontSize: 12, color: "var(--text-muted, #64748b)" }}>
+            Comentario <span style={{ color: "#dc2626" }}>*</span>
+          </label>
+          <textarea
+            value={comentario}
+            onChange={(e) => setComentario(e.target.value)}
+            rows={3}
+            placeholder="Detalle del descarte…"
+            style={{
+              width: "100%",
+              padding: "8px 10px",
+              borderRadius: 6,
+              border: "1px solid var(--border, #e2e8f0)",
+              marginTop: 4,
+              fontSize: 14,
+              resize: "vertical",
+              fontFamily: "inherit",
+            }}
+            autoFocus
+          />
+        </div>
+
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 18 }}>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={onCancel}>
+            Cancelar
+          </button>
+          <button
+            type="button"
+            className="btn btn-primary btn-sm"
+            disabled={!valido}
             onClick={confirmar}
           >
             Confirmar

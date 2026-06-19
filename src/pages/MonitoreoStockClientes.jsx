@@ -5,6 +5,8 @@ import { supabase } from "../lib/supabase";
 import useAuth from "../hooks/useAuth";
 import Toast from "../components/Toast";
 import { descargarCSV, descargarReportePDF } from "../lib/reporteStock";
+import { generarPDFSolicitud } from "../components/SolicitudCotizacionDocument.jsx";
+import DateFilter from "../components/DateFilter";
 import {
   Package,
   Users,
@@ -377,21 +379,11 @@ export default function MonitoreoStockClientes() {
       <div style={styles.filtrosCard}>
         <div style={styles.filtroGroup}>
           <label style={styles.filtroLabel}>Desde</label>
-          <input
-            type="date"
-            value={filtroDesde}
-            onChange={(e) => setFiltroDesde(e.target.value)}
-            style={styles.input}
-          />
+          <DateFilter value={filtroDesde} onChange={setFiltroDesde} placeholder="Desde" />
         </div>
         <div style={styles.filtroGroup}>
           <label style={styles.filtroLabel}>Hasta</label>
-          <input
-            type="date"
-            value={filtroHasta}
-            onChange={(e) => setFiltroHasta(e.target.value)}
-            style={styles.input}
-          />
+          <DateFilter value={filtroHasta} onChange={setFiltroHasta} placeholder="Hasta" />
         </div>
         <div style={{ ...styles.filtroGroup, flex: 1, minWidth: 180 }}>
           <label style={styles.filtroLabel}>RUT</label>
@@ -659,7 +651,8 @@ function TypeaheadCliente({ valor, campo, placeholder, opciones, onChange, onSel
         onFocus={() => setAbierto(true)}
         onBlur={() => setTimeout(() => setAbierto(false), 150)}
         onKeyDown={manejarTeclado}
-        style={styles.input}
+        className="input"
+        style={{ minWidth: 120 }}
         autoComplete="off"
       />
       {abierto && sugerencias.length > 0 && (
@@ -677,13 +670,13 @@ function TypeaheadCliente({ valor, campo, placeholder, opciones, onChange, onSel
                 onMouseEnter={() => setIndiceActivo(idx)}
                 style={{
                   ...styles.dropdownItem,
-                  background: esActivo ? "#f0fdfa" : "transparent",
+                  background: esActivo ? "#e6f7f7" : "transparent",
                 }}
               >
-                <div style={{ fontWeight: 600, color: "#0f172a", fontSize: 13 }}>
+                <div style={{ fontWeight: 600, color: "var(--text)", fontSize: 13 }}>
                   {campo === "razon_social" ? rs : rut}
                 </div>
-                <div style={{ fontSize: 11, color: "#64748b", marginTop: 1 }}>
+                <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 1 }}>
                   {campo === "razon_social" ? rut : rs}
                 </div>
               </button>
@@ -716,6 +709,66 @@ function Chip({ valor, color, bg }) {
     >
       {v}
     </span>
+  );
+}
+
+// Hilo de mensajes (lado equipo) ligado a una solicitud/cotización.
+function HiloMensajesAdmin({ solicitudId, setToast }) {
+  const [mensajes, setMensajes] = useState([]);
+  const [texto, setTexto] = useState("");
+  const [cargando, setCargando] = useState(true);
+  const [enviando, setEnviando] = useState(false);
+
+  async function cargar() {
+    setCargando(true);
+    try {
+      const data = await api.get(`/stock-clientes/solicitudes/${solicitudId}/mensajes`);
+      setMensajes(Array.isArray(data) ? data : []);
+    } catch { /* */ } finally { setCargando(false); }
+  }
+  useEffect(() => { cargar(); /* eslint-disable-next-line */ }, [solicitudId]);
+
+  async function enviar(e) {
+    e?.preventDefault?.();
+    const t = texto.trim();
+    if (!t || enviando) return;
+    setEnviando(true);
+    try {
+      await api.post(`/stock-clientes/solicitudes/${solicitudId}/mensajes`, { mensaje: t });
+      setTexto("");
+      await cargar();
+    } catch (err) {
+      setToast?.({ type: "error", message: err?.message || "No se pudo enviar el mensaje." });
+    } finally { setEnviando(false); }
+  }
+
+  return (
+    <div style={{ border: "1px solid var(--border, #e2e8f0)", borderRadius: 10, padding: 10, marginBottom: 10 }}>
+      <div style={{ fontSize: 11, fontWeight: 700, color: "#475569", textTransform: "uppercase", letterSpacing: ".04em", marginBottom: 8, display: "flex", alignItems: "center", gap: 5 }}>
+        <MessageCircle size={12} /> Comunicación con el cliente
+      </div>
+      <div style={{ maxHeight: 200, overflowY: "auto", display: "flex", flexDirection: "column", gap: 6, marginBottom: 8 }}>
+        {cargando ? (
+          <div style={{ fontSize: 12, color: "#94a3b8" }}>Cargando…</div>
+        ) : mensajes.length === 0 ? (
+          <div style={{ fontSize: 12, color: "#94a3b8" }}>Aún no hay mensajes. Escribe para iniciar la conversación.</div>
+        ) : mensajes.map((m) => {
+          const equipo = m.autor_tipo === "equipo";
+          return (
+            <div key={m.id} style={{ alignSelf: equipo ? "flex-end" : "flex-start", maxWidth: "85%", background: equipo ? "#e6f7f7" : "#f1f5f9", borderRadius: 10, padding: "6px 10px" }}>
+              <div style={{ fontSize: 13, color: "#0f172a", whiteSpace: "pre-wrap" }}>{m.mensaje}</div>
+              <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 2 }}>{equipo ? (m.autor_nombre || "Equipo") : "Cliente"} · {fmtFechaHora(m.created_at)}</div>
+            </div>
+          );
+        })}
+      </div>
+      <form onSubmit={enviar} style={{ display: "flex", gap: 6 }}>
+        <input className="input" value={texto} onChange={(e) => setTexto(e.target.value)} placeholder="Escribe un mensaje al cliente…" style={{ flex: 1 }} />
+        <button type="submit" disabled={enviando || !texto.trim()} className="btn btn-primary btn-sm" style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+          <Send size={13} /> Enviar
+        </button>
+      </form>
+    </div>
   );
 }
 
@@ -790,6 +843,7 @@ function DetalleDeclaracion({ declaracion, onCerrar, setToast }) {
   const [cargandoSolicitudes, setCargandoSolicitudes] = useState(true);
   const [expandidaId, setExpandidaId] = useState(null);
   const [contacto, setContacto] = useState(null);
+  const [sucursalesMap, setSucursalesMap] = useState({});
   const [mostrarCorreo, setMostrarCorreo] = useState(false);
 
   // Lleva al admin a /crear con datos del cliente (RUT, razón social, contacto)
@@ -806,6 +860,7 @@ function DetalleDeclaracion({ declaracion, onCerrar, setToast }) {
       email: solicitud?.contacto_email || "",
       telefono: solicitud?.contacto_telefono || "",
       observaciones: armarObservacionesSolicitud(declaracion, solicitud),
+      solicitud_stock_id: solicitud?.id ?? null,
     };
 
     // Marcar como respondida en segundo plano (no bloqueamos la navegación).
@@ -853,17 +908,23 @@ function DetalleDeclaracion({ declaracion, onCerrar, setToast }) {
     (async () => {
       setCargandoSolicitudes(true);
       try {
-        const [data, cont] = await Promise.all([
+        const [data, cont, sucs] = await Promise.all([
           api.get(
             `/stock-clientes/solicitudes-por-rut?rut=${encodeURIComponent(declaracion.rut)}`,
           ),
           api
             .get(`/stock-clientes/contacto?rut=${encodeURIComponent(declaracion.rut)}`)
             .catch(() => null),
+          api
+            .get(`/stock-clientes/sucursales-por-rut?rut=${encodeURIComponent(declaracion.rut)}`)
+            .catch(() => []),
         ]);
         if (!cancel) {
           setSolicitudes(Array.isArray(data) ? data : []);
           setContacto(cont || null);
+          const map = {};
+          (Array.isArray(sucs) ? sucs : []).forEach((s) => { map[s.id] = s; });
+          setSucursalesMap(map);
         }
       } catch {
         if (!cancel) setSolicitudes([]);
@@ -1202,6 +1263,7 @@ function DetalleDeclaracion({ declaracion, onCerrar, setToast }) {
                               {fmtFechaHora(s.created_at)} ·{" "}
                               {itemsSol.length} producto
                               {itemsSol.length === 1 ? "" : "s"}
+                              {s.sucursal_id && sucursalesMap[s.sucursal_id] ? ` · 🏢 ${sucursalesMap[s.sucursal_id].nombre}` : ""}
                             </div>
                           </div>
                         </div>
@@ -1290,7 +1352,42 @@ function DetalleDeclaracion({ declaracion, onCerrar, setToast }) {
                             </div>
                           )}
 
+                          {s.cotizacion && (
+                            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "8px 12px", background: "#ecfdf5", border: "1px solid #a7f3d0", borderRadius: 10, marginBottom: 10 }}>
+                              <div style={{ fontSize: 12.5, color: "#065f46" }}>
+                                <strong>Cotización generada:</strong> {s.cotizacion.id_licitacion || `#${s.cotizacion.id}`} · {s.cotizacion.estado}
+                              </div>
+                              <button type="button" onClick={() => navigate(`/detalle/${s.cotizacion.id}`)} style={{ ...styles.btnSecMini, display: "inline-flex", alignItems: "center", gap: 5 }}>
+                                Ver cotización
+                              </button>
+                            </div>
+                          )}
+
+                          <HiloMensajesAdmin solicitudId={s.id} setToast={setToast} />
+
                           <div style={styles.solAcciones}>
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                try {
+                                  await generarPDFSolicitud(s, {
+                                    razon_social: declaracion.razon_social || "",
+                                    rut: formatearRutVisual(declaracion.rut),
+                                    fechaTexto: fmtFechaHora(s.created_at),
+                                  });
+                                } catch (e) {
+                                  setToast({
+                                    type: "error",
+                                    message: e?.message || "No se pudo generar el PDF.",
+                                  });
+                                }
+                              }}
+                              style={{ ...styles.btnSecMini, display: "inline-flex", alignItems: "center", gap: 5 }}
+                              title="Descargar la solicitud del cliente como PDF"
+                            >
+                              <FileDown size={14} />
+                              Descargar PDF
+                            </button>
                             {s.estado === "pendiente" && (
                               <>
                                 <button
@@ -1928,11 +2025,13 @@ const styles = {
     fontWeight: 500,
   },
   input: {
-    padding: "8px 12px",
-    border: "1px solid #cbd5e1",
-    borderRadius: 8,
-    fontSize: 13,
-    color: "#0f172a",
+    height: 36,
+    padding: "0 10px",
+    border: "1px solid var(--border-strong)",
+    borderRadius: "var(--radius)",
+    fontSize: 13.5,
+    color: "var(--text)",
+    background: "var(--surface)",
     outline: "none",
     minWidth: 120,
     width: "100%",
@@ -1943,10 +2042,10 @@ const styles = {
     top: "calc(100% + 4px)",
     left: 0,
     right: 0,
-    background: "#fff",
-    border: "1px solid #e2e8f0",
-    borderRadius: 8,
-    boxShadow: "0 10px 24px rgba(15,23,42,0.10)",
+    background: "var(--surface)",
+    border: "1px solid var(--border)",
+    borderRadius: 10,
+    boxShadow: "0 10px 30px rgba(15,23,42,0.15)",
     maxHeight: 280,
     overflowY: "auto",
     zIndex: 50,

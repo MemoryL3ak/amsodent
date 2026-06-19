@@ -22,6 +22,7 @@ import { MarcajesModule } from './marcajes/marcajes.module';
 import { StockClientesModule } from './stock-clientes/stock-clientes.module';
 import { RecordatoriosModule } from './recordatorios/recordatorios.module';
 import { ChoferesModule } from './choferes/choferes.module';
+import { ActividadesModule } from './actividades/actividades.module';
 
 @Module({
   imports: [
@@ -48,6 +49,7 @@ import { ChoferesModule } from './choferes/choferes.module';
     StockClientesModule,
     RecordatoriosModule,
     ChoferesModule,
+    ActividadesModule,
   ],
 })
 export class AppModule {}

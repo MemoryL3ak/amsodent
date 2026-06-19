@@ -180,6 +180,35 @@ export class MarcajesService {
     return { ok: true, count: limpios.length };
   }
 
+  // Oficinas (ids) asignadas a un trabajador — para el panel de Usuarios.
+  async oficinasDeTrabajador(email: string): Promise<number[]> {
+    const { ids } = await this.asignacionTrabajador(email);
+    return ids;
+  }
+
+  // Reemplaza las oficinas asignadas a un trabajador (asignación desde Usuarios).
+  async setOficinasTrabajador(email: string, oficinaIds: number[]) {
+    const client = this.supabase.getClient();
+    const e = String(email || '').trim().toLowerCase();
+    if (!e) throw new BadRequestException('Correo de trabajador requerido.');
+    const ids = Array.from(
+      new Set((oficinaIds || []).map((x) => Number(x)).filter((n) => Number.isFinite(n) && n > 0)),
+    );
+    const { error: delErr } = await client
+      .from('marcaje_oficina_trabajadores')
+      .delete()
+      .eq('trabajador_email', e);
+    if (delErr) throw new BadRequestException(delErr.message);
+    if (ids.length) {
+      const rows = ids.map((oficina_id) => ({ oficina_id, trabajador_email: e }));
+      const { error: insErr } = await client
+        .from('marcaje_oficina_trabajadores')
+        .insert(rows);
+      if (insErr) throw new BadRequestException(insErr.message);
+    }
+    return { ok: true, count: ids.length };
+  }
+
   // Oficinas asignadas a un trabajador. `migrada=false` si la tabla aún no existe
   // (entorno sin migrar) → el llamador debe caer al comportamiento previo.
   private async asignacionTrabajador(

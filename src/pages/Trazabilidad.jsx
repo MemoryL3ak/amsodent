@@ -983,6 +983,9 @@ export default function Trazabilidad() {
       else if (facturas.length > 0) estadoDoc = "con factura";
       else if (guias.length > 0) estadoDoc = "falta factura";
       else estadoDoc = "solo OC";
+      const numerosOC = Array.from(
+        new Set(ocs.map((o) => String(o.numero || "").trim()).filter(Boolean))
+      ).join(", ");
       return {
         "ID Cotización": lic.id_licitacion || lic.id || "",
         "Cliente": lic.nombre_entidad || "",
@@ -990,6 +993,7 @@ export default function Trazabilidad() {
         "Tipo de Compra": lic.tipo_compra || "",
         "Fecha Adjudicación": (lic.fecha_adjudicada || "").toString().slice(0, 10),
         "Monto Total": Number(lic.total_con_iva ?? lic.total_sin_iva ?? 0),
+        "N° OC": numerosOC,
         "# OCs": ocs.length,
         "# Guías": guias.length,
         "# Facturas": facturas.length,

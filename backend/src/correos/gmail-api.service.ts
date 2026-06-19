@@ -261,13 +261,18 @@ export class GmailApiService {
     const { labelIds, includeSpamTrash } = this.resolverCarpeta(opts.carpeta, opts.labelId);
     const maxResults = Math.min(Math.max(Number(opts.maxResults) || 25, 1), 50);
 
+    // Cuando hay texto de búsqueda, buscar en TODO el correo (como Gmail) en vez
+    // de limitar a la carpeta/etiqueta actual: así un correo que está en otra
+    // carpeta también aparece. Sin texto, se respeta la carpeta seleccionada.
+    const tieneBusqueda = Boolean((opts.q || '').trim());
+
     const lista = await gmail.users.messages.list({
       userId: 'me',
-      labelIds,
+      labelIds: tieneBusqueda ? undefined : labelIds,
       q: opts.q || undefined,
       maxResults,
       pageToken: opts.pageToken || undefined,
-      includeSpamTrash,
+      includeSpamTrash: tieneBusqueda ? true : includeSpamTrash,
     });
 
     const ids = (lista.data.messages || []).map((m) => m.id!).filter(Boolean);

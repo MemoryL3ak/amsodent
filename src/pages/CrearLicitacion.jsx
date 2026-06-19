@@ -832,6 +832,10 @@ export default function CrearLicitacion() {
     }
   }
 
+  // Si esta cotización se crea a partir de una solicitud del portal del cliente,
+  // guardamos el id para vincularlas al guardar.
+  const [solicitudStockId, setSolicitudStockId] = useState(null);
+
   useEffect(() => {
     const draftDuplicado = location.state?.duplicarLicitacion;
     if (!draftDuplicado) return;
@@ -854,6 +858,7 @@ export default function CrearLicitacion() {
     try {
       const data = JSON.parse(guardado);
 
+      if (data.solicitud_stock_id != null) setSolicitudStockId(data.solicitud_stock_id);
       setIdLicitacionInput(data.idLicitacionInput || "");
       setNombre(data.nombre || "");
       setFechaHoraCierre(data.fechaHoraCierre || "");
@@ -1723,6 +1728,18 @@ export default function CrearLicitacion() {
           message: "La licitación se creó, pero hubo un error guardando los ítems.",
         });
         return;
+      }
+
+      // Vincular con la solicitud del portal del cliente (si aplica).
+      if (solicitudStockId) {
+        try {
+          await api.put(`/stock-clientes/solicitudes/${solicitudStockId}/vincular`, {
+            licitacion_id: idLicitacion,
+          });
+        } catch (errVinc) {
+          console.warn("No se pudo vincular la solicitud del cliente:", errVinc?.message);
+        }
+        setSolicitudStockId(null);
       }
 
       if (requiereAprobacion) {

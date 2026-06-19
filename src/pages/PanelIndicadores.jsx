@@ -4,7 +4,7 @@ import useAuth from "../hooks/useAuth";
 import MonthCalendarPicker from "../components/MonthCalendarPicker";
 import {
   TrendingUp, TrendingDown, Minus, ShoppingCart, Target, FileText,
-  UserPlus, RefreshCw, Award,
+  UserPlus, RefreshCw, Award, Banknote, X,
 } from "lucide-react";
 
 /* ── Helpers ──────────────────────────────────────────────────────────── */
@@ -88,12 +88,23 @@ export default function PanelIndicadores() {
   const puedeVer = esAdmin || esJefatura;
 
   const [periodo, setPeriodo] = useState(inicioMesISO());
+  const [filtroTipo, setFiltroTipo] = useState(""); // "" todos | "publica" | "particular"
   const [loading, setLoading] = useState(true);
   const [lics, setLics] = useState([]);
   const [adjDateByLic, setAdjDateByLic] = useState({});
-  const [catData, setCatData] = useState([]);
+  const [docSums, setDocSums] = useState({}); // { [licId]: { guia, oc, factbol } }
+  const [catData, setCatData] = useState([]); // [{ categoria, monto, productos:[{producto,monto}] }]
+  const [mostrarProductos, setMostrarProductos] = useState(false);
   const [metaCotizaciones, setMetaCotizaciones] = useState(0);
   const [metaMonto, setMetaMonto] = useState(0);
+
+  // Público vs particular según tipo_cliente de la licitación.
+  const esParticular = (l) => (l?.tipo_cliente || "").toLowerCase().includes("particular");
+  const pasaTipo = (l) => {
+    if (filtroTipo === "publica") return !esParticular(l);
+    if (filtroTipo === "particular") return esParticular(l);
+    return true;
+  };
 
   const mesActual = mesDe(periodo);
   const mesPrev = addMesKey(mesActual, -1);
@@ -111,24 +122,37 @@ export default function PanelIndicadores() {
         const rows = data || [];
         const ids = rows.map((l) => Number(l.id)).filter(Boolean);
         const adj = {};
+        const sums = {}; // { lid: { guia, oc, factbol } }
         if (ids.length) {
           const docs = await api.post("/licitaciones/documentos/filter", {
-            filter: { licitacion_ids: ids, tipo: ["orden_compra", "factura_boleta", "efectivo"] },
-            fields: "licitacion_id,tipo,fecha_oc,created_at",
+            filter: {
+              licitacion_ids: ids,
+              tipo: ["orden_compra", "guia_despacho", "factura", "factura_boleta", "efectivo"],
+            },
+            fields: "licitacion_id,tipo,monto,fecha_oc,created_at",
           });
           (docs || []).forEach((d) => {
             const lid = Number(d.licitacion_id);
-            const f = toDateISO(d.fecha_oc) || toDateISO(d.created_at);
-            if (!lid || !f) return;
-            if (!adj[lid] || f < adj[lid]) adj[lid] = f;
+            if (!lid) return;
+            const monto = Number(d.monto || 0);
+            const acc = (sums[lid] = sums[lid] || { guia: 0, oc: 0, factbol: 0 });
+            if (d.tipo === "guia_despacho") acc.guia += monto;
+            else if (d.tipo === "orden_compra") acc.oc += monto;
+            else if (d.tipo === "factura" || d.tipo === "factura_boleta" || d.tipo === "efectivo") acc.factbol += monto;
+            // Fecha de adjudicación: primera OC (público) o boleta/efectivo (particular).
+            if (d.tipo === "orden_compra" || d.tipo === "factura_boleta" || d.tipo === "efectivo") {
+              const f = toDateISO(d.fecha_oc) || toDateISO(d.created_at);
+              if (f && (!adj[lid] || f < adj[lid])) adj[lid] = f;
+            }
           });
         }
         if (!activo) return;
         setLics(rows);
         setAdjDateByLic(adj);
+        setDocSums(sums);
       } catch (e) {
         console.error("Error cargando panel:", e);
-        if (activo) { setLics([]); setAdjDateByLic({}); }
+        if (activo) { setLics([]); setAdjDateByLic({}); setDocSums({}); }
       } finally {
         if (activo) setLoading(false);
       }
@@ -142,29 +166,40 @@ export default function PanelIndicadores() {
     let activo = true;
     (async () => {
       const idsMes = lics
-        .filter((l) => mesDe(adjDateByLic[l.id]) === mesActual)
+        .filter((l) => pasaTipo(l) && mesDe(adjDateByLic[l.id]) === mesActual)
         .map((l) => Number(l.id));
       if (!idsMes.length) { if (activo) setCatData([]); return; }
       try {
         const items = await api.post("/licitaciones/items/filter", {
           licitacion_ids: idsMes,
-          fields: "licitacion_id,categoria,total",
+          fields: "licitacion_id,producto,categoria,total",
         });
-        const map = {};
+        const mapCat = {};      // cat -> total
+        const mapCatProd = {};  // cat -> { producto -> monto }
         (items || []).forEach((it) => {
+          const total = Number(it.total || 0);
           const cat = (it.categoria || "Sin categoría").trim() || "Sin categoría";
-          map[cat] = (map[cat] || 0) + Number(it.total || 0);
+          const prod = (it.producto || "Sin nombre").trim() || "Sin nombre";
+          mapCat[cat] = (mapCat[cat] || 0) + total;
+          (mapCatProd[cat] = mapCatProd[cat] || {});
+          mapCatProd[cat][prod] = (mapCatProd[cat][prod] || 0) + total;
         });
-        const arr = Object.entries(map).map(([categoria, monto]) => ({ categoria, monto }))
-          .sort((a, b) => b.monto - a.monto);
-        if (activo) setCatData(arr);
+        const arrCat = Object.entries(mapCat).map(([categoria, monto]) => ({
+          categoria,
+          monto,
+          productos: Object.entries(mapCatProd[categoria] || {})
+            .map(([producto, m]) => ({ producto, monto: m }))
+            .sort((a, b) => b.monto - a.monto)
+            .slice(0, 10),
+        })).sort((a, b) => b.monto - a.monto);
+        if (activo) setCatData(arrCat);
       } catch (e) {
         console.error("Error ventas por categoría:", e);
         if (activo) setCatData([]);
       }
     })();
     return () => { activo = false; };
-  }, [cargando, puedeVer, lics, adjDateByLic, mesActual]);
+  }, [cargando, puedeVer, lics, adjDateByLic, mesActual, filtroTipo]);
 
   // Metas (donde existan): N° cotizaciones del equipo + monto neto de vendedores.
   useEffect(() => {
@@ -184,16 +219,38 @@ export default function PanelIndicadores() {
     return () => { activo = false; };
   }, [cargando, puedeVer, periodo]);
 
+  // Venta / adjudicado por licitación, según su tipo de cliente (basado en documentos).
+  //  Público   → Ventas = Σ guías de despacho;  Adjudicado = Σ órdenes de compra.
+  //  Particular → Ventas = Adjudicado = Σ boletas/facturas.
+  const ventaDeLic = (l) => {
+    const ds = docSums[l.id] || {};
+    return esParticular(l) ? (ds.factbol || 0) : (ds.guia || 0);
+  };
+  const adjudicadoDeLic = (l) => {
+    const ds = docSums[l.id] || {};
+    return esParticular(l) ? (ds.factbol || 0) : (ds.oc || 0);
+  };
+  // Monto neto de la OC (la OC se guarda neta); fallback al neto de la cotización.
+  const netoDeLic = (l) => {
+    const oc = (docSums[l.id] || {}).oc || 0;
+    if (oc > 0) return oc;
+    const sinIva = Number(l.total_sin_iva || 0);
+    if (sinIva > 0) return sinIva;
+    return Math.round(Number(l.total_con_iva || 0) / 1.19);
+  };
+
   // Métricas de un mes dado (key 'YYYY-MM').
   const metricasMes = useMemo(() => {
     return (mesKey) => {
-      let ventas = 0, ventasNeto = 0, adjudicadas = 0, cotizaciones = 0;
+      let ventas = 0, ventasNeto = 0, adjudicadoMonto = 0, adjudicadas = 0, cotizaciones = 0;
       const clientesMes = new Set();
       lics.forEach((l) => {
+        if (!pasaTipo(l)) return;
         if (mesDe(l.fecha) === mesKey) cotizaciones++;
         if (mesDe(adjDateByLic[l.id]) === mesKey) {
           adjudicadas++;
-          ventas += Number(l.total_con_iva || 0);
+          ventas += ventaDeLic(l);
+          adjudicadoMonto += adjudicadoDeLic(l);
           ventasNeto += Number(l.total_sin_iva || l.total_con_iva || 0);
           const c = (l.rut_entidad || l.nombre_entidad || "").trim().toLowerCase();
           if (c) clientesMes.add(c);
@@ -201,14 +258,15 @@ export default function PanelIndicadores() {
       });
       const conversion = cotizaciones > 0 ? (adjudicadas / cotizaciones) * 100 : 0;
       const ticket = adjudicadas > 0 ? ventas / adjudicadas : 0;
-      return { ventas, ventasNeto, adjudicadas, cotizaciones, conversion, ticket, clientes: clientesMes };
+      return { ventas, ventasNeto, adjudicadoMonto, adjudicadas, cotizaciones, conversion, ticket, clientes: clientesMes };
     };
-  }, [lics, adjDateByLic]);
+  }, [lics, adjDateByLic, docSums, filtroTipo]);
 
   // Primera adjudicación por cliente (para clientes nuevos / recompra).
   const clienteAdjMeses = useMemo(() => {
     const m = {}; // clienteKey -> [mesKey...]
     lics.forEach((l) => {
+      if (!pasaTipo(l)) return;
       const mk = mesDe(adjDateByLic[l.id]);
       if (!mk) return;
       const c = (l.rut_entidad || l.nombre_entidad || "").trim().toLowerCase();
@@ -216,7 +274,7 @@ export default function PanelIndicadores() {
       (m[c] = m[c] || []).push(mk);
     });
     return m;
-  }, [lics, adjDateByLic]);
+  }, [lics, adjDateByLic, filtroTipo]);
 
   function clientesNuevosYRecompra(mesKey) {
     let nuevos = 0, repiten = 0, totalConCompra = 0;
@@ -250,7 +308,7 @@ export default function PanelIndicadores() {
 
   // Embudo de conversión (cohorte de cotizaciones creadas en el mes).
   const embudo = useMemo(() => {
-    const creadas = lics.filter((l) => mesDe(l.fecha) === mesActual);
+    const creadas = lics.filter((l) => pasaTipo(l) && mesDe(l.fecha) === mesActual);
     const total = creadas.length;
     const enProceso = creadas.filter((l) => ESTADOS_ABIERTOS.includes(l.estado)).length;
     const adjudicadas = creadas.filter((l) => l.estado === "Adjudicada" || adjDateByLic[l.id]).length;
@@ -261,19 +319,20 @@ export default function PanelIndicadores() {
       { etapa: "Adjudicadas (cierres)", n: adjudicadas, color: "#16a34a" },
       { etapa: "No adjudicadas", n: perdidas, color: "#ef4444" },
     ];
-  }, [lics, adjDateByLic, mesActual]);
+  }, [lics, adjDateByLic, mesActual, filtroTipo]);
 
   // Top 5 clientes por venta del mes.
   const topClientes = useMemo(() => {
     const map = {};
     lics.forEach((l) => {
+      if (!pasaTipo(l)) return;
       if (mesDe(adjDateByLic[l.id]) !== mesActual) return;
       const nombre = (l.nombre_entidad || l.rut_entidad || "—").trim();
-      map[nombre] = (map[nombre] || 0) + Number(l.total_con_iva || 0);
+      map[nombre] = (map[nombre] || 0) + netoDeLic(l);
     });
     return Object.entries(map).map(([nombre, monto]) => ({ nombre, monto }))
       .sort((a, b) => b.monto - a.monto).slice(0, 5);
-  }, [lics, adjDateByLic, mesActual]);
+  }, [lics, adjDateByLic, docSums, mesActual, filtroTipo]);
 
   if (!cargando && !puedeVer) {
     return (
@@ -289,6 +348,15 @@ export default function PanelIndicadores() {
   const cumplimientoCot = metaCotizaciones > 0 ? (m.cotizaciones / metaCotizaciones) * 100 : null;
   const cumplimiento = cumplimientoMonto != null ? cumplimientoMonto : cumplimientoCot;
 
+  const subVentas =
+    filtroTipo === "publica" ? "Mes · guías de despacho"
+    : filtroTipo === "particular" ? "Mes · boletas/facturas"
+    : "Mes · guías (púb.) + boletas (part.)";
+  const subAdjudicado =
+    filtroTipo === "publica" ? "Mes · órdenes de compra"
+    : filtroTipo === "particular" ? "Mes · boletas/facturas"
+    : "Mes · OC (púb.) + boletas (part.)";
+
   const maxEvol = Math.max(1, ...evolucion.map((e) => e.ventas));
   const maxEmbudo = Math.max(1, ...embudo.map((e) => e.n));
   const totalCat = catData.reduce((acc, c) => acc + c.monto, 0);
@@ -301,9 +369,19 @@ export default function PanelIndicadores() {
           <h1 className="page-title">Panel de Indicadores — Gestión Comercial</h1>
           <p className="page-subtitle">Mide · Analiza · Mejora · Crece</p>
         </div>
-        <div className="field" style={{ margin: 0 }}>
-          <label className="field-label">Mes</label>
-          <MonthCalendarPicker value={periodo} onChange={setPeriodo} />
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+          <div className="field" style={{ margin: 0 }}>
+            <label className="field-label">Tipo de cliente</label>
+            <select className="input" value={filtroTipo} onChange={(e) => setFiltroTipo(e.target.value)} style={{ minWidth: 180 }}>
+              <option value="">Todos</option>
+              <option value="publica">Entidad Pública</option>
+              <option value="particular">Cliente Particular</option>
+            </select>
+          </div>
+          <div className="field" style={{ margin: 0 }}>
+            <label className="field-label">Mes</label>
+            <MonthCalendarPicker value={periodo} onChange={setPeriodo} />
+          </div>
         </div>
       </div>
 
@@ -313,12 +391,13 @@ export default function PanelIndicadores() {
         <>
           {/* KPIs */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 14, marginBottom: 22 }}>
-            <KpiCard icon={ShoppingCart} color="#0e7490" label="Ventas Totales" sub="Mes · con IVA" value={fmtCLP(m.ventas)} delta={<Delta actual={m.ventas} prev={mPrev.ventas} />} />
+            <KpiCard icon={ShoppingCart} color="#0e7490" label="Ventas Totales" sub={subVentas} value={fmtCLP(m.ventas)} delta={<Delta actual={m.ventas} prev={mPrev.ventas} />} />
+            <KpiCard icon={Banknote} color="#15803d" label="Adjudicados" sub={subAdjudicado} value={fmtCLP(m.adjudicadoMonto)} delta={<Delta actual={m.adjudicadoMonto} prev={mPrev.adjudicadoMonto} />} />
             <KpiCard icon={Target} color="#16a34a" label="Conversión" sub="Adjudicadas / cotizaciones" value={fmtPct(m.conversion)} delta={<Delta actual={m.conversion} prev={mPrev.conversion} unidadPp />} />
             <KpiCard icon={FileText} color="#6366f1" label="Cotizaciones" sub="Creadas en el mes" value={fmtNum(m.cotizaciones)} delta={<Delta actual={m.cotizaciones} prev={mPrev.cotizaciones} />} />
             <KpiCard icon={UserPlus} color="#d97706" label="Clientes Nuevos" sub="Primera compra el mes" value={fmtNum(cnr.nuevos)} delta={<Delta actual={cnr.nuevos} prev={cnrPrev.nuevos} />} />
             <KpiCard icon={RefreshCw} color="#0ea5e9" label="Recompra" sub="Clientes que repiten" value={fmtPct(cnr.recompra)} delta={<Delta actual={cnr.recompra} prev={cnrPrev.recompra} unidadPp />} />
-            <KpiCard icon={Award} color="#b45309" label="Lic. Adjudicadas" sub="Cierres del mes" value={fmtNum(m.adjudicadas)} delta={<Delta actual={m.adjudicadas} prev={mPrev.adjudicadas} />} />
+            <KpiCard icon={Award} color="#b45309" label="Cotizaciones adjudicadas" sub="Cierres del mes" value={fmtNum(m.adjudicadas)} delta={<Delta actual={m.adjudicadas} prev={mPrev.adjudicadas} />} />
           </div>
 
           {/* Charts row 1 */}
@@ -347,16 +426,35 @@ export default function PanelIndicadores() {
             </div>
             {/* Ventas por categoría */}
             <div className="surface" style={{ padding: 18 }}>
-              <h3 className="surface-title" style={{ marginBottom: 14 }}>Ventas por categoría (mes)</h3>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, gap: 8 }}>
+                <h3 className="surface-title" style={{ margin: 0 }}>Ventas por categoría (mes)</h3>
+                {catData.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setMostrarProductos(true)}
+                    className="btn btn-ghost"
+                    style={{ fontSize: 12, padding: "4px 10px" }}
+                    title="Ver productos por categoría"
+                  >
+                    Ver productos
+                  </button>
+                )}
+              </div>
               {catData.length === 0 ? (
                 <p style={{ color: "var(--text-muted)", fontSize: 13 }}>Sin ventas en el periodo.</p>
               ) : (
-                <Donut data={catData} total={totalCat} />
+                <div
+                  onClick={() => setMostrarProductos(true)}
+                  style={{ cursor: "pointer" }}
+                  title="Ver productos por categoría"
+                >
+                  <Donut data={catData} total={totalCat} />
+                </div>
               )}
             </div>
             {/* Top clientes */}
             <div className="surface" style={{ padding: 18 }}>
-              <h3 className="surface-title" style={{ marginBottom: 14 }}>Top 5 clientes por ventas (mes)</h3>
+              <h3 className="surface-title" style={{ marginBottom: 14 }}>Top 5 clientes por monto neto OC (mes)</h3>
               {topClientes.length === 0 ? (
                 <p style={{ color: "var(--text-muted)", fontSize: 13 }}>Sin ventas en el periodo.</p>
               ) : (
@@ -395,11 +493,13 @@ export default function PanelIndicadores() {
                   </thead>
                   <tbody>
                     <FilaInd nombre="Ventas (neto)" actual={fmtCLP(m.ventasNeto)} meta={metaMonto > 0 ? fmtCLP(metaMonto) : "—"} cumpl={metaMonto > 0 ? (m.ventasNeto / metaMonto) * 100 : null} delta={<Delta actual={m.ventasNeto} prev={mPrev.ventasNeto} />} />
+                    <FilaInd nombre="Ventas (documentos)" actual={fmtCLP(m.ventas)} meta="—" cumpl={null} delta={<Delta actual={m.ventas} prev={mPrev.ventas} />} />
+                    <FilaInd nombre="Adjudicado ($)" actual={fmtCLP(m.adjudicadoMonto)} meta="—" cumpl={null} delta={<Delta actual={m.adjudicadoMonto} prev={mPrev.adjudicadoMonto} />} />
                     <FilaInd nombre="N° Cotizaciones" actual={fmtNum(m.cotizaciones)} meta={metaCotizaciones > 0 ? fmtNum(metaCotizaciones) : "—"} cumpl={metaCotizaciones > 0 ? (m.cotizaciones / metaCotizaciones) * 100 : null} delta={<Delta actual={m.cotizaciones} prev={mPrev.cotizaciones} />} />
                     <FilaInd nombre="Conversión" actual={fmtPct(m.conversion)} meta="—" cumpl={null} delta={<Delta actual={m.conversion} prev={mPrev.conversion} unidadPp />} />
                     <FilaInd nombre="Ticket promedio" actual={fmtCLP(m.ticket)} meta="—" cumpl={null} delta={<Delta actual={m.ticket} prev={mPrev.ticket} />} />
                     <FilaInd nombre="% Recompra" actual={fmtPct(cnr.recompra)} meta="—" cumpl={null} delta={<Delta actual={cnr.recompra} prev={cnrPrev.recompra} unidadPp />} />
-                    <FilaInd nombre="Lic. adjudicadas" actual={fmtNum(m.adjudicadas)} meta="—" cumpl={null} delta={<Delta actual={m.adjudicadas} prev={mPrev.adjudicadas} />} />
+                    <FilaInd nombre="Cotizaciones adjudicadas" actual={fmtNum(m.adjudicadas)} meta="—" cumpl={null} delta={<Delta actual={m.adjudicadas} prev={mPrev.adjudicadas} />} />
                   </tbody>
                 </table>
               </div>
@@ -449,6 +549,87 @@ export default function PanelIndicadores() {
           </div>
         </>
       )}
+
+      {mostrarProductos && (
+        <ModalProductosPorCategoria
+          categorias={catData}
+          onCerrar={() => setMostrarProductos(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+/* ── Modal: productos por categoría (acordeón) ────────────────────────── */
+function ModalProductosPorCategoria({ categorias, onCerrar }) {
+  const total = categorias.reduce((acc, c) => acc + c.monto, 0);
+  // Primera categoría abierta por defecto.
+  const [abierta, setAbierta] = useState(categorias[0]?.categoria || null);
+  return (
+    <div
+      onClick={onCerrar}
+      style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.55)", display: "grid", placeItems: "center", zIndex: 11000, padding: 16 }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{ background: "var(--surface)", borderRadius: "var(--radius-lg)", border: "1px solid var(--border)", width: "min(580px, 100%)", maxHeight: "85vh", overflow: "auto", boxShadow: "0 20px 50px rgba(0,0,0,.3)" }}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 18px", borderBottom: "1px solid var(--border)" }}>
+          <h3 className="surface-title" style={{ margin: 0 }}>Productos por categoría (mes)</h3>
+          <button type="button" onClick={onCerrar} className="btn btn-ghost" style={{ padding: 6 }} aria-label="Cerrar">
+            <X size={18} />
+          </button>
+        </div>
+        <div style={{ padding: 14 }}>
+          {categorias.length === 0 ? (
+            <p style={{ color: "var(--text-muted)", fontSize: 13 }}>Sin productos en el periodo.</p>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {categorias.map((c, i) => {
+                const expandida = abierta === c.categoria;
+                const color = COLORES_CAT[i % COLORES_CAT.length];
+                const maxProd = Math.max(1, ...c.productos.map((p) => p.monto));
+                return (
+                  <div key={c.categoria} style={{ border: "1px solid var(--border)", borderRadius: "var(--radius)", overflow: "hidden" }}>
+                    <button
+                      type="button"
+                      onClick={() => setAbierta(expandida ? null : c.categoria)}
+                      style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", background: "var(--bg)", border: "none", cursor: "pointer", textAlign: "left" }}
+                    >
+                      <span style={{ width: 11, height: 11, borderRadius: 3, background: color, flexShrink: 0 }} />
+                      <span style={{ flex: 1, fontWeight: 600, fontSize: 13, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={c.categoria}>{c.categoria}</span>
+                      <span style={{ fontSize: 12.5, fontWeight: 700, color: "var(--text)", whiteSpace: "nowrap" }}>
+                        {fmtCLP(c.monto)}
+                        <span style={{ color: "var(--text-muted)", fontWeight: 400, marginLeft: 6 }}>{total > 0 ? `${((c.monto / total) * 100).toFixed(0)}%` : "0%"}</span>
+                      </span>
+                      <span style={{ color: "var(--text-muted)", transform: expandida ? "rotate(180deg)" : "none", transition: "transform .15s" }}>▾</span>
+                    </button>
+                    {expandida && (
+                      <div style={{ padding: "10px 12px", display: "flex", flexDirection: "column", gap: 9 }}>
+                        {c.productos.length === 0 ? (
+                          <p style={{ color: "var(--text-muted)", fontSize: 12 }}>Sin productos con nombre en esta categoría.</p>
+                        ) : c.productos.map((p, j) => (
+                          <div key={p.producto}>
+                            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 3, gap: 8 }}>
+                              <span style={{ color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={p.producto}>
+                                <strong style={{ color: "var(--text-muted)", marginRight: 6 }}>{j + 1}.</strong>{p.producto}
+                              </span>
+                              <strong style={{ color: "var(--text)", whiteSpace: "nowrap" }}>{fmtCLP(p.monto)}</strong>
+                            </div>
+                            <div style={{ height: 8, borderRadius: 4, background: "var(--bg)", overflow: "hidden" }}>
+                              <div style={{ height: "100%", width: `${clamp((p.monto / maxProd) * 100, 2, 100)}%`, background: color, borderRadius: 4 }} />
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

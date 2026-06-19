@@ -37,6 +37,7 @@ import {
 } from "lucide-react";
 
 import { descargarCSV, descargarReportePDF } from "../lib/reporteStock";
+import { generarPDFcotizacion } from "../utils/generarPDFcotizacion";
 
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3001/api";
 const TOKEN_KEY = "portal_stock_token";
@@ -1003,6 +1004,31 @@ function PantallaDeclaracion({ cliente, setToast }) {
   const [guardando, setGuardando] = useState(false);
   const [mostrarSolicitud, setMostrarSolicitud] = useState(false);
   const [mostrarCargaMasiva, setMostrarCargaMasiva] = useState(false);
+  // Sucursales (catálogos por dirección).
+  const [sucursales, setSucursales] = useState([]);
+  const [sucursalId, setSucursalId] = useState(null);
+  const [mostrarSucursales, setMostrarSucursales] = useState(false);
+
+  const sucursalActual = useMemo(
+    () => sucursales.find((s) => String(s.id) === String(sucursalId)) || null,
+    [sucursales, sucursalId],
+  );
+
+  async function cargarSucursales(preferirId) {
+    try {
+      const data = await apiRequest("/stock-clientes/mis-sucursales");
+      const lista = Array.isArray(data) ? data : [];
+      setSucursales(lista);
+      setSucursalId((prev) => {
+        const elegido = preferirId ?? prev;
+        if (elegido && lista.some((s) => String(s.id) === String(elegido))) return elegido;
+        return lista[0]?.id ?? null;
+      });
+      return lista;
+    } catch {
+      return [];
+    }
+  }
 
   async function cargarSolicitudes() {
     setCargandoSolicitudes(true);
@@ -1016,14 +1042,23 @@ function PantallaDeclaracion({ cliente, setToast }) {
     }
   }
 
+  // Cargar sucursales al montar (define la sucursal activa).
   useEffect(() => {
+    cargarSucursales();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Cargar catálogo + declaraciones de la sucursal activa.
+  useEffect(() => {
+    if (!sucursalId) return;
     let cancel = false;
     async function cargar() {
       setCargando(true);
       try {
+        const qs = `?sucursal_id=${sucursalId}`;
         const [productos, decls, solics] = await Promise.all([
-          apiRequest("/stock-clientes/mis-productos"),
-          apiRequest("/stock-clientes/mis-declaraciones"),
+          apiRequest(`/stock-clientes/mis-productos${qs}`),
+          apiRequest(`/stock-clientes/mis-declaraciones${qs}`),
           apiRequest("/stock-clientes/mis-solicitudes").catch(() => []),
         ]);
         if (cancel) return;
@@ -1061,7 +1096,8 @@ function PantallaDeclaracion({ cliente, setToast }) {
     return () => {
       cancel = true;
     };
-  }, [setToast]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sucursalId]);
 
   function crearItemVacio() {
     return {
@@ -1181,7 +1217,7 @@ function PantallaDeclaracion({ cliente, setToast }) {
     try {
       const res = await apiRequest("/stock-clientes/declaracion", {
         method: "POST",
-        body: JSON.stringify({ items: limpios }),
+        body: JSON.stringify({ items: limpios, sucursal_id: sucursalId }),
       });
       const decl = res?.declaracion;
       const totalAlertas = (decl?.total_rojos || 0) + (decl?.total_amarillos || 0);
@@ -1455,6 +1491,28 @@ function PantallaDeclaracion({ cliente, setToast }) {
               <Plus size={15} /> Agregar producto
             </button>
           </div>
+        </div>
+
+        {/* Selector de sucursal (catálogo por dirección) */}
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", padding: "0 0 14px", borderBottom: "1px solid #eef2f7", marginBottom: 14 }}>
+          <span style={{ fontSize: 13, fontWeight: 600, color: "#334155" }}>Sucursal:</span>
+          <select
+            value={sucursalId ?? ""}
+            onChange={(e) => setSucursalId(e.target.value || null)}
+            style={{ height: 38, padding: "0 12px", border: "1px solid #cbd5e1", borderRadius: 8, fontSize: 13.5, minWidth: 220, background: "#fff", cursor: "pointer" }}
+          >
+            {sucursales.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.nombre}{s.direccion ? ` — ${s.direccion}` : ""}
+              </option>
+            ))}
+          </select>
+          <button onClick={() => setMostrarSucursales(true)} style={styles.btnSecundarioOutline} className="btn-hover" title="Crear o editar sucursales">
+            <MapPin size={15} /> Gestionar sucursales
+          </button>
+          {sucursalActual?.comuna && (
+            <span style={{ fontSize: 12, color: "#64748b" }}>{sucursalActual.comuna}</span>
+          )}
         </div>
 
         <div style={styles.tablaWrap}>
@@ -1743,10 +1801,20 @@ function PantallaDeclaracion({ cliente, setToast }) {
         />
       )}
 
+      {mostrarSucursales && (
+        <ModalSucursales
+          sucursales={sucursales}
+          onCerrar={() => setMostrarSucursales(false)}
+          onCambio={(nuevoId) => cargarSucursales(nuevoId)}
+          setToast={setToast}
+        />
+      )}
+
       {mostrarSolicitud && (
         <ModalSolicitudCotizacion
           cliente={cliente}
           productos={items}
+          sucursalId={sucursalId}
           onCerrar={() => setMostrarSolicitud(false)}
           onEnviado={(resumen) => {
             setMostrarSolicitud(false);
@@ -1982,16 +2050,147 @@ function PanelMisSolicitudes({ solicitudes, cargando, onSolicitarNueva }) {
                   </div>
                 )}
 
-                {s.estado === "respondida" && s.respondida_at && (
+                {s.estado === "respondida" && s.respondida_at && !s.cotizacion && (
                   <div style={solStyles.respondidaInfo}>
                     Respondida el {fmtFechaHora(s.respondida_at)}
                   </div>
                 )}
+
+                {s.cotizacion && <CotizacionGenerada solicitud={s} />}
+
+                <HiloMensajesCliente solicitudId={s.id} />
               </div>
             )}
           </div>
         );
       })}
+    </div>
+  );
+}
+
+/* Bloque "cotización generada" + descarga de PDF en el portal del cliente. */
+function CotizacionGenerada({ solicitud }) {
+  const [descargando, setDescargando] = useState(false);
+  const [error, setError] = useState("");
+  const cot = solicitud.cotizacion || {};
+
+  const ESTADO_LABEL = {
+    "En espera": "En preparación",
+    "Pendiente Aprobación": "En revisión interna",
+    Adjudicada: "Aceptada / Adjudicada",
+    Perdida: "No concretada",
+    Desierta: "No concretada",
+    Descartada: "Descartada",
+    Cancelada: "Cancelada",
+  };
+  const estadoTxt = ESTADO_LABEL[cot.estado] || cot.estado || "En proceso";
+
+  async function descargar() {
+    setDescargando(true);
+    setError("");
+    try {
+      const r = await apiRequest(`/stock-clientes/mis-solicitudes/${solicitud.id}/cotizacion`);
+      if (!r?.datos) throw new Error("La cotización aún no está disponible.");
+      await generarPDFcotizacion(r.datos);
+    } catch (e) {
+      setError(e?.message || "No se pudo descargar la cotización.");
+    } finally {
+      setDescargando(false);
+    }
+  }
+
+  return (
+    <div style={{ marginTop: 12, padding: "12px 14px", background: "#ecfdf5", border: "1px solid #a7f3d0", borderRadius: 12 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+        <div>
+          <div style={{ fontSize: 13.5, fontWeight: 700, color: "#065f46" }}>
+            ✅ Se generó una cotización basada en su solicitud
+          </div>
+          <div style={{ fontSize: 12, color: "#047857", marginTop: 2 }}>
+            N° {cot.id_licitacion || `#${cot.id}`} · Estado: <strong>{estadoTxt}</strong>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={descargar}
+          disabled={descargando}
+          style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 14px", background: "#047857", color: "#fff", border: "none", borderRadius: 999, fontSize: 12.5, fontWeight: 600, cursor: descargando ? "wait" : "pointer" }}
+        >
+          <FileDown size={14} /> {descargando ? "Generando…" : "Descargar PDF"}
+        </button>
+      </div>
+      {error && <div style={{ fontSize: 11.5, color: "#b91c1c", marginTop: 6 }}>{error}</div>}
+    </div>
+  );
+}
+
+/* Hilo de mensajes (lado cliente) ligado a su solicitud/cotización. */
+function HiloMensajesCliente({ solicitudId }) {
+  const [mensajes, setMensajes] = useState([]);
+  const [texto, setTexto] = useState("");
+  const [cargando, setCargando] = useState(true);
+  const [enviando, setEnviando] = useState(false);
+  const [error, setError] = useState("");
+
+  async function cargar() {
+    setCargando(true);
+    try {
+      const data = await apiRequest(`/stock-clientes/mis-solicitudes/${solicitudId}/mensajes`);
+      setMensajes(Array.isArray(data) ? data : []);
+    } catch { /* */ } finally { setCargando(false); }
+  }
+  useEffect(() => { cargar(); /* eslint-disable-next-line */ }, [solicitudId]);
+
+  async function enviar(e) {
+    e?.preventDefault?.();
+    const t = texto.trim();
+    if (!t || enviando) return;
+    setEnviando(true);
+    setError("");
+    try {
+      await apiRequest(`/stock-clientes/mis-solicitudes/${solicitudId}/mensajes`, {
+        method: "POST",
+        body: JSON.stringify({ mensaje: t }),
+      });
+      setTexto("");
+      await cargar();
+    } catch (err) {
+      setError(err?.message || "No se pudo enviar el mensaje.");
+    } finally { setEnviando(false); }
+  }
+
+  return (
+    <div style={{ marginTop: 12, border: "1px solid #e2e8f0", borderRadius: 12, padding: 12 }}>
+      <div style={{ fontSize: 11, fontWeight: 700, color: "#475569", textTransform: "uppercase", letterSpacing: ".04em", marginBottom: 8, display: "flex", alignItems: "center", gap: 5 }}>
+        <MessageCircle size={12} /> Comunicación con Amsodent
+      </div>
+      <div style={{ maxHeight: 220, overflowY: "auto", display: "flex", flexDirection: "column", gap: 6, marginBottom: 8 }}>
+        {cargando ? (
+          <div style={{ fontSize: 12, color: "#94a3b8" }}>Cargando…</div>
+        ) : mensajes.length === 0 ? (
+          <div style={{ fontSize: 12, color: "#94a3b8" }}>¿Necesita una modificación o tiene dudas? Escríbanos aquí.</div>
+        ) : mensajes.map((m) => {
+          const mio = m.autor_tipo === "cliente";
+          return (
+            <div key={m.id} style={{ alignSelf: mio ? "flex-end" : "flex-start", maxWidth: "85%", background: mio ? "#dbeafe" : "#f1f5f9", borderRadius: 10, padding: "6px 10px" }}>
+              <div style={{ fontSize: 13, color: "#0f172a", whiteSpace: "pre-wrap" }}>{m.mensaje}</div>
+              <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 2 }}>{mio ? "Usted" : (m.autor_nombre || "Amsodent")} · {fmtFechaHora(m.created_at)}</div>
+            </div>
+          );
+        })}
+      </div>
+      <form onSubmit={enviar} style={{ display: "flex", gap: 6 }}>
+        <input
+          value={texto}
+          onChange={(e) => setTexto(e.target.value)}
+          placeholder="Escriba un mensaje o solicite una modificación…"
+          style={{ flex: 1, height: 36, padding: "0 10px", border: "1px solid #cbd5e1", borderRadius: 8, fontSize: 13, outline: "none" }}
+        />
+        <button type="submit" disabled={enviando || !texto.trim()} style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "0 14px", background: "#0ea5a4", color: "#fff", border: "none", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+          <Send size={13} /> Enviar
+        </button>
+      </form>
+      {error && <div style={{ fontSize: 11.5, color: "#b91c1c", marginTop: 6 }}>{error}</div>}
     </div>
   );
 }
@@ -2382,9 +2581,110 @@ function BuscadorCatalogo({ onAgregar }) {
   );
 }
 
+/* Gestión de sucursales del cliente (catálogos por dirección). */
+function ModalSucursales({ sucursales, onCerrar, onCambio, setToast }) {
+  const [lista, setLista] = useState(sucursales || []);
+  const [form, setForm] = useState({ nombre: "", direccion: "", comuna: "" });
+  const [editId, setEditId] = useState(null);
+  const [guardando, setGuardando] = useState(false);
+
+  const inputStyle = { width: "100%", height: 38, padding: "0 10px", border: "1px solid #cbd5e1", borderRadius: 8, fontSize: 13.5, outline: "none", boxSizing: "border-box" };
+
+  async function recargar() {
+    const l = await onCambio?.();
+    if (Array.isArray(l)) setLista(l);
+  }
+
+  async function guardar(e) {
+    e?.preventDefault?.();
+    const nombre = form.nombre.trim();
+    if (!nombre) { setToast({ type: "warning", mensaje: "Ingrese el nombre de la sucursal." }); return; }
+    setGuardando(true);
+    try {
+      if (editId) {
+        await apiRequest(`/stock-clientes/sucursales/${editId}`, { method: "PUT", body: JSON.stringify(form) });
+      } else {
+        await apiRequest(`/stock-clientes/sucursales`, { method: "POST", body: JSON.stringify(form) });
+      }
+      setForm({ nombre: "", direccion: "", comuna: "" });
+      setEditId(null);
+      await recargar();
+      setToast({ type: "success", mensaje: editId ? "Sucursal actualizada." : "Sucursal creada." });
+    } catch (err) {
+      setToast({ type: "error", mensaje: err?.message || "No se pudo guardar la sucursal." });
+    } finally {
+      setGuardando(false);
+    }
+  }
+
+  function editar(s) {
+    setEditId(s.id);
+    setForm({ nombre: s.nombre || "", direccion: s.direccion || "", comuna: s.comuna || "" });
+  }
+
+  async function eliminar(s) {
+    if (lista.length <= 1) { setToast({ type: "warning", mensaje: "Debe existir al menos una sucursal." }); return; }
+    try {
+      await apiRequest(`/stock-clientes/sucursales/${s.id}`, { method: "DELETE" });
+      if (editId === s.id) { setEditId(null); setForm({ nombre: "", direccion: "", comuna: "" }); }
+      await recargar();
+    } catch (err) {
+      setToast({ type: "error", mensaje: err?.message || "No se pudo eliminar la sucursal." });
+    }
+  }
+
+  return createPortal(
+    <div onClick={(e) => { if (e.target === e.currentTarget) onCerrar(); }} style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,.55)", zIndex: 11000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+      <div style={{ width: 520, maxWidth: "100%", maxHeight: "90vh", overflow: "auto", background: "#fff", borderRadius: 14, boxShadow: "0 20px 50px rgba(0,0,0,.3)" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 20px", borderBottom: "1px solid #e2e8f0" }}>
+          <strong style={{ fontSize: 16 }}>Sucursales</strong>
+          <button type="button" onClick={onCerrar} style={{ background: "none", border: "none", cursor: "pointer", color: "#64748b" }}><X size={18} /></button>
+        </div>
+        <div style={{ padding: 20 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 18 }}>
+            {lista.length === 0 ? (
+              <div style={{ fontSize: 13, color: "#94a3b8" }}>Aún no hay sucursales.</div>
+            ) : lista.map((s) => (
+              <div key={s.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "8px 12px", border: "1px solid #e2e8f0", borderRadius: 10 }}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 13.5, fontWeight: 600, color: "#0f172a" }}>{s.nombre}</div>
+                  {(s.direccion || s.comuna) && (
+                    <div style={{ fontSize: 12, color: "#64748b" }}>{[s.direccion, s.comuna].filter(Boolean).join(", ")}</div>
+                  )}
+                </div>
+                <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                  <button type="button" onClick={() => editar(s)} style={{ border: "1px solid #cbd5e1", background: "#fff", borderRadius: 8, padding: "4px 10px", fontSize: 12, cursor: "pointer" }}>Editar</button>
+                  <button type="button" onClick={() => eliminar(s)} style={{ border: "1px solid #fecaca", background: "#fff", color: "#dc2626", borderRadius: 8, padding: "4px 10px", fontSize: 12, cursor: "pointer" }}><Trash2 size={13} /></button>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <form onSubmit={guardar} style={{ borderTop: "1px solid #eef2f7", paddingTop: 16, display: "flex", flexDirection: "column", gap: 10 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "#334155" }}>{editId ? "Editar sucursal" : "Nueva sucursal"}</div>
+            <input value={form.nombre} onChange={(e) => setForm((f) => ({ ...f, nombre: e.target.value }))} placeholder="Nombre (ej: Casa Matriz, Sucursal Norte)" style={inputStyle} />
+            <input value={form.direccion} onChange={(e) => setForm((f) => ({ ...f, direccion: e.target.value }))} placeholder="Dirección" style={inputStyle} />
+            <input value={form.comuna} onChange={(e) => setForm((f) => ({ ...f, comuna: e.target.value }))} placeholder="Comuna" style={inputStyle} />
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              {editId && (
+                <button type="button" onClick={() => { setEditId(null); setForm({ nombre: "", direccion: "", comuna: "" }); }} style={{ border: "1px solid #cbd5e1", background: "#fff", borderRadius: 8, padding: "8px 14px", fontSize: 13, cursor: "pointer" }}>Cancelar</button>
+              )}
+              <button type="submit" disabled={guardando} style={{ border: "none", background: "#0ea5a4", color: "#fff", borderRadius: 8, padding: "8px 16px", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+                {guardando ? "Guardando…" : editId ? "Guardar cambios" : "Agregar sucursal"}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 function ModalSolicitudCotizacion({
   cliente,
   productos,
+  sucursalId,
   onCerrar,
   onEnviado,
   setToast,
@@ -2557,6 +2857,7 @@ function ModalSolicitudCotizacion({
           contacto_nombre: contactoNombre.trim() || undefined,
           contacto_email: contactoEmail.trim() || undefined,
           contacto_telefono: contactoTel.trim() || undefined,
+          sucursal_id: sucursalId ?? undefined,
         }),
       });
       onEnviado?.({ items: itemsListos.length, id: res?.solicitud?.id });

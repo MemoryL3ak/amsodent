@@ -4,7 +4,7 @@ import { Link } from "react-router-dom";
 import useAuth from "../hooks/useAuth";
 import Toast from "../components/Toast";
 import DateFilter from "../components/DateFilter";
-import { Eye, AlertTriangle, Save } from "lucide-react";
+import { Eye, AlertTriangle, Save, Lock } from "lucide-react";
 
 function fmtCLP(value) {
   return `$${Number(value || 0).toLocaleString("es-CL")}`;
@@ -112,6 +112,19 @@ export default function Factoring() {
   function montoFactura(f) {
     const lic = licMap[f.licitacion_id] || {};
     return Number(f.monto) || Number(lic.total_con_iva) || 0;
+  }
+
+  // Una fila tiene datos de factoring guardados si ya se le cargó al menos un campo.
+  function filaGuardada(f) {
+    return Boolean(
+      (f.factoring_empresa || "").toString().trim() ||
+      f.factoring_vencimiento ||
+      f.factoring_comision_pct != null
+    );
+  }
+  // Tras guardar, la edición queda bloqueada salvo para admin.
+  function filaBloqueada(f) {
+    return filaGuardada(f) && !esAdmin;
   }
 
   function setDraft(docId, campo, valor) {
@@ -247,12 +260,12 @@ export default function Factoring() {
         </div>
         <div className="stat-card">
           <div className="stat-label">Monto facturas</div>
-          <div className="stat-money" style={{ color: "#7c3aed" }}>{fmtCLP(stats.monto)}</div>
+          <div className="stat-value stat-value-money" style={{ color: "#7c3aed" }}>{fmtCLP(stats.monto)}</div>
           <div className="stat-sub">total · con IVA</div>
         </div>
         <div className="stat-card">
           <div className="stat-label">Comisión total</div>
-          <div className="stat-money" style={{ color: "#b45309" }}>{fmtCLP(stats.comision)}</div>
+          <div className="stat-value stat-value-money" style={{ color: "#b45309" }}>{fmtCLP(stats.comision)}</div>
           <div className="stat-sub">según % registrado</div>
         </div>
         <div className="stat-card">
@@ -337,6 +350,7 @@ export default function Factoring() {
                     : 0;
                   const dias = diasHasta(d.vencimiento);
                   const sem = semaforoPlazo(dias);
+                  const bloqueada = filaBloqueada(f);
                   return (
                     <tr key={f.id}>
                       <td style={{ verticalAlign: "middle" }}>
@@ -378,36 +392,48 @@ export default function Factoring() {
                         {fmtCLP(monto)}
                       </td>
                       <td style={{ verticalAlign: "middle" }}>
-                        <input
-                          type="text"
-                          className="input"
-                          placeholder="Empresa…"
-                          value={d.empresa || ""}
-                          onChange={(e) => setDraft(f.id, "empresa", e.target.value)}
-                          style={{ width: "100%", minWidth: 140 }}
-                        />
+                        {bloqueada ? (
+                          <span style={{ fontWeight: 500, color: "#1f2937" }}>{d.empresa || "—"}</span>
+                        ) : (
+                          <input
+                            type="text"
+                            className="input"
+                            placeholder="Empresa…"
+                            value={d.empresa || ""}
+                            onChange={(e) => setDraft(f.id, "empresa", e.target.value)}
+                            style={{ width: "100%", minWidth: 140 }}
+                          />
+                        )}
                       </td>
                       <td style={{ verticalAlign: "middle", textAlign: "right" }}>
-                        <input
-                          type="text"
-                          inputMode="decimal"
-                          className="input"
-                          placeholder="0"
-                          value={d.comision ?? ""}
-                          onChange={(e) => setDraft(f.id, "comision", e.target.value.replace(/[^\d.,]/g, "").replace(",", "."))}
-                          style={{ width: 80, textAlign: "right" }}
-                        />
+                        {bloqueada ? (
+                          <span style={{ fontWeight: 500, color: "#1f2937" }}>{d.comision !== "" && d.comision != null ? `${d.comision}%` : "—"}</span>
+                        ) : (
+                          <input
+                            type="text"
+                            inputMode="decimal"
+                            className="input"
+                            placeholder="0"
+                            value={d.comision ?? ""}
+                            onChange={(e) => setDraft(f.id, "comision", e.target.value.replace(/[^\d.,]/g, "").replace(",", "."))}
+                            style={{ width: 80, textAlign: "right" }}
+                          />
+                        )}
                       </td>
                       <td style={{ verticalAlign: "middle", textAlign: "right", color: "#b45309", fontWeight: 600, whiteSpace: "nowrap" }}>
                         {comisionMonto > 0 ? fmtCLP(comisionMonto) : "—"}
                       </td>
                       <td style={{ verticalAlign: "middle" }}>
                         <div style={{ minWidth: 150 }}>
-                          <DateFilter
-                            value={d.vencimiento || ""}
-                            onChange={(v) => setDraft(f.id, "vencimiento", v)}
-                            placeholder="Vencimiento"
-                          />
+                          {bloqueada ? (
+                            <span style={{ fontWeight: 500, color: "#1f2937" }}>{fmtDateCL(d.vencimiento)}</span>
+                          ) : (
+                            <DateFilter
+                              value={d.vencimiento || ""}
+                              onChange={(v) => setDraft(f.id, "vencimiento", v)}
+                              placeholder="Vencimiento"
+                            />
+                          )}
                           <div style={{ marginTop: 4 }}>
                             <span style={{
                               display: "inline-flex", alignItems: "center", gap: 4,
@@ -417,7 +443,7 @@ export default function Factoring() {
                               {dias != null && dias <= 5 && <AlertTriangle size={11} />}
                               {sem.label}
                             </span>
-                            {d.vencimiento && (
+                            {!bloqueada && d.vencimiento && (
                               <span style={{ marginLeft: 6, fontSize: 11, color: "var(--text-muted)" }}>
                                 {fmtDateCL(d.vencimiento)}
                               </span>
@@ -426,15 +452,24 @@ export default function Factoring() {
                         </div>
                       </td>
                       <td style={{ verticalAlign: "middle", textAlign: "right" }}>
-                        <button
-                          type="button"
-                          onClick={() => guardarFila(f)}
-                          disabled={savingId === f.id}
-                          className="btn btn-primary btn-sm"
-                          style={{ display: "inline-flex", alignItems: "center", gap: 4 }}
-                        >
-                          <Save size={13} /> {savingId === f.id ? "…" : "Guardar"}
-                        </button>
+                        {bloqueada ? (
+                          <span
+                            title="Datos guardados. Solo un administrador puede editarlos."
+                            style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12, color: "var(--text-muted)" }}
+                          >
+                            <Lock size={13} /> Guardado
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => guardarFila(f)}
+                            disabled={savingId === f.id}
+                            className="btn btn-primary btn-sm"
+                            style={{ display: "inline-flex", alignItems: "center", gap: 4 }}
+                          >
+                            <Save size={13} /> {savingId === f.id ? "…" : "Guardar"}
+                          </button>
+                        )}
                       </td>
                     </tr>
                   );
