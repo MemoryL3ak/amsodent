@@ -1004,10 +1004,22 @@ function PantallaDeclaracion({ cliente, setToast }) {
   const [guardando, setGuardando] = useState(false);
   const [mostrarSolicitud, setMostrarSolicitud] = useState(false);
   const [mostrarCargaMasiva, setMostrarCargaMasiva] = useState(false);
-  // Sucursales (catálogos por dirección).
+  // Sucursales (catálogos por dirección). Las gestiona el administrador; aquí
+  // solo se seleccionan.
   const [sucursales, setSucursales] = useState([]);
   const [sucursalId, setSucursalId] = useState(null);
   const [mostrarSucursales, setMostrarSucursales] = useState(false);
+
+  // Ubicaciones del cliente (bodega/caja/estante), gestionadas por él.
+  const [ubicaciones, setUbicaciones] = useState([]);
+  const [mostrarUbicaciones, setMostrarUbicaciones] = useState(false);
+
+  async function cargarUbicaciones() {
+    try {
+      const data = await apiRequest("/stock-clientes/mis-ubicaciones");
+      setUbicaciones(Array.isArray(data) ? data : []);
+    } catch { /* */ }
+  }
 
   const sucursalActual = useMemo(
     () => sucursales.find((s) => String(s.id) === String(sucursalId)) || null,
@@ -1042,9 +1054,10 @@ function PantallaDeclaracion({ cliente, setToast }) {
     }
   }
 
-  // Cargar sucursales al montar (define la sucursal activa).
+  // Cargar sucursales + ubicaciones al montar.
   useEffect(() => {
     cargarSucursales();
+    cargarUbicaciones();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1078,6 +1091,7 @@ function PantallaDeclaracion({ cliente, setToast }) {
             stock_bajo: p.stock_alerta ?? "",
             stock_minimo: p.stock_minimo ?? "",
             precio_unitario: p.precio_unitario ?? "",
+            ubicacion_id: p.ubicacion_id ?? "",
           }));
           setItems(mapeados);
           setBaseline(mapeados.map((o) => ({ ...o })));
@@ -1109,6 +1123,7 @@ function PantallaDeclaracion({ cliente, setToast }) {
       stock_bajo: "",
       stock_minimo: "",
       precio_unitario: "",
+      ubicacion_id: "",
     };
   }
 
@@ -1204,6 +1219,7 @@ function PantallaDeclaracion({ cliente, setToast }) {
           stock_minimo: minimo,
           stock_alerta,
           precio_unitario,
+          ubicacion_id: it.ubicacion_id ? Number(it.ubicacion_id) : null,
         };
       })
       .filter((it) => it.nombre.length > 0);
@@ -1507,12 +1523,12 @@ function PantallaDeclaracion({ cliente, setToast }) {
               </option>
             ))}
           </select>
-          <button onClick={() => setMostrarSucursales(true)} style={styles.btnSecundarioOutline} className="btn-hover" title="Crear o editar sucursales">
-            <MapPin size={15} /> Gestionar sucursales
-          </button>
           {sucursalActual?.comuna && (
             <span style={{ fontSize: 12, color: "#64748b" }}>{sucursalActual.comuna}</span>
           )}
+          <button onClick={() => setMostrarUbicaciones(true)} style={styles.btnSecundarioOutline} className="btn-hover" title="Crear o editar tus ubicaciones (bodega, caja, etc.)">
+            <MapPin size={15} /> Gestionar ubicaciones
+          </button>
         </div>
 
         <div style={styles.tablaWrap}>
@@ -1523,6 +1539,7 @@ function PantallaDeclaracion({ cliente, setToast }) {
                 <th style={{ ...styles.th, minWidth: 150 }}>Producto</th>
                 <th style={{ ...styles.th, minWidth: 88 }}>Marca</th>
                 <th style={{ ...styles.th, minWidth: 64 }}>Formato</th>
+                <th style={{ ...styles.th, minWidth: 110 }} title="Ubicación física del producto (bodega, caja, estante). Gestiona tu lista con «Gestionar ubicaciones».">Ubicación</th>
                 <th style={{ ...styles.th, minWidth: 60, textAlign: "right" }}>
                   Stock actual
                 </th>
@@ -1621,6 +1638,18 @@ function PantallaDeclaracion({ cliente, setToast }) {
                         placeholder="Ej: caja, frasco, set…"
                         style={styles.cellInput}
                       />
+                    </td>
+                    <td style={styles.td}>
+                      <select
+                        value={it.ubicacion_id ?? ""}
+                        onChange={(e) => actualizarItem(idx, "ubicacion_id", e.target.value)}
+                        style={{ ...styles.cellInput, cursor: "pointer" }}
+                      >
+                        <option value="">—</option>
+                        {ubicaciones.map((u) => (
+                          <option key={u.id} value={u.id}>{u.nombre}</option>
+                        ))}
+                      </select>
                     </td>
                     <td style={styles.td}>
                       <input
@@ -1801,11 +1830,12 @@ function PantallaDeclaracion({ cliente, setToast }) {
         />
       )}
 
-      {mostrarSucursales && (
-        <ModalSucursales
-          sucursales={sucursales}
-          onCerrar={() => setMostrarSucursales(false)}
-          onCambio={(nuevoId) => cargarSucursales(nuevoId)}
+      {mostrarUbicaciones && (
+        <ModalUbicaciones
+          ubicaciones={ubicaciones}
+          apiRequest={apiRequest}
+          onCerrar={() => setMostrarUbicaciones(false)}
+          onCambio={cargarUbicaciones}
           setToast={setToast}
         />
       )}
@@ -2581,96 +2611,94 @@ function BuscadorCatalogo({ onAgregar }) {
   );
 }
 
-/* Gestión de sucursales del cliente (catálogos por dirección). */
-function ModalSucursales({ sucursales, onCerrar, onCambio, setToast }) {
-  const [lista, setLista] = useState(sucursales || []);
-  const [form, setForm] = useState({ nombre: "", direccion: "", comuna: "" });
+/* Gestión de ubicaciones del cliente (bodega, caja, estante, etc.). */
+function ModalUbicaciones({ ubicaciones, apiRequest, onCerrar, onCambio, setToast }) {
+  const [lista, setLista] = useState(ubicaciones || []);
+  const [form, setForm] = useState({ nombre: "" });
   const [editId, setEditId] = useState(null);
   const [guardando, setGuardando] = useState(false);
 
   const inputStyle = { width: "100%", height: 38, padding: "0 10px", border: "1px solid #cbd5e1", borderRadius: 8, fontSize: 13.5, outline: "none", boxSizing: "border-box" };
 
   async function recargar() {
-    const l = await onCambio?.();
-    if (Array.isArray(l)) setLista(l);
+    await onCambio?.();
+    try {
+      const l = await apiRequest("/stock-clientes/mis-ubicaciones");
+      if (Array.isArray(l)) setLista(l);
+    } catch { /* */ }
   }
 
   async function guardar(e) {
     e?.preventDefault?.();
     const nombre = form.nombre.trim();
-    if (!nombre) { setToast({ type: "warning", mensaje: "Ingrese el nombre de la sucursal." }); return; }
+    if (!nombre) { setToast({ type: "warning", mensaje: "Ingrese el nombre de la ubicación." }); return; }
     setGuardando(true);
     try {
       if (editId) {
-        await apiRequest(`/stock-clientes/sucursales/${editId}`, { method: "PUT", body: JSON.stringify(form) });
+        await apiRequest(`/stock-clientes/ubicaciones/${editId}`, { method: "PUT", body: JSON.stringify({ nombre }) });
       } else {
-        await apiRequest(`/stock-clientes/sucursales`, { method: "POST", body: JSON.stringify(form) });
+        await apiRequest(`/stock-clientes/ubicaciones`, { method: "POST", body: JSON.stringify({ nombre }) });
       }
-      setForm({ nombre: "", direccion: "", comuna: "" });
+      setForm({ nombre: "" });
       setEditId(null);
       await recargar();
-      setToast({ type: "success", mensaje: editId ? "Sucursal actualizada." : "Sucursal creada." });
+      setToast({ type: "success", mensaje: editId ? "Ubicación actualizada." : "Ubicación creada." });
     } catch (err) {
-      setToast({ type: "error", mensaje: err?.message || "No se pudo guardar la sucursal." });
+      setToast({ type: "error", mensaje: err?.message || "No se pudo guardar la ubicación." });
     } finally {
       setGuardando(false);
     }
   }
 
-  function editar(s) {
-    setEditId(s.id);
-    setForm({ nombre: s.nombre || "", direccion: s.direccion || "", comuna: s.comuna || "" });
+  function editar(u) {
+    setEditId(u.id);
+    setForm({ nombre: u.nombre || "" });
   }
 
-  async function eliminar(s) {
-    if (lista.length <= 1) { setToast({ type: "warning", mensaje: "Debe existir al menos una sucursal." }); return; }
+  async function eliminar(u) {
     try {
-      await apiRequest(`/stock-clientes/sucursales/${s.id}`, { method: "DELETE" });
-      if (editId === s.id) { setEditId(null); setForm({ nombre: "", direccion: "", comuna: "" }); }
+      await apiRequest(`/stock-clientes/ubicaciones/${u.id}`, { method: "DELETE" });
+      if (editId === u.id) { setEditId(null); setForm({ nombre: "" }); }
       await recargar();
     } catch (err) {
-      setToast({ type: "error", mensaje: err?.message || "No se pudo eliminar la sucursal." });
+      setToast({ type: "error", mensaje: err?.message || "No se pudo eliminar la ubicación." });
     }
   }
 
   return createPortal(
     <div onClick={(e) => { if (e.target === e.currentTarget) onCerrar(); }} style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,.55)", zIndex: 11000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
-      <div style={{ width: 520, maxWidth: "100%", maxHeight: "90vh", overflow: "auto", background: "#fff", borderRadius: 14, boxShadow: "0 20px 50px rgba(0,0,0,.3)" }}>
+      <div style={{ width: 460, maxWidth: "100%", maxHeight: "90vh", overflow: "auto", background: "#fff", borderRadius: 14, boxShadow: "0 20px 50px rgba(0,0,0,.3)" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 20px", borderBottom: "1px solid #e2e8f0" }}>
-          <strong style={{ fontSize: 16 }}>Sucursales</strong>
+          <strong style={{ fontSize: 16 }}>Ubicaciones</strong>
           <button type="button" onClick={onCerrar} style={{ background: "none", border: "none", cursor: "pointer", color: "#64748b" }}><X size={18} /></button>
         </div>
         <div style={{ padding: 20 }}>
+          <p style={{ fontSize: 12.5, color: "#64748b", marginTop: 0 }}>
+            Define tus ubicaciones (bodega, caja, estante…) y luego asígnalas a cada producto en la tabla de stock.
+          </p>
           <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 18 }}>
             {lista.length === 0 ? (
-              <div style={{ fontSize: 13, color: "#94a3b8" }}>Aún no hay sucursales.</div>
-            ) : lista.map((s) => (
-              <div key={s.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "8px 12px", border: "1px solid #e2e8f0", borderRadius: 10 }}>
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 13.5, fontWeight: 600, color: "#0f172a" }}>{s.nombre}</div>
-                  {(s.direccion || s.comuna) && (
-                    <div style={{ fontSize: 12, color: "#64748b" }}>{[s.direccion, s.comuna].filter(Boolean).join(", ")}</div>
-                  )}
-                </div>
+              <div style={{ fontSize: 13, color: "#94a3b8" }}>Aún no hay ubicaciones.</div>
+            ) : lista.map((u) => (
+              <div key={u.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "8px 12px", border: "1px solid #e2e8f0", borderRadius: 10 }}>
+                <div style={{ fontSize: 13.5, fontWeight: 600, color: "#0f172a", minWidth: 0 }}>{u.nombre}</div>
                 <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-                  <button type="button" onClick={() => editar(s)} style={{ border: "1px solid #cbd5e1", background: "#fff", borderRadius: 8, padding: "4px 10px", fontSize: 12, cursor: "pointer" }}>Editar</button>
-                  <button type="button" onClick={() => eliminar(s)} style={{ border: "1px solid #fecaca", background: "#fff", color: "#dc2626", borderRadius: 8, padding: "4px 10px", fontSize: 12, cursor: "pointer" }}><Trash2 size={13} /></button>
+                  <button type="button" onClick={() => editar(u)} style={{ border: "1px solid #cbd5e1", background: "#fff", borderRadius: 8, padding: "4px 10px", fontSize: 12, cursor: "pointer" }}>Editar</button>
+                  <button type="button" onClick={() => eliminar(u)} style={{ border: "1px solid #fecaca", background: "#fff", color: "#dc2626", borderRadius: 8, padding: "4px 10px", fontSize: 12, cursor: "pointer" }}><Trash2 size={13} /></button>
                 </div>
               </div>
             ))}
           </div>
 
           <form onSubmit={guardar} style={{ borderTop: "1px solid #eef2f7", paddingTop: 16, display: "flex", flexDirection: "column", gap: 10 }}>
-            <div style={{ fontSize: 13, fontWeight: 700, color: "#334155" }}>{editId ? "Editar sucursal" : "Nueva sucursal"}</div>
-            <input value={form.nombre} onChange={(e) => setForm((f) => ({ ...f, nombre: e.target.value }))} placeholder="Nombre (ej: Casa Matriz, Sucursal Norte)" style={inputStyle} />
-            <input value={form.direccion} onChange={(e) => setForm((f) => ({ ...f, direccion: e.target.value }))} placeholder="Dirección" style={inputStyle} />
-            <input value={form.comuna} onChange={(e) => setForm((f) => ({ ...f, comuna: e.target.value }))} placeholder="Comuna" style={inputStyle} />
+            <div style={{ fontSize: 13, fontWeight: 700, color: "#334155" }}>{editId ? "Editar ubicación" : "Nueva ubicación"}</div>
+            <input value={form.nombre} onChange={(e) => setForm({ nombre: e.target.value })} placeholder="Nombre (ej: Bodega central, Caja 3, Estante A)" style={inputStyle} />
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
               {editId && (
-                <button type="button" onClick={() => { setEditId(null); setForm({ nombre: "", direccion: "", comuna: "" }); }} style={{ border: "1px solid #cbd5e1", background: "#fff", borderRadius: 8, padding: "8px 14px", fontSize: 13, cursor: "pointer" }}>Cancelar</button>
+                <button type="button" onClick={() => { setEditId(null); setForm({ nombre: "" }); }} style={{ border: "1px solid #cbd5e1", background: "#fff", borderRadius: 8, padding: "8px 14px", fontSize: 13, cursor: "pointer" }}>Cancelar</button>
               )}
               <button type="submit" disabled={guardando} style={{ border: "none", background: "#0ea5a4", color: "#fff", borderRadius: 8, padding: "8px 16px", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
-                {guardando ? "Guardando…" : editId ? "Guardar cambios" : "Agregar sucursal"}
+                {guardando ? "Guardando…" : editId ? "Guardar cambios" : "Agregar ubicación"}
               </button>
             </div>
           </form>

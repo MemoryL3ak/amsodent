@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import ConfirmModal from "../components/ConfirmModal";
 import useAuth from "../hooks/useAuth";
 
 export default function Clientes() {
+  const navigate = useNavigate();
   const [clientes, setClientes] = useState([]);
   const [vendedores, setVendedores] = useState([]);
 
@@ -188,7 +189,7 @@ export default function Clientes() {
               <col style={{ width: 150 }} />
               <col style={{ width: 180 }} />
               {esAdmin && <col style={{ width: 170 }} />}
-              <col style={{ width: 180 }} />
+              <col style={{ width: 270 }} />
             </colgroup>
             <thead>
               <tr>
@@ -205,7 +206,7 @@ export default function Clientes() {
 
             <tbody>
               {clientesFiltrados.map((c) => (
-                <tr key={c.id}>
+                <tr key={c.id} onClick={() => navigate(`/clientes/${c.id}`)} style={{ cursor: "pointer" }} title="Ver perfil del cliente">
                   <td style={{ fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.rut}</td>
                   <td style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={c.nombre}>{c.nombre}</td>
                   <td style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.tipo_cliente || "—"}</td>
@@ -221,13 +222,13 @@ export default function Clientes() {
                       )}
                     </td>
                   )}
-                  <td style={{ textAlign: "right" }}>
+                  <td style={{ textAlign: "right" }} onClick={(e) => e.stopPropagation()}>
                     <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", flexWrap: "nowrap" }}>
                       <Link
-                        to={`/clientes/editar/${c.id}`}
-                        className="btn btn-secondary btn-sm"
+                        to={`/clientes/${c.id}`}
+                        className="btn btn-primary btn-sm"
                       >
-                        Editar
+                        Ver perfil
                       </Link>
                       <button
                         type="button"

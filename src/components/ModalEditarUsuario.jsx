@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { supabase } from "../lib/supabase";
 import { api } from "../lib/api";
+import Avatar from "./Avatar";
 
 const ROLES = [
   { value: "admin",                label: "Administrador" },
@@ -11,11 +12,26 @@ const ROLES = [
   { value: "contabilidad",         label: "Contabilidad" },
 ];
 
-export default function ModalEditarUsuario({ user, close, onToast }) {
+export default function ModalEditarUsuario({ user, perfiles = [], close, onToast }) {
   const [nombre, setNombre] = useState(user.nombre || "");
   const [rol,    setRol]    = useState(user.rol    || "ventas");
+  const [perfilId, setPerfilId] = useState(user.permission_profile_id || "");
+  const [avatarUrl, setAvatarUrl] = useState(user.avatar_url || "");
   const [saving, setSaving] = useState(false);
   const [error,  setError]  = useState("");
+
+  async function subirAvatar(file) {
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const r = await api.putForm(`/usuarios/profiles/${user.id}/avatar`, fd);
+      setAvatarUrl(r?.avatar_url || "");
+      onToast?.({ type: "success", message: "Foto actualizada." });
+    } catch (e) {
+      console.error(e);
+      onToast?.({ type: "error", message: e?.message || "No se pudo subir la foto. ¿Creaste el bucket 'avatars'?" });
+    }
+  }
 
   // Oficinas de marcaje asignadas al usuario.
   const [oficinas, setOficinas] = useState([]);
@@ -56,7 +72,7 @@ export default function ModalEditarUsuario({ user, close, onToast }) {
     setSaving(true);
     const { error: e } = await supabase
       .from("profiles")
-      .update({ nombre: nombre.trim(), rol })
+      .update({ nombre: nombre.trim(), rol, permission_profile_id: perfilId || null })
       .eq("id", user.id);
 
     if (e) {
@@ -116,6 +132,14 @@ export default function ModalEditarUsuario({ user, close, onToast }) {
 
         {/* Body */}
         <div style={{ padding: "20px 24px", display: "flex", flexDirection: "column", gap: "14px" }}>
+          {/* Foto de perfil */}
+          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+            <Avatar src={avatarUrl} nombre={nombre || user.email} size={64} editable onUpload={subirAvatar} title="Foto del usuario" />
+            <div style={{ fontSize: 12.5, color: "var(--text-muted)" }}>
+              Foto del usuario. Haz clic en la cámara para cambiarla.
+            </div>
+          </div>
+
           {/* Email (solo lectura) */}
           <div className="field">
             <label className="field-label">Correo electrónico</label>
@@ -149,6 +173,22 @@ export default function ModalEditarUsuario({ user, close, onToast }) {
                 <option key={r.value} value={r.value}>{r.label}</option>
               ))}
             </select>
+          </div>
+
+          <div className="field">
+            <label className="field-label">Perfil de permisos</label>
+            <select
+              className="input"
+              value={perfilId}
+              onChange={(e) => setPerfilId(e.target.value)}
+              disabled={saving}
+            >
+              <option value="">Acceso por rol (predeterminado)</option>
+              {perfiles.map((p) => (
+                <option key={p.id} value={p.id}>{p.nombre}</option>
+              ))}
+            </select>
+            <div className="field-hint">Si eliges un perfil, define los módulos visibles para este usuario (anula el acceso por rol).</div>
           </div>
 
           {/* Oficinas de marcaje asignadas */}

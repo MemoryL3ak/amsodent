@@ -1,7 +1,13 @@
 import { Injectable, BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { randomUUID } from 'crypto';
 import { SupabaseService } from '../supabase/supabase.service';
+import { CalendarApiService } from './calendar-api.service';
 
 type Usuario = { id?: string; email?: string };
+
+// Columnas opcionales que pueden no estar migradas todavía: si el insert/update
+// falla mencionándolas, se quitan del payload y se reintenta.
+const COLUMNAS_OPCIONALES = ['adjuntos', 'motivo', 'licitacion_id', 'grupo_id', 'participantes', 'meet_url', 'evento_google_id'];
 
 export interface ActividadFiltros {
   desde?: string;
@@ -14,7 +20,27 @@ export interface ActividadFiltros {
 
 @Injectable()
 export class ActividadesService {
-  constructor(private supabase: SupabaseService) {}
+  constructor(
+    private supabase: SupabaseService,
+    private calendar: CalendarApiService,
+  ) {}
+
+  // Cuenta de Google conectada del usuario (módulo Mi Correo): token + scopes.
+  private async cuentaGoogle(userId?: string): Promise<{ refreshToken: string; scopes: string } | null> {
+    if (!userId) return null;
+    try {
+      const { data } = await this.supabase
+        .getClient()
+        .from('correo_cuentas')
+        .select('refresh_token, scopes')
+        .eq('user_id', userId)
+        .maybeSingle();
+      if (!data?.refresh_token) return null;
+      return { refreshToken: String(data.refresh_token), scopes: String(data.scopes || '') };
+    } catch {
+      return null;
+    }
+  }
 
   private async datosPerfil(user: Usuario): Promise<{ rol: string; nombre: string }> {
     try {
@@ -66,6 +92,50 @@ export class ActividadesService {
     return data || [];
   }
 
+  // Inserta filas tolerando columnas opcionales aún no migradas.
+  private async insertarFilas(filas: any[]) {
+    const intentar = (rows: any[]) =>
+      this.supabase.getClient().from('actividades_cliente').insert(rows).select();
+    let { data, error } = await intentar(filas);
+    if (error) {
+      const msg = [error.message, (error as any).details, (error as any).hint]
+        .filter(Boolean).join(' ').toLowerCase();
+      const aQuitar = COLUMNAS_OPCIONALES.filter((c) => msg.includes(c));
+      if (aQuitar.length) {
+        const limpias = filas.map((f) => {
+          const g = { ...f };
+          aQuitar.forEach((c) => delete g[c]);
+          return g;
+        });
+        ({ data, error } = await intentar(limpias));
+      }
+    }
+    if (error) throw new BadRequestException(error.message);
+    return data || [];
+  }
+
+  // Actualiza tolerando columnas opcionales. `aplicarFiltro` añade el .eq()/.neq().
+  private async actualizarConTolerancia(
+    patch: Record<string, any>,
+    aplicarFiltro: (q: any) => any,
+  ) {
+    const intentar = (p: Record<string, any>) =>
+      aplicarFiltro(this.supabase.getClient().from('actividades_cliente').update(p)).select();
+    let { data, error } = await intentar(patch);
+    if (error) {
+      const msg = [error.message, (error as any).details, (error as any).hint]
+        .filter(Boolean).join(' ').toLowerCase();
+      const aQuitar = COLUMNAS_OPCIONALES.filter((c) => msg.includes(c));
+      if (aQuitar.length) {
+        const limpio = { ...patch };
+        aQuitar.forEach((c) => delete limpio[c]);
+        ({ data, error } = await intentar(limpio));
+      }
+    }
+    if (error) throw new BadRequestException(error.message);
+    return data || [];
+  }
+
   async crear(user: Usuario, body: any) {
     const { nombre } = await this.datosPerfil(user);
     const email = (user?.email || '').toLowerCase();
@@ -75,13 +145,15 @@ export class ActividadesService {
     if (!body?.fecha) {
       throw new BadRequestException('La fecha es obligatoria.');
     }
-    const fila = {
-      user_email: email,
-      user_nombre: nombre || email,
+    const tipo = (body.tipo || 'gestion').trim();
+    // Campos compartidos de la actividad (sin user_*).
+    const base: Record<string, any> = {
       cliente_id: body.cliente_id != null ? body.cliente_id : null,
       cliente_nombre: (body.cliente_nombre || '').trim() || null,
       titulo: String(body.titulo).trim(),
-      tipo: (body.tipo || 'gestion').trim(),
+      tipo,
+      motivo: (body.motivo || '').trim() || null,
+      licitacion_id: body.licitacion_id != null ? body.licitacion_id : null,
       comentario: (body.comentario || '').trim() || null,
       fecha: body.fecha,
       hora_inicio: body.todo_el_dia ? null : body.hora_inicio || null,
@@ -90,23 +162,73 @@ export class ActividadesService {
       estado: (body.estado || 'pendiente').trim(),
       adjuntos: Array.isArray(body.adjuntos) ? body.adjuntos : [],
     };
-    const insertar = (f: any) =>
-      this.supabase.getClient().from('actividades_cliente').insert([f]).select().single();
-    let { data, error } = await insertar(fila);
-    // Tolerancia: si la columna adjuntos no está migrada, reintentar sin ella.
-    if (error && /adjuntos/i.test([error.message, (error as any).details, (error as any).hint].filter(Boolean).join(' '))) {
-      const { adjuntos: _omit, ...sinAdj } = fila;
-      ({ data, error } = await insertar(sinAdj));
+
+    // Reunión con participantes → se replica la actividad para cada uno.
+    const participantes = Array.isArray(body.participantes)
+      ? body.participantes.filter((p: any) => p && p.email)
+      : [];
+
+    // Google Meet: crea un evento en el calendario de la cuenta conectada.
+    let meetError: string | null = null;
+    if (tipo === 'reunion' && body.crear_meet) {
+      const cuenta = await this.cuentaGoogle(user.id);
+      if (!cuenta) {
+        meetError = 'No se generó el Meet: conecta tu cuenta de Google en «Mi Correo».';
+      } else if (cuenta.scopes && !cuenta.scopes.toLowerCase().includes('calendar')) {
+        // El token guardado no incluye el permiso de calendario → reconectar.
+        meetError = 'No se generó el Meet: reconecta tu cuenta de Google en «Mi Correo» y acepta el permiso de Calendar.';
+      } else {
+        try {
+          const ev = await this.calendar.crearEventoMeet(cuenta.refreshToken, {
+            titulo: base.titulo,
+            descripcion: base.comentario || undefined,
+            fecha: base.fecha,
+            horaInicio: body.hora_inicio || null,
+            horaFin: body.hora_fin || null,
+            invitados: participantes.map((p: any) => p.email),
+          });
+          base.meet_url = ev.meetUrl;
+          base.evento_google_id = ev.eventId;
+        } catch (e: any) {
+          // Mensaje específico que arma CalendarApiService (API deshabilitada,
+          // permisos insuficientes, etc.).
+          meetError = `No se generó el Meet: ${e?.message || 'error desconocido'}`;
+        }
+      }
     }
-    if (error) throw new BadRequestException(error.message);
-    return data;
+
+    if (tipo === 'reunion' && participantes.length) {
+      const grupo_id = randomUUID();
+      const todos = [{ email, nombre: nombre || email }, ...participantes];
+      const vistos = new Set<string>();
+      const filas: any[] = [];
+      for (const p of todos) {
+        const e = String(p.email || '').toLowerCase();
+        if (!e || vistos.has(e)) continue;
+        vistos.add(e);
+        filas.push({
+          ...base,
+          grupo_id,
+          participantes: todos,
+          user_email: e,
+          user_nombre: p.nombre || e,
+        });
+      }
+      const data = await this.insertarFilas(filas);
+      const propia = data.find((r: any) => String(r.user_email || '').toLowerCase() === email) || data[0];
+      return { ...propia, _meet_error: meetError };
+    }
+
+    const fila = { ...base, user_email: email, user_nombre: nombre || email };
+    const data = await this.insertarFilas([fila]);
+    return { ...data[0], _meet_error: meetError };
   }
 
   private async verificarPropiedad(user: Usuario, id: number) {
     const { data, error } = await this.supabase
       .getClient()
       .from('actividades_cliente')
-      .select('id, user_email')
+      .select('id, user_email, grupo_id')
       .eq('id', id)
       .maybeSingle();
     if (error) throw new BadRequestException(error.message);
@@ -120,38 +242,47 @@ export class ActividadesService {
   }
 
   async actualizar(user: Usuario, id: number, body: any) {
-    await this.verificarPropiedad(user, id);
-    const patch: Record<string, any> = { updated_at: new Date().toISOString() };
-    if (body.cliente_id !== undefined) patch.cliente_id = body.cliente_id != null ? body.cliente_id : null;
-    if (body.cliente_nombre !== undefined) patch.cliente_nombre = (body.cliente_nombre || '').trim() || null;
-    if (body.titulo !== undefined) patch.titulo = String(body.titulo).trim();
-    if (body.tipo !== undefined) patch.tipo = (body.tipo || 'gestion').trim();
-    if (body.comentario !== undefined) patch.comentario = (body.comentario || '').trim() || null;
-    if (body.fecha !== undefined) patch.fecha = body.fecha;
-    if (body.todo_el_dia !== undefined) patch.todo_el_dia = Boolean(body.todo_el_dia);
-    if (body.hora_inicio !== undefined) patch.hora_inicio = body.todo_el_dia ? null : body.hora_inicio || null;
-    if (body.hora_fin !== undefined) patch.hora_fin = body.todo_el_dia ? null : body.hora_fin || null;
-    if (body.estado !== undefined) patch.estado = (body.estado || 'pendiente').trim();
-    if (body.adjuntos !== undefined) patch.adjuntos = Array.isArray(body.adjuntos) ? body.adjuntos : [];
+    const fila = await this.verificarPropiedad(user, id);
 
-    const actualizar = (p: any) =>
-      this.supabase.getClient().from('actividades_cliente').update(p).eq('id', id).select().single();
-    let { data, error } = await actualizar(patch);
-    if (error && /adjuntos/i.test([error.message, (error as any).details, (error as any).hint].filter(Boolean).join(' '))) {
-      const { adjuntos: _omit, ...sinAdj } = patch;
-      ({ data, error } = await actualizar(sinAdj));
+    // Patch de la fila objetivo (incluye estado).
+    const patch: Record<string, any> = { updated_at: new Date().toISOString() };
+    // Campos compartidos (se propagan al grupo de la reunión).
+    const compartidos: Record<string, any> = {};
+    const setCompartido = (k: string, v: any) => { patch[k] = v; compartidos[k] = v; };
+
+    if (body.cliente_id !== undefined) setCompartido('cliente_id', body.cliente_id != null ? body.cliente_id : null);
+    if (body.cliente_nombre !== undefined) setCompartido('cliente_nombre', (body.cliente_nombre || '').trim() || null);
+    if (body.titulo !== undefined) setCompartido('titulo', String(body.titulo).trim());
+    if (body.tipo !== undefined) setCompartido('tipo', (body.tipo || 'gestion').trim());
+    if (body.motivo !== undefined) setCompartido('motivo', (body.motivo || '').trim() || null);
+    if (body.licitacion_id !== undefined) setCompartido('licitacion_id', body.licitacion_id != null ? body.licitacion_id : null);
+    if (body.comentario !== undefined) setCompartido('comentario', (body.comentario || '').trim() || null);
+    if (body.fecha !== undefined) setCompartido('fecha', body.fecha);
+    if (body.todo_el_dia !== undefined) setCompartido('todo_el_dia', Boolean(body.todo_el_dia));
+    if (body.hora_inicio !== undefined) setCompartido('hora_inicio', body.todo_el_dia ? null : body.hora_inicio || null);
+    if (body.hora_fin !== undefined) setCompartido('hora_fin', body.todo_el_dia ? null : body.hora_fin || null);
+    if (body.participantes !== undefined) setCompartido('participantes', Array.isArray(body.participantes) ? body.participantes : []);
+    if (body.adjuntos !== undefined) setCompartido('adjuntos', Array.isArray(body.adjuntos) ? body.adjuntos : []);
+    // estado: solo en la fila propia (cada participante lleva el suyo).
+    if (body.estado !== undefined) patch.estado = (body.estado || 'pendiente').trim();
+
+    const data = await this.actualizarConTolerancia(patch, (q) => q.eq('id', id));
+
+    // Reunión grupal: propagar los campos compartidos al resto del grupo.
+    if (fila.grupo_id && Object.keys(compartidos).length > 0) {
+      const patchGrupo = { ...compartidos, updated_at: new Date().toISOString() };
+      await this.actualizarConTolerancia(patchGrupo, (q) => q.eq('grupo_id', fila.grupo_id).neq('id', id));
     }
-    if (error) throw new BadRequestException(error.message);
-    return data;
+    return data[0];
   }
 
   async eliminar(user: Usuario, id: number) {
-    await this.verificarPropiedad(user, id);
-    const { error } = await this.supabase
-      .getClient()
-      .from('actividades_cliente')
-      .delete()
-      .eq('id', id);
+    const fila = await this.verificarPropiedad(user, id);
+    const client = this.supabase.getClient();
+    const query = fila.grupo_id
+      ? client.from('actividades_cliente').delete().eq('grupo_id', fila.grupo_id)
+      : client.from('actividades_cliente').delete().eq('id', id);
+    const { error } = await query;
     if (error) throw new BadRequestException(error.message);
     return { deleted: true };
   }

@@ -764,6 +764,64 @@ body {
   .stat-value-money { font-size: 30px; }
 }
 
+/* KPIs del perfil 360 del cliente: la columna central es angosta (layout de
+   3 columnas), así que se reducen para que los montos no se trunquen. */
+.stats-360 .stat-card { padding: 14px 16px 12px; }
+.stats-360 .stat-label { font-size: 10.5px; }
+.stats-360 .stat-value { font-size: 26px; letter-spacing: -.5px; }
+.stats-360 .stat-value.stat-value-money { font-size: 22px; }
+.stats-360 .stat-sub { font-size: 11px; margin-top: 3px; }
+@media (max-width: 1400px) {
+  .stats-360 .stat-value { font-size: 23px; }
+  .stats-360 .stat-value.stat-value-money { font-size: 19px; }
+}
+
+/* ── Bitácora / Agenda (dashboard) ──────────────────────────────────────── */
+.bitacora-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.bitacora-kpi {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 15px 16px;
+}
+@media (max-width: 640px) {
+  .bitacora-kpis { grid-template-columns: 1fr; }
+}
+
+.bitacora-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 14px;
+  align-items: start;
+}
+@media (max-width: 1100px) {
+  .bitacora-layout { grid-template-columns: 1fr; }
+}
+
+.bitacora-ministats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  margin-top: 14px;
+}
+.bitacora-ministat {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+}
+@media (max-width: 1100px) {
+  .bitacora-ministats { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 560px) {
+  .bitacora-ministats { grid-template-columns: 1fr; }
+}
+
 .stat-sub {
   font-size: 12px;
   color: var(--text-soft);
@@ -1635,6 +1693,22 @@ select.input {
   .surface-body { padding: 16px; }
   .stat-card { padding: 16px 16px 14px; }
 }
+
+/* Vista compacta: para páginas con tablas grandes (Seguimiento de Pagos,
+   Trazabilidad) que deben caber en una pantalla sin scroll horizontal. */
+.vista-compacta.page { padding: 16px 20px 22px; }
+.vista-compacta .page-header { margin-bottom: 14px; }
+.vista-compacta .stats-row { margin-bottom: 12px; gap: 10px; }
+.vista-compacta .stat-card { padding: 12px 14px 11px; }
+.vista-compacta .stat-value { font-size: 24px; }
+.vista-compacta .stat-value.stat-value-money { font-size: 21px; }
+.vista-compacta .stat-money { font-size: 13px; margin-top: 3px; }
+.vista-compacta .stat-label { font-size: 11px; }
+.vista-compacta .stat-sub { font-size: 11px; margin-top: 2px; }
+.vista-compacta .filter-bar { padding: 10px 12px; gap: 8px; margin-bottom: 12px; }
+.vista-compacta .data-table th { padding: 7px 9px; font-size: 10.5px; }
+.vista-compacta .data-table td { padding: 7px 9px; font-size: 12.5px; }
+.vista-compacta .table-scroll { max-height: calc(100vh - 240px); }
 
 /* React DatePicker — Trazabilidad custom (corporate look) */
 .trazabilidad-datepicker {

@@ -16,6 +16,8 @@ const SCOPES = [
   'https://www.googleapis.com/auth/userinfo.email',
   'https://www.googleapis.com/auth/gmail.send',
   'https://www.googleapis.com/auth/gmail.modify',
+  // Crear eventos en el calendario del usuario (reuniones con Google Meet).
+  'https://www.googleapis.com/auth/calendar.events',
 ];
 
 const SCOPES_DWD = [

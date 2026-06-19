@@ -1,7 +1,9 @@
 import {
   Controller, Get, Post, Put, Delete,
   Body, Param, Query, UseGuards,
+  UseInterceptors, UploadedFile,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { UsuariosService } from './usuarios.service';
 import { AuthGuard } from '../auth/auth.guard';
 import { AdminGuard } from '../auth/admin.guard';
@@ -34,6 +36,37 @@ export class UsuariosController {
   @Delete('profiles/:id')
   deleteProfile(@Param('id') id: string) {
     return this.usuariosService.deleteProfile(id);
+  }
+
+  // Foto de perfil (avatar). El usuario sube la suya o un admin la asigna.
+  @Put('profiles/:id/avatar')
+  @UseInterceptors(FileInterceptor('file'))
+  subirAvatar(@Param('id') id: string, @UploadedFile() file: Express.Multer.File) {
+    return this.usuariosService.subirAvatar(id, file);
+  }
+
+  // ── Perfiles de permisos (RBAC). Solo admin. ──
+  @Get('perfiles')
+  listarPerfiles() {
+    return this.usuariosService.listarPerfiles();
+  }
+
+  @Post('perfiles')
+  @UseGuards(AdminGuard)
+  crearPerfil(@Body() body: any) {
+    return this.usuariosService.crearPerfil(body);
+  }
+
+  @Put('perfiles/:id')
+  @UseGuards(AdminGuard)
+  actualizarPerfil(@Param('id') id: string, @Body() body: any) {
+    return this.usuariosService.actualizarPerfil(id, body);
+  }
+
+  @Delete('perfiles/:id')
+  @UseGuards(AdminGuard)
+  eliminarPerfil(@Param('id') id: string) {
+    return this.usuariosService.eliminarPerfil(id);
   }
 
   @Post('reset-password')

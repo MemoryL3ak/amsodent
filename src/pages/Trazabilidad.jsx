@@ -1244,7 +1244,7 @@ export default function Trazabilidad() {
   }
 
   return (
-    <div className="page">
+    <div className="page vista-compacta">
       {toast && <Toast type={toast.type} message={toast.message} onClose={() => setToast(null)} />}
 
       {/* Header */}
@@ -1607,7 +1607,7 @@ export default function Trazabilidad() {
           overflow: "hidden",
         }}
       >
-        <div className="table-scroll" style={{ maxHeight: "calc(100vh - 360px)" }}>
+        <div className="table-scroll" style={{ maxHeight: "calc(100vh - 240px)" }}>
           <table className="data-table trazabilidad-table table-fit">
             <thead>
               <tr>

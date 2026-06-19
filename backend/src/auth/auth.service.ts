@@ -1,5 +1,6 @@
 import { Injectable, BadRequestException, UnauthorizedException } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
+import { permisosEfectivos } from './permisos';
 
 @Injectable()
 export class AuthService {
@@ -21,15 +22,36 @@ export class AuthService {
   }
 
   async getProfile(userId: string) {
-    const { data, error } = await this.supabase
-      .getClient()
+    const client = this.supabase.getClient();
+    const { data, error } = await client
       .from('profiles')
       .select('*')
       .eq('id', userId)
       .single();
 
     if (error) throw new BadRequestException(error.message);
-    return data;
+
+    // Permisos efectivos: perfil asignado o, en su defecto, por rol.
+    let permisosPerfil: any = null;
+    let perfilNombre: string | null = null;
+    if (data?.permission_profile_id) {
+      try {
+        const { data: perfil } = await client
+          .from('permission_profiles')
+          .select('nombre, permisos')
+          .eq('id', data.permission_profile_id)
+          .maybeSingle();
+        if (perfil) {
+          permisosPerfil = perfil.permisos;
+          perfilNombre = perfil.nombre;
+        }
+      } catch { /* tabla puede no existir aún */ }
+    }
+    return {
+      ...data,
+      permisos: permisosEfectivos(data?.rol, permisosPerfil),
+      perfil_nombre: perfilNombre,
+    };
   }
 
   async createUser(body: {

@@ -17,7 +17,7 @@ export class UsuariosService {
   async getProfilesByEmails(emails: string[]) {
     const { data, error } = await this.supabase.getClient()
       .from('profiles')
-      .select('email,nombre,rol')
+      .select('email,nombre,rol,avatar_url')
       .in('email', emails);
     if (error) throw new BadRequestException(error.message);
     return data;
@@ -50,6 +50,80 @@ export class UsuariosService {
       .eq('id', id);
     if (error) throw new BadRequestException(error.message);
     return { deleted: true };
+  }
+
+  // ── Perfiles de permisos (RBAC configurable) ─────────────────────────────
+  async listarPerfiles() {
+    const { data, error } = await this.supabase.getClient()
+      .from('permission_profiles')
+      .select('*')
+      .order('nombre', { ascending: true });
+    if (error) {
+      if ((error.message || '').toLowerCase().includes('permission_profiles')) return [];
+      throw new BadRequestException(error.message);
+    }
+    return data || [];
+  }
+
+  async crearPerfil(body: { nombre?: string; descripcion?: string; permisos?: string[] }) {
+    const nombre = String(body?.nombre || '').trim();
+    if (!nombre) throw new BadRequestException('El nombre del perfil es obligatorio.');
+    const { data, error } = await this.supabase.getClient()
+      .from('permission_profiles')
+      .insert({
+        nombre,
+        descripcion: String(body?.descripcion || '').trim() || null,
+        permisos: Array.isArray(body?.permisos) ? body.permisos : [],
+      })
+      .select()
+      .single();
+    if (error) throw new BadRequestException(error.message);
+    return data;
+  }
+
+  async actualizarPerfil(id: string, body: { nombre?: string; descripcion?: string; permisos?: string[] }) {
+    const patch: Record<string, any> = { updated_at: new Date().toISOString() };
+    if (body?.nombre !== undefined) patch.nombre = String(body.nombre || '').trim();
+    if (body?.descripcion !== undefined) patch.descripcion = String(body.descripcion || '').trim() || null;
+    if (body?.permisos !== undefined) patch.permisos = Array.isArray(body.permisos) ? body.permisos : [];
+    const { data, error } = await this.supabase.getClient()
+      .from('permission_profiles')
+      .update(patch)
+      .eq('id', id)
+      .select()
+      .single();
+    if (error) throw new BadRequestException(error.message);
+    return data;
+  }
+
+  async eliminarPerfil(id: string) {
+    const { error } = await this.supabase.getClient()
+      .from('permission_profiles')
+      .delete()
+      .eq('id', id);
+    if (error) throw new BadRequestException(error.message);
+    return { deleted: true };
+  }
+
+  // Sube la foto de perfil al bucket público "avatars" y guarda su URL pública
+  // en profiles.avatar_url. Devuelve { avatar_url }.
+  async subirAvatar(id: string, file: Express.Multer.File) {
+    if (!file?.buffer) throw new BadRequestException('Falta el archivo.');
+    const client = this.supabase.getClient();
+    const ext = (file.originalname.split('.').pop() || 'jpg').toLowerCase();
+    const path = `profiles/${id}/${Date.now()}.${ext}`;
+    const { error: upErr } = await client.storage
+      .from('avatars')
+      .upload(path, file.buffer, { contentType: file.mimetype, upsert: true });
+    if (upErr) throw new BadRequestException(upErr.message);
+    const { data: pub } = client.storage.from('avatars').getPublicUrl(path);
+    const avatar_url = pub?.publicUrl || null;
+    const { error } = await client
+      .from('profiles')
+      .update({ avatar_url })
+      .eq('id', id);
+    if (error) throw new BadRequestException(error.message);
+    return { avatar_url };
   }
 
   async resetPassword(email: string) {

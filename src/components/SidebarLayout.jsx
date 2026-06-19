@@ -5,6 +5,8 @@ import { useEffect, useState } from "react";
 import { useUnsavedChanges } from "../context/UnsavedChangesContext";
 import SessionTracker from "./SessionTracker";
 import PresenceTracker from "./PresenceTracker";
+import Avatar from "./Avatar";
+import { permisosFallback } from "../constants/modulos";
 import {
   FilePlus,
   ClipboardList,
@@ -17,6 +19,7 @@ import {
   BarChart2,
   Activity,
   UserCog,
+  UserCheck,
   LogOut,
   CreditCard,
   Gift,
@@ -116,15 +119,30 @@ export default function SidebarLayout() {
       const rolDB = perfilDB?.rol || "usuario";
 
       setPerfil({
+        id: perfilDB?.id || "",
         nombre,
         rol: rolDB,
         rolLabel: labelRol(rolDB),
         email: perfilDB?.email || "",
+        avatarUrl: perfilDB?.avatar_url || "",
+        permisos: Array.isArray(perfilDB?.permisos) ? perfilDB.permisos : null,
       });
     }
 
     cargarPerfil();
   }, []);
+
+  async function subirMiFoto(file) {
+    if (!perfil?.id) return;
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const r = await api.putForm(`/usuarios/profiles/${perfil.id}/avatar`, fd);
+      setPerfil((p) => ({ ...p, avatarUrl: r?.avatar_url || p.avatarUrl }));
+    } catch (e) {
+      console.error("No se pudo subir la foto:", e?.message);
+    }
+  }
 
   async function cerrarSesion() {
     try {
@@ -143,68 +161,64 @@ export default function SidebarLayout() {
   const chatNoLeidos = useChatNoLeidos(perfil?.email);
 
   const rolNorm = (perfil?.rol || "").toString().trim().toLowerCase();
-  const esAdmin = rolNorm === "admin";
-  const esJefatura = ["jefe_ventas", "jefe ventas", "jefe-ventas", "jefe de ventas", "jefe_ventas_especial"].includes(rolNorm);
-  const esJefeVentasEspecial = rolNorm === "jefe_ventas_especial";
-  const esJefeVentas = ["jefe_ventas", "jefe ventas", "jefe-ventas", "jefe de ventas"].includes(rolNorm);
-  const esContabilidad = rolNorm === "contabilidad";
-  const esVentas = rolNorm === "ventas" || rolNorm === "ventas_especial";
-  const esVentasEspecial = rolNorm === "ventas_especial";
-  // Resumen Comercial: solo admin + jefatura de ventas (no vendedores ni contabilidad).
-  const puedeVerResumenComercial = esAdmin || esJefatura;
-  const puedeVerMetas = esAdmin || esJefatura || esVentas || esContabilidad;
+  const esAdmin = rolNorm === "admin" || rolNorm === "administrador";
+  // Permisos efectivos (perfil de permisos o, en su defecto, por rol). El
+  // backend (/auth/profile) los entrega; si no, se usa el fallback por rol.
+  const permisos = Array.isArray(perfil?.permisos) ? perfil.permisos : permisosFallback(perfil?.rol);
+  const puede = (m) => esAdmin || permisos.includes(m);
 
   const comercialNav = [
-    { to: "/listar",      icon: ClipboardList, label: "Cotizaciones" },
-    { to: "/crear",       icon: FilePlus,      label: "Nueva Cotización" },
-    { to: "/clientes",    icon: Users,         label: "Clientes" },
-    { to: "/bitacora-actividades", icon: CalendarDays, label: "Bitácora actividades" },
-    { to: "/productos",   icon: Package,       label: "Productos" },
-    { to: "/campanas",    icon: Megaphone,     label: "Campañas" },
+    puede("cotizaciones") && { to: "/listar",      icon: ClipboardList, label: "Cotizaciones" },
+    puede("crear_cotizacion") && { to: "/crear",       icon: FilePlus,      label: "Nueva Cotización" },
+    puede("clientes") && { to: "/clientes",    icon: Users,         label: "Clientes" },
+    puede("mis_clientes") && { to: "/mis-clientes", icon: UserCheck,    label: "Mis clientes" },
+    puede("bitacora") && { to: "/bitacora-actividades", icon: CalendarDays, label: "Bitácora actividades" },
+    puede("productos") && { to: "/productos",   icon: Package,       label: "Productos" },
+    puede("campanas") && { to: "/campanas",    icon: Megaphone,     label: "Campañas" },
   ].filter(Boolean);
 
   const postVentaNav = [
-    (esAdmin || esJefeVentasEspecial || esJefeVentas) && { to: "/trazabilidad",      icon: FileText,   label: "Trazabilidad" },
-    (esAdmin || esJefeVentasEspecial || esContabilidad) && { to: "/seguimiento-pagos", icon: CreditCard, label: "Seguimiento de Pagos" },
-    (esAdmin || esJefeVentasEspecial || esContabilidad) && { to: "/cobranza", icon: Wallet, label: "Cobranza" },
-    (esAdmin || esJefeVentasEspecial) && { to: "/factoring", icon: Landmark, label: "Factoring" },
+    puede("trazabilidad") && { to: "/trazabilidad",      icon: FileText,   label: "Trazabilidad" },
+    puede("seguimiento_pagos") && { to: "/seguimiento-pagos", icon: CreditCard, label: "Seguimiento de Pagos" },
+    puede("cobranza") && { to: "/cobranza", icon: Wallet, label: "Cobranza" },
+    puede("factoring") && { to: "/factoring", icon: Landmark, label: "Factoring" },
   ].filter(Boolean);
 
   const comunicacionNav = [
-    { to: "/buzon",                 icon: Mail,          label: "Mi Correo" },
-    { to: "/bitacora-cotizaciones", icon: MessagesSquare, label: "Chat Grupal", badge: chatNoLeidos },
+    puede("mi_correo") && { to: "/buzon",                 icon: Mail,          label: "Mi Correo" },
+    puede("chat") && { to: "/bitacora-cotizaciones", icon: MessagesSquare, label: "Chat Grupal", badge: chatNoLeidos },
   ].filter(Boolean);
 
   const metasNav = [
-    puedeVerMetas && { to: "/metas", icon: Target, label: "Definición de metas" },
-    (esAdmin || esJefatura || esContabilidad) && { to: "/metas-canal", icon: SlidersHorizontal, label: "Resumen canales" },
+    puede("metas") && { to: "/metas", icon: Target, label: "Definición de metas" },
+    puede("resumen_canales") && { to: "/metas-canal", icon: SlidersHorizontal, label: "Resumen canales" },
   ].filter(Boolean);
 
   const reportesNav = [
-    puedeVerResumenComercial && { to: "/panel-indicadores", icon: LayoutDashboard, label: "Panel de Indicadores" },
-    puedeVerResumenComercial && { to: "/ventas", icon: TrendingUp, label: "Resumen Comercial" },
-    puedeVerResumenComercial && { to: "/cotizaciones-vendedor", icon: BarChart3, label: "Cotizaciones por Vendedor" },
+    puede("panel_indicadores") && { to: "/panel-indicadores", icon: LayoutDashboard, label: "Panel de Indicadores" },
+    puede("resumen_comercial") && { to: "/ventas", icon: TrendingUp, label: "Resumen Comercial" },
+    puede("cotizaciones_vendedor") && { to: "/cotizaciones-vendedor", icon: BarChart3, label: "Cotizaciones por Vendedor" },
   ].filter(Boolean);
 
   const herramientasNav = [
-    (esAdmin || esVentasEspecial) && { to: "/sorteo-registros", icon: Gift, label: "Sorteo" },
-    esAdmin && { to: "/marcaje", icon: Clock, label: "Marcar Asistencia" },
+    puede("sorteo") && { to: "/sorteo-registros", icon: Gift, label: "Sorteo" },
+    puede("marcaje") && { to: "/marcaje", icon: Clock, label: "Marcar Asistencia" },
   ].filter(Boolean);
 
   const logisticaNav = [
-    esAdmin && { to: "/despachos-choferes", icon: Truck, label: "Despachos y Choferes" },
-    esAdmin && { to: "/tracking-choferes", icon: MapPin, label: "Tracking en Vivo" },
+    puede("despachos_choferes") && { to: "/despachos-choferes", icon: Truck, label: "Despachos y Choferes" },
+    puede("tracking_choferes") && { to: "/tracking-choferes", icon: MapPin, label: "Tracking en Vivo" },
   ].filter(Boolean);
 
   const portalClienteNav = [
-    (esAdmin || esVentasEspecial) && { to: "/monitoreo-stock", icon: PackageSearch, label: "Monitoreo Stock Clientes" },
-    esAdmin && { to: "/portal-accesos", icon: KeyRound, label: "Acceso Portal Clientes" },
+    puede("monitoreo_stock") && { to: "/monitoreo-stock", icon: PackageSearch, label: "Monitoreo Stock Clientes" },
+    puede("portal_accesos") && { to: "/portal-accesos", icon: KeyRound, label: "Acceso Portal Clientes" },
   ].filter(Boolean);
 
   const adminNav = [
-    esAdmin && { to: "/usuarios",          icon: UserCog,  label: "Usuarios" },
-    esAdmin && { to: "/monitoreo",         icon: Activity, label: "Monitoreo de Usuarios" },
-    esAdmin && { to: "/monitoreo-marcajes", icon: MapPin,   label: "Monitoreo de Asistencia" },
+    puede("usuarios") && { to: "/usuarios",          icon: UserCog,  label: "Usuarios" },
+    puede("monitoreo_usuarios") && { to: "/monitoreo",         icon: Activity, label: "Monitoreo de Usuarios" },
+    puede("monitoreo_asistencia") && { to: "/monitoreo-marcajes", icon: MapPin,   label: "Monitoreo de Asistencia" },
   ].filter(Boolean);
 
   function NavGroup({ label, items, collapsible, icon: GroupIcon, storageKey }) {
@@ -402,9 +416,7 @@ export default function SidebarLayout() {
         {/* User section */}
         {perfil && (
           <div className="sidebar-user">
-            <div className="user-avatar">
-              {String(perfil.nombre || "U").charAt(0).toUpperCase()}
-            </div>
+            <Avatar src={perfil.avatarUrl} nombre={perfil.nombre} size={36} editable onUpload={subirMiFoto} title="Mi foto" />
             <div className="user-info">
               <div className="user-name">{perfil.nombre}</div>
               <div className="user-role">{perfil.rolLabel}</div>

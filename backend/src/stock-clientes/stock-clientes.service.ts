@@ -39,6 +39,10 @@ export type ItemDeclaracion = {
   // Producto marcado como esencial para la operación del cliente. Independiente
   // del semáforo: identifica importancia del producto, no nivel de stock.
   es_critico?: boolean;
+  // Ubicación física del producto (bodega/caja/estante). El cliente gestiona
+  // su propia lista de ubicaciones y asigna una por producto.
+  ubicacion_id?: number | null;
+  ubicacion?: string | null;
   semaforo: SemaforoColor;
 };
 
@@ -892,6 +896,65 @@ export class StockClientesService {
     return data || [];
   }
 
+  // ── Ubicaciones (bodega/caja/estante) gestionadas por el cliente ──────────
+  async listarUbicaciones(rut: string, incluirInactivas = false) {
+    const rutN = normalizarRut(rut);
+    if (!rutN) return [];
+    let q = this.supabase.getClient().from('stock_ubicaciones').select('*').eq('rut', rutN);
+    if (!incluirInactivas) q = q.eq('activo', true);
+    const { data, error } = await q.order('created_at', { ascending: true });
+    if (error) {
+      // Si la tabla aún no existe (migración no aplicada), no rompemos el portal.
+      if ((error.message || '').toLowerCase().includes('stock_ubicaciones')) return [];
+      throw new BadRequestException(error.message);
+    }
+    return data || [];
+  }
+
+  async crearUbicacion(rut: string, body: { nombre?: string }) {
+    const rutN = normalizarRut(rut);
+    if (!rutN) throw new UnauthorizedException('Sesión inválida.');
+    const nombre = String(body?.nombre || '').trim().slice(0, 120);
+    if (!nombre) throw new BadRequestException('El nombre de la ubicación es obligatorio.');
+    const { data, error } = await this.supabase
+      .getClient()
+      .from('stock_ubicaciones')
+      .insert({ rut: rutN, nombre })
+      .select()
+      .single();
+    if (error) throw new BadRequestException(error.message);
+    return data;
+  }
+
+  async actualizarUbicacion(rut: string, id: number, body: { nombre?: string }) {
+    const rutN = normalizarRut(rut);
+    const client = this.supabase.getClient();
+    const { data: u } = await client.from('stock_ubicaciones').select('id, rut').eq('id', id).maybeSingle();
+    if (!u) throw new NotFoundException('Ubicación no encontrada.');
+    if (normalizarRut(u.rut) !== rutN) throw new ForbiddenException('No autorizado.');
+    const nombre = String(body?.nombre || '').trim().slice(0, 120);
+    if (!nombre) throw new BadRequestException('El nombre de la ubicación es obligatorio.');
+    const { data, error } = await client
+      .from('stock_ubicaciones')
+      .update({ nombre })
+      .eq('id', id)
+      .select()
+      .single();
+    if (error) throw new BadRequestException(error.message);
+    return data;
+  }
+
+  async eliminarUbicacion(rut: string, id: number) {
+    const rutN = normalizarRut(rut);
+    const client = this.supabase.getClient();
+    const { data: u } = await client.from('stock_ubicaciones').select('id, rut').eq('id', id).maybeSingle();
+    if (!u) throw new NotFoundException('Ubicación no encontrada.');
+    if (normalizarRut(u.rut) !== rutN) throw new ForbiddenException('No autorizado.');
+    const { error } = await client.from('stock_ubicaciones').update({ activo: false }).eq('id', id);
+    if (error) throw new BadRequestException(error.message);
+    return { ok: true };
+  }
+
   async listarProductos(rut: string, sucursalId?: number | null) {
     const rutN = normalizarRut(rut);
     let q = this.supabase
@@ -989,6 +1052,11 @@ export class StockClientesService {
             ? precioNum
             : null;
         const es_critico = it?.es_critico === true;
+        const ubicacion_id =
+          (it as any)?.ubicacion_id == null || (it as any)?.ubicacion_id === ''
+            ? null
+            : Number((it as any).ubicacion_id);
+        const ubicacion = String((it as any)?.ubicacion || '').trim().slice(0, 120) || null;
         return {
           nombre,
           sku,
@@ -999,6 +1067,8 @@ export class StockClientesService {
           stock_alerta,
           precio_unitario,
           es_critico,
+          ubicacion_id: ubicacion_id != null && Number.isFinite(ubicacion_id) ? ubicacion_id : null,
+          ubicacion,
           semaforo: calcularSemaforo(stock_actual, stock_minimo, stock_alerta),
         };
       })
@@ -1071,22 +1141,23 @@ export class StockClientesService {
       stock_alerta: it.stock_alerta,
       precio_unitario: it.precio_unitario,
       es_critico: it.es_critico === true,
+      ubicacion_id: (it as any).ubicacion_id ?? null,
       activo: true,
       actualizado_at: ahora,
     }));
     let { error: errInsProd } = await client
       .from('stock_productos_cliente')
       .insert(productosRows);
-    // Si la columna `sku` aún no existe (migración pendiente), reintenta sin
-    // ella para no bloquear la declaración.
+    // Si las columnas `sku`/`ubicacion_id` aún no existen (migración pendiente),
+    // reintenta sin ellas para no bloquear la declaración.
     if (
       errInsProd &&
-      (errInsProd.code === '42703' || /sku/i.test(errInsProd.message || ''))
+      (errInsProd.code === '42703' || /sku|ubicacion_id/i.test(errInsProd.message || ''))
     ) {
-      const rowsSinSku = productosRows.map(({ sku, ...resto }) => resto);
+      const rowsSinExtras = productosRows.map(({ sku, ubicacion_id, ...resto }) => resto);
       ({ error: errInsProd } = await client
         .from('stock_productos_cliente')
-        .insert(rowsSinSku));
+        .insert(rowsSinExtras));
     }
     if (errInsProd) {
       // No borramos los previos: la lista persistente conserva su estado

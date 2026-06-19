@@ -51,22 +51,25 @@ export const api = {
   post: (path, body) => request(path, { method: 'POST', body: JSON.stringify(body) }),
   put: (path, body) => request(path, { method: 'PUT', body: JSON.stringify(body) }),
   delete: (path) => request(path, { method: 'DELETE' }),
-  postForm: async (path, formData) => {
-    const token = await getAuthToken();
-    const res = await fetch(`${API_URL}${path}`, {
-      method: 'POST',
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-      body: formData,
-    });
-    const text = await res.text();
-    const body = text ? safeJsonParse(text) : null;
-    if (!res.ok) {
-      const msg = (body && (body.message || body.error)) || `Error ${res.status}`;
-      const error = new Error(msg);
-      error.status = res.status;
-      error.body = body;
-      throw error;
-    }
-    return body;
-  },
+  postForm: (path, formData) => sendForm('POST', path, formData),
+  putForm: (path, formData) => sendForm('PUT', path, formData),
 };
+
+async function sendForm(method, path, formData) {
+  const token = await getAuthToken();
+  const res = await fetch(`${API_URL}${path}`, {
+    method,
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body: formData,
+  });
+  const text = await res.text();
+  const body = text ? safeJsonParse(text) : null;
+  if (!res.ok) {
+    const msg = (body && (body.message || body.error)) || `Error ${res.status}`;
+    const error = new Error(msg);
+    error.status = res.status;
+    error.body = body;
+    throw error;
+  }
+  return body;
+}

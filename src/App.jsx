@@ -22,6 +22,8 @@ import Clientes from "./pages/Clientes";
 import BitacoraActividades from "./pages/BitacoraActividades";
 import CrearCliente from "./pages/CrearCliente";
 import EditarCliente from "./pages/EditarCliente";
+import DetalleCliente from "./pages/DetalleCliente";
+import MisClientes from "./pages/MisClientes";
 
 // MONITOREO
 import MonitoreoUsuarios from "./pages/MonitoreoUsuarios";
@@ -51,6 +53,7 @@ import PortalCliente from "./pages/PortalCliente";
 import PortalDespachos from "./pages/PortalDespachos";
 import SorteoRegistros from "./pages/SorteoRegistros";
 import RequireRole from "./components/RequireRole";
+import RequireModulo from "./components/RequireModulo";
 
 // COMUNICACIONES
 import Comunicaciones from "./pages/Comunicaciones";
@@ -104,9 +107,11 @@ export default function App() {
 
           {/* CLIENTES */}
           <Route path="clientes" element={<Clientes />} />
+          <Route path="mis-clientes" element={<MisClientes />} />
           <Route path="bitacora-actividades" element={<BitacoraActividades />} />
           <Route path="clientes/nuevo" element={<CrearCliente />} />
           <Route path="clientes/editar/:id" element={<EditarCliente />} />
+          <Route path="clientes/:id" element={<DetalleCliente />} />
 
           {/* MONITOREO */}
           <Route path="monitoreo" element={<MonitoreoUsuarios />} />
@@ -128,73 +133,73 @@ export default function App() {
           <Route
             path="trazabilidad"
             element={
-              <RequireRole allow={["admin", "jefe_ventas_especial", "jefe_ventas"]}>
+              <RequireModulo modulo="trazabilidad">
                 <Trazabilidad />
-              </RequireRole>
+              </RequireModulo>
             }
           />
           <Route
             path="seguimiento-pagos"
             element={
-              <RequireRole allow={["admin", "jefe_ventas_especial", "contabilidad"]}>
+              <RequireModulo modulo="seguimiento_pagos">
                 <SeguimientoPagos />
-              </RequireRole>
+              </RequireModulo>
             }
           />
           <Route
             path="cobranza"
             element={
-              <RequireRole allow={["admin", "jefe_ventas_especial", "contabilidad"]}>
+              <RequireModulo modulo="cobranza">
                 <Cobranza />
-              </RequireRole>
+              </RequireModulo>
             }
           />
           <Route
             path="factoring"
             element={
-              <RequireRole allow={["admin", "jefe_ventas_especial"]}>
+              <RequireModulo modulo="factoring">
                 <Factoring />
-              </RequireRole>
+              </RequireModulo>
             }
           />
           <Route
             path="despachos-choferes"
             element={
-              <RequireRole allow={["admin"]}>
+              <RequireModulo modulo="despachos_choferes">
                 <DespachosChoferes />
-              </RequireRole>
+              </RequireModulo>
             }
           />
           <Route
             path="tracking-choferes"
             element={
-              <RequireRole allow={["admin"]}>
+              <RequireModulo modulo="tracking_choferes">
                 <TrackingChoferes />
-              </RequireRole>
+              </RequireModulo>
             }
           />
           <Route
             path="ventas"
             element={
-              <RequireRole allow={["admin", "jefe_ventas", "jefe_ventas_especial"]}>
+              <RequireModulo modulo="resumen_comercial">
                 <Ventas />
-              </RequireRole>
+              </RequireModulo>
             }
           />
           <Route
             path="cotizaciones-vendedor"
             element={
-              <RequireRole allow={["admin", "jefe_ventas", "jefe_ventas_especial"]}>
+              <RequireModulo modulo="cotizaciones_vendedor">
                 <CotizacionesPorVendedor />
-              </RequireRole>
+              </RequireModulo>
             }
           />
           <Route
             path="panel-indicadores"
             element={
-              <RequireRole allow={["admin", "jefe_ventas", "jefe_ventas_especial"]}>
+              <RequireModulo modulo="panel_indicadores">
                 <PanelIndicadores />
-              </RequireRole>
+              </RequireModulo>
             }
           />
           <Route path="metas" element={<Metas />} />
@@ -204,9 +209,9 @@ export default function App() {
           <Route
             path="sorteo-registros"
             element={
-              <RequireRole allow={["admin", "ventas_especial"]}>
+              <RequireModulo modulo="sorteo">
                 <SorteoRegistros />
-              </RequireRole>
+              </RequireModulo>
             }
           />
 
@@ -233,9 +238,9 @@ export default function App() {
           <Route
             path="marcaje"
             element={
-              <RequireRole allow={["admin"]}>
+              <RequireModulo modulo="marcaje">
                 <Marcaje />
-              </RequireRole>
+              </RequireModulo>
             }
           />
 
@@ -243,9 +248,9 @@ export default function App() {
           <Route
             path="monitoreo-marcajes"
             element={
-              <RequireRole allow={["admin"]}>
+              <RequireModulo modulo="monitoreo_asistencia">
                 <MonitoreoMarcajes />
-              </RequireRole>
+              </RequireModulo>
             }
           />
 
@@ -253,9 +258,9 @@ export default function App() {
           <Route
             path="monitoreo-stock"
             element={
-              <RequireRole allow={["admin", "ventas_especial"]}>
+              <RequireModulo modulo="monitoreo_stock">
                 <MonitoreoStockClientes />
-              </RequireRole>
+              </RequireModulo>
             }
           />
 
@@ -263,9 +268,9 @@ export default function App() {
           <Route
             path="portal-accesos"
             element={
-              <RequireRole allow={["admin"]}>
+              <RequireModulo modulo="portal_accesos">
                 <AccesoPortalClientes />
-              </RequireRole>
+              </RequireModulo>
             }
           />
         </Route>
