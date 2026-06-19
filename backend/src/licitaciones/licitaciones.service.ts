@@ -137,6 +137,10 @@ export class LicitacionesService {
   async update(id: number, body: Record<string, any>, aprobadorEmail?: string) {
     const client = this.supabase.getClient();
 
+    // Bandera (no es columna): notificar al cliente que su cotización se editó.
+    const notificarCliente = body?.notificar_cliente_cotizacion === true;
+    if ('notificar_cliente_cotizacion' in body) delete body.notificar_cliente_cotizacion;
+
     // Estado previo para detectar una aprobación (Pendiente Aprobación → otro).
     let estadoPrevio: string | null = null;
     try {
@@ -182,7 +186,57 @@ export class LicitacionesService {
     } catch (e: any) {
       this.logger.warn(`no se pudo notificar aprobación: ${e?.message || e}`);
     }
+
+    // Punto 11: si la cotización proviene de una solicitud del cliente y se
+    // editó desde la plataforma, avisamos al cliente (hilo + correo).
+    if (notificarCliente) {
+      try {
+        await this.notificarClienteCotizacion(id, aprobadorEmail);
+      } catch (e: any) {
+        this.logger.warn(`no se pudo notificar al cliente: ${e?.message || e}`);
+      }
+    }
     return data;
+  }
+
+  // Avisa al cliente que la cotización vinculada a su solicitud fue modificada:
+  // deja un mensaje en el hilo (lo ve en su portal) y le envía un correo.
+  private async notificarClienteCotizacion(licId: number, autorEmail?: string) {
+    const client = this.supabase.getClient();
+    const { data: sol } = await client
+      .from('stock_solicitudes_cotizacion')
+      .select('id, rut, razon_social, contacto_email, licitacion_id')
+      .eq('licitacion_id', licId)
+      .maybeSingle();
+    if (!sol) return; // la cotización no proviene de una solicitud del cliente
+
+    const texto =
+      'Hemos actualizado la cotización asociada a su solicitud. Ingrese a su portal para ver el detalle y, si lo necesita, solicitar cambios.';
+
+    // Mensaje en el hilo bidireccional (queda sin leer para el cliente).
+    await client.from('stock_cotizacion_mensajes').insert({
+      solicitud_id: sol.id,
+      autor_tipo: 'equipo',
+      autor_email: autorEmail || null,
+      autor_nombre: 'Equipo Amsodent',
+      mensaje: texto,
+      leido_cliente: false,
+      leido_equipo: true,
+    });
+
+    // Correo al contacto de la solicitud.
+    const para = String(sol.contacto_email || '').trim().toLowerCase();
+    if (para) {
+      const cliente = sol.razon_social || 'cliente';
+      await this.mailings.enviarUno({
+        para,
+        asunto: 'Amsodent · Actualización de su cotización',
+        cuerpoHtml:
+          `<p>Estimados ${cliente},</p>` +
+          `<p>${texto}</p>` +
+          `<p>Saludos,<br/>Equipo Amsodent</p>`,
+      });
+    }
   }
 
   private async notificarAprobacion(lic: any, aprobadorEmail?: string) {

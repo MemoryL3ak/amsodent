@@ -131,6 +131,31 @@ export class StockClientesController {
     return await this.stockClientes.eliminarSucursal(req.stockPortal.rut, id);
   }
 
+  // Ubicaciones del cliente (bodega, caja, etc.) — el cliente gestiona su lista.
+  @UseGuards(StockPortalGuard)
+  @Get('mis-ubicaciones')
+  async misUbicaciones(@Req() req: any) {
+    return await this.stockClientes.listarUbicaciones(req.stockPortal.rut);
+  }
+
+  @UseGuards(StockPortalGuard)
+  @Post('ubicaciones')
+  async crearUbicacion(@Req() req: any, @Body() body: any) {
+    return await this.stockClientes.crearUbicacion(req.stockPortal.rut, body);
+  }
+
+  @UseGuards(StockPortalGuard)
+  @Put('ubicaciones/:id')
+  async actualizarUbicacion(@Req() req: any, @Param('id', ParseIntPipe) id: number, @Body() body: any) {
+    return await this.stockClientes.actualizarUbicacion(req.stockPortal.rut, id, body);
+  }
+
+  @UseGuards(StockPortalGuard)
+  @Delete('ubicaciones/:id')
+  async eliminarUbicacion(@Req() req: any, @Param('id', ParseIntPipe) id: number) {
+    return await this.stockClientes.eliminarUbicacion(req.stockPortal.rut, id);
+  }
+
   @UseGuards(StockPortalGuard)
   @Get('mis-solicitudes')
   async misSolicitudes(@Req() req: any) {
@@ -247,6 +272,32 @@ export class StockClientesController {
   @Get('sucursales-por-rut')
   async listarSucursalesPorRut(@Query('rut') rut: string) {
     return await this.stockClientes.listarSucursalesPorRut(rut);
+  }
+
+  // Gestión de sucursales desde la plataforma (admin) — el cliente ya no las crea.
+  @UseGuards(AuthGuard)
+  @Post('admin/sucursales')
+  async adminCrearSucursal(@Body() body: any) {
+    return await this.stockClientes.crearSucursal(body?.rut, body);
+  }
+
+  @UseGuards(AuthGuard)
+  @Put('admin/sucursales/:id')
+  async adminActualizarSucursal(@Param('id', ParseIntPipe) id: number, @Body() body: any) {
+    return await this.stockClientes.actualizarSucursal(body?.rut, id, body);
+  }
+
+  @UseGuards(AuthGuard)
+  @Delete('admin/sucursales/:id')
+  async adminEliminarSucursal(@Param('id', ParseIntPipe) id: number, @Query('rut') rut: string) {
+    return await this.stockClientes.eliminarSucursal(rut, id);
+  }
+
+  // Ubicaciones de un cliente (para mostrarlas en el monitoreo admin).
+  @UseGuards(AuthGuard)
+  @Get('ubicaciones-por-rut')
+  async listarUbicacionesPorRut(@Query('rut') rut: string) {
+    return await this.stockClientes.listarUbicaciones(rut, true);
   }
 
   @UseGuards(AuthGuard)

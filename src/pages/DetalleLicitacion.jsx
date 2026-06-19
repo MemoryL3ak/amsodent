@@ -2663,11 +2663,12 @@ export default function EditarLicitacion() {
 
     setToast(null);
 
+    const esParticularVal = (tipoCliente || "").toString().trim().toLowerCase() === "cliente particular";
     const errores = [];
     if (!idLicitacionInput) errores.push("ID Licitación");
     if (!nombre) errores.push("Nombre Licitación");
-    if (!fechaHoraCierre) errores.push("Fecha y Hora de Cierre");
-    if (!monto) errores.push("Monto");
+    if (!esParticularVal && !fechaHoraCierre) errores.push("Fecha y Hora de Cierre");
+    if (!esParticularVal && !monto) errores.push("Monto");
     if (!tipoCliente) errores.push("Tipo de Cotización");
     if (!rutEntidad) errores.push("RUT Entidad");
     if (!nombreEntidad) errores.push("Nombre Entidad");
@@ -2792,6 +2793,9 @@ export default function EditarLicitacion() {
 
       try {
         await api.put(`/licitaciones/${id}`, {
+          // Si la cotización proviene de una solicitud del cliente, el backend
+          // le avisa de la modificación (hilo + correo). Si no, no hace nada.
+          notificar_cliente_cotizacion: true,
           id_licitacion: idLicitacionInput,
           nombre,
           fecha_hora_cierre: fechaHoraCierre,
@@ -3121,32 +3125,37 @@ export default function EditarLicitacion() {
             />
           </div>
 
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Fecha y Hora de Cierre *
-            </label>
-            <input
-              type="datetime-local"
-              className={inputClass}
-              value={fechaHoraCierre}
-              onChange={(e) => setFechaHoraCierre(e.target.value)}
-              disabled={!esEditable}
-            />
-          </div>
+          {/* Cliente Particular: no aplica fecha/hora de cierre ni monto presupuesto. */}
+          {tipoCliente.toLowerCase() !== "cliente particular" && (
+            <>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Fecha y Hora de Cierre *
+                </label>
+                <input
+                  type="datetime-local"
+                  className={inputClass}
+                  value={fechaHoraCierre}
+                  onChange={(e) => setFechaHoraCierre(e.target.value)}
+                  disabled={!esEditable}
+                />
+              </div>
 
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Monto Presupuesto *
-            </label>
-            <input
-              type="text"
-              inputMode="numeric"
-              className={inputClass}
-              value={monto ? `$${formatearCLDesdeString(String(monto))}` : ""}
-              onChange={(e) => setMonto(soloDigitos(e.target.value))}
-              disabled={!esEditable}
-            />
-          </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Monto Presupuesto *
+                </label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  className={inputClass}
+                  value={monto ? `$${formatearCLDesdeString(String(monto))}` : ""}
+                  onChange={(e) => setMonto(soloDigitos(e.target.value))}
+                  disabled={!esEditable}
+                />
+              </div>
+            </>
+          )}
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -3949,26 +3958,30 @@ export default function EditarLicitacion() {
               </div>
             </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Saldo Presupuesto
-              </label>
-              <div className="form-display form-display-value" style={{fontWeight:600}}>
-                {saldoPresupuesto >= 0 ? "$" : "-$"}
-                {Math.abs(saldoPresupuesto).toLocaleString("es-CL")}
-              </div>
-            </div>
+            {tipoCliente.toLowerCase() !== "cliente particular" && (
+              <>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Saldo Presupuesto
+                  </label>
+                  <div className="form-display form-display-value" style={{fontWeight:600}}>
+                    {saldoPresupuesto >= 0 ? "$" : "-$"}
+                    {Math.abs(saldoPresupuesto).toLocaleString("es-CL")}
+                  </div>
+                </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                % Presupuesto
-              </label>
-              <div className={`form-display form-display-value ${colorPresupuesto}`} style={{fontWeight:600}}>
-                {porcentajePresupuesto > 0
-                  ? formatPorcentajePresupuesto(porcentajePresupuesto)
-                  : "0%"}
-              </div>
-            </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    % Presupuesto
+                  </label>
+                  <div className={`form-display form-display-value ${colorPresupuesto}`} style={{fontWeight:600}}>
+                    {porcentajePresupuesto > 0
+                      ? formatPorcentajePresupuesto(porcentajePresupuesto)
+                      : "0%"}
+                  </div>
+                </div>
+              </>
+            )}
           </div>
         </div>
 
@@ -4873,7 +4886,7 @@ function ModalMotivoDescarte({ motivoActual, comentarioActual, onCancel, onConfi
   const [seleccion, setSeleccion] = useState(motivoActual || "");
   const [comentario, setComentario] = useState(comentarioActual || "");
 
-  const opciones = ["Presupuesto", "Quiebre stock"];
+  const opciones = ["Presupuesto", "Quiebre stock", "Otro Motivo"];
   const valido = Boolean(seleccion) && comentario.trim().length > 0;
 
   function confirmar() {

@@ -94,6 +94,7 @@ export default function PanelIndicadores() {
   const [adjDateByLic, setAdjDateByLic] = useState({});
   const [docSums, setDocSums] = useState({}); // { [licId]: { guia, oc, factbol } }
   const [catData, setCatData] = useState([]); // [{ categoria, monto, productos:[{producto,monto}] }]
+  const [margenMes, setMargenMes] = useState({ monto: 0, pct: 0 });
   const [mostrarProductos, setMostrarProductos] = useState(false);
   const [metaCotizaciones, setMetaCotizaciones] = useState(0);
   const [metaMonto, setMetaMonto] = useState(0);
@@ -168,14 +169,15 @@ export default function PanelIndicadores() {
       const idsMes = lics
         .filter((l) => pasaTipo(l) && mesDe(adjDateByLic[l.id]) === mesActual)
         .map((l) => Number(l.id));
-      if (!idsMes.length) { if (activo) setCatData([]); return; }
+      if (!idsMes.length) { if (activo) { setCatData([]); setMargenMes({ monto: 0, pct: 0 }); } return; }
       try {
         const items = await api.post("/licitaciones/items/filter", {
           licitacion_ids: idsMes,
-          fields: "licitacion_id,producto,categoria,total",
+          fields: "licitacion_id,producto,categoria,total,costo,cantidad",
         });
         const mapCat = {};      // cat -> total
         const mapCatProd = {};  // cat -> { producto -> monto }
+        let ventaNeta = 0, costoTotal = 0; // para el margen del mes
         (items || []).forEach((it) => {
           const total = Number(it.total || 0);
           const cat = (it.categoria || "Sin categoría").trim() || "Sin categoría";
@@ -183,7 +185,12 @@ export default function PanelIndicadores() {
           mapCat[cat] = (mapCat[cat] || 0) + total;
           (mapCatProd[cat] = mapCatProd[cat] || {});
           mapCatProd[cat][prod] = (mapCatProd[cat][prod] || 0) + total;
+          ventaNeta += total;
+          costoTotal += (Number(it.costo || 0) * (Number(it.cantidad) || 0));
         });
+        const margenMonto = Math.round(ventaNeta - costoTotal);
+        const margenPct = ventaNeta > 0 ? (margenMonto / ventaNeta) * 100 : 0;
+        if (activo) setMargenMes({ monto: margenMonto, pct: margenPct });
         const arrCat = Object.entries(mapCat).map(([categoria, monto]) => ({
           categoria,
           monto,
@@ -398,6 +405,8 @@ export default function PanelIndicadores() {
             <KpiCard icon={UserPlus} color="#d97706" label="Clientes Nuevos" sub="Primera compra el mes" value={fmtNum(cnr.nuevos)} delta={<Delta actual={cnr.nuevos} prev={cnrPrev.nuevos} />} />
             <KpiCard icon={RefreshCw} color="#0ea5e9" label="Recompra" sub="Clientes que repiten" value={fmtPct(cnr.recompra)} delta={<Delta actual={cnr.recompra} prev={cnrPrev.recompra} unidadPp />} />
             <KpiCard icon={Award} color="#b45309" label="Cotizaciones adjudicadas" sub="Cierres del mes" value={fmtNum(m.adjudicadas)} delta={<Delta actual={m.adjudicadas} prev={mPrev.adjudicadas} />} />
+            <KpiCard icon={TrendingUp} color="#7c3aed" label="Margen %" sub="(venta − costo) / venta · adjudicadas" value={fmtPct(margenMes.pct)} />
+            <KpiCard icon={Banknote} color="#0d9488" label="Margen $" sub="Venta neta − costo · adjudicadas" value={fmtCLP(margenMes.monto)} />
           </div>
 
           {/* Charts row 1 */}

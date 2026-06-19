@@ -31,6 +31,8 @@ import {
   FileSignature,
   ImagePlus,
   Smile,
+  Clock,
+  CornerDownLeft,
 } from "lucide-react";
 import { api } from "../lib/api";
 import { supabase } from "../lib/supabase";
@@ -47,6 +49,18 @@ const MUTED = "#64748b";
 const FAINT = "#94a3b8";
 const LINE = "#e8edf2";
 const LINE_SOFT = "#f1f4f7";
+
+// Operadores de búsqueda estilo Gmail (se sugieren al escribir).
+const OPERADORES_BUSQUEDA = [
+  { op: "from:", desc: "Remitente" },
+  { op: "to:", desc: "Destinatario" },
+  { op: "subject:", desc: "Asunto" },
+  { op: "has:attachment", desc: "Con adjuntos" },
+  { op: "is:unread", desc: "No leídos" },
+  { op: "is:starred", desc: "Destacados" },
+  { op: "after:", desc: "Después de (aaaa/mm/dd)" },
+  { op: "before:", desc: "Antes de (aaaa/mm/dd)" },
+];
 
 /* ── Helpers ─────────────────────────────────────────────────────────── */
 const AVATAR_GRADIENTS = [
@@ -136,6 +150,11 @@ export default function Buzon() {
   const [qActiva, setQActiva] = useState("");
   const [busquedaInput, setBusquedaInput] = useState("");
   const [soloNoLeidos, setSoloNoLeidos] = useState(false);
+  // Autocompletado de búsqueda estilo Gmail.
+  const [mostrarSug, setMostrarSug] = useState(false);
+  const [idxSug, setIdxSug] = useState(-1);
+  const [recientes, setRecientes] = useState([]);
+  const inputBusquedaRef = useRef(null);
 
   const [mensajes, setMensajes] = useState([]);
   const [nextPageToken, setNextPageToken] = useState(null);
@@ -469,9 +488,145 @@ export default function Buzon() {
     }
   }
 
+  // ── Búsqueda con autocompletado (estilo Gmail) ──────────────────────────
+  const claveRecientes = `buzon_busquedas_${estado?.correoEnvio || "default"}`;
+
+  // Cargar búsquedas recientes guardadas para la cuenta actual.
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(claveRecientes);
+      setRecientes(raw ? JSON.parse(raw) : []);
+    } catch {
+      setRecientes([]);
+    }
+  }, [claveRecientes]);
+
+  function guardarReciente(valor) {
+    const limpio = (valor || "").trim();
+    if (!limpio) return;
+    setRecientes((prev) => {
+      const next = [limpio, ...prev.filter((x) => x !== limpio)].slice(0, 8);
+      try {
+        localStorage.setItem(claveRecientes, JSON.stringify(next));
+      } catch {
+        // almacenamiento no disponible — silencioso
+      }
+      return next;
+    });
+  }
+
+  // Búsqueda en vivo: aplica el texto tras una breve pausa al escribir.
+  useEffect(() => {
+    if (!estado?.disponible) return;
+    if (busquedaInput === qActiva) return;
+    const t = setTimeout(() => setQActiva(busquedaInput), 450);
+    return () => clearTimeout(t);
+  }, [busquedaInput, qActiva, estado?.disponible]);
+
+  // Sugerencias derivadas del texto, los mensajes cargados y el historial.
+  const sugerencias = useMemo(() => {
+    const q = busquedaInput.trim().toLowerCase();
+    const out = [];
+    if (!q) {
+      recientes.slice(0, 6).forEach((r) => out.push({ tipo: "reciente", texto: r, valor: r }));
+      return out;
+    }
+    // Búsquedas recientes coincidentes.
+    recientes
+      .filter((r) => r.toLowerCase().includes(q))
+      .slice(0, 3)
+      .forEach((r) => out.push({ tipo: "reciente", texto: r, valor: r }));
+    // Remitentes de la bandeja actual.
+    const vistos = new Set();
+    for (const m of mensajes) {
+      if (out.length > 11) break;
+      const email = (m.de || "").trim();
+      const nombre = (m.deNombre || "").trim();
+      if (!email || vistos.has(email.toLowerCase())) continue;
+      if (email.toLowerCase().includes(q) || nombre.toLowerCase().includes(q)) {
+        vistos.add(email.toLowerCase());
+        out.push({
+          tipo: "remitente",
+          texto: nombre && nombre.toLowerCase() !== email.toLowerCase() ? `${nombre} <${email}>` : email,
+          valor: `from:${email}`,
+        });
+      }
+    }
+    // Asuntos coincidentes.
+    const asuntosVistos = new Set();
+    for (const m of mensajes) {
+      if (out.length > 15) break;
+      const asunto = (m.asunto || "").trim();
+      const clave = asunto.toLowerCase();
+      if (asunto && clave.includes(q) && !asuntosVistos.has(clave)) {
+        asuntosVistos.add(clave);
+        out.push({ tipo: "asunto", texto: asunto, valor: asunto });
+      }
+    }
+    // Operadores Gmail.
+    OPERADORES_BUSQUEDA.filter(
+      (o) => o.op.toLowerCase().startsWith(q) || o.desc.toLowerCase().includes(q),
+    )
+      .slice(0, 3)
+      .forEach((o) => out.push({ tipo: "operador", texto: `${o.op} ${o.desc}`, valor: o.op }));
+    return out.slice(0, 9);
+  }, [busquedaInput, mensajes, recientes]);
+
+  function elegirSugerencia(s) {
+    if (!s) return;
+    // Los operadores con ":" requieren más texto: rellenan sin disparar la búsqueda.
+    if (s.tipo === "operador" && s.valor.endsWith(":")) {
+      setBusquedaInput(s.valor);
+      setIdxSug(-1);
+      inputBusquedaRef.current?.focus();
+      return;
+    }
+    setBusquedaInput(s.valor);
+    setQActiva(s.valor);
+    guardarReciente(s.valor);
+    setMostrarSug(false);
+    setIdxSug(-1);
+  }
+
   function aplicarBusqueda(e) {
     e?.preventDefault();
+    if (mostrarSug && idxSug >= 0 && sugerencias[idxSug]) {
+      elegirSugerencia(sugerencias[idxSug]);
+      return;
+    }
     setQActiva(busquedaInput);
+    guardarReciente(busquedaInput);
+    setMostrarSug(false);
+    setIdxSug(-1);
+  }
+
+  function limpiarBusqueda() {
+    setBusquedaInput("");
+    setQActiva("");
+    setMostrarSug(false);
+    setIdxSug(-1);
+    inputBusquedaRef.current?.focus();
+  }
+
+  function onKeyDownBusqueda(e) {
+    if (!mostrarSug || sugerencias.length === 0) {
+      if (e.key === "ArrowDown" && sugerencias.length > 0) {
+        setMostrarSug(true);
+        setIdxSug(0);
+        e.preventDefault();
+      }
+      return;
+    }
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setIdxSug((i) => (i + 1) % sugerencias.length);
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setIdxSug((i) => (i <= 0 ? sugerencias.length - 1 : i - 1));
+    } else if (e.key === "Escape") {
+      setMostrarSug(false);
+      setIdxSug(-1);
+    }
   }
 
   // ── Render ────────────────────────────────────────────────────────────
@@ -670,27 +825,36 @@ export default function Buzon() {
                 gap: 11,
               }}
             >
-              <form onSubmit={aplicarBusqueda} style={{ position: "relative" }}>
+              <form onSubmit={aplicarBusqueda} style={{ position: "relative" }} autoComplete="off">
                 <Search
                   size={15}
                   style={{
                     position: "absolute",
                     left: 12,
-                    top: "50%",
+                    top: 19,
                     transform: "translateY(-50%)",
                     color: FAINT,
+                    pointerEvents: "none",
                   }}
                 />
                 <input
+                  ref={inputBusquedaRef}
                   className="bz-input"
                   type="text"
                   value={busquedaInput}
-                  onChange={(e) => setBusquedaInput(e.target.value)}
+                  onChange={(e) => {
+                    setBusquedaInput(e.target.value);
+                    setMostrarSug(true);
+                    setIdxSug(-1);
+                  }}
+                  onFocus={() => setMostrarSug(true)}
+                  onBlur={() => setTimeout(() => setMostrarSug(false), 120)}
+                  onKeyDown={onKeyDownBusqueda}
                   placeholder="Buscar en el correo…"
                   style={{
                     width: "100%",
                     height: 38,
-                    padding: "0 12px 0 35px",
+                    padding: busquedaInput ? "0 34px 0 35px" : "0 12px 0 35px",
                     borderRadius: 9,
                     border: `1px solid ${LINE}`,
                     fontSize: 13,
@@ -700,6 +864,99 @@ export default function Buzon() {
                     background: "#f8fafb",
                   }}
                 />
+                {busquedaInput && (
+                  <button
+                    type="button"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={limpiarBusqueda}
+                    title="Limpiar búsqueda"
+                    style={{
+                      position: "absolute",
+                      right: 8,
+                      top: 19,
+                      transform: "translateY(-50%)",
+                      width: 22,
+                      height: 22,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      border: "none",
+                      borderRadius: "50%",
+                      background: "transparent",
+                      color: MUTED,
+                      cursor: "pointer",
+                    }}
+                  >
+                    <X size={15} />
+                  </button>
+                )}
+
+                {mostrarSug && sugerencias.length > 0 && (
+                  <div
+                    style={{
+                      position: "absolute",
+                      top: 42,
+                      left: 0,
+                      right: 0,
+                      zIndex: 40,
+                      background: "#fff",
+                      border: `1px solid ${LINE}`,
+                      borderRadius: 10,
+                      boxShadow: "0 12px 32px rgba(15,23,42,0.14)",
+                      overflow: "hidden",
+                      maxHeight: 320,
+                      overflowY: "auto",
+                    }}
+                  >
+                    {sugerencias.map((s, i) => {
+                      const Icono =
+                        s.tipo === "reciente"
+                          ? Clock
+                          : s.tipo === "remitente"
+                            ? Mail
+                            : s.tipo === "operador"
+                              ? CornerDownLeft
+                              : Search;
+                      return (
+                        <button
+                          key={`${s.tipo}-${i}-${s.valor}`}
+                          type="button"
+                          onMouseDown={(e) => e.preventDefault()}
+                          onMouseEnter={() => setIdxSug(i)}
+                          onClick={() => elegirSugerencia(s)}
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 10,
+                            width: "100%",
+                            padding: "9px 12px",
+                            border: "none",
+                            background: i === idxSug ? TEAL_SOFT : "transparent",
+                            cursor: "pointer",
+                            textAlign: "left",
+                          }}
+                        >
+                          <Icono size={15} style={{ color: s.tipo === "operador" ? TEAL : FAINT, flexShrink: 0 }} />
+                          <span
+                            style={{
+                              fontSize: 13,
+                              color: INK,
+                              whiteSpace: "nowrap",
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              flex: 1,
+                            }}
+                          >
+                            {s.texto}
+                          </span>
+                          {s.tipo === "operador" && (
+                            <span style={{ fontSize: 11, color: FAINT, flexShrink: 0 }}>operador</span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
               </form>
 
               <div

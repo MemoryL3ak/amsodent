@@ -793,7 +793,7 @@ export default function SeguimientoPagos() {
   }
 
   return (
-    <div className="page">
+    <div className="page vista-compacta">
       {toast && <Toast type={toast.type} message={toast.message} onClose={() => setToast(null)} />}
 
       <ConfirmModal
@@ -1012,7 +1012,7 @@ export default function SeguimientoPagos() {
           overflow: "hidden",
         }}
       >
-        <div className="table-scroll" style={{ maxHeight: "calc(100vh - 360px)" }}>
+        <div className="table-scroll" style={{ maxHeight: "calc(100vh - 240px)" }}>
           <table className="data-table trazabilidad-table table-fit">
             <colgroup>
               <col style={{ width: "17%" }} />
@@ -1340,7 +1340,7 @@ export default function SeguimientoPagos() {
                             onClick={() => iniciarPago(f)}
                             className="btn btn-primary btn-sm"
                           >
-                            <Circle size={12} style={{ marginRight: 4 }} /> Marcar pagada
+                            <Circle size={12} style={{ marginRight: 4 }} /> Registrar Pago
                           </button>
                         )}
                         {!editando && (
