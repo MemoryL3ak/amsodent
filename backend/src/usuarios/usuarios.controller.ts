@@ -69,6 +69,13 @@ export class UsuariosController {
     return this.usuariosService.eliminarPerfil(id);
   }
 
+  // Crear usuario (Auth + perfil). Solo admin.
+  @Post('crear')
+  @UseGuards(AdminGuard)
+  crearUsuario(@Body() body: { email?: string; nombre?: string; rol?: string }) {
+    return this.usuariosService.crearUsuario(body);
+  }
+
   @Post('reset-password')
   resetPassword(@Body() body: { email: string }) {
     return this.usuariosService.resetPassword(body.email);

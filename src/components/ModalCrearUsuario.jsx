@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { api } from "../lib/api";
 
 const ROLES = [
   { value: "admin",                label: "Administrador" },
@@ -27,31 +28,21 @@ export default function ModalCrearUsuario({ abierto, cerrar, onSuccess, onToast 
 
     setSaving(true);
     try {
-      const endpoint = import.meta.env.VITE_CREATE_USER_ENDPOINT;
-      const res = await fetch(endpoint, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${import.meta.env.VITE_SERVICE_ROLE_KEY}`,
-        },
-        body: JSON.stringify({ email: email.trim(), nombre: nombre.trim(), rol }),
+      // El usuario se crea en el backend (NestJS), donde vive el service_role.
+      // Antes se llamaba a una Edge Function desde el navegador con el
+      // service_role expuesto, lo que fallaba por CORS y era inseguro.
+      const data = await api.post("/usuarios/crear", {
+        email: email.trim(),
+        nombre: nombre.trim(),
+        rol,
       });
 
-      const data = await res.json();
-
-      if (!res.ok) {
-        setError(data.error || "Error al crear usuario");
-        setSaving(false);
-        return;
-      }
-
-      // Mostrar contraseña temporal si la devuelve el endpoint
+      // Mostrar contraseña temporal devuelta por el backend.
       setTempPassword(data.password || data.temp_password || data.contraseña || null);
       onSuccess?.();
-
     } catch (err) {
       console.error(err);
-      setError("Error inesperado al crear usuario.");
+      setError(err?.message || "Error inesperado al crear usuario.");
     } finally {
       setSaving(false);
     }
