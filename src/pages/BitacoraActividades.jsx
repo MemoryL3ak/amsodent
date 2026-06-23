@@ -707,42 +707,43 @@ function VistaMes({ ancla, porFecha, hoyDate, onNuevo, onEditar, mostrarUsuario 
   const dias = Array.from({ length: 42 }, (_, i) => addDays(ini, i));
   return (
     <div className="surface" style={{ overflow: "hidden" }}>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", borderBottom: "1px solid var(--border)" }}>
-        {DIAS.map((d) => (
-          <div key={d} style={{ padding: "8px 0", textAlign: "center", fontSize: 11, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".04em" }}>{d}</div>
-        ))}
-      </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)" }}>
-        {dias.map((d, i) => {
-          const key = ymd(d);
-          const items = porFecha[key] || [];
-          const otroMes = d.getMonth() !== ancla.getMonth();
-          const esHoy = mismaFecha(d, hoyDate);
-          return (
-            <div
-              key={i}
-              onClick={() => onNuevo(d)}
-              style={{
-                minHeight: 104, borderRight: (i % 7 !== 6) ? "1px solid var(--border)" : "none",
-                borderBottom: i < 35 ? "1px solid var(--border)" : "none",
-                padding: 5, cursor: "pointer", background: otroMes ? "var(--bg)" : "var(--surface)",
-                display: "flex", flexDirection: "column", gap: 3,
-              }}
-            >
-              <div style={{ display: "flex", justifyContent: "flex-end" }}>
-                <span style={{
-                  fontSize: 12, fontWeight: 700, width: 22, height: 22, display: "grid", placeItems: "center",
-                  borderRadius: "50%", color: esHoy ? "#fff" : otroMes ? "var(--text-muted)" : "var(--text)",
-                  background: esHoy ? "var(--primary)" : "transparent",
-                }}>{d.getDate()}</span>
+      <div style={{ overflowX: "auto" }}>
+        {/* Grilla única (cabecera + días) con líneas de 1px nítidas y consistentes
+            en cualquier ancho: gap de 1px sobre un fondo del color del borde. */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gap: 1, background: "var(--border)", minWidth: 620 }}>
+          {DIAS.map((d) => (
+            <div key={d} style={{ padding: "8px 0", textAlign: "center", fontSize: 11, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".04em", background: "var(--surface)" }}>{d}</div>
+          ))}
+          {dias.map((d, i) => {
+            const key = ymd(d);
+            const items = porFecha[key] || [];
+            const otroMes = d.getMonth() !== ancla.getMonth();
+            const esHoy = mismaFecha(d, hoyDate);
+            return (
+              <div
+                key={i}
+                onClick={() => onNuevo(d)}
+                style={{
+                  minHeight: 104, padding: 5, cursor: "pointer",
+                  background: otroMes ? "var(--bg)" : "var(--surface)",
+                  display: "flex", flexDirection: "column", gap: 3,
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                  <span style={{
+                    fontSize: 12, fontWeight: 700, width: 22, height: 22, display: "grid", placeItems: "center",
+                    borderRadius: "50%", color: esHoy ? "#fff" : otroMes ? "var(--text-muted)" : "var(--text)",
+                    background: esHoy ? "var(--primary)" : "transparent",
+                  }}>{d.getDate()}</span>
+                </div>
+                {items.slice(0, 3).map((a) => <Chip key={a.id} a={a} compact onClick={onEditar} mostrarUsuario={mostrarUsuario} />)}
+                {items.length > 3 && (
+                  <span style={{ fontSize: 10.5, color: "var(--text-muted)", paddingLeft: 4 }}>+{items.length - 3} más</span>
+                )}
               </div>
-              {items.slice(0, 3).map((a) => <Chip key={a.id} a={a} compact onClick={onEditar} mostrarUsuario={mostrarUsuario} />)}
-              {items.length > 3 && (
-                <span style={{ fontSize: 10.5, color: "var(--text-muted)", paddingLeft: 4 }}>+{items.length - 3} más</span>
-              )}
-            </div>
-          );
-        })}
+            );
+          })}
+        </div>
       </div>
     </div>
   );
@@ -753,22 +754,26 @@ function VistaSemana({ ancla, porFecha, hoyDate, onNuevo, onEditar, mostrarUsuar
   const l = lunesDe(ancla);
   const dias = Array.from({ length: 7 }, (_, i) => addDays(l, i));
   return (
-    <div className="surface" style={{ overflow: "hidden", display: "grid", gridTemplateColumns: "repeat(7, 1fr)" }}>
-      {dias.map((d, i) => {
-        const items = porFecha[ymd(d)] || [];
-        const esHoy = mismaFecha(d, hoyDate);
-        return (
-          <div key={i} style={{ borderRight: i < 6 ? "1px solid var(--border)" : "none", minHeight: 360, display: "flex", flexDirection: "column" }}>
-            <div onClick={() => onNuevo(d)} style={{ padding: "8px 6px", textAlign: "center", borderBottom: "1px solid var(--border)", cursor: "pointer", background: esHoy ? "var(--primary-light, #e6f7f7)" : "transparent" }}>
-              <div style={{ fontSize: 10.5, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase" }}>{DIAS[i]}</div>
-              <div style={{ fontSize: 17, fontWeight: 800, color: esHoy ? "var(--primary-dark)" : "var(--text)" }}>{d.getDate()}</div>
-            </div>
-            <div onClick={() => onNuevo(d)} style={{ flex: 1, padding: 5, display: "flex", flexDirection: "column", gap: 4, cursor: "pointer" }}>
-              {items.map((a) => <Chip key={a.id} a={a} onClick={onEditar} mostrarUsuario={mostrarUsuario} />)}
-            </div>
-          </div>
-        );
-      })}
+    <div className="surface" style={{ overflow: "hidden" }}>
+      <div style={{ overflowX: "auto" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gap: 1, background: "var(--border)", minWidth: 620 }}>
+          {dias.map((d, i) => {
+            const items = porFecha[ymd(d)] || [];
+            const esHoy = mismaFecha(d, hoyDate);
+            return (
+              <div key={i} style={{ minHeight: 360, display: "flex", flexDirection: "column", background: "var(--surface)" }}>
+                <div onClick={() => onNuevo(d)} style={{ padding: "8px 6px", textAlign: "center", borderBottom: "1px solid var(--border)", cursor: "pointer", background: esHoy ? "var(--primary-light, #e6f7f7)" : "transparent" }}>
+                  <div style={{ fontSize: 10.5, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase" }}>{DIAS[i]}</div>
+                  <div style={{ fontSize: 17, fontWeight: 800, color: esHoy ? "var(--primary-dark)" : "var(--text)" }}>{d.getDate()}</div>
+                </div>
+                <div onClick={() => onNuevo(d)} style={{ flex: 1, padding: 5, display: "flex", flexDirection: "column", gap: 4, cursor: "pointer" }}>
+                  {items.map((a) => <Chip key={a.id} a={a} onClick={onEditar} mostrarUsuario={mostrarUsuario} />)}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 }
