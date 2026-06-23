@@ -8,6 +8,7 @@ dotenv.config({ path: path.resolve(__dirname, '..', '.env') });
 
 import { NestFactory } from '@nestjs/core';
 import * as dns from 'dns';
+import compression from 'compression';
 import { json, urlencoded } from 'express';
 import { AppModule } from './app.module';
 
@@ -47,6 +48,10 @@ async function bootstrap() {
       : true,
     credentials: true,
   });
+
+  // Compresión gzip: las respuestas grandes (listas de cotizaciones, ítems,
+  // etc. de varios MB) viajan ~10x más livianas → carga mucho más rápida.
+  app.use(compression());
 
   app.use(json({ limit: '8mb' }));
   app.use(urlencoded({ extended: true, limit: '8mb' }));
