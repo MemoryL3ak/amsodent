@@ -544,57 +544,31 @@ export default function BitacoraActividades() {
         ))}
       </div>
 
-      {/* Layout principal: calendario + panel lateral */}
-      <div className="bitacora-layout">
-        <div style={{ minWidth: 0 }}>
-          {loading ? (
-            <div className="surface" style={{ padding: "40px 24px", color: "var(--text-muted)" }}>Cargando actividades…</div>
-          ) : vista === "mes" ? (
-            <VistaMes ancla={ancla} porFecha={porFecha} hoyDate={hoyDate} onNuevo={abrirNueva} onEditar={abrirEditar} mostrarUsuario={mostrarUsuario} />
-          ) : vista === "semana" ? (
-            <VistaSemana ancla={ancla} porFecha={porFecha} hoyDate={hoyDate} onNuevo={abrirNueva} onEditar={abrirEditar} mostrarUsuario={mostrarUsuario} />
-          ) : vista === "dia" ? (
-            <VistaDia ancla={ancla} porFecha={porFecha} onNuevo={abrirNueva} onEditar={abrirEditar} onToggle={alternarEstado} mostrarUsuario={mostrarUsuario} />
-          ) : (
-            <VistaAgenda actividades={actividades} onEditar={abrirEditar} onToggle={alternarEstado} esAdmin={esAdmin} mostrarUsuario={mostrarUsuario} />
-          )}
-        </div>
-
-        <aside style={{ display: "flex", flexDirection: "column", gap: 14, minWidth: 0 }}>
-          <PanelActividades titulo="Próximas actividades" icon={CalendarClock} items={dash.proximas} onEditar={abrirEditar} vacio="Sin actividades próximas." />
-          <PanelActividades titulo="Tareas pendientes" icon={ListChecks} items={dash.tareasPendientes} onEditar={abrirEditar} onToggle={alternarEstado} checkable vacio="Sin tareas pendientes." />
-          <PanelActividades titulo="Alertas importantes" icon={Bell} items={dash.vencidas} onEditar={abrirEditar} tono="danger" vacio="Sin alertas. Todo al día." />
-          {esAdmin && (
-            <div className="surface" style={{ padding: 14 }}>
-              <ResumenLista titulo="Por usuario" icon={User} items={kpis.porUsuario.map((u) => ({ label: u.nombre, n: u.n, color: colorUsuario(u.email) }))} vacio="Sin actividad" />
-            </div>
-          )}
-        </aside>
+      {/* Calendario a todo el ancho */}
+      <div style={{ minWidth: 0 }}>
+        {loading ? (
+          <div className="surface" style={{ padding: "40px 24px", color: "var(--text-muted)" }}>Cargando actividades…</div>
+        ) : vista === "mes" ? (
+          <VistaMes ancla={ancla} porFecha={porFecha} hoyDate={hoyDate} onNuevo={abrirNueva} onEditar={abrirEditar} mostrarUsuario={mostrarUsuario} />
+        ) : vista === "semana" ? (
+          <VistaSemana ancla={ancla} porFecha={porFecha} hoyDate={hoyDate} onNuevo={abrirNueva} onEditar={abrirEditar} mostrarUsuario={mostrarUsuario} />
+        ) : vista === "dia" ? (
+          <VistaDia ancla={ancla} porFecha={porFecha} onNuevo={abrirNueva} onEditar={abrirEditar} onToggle={alternarEstado} mostrarUsuario={mostrarUsuario} />
+        ) : (
+          <VistaAgenda actividades={actividades} onEditar={abrirEditar} onToggle={alternarEstado} esAdmin={esAdmin} mostrarUsuario={mostrarUsuario} />
+        )}
       </div>
 
-      {/* Mini-stats inferiores */}
-      <div className="bitacora-ministats">
-        <MiniStat icon={CalendarCheck} color="#2563eb" label="Visitas realizadas" sub="este mes" value={dash.visitasRealizadasMes} />
-        <MiniStat icon={FileText} color="#16a34a" label="Cotizaciones en proceso" sub="oportunidades activas" value={dash.enProceso} />
-        <div className="surface bitacora-ministat">
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div className="stat-label">Conversión</div>
-            <div style={{ fontSize: 26, fontWeight: 800, color: "#7c3aed", lineHeight: 1.1 }}>{dash.conversion}%</div>
-            <div className="stat-sub">{dash.adjudicadas} adjudicadas</div>
+      {/* Paneles (debajo del calendario, en columnas) */}
+      <div className="bitacora-paneles">
+        <PanelActividades titulo="Próximas actividades" icon={CalendarClock} items={dash.proximas} onEditar={abrirEditar} vacio="Sin actividades próximas." />
+        <PanelActividades titulo="Tareas pendientes" icon={ListChecks} items={dash.tareasPendientes} onEditar={abrirEditar} onToggle={alternarEstado} checkable vacio="Sin tareas pendientes." />
+        <PanelActividades titulo="Alertas importantes" icon={Bell} items={dash.vencidas} onEditar={abrirEditar} tono="danger" vacio="Sin alertas. Todo al día." />
+        {esAdmin && (
+          <div className="surface" style={{ padding: 14 }}>
+            <ResumenLista titulo="Por usuario" icon={User} items={kpis.porUsuario.map((u) => ({ label: u.nombre, n: u.n, color: colorUsuario(u.email) }))} vacio="Sin actividad" />
           </div>
-          <Donut pct={dash.conversion} color="#7c3aed" />
-        </div>
-        <div className="surface bitacora-ministat">
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div className="stat-label">Meta mensual · visitas</div>
-            <div style={{ fontSize: 26, fontWeight: 800, color: "var(--text)", lineHeight: 1.1 }}>
-              {dash.visitasRealizadasMes}<span style={{ fontSize: 16, color: "var(--text-muted)", fontWeight: 700 }}> / {dash.visitasProgramadasMes}</span>
-            </div>
-            <div style={{ marginTop: 8, height: 7, borderRadius: 999, background: "var(--bg)", overflow: "hidden" }}>
-              <div style={{ width: `${Math.min(100, dash.metaPct)}%`, height: "100%", background: "linear-gradient(90deg,#28aeb1,#22c55e)", borderRadius: 999 }} />
-            </div>
-          </div>
-        </div>
+        )}
       </div>
 
       {modal && (
@@ -683,36 +657,6 @@ function KpiTop({ icon: Icon, color, label, value, sub }) {
   );
 }
 
-/* ── Mini-stat inferior ───────────────────────────────────────────────── */
-function MiniStat({ icon: Icon, color, label, sub, value }) {
-  return (
-    <div className="surface bitacora-ministat">
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div className="stat-label">{label}</div>
-        <div style={{ fontSize: 26, fontWeight: 800, color: "var(--text)", lineHeight: 1.1 }}>{value}</div>
-        <div className="stat-sub">{sub}</div>
-      </div>
-      <div style={{ width: 40, height: 40, borderRadius: 10, background: `${color}14`, color, display: "grid", placeItems: "center", flexShrink: 0 }}>
-        <Icon size={20} />
-      </div>
-    </div>
-  );
-}
-
-/* ── Dona de progreso (SVG) ───────────────────────────────────────────── */
-function Donut({ pct, color }) {
-  const r = 22, c = 2 * Math.PI * r;
-  const off = c * (1 - Math.min(100, Math.max(0, pct)) / 100);
-  return (
-    <svg width="56" height="56" viewBox="0 0 56 56" style={{ flexShrink: 0 }}>
-      <circle cx="28" cy="28" r={r} fill="none" stroke="var(--bg)" strokeWidth="7" />
-      <circle cx="28" cy="28" r={r} fill="none" stroke={color} strokeWidth="7" strokeLinecap="round"
-        strokeDasharray={c} strokeDashoffset={off} transform="rotate(-90 28 28)" />
-      <text x="28" y="32" textAnchor="middle" style={{ fontSize: 13, fontWeight: 800, fill: "var(--text)" }}>{pct}%</text>
-    </svg>
-  );
-}
-
 /* ── Panel lateral: lista de actividades (próximas / tareas / alertas) ──── */
 function PanelActividades({ titulo, icon: Icon, items, onEditar, onToggle, checkable, tono, vacio }) {
   const acento = tono === "danger" ? "#dc2626" : "var(--primary-dark)";
@@ -742,10 +686,10 @@ function PanelActividades({ titulo, icon: Icon, items, onEditar, onToggle, check
                   <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                     <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.titulo}</span>
                   </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 2, fontSize: 11.5, color: tono === "danger" ? "#b91c1c" : "var(--text-muted)" }}>
-                    <span style={{ fontWeight: 600 }}>{etiquetaFecha}</span>
-                    {!a.todo_el_dia && a.hora_inicio && <span>{fmtHora(a.hora_inicio)}</span>}
-                    {a.cliente_nombre && <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>· {a.cliente_nombre}</span>}
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 2, fontSize: 11.5, color: tono === "danger" ? "#b91c1c" : "var(--text-muted)" }}>
+                    <span style={{ fontWeight: 600, whiteSpace: "nowrap", flexShrink: 0 }}>{etiquetaFecha}</span>
+                    {!a.todo_el_dia && a.hora_inicio && <span style={{ whiteSpace: "nowrap", flexShrink: 0 }}>{fmtHora(a.hora_inicio)}</span>}
+                    {a.cliente_nombre && <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>· {a.cliente_nombre}</span>}
                   </div>
                 </div>
               </div>

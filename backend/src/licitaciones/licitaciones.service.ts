@@ -316,22 +316,56 @@ export class LicitacionesService {
     const ids = Array.isArray(licitacionIds) ? licitacionIds : [];
     if (!ids.length) return [];
     const CHUNK = 150;
-    const sel = fields || '*';
     const chunks: number[][] = [];
     for (let i = 0; i < ids.length; i += CHUNK) chunks.push(ids.slice(i, i + CHUNK));
-    const results = await Promise.all(
-      chunks.map((chunk) =>
-        this.supabase.getClient()
-          .from('items_licitacion')
-          .select(sel)
-          .in('licitacion_id', chunk)
-          .range(0, 50000),
-      ),
-    );
+
+    const ejecutar = (sel: string) =>
+      Promise.all(
+        chunks.map((chunk) =>
+          this.supabase.getClient()
+            .from('items_licitacion')
+            .select(sel)
+            .in('licitacion_id', chunk)
+            .range(0, 50000),
+        ),
+      );
+
+    let sel = fields || '*';
+    let resultados = await ejecutar(sel);
+
+    // Tolerar columnas inexistentes (p. ej. costo/cantidad sin migrar): se quitan
+    // del select y se reintenta, en vez de romper la consulta completa.
+    const omitidas: string[] = [];
+    let intentos = 0;
+    while (fields && sel !== '*' && intentos < 10) {
+      const err = resultados.find((r) => r.error)?.error;
+      if (!err) break;
+      const faltante = this.columnaFaltante(err);
+      if (!faltante) break;
+      omitidas.push(faltante);
+      const restantes = fields
+        .split(',')
+        .map((f) => f.trim())
+        .filter((f) => f && !omitidas.includes(f));
+      if (restantes.length === 0) break;
+      sel = restantes.join(',');
+      resultados = await ejecutar(sel);
+      intentos++;
+    }
+
     const merged: any[] = [];
-    for (const { data, error } of results) {
+    for (const { data, error } of resultados) {
       if (error) throw new BadRequestException(error.message);
       if (data) merged.push(...(data as any[]));
+    }
+
+    // Reponer las columnas omitidas como null para no romper el frontend.
+    if (omitidas.length > 0) {
+      return merged.map((row: any) => {
+        const out: any = { ...row };
+        for (const col of omitidas) if (!(col in out)) out[col] = null;
+        return out;
+      });
     }
     return merged;
   }

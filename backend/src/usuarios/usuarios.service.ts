@@ -126,6 +126,63 @@ export class UsuariosService {
     return { avatar_url };
   }
 
+  // Crea un usuario en Auth (con contraseña temporal) + su perfil. Solo admin.
+  // Reemplaza la antigua Edge Function que se llamaba desde el navegador con el
+  // service_role expuesto (riesgo de seguridad + CORS). Aquí el service_role
+  // vive en el servidor.
+  async crearUsuario(body: { email?: string; nombre?: string; rol?: string }) {
+    const email = String(body?.email || '').trim().toLowerCase();
+    const nombre = String(body?.nombre || '').trim();
+    const rol = String(body?.rol || 'ventas').trim() || 'ventas';
+    if (!email) throw new BadRequestException('El correo es obligatorio.');
+    if (!nombre) throw new BadRequestException('El nombre es obligatorio.');
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      throw new BadRequestException('El correo no es válido.');
+    }
+
+    const client = this.supabase.getClient();
+    const password = this.generarPasswordTemporal();
+
+    // 1) Crear el usuario en Auth (email ya confirmado, sin enviar invitación).
+    const { data: created, error: createErr } = await client.auth.admin.createUser({
+      email,
+      password,
+      email_confirm: true,
+      user_metadata: { nombre },
+    });
+    if (createErr) {
+      const msg = (createErr.message || '').toLowerCase();
+      if (msg.includes('already') || msg.includes('registered') || msg.includes('exists')) {
+        throw new BadRequestException('Ya existe un usuario con ese correo.');
+      }
+      throw new BadRequestException(createErr.message);
+    }
+    const userId = created?.user?.id;
+    if (!userId) throw new BadRequestException('No se pudo crear el usuario.');
+
+    // 2) Crear/actualizar el perfil. Si falla, se revierte el usuario de Auth
+    //    para no dejar cuentas huérfanas.
+    const { error: profErr } = await client
+      .from('profiles')
+      .upsert({ id: userId, email, nombre, rol }, { onConflict: 'id' });
+    if (profErr) {
+      await client.auth.admin.deleteUser(userId).catch(() => undefined);
+      throw new BadRequestException(profErr.message);
+    }
+
+    return { id: userId, email, nombre, rol, password };
+  }
+
+  // Contraseña temporal legible (sin caracteres ambiguos como O/0, l/1).
+  private generarPasswordTemporal(): string {
+    const abc = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
+    let out = '';
+    for (let i = 0; i < 10; i++) {
+      out += abc[Math.floor(Math.random() * abc.length)];
+    }
+    return out;
+  }
+
   async resetPassword(email: string) {
     const { error } = await this.supabase.getClient()
       .auth.resetPasswordForEmail(email, {
