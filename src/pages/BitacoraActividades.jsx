@@ -131,6 +131,8 @@ export default function BitacoraActividades() {
   const { user, rol } = useAuth();
   const rolNorm = (rol || "").toString().trim().toLowerCase();
   const esAdmin = rolNorm === "admin" || rolNorm === "administrador";
+  // Vista global (ve actividades de todos y filtra por usuario): admin + jefe de ventas.
+  const verTodas = esAdmin || rolNorm === "jefe_ventas";
 
   const [vista, setVista] = useState("mes"); // mes | semana | dia | agenda
   const [ancla, setAncla] = useState(() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; });
@@ -169,7 +171,7 @@ export default function BitacoraActividades() {
       params.set("hasta", rango.hasta);
       if (filtroTipo) params.set("tipo", filtroTipo);
       if (filtroCliente) params.set("cliente_id", filtroCliente);
-      if (esAdmin && filtroUsuario) params.set("email", filtroUsuario);
+      if (verTodas && filtroUsuario) params.set("email", filtroUsuario);
       const data = await api.get(`/actividades?${params.toString()}`);
       setActividades(Array.isArray(data) ? data : []);
     } catch (e) {
@@ -178,7 +180,7 @@ export default function BitacoraActividades() {
     } finally {
       setLoading(false);
     }
-  }, [rango, filtroTipo, filtroCliente, filtroUsuario, esAdmin]);
+  }, [rango, filtroTipo, filtroCliente, filtroUsuario, verTodas]);
 
   useEffect(() => { cargar(); }, [cargar]);
 
@@ -190,13 +192,13 @@ export default function BitacoraActividades() {
       const params = new URLSearchParams();
       params.set("desde", ymd(addDays(h, -60)));
       params.set("hasta", ymd(addDays(h, 60)));
-      if (esAdmin && filtroUsuario) params.set("email", filtroUsuario);
+      if (verTodas && filtroUsuario) params.set("email", filtroUsuario);
       const data = await api.get(`/actividades?${params.toString()}`);
       setMetricas(Array.isArray(data) ? data : []);
     } catch {
       setMetricas([]);
     }
-  }, [esAdmin, filtroUsuario]);
+  }, [verTodas, filtroUsuario]);
 
   useEffect(() => { cargarMetricas(); }, [cargarMetricas]);
 
@@ -221,7 +223,7 @@ export default function BitacoraActividades() {
         setPerfiles(Array.isArray(p) ? p : []);
       } catch { /* */ }
     })();
-    if (esAdmin) {
+    if (verTodas) {
       (async () => {
         try {
           const u = await api.get("/actividades/usuarios");
@@ -229,10 +231,10 @@ export default function BitacoraActividades() {
         } catch { /* */ }
       })();
     }
-  }, [esAdmin]);
+  }, [verTodas]);
 
-  // En vista admin sin filtro de un único usuario, diferenciamos por color/usuario.
-  const mostrarUsuario = esAdmin && !filtroUsuario;
+  // En vista global sin filtro de un único usuario, diferenciamos por color/usuario.
+  const mostrarUsuario = verTodas && !filtroUsuario;
 
   const clienteOptions = useMemo(
     () => clientes
@@ -382,7 +384,7 @@ export default function BitacoraActividades() {
       }
       cargar();
       cargarMetricas();
-      if (esAdmin) { try { const u = await api.get("/actividades/usuarios"); setUsuarios(Array.isArray(u) ? u : []); } catch { /* */ } }
+      if (verTodas) { try { const u = await api.get("/actividades/usuarios"); setUsuarios(Array.isArray(u) ? u : []); } catch { /* */ } }
       // Si se generó un Meet, dejamos el modal abierto para mostrar/copiar la URL.
       if (!r?.meet_url) setModal(null);
       return r;
@@ -439,7 +441,7 @@ export default function BitacoraActividades() {
       <div className="page-header" style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
         <div>
           <h1 className="page-title">Bitácora de actividades</h1>
-          <p className="page-subtitle">Gestiones y actividades por cliente · {esAdmin ? "vista de administración" : "tu agenda"}</p>
+          <p className="page-subtitle">Gestiones y actividades por cliente · {verTodas ? "vista global" : "tu agenda"}</p>
         </div>
         <button type="button" className="btn btn-primary" onClick={() => abrirNueva()}>
           <Plus size={15} /> Nueva actividad
@@ -509,7 +511,7 @@ export default function BitacoraActividades() {
             options={[{ value: "", label: "Todos" }, ...clienteOptions]}
           />
         </div>
-        {esAdmin && (
+        {verTodas && (
           <div className="filter-field" style={{ minWidth: 220 }}>
             <label className="filter-label"><User size={11} style={{ marginRight: 4 }} />Usuario</label>
             <Combo
@@ -564,7 +566,7 @@ export default function BitacoraActividades() {
         <PanelActividades titulo="Próximas actividades" icon={CalendarClock} items={dash.proximas} onEditar={abrirEditar} vacio="Sin actividades próximas." />
         <PanelActividades titulo="Tareas pendientes" icon={ListChecks} items={dash.tareasPendientes} onEditar={abrirEditar} onToggle={alternarEstado} checkable vacio="Sin tareas pendientes." />
         <PanelActividades titulo="Alertas importantes" icon={Bell} items={dash.vencidas} onEditar={abrirEditar} tono="danger" vacio="Sin alertas. Todo al día." />
-        {esAdmin && (
+        {verTodas && (
           <div className="surface" style={{ padding: 14 }}>
             <ResumenLista titulo="Por usuario" icon={User} items={kpis.porUsuario.map((u) => ({ label: u.nombre, n: u.n, color: colorUsuario(u.email) }))} vacio="Sin actividad" />
           </div>
