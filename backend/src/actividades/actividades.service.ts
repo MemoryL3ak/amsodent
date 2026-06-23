@@ -63,6 +63,12 @@ export class ActividadesService {
     return rol === 'admin' || rol === 'administrador';
   }
 
+  // Roles que ven las actividades de TODOS los usuarios (vista global) y pueden
+  // filtrar por usuario: admin y jefe de ventas.
+  private puedeVerTodas(rol: string): boolean {
+    return this.esAdmin(rol) || rol === 'jefe_ventas';
+  }
+
   async listar(user: Usuario, filtros: ActividadFiltros) {
     const { rol } = await this.datosPerfil(user);
     const email = (user?.email || '').toLowerCase();
@@ -73,9 +79,9 @@ export class ActividadesService {
       .order('fecha', { ascending: true })
       .order('hora_inicio', { ascending: true, nullsFirst: true });
 
-    // Visibilidad: el admin puede ver todo (y filtrar por usuario); el resto
-    // solo ve sus propias actividades.
-    if (this.esAdmin(rol)) {
+    // Visibilidad: admin y jefe de ventas ven todo (y filtran por usuario); el
+    // resto solo ve sus propias actividades.
+    if (this.puedeVerTodas(rol)) {
       if (filtros.email) query = query.ilike('user_email', filtros.email);
     } else {
       query = query.ilike('user_email', email);
@@ -387,7 +393,7 @@ export class ActividadesService {
   // Usuarios con actividades (para el filtro del admin).
   async usuarios(user: Usuario) {
     const { rol } = await this.datosPerfil(user);
-    if (!this.esAdmin(rol)) return [];
+    if (!this.puedeVerTodas(rol)) return [];
     const { data, error } = await this.supabase
       .getClient()
       .from('actividades_cliente')
