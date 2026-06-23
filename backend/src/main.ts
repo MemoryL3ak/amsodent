@@ -11,6 +11,17 @@ import * as dns from 'dns';
 import { json, urlencoded } from 'express';
 import { AppModule } from './app.module';
 
+// Blindaje del proceso: un rechazo/excepción no capturado NO debe tumbar el
+// backend. Sin esto, los reintentos asíncronos de googleapis (gaxios) al fallar
+// un refresh token de Gmail (`invalid_grant`) generan un unhandledRejection que
+// mata el proceso → Railway reinicia → 502 en TODOS los endpoints (crash-loop).
+process.on('unhandledRejection', (reason) => {
+  console.error('[unhandledRejection]', reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[uncaughtException]', err);
+});
+
 // Railway (y la mayoría de cloud providers chicos) sólo tienen IPv4 saliente.
 // Por default Node resuelve hostnames con IPv6 primero, lo que hace fallar
 // llamadas a Gmail SMTP (smtp.gmail.com), Boostr (api.boostr.cl), etc. con
