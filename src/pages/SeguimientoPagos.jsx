@@ -123,6 +123,7 @@ export default function SeguimientoPagos() {
 
   // Filtros
   const [filtroEstado, setFiltroEstado] = useState("todas");
+  const [filtroCierreForzado, setFiltroCierreForzado] = useState("todas"); // todas | forzado | abiertos
   const [filtroEntidad, setFiltroEntidad] = useState("");
   const [filtroNumero, setFiltroNumero] = useState("");
   const [filtroTipoCotizacion, setFiltroTipoCotizacion] = useState("");
@@ -131,6 +132,12 @@ export default function SeguimientoPagos() {
   const [filtroFormaPago, setFiltroFormaPago] = useState([]);
   const [openFormaPago, setOpenFormaPago] = useState(false);
   const formaPagoRef = useRef(null);
+  // Filtro de fecha (por fecha de factura) y empresa despachadora (desde la
+  // guía de despacho de cada cotización, módulo Trazabilidad).
+  const [filtroDesde, setFiltroDesde] = useState("");
+  const [filtroHasta, setFiltroHasta] = useState("");
+  const [filtroEmpresaDespacho, setFiltroEmpresaDespacho] = useState("");
+  const [empresaDespachoMap, setEmpresaDespachoMap] = useState({}); // licitacion_id → empresa
 
   useEffect(() => {
     const onClickOutside = (e) => {
@@ -193,7 +200,7 @@ export default function SeguimientoPagos() {
 
         // Cotizaciones adjudicadas reales
         const licsAdj = await api.get(
-          "/licitaciones/with-fields?fields=id,id_licitacion,nombre_entidad,fecha_adjudicada,total_con_iva,total_sin_iva,creado_por,condicion_venta,comuna,estado,tipo_compra,tipo_cliente"
+          "/licitaciones/with-fields?fields=id,id_licitacion,nombre_entidad,fecha_adjudicada,total_con_iva,total_sin_iva,creado_por,condicion_venta,comuna,estado,tipo_compra,tipo_cliente,ciclo_cerrado,monto_forzado"
         );
         rows = (licsAdj || []).filter((l) => l.estado === "Adjudicada");
 
@@ -216,6 +223,7 @@ export default function SeguimientoPagos() {
         const ocNums = {};
         const ncList = {};
         const ncSum = {};
+        const empresaMap = {};
         if (ids.length > 0) {
           const docs = await api.post("/licitaciones/documentos/filter", {
             // Orden de compra (monto a cobrar), factura (Entidad Pública),
@@ -223,12 +231,18 @@ export default function SeguimientoPagos() {
             // particular (transferencia/comprobante, webpay y efectivo).
             filter: {
               licitacion_ids: ids,
-              tipo: ["orden_compra", "factura", "factura_boleta", "comprobante_pago", "webpay", "efectivo", "nota_credito"],
+              tipo: ["orden_compra", "factura", "factura_boleta", "comprobante_pago", "webpay", "efectivo", "nota_credito", "guia_despacho"],
             },
             fields: "*",
           });
           (docs || []).forEach((d) => {
             const lid = d.licitacion_id;
+            if (d.tipo === "guia_despacho") {
+              // Empresa despachadora de la cotización (de su guía de despacho).
+              const emp = String(d.empresa_despacho || "").trim();
+              if (emp && !empresaMap[lid]) empresaMap[lid] = emp;
+              return;
+            }
             if (d.tipo === "factura" || d.tipo === "factura_boleta") {
               allFacturas.push(d);
               return;
@@ -258,6 +272,7 @@ export default function SeguimientoPagos() {
           });
         }
         setFacturas(allFacturas);
+        setEmpresaDespachoMap(empresaMap);
         setComprobantesMap(compMap);
         setComprobantesSumMap(compSum);
         setMontoOcMap(ocSum);
@@ -313,6 +328,25 @@ export default function SeguimientoPagos() {
     return [...set].sort();
   }, [licMap]);
 
+  // Empresas despachadoras disponibles (desde las guías de despacho).
+  const empresasDespacho = useMemo(() => {
+    const set = new Set();
+    Object.values(empresaDespachoMap || {}).forEach((e) => {
+      const t = (e || "").toString().trim();
+      if (t) set.add(t);
+    });
+    // Orden fijo: Blue Express, Starken, Despacho interno, …(otras), Otro al final.
+    const rank = (s) => {
+      const v = s.toLowerCase();
+      if (v.includes("blue")) return 0;
+      if (v.includes("starken")) return 1;
+      if (v.includes("interno")) return 2;
+      if (v === "otro") return 99;
+      return 50;
+    };
+    return [...set].sort((a, b) => rank(a) - rank(b) || a.localeCompare(b, "es"));
+  }, [empresaDespachoMap]);
+
   // ── Notas de crédito / reconciliación de montos ──────────────────────────
   // Monto base a cobrar (antes de notas de crédito): particular → monto de la
   // factura/boleta; público → valor neto de la OC.
@@ -344,8 +378,11 @@ export default function SeguimientoPagos() {
     return Boolean(f.pagada) && !descalceMontos(f, lic);
   }
 
-  // Filtros aplicados
-  const facturasFiltradas = useMemo(() => {
+  // Filtros base: todos MENOS el de estado. Los KPIs se calculan sobre estas
+  // facturas para que respeten los filtros (entidad, fecha, empresa, etc.) sin
+  // que el filtro de estado anule el resto de los baldes (los KPIs SON el
+  // desglose por estado).
+  const facturasFiltradasBase = useMemo(() => {
     return facturas.filter((f) => {
       const lic = licMap[f.licitacion_id];
       if (!lic) return false;
@@ -361,30 +398,52 @@ export default function SeguimientoPagos() {
         return false;
       }
 
-
       if (filtroNumero) {
         const num = (f.numero || "").toString().toLowerCase();
         if (!num.includes(filtroNumero.toLowerCase())) return false;
       }
+
+      // Empresa despachadora (de la guía de despacho de la cotización).
+      if (filtroEmpresaDespacho) {
+        const emp = (empresaDespachoMap[f.licitacion_id] || "").toString().trim();
+        if (emp !== filtroEmpresaDespacho) return false;
+      }
+
+      // Rango de fecha (por fecha de la factura).
+      const ff = String(f.fecha_factura || "").slice(0, 10);
+      if (filtroDesde && (!ff || ff < filtroDesde)) return false;
+      if (filtroHasta && (!ff || ff > filtroHasta)) return false;
 
       // Tipo de pago (forma_pago): solo aplica a facturas con forma registrada.
       if (filtroFormaPago.length > 0) {
         if (!f.forma_pago || !filtroFormaPago.includes(f.forma_pago)) return false;
       }
 
+      // Cierre forzado de ciclo (Trazabilidad → ciclo_cerrado).
+      if (filtroCierreForzado === "forzado" && !lic.ciclo_cerrado) return false;
+      if (filtroCierreForzado === "abiertos" && lic.ciclo_cerrado) return false;
+
+      return true;
+    });
+  }, [facturas, licMap, filtroEntidad, filtroNumero, filtroTipoCotizacion, filtroTipoCompra, filtroFormaPago, filtroEmpresaDespacho, empresaDespachoMap, filtroDesde, filtroHasta, filtroCierreForzado]);
+
+  // Filtros aplicados a la tabla = base + filtro de estado.
+  const facturasFiltradas = useMemo(() => {
+    if (filtroEstado === "todas") return facturasFiltradasBase;
+    return facturasFiltradasBase.filter((f) => {
+      const lic = licMap[f.licitacion_id];
+      if (!lic) return false;
       const plazo = plazoDias(lic.condicion_venta);
       const dias = diasEntre(f.fecha_factura);
       const diasRestantes = dias != null ? plazo - dias : null;
-
       const pagadaEf = estaPagada(f, lic);
       if (filtroEstado === "pagadas" && !pagadaEf) return false;
       if (filtroEstado === "pendientes" && pagadaEf) return false;
       if (filtroEstado === "vencidas" && (pagadaEf || diasRestantes == null || diasRestantes >= 0)) return false;
       if (filtroEstado === "por_vencer" && (pagadaEf || diasRestantes == null || diasRestantes < 0 || diasRestantes > 5)) return false;
-
       return true;
     });
-  }, [facturas, licMap, filtroEntidad, filtroNumero, filtroTipoCotizacion, filtroTipoCompra, filtroFormaPago, filtroEstado, notasCreditoSumMap, comprobantesSumMap, montoOcMap]);
+  }, [facturasFiltradasBase, licMap, filtroEstado, notasCreditoSumMap, comprobantesSumMap, montoOcMap]);
 
   // Ordenamiento
   const facturasOrdenadas = useMemo(() => {
@@ -515,19 +574,26 @@ export default function SeguimientoPagos() {
     }
   }
 
-  // Stats globales (de todas las facturas, no solo las filtradas).
-  // Cada balde acumula también el monto con IVA (lic.total_con_iva).
+  // Stats — se calculan sobre las facturas filtradas (base, sin el filtro de
+  // estado) para que los KPIs respeten los filtros aplicados.
   const stats = useMemo(() => {
     let total = 0, pagadas = 0, pendientes = 0, vencidas = 0, porVencer = 0;
     let montoPagadas = 0, montoEnPlazo = 0, montoPorVencer = 0, montoVencidas = 0;
     let factoringCount = 0, montoFactoring = 0;
-    facturas.forEach((f) => {
+    let totalFacturadoCount = 0, totalFacturadoMonto = 0;
+    const licsEnVista = new Set();
+    facturasFiltradasBase.forEach((f) => {
       const lic = licMap[f.licitacion_id];
       if (!lic) return;
+      licsEnVista.add(f.licitacion_id);
       // Monto de cada KPI = valor neto de la OC (suma de OC), con fallback al
       // neto de la cotización cuando no hay OC.
       const monto = montoNetoPago(montoOcMap[f.licitacion_id], lic);
       total++;
+      // Total facturado = valor base de la factura (particular: monto factura;
+      // público: neto de OC), antes de notas de crédito.
+      totalFacturadoCount++;
+      totalFacturadoMonto += montoBaseFactura(f, lic);
       // Pagada solo si los montos calzan (punto 17); si no, cae a pendiente.
       if (estaPagada(f, lic)) {
         pagadas++; montoPagadas += monto;
@@ -542,12 +608,20 @@ export default function SeguimientoPagos() {
       else if (diasRestantes != null && diasRestantes <= 5) { porVencer++; montoPorVencer += monto; }
       else { montoEnPlazo += monto; }
     });
-    // Notas de crédito (cantidad de documentos y monto total).
+    // Notas de crédito y forzado a cierre de las cotizaciones en la vista filtrada.
     let ncCount = 0, ncMonto = 0;
-    Object.values(notasCreditoMap).forEach((arr) => { ncCount += (arr?.length || 0); });
-    Object.values(notasCreditoSumMap).forEach((v) => { ncMonto += Number(v || 0); });
-    return { total, pagadas, pendientes, vencidas, porVencer, montoPagadas, montoEnPlazo, montoPorVencer, montoVencidas, factoringCount, montoFactoring, ncCount, ncMonto };
-  }, [facturas, licMap, montoOcMap, notasCreditoMap, notasCreditoSumMap, comprobantesSumMap]);
+    let forzadoCount = 0, forzadoMonto = 0;
+    licsEnVista.forEach((lid) => {
+      ncCount += (notasCreditoMap[lid]?.length || 0);
+      ncMonto += Number(notasCreditoSumMap[lid] || 0);
+      const lic = licMap[lid];
+      if (lic?.ciclo_cerrado) {
+        forzadoCount++;
+        forzadoMonto += Number(lic.monto_forzado || 0);
+      }
+    });
+    return { total, pagadas, pendientes, vencidas, porVencer, montoPagadas, montoEnPlazo, montoPorVencer, montoVencidas, factoringCount, montoFactoring, ncCount, ncMonto, totalFacturadoCount, totalFacturadoMonto, forzadoCount, forzadoMonto };
+  }, [facturasFiltradasBase, licMap, montoOcMap, notasCreditoMap, notasCreditoSumMap, comprobantesSumMap]);
 
   async function abrirDocumento(doc) {
     if (!doc?.bucket || !doc?.storage_path) return;
@@ -858,8 +932,14 @@ export default function SeguimientoPagos() {
         </div>
       </div>
 
-      {/* Stats — cantidad + monto con IVA por estado */}
-      <div className="stats-row stats-6">
+      {/* Stats — cantidad + monto por estado. Respetan los filtros aplicados. */}
+      <div className="stats-row stats-8">
+        <div className="stat-card">
+          <div className="stat-label">Total facturado</div>
+          <div className="stat-value" style={{ color: "var(--text)" }}>{stats.totalFacturadoCount}</div>
+          <div className="stat-money" style={{ color: "var(--text)" }}>{fmtCLP(stats.totalFacturadoMonto)}</div>
+          <div className="stat-sub">facturas emitidas · monto base</div>
+        </div>
         <div className="stat-card">
           <div className="stat-label">Pagadas</div>
           <div className="stat-value" style={{ color: "var(--success)" }}>{stats.pagadas}</div>
@@ -898,6 +978,12 @@ export default function SeguimientoPagos() {
           <div className="stat-money" style={{ color: "#0ea5e9" }}>{fmtCLP(stats.ncMonto)}</div>
           <div className="stat-sub">descuento aplicado a facturas</div>
         </div>
+        <div className="stat-card">
+          <div className="stat-label">Forzado a cierre</div>
+          <div className="stat-value" style={{ color: "#dc2626" }}>{stats.forzadoCount}</div>
+          <div className="stat-money" style={{ color: "#dc2626" }}>{fmtCLP(stats.forzadoMonto)}</div>
+          <div className="stat-sub">cotizaciones de ciclo cerrado · monto forzado</div>
+        </div>
       </div>
 
       {/* Filtros */}
@@ -910,6 +996,14 @@ export default function SeguimientoPagos() {
             <option value="pendientes">Pendientes</option>
             <option value="por_vencer">Por vencer</option>
             <option value="vencidas">Vencidas</option>
+          </select>
+        </div>
+        <div className="filter-field">
+          <label className="filter-label">Cierre de ciclo</label>
+          <select className="input" value={filtroCierreForzado} onChange={(e) => setFiltroCierreForzado(e.target.value)}>
+            <option value="todas">Todos</option>
+            <option value="forzado">Cierre forzado</option>
+            <option value="abiertos">Ciclos abiertos</option>
           </select>
         </div>
         <div className="filter-field">
@@ -1000,6 +1094,29 @@ export default function SeguimientoPagos() {
               </div>
             </div>
           )}
+        </div>
+        {empresasDespacho.length > 0 && (
+          <div className="filter-field">
+            <label className="filter-label">Empresa despachadora</label>
+            <select
+              className="input"
+              value={filtroEmpresaDespacho}
+              onChange={(e) => setFiltroEmpresaDespacho(e.target.value)}
+            >
+              <option value="">Todas</option>
+              {empresasDespacho.map((e) => (
+                <option key={e} value={e}>{e}</option>
+              ))}
+            </select>
+          </div>
+        )}
+        <div className="filter-field">
+          <label className="filter-label">Factura desde</label>
+          <DateFilter value={filtroDesde} onChange={setFiltroDesde} maxDate={filtroHasta ? new Date(`${filtroHasta}T00:00:00`) : undefined} placeholder="Desde…" />
+        </div>
+        <div className="filter-field">
+          <label className="filter-label">Factura hasta</label>
+          <DateFilter value={filtroHasta} onChange={setFiltroHasta} minDate={filtroDesde ? new Date(`${filtroDesde}T00:00:00`) : undefined} placeholder="Hasta…" />
         </div>
       </div>
 
@@ -1127,6 +1244,24 @@ export default function SeguimientoPagos() {
                           >
                             {particular ? "Particular" : "Pública"}
                           </span>
+                          {lic.ciclo_cerrado && (
+                            <span
+                              title={lic.monto_forzado ? `Monto forzado: $${Number(lic.monto_forzado).toLocaleString("es-CL")}` : "Ciclo cerrado de forma forzada en Trazabilidad"}
+                              style={{
+                                display: "inline-block",
+                                padding: "1px 8px",
+                                borderRadius: "999px",
+                                fontSize: "10px",
+                                fontWeight: 700,
+                                textTransform: "uppercase",
+                                letterSpacing: ".4px",
+                                color: "#b91c1c",
+                                background: "#fee2e2",
+                              }}
+                            >
+                              Cierre forzado
+                            </span>
+                          )}
                           {lic.comuna && (
                             <span style={{ color: "var(--text-muted)", fontSize: "11px" }}>{lic.comuna}</span>
                           )}

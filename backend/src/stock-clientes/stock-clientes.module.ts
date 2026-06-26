@@ -3,11 +3,12 @@ import { StockClientesController } from './stock-clientes.controller';
 import { StockClientesService } from './stock-clientes.service';
 import { MailingsModule } from '../mailings/mailings.module';
 import { CorreosModule } from '../correos/correos.module';
+import { LicitacionesModule } from '../licitaciones/licitaciones.module';
 import { AuthGuard } from '../auth/auth.guard';
 import { AdminGuard } from '../auth/admin.guard';
 
 @Module({
-  imports: [MailingsModule, CorreosModule],
+  imports: [MailingsModule, CorreosModule, LicitacionesModule],
   controllers: [StockClientesController],
   providers: [StockClientesService, AuthGuard, AdminGuard],
   exports: [StockClientesService],

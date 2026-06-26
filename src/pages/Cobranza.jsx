@@ -231,6 +231,8 @@ export default function Cobranza() {
   const [filtroCotId, setFiltroCotId] = useState("");
   const [filtroTipoCotizacion, setFiltroTipoCotizacion] = useState("");
   const [filtroEstado, setFiltroEstado] = useState("");
+  // Rango de días de atraso (tramos de aging).
+  const [filtroRangoDias, setFiltroRangoDias] = useState("");
 
   // Filtros (Historial de gestiones)
   const [hEntidad, setHEntidad] = useState("");
@@ -411,9 +413,19 @@ export default function Cobranza() {
         const est = estadosMap[String(f.id)]?.estado || "sin_gestion";
         if (est !== filtroEstado) return false;
       }
+      // Rango de días de atraso (días vencidos = días desde emisión − plazo).
+      if (filtroRangoDias) {
+        const dias = diasEntre(f.fecha_factura);
+        const atraso = dias != null ? dias - plazoDias(lic.condicion_venta) : null;
+        if (atraso == null || atraso < 1) return false;
+        if (filtroRangoDias === "1-60" && atraso > 60) return false;
+        if (filtroRangoDias === "61-90" && (atraso < 61 || atraso > 90)) return false;
+        if (filtroRangoDias === "91-120" && (atraso < 91 || atraso > 120)) return false;
+        if (filtroRangoDias === "+120" && atraso <= 120) return false;
+      }
       return true;
     });
-  }, [vencidas, licMap, filtroEntidad, filtroNumero, filtroCotId, filtroOC, ocPorLic, filtroTipoCotizacion, filtroEstado, estadosMap]);
+  }, [vencidas, licMap, filtroEntidad, filtroNumero, filtroCotId, filtroOC, ocPorLic, filtroTipoCotizacion, filtroEstado, estadosMap, filtroRangoDias]);
 
   const stats = useMemo(() => {
     let monto = 0, sinGestion = 0, enGestion = 0, comprometido = 0;
@@ -738,6 +750,16 @@ export default function Cobranza() {
           <select className="input" value={filtroEstado} onChange={(e) => setFiltroEstado(e.target.value)}>
             <option value="">Todos</option>
             {ESTADOS_COBRANZA.map((e) => <option key={e.value} value={e.value}>{e.label}</option>)}
+          </select>
+        </div>
+        <div className="filter-field">
+          <label className="filter-label">Días de atraso</label>
+          <select className="input" value={filtroRangoDias} onChange={(e) => setFiltroRangoDias(e.target.value)}>
+            <option value="">Todos</option>
+            <option value="1-60">1 a 60 días</option>
+            <option value="61-90">61 a 90 días</option>
+            <option value="91-120">91 a 120 días</option>
+            <option value="+120">Más de 120 días</option>
           </select>
         </div>
       </div>

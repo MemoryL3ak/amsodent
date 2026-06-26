@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
 import useAuth from "../hooks/useAuth";
 import DateFilter from "../components/DateFilter";
-import { FileText, Trophy, TrendingUp, CircleDollarSign, Truck, Package, Lock } from "lucide-react";
+import { FileText, Trophy, TrendingUp, CircleDollarSign, Truck } from "lucide-react";
 
 const ESTADOS_ORDEN = [
   "En espera",
@@ -121,7 +121,7 @@ function KpiCard({ title, value, subtitle, minor, color, icon: Icon }) {
   );
 }
 
-export default function Ventas() {
+export default function Ventas({ embedded = false }) {
   const { user, rol, cargando } = useAuth();
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState("");
@@ -583,21 +583,23 @@ export default function Ventas() {
   const hastaMostrado = fechaHasta || "-";
 
   return (
-    <div className="page">
+    <div className={embedded ? "" : "page"}>
 
       {/* HEADER */}
       <div className="surface" style={{ marginBottom: "20px" }}>
         <div className="surface-body">
           <div style={{ display: "flex", flexWrap: "wrap", alignItems: "flex-start", justifyContent: "space-between", gap: "20px" }}>
-            <div>
-              <div style={{ fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.15em", color: "var(--primary)", fontWeight: 600, marginBottom: "6px" }}>
-                Resumen Comercial
+            {!embedded && (
+              <div>
+                <div style={{ fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.15em", color: "var(--primary)", fontWeight: 600, marginBottom: "6px" }}>
+                  Resumen Comercial
+                </div>
+                <h1 className="page-title" style={{ marginBottom: "4px" }}>Resumen Comercial</h1>
+                <p style={{ fontSize: "13px", color: "var(--text-muted)", margin: 0 }}>
+                  Vista general y por vendedor con métricas de adjudicación, montos y desempeño.
+                </p>
               </div>
-              <h1 className="page-title" style={{ marginBottom: "4px" }}>Resumen Comercial</h1>
-              <p style={{ fontSize: "13px", color: "var(--text-muted)", margin: 0 }}>
-                Vista general y por vendedor con métricas de adjudicación, montos y desempeño.
-              </p>
-            </div>
+            )}
 
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "12px", minWidth: "560px", flex: "1 1 600px" }}>
               <div className="field">
@@ -705,8 +707,8 @@ export default function Ventas() {
         </div>
       ) : (
         <>
-          {/* KPI CARDS — Despacho y cierre */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "16px", marginBottom: "20px" }}>
+          {/* KPI CARDS — Despacho (el "Forzado a Cierre" se trasladó a Seguimiento de Pagos) */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: "16px", marginBottom: "20px" }}>
             <KpiCard
               title="Monto Adjudicado (OC)"
               value={fmtCLP(resumenGeneral.adjudicadoOcNeto)}
@@ -722,22 +724,6 @@ export default function Ventas() {
               minor={`Pública ${fmtCLP(resumenGeneral.realVendidoPublicaNeto)} · Particular ${fmtCLP(resumenGeneral.realVendidoParticularNeto)}`}
               color="#16a34a"
               icon={Truck}
-            />
-            <KpiCard
-              title="Pendiente por Despachar"
-              value={fmtCLP(resumenGeneral.pendienteDespacharNeto)}
-              subtitle="Neto · OC − guías (ciclos abiertos)"
-              minor={`Bruto: ${fmtCLP(montoBrutoDesdeNeto(resumenGeneral.pendienteDespacharNeto))}`}
-              color="#0d9488"
-              icon={Package}
-            />
-            <KpiCard
-              title="Forzado a Cierre"
-              value={fmtCLP(resumenGeneral.totalForzadoNeto)}
-              subtitle="Neto · no se despacha (cierre forzado)"
-              minor={`Bruto: ${fmtCLP(montoBrutoDesdeNeto(resumenGeneral.totalForzadoNeto))}`}
-              color="#dc2626"
-              icon={Lock}
             />
           </div>
 
@@ -911,80 +897,7 @@ export default function Ventas() {
             </div>
           </div>
 
-          {/* TABLA RESUMEN POR REGIÓN */}
-          <div className="surface">
-            <div className="surface-header">
-              <div>
-                <h3 className="surface-title">Resumen por Región</h3>
-                <p style={{ fontSize: "12px", color: "var(--text-muted)", margin: 0 }}>
-                  Distribución territorial de licitaciones y montos en el periodo.
-                </p>
-              </div>
-              <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-                <input
-                  type="text"
-                  className="input"
-                  style={{ width: "200px" }}
-                  value={filtroRegionResumen}
-                  onChange={(e) => setFiltroRegionResumen(e.target.value)}
-                  placeholder="Filtrar región…"
-                />
-                <span style={{ fontSize: "12px", color: "var(--text-muted)", whiteSpace: "nowrap" }}>
-                  {resumenRegionesFiltrado.length} región(es)
-                </span>
-              </div>
-            </div>
-            <div className="table-wrap" style={{ boxShadow: "none", border: "none", borderRadius: 0 }}>
-              <div className="table-scroll" style={{ maxHeight: "420px" }}>
-                <table className="data-table" style={{ minWidth: "1050px" }}>
-                  <thead>
-                    <tr>
-                      <th>Región</th>
-                      <th style={{ textAlign: "right" }}>Total</th>
-                      <th style={{ textAlign: "right" }}>Adj.</th>
-                      <th style={{ textAlign: "right" }}>Pend.</th>
-                      <th style={{ textAlign: "right" }}>Perd.</th>
-                      <th style={{ textAlign: "right" }}>Des.</th>
-                      <th style={{ textAlign: "right" }}>Desc.</th>
-                      <th style={{ textAlign: "right" }}>Monto Total</th>
-                      <th style={{ textAlign: "right" }}>Adj. Total</th>
-                      {mostrarConsumido && <th style={{ textAlign: "right" }}>Consumido</th>}
-                      {mostrarPendiente && <th style={{ textAlign: "right" }}>Por consumir</th>}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {resumenRegionesFiltrado.map((r) => (
-                      <tr key={r.region}>
-                        <td style={{ fontWeight: 600 }}>{r.region}</td>
-                        <td style={{ textAlign: "right", fontWeight: 600 }}>{r.total}</td>
-                        <td style={{ textAlign: "right", fontWeight: 600, color: "#15803d" }}>{r.adjudicadas}</td>
-                        <td style={{ textAlign: "right" }}>{r.pendientes}</td>
-                        <td style={{ textAlign: "right", color: "#b91c1c" }}>{r.perdidas}</td>
-                        <td style={{ textAlign: "right" }}>{r.desiertas}</td>
-                        <td style={{ textAlign: "right" }}>{r.descartadas}</td>
-                        <td style={{ textAlign: "right" }}>{fmtCLP(r.montoTotal)}</td>
-                        <td style={{ textAlign: "right", fontWeight: 600, color: "#15803d" }}>{fmtCLP(r.montoAdjudicado)}</td>
-                        {mostrarConsumido && (
-                          <td style={{ textAlign: "right", fontWeight: 600, color: "#1d4ed8" }}>{fmtCLP(r.montoAdjudicadoConsumido)}</td>
-                        )}
-                        {mostrarPendiente && (
-                          <td style={{ textAlign: "right", fontWeight: 600, color: "#b45309" }}>{fmtCLP(r.montoAdjudicadoPendiente)}</td>
-                        )}
-                      </tr>
-                    ))}
-                    {resumenRegionesFiltrado.length === 0 && (
-                      <tr>
-                        <td colSpan={9 + (mostrarConsumido ? 1 : 0) + (mostrarPendiente ? 1 : 0)}
-                          style={{ textAlign: "center", padding: "40px 0", color: "var(--text-muted)" }}>
-                          No hay datos por región con los filtros actuales.
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
+          {/* El "Resumen por Región" se trasladó al Panel de Indicadores. */}
         </>
       )}
     </div>

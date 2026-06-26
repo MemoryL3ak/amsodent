@@ -8,6 +8,7 @@ export default function Clientes() {
   const navigate = useNavigate();
   const [clientes, setClientes] = useState([]);
   const [vendedores, setVendedores] = useState([]);
+  const [moraMap, setMoraMap] = useState({}); // rut → { diasAtrasoMax, ... }
 
   const { rol } = useAuth();
   const esAdmin = ["admin", "administrador"].includes((rol || "").trim().toLowerCase());
@@ -37,6 +38,15 @@ export default function Clientes() {
       }));
 
       setClientes(clean);
+
+      // Mora de cobranza por rut → para marcar clientes bloqueados.
+      const ruts = clean.map((c) => c.rut).filter(Boolean);
+      if (ruts.length > 0) {
+        try {
+          const mora = await api.post("/licitaciones/clientes-mora", { ruts });
+          setMoraMap(mora || {});
+        } catch { /* tolerante */ }
+      }
     } catch (err) {
       console.error(err);
     }
@@ -45,6 +55,15 @@ export default function Clientes() {
   useEffect(() => {
     cargar();
   }, []);
+
+  // Estado de bloqueo del cliente: mora ≥ umbral (60 particular / 120 público)
+  // salvo desbloqueo manual del admin.
+  const estaBloqueado = (c) => {
+    if (c?.cobranza_desbloqueado) return false;
+    const umbral = esClienteParticular(c) ? 60 : 120;
+    const dias = Number(moraMap[c?.rut]?.diasAtrasoMax || 0);
+    return dias >= umbral;
+  };
 
   // El vendedor asignado solo se muestra al admin; cargamos los perfiles para
   // poder mostrar el nombre en vez del correo.
@@ -185,6 +204,7 @@ export default function Clientes() {
               <col style={{ width: 130 }} />
               <col />
               <col style={{ width: 150 }} />
+              <col style={{ width: 120 }} />
               <col style={{ width: 180 }} />
               <col style={{ width: 150 }} />
               <col style={{ width: 180 }} />
@@ -196,6 +216,7 @@ export default function Clientes() {
                 <th>RUT</th>
                 <th>Nombre</th>
                 <th>Tipo</th>
+                <th>Estado</th>
                 <th>Región</th>
                 <th>Comuna</th>
                 <th>Contacto</th>
@@ -209,7 +230,29 @@ export default function Clientes() {
                 <tr key={c.id} onClick={() => navigate(`/clientes/${c.id}`)} style={{ cursor: "pointer" }} title="Ver perfil del cliente">
                   <td style={{ fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.rut}</td>
                   <td style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={c.nombre}>{c.nombre}</td>
-                  <td style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.tipo_cliente || "—"}</td>
+                  <td style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                    {c.tipo_cliente || "—"}
+                    {c.transitorio && (
+                      <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 700, color: "#92400e", background: "#fef3c7", border: "1px solid #fde68a", borderRadius: 999, padding: "1px 7px" }} title="Cliente transitorio: creado con datos mínimos, falta completar su información.">
+                        Transitorio
+                      </span>
+                    )}
+                  </td>
+                  <td style={{ whiteSpace: "nowrap" }}>
+                    {estaBloqueado(c) ? (
+                      <span style={{ fontSize: 11, fontWeight: 700, color: "#b91c1c", background: "#fee2e2", border: "1px solid #fecaca", borderRadius: 999, padding: "2px 9px" }} title={`Mora: ${moraMap[c.rut]?.diasAtrasoMax || 0} días`}>
+                        Bloqueado
+                      </span>
+                    ) : c.cobranza_desbloqueado ? (
+                      <span style={{ fontSize: 11, fontWeight: 600, color: "#92400e", background: "#fef3c7", border: "1px solid #fde68a", borderRadius: 999, padding: "2px 9px" }} title="Desbloqueado manualmente por admin">
+                        Desbloq.
+                      </span>
+                    ) : (
+                      <span style={{ fontSize: 11, fontWeight: 600, color: "#15803d", background: "#dcfce7", border: "1px solid #bbf7d0", borderRadius: 999, padding: "2px 9px" }}>
+                        Activo
+                      </span>
+                    )}
+                  </td>
                   <td style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.region}</td>
                   <td style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.comuna}</td>
                   <td style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={c.contacto}>{c.contacto}</td>
@@ -244,7 +287,7 @@ export default function Clientes() {
 
               {clientesFiltrados.length === 0 && (
                 <tr>
-                  <td colSpan={esAdmin ? 8 : 7} style={{ textAlign: "center", padding: "60px 0", color: "var(--text-muted)" }}>
+                  <td colSpan={esAdmin ? 9 : 8} style={{ textAlign: "center", padding: "60px 0", color: "var(--text-muted)" }}>
                     No hay clientes que coincidan con el filtro.
                   </td>
                 </tr>

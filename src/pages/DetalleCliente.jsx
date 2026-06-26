@@ -9,7 +9,7 @@ import Avatar from "../components/Avatar";
 import {
   ArrowLeft, Pencil, Building2, MapPin, Phone, Mail, Globe, User, IdCard,
   DollarSign, Package, FileText, Target, CheckCircle2, Plus, Trash2,
-  CalendarClock, AlertTriangle, Cake, Briefcase, Clock,
+  CalendarClock, AlertTriangle, Cake, Briefcase, Clock, ShieldCheck, Wallet,
 } from "lucide-react";
 
 /* ─── Helpers ─────────────────────────────────────────────────────────── */
@@ -87,6 +87,9 @@ export default function DetalleCliente() {
   const [editando, setEditando] = useState(false);
   const [esAdmin, setEsAdmin] = useState(false);
   const [vendedores, setVendedores] = useState([]);
+  // Estado de bloqueo por mora (cobranza).
+  const [mora, setMora] = useState(null); // { bloqueado, diasAtrasoMax, umbral, desbloqueado }
+  const [moraLoading, setMoraLoading] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -161,6 +164,57 @@ export default function DetalleCliente() {
     })();
     return () => { cancel = true; };
   }, [id]);
+
+  // Estado de bloqueo por mora del cliente.
+  const cargarMora = async (rut, tipo) => {
+    if (!rut) return;
+    try {
+      const r = await api.get(`/licitaciones/cliente-mora?rut=${encodeURIComponent(rut)}&tipo=${encodeURIComponent(tipo || "")}`);
+      setMora(r || null);
+    } catch { setMora(null); }
+  };
+  useEffect(() => {
+    if (cliente?.rut) cargarMora(cliente.rut, cliente.tipo_cliente);
+  }, [cliente?.rut, cliente?.tipo_cliente]);
+
+  // Override manual del estado de cobranza (admin): 'auto' | 'bloqueado' | 'desbloqueado'.
+  async function cambiarCobranzaOverride(valor) {
+    if (!esAdmin || !cliente) return;
+    const override = valor === "bloqueado" || valor === "desbloqueado" ? valor : null;
+    setMoraLoading(true);
+    try {
+      await api.put(`/clientes/${id}/cobranza-override`, { override });
+      setCliente((c) => ({ ...c, cobranza_override: override, cobranza_desbloqueado: override === "desbloqueado" }));
+      await cargarMora(cliente.rut, cliente.tipo_cliente);
+      setToast({
+        type: "success",
+        message:
+          override === "bloqueado" ? "Cobranza forzada a BLOQUEADO."
+          : override === "desbloqueado" ? "Cobranza forzada a DESBLOQUEADO (permite cotizar)."
+          : "Cobranza en automático (según atraso).",
+      });
+    } catch (e) {
+      setToast({ type: "error", message: e?.message || "No se pudo actualizar el estado de cobranza." });
+    } finally {
+      setMoraLoading(false);
+    }
+  }
+
+  // Estado de cliente editable a mano por admin (Activo ↔ Transitorio).
+  const [estadoLoading, setEstadoLoading] = useState(false);
+  async function cambiarTransitorio(valor) {
+    if (!esAdmin || !cliente) return;
+    setEstadoLoading(true);
+    try {
+      await api.put(`/clientes/${id}`, { transitorio: valor });
+      setCliente((c) => ({ ...c, transitorio: valor }));
+      setToast({ type: "success", message: valor ? "Marcado como cliente transitorio." : "Marcado como cliente activo." });
+    } catch (e) {
+      setToast({ type: "error", message: e?.message || "No se pudo actualizar el estado del cliente." });
+    } finally {
+      setEstadoLoading(false);
+    }
+  }
 
   /* ── Agregaciones ── */
   const calc = useMemo(() => {
@@ -268,6 +322,58 @@ export default function DetalleCliente() {
     return d != null && d <= 180 ? { label: "Activo", activo: true } : { label: "Inactivo", activo: false };
   }, [actividades, cotizaciones]);
 
+  // Línea de tiempo de actividades: conteo por mes o por semana (últimos 12
+  // periodos) para ver la evolución y el comportamiento del cliente.
+  const [tlGran, setTlGran] = useState("mensual"); // "mensual" | "semanal"
+  const timelineActividades = useMemo(() => {
+    const ymdL = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    const cap = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
+    const fechas = actividades.map((a) => String(a.fecha || "").slice(0, 10)).filter(Boolean);
+    const periodos = [];
+    if (tlGran === "semanal") {
+      const hoy = new Date(); hoy.setHours(0, 0, 0, 0);
+      const lunes = new Date(hoy); lunes.setDate(hoy.getDate() - ((hoy.getDay() + 6) % 7));
+      const conteo = {};
+      fechas.forEach((f) => {
+        const d = new Date(`${f}T00:00:00`);
+        const lun = new Date(d); lun.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+        const k = ymdL(lun);
+        conteo[k] = (conteo[k] || 0) + 1;
+      });
+      for (let i = 11; i >= 0; i--) {
+        const ws = new Date(lunes); ws.setDate(lunes.getDate() - i * 7);
+        const k = ymdL(ws);
+        periodos.push({
+          key: k,
+          label: `${ws.getDate()} ${ws.toLocaleDateString("es-CL", { month: "short" }).replace(".", "")}`,
+          titulo: `Semana del ${ws.toLocaleDateString("es-CL", { day: "2-digit", month: "long" })}`,
+          count: conteo[k] || 0,
+        });
+      }
+    } else {
+      const conteo = {};
+      fechas.forEach((f) => { const k = f.slice(0, 7); conteo[k] = (conteo[k] || 0) + 1; });
+      const base = new Date(); base.setDate(1);
+      for (let i = 11; i >= 0; i--) {
+        const d = new Date(base.getFullYear(), base.getMonth() - i, 1);
+        const k = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+        periodos.push({
+          key: k,
+          label: cap(d.toLocaleDateString("es-CL", { month: "short" }).replace(".", "")),
+          titulo: cap(d.toLocaleDateString("es-CL", { month: "long", year: "numeric" })),
+          count: conteo[k] || 0,
+        });
+      }
+    }
+    const counts = periodos.map((p) => p.count);
+    const max = Math.max(1, ...counts);
+    const total = counts.reduce((a, b) => a + b, 0);
+    const promedio = total / periodos.length;
+    const pico = periodos[counts.indexOf(Math.max(...counts))];
+    const activos = counts.filter((c) => c > 0).length;
+    return { periodos, max, total, promedio, pico, activos };
+  }, [actividades, tlGran]);
+
   // Alertas inteligentes derivadas de la data.
   const alertas = useMemo(() => {
     const out = [];
@@ -362,13 +468,68 @@ export default function DetalleCliente() {
               <HeaderItem icon={User} label="Ejecutivo" value={cliente.vendedor_asignado || "—"} />
               <HeaderItem icon={CalendarClock} label="Última visita" value={fmtFecha(visitas.ultima)} />
               <HeaderItem icon={CalendarClock} label="Próxima visita" value={fmtFecha(visitas.proxima)} />
+
+              {/* Estado de cliente (editable por admin: Activo ↔ Transitorio) */}
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <span style={{ fontSize: 10.5, textTransform: "uppercase", letterSpacing: ".4px", color: "var(--text-muted)", display: "flex", alignItems: "center", gap: 4 }}>
+                  <ShieldCheck size={11} /> Estado de cliente
+                </span>
+                {esAdmin ? (
+                  <select
+                    className="input"
+                    value={cliente.transitorio ? "transitorio" : "activo"}
+                    onChange={(e) => cambiarTransitorio(e.target.value === "transitorio")}
+                    disabled={estadoLoading}
+                    style={{ height: 30, padding: "2px 8px", fontSize: 12.5, fontWeight: 600, width: "auto", minWidth: 120 }}
+                    title="Transitorio = creado con datos mínimos."
+                  >
+                    <option value="activo">Activo</option>
+                    <option value="transitorio">Transitorio</option>
+                  </select>
+                ) : (
+                  <span style={{ ...badge, alignSelf: "flex-start", background: cliente.transitorio ? "#fef3c7" : "#dcfce7", color: cliente.transitorio ? "#92400e" : "#15803d" }}>
+                    {cliente.transitorio ? "Transitorio" : "Activo"}
+                  </span>
+                )}
+              </div>
+
+              {/* Estado de cobranza: automático por atraso; admin puede forzarlo a mano. */}
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <span style={{ fontSize: 10.5, textTransform: "uppercase", letterSpacing: ".4px", color: "var(--text-muted)", display: "flex", alignItems: "center", gap: 4 }}>
+                  <Wallet size={11} /> Estado de cobranza
+                </span>
+                {esAdmin ? (
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <select
+                      className="input"
+                      value={mora?.bloqueado ? "bloqueado" : "aldia"}
+                      onChange={(e) => cambiarCobranzaOverride(e.target.value === "bloqueado" ? "bloqueado" : "desbloqueado")}
+                      disabled={moraLoading || !mora}
+                      style={{ height: 30, padding: "2px 8px", fontSize: 12.5, fontWeight: 600, width: "auto", minWidth: 120,
+                        color: mora?.bloqueado ? "#b91c1c" : "#15803d" }}
+                      title="Por defecto se calcula por los días de atraso; aquí puedes forzarlo a mano."
+                    >
+                      <option value="aldia">Al día</option>
+                      <option value="bloqueado">Bloqueado</option>
+                    </select>
+                    {mora && mora.diasAtrasoMax > 0 && (
+                      <span style={{ fontSize: 11, color: "var(--text-muted)" }} title={`Umbral ${mora.umbral} días`}>
+                        {mora.diasAtrasoMax}d atraso
+                      </span>
+                    )}
+                  </div>
+                ) : (
+                  <div style={{ minHeight: 30, display: "flex", alignItems: "center" }}>
+                    {mora ? <EstadoCobranzaBadge mora={mora} /> : (
+                      <span style={{ ...badge, background: "#e5e7eb", color: "#6b7280" }}>{moraLoading ? "Calculando…" : "—"}</span>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 10 }}>
-            <span style={{ ...badge, background: estadoCliente.activo ? "#dcfce7" : "#e5e7eb", color: estadoCliente.activo ? "#15803d" : "#6b7280" }}>
-              {estadoCliente.label}
-            </span>
-            <button className="btn btn-secondary btn-sm" onClick={() => setEditando(true)} style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+          <div style={{ alignSelf: "flex-start" }}>
+            <button className="btn btn-secondary btn-sm" onClick={() => setEditando(true)} style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 5 }}>
               <Pencil size={13} /> Editar
             </button>
           </div>
@@ -545,25 +706,113 @@ export default function DetalleCliente() {
               accion={<Link to="/bitacora-actividades" className="btn btn-ghost btn-sm">Ir a la bitácora</Link>}
             >
               {actividades.length === 0 ? <Vacio texto="Sin gestiones registradas para este cliente." /> : (
-                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                  {actividades
-                    .slice()
-                    .sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)))
-                    .map((a) => {
-                      const Icono = ICONO_ACTIVIDAD[a.tipo] || FileText;
+                <>
+                  {/* Línea de tiempo de actividades (mensual / semanal) */}
+                  <div style={{ marginBottom: 18, padding: "16px 18px", background: "linear-gradient(180deg, var(--surface), var(--bg))", borderRadius: 12, border: "1px solid var(--border)" }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text-soft)", textTransform: "uppercase", letterSpacing: ".4px" }}>
+                        Actividad en el tiempo
+                        <span style={{ marginLeft: 8, fontWeight: 500, textTransform: "none", letterSpacing: 0, color: "var(--text-muted)" }}>
+                          últimos 12 {tlGran === "semanal" ? "semanas" : "meses"}
+                        </span>
+                      </div>
+                      {/* Toggle mensual / semanal */}
+                      <div style={{ display: "inline-flex", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 8, padding: 2 }}>
+                        {[{ id: "mensual", t: "Mensual" }, { id: "semanal", t: "Semanal" }].map((g) => (
+                          <button
+                            key={g.id}
+                            type="button"
+                            onClick={() => setTlGran(g.id)}
+                            style={{
+                              border: "none", cursor: "pointer", fontSize: 12, fontWeight: 600, padding: "4px 12px", borderRadius: 6,
+                              background: tlGran === g.id ? "var(--primary)" : "transparent",
+                              color: tlGran === g.id ? "#fff" : "var(--text-muted)",
+                            }}
+                          >
+                            {g.t}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Resumen rápido */}
+                    <div style={{ display: "flex", gap: 18, flexWrap: "wrap", marginBottom: 14 }}>
+                      <TlStat label="Total en el periodo" value={timelineActividades.total} />
+                      <TlStat label={`Promedio / ${tlGran === "semanal" ? "semana" : "mes"}`} value={timelineActividades.promedio.toFixed(1)} />
+                      <TlStat label="Pico" value={`${timelineActividades.pico?.count || 0}`} hint={timelineActividades.pico?.label} />
+                      <TlStat label={tlGran === "semanal" ? "Semanas con actividad" : "Meses con actividad"} value={`${timelineActividades.activos}/12`} />
+                    </div>
+
+                    {/* Línea de tiempo (línea + área sobre un eje temporal) */}
+                    {(() => {
+                      const per = timelineActividades.periodos;
+                      const n = per.length;
+                      const W = 1000, H = 210, padX = 30, topPad = 28, botPad = 26;
+                      const plotBottom = H - botPad, plotTop = topPad;
+                      const max = timelineActividades.max;
+                      const xFor = (i) => padX + (n <= 1 ? 0 : (i / (n - 1)) * (W - 2 * padX));
+                      const yFor = (c) => plotBottom - (c / max) * (plotBottom - plotTop);
+                      const pts = per.map((p, i) => ({ ...p, x: xFor(i), y: yFor(p.count) }));
+                      const linePath = pts.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" ");
+                      const areaPath = `${linePath} L ${pts[n - 1].x.toFixed(1)} ${plotBottom} L ${pts[0].x.toFixed(1)} ${plotBottom} Z`;
+                      const picoCount = timelineActividades.pico?.count || 0;
                       return (
-                        <div key={a.id} style={{ display: "flex", gap: 12, padding: "10px 0", borderBottom: "1px solid var(--border)" }}>
-                          <div style={tlIcon("actividad")}><Icono size={14} /></div>
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ fontSize: 13, fontWeight: 600 }}>{a.titulo || a.tipo}</div>
-                            {a.comentario && <div style={{ fontSize: 12, color: "var(--text-soft)" }}>{a.comentario}</div>}
-                            <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{a.user_nombre || a.user_email}</div>
-                          </div>
-                          <div style={{ fontSize: 11.5, color: "var(--text-muted)", whiteSpace: "nowrap" }}>{fmtFecha(a.fecha)}</div>
-                        </div>
+                        <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: "block", overflow: "visible" }}>
+                          <defs>
+                            <linearGradient id="tlArea" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="0%" stopColor="var(--primary)" stopOpacity="0.30" />
+                              <stop offset="100%" stopColor="var(--primary)" stopOpacity="0" />
+                            </linearGradient>
+                          </defs>
+                          {/* eje temporal */}
+                          <line x1={padX} y1={plotBottom} x2={W - padX} y2={plotBottom} stroke="var(--border)" strokeWidth="1" />
+                          <path d={areaPath} fill="url(#tlArea)" />
+                          <path d={linePath} fill="none" stroke="var(--primary)" strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
+                          {pts.map((p) => {
+                            const esPico = p.count > 0 && p.count === picoCount;
+                            return (
+                              <g key={p.key}>
+                                {/* marca sobre el eje */}
+                                <line x1={p.x} y1={plotBottom} x2={p.x} y2={plotBottom + 4} stroke="var(--border)" strokeWidth="1" />
+                                <circle cx={p.x} cy={p.y} r={esPico ? 6 : 4.2} fill={esPico ? "var(--primary-dark)" : "#fff"} stroke="var(--primary)" strokeWidth="2.2">
+                                  <title>{`${p.titulo}: ${p.count} actividad(es)`}</title>
+                                </circle>
+                                {p.count > 0 && (
+                                  <text x={p.x} y={p.y - 11} textAnchor="middle" fontSize="12" fontWeight="700" fill={esPico ? "var(--primary-dark)" : "var(--text-soft)"}>{p.count}</text>
+                                )}
+                                <text x={p.x} y={H - 6} textAnchor="middle" fontSize="11" fill="var(--text-muted)">{p.label}</text>
+                              </g>
+                            );
+                          })}
+                        </svg>
                       );
-                    })}
-                </div>
+                    })()}
+                  </div>
+
+                  {/* Lista de gestiones (contenida con scroll propio) */}
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text-soft)" }}>{actividades.length} gestiones</span>
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 10, maxHeight: 460, overflowY: "auto", paddingRight: 6 }}>
+                    {actividades
+                      .slice()
+                      .sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)))
+                      .map((a) => {
+                        const Icono = ICONO_ACTIVIDAD[a.tipo] || FileText;
+                        return (
+                          <div key={a.id} style={{ display: "flex", gap: 12, padding: "10px 0", borderBottom: "1px solid var(--border)" }}>
+                            <div style={tlIcon("actividad")}><Icono size={14} /></div>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontSize: 13, fontWeight: 600 }}>{a.titulo || a.tipo}</div>
+                              {a.comentario && <div style={{ fontSize: 12, color: "var(--text-soft)" }}>{a.comentario}</div>}
+                              <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{a.user_nombre || a.user_email}</div>
+                            </div>
+                            <div style={{ fontSize: 11.5, color: "var(--text-muted)", whiteSpace: "nowrap" }}>{fmtFecha(a.fecha)}</div>
+                          </div>
+                        );
+                      })}
+                  </div>
+                </>
               )}
             </Seccion>
           )}
@@ -694,6 +943,19 @@ function Seccion({ titulo, accion, children, pad0 }) {
         {accion}
       </div>
       <div className="surface-body" style={pad0 ? { padding: 0 } : undefined}>{children}</div>
+    </div>
+  );
+}
+
+// Mini-estadística de la línea de tiempo de actividades.
+function TlStat({ label, value, hint }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+      <span style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: ".4px", color: "var(--text-muted)" }}>{label}</span>
+      <span style={{ fontSize: 18, fontWeight: 800, color: "var(--text)", lineHeight: 1 }}>
+        {value}
+        {hint ? <span style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)", marginLeft: 5 }}>{hint}</span> : null}
+      </span>
     </div>
   );
 }
@@ -974,6 +1236,35 @@ function ModalContacto({ contacto, onCerrar, onGuardar }) {
 const lnkVolver = { fontSize: 13, color: "var(--text-muted)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 5, marginBottom: 12 };
 const badge = { display: "inline-flex", alignItems: "center", padding: "3px 10px", borderRadius: 999, fontSize: 11, fontWeight: 600 };
 const miniRow = { fontSize: 11.5, color: "var(--text-soft)", display: "flex", alignItems: "center", gap: 5, marginTop: 2 };
+
+// Badge del estado de cobranza EFECTIVO (resultado tras aplicar el override).
+function EstadoCobranzaBadge({ mora }) {
+  const dias = Number(mora?.diasAtrasoMax || 0);
+  const umbral = Number(mora?.umbral || 0);
+  if (mora?.bloqueado) {
+    const forzado = mora.override === "bloqueado";
+    return (
+      <span style={{ ...badge, background: "#fee2e2", color: "#b91c1c", display: "inline-flex", alignItems: "center", gap: 5 }}
+        title={forzado ? "Bloqueado manualmente por un administrador" : `Mora de ${dias} días (umbral ${umbral})`}>
+        <AlertTriangle size={12} /> Bloqueado{forzado ? " (forzado)" : ` · ${dias}d`}
+      </span>
+    );
+  }
+  if (mora?.override === "desbloqueado") {
+    return (
+      <span style={{ ...badge, background: "#fef3c7", color: "#92400e" }}
+        title={`Desbloqueado manualmente por un administrador${dias ? ` (mora de ${dias} días)` : ""}`}>
+        Desbloqueado{dias >= umbral && dias > 0 ? ` · ${dias}d` : ""}
+      </span>
+    );
+  }
+  return (
+    <span style={{ ...badge, background: "#dcfce7", color: "#15803d" }}
+      title={dias ? `Atraso máximo ${dias} días (umbral ${umbral})` : "Sin facturas vencidas"}>
+      Al día
+    </span>
+  );
+}
 function tlIcon(clase) {
   const c = clase === "documento" ? { bg: "#eff6ff", color: "#3b82f6" } : { bg: "var(--primary-light)", color: "var(--primary-dark)" };
   return { width: 30, height: 30, borderRadius: "50%", background: c.bg, color: c.color, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 };

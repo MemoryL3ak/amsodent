@@ -14,7 +14,6 @@ import {
   Package,
   Users,
   Megaphone,
-  TrendingUp,
   Target,
   BarChart2,
   Activity,
@@ -196,8 +195,7 @@ export default function SidebarLayout() {
 
   const reportesNav = [
     puede("panel_indicadores") && { to: "/panel-indicadores", icon: LayoutDashboard, label: "Panel de Indicadores" },
-    puede("resumen_comercial") && { to: "/ventas", icon: TrendingUp, label: "Resumen Comercial" },
-    puede("cotizaciones_vendedor") && { to: "/cotizaciones-vendedor", icon: BarChart3, label: "Cotizaciones por Vendedor" },
+    (puede("cotizaciones_vendedor") || puede("resumen_comercial")) && { to: "/cotizaciones-vendedor", icon: BarChart3, label: "Panel de Ejecutivos" },
   ].filter(Boolean);
 
   const herramientasNav = [

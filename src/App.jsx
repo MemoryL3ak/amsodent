@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import ProtectedRoute from "./components/ProtectedRoute";
 import SidebarLayout from "./components/SidebarLayout";
 import { UnsavedChangesProvider } from "./context/UnsavedChangesContext";
@@ -35,7 +35,6 @@ import ConfiguracionUsuarios from "./pages/ConfiguracionUsuarios";
 import CampanasProductos from "./pages/CampanasProductos";
 import CrearCampana from "./pages/CrearCampana";
 import EditarCampana from "./pages/EditarCampana";
-import Ventas from "./pages/Ventas";
 import CotizacionesPorVendedor from "./pages/CotizacionesPorVendedor";
 import PanelIndicadores from "./pages/PanelIndicadores";
 import Metas from "./pages/Metas";
@@ -178,18 +177,12 @@ export default function App() {
               </RequireModulo>
             }
           />
-          <Route
-            path="ventas"
-            element={
-              <RequireModulo modulo="resumen_comercial">
-                <Ventas />
-              </RequireModulo>
-            }
-          />
+          {/* "Resumen Comercial" se fusionó en "Panel de Ejecutivos". */}
+          <Route path="ventas" element={<Navigate to="/cotizaciones-vendedor" replace />} />
           <Route
             path="cotizaciones-vendedor"
             element={
-              <RequireModulo modulo="cotizaciones_vendedor">
+              <RequireModulo modulo={["cotizaciones_vendedor", "resumen_comercial"]}>
                 <CotizacionesPorVendedor />
               </RequireModulo>
             }

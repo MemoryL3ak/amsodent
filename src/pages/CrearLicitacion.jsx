@@ -1,5 +1,5 @@
 // CrearLicitacion.jsx
-import React, { useEffect, useMemo, useState, useCallback } from "react";
+import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { useLocation } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 import { api } from "../lib/api";
@@ -745,6 +745,8 @@ export default function CrearLicitacion() {
 
   const [rutEntidad, setRutEntidad] = useState("");
   const [nombreEntidad, setNombreEntidad] = useState("");
+  // Lista de clientes para autocompletar la entidad por RUT o por nombre.
+  const [clientesLista, setClientesLista] = useState([]);
   const [giro, setGiro] = useState("");
   const [tipoCliente, setTipoCliente] = useState(""); // "Entidad Pública" | "Cliente Particular" | ""
   // Preview del próximo correlativo para cliente particular (max(id)+1 al momento de la consulta).
@@ -796,17 +798,11 @@ export default function CrearLicitacion() {
     } catch {}
   }
 
-  async function buscarClientePorRut(rut) {
-    if (!rut) return;
-
-    const { data, error } = await supabase
-      .from("clientes")
-      .select("*")
-      .eq("rut", rut)
-      .maybeSingle();
-
-    if (error || !data) return;
-
+  // Rellena el formulario con los datos de un cliente (sea encontrado por RUT
+  // o por nombre).
+  function aplicarCliente(data) {
+    if (!data) return;
+    if (data.rut) setRutEntidad(data.rut);
     setNombreEntidad(data.nombre || "");
     setDepartamento(data.departamento || "");
     setMunicipalidad(data.municipalidad || "");
@@ -830,6 +826,40 @@ export default function CrearLicitacion() {
         setListado("2");
       }
     }
+  }
+
+  // Carga la lista de clientes (RUT + nombre) para las sugerencias de la entidad.
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase
+        .from("clientes")
+        .select("rut,nombre")
+        .order("nombre", { ascending: true });
+      if (Array.isArray(data)) setClientesLista(data);
+    })();
+  }, []);
+
+  async function buscarClientePorRut(rut) {
+    if (!rut) return;
+    const { data, error } = await supabase
+      .from("clientes")
+      .select("*")
+      .eq("rut", rut)
+      .maybeSingle();
+    if (error || !data) return;
+    aplicarCliente(data);
+  }
+
+  async function buscarClientePorNombre(nombre) {
+    const n = (nombre || "").trim();
+    if (!n) return;
+    const { data, error } = await supabase
+      .from("clientes")
+      .select("*")
+      .ilike("nombre", n) // coincidencia exacta (case-insensitive) con el nombre elegido
+      .limit(1);
+    if (error || !data || !data.length) return;
+    aplicarCliente(data[0]);
   }
 
   // Si esta cotización se crea a partir de una solicitud del portal del cliente,
@@ -1536,6 +1566,21 @@ export default function CrearLicitacion() {
       return;
     }
 
+    // Pre-check de bloqueo por mora del cliente (el backend lo valida igual al
+    // guardar, esto solo evita el trabajo previo y avisa de inmediato).
+    try {
+      const estadoMora = await api.get(
+        `/licitaciones/cliente-mora?rut=${encodeURIComponent(rutEntidad)}&tipo=${encodeURIComponent(tipoCliente || "")}`
+      );
+      if (estadoMora?.bloqueado) {
+        setToast({
+          type: "error",
+          message: `Cliente bloqueado por deuda: ${estadoMora.diasAtrasoMax} días de atraso (máximo ${estadoMora.umbral}). Regulariza en Cobranza o solicita desbloqueo a un administrador.`,
+        });
+        return;
+      }
+    } catch { /* si el check falla, no bloqueamos aquí; el backend decide al guardar */ }
+
     setGuardando(true);
     setToast({ type: "info", message: "Guardando licitación…" });
 
@@ -1682,7 +1727,8 @@ export default function CrearLicitacion() {
         });
       } catch (error) {
         console.error(error);
-        setToast({ type: "error", message: "Error al guardar licitación" });
+        // Surface el motivo real (ej. bloqueo por mora del cliente).
+        setToast({ type: "error", message: error?.message || "Error al guardar licitación" });
         return;
       }
 
@@ -2123,11 +2169,15 @@ export default function CrearLicitacion() {
             <label className="block text-sm font-medium text-gray-700 mb-1">
               RUT *
             </label>
-            <input
-              className="w-full rounded-md border border-gray-300 px-3 py-2"
+            <ClienteAutocomplete
+              modo="rut"
               value={rutEntidad}
-              onChange={(e) => setRutEntidad(e.target.value)}
+              onChange={setRutEntidad}
+              onPick={(c) => buscarClientePorRut(c.rut)}
               onBlur={() => buscarClientePorRut(rutEntidad)}
+              clientes={clientesLista}
+              className="w-full rounded-md border border-gray-300 px-3 py-2"
+              placeholder="Busca o escribe el RUT…"
             />
           </div>
 
@@ -2135,10 +2185,15 @@ export default function CrearLicitacion() {
             <label className="block text-sm font-medium text-gray-700 mb-1">
               Nombre Entidad *
             </label>
-            <input
-              className="w-full rounded-md border border-gray-300 px-3 py-2"
+            <ClienteAutocomplete
+              modo="nombre"
               value={nombreEntidad}
-              onChange={(e) => setNombreEntidad(e.target.value)}
+              onChange={setNombreEntidad}
+              onPick={(c) => buscarClientePorRut(c.rut)}
+              onBlur={() => buscarClientePorNombre(nombreEntidad)}
+              clientes={clientesLista}
+              className="w-full rounded-md border border-gray-300 px-3 py-2"
+              placeholder="Busca o escribe el nombre…"
             />
           </div>
 
@@ -2760,6 +2815,99 @@ export default function CrearLicitacion() {
           Guardar Cotización
         </button>
       </div>
+    </div>
+  );
+}
+
+/* ── Autocompletado de entidad (busca cliente por RUT o nombre, con estilo
+   propio en vez del <datalist> nativo). Permite también texto libre. ──────── */
+function ClienteAutocomplete({ modo, value, onChange, onPick, onBlur, clientes, className, placeholder }) {
+  const [open, setOpen] = useState(false);
+  const [activo, setActivo] = useState(-1);
+  const boxRef = useRef(null);
+
+  const norm = (s) => (s || "").toString().toLowerCase().replace(/[.\-\s]/g, "");
+  const q = (value || "").toString().toLowerCase().trim();
+  const qn = norm(value);
+
+  const sugerencias = useMemo(() => {
+    if (!q) return [];
+    const res = [];
+    for (const c of clientes || []) {
+      const nombre = (c.nombre || "").toLowerCase();
+      const rut = (c.rut || "").toLowerCase();
+      const match =
+        modo === "rut"
+          ? rut.includes(q) || (qn && norm(c.rut).includes(qn))
+          : nombre.includes(q) || (qn && norm(c.rut).includes(qn));
+      if (match) res.push(c);
+      if (res.length >= 8) break;
+    }
+    return res;
+  }, [clientes, q, qn, modo]);
+
+  useEffect(() => {
+    function onDoc(e) {
+      if (boxRef.current && !boxRef.current.contains(e.target)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, []);
+
+  const elegir = (c) => {
+    onPick(c);
+    setOpen(false);
+    setActivo(-1);
+  };
+
+  return (
+    <div ref={boxRef} style={{ position: "relative" }}>
+      <input
+        className={className}
+        value={value}
+        placeholder={placeholder}
+        autoComplete="off"
+        onChange={(e) => { onChange(e.target.value); setOpen(true); setActivo(-1); }}
+        onFocus={() => { if (value) setOpen(true); }}
+        onBlur={onBlur}
+        onKeyDown={(e) => {
+          if (!open || !sugerencias.length) return;
+          if (e.key === "ArrowDown") { e.preventDefault(); setActivo((a) => Math.min(a + 1, sugerencias.length - 1)); }
+          else if (e.key === "ArrowUp") { e.preventDefault(); setActivo((a) => Math.max(a - 1, 0)); }
+          else if (e.key === "Enter" && activo >= 0) { e.preventDefault(); elegir(sugerencias[activo]); }
+          else if (e.key === "Escape") setOpen(false);
+        }}
+      />
+      {open && sugerencias.length > 0 && (
+        <div
+          style={{
+            position: "absolute", zIndex: 1000, top: "calc(100% + 2px)", left: 0, right: 0,
+            background: "#fff", border: "1px solid #d1d5db", borderRadius: 8,
+            boxShadow: "0 8px 24px rgba(0,0,0,.12)", maxHeight: 260, overflowY: "auto",
+          }}
+        >
+          {sugerencias.map((c, i) => (
+            <button
+              type="button"
+              key={i}
+              onMouseDown={(e) => { e.preventDefault(); elegir(c); }}
+              onMouseEnter={() => setActivo(i)}
+              style={{
+                display: "block", width: "100%", textAlign: "left", padding: "8px 12px",
+                border: "none", borderBottom: "1px solid #f1f5f9", cursor: "pointer",
+                background: i === activo ? "#eff6ff" : "#fff",
+              }}
+            >
+              <div style={{ fontSize: 13, fontWeight: 600, color: "#111827" }}>
+                {modo === "rut" ? (c.rut || "—") : (c.nombre || "—")}
+              </div>
+              <div style={{ fontSize: 12, color: "#6b7280" }}>
+                {modo === "rut" ? (c.nombre || "") : (c.rut || "")}
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
