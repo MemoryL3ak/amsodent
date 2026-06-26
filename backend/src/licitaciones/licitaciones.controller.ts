@@ -30,6 +30,18 @@ export class LicitacionesController {
     return this.licitacionesService.getNextId();
   }
 
+  // Estado de bloqueo por mora de un cliente (para pre-check al cotizar).
+  @Get('cliente-mora')
+  clienteMora(@Query('rut') rut: string, @Query('tipo') tipo?: string) {
+    return this.licitacionesService.estadoBloqueoCliente(rut, tipo);
+  }
+
+  // Mora por lote de ruts (para la lista de clientes).
+  @Post('clientes-mora')
+  clientesMora(@Body() body: { ruts: string[] }) {
+    return this.licitacionesService.moraPorRuts(body?.ruts || []);
+  }
+
   @Get(':id')
   findOne(@Param('id', ParseIntPipe) id: number) {
     return this.licitacionesService.findOne(id);

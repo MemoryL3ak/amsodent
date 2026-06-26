@@ -13,6 +13,7 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ClientesService } from './clientes.service';
 import { AuthGuard } from '../auth/auth.guard';
+import { AdminGuard } from '../auth/admin.guard';
 
 // El id de clientes puede ser numérico (bigint) o uuid según el historial
 // de la tabla en Supabase, así que no validamos con ParseIntPipe — Supabase
@@ -74,6 +75,26 @@ export class ClientesController {
   @Post()
   create(@Body() body: any) {
     return this.clientesService.create(body);
+  }
+
+  // Creación rápida (bitácora): datos mínimos → cliente transitorio.
+  @Post('rapido')
+  crearRapido(@Body() body: any) {
+    return this.clientesService.crearRapido(body);
+  }
+
+  // Override del bloqueo por mora (desbloqueo manual). Solo admin.
+  @Put(':id/cobranza-desbloqueo')
+  @UseGuards(AdminGuard)
+  setCobranzaDesbloqueo(@Param('id') id: string, @Body() body: { desbloqueado: boolean }) {
+    return this.clientesService.setCobranzaDesbloqueo(id, !!body?.desbloqueado);
+  }
+
+  // Override manual del estado de cobranza: 'bloqueado' | 'desbloqueado' | null. Solo admin.
+  @Put(':id/cobranza-override')
+  @UseGuards(AdminGuard)
+  setCobranzaOverride(@Param('id') id: string, @Body() body: { override?: string | null }) {
+    return this.clientesService.setCobranzaOverride(id, body?.override ?? null);
   }
 
   @Put(':id')

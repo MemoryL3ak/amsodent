@@ -3,6 +3,7 @@ import { api } from "../lib/api";
 import useAuth from "../hooks/useAuth";
 import DateFilter from "../components/DateFilter";
 import { Target, ClipboardList, TrendingUp, Users } from "lucide-react";
+import Ventas from "./Ventas";
 
 // Estados que NO cuentan como cotización "ingresada" para la meta del equipo.
 const ESTADOS_NO_CUENTAN = ["Descartada", "Desierta"];
@@ -301,9 +302,9 @@ export default function CotizacionesPorVendedor() {
               <div style={{ fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.15em", color: "var(--primary)", fontWeight: 600, marginBottom: "6px" }}>
                 Reporte
               </div>
-              <h1 className="page-title" style={{ marginBottom: "4px" }}>Cotizaciones por Vendedor</h1>
+              <h1 className="page-title" style={{ marginBottom: "4px" }}>Panel de Ejecutivos</h1>
               <p style={{ fontSize: "13px", color: "var(--text-muted)", margin: 0 }}>
-                Detalle de cotizaciones ingresadas por vendedor y avance del equipo frente a la meta mensual.
+                Cotizaciones por vendedor, avance frente a la meta y resumen comercial del equipo.
               </p>
             </div>
 
@@ -442,6 +443,7 @@ export default function CotizacionesPorVendedor() {
                       <th>Vendedor</th>
                       <th style={{ textAlign: "right" }}>Ingresadas</th>
                       <th style={{ textAlign: "right" }}>Adj.</th>
+                      <th style={{ textAlign: "right" }}>% Conv.</th>
                       <th style={{ textAlign: "right" }}>Pend.</th>
                       <th style={{ textAlign: "right" }}>Perd.</th>
                       <th style={{ textAlign: "right" }}>No cuentan</th>
@@ -464,6 +466,9 @@ export default function CotizacionesPorVendedor() {
                           </td>
                           <td style={{ textAlign: "right", fontWeight: 700, color: "#0e7490" }}>{r.ingresadas}</td>
                           <td style={{ textAlign: "right", color: "#15803d" }}>{r.adjudicadas}</td>
+                          <td style={{ textAlign: "right", fontWeight: 600 }}>
+                            {fmtPct(r.ingresadas > 0 ? (r.adjudicadas / r.ingresadas) * 100 : 0)}
+                          </td>
                           <td style={{ textAlign: "right" }}>{r.pendientes}</td>
                           <td style={{ textAlign: "right", color: "#b91c1c" }}>{r.perdidas}</td>
                           <td style={{ textAlign: "right", color: "var(--text-muted)" }}>{r.noCuentan}</td>
@@ -483,7 +488,7 @@ export default function CotizacionesPorVendedor() {
                     })}
                     {resumenVendedores.length === 0 && (
                       <tr>
-                        <td colSpan={8} style={{ textAlign: "center", padding: "40px 0", color: "var(--text-muted)" }}>
+                        <td colSpan={9} style={{ textAlign: "center", padding: "40px 0", color: "var(--text-muted)" }}>
                           No hay cotizaciones ingresadas en el rango seleccionado.
                         </td>
                       </tr>
@@ -495,6 +500,7 @@ export default function CotizacionesPorVendedor() {
                         <td>Total equipo</td>
                         <td style={{ textAlign: "right", color: "#0e7490" }}>{totales.ingresadas}</td>
                         <td style={{ textAlign: "right", color: "#15803d" }}>{totales.adjudicadas}</td>
+                        <td style={{ textAlign: "right", fontWeight: 600 }}>{fmtPct(totales.ingresadas > 0 ? (totales.adjudicadas / totales.ingresadas) * 100 : 0)}</td>
                         <td style={{ textAlign: "right" }}>{totales.pendientes}</td>
                         <td style={{ textAlign: "right", color: "#b91c1c" }}>{totales.perdidas}</td>
                         <td style={{ textAlign: "right", color: "var(--text-muted)" }}>{totales.noCuentan}</td>
@@ -509,6 +515,11 @@ export default function CotizacionesPorVendedor() {
           </div>
         </>
       )}
+
+      {/* Resumen comercial (trasladado desde su antigua página). */}
+      <div style={{ marginTop: 8 }}>
+        <Ventas embedded />
+      </div>
     </div>
   );
 }

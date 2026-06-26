@@ -7,5 +7,6 @@ import { MailingsModule } from '../mailings/mailings.module';
   imports: [MailingsModule],
   controllers: [LicitacionesController],
   providers: [LicitacionesService],
+  exports: [LicitacionesService],
 })
 export class LicitacionesModule {}

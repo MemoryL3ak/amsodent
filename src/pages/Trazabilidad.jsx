@@ -1305,8 +1305,13 @@ export default function Trazabilidad() {
         const totalGuias = dataFiltrada.reduce((acc, l) => acc + getGuias(l.id).length, 0);
         const totalFacturas = dataFiltrada.reduce((acc, l) => acc + getFacturas(l.id).length, 0);
         const sinFactura = dataFiltrada.filter((l) => getFacturas(l.id).length === 0).length;
+        // Pendiente por despachar = OC − guías, solo de ciclos NO cerrados (no forzados).
+        const pendienteDespachar = dataFiltrada.reduce((acc, l) => {
+          if (l.ciclo_cerrado) return acc;
+          return acc + Math.max(0, montoPorConsumir(l).porConsumir);
+        }, 0);
         return (
-          <div className="stats-row stats-5">
+          <div className="stats-row stats-6">
             <div className="stat-card">
               <div className="stat-label">Cotizaciones</div>
               <div className="stat-value">{dataFiltrada.length}</div>
@@ -1331,6 +1336,13 @@ export default function Trazabilidad() {
               <div className="stat-label">Sin Factura</div>
               <div className="stat-value" style={{ color: "var(--warning)" }}>{sinFactura}</div>
               <div className="stat-sub">cotizaciones</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-label">Pendiente por Despachar</div>
+              <div className="stat-value" style={{ color: "#0d9488" }}>
+                ${pendienteDespachar.toLocaleString("es-CL")}
+              </div>
+              <div className="stat-sub">OC − guías · ciclos abiertos</div>
             </div>
           </div>
         );

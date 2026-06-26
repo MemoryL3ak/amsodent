@@ -8,7 +8,9 @@ export default function RequireModulo({ modulo, children }) {
 
   if (cargando) return <div>Cargando...</div>;
 
-  if (!puede(modulo)) {
+  // `modulo` puede ser un string o un arreglo (acceso si tiene cualquiera).
+  const mods = Array.isArray(modulo) ? modulo : [modulo];
+  if (!mods.some((m) => puede(m))) {
     return <Navigate to="/denegado" replace />;
   }
 

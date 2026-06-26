@@ -55,15 +55,80 @@ export class ClientesService {
     return data;
   }
 
-  async update(id: string | number, body: Record<string, any>) {
-    const { data, error } = await this.supabase
-      .getClient()
-      .from('clientes')
-      .update(body)
-      .eq('id', id)
-      .select()
-      .single();
+  // Creación rápida desde la bitácora de actividades. Permite registrar un
+  // cliente con datos mínimos (solo el nombre). Si no trae RUT se marca como
+  // "transitorio" (a completar luego); con RUT se considera un cliente normal.
+  // Tolera que la columna `transitorio` aún no esté migrada (error 42703).
+  async crearRapido(body: {
+    nombre: string;
+    rut?: string;
+    email?: string;
+    telefono?: string;
+    contacto?: string;
+    region?: string;
+    comuna?: string;
+    direccion?: string;
+    tipo_cliente?: 'Cliente Particular' | 'Entidad Pública' | null;
+  }) {
+    const nombre = (body?.nombre || '').trim();
+    if (!nombre) throw new BadRequestException('El nombre es obligatorio.');
+    const rut = (body?.rut || '').trim();
+    // Cliente "transitorio" cuando faltan los datos clave (sin RUT). Con RUT y
+    // datos de contacto se considera un cliente final/activo.
+    const transitorio = !rut;
+    const fila: Record<string, any> = {
+      nombre,
+      rut,
+      email: (body?.email || '').trim(),
+      telefono: (body?.telefono || '').trim(),
+      contacto: (body?.contacto || '').trim(),
+      region: (body?.region || '').trim(),
+      comuna: (body?.comuna || '').trim(),
+      direccion: (body?.direccion || '').trim(),
+      tipo_cliente: body?.tipo_cliente || null,
+      transitorio,
+    };
+    const intentar = (f: Record<string, any>) =>
+      this.supabase.getClient().from('clientes').insert([f]).select().single();
+    let { data, error } = await intentar(fila);
+    if (error) {
+      const msg = [error.message, (error as any).details, (error as any).hint, (error as any).code]
+        .filter(Boolean).join(' ').toLowerCase();
+      if (msg.includes('transitorio') || msg.includes('42703')) {
+        const limpio = { ...fila };
+        delete limpio.transitorio;
+        ({ data, error } = await intentar(limpio));
+      }
+    }
+    if (error) throw new BadRequestException(error.message);
+    return data;
+  }
 
+  async update(id: string | number, body: Record<string, any>) {
+    const patch: Record<string, any> = { ...body };
+    // Al completar el RUT, un cliente transitorio pasa a ser cliente normal.
+    if (patch.transitorio === undefined && typeof patch.rut === 'string' && patch.rut.trim()) {
+      patch.transitorio = false;
+    }
+    const intentar = (p: Record<string, any>) =>
+      this.supabase
+        .getClient()
+        .from('clientes')
+        .update(p)
+        .eq('id', id)
+        .select()
+        .single();
+    let { data, error } = await intentar(patch);
+    // Tolera que la columna `transitorio` aún no esté migrada (error 42703).
+    if (error) {
+      const msg = [error.message, (error as any).details, (error as any).hint, (error as any).code]
+        .filter(Boolean).join(' ').toLowerCase();
+      if (msg.includes('transitorio') || msg.includes('42703')) {
+        const limpio = { ...patch };
+        delete limpio.transitorio;
+        ({ data, error } = await intentar(limpio));
+      }
+    }
     if (error) throw new BadRequestException(error.message);
     return data;
   }
@@ -77,6 +142,53 @@ export class ClientesService {
 
     if (error) throw new BadRequestException(error.message);
     return { deleted: true };
+  }
+
+  // Override manual del bloqueo por mora (solo admin). Si la columna aún no
+  // está migrada, no rompe: simplemente no persiste el override.
+  async setCobranzaDesbloqueo(id: string | number, valor: boolean) {
+    const { data, error } = await this.supabase
+      .getClient()
+      .from('clientes')
+      .update({ cobranza_desbloqueado: !!valor })
+      .eq('id', id)
+      .select()
+      .single();
+    if (error) {
+      const msg = (error.message || '').toLowerCase();
+      if (msg.includes('cobranza_desbloqueado')) {
+        throw new BadRequestException(
+          'Falta aplicar la migración de bloqueo por cobranza (columna cobranza_desbloqueado).',
+        );
+      }
+      throw new BadRequestException(error.message);
+    }
+    return { cobranza_desbloqueado: !!valor, cliente: data };
+  }
+
+  // Override manual del estado de cobranza (solo admin):
+  //   'bloqueado' | 'desbloqueado' | null (automático según atraso).
+  // Tolera que la columna aún no esté migrada (cae al booleano anterior).
+  async setCobranzaOverride(id: string | number, valor: any) {
+    const v =
+      valor === 'bloqueado' || valor === 'desbloqueado' ? valor : null;
+    const intentar = (p: Record<string, any>) =>
+      this.supabase.getClient().from('clientes').update(p).eq('id', id).select().single();
+    let { data, error } = await intentar({
+      cobranza_override: v,
+      // Mantener el booleano en sincronía para compatibilidad.
+      cobranza_desbloqueado: v === 'desbloqueado',
+    });
+    if (error) {
+      const msg = [error.message, (error as any).details, (error as any).hint, (error as any).code]
+        .filter(Boolean).join(' ').toLowerCase();
+      if (msg.includes('cobranza_override') || msg.includes('42703')) {
+        // Sin la columna nueva: persistimos al menos el desbloqueo booleano.
+        ({ data, error } = await intentar({ cobranza_desbloqueado: v === 'desbloqueado' }));
+      }
+    }
+    if (error) throw new BadRequestException(error.message);
+    return { cobranza_override: v, cliente: data };
   }
 
   // ============================================================

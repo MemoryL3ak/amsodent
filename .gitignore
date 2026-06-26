@@ -18,3 +18,5 @@ scripts/output/
 backend/google-sa.json
 **/google-sa.json
 **/*service-account*.json
+# Export de facturas con datos reales — nunca commitear
+facturas_duplicadas.csv

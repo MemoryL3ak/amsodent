@@ -10,6 +10,7 @@ import * as crypto from 'crypto';
 import { SupabaseService } from '../supabase/supabase.service';
 import { MailingsService } from '../mailings/mailings.service';
 import { CorreosService } from '../correos/correos.service';
+import { LicitacionesService } from '../licitaciones/licitaciones.service';
 import {
   plantillaAlertaStock,
   plantillaSolicitudCotizacion,
@@ -193,6 +194,7 @@ export class StockClientesService {
     private supabase: SupabaseService,
     private mailings: MailingsService,
     private correos: CorreosService,
+    private licitaciones: LicitacionesService,
   ) {}
 
   private get secret(): string {
@@ -1225,6 +1227,16 @@ export class StockClientesService {
   ) {
     const rutN = normalizarRut(payload.rut);
     if (!rutN) throw new UnauthorizedException('Sesión inválida.');
+
+    // Bloqueo por mora: el cliente del portal es particular (umbral 60 días).
+    // Las licitaciones guardan el rut con formato (puntos/guión), así que
+    // consultamos con el rut formateado para que calce con rut_entidad.
+    const bloqueo = await this.licitaciones.estadoBloqueoCliente(formatearRut(rutN), 'Cliente Particular');
+    if (bloqueo.bloqueado) {
+      throw new BadRequestException(
+        `No es posible enviar la solicitud: registras ${bloqueo.diasAtrasoMax} días de atraso en pagos (máximo ${bloqueo.umbral}). Regulariza tu cuenta para volver a cotizar.`,
+      );
+    }
 
     let sucursalId = body?.sucursal_id ? Number(body.sucursal_id) : null;
     if (!sucursalId) {

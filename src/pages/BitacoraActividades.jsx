@@ -32,6 +32,28 @@ function inicialesNombre(nombre) {
   return (p[0][0] + (p[1]?.[0] || "")).toUpperCase();
 }
 
+// Las reuniones con participantes se guardan como una fila por persona (mismo
+// grupo_id). En la vista global (admin/jefatura sin filtrar por un usuario) eso
+// duplica la misma reunión N veces. Aquí colapsamos cada grupo_id a una sola
+// fila, prefiriendo la del creador (primer participante de la lista).
+function dedupeGrupos(list, activar) {
+  if (!activar) return list || [];
+  const out = [];
+  const idxPorGrupo = new Map();
+  for (const a of list || []) {
+    if (!a?.grupo_id) { out.push(a); continue; }
+    const creador = String(a.participantes?.[0]?.email || "").toLowerCase();
+    const esCreador = creador && String(a.user_email || "").toLowerCase() === creador;
+    if (!idxPorGrupo.has(a.grupo_id)) {
+      idxPorGrupo.set(a.grupo_id, out.length);
+      out.push(a);
+    } else if (esCreador) {
+      out[idxPorGrupo.get(a.grupo_id)] = a; // reemplaza por la fila del creador
+    }
+  }
+  return out;
+}
+
 /* ── Combo: react-select estilizado igual a la clase .input de la app ──── */
 const comboTheme = (theme) => ({
   ...theme,
@@ -149,6 +171,7 @@ export default function BitacoraActividades() {
   const [filtroTipo, setFiltroTipo] = useState("");
   const [filtroCliente, setFiltroCliente] = useState("");
   const [filtroUsuario, setFiltroUsuario] = useState("");
+  const [filtroMotivo, setFiltroMotivo] = useState("");
 
   // Modal de actividad
   const [modal, setModal] = useState(null); // { ...actividad } o { fecha } para nueva
@@ -243,10 +266,22 @@ export default function BitacoraActividades() {
     [clientes],
   );
 
+  // En la vista global colapsamos las reuniones replicadas por participante
+  // (mismo grupo_id) para que el admin/jefatura no las vea duplicadas.
+  const actividadesVista = useMemo(() => {
+    const base = dedupeGrupos(actividades, mostrarUsuario);
+    if (!filtroMotivo) return base;
+    return base.filter((a) => (a.motivo || "") === filtroMotivo);
+  }, [actividades, mostrarUsuario, filtroMotivo]);
+  const metricasVista = useMemo(
+    () => dedupeGrupos(metricas, mostrarUsuario),
+    [metricas, mostrarUsuario],
+  );
+
   // Agrupar actividades por fecha (YYYY-MM-DD) para pintar el calendario.
   const porFecha = useMemo(() => {
     const m = {};
-    actividades.forEach((a) => {
+    actividadesVista.forEach((a) => {
       const k = String(a.fecha).slice(0, 10);
       (m[k] = m[k] || []).push(a);
     });
@@ -256,7 +291,7 @@ export default function BitacoraActividades() {
       return String(x.hora_inicio || "").localeCompare(String(y.hora_inicio || ""));
     }));
     return m;
-  }, [actividades]);
+  }, [actividadesVista]);
 
   const cotizacionOptions = useMemo(
     () => cotizaciones.map((c) => ({
@@ -269,13 +304,13 @@ export default function BitacoraActividades() {
   );
 
   const kpis = useMemo(() => {
-    const total = actividades.length;
-    const realizadas = actividades.filter((a) => a.estado === "realizada").length;
+    const total = actividadesVista.length;
+    const realizadas = actividadesVista.filter((a) => a.estado === "realizada").length;
     const pendientes = total - realizadas;
     const porTipo = {};
     const porUsuario = {};
     const porMotivo = {};
-    actividades.forEach((a) => {
+    actividadesVista.forEach((a) => {
       porTipo[a.tipo] = (porTipo[a.tipo] || 0) + 1;
       const uk = a.user_email || "—";
       porUsuario[uk] = porUsuario[uk] || { nombre: a.user_nombre || uk, n: 0 };
@@ -289,7 +324,7 @@ export default function BitacoraActividades() {
       porUsuario: Object.entries(porUsuario).map(([email, v]) => ({ email, ...v })).sort((a, b) => b.n - a.n),
       porMotivo: Object.entries(porMotivo).sort((a, b) => b[1] - a[1]),
     };
-  }, [actividades]);
+  }, [actividadesVista]);
 
   // ── Dashboard: KPIs superiores, paneles laterales y mini-stats ──────────
   const dash = useMemo(() => {
@@ -315,11 +350,11 @@ export default function BitacoraActividades() {
 
     // Actividades (ventana fija)
     const orden = (a) => `${String(a.fecha).slice(0, 10)} ${a.todo_el_dia ? "00:00" : (a.hora_inicio || "99:99")}`;
-    const visitasHoy = metricas.filter((a) => a.tipo === "visita" && String(a.fecha).slice(0, 10) === hoyKey).length;
-    const visitasRealizadasMes = metricas.filter((a) => a.tipo === "visita" && a.estado === "realizada" && enMes(String(a.fecha).slice(0, 10))).length;
-    const visitasProgramadasMes = metricas.filter((a) => a.tipo === "visita" && enMes(String(a.fecha).slice(0, 10))).length;
-    const realizadasMes = metricas.filter((a) => a.estado === "realizada" && enMes(String(a.fecha).slice(0, 10))).length;
-    const programadasMes = metricas.filter((a) => enMes(String(a.fecha).slice(0, 10))).length;
+    const visitasHoy = metricasVista.filter((a) => a.tipo === "visita" && String(a.fecha).slice(0, 10) === hoyKey).length;
+    const visitasRealizadasMes = metricasVista.filter((a) => a.tipo === "visita" && a.estado === "realizada" && enMes(String(a.fecha).slice(0, 10))).length;
+    const visitasProgramadasMes = metricasVista.filter((a) => a.tipo === "visita" && enMes(String(a.fecha).slice(0, 10))).length;
+    const realizadasMes = metricasVista.filter((a) => a.estado === "realizada" && enMes(String(a.fecha).slice(0, 10))).length;
+    const programadasMes = metricasVista.filter((a) => enMes(String(a.fecha).slice(0, 10))).length;
     const vencidas = metricas
       .filter((a) => a.estado !== "realizada" && String(a.fecha).slice(0, 10) < hoyKey)
       .sort((x, y) => orden(y).localeCompare(orden(x)))
@@ -343,7 +378,7 @@ export default function BitacoraActividades() {
       pendientesMes, metaCumplimiento,
       vencidas, proximas, tareasPendientes, metaPct,
     };
-  }, [clientes, cotizaciones, metricas]);
+  }, [clientes, cotizaciones, metricasVista]);
 
   // Navegación.
   function navegar(dir) {
@@ -394,6 +429,14 @@ export default function BitacoraActividades() {
     }
   }
 
+  // Creación rápida de cliente desde el modal de actividad. Devuelve el cliente
+  // creado y lo agrega a la lista local para que quede seleccionable al instante.
+  async function crearClienteRapido(payload) {
+    const nuevo = await api.post("/clientes/rapido", payload);
+    if (nuevo?.id != null) setClientes((prev) => [...prev, nuevo]);
+    return nuevo;
+  }
+
   async function eliminar(a) {
     try {
       await api.delete(`/actividades/${a.id}`);
@@ -418,6 +461,26 @@ export default function BitacoraActividades() {
       setActividades((prev) => prev.map((x) => x.id === a.id ? { ...x, estado: a.estado } : x));
       setMetricas((prev) => prev.map((x) => x.id === a.id ? { ...x, estado: a.estado } : x));
       setToast({ type: "error", message: "No se pudo cambiar el estado." });
+    }
+  }
+
+  // Mover una actividad a otro día (drag & drop, estilo Google Calendar).
+  async function moverActividad(id, nuevaFecha) {
+    const a = actividades.find((x) => String(x.id) === String(id));
+    if (!a || !nuevaFecha) return;
+    const fechaAnterior = String(a.fecha).slice(0, 10);
+    if (fechaAnterior === nuevaFecha) return;
+    // Optimista en ambas colecciones.
+    setActividades((prev) => prev.map((x) => x.id === a.id ? { ...x, fecha: nuevaFecha } : x));
+    setMetricas((prev) => prev.map((x) => x.id === a.id ? { ...x, fecha: nuevaFecha } : x));
+    try {
+      await api.put(`/actividades/${a.id}`, { fecha: nuevaFecha });
+      cargarMetricas();
+    } catch (e) {
+      // Revertir si falla (p. ej. sin permiso para editar la de otro usuario).
+      setActividades((prev) => prev.map((x) => x.id === a.id ? { ...x, fecha: fechaAnterior } : x));
+      setMetricas((prev) => prev.map((x) => x.id === a.id ? { ...x, fecha: fechaAnterior } : x));
+      setToast({ type: "error", message: e?.message || "No se pudo mover la actividad." });
     }
   }
 
@@ -511,6 +574,17 @@ export default function BitacoraActividades() {
             options={[{ value: "", label: "Todos" }, ...clienteOptions]}
           />
         </div>
+        <div className="filter-field" style={{ minWidth: 200 }}>
+          <label className="filter-label"><Filter size={11} style={{ marginRight: 4 }} />Motivo</label>
+          <Combo
+            value={filtroMotivo}
+            onChange={(v) => setFiltroMotivo(v || "")}
+            isSearchable={false}
+            isClearable
+            placeholder="Todos"
+            options={[{ value: "", label: "Todos" }, ...MOTIVOS.map((m) => ({ value: m, label: m }))]}
+          />
+        </div>
         {verTodas && (
           <div className="filter-field" style={{ minWidth: 220 }}>
             <label className="filter-label"><User size={11} style={{ marginRight: 4 }} />Usuario</label>
@@ -551,13 +625,13 @@ export default function BitacoraActividades() {
         {loading ? (
           <div className="surface" style={{ padding: "40px 24px", color: "var(--text-muted)" }}>Cargando actividades…</div>
         ) : vista === "mes" ? (
-          <VistaMes ancla={ancla} porFecha={porFecha} hoyDate={hoyDate} onNuevo={abrirNueva} onEditar={abrirEditar} mostrarUsuario={mostrarUsuario} />
+          <VistaMes ancla={ancla} porFecha={porFecha} hoyDate={hoyDate} onNuevo={abrirNueva} onEditar={abrirEditar} onMover={moverActividad} mostrarUsuario={mostrarUsuario} />
         ) : vista === "semana" ? (
-          <VistaSemana ancla={ancla} porFecha={porFecha} hoyDate={hoyDate} onNuevo={abrirNueva} onEditar={abrirEditar} mostrarUsuario={mostrarUsuario} />
+          <VistaSemana ancla={ancla} porFecha={porFecha} hoyDate={hoyDate} onNuevo={abrirNueva} onEditar={abrirEditar} onMover={moverActividad} mostrarUsuario={mostrarUsuario} />
         ) : vista === "dia" ? (
           <VistaDia ancla={ancla} porFecha={porFecha} onNuevo={abrirNueva} onEditar={abrirEditar} onToggle={alternarEstado} mostrarUsuario={mostrarUsuario} />
         ) : (
-          <VistaAgenda actividades={actividades} onEditar={abrirEditar} onToggle={alternarEstado} esAdmin={esAdmin} mostrarUsuario={mostrarUsuario} />
+          <VistaAgenda actividades={actividadesVista} onEditar={abrirEditar} onToggle={alternarEstado} esAdmin={esAdmin} mostrarUsuario={mostrarUsuario} />
         )}
       </div>
 
@@ -583,6 +657,7 @@ export default function BitacoraActividades() {
           onCancel={() => setModal(null)}
           onSave={guardar}
           onDelete={(a) => setConfirmDel(a)}
+          onCrearCliente={crearClienteRapido}
         />
       )}
     </div>
@@ -590,7 +665,7 @@ export default function BitacoraActividades() {
 }
 
 /* ── Chip de actividad ────────────────────────────────────────────────── */
-function Chip({ a, onClick, compact, mostrarUsuario }) {
+function Chip({ a, onClick, compact, mostrarUsuario, draggable }) {
   const color = colorTipo(a.tipo);
   const hecha = a.estado === "realizada";
   const cu = colorUsuario(a.user_email);
@@ -598,11 +673,17 @@ function Chip({ a, onClick, compact, mostrarUsuario }) {
     <button
       type="button"
       onClick={(e) => { e.stopPropagation(); onClick(a); }}
-      title={`${labelTipo(a.tipo)}${a.hora_inicio ? ` · ${fmtHora(a.hora_inicio)}` : ""} · ${a.titulo}${a.cliente_nombre ? ` · ${a.cliente_nombre}` : ""}${mostrarUsuario ? ` · ${a.user_nombre || a.user_email}` : ""}`}
+      draggable={draggable}
+      onDragStart={draggable ? (e) => {
+        e.stopPropagation();
+        e.dataTransfer.setData("text/plain", String(a.id));
+        e.dataTransfer.effectAllowed = "move";
+      } : undefined}
+      title={`${labelTipo(a.tipo)}${a.hora_inicio ? ` · ${fmtHora(a.hora_inicio)}` : ""} · ${a.titulo}${a.cliente_nombre ? ` · ${a.cliente_nombre}` : ""}${mostrarUsuario ? ` · ${a.user_nombre || a.user_email}` : ""}${draggable ? " · arrastra para mover de día" : ""}`}
       style={{
         display: "flex", alignItems: "center", gap: 5, width: "100%",
         background: `${color}14`, borderLeft: `3px solid ${color}`, border: "none",
-        borderRadius: 5, padding: compact ? "2px 6px" : "4px 7px", cursor: "pointer",
+        borderRadius: 5, padding: compact ? "2px 6px" : "4px 7px", cursor: draggable ? "grab" : "pointer",
         textAlign: "left", opacity: hecha ? 0.6 : 1,
       }}
     >
@@ -704,9 +785,10 @@ function PanelActividades({ titulo, icon: Icon, items, onEditar, onToggle, check
 }
 
 /* ── Vista Mes ────────────────────────────────────────────────────────── */
-function VistaMes({ ancla, porFecha, hoyDate, onNuevo, onEditar, mostrarUsuario }) {
+function VistaMes({ ancla, porFecha, hoyDate, onNuevo, onEditar, onMover, mostrarUsuario }) {
   const ini = lunesDe(new Date(ancla.getFullYear(), ancla.getMonth(), 1));
   const dias = Array.from({ length: 42 }, (_, i) => addDays(ini, i));
+  const [sobre, setSobre] = useState(null); // día resaltado durante el arrastre
   return (
     <div className="surface" style={{ overflow: "hidden" }}>
       <div style={{ overflowX: "auto" }}>
@@ -721,13 +803,23 @@ function VistaMes({ ancla, porFecha, hoyDate, onNuevo, onEditar, mostrarUsuario 
             const items = porFecha[key] || [];
             const otroMes = d.getMonth() !== ancla.getMonth();
             const esHoy = mismaFecha(d, hoyDate);
+            const resaltado = sobre === key;
             return (
               <div
                 key={i}
                 onClick={() => onNuevo(d)}
+                onDragOver={onMover ? (e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; if (sobre !== key) setSobre(key); } : undefined}
+                onDragLeave={onMover ? () => setSobre((s) => (s === key ? null : s)) : undefined}
+                onDrop={onMover ? (e) => {
+                  e.preventDefault();
+                  setSobre(null);
+                  const id = e.dataTransfer.getData("text/plain");
+                  if (id) onMover(id, key);
+                } : undefined}
                 style={{
                   minHeight: 104, padding: 5, cursor: "pointer",
-                  background: otroMes ? "var(--bg)" : "var(--surface)",
+                  background: resaltado ? "var(--primary-light, #e6f7f7)" : otroMes ? "var(--bg)" : "var(--surface)",
+                  boxShadow: resaltado ? "inset 0 0 0 2px var(--primary)" : "none",
                   display: "flex", flexDirection: "column", gap: 3,
                 }}
               >
@@ -738,7 +830,7 @@ function VistaMes({ ancla, porFecha, hoyDate, onNuevo, onEditar, mostrarUsuario 
                     background: esHoy ? "var(--primary)" : "transparent",
                   }}>{d.getDate()}</span>
                 </div>
-                {items.slice(0, 3).map((a) => <Chip key={a.id} a={a} compact onClick={onEditar} mostrarUsuario={mostrarUsuario} />)}
+                {items.slice(0, 3).map((a) => <Chip key={a.id} a={a} compact onClick={onEditar} draggable={Boolean(onMover)} mostrarUsuario={mostrarUsuario} />)}
                 {items.length > 3 && (
                   <span style={{ fontSize: 10.5, color: "var(--text-muted)", paddingLeft: 4 }}>+{items.length - 3} más</span>
                 )}
@@ -752,24 +844,42 @@ function VistaMes({ ancla, porFecha, hoyDate, onNuevo, onEditar, mostrarUsuario 
 }
 
 /* ── Vista Semana ─────────────────────────────────────────────────────── */
-function VistaSemana({ ancla, porFecha, hoyDate, onNuevo, onEditar, mostrarUsuario }) {
+function VistaSemana({ ancla, porFecha, hoyDate, onNuevo, onEditar, onMover, mostrarUsuario }) {
   const l = lunesDe(ancla);
   const dias = Array.from({ length: 7 }, (_, i) => addDays(l, i));
+  const [sobre, setSobre] = useState(null);
   return (
     <div className="surface" style={{ overflow: "hidden" }}>
       <div style={{ overflowX: "auto" }}>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gap: 1, background: "var(--border)", minWidth: 620 }}>
           {dias.map((d, i) => {
-            const items = porFecha[ymd(d)] || [];
+            const key = ymd(d);
+            const items = porFecha[key] || [];
             const esHoy = mismaFecha(d, hoyDate);
+            const resaltado = sobre === key;
             return (
-              <div key={i} style={{ minHeight: 360, display: "flex", flexDirection: "column", background: "var(--surface)" }}>
+              <div
+                key={i}
+                onDragOver={onMover ? (e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; if (sobre !== key) setSobre(key); } : undefined}
+                onDragLeave={onMover ? () => setSobre((s) => (s === key ? null : s)) : undefined}
+                onDrop={onMover ? (e) => {
+                  e.preventDefault();
+                  setSobre(null);
+                  const id = e.dataTransfer.getData("text/plain");
+                  if (id) onMover(id, key);
+                } : undefined}
+                style={{
+                  minHeight: 360, display: "flex", flexDirection: "column",
+                  background: resaltado ? "var(--primary-light, #e6f7f7)" : "var(--surface)",
+                  boxShadow: resaltado ? "inset 0 0 0 2px var(--primary)" : "none",
+                }}
+              >
                 <div onClick={() => onNuevo(d)} style={{ padding: "8px 6px", textAlign: "center", borderBottom: "1px solid var(--border)", cursor: "pointer", background: esHoy ? "var(--primary-light, #e6f7f7)" : "transparent" }}>
                   <div style={{ fontSize: 10.5, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase" }}>{DIAS[i]}</div>
                   <div style={{ fontSize: 17, fontWeight: 800, color: esHoy ? "var(--primary-dark)" : "var(--text)" }}>{d.getDate()}</div>
                 </div>
                 <div onClick={() => onNuevo(d)} style={{ flex: 1, padding: 5, display: "flex", flexDirection: "column", gap: 4, cursor: "pointer" }}>
-                  {items.map((a) => <Chip key={a.id} a={a} onClick={onEditar} mostrarUsuario={mostrarUsuario} />)}
+                  {items.map((a) => <Chip key={a.id} a={a} onClick={onEditar} draggable={Boolean(onMover)} mostrarUsuario={mostrarUsuario} />)}
                 </div>
               </div>
             );
@@ -903,11 +1013,42 @@ function FilaActividad({ a, onEditar, onToggle, mostrarUsuario }) {
 }
 
 /* ── Modal crear / editar actividad ───────────────────────────────────── */
-function ModalActividad({ inicial, clienteOptions, cotizacionOptions, perfiles, miEmail, onCancel, onSave, onDelete }) {
+function ModalActividad({ inicial, clienteOptions, cotizacionOptions, perfiles, miEmail, onCancel, onSave, onDelete, onCrearCliente }) {
   const [titulo, setTitulo] = useState(inicial.titulo || "");
   const [tipo, setTipo] = useState(inicial.tipo || "gestion");
   const [motivo, setMotivo] = useState(inicial.motivo || "");
   const [clienteId, setClienteId] = useState(inicial.cliente_id ?? null);
+  // Alta rápida de cliente desde el modal.
+  const [nuevoCli, setNuevoCli] = useState(false);
+  const [nc, setNc] = useState({ nombre: "", rut: "", email: "", telefono: "", tipo_cliente: "" });
+  const [ncGuardando, setNcGuardando] = useState(false);
+  const [ncError, setNcError] = useState("");
+
+  async function guardarNuevoCliente() {
+    const nombre = nc.nombre.trim();
+    if (!nombre) { setNcError("El nombre es obligatorio."); return; }
+    setNcGuardando(true);
+    setNcError("");
+    try {
+      const creado = await onCrearCliente({
+        nombre,
+        rut: nc.rut.trim(),
+        email: nc.email.trim(),
+        telefono: nc.telefono.trim(),
+        tipo_cliente: nc.tipo_cliente || null,
+      });
+      if (creado?.id != null) {
+        setClienteId(creado.id);
+        setLicitacionId("");
+        setNuevoCli(false);
+        setNc({ nombre: "", rut: "", email: "", telefono: "", tipo_cliente: "" });
+      }
+    } catch (e) {
+      setNcError(e?.message || "No se pudo crear el cliente.");
+    } finally {
+      setNcGuardando(false);
+    }
+  }
   const [licitacionId, setLicitacionId] = useState(inicial.licitacion_id ?? "");
   const [participantes, setParticipantes] = useState(
     Array.isArray(inicial.participantes)
@@ -1082,13 +1223,48 @@ function ModalActividad({ inicial, clienteOptions, cotizacionOptions, perfiles, 
           </div>
 
           <div className="field">
-            <label className="field-label">Cliente <span style={{ color: "var(--danger)" }}>*</span></label>
-            <Combo
-              value={clienteId ?? ""}
-              onChange={(v) => { setClienteId(v || null); setLicitacionId(""); }}
-              placeholder="Selecciona un cliente…"
-              options={clienteOptions}
-            />
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <label className="field-label">Cliente <span style={{ color: "var(--danger)" }}>*</span></label>
+              <button
+                type="button"
+                onClick={() => { setNuevoCli((v) => !v); setNcError(""); }}
+                style={{ background: "none", border: "none", cursor: "pointer", color: "var(--primary)", fontSize: 12, fontWeight: 600, padding: 0 }}
+              >
+                {nuevoCli ? "Cancelar" : "+ Nuevo cliente"}
+              </button>
+            </div>
+            {!nuevoCli && (
+              <Combo
+                value={clienteId ?? ""}
+                onChange={(v) => { setClienteId(v || null); setLicitacionId(""); }}
+                placeholder="Selecciona un cliente…"
+                options={clienteOptions}
+              />
+            )}
+            {nuevoCli && (
+              <div style={{ border: "1px solid var(--border)", borderRadius: 8, padding: 12, background: "var(--bg)", display: "flex", flexDirection: "column", gap: 8 }}>
+                <input className="input" placeholder="Nombre del cliente *" value={nc.nombre} onChange={(e) => setNc((p) => ({ ...p, nombre: e.target.value }))} />
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                  <input className="input" placeholder="RUT (opcional)" value={nc.rut} onChange={(e) => setNc((p) => ({ ...p, rut: e.target.value }))} />
+                  <select className="input" value={nc.tipo_cliente} onChange={(e) => setNc((p) => ({ ...p, tipo_cliente: e.target.value }))}>
+                    <option value="">Tipo (opcional)</option>
+                    <option value="Cliente Particular">Cliente Particular</option>
+                    <option value="Entidad Pública">Entidad Pública</option>
+                  </select>
+                  <input className="input" placeholder="Email (opcional)" value={nc.email} onChange={(e) => setNc((p) => ({ ...p, email: e.target.value }))} />
+                  <input className="input" placeholder="Teléfono (opcional)" value={nc.telefono} onChange={(e) => setNc((p) => ({ ...p, telefono: e.target.value }))} />
+                </div>
+                <div className="field-hint" style={{ margin: 0 }}>
+                  Sin RUT se guarda como <strong>cliente transitorio</strong> (a completar luego). Con RUT y datos de contacto queda como cliente normal.
+                </div>
+                {ncError && <div style={{ color: "var(--danger)", fontSize: 12 }}>{ncError}</div>}
+                <div>
+                  <button type="button" className="btn btn-primary btn-sm" onClick={guardarNuevoCliente} disabled={ncGuardando || !nc.nombre.trim()}>
+                    {ncGuardando ? "Guardando…" : "Crear y seleccionar"}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="field">

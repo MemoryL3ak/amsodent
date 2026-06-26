@@ -107,7 +107,139 @@ export class LicitacionesService {
     return { next: maxId + 1 };
   }
 
+  // ── Bloqueo por mora (cobranza) ─────────────────────────────────────────
+  // Umbral de días de atraso a partir del cual no se puede cotizar.
+  private umbralMora(tipoCliente?: string): number {
+    return (tipoCliente || '').toLowerCase().includes('particular') ? 60 : 120;
+  }
+
+  private plazoDeCondicion(cond?: string): number {
+    const c = (cond || '').toString().toLowerCase();
+    const m = c.match(/(\d+)/);
+    if (m) return Number(m[1]);
+    if (c.includes('contado')) return 0;
+    return 30;
+  }
+
+  private diasDesdeFecha(fechaIso?: string): number | null {
+    if (!fechaIso) return null;
+    const f = new Date(`${String(fechaIso).slice(0, 10)}T00:00:00`);
+    if (Number.isNaN(f.getTime())) return null;
+    const hoy = new Date();
+    hoy.setHours(0, 0, 0, 0);
+    return Math.floor((hoy.getTime() - f.getTime()) / (1000 * 60 * 60 * 24));
+  }
+
+  // Mora (días de atraso máximo + monto vencido) por RUT. Recorre las
+  // cotizaciones adjudicadas de cada rut y sus facturas NO pagadas.
+  async moraPorRuts(ruts: string[]): Promise<Record<string, { diasAtrasoMax: number; montoVencido: number; facturasVencidas: number }>> {
+    const limpios = Array.from(new Set((ruts || []).map((r) => String(r || '').trim()).filter(Boolean)));
+    const out: Record<string, { diasAtrasoMax: number; montoVencido: number; facturasVencidas: number }> = {};
+    limpios.forEach((r) => { out[r] = { diasAtrasoMax: 0, montoVencido: 0, facturasVencidas: 0 }; });
+    if (!limpios.length) return out;
+
+    // 1) Cotizaciones adjudicadas de esos ruts (en chunks para no desbordar).
+    const condById: Record<number, string> = {};
+    const rutById: Record<number, string> = {};
+    const ids: number[] = [];
+    const CHUNK = 100;
+    for (let i = 0; i < limpios.length; i += CHUNK) {
+      const grupo = limpios.slice(i, i + CHUNK);
+      const { data: lics } = await this.supabase.getClient()
+        .from('licitaciones')
+        .select('id, rut_entidad, condicion_venta, estado')
+        .in('rut_entidad', grupo)
+        .range(0, 20000);
+      (lics || []).forEach((l: any) => {
+        if (String(l.estado) !== 'Adjudicada') return;
+        ids.push(l.id);
+        condById[l.id] = l.condicion_venta;
+        rutById[l.id] = String(l.rut_entidad || '').trim();
+      });
+    }
+    if (!ids.length) return out;
+
+    // 2) Facturas no pagadas de esas cotizaciones.
+    const docs = await this.getDocumentosByFilter(
+      { licitacion_ids: ids, tipo: ['factura', 'factura_boleta'] },
+      'licitacion_id,fecha_factura,pagada,monto',
+    );
+    (docs || []).forEach((d: any) => {
+      if (d.pagada) return;
+      const rut = rutById[d.licitacion_id];
+      if (!rut || !out[rut]) return;
+      const dias = this.diasDesdeFecha(d.fecha_factura);
+      if (dias == null) return;
+      const atraso = dias - this.plazoDeCondicion(condById[d.licitacion_id]);
+      if (atraso > 0) {
+        out[rut].facturasVencidas += 1;
+        out[rut].montoVencido += Number(d.monto || 0);
+        if (atraso > out[rut].diasAtrasoMax) out[rut].diasAtrasoMax = atraso;
+      }
+    });
+    return out;
+  }
+
+  // ¿El cliente (rut) está habilitado para cotizar? Considera la mora y el
+  // override manual del admin (clientes.cobranza_desbloqueado).
+  async estadoBloqueoCliente(rut: string, tipoCliente?: string) {
+    const r = String(rut || '').trim();
+    const umbral = this.umbralMora(tipoCliente);
+    if (!r) return { rut: r, diasAtrasoMax: 0, montoVencido: 0, umbral, bloqueado: false, desbloqueado: false };
+    const mora = (await this.moraPorRuts([r]))[r] || { diasAtrasoMax: 0, montoVencido: 0, facturasVencidas: 0 };
+    // Override manual del admin: 'bloqueado' | 'desbloqueado' | null (automático).
+    let override: 'bloqueado' | 'desbloqueado' | null = null;
+    try {
+      const { data: cli } = await this.supabase.getClient()
+        .from('clientes')
+        .select('cobranza_override')
+        .eq('rut', r)
+        .maybeSingle();
+      const v = (cli?.cobranza_override || '').toString().trim().toLowerCase();
+      if (v === 'bloqueado' || v === 'desbloqueado') override = v;
+    } catch { /* columna sin migrar */ }
+    // Compatibilidad con el override anterior (booleano cobranza_desbloqueado).
+    if (!override) {
+      try {
+        const { data: cli2 } = await this.supabase.getClient()
+          .from('clientes')
+          .select('cobranza_desbloqueado')
+          .eq('rut', r)
+          .maybeSingle();
+        if (cli2?.cobranza_desbloqueado) override = 'desbloqueado';
+      } catch { /* columna sin migrar */ }
+    }
+    const autoBloqueado = mora.diasAtrasoMax >= umbral;
+    let bloqueado: boolean;
+    if (override === 'desbloqueado') bloqueado = false;
+    else if (override === 'bloqueado') bloqueado = true;
+    else bloqueado = autoBloqueado;
+    return {
+      rut: r,
+      diasAtrasoMax: mora.diasAtrasoMax,
+      montoVencido: mora.montoVencido,
+      umbral,
+      bloqueado,
+      autoBloqueado,
+      override, // null = automático
+      desbloqueado: override === 'desbloqueado',
+    };
+  }
+
   async create(body: Record<string, any>) {
+    // Bloqueo por mora: no permitir cotizar a clientes con atraso ≥ umbral
+    // (120 días mercado público / 60 días cliente particular), salvo override
+    // manual del admin.
+    const rutEntidad = String(body?.rut_entidad || '').trim();
+    if (rutEntidad) {
+      const estado = await this.estadoBloqueoCliente(rutEntidad, body?.tipo_cliente);
+      if (estado.bloqueado) {
+        throw new BadRequestException(
+          `Cliente bloqueado por deuda: ${estado.diasAtrasoMax} días de atraso (máximo permitido ${estado.umbral}). Regulariza en Cobranza o solicita desbloqueo a un administrador.`,
+        );
+      }
+    }
+
     const { data, error } = await this.supabase.getClient()
       .from('licitaciones')
       .insert([body])
