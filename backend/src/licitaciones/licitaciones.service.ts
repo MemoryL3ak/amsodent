@@ -30,6 +30,83 @@ export class LicitacionesService {
     return data;
   }
 
+  /* ===========================================================
+     LICITACIONES DISPONIBLES (listado para tomar/cargar)
+  =========================================================== */
+  async listarDisponibles() {
+    const { data, error } = await this.supabase.getClient()
+      .from('licitaciones_disponibles')
+      .select('*')
+      .order('cargada', { ascending: true })
+      .order('created_at', { ascending: false });
+    if (error) throw new BadRequestException(error.message);
+    return data || [];
+  }
+
+  // Carga masiva desde xlsx. Inserta solo las que no existan (dedup por
+  // id_licitacion, case-insensitive). Devuelve cuántas se insertaron / omitieron.
+  async bulkDisponibles(rows: { id_licitacion?: string; nombre?: string }[], subidaPor: string) {
+    const vistos = new Set<string>();
+    const limpias: { id_licitacion: string; nombre: string }[] = [];
+    for (const r of rows || []) {
+      const idl = String(r?.id_licitacion || '').trim();
+      if (!idl) continue;
+      const key = idl.toLowerCase();
+      if (vistos.has(key)) continue;
+      vistos.add(key);
+      limpias.push({ id_licitacion: idl, nombre: String(r?.nombre || '').trim() });
+    }
+    if (!limpias.length) return { insertados: 0, duplicados: 0, total: 0 };
+
+    const { data: existentes, error: errSel } = await this.supabase.getClient()
+      .from('licitaciones_disponibles')
+      .select('id_licitacion');
+    if (errSel) throw new BadRequestException(errSel.message);
+    const setExist = new Set((existentes || []).map((e: any) => String(e.id_licitacion || '').trim().toLowerCase()));
+
+    const nuevas = limpias.filter((l) => !setExist.has(l.id_licitacion.toLowerCase()));
+    const duplicados = limpias.length - nuevas.length;
+    if (nuevas.length) {
+      const filas = nuevas.map((n) => ({ ...n, subida_por: subidaPor }));
+      const { error } = await this.supabase.getClient()
+        .from('licitaciones_disponibles')
+        .insert(filas);
+      if (error) throw new BadRequestException(error.message);
+    }
+    return { insertados: nuevas.length, duplicados, total: limpias.length };
+  }
+
+  async marcarDisponibleCargada(id: number, cargadaPor: string) {
+    const { data, error } = await this.supabase.getClient()
+      .from('licitaciones_disponibles')
+      .update({ cargada: true, cargada_por: cargadaPor, cargada_at: new Date().toISOString() })
+      .eq('id', id)
+      .select()
+      .single();
+    if (error) throw new BadRequestException(error.message);
+    return data;
+  }
+
+  async desmarcarDisponible(id: number) {
+    const { data, error } = await this.supabase.getClient()
+      .from('licitaciones_disponibles')
+      .update({ cargada: false, cargada_por: null, cargada_at: null })
+      .eq('id', id)
+      .select()
+      .single();
+    if (error) throw new BadRequestException(error.message);
+    return data;
+  }
+
+  async eliminarDisponible(id: number) {
+    const { error } = await this.supabase.getClient()
+      .from('licitaciones_disponibles')
+      .delete()
+      .eq('id', id);
+    if (error) throw new BadRequestException(error.message);
+    return { deleted: true };
+  }
+
   // Detecta una columna inexistente a partir del error de Postgres
   // (código 42703 / "column ... does not exist"). Devuelve el nombre de la
   // columna o null si el error es de otro tipo.

@@ -496,7 +496,7 @@ export default function DetalleCliente() {
               {/* Estado de cobranza: automático por atraso; admin puede forzarlo a mano. */}
               <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                 <span style={{ fontSize: 10.5, textTransform: "uppercase", letterSpacing: ".4px", color: "var(--text-muted)", display: "flex", alignItems: "center", gap: 4 }}>
-                  <Wallet size={11} /> Estado de cobranza
+                  <Wallet size={11} /> Estado Comercial
                 </span>
                 {esAdmin ? (
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>

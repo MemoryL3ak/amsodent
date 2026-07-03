@@ -16,7 +16,7 @@ import {
 const ACTIVIDADES_BUCKET = "chat-adjuntos";
 
 // Motivo de la gestión (opcional).
-const MOTIVOS = ["1er Contacto", "Solicitud de Reunión", "Presupuesto", "Presentación Empresa"];
+const MOTIVOS = ["1er Contacto", "Solicitud de Reunión", "Presupuesto", "Presentación Empresa", "Gestión Administrativa", "Mapeo", "Visita Espontánea", "Referido"];
 
 // Color estable por usuario (para diferenciar en la vista de admin).
 const PALETA_USUARIOS = ["#2563eb", "#16a34a", "#db2777", "#9333ea", "#ea580c", "#0891b2", "#ca8a04", "#dc2626", "#4f46e5", "#0d9488"];
@@ -1020,7 +1020,7 @@ function ModalActividad({ inicial, clienteOptions, cotizacionOptions, perfiles, 
   const [clienteId, setClienteId] = useState(inicial.cliente_id ?? null);
   // Alta rápida de cliente desde el modal.
   const [nuevoCli, setNuevoCli] = useState(false);
-  const [nc, setNc] = useState({ nombre: "", rut: "", email: "", telefono: "", tipo_cliente: "" });
+  const [nc, setNc] = useState({ nombre: "", rut: "", email: "", telefono: "", direccion: "", tipo_cliente: "" });
   const [ncGuardando, setNcGuardando] = useState(false);
   const [ncError, setNcError] = useState("");
 
@@ -1035,13 +1035,14 @@ function ModalActividad({ inicial, clienteOptions, cotizacionOptions, perfiles, 
         rut: nc.rut.trim(),
         email: nc.email.trim(),
         telefono: nc.telefono.trim(),
+        direccion: nc.direccion.trim(),
         tipo_cliente: nc.tipo_cliente || null,
       });
       if (creado?.id != null) {
         setClienteId(creado.id);
         setLicitacionId("");
         setNuevoCli(false);
-        setNc({ nombre: "", rut: "", email: "", telefono: "", tipo_cliente: "" });
+        setNc({ nombre: "", rut: "", email: "", telefono: "", direccion: "", tipo_cliente: "" });
       }
     } catch (e) {
       setNcError(e?.message || "No se pudo crear el cliente.");
@@ -1254,6 +1255,7 @@ function ModalActividad({ inicial, clienteOptions, cotizacionOptions, perfiles, 
                   <input className="input" placeholder="Email (opcional)" value={nc.email} onChange={(e) => setNc((p) => ({ ...p, email: e.target.value }))} />
                   <input className="input" placeholder="Teléfono (opcional)" value={nc.telefono} onChange={(e) => setNc((p) => ({ ...p, telefono: e.target.value }))} />
                 </div>
+                <input className="input" placeholder="Dirección (opcional)" value={nc.direccion} onChange={(e) => setNc((p) => ({ ...p, direccion: e.target.value }))} />
                 <div className="field-hint" style={{ margin: 0 }}>
                   Sin RUT se guarda como <strong>cliente transitorio</strong> (a completar luego). Con RUT y datos de contacto queda como cliente normal.
                 </div>

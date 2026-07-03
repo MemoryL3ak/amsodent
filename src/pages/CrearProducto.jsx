@@ -344,7 +344,7 @@ export default function CrearProducto() {
 
     const skuLimpio = (sku ?? "").toString().trim().toUpperCase();
     let estadoFinal = skuLimpio ? "Activo" : "Transitorio";
-    if (!skuLimpio && margenVentaNum > 0 && margenVentaNum < 15) {
+    if (!skuLimpio && margenVentaNum > 0 && margenVentaNum < 20) {
       estadoFinal = "Pendiente Aprobación";
     }
 
@@ -435,7 +435,7 @@ export default function CrearProducto() {
       setToast({
         type: "warning",
         message:
-          "Producto creado en estado \"Pendiente Aprobación\" (margen < 15%).",
+          "Producto creado en estado \"Pendiente Aprobación\" (margen < 20%).",
       });
     } else {
       setToast({
@@ -515,7 +515,7 @@ export default function CrearProducto() {
                     />
                     {esPendienteAprobacion && (
                       <p className="text-xs text-orange-700 mt-1">
-                        Requiere aprobación de admin (margen &lt; 15%).
+                        Requiere aprobación de admin (margen &lt; 20%).
                       </p>
                     )}
                   </div>

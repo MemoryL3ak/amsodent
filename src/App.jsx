@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useParams } from "react-router-dom";
 import ProtectedRoute from "./components/ProtectedRoute";
 import SidebarLayout from "./components/SidebarLayout";
 import { UnsavedChangesProvider } from "./context/UnsavedChangesContext";
@@ -9,6 +9,9 @@ import ResetPassword from "./pages/ResetPassword";
 
 // LICITACIONES
 import CrearLicitacion from "./pages/CrearLicitacion";
+import LicitacionesDisponibles from "./pages/LicitacionesDisponibles";
+import OrdenesCompra from "./pages/OrdenesCompra";
+import CrearOrdenCompra from "./pages/CrearOrdenCompra";
 import ListarLicitaciones from "./pages/ListarLicitaciones";
 import DetalleLicitacion from "./pages/DetalleLicitacion";
 
@@ -37,6 +40,9 @@ import CrearCampana from "./pages/CrearCampana";
 import EditarCampana from "./pages/EditarCampana";
 import CotizacionesPorVendedor from "./pages/CotizacionesPorVendedor";
 import PanelIndicadores from "./pages/PanelIndicadores";
+import PanelParticular from "./pages/PanelParticular";
+import Comisiones from "./pages/Comisiones";
+import PanelPublica from "./pages/PanelPublica";
 import Metas from "./pages/Metas";
 import MetasPorCanal from "./pages/MetasPorCanal";
 import Trazabilidad from "./pages/Trazabilidad";
@@ -70,6 +76,14 @@ import DespachosChoferes from "./pages/DespachosChoferes";
 import TrackingChoferes from "./pages/TrackingChoferes";
 import PortalChofer from "./pages/PortalChofer";
 
+// Envuelve DetalleLicitacion con key={id} para forzar el remontaje al cambiar
+// de cotización (p. ej. al abrir otra desde las notificaciones): así el estado
+// se reinicia y no queda "pegada" la cotización anterior.
+function DetalleLicitacionRoute() {
+  const { id } = useParams();
+  return <DetalleLicitacion key={id} />;
+}
+
 export default function App() {
   return (
     <BrowserRouter>
@@ -96,8 +110,12 @@ export default function App() {
         >
           {/* LICITACIONES */}
           <Route path="crear" element={<CrearLicitacion />} />
+          <Route path="licitaciones-disponibles" element={<LicitacionesDisponibles />} />
+          <Route path="ordenes-compra" element={<OrdenesCompra />} />
+          <Route path="ordenes-compra/nueva" element={<CrearOrdenCompra />} />
+          <Route path="ordenes-compra/:id" element={<CrearOrdenCompra />} />
           <Route path="listar" element={<ListarLicitaciones />} />
-          <Route path="detalle/:id" element={<DetalleLicitacion />} />
+          <Route path="detalle/:id" element={<DetalleLicitacionRoute />} />
 
           {/* PRODUCTOS */}
           <Route path="productos" element={<Productos />} />
@@ -195,8 +213,25 @@ export default function App() {
               </RequireModulo>
             }
           />
+          <Route
+            path="panel-particular"
+            element={
+              <RequireModulo modulo="panel_indicadores">
+                <PanelParticular />
+              </RequireModulo>
+            }
+          />
+          <Route
+            path="panel-publica"
+            element={
+              <RequireModulo modulo="panel_indicadores">
+                <PanelPublica />
+              </RequireModulo>
+            }
+          />
           <Route path="metas" element={<Metas />} />
           <Route path="metas-canal" element={<MetasPorCanal />} />
+          <Route path="comisiones" element={<Comisiones />} />
 
           {/* SORTEO (admin + ventas_especial) */}
           <Route

@@ -3,6 +3,7 @@ import { api } from "../lib/api";
 import useAuth from "../hooks/useAuth";
 import MonthCalendarPicker from "../components/MonthCalendarPicker";
 import DateFilter from "../components/DateFilter";
+import EmbudoComercial from "../components/panel/EmbudoComercial";
 import {
   TrendingUp, TrendingDown, Minus, ShoppingCart, Target, FileText,
   UserPlus, RefreshCw, Award, Banknote, X, Download,
@@ -99,6 +100,7 @@ export default function PanelIndicadores() {
   const [docSums, setDocSums] = useState({}); // { [licId]: { guia, oc, factbol } }
   const [catData, setCatData] = useState([]); // [{ categoria, monto, productos:[{producto,monto}] }]
   const [margenMes, setMargenMes] = useState({ monto: 0, pct: 0 });
+  const [costoBySku, setCostoBySku] = useState({}); // sku → costo (para el margen)
   const [mostrarProductos, setMostrarProductos] = useState(false);
   const [metaCotizaciones, setMetaCotizaciones] = useState(0);
   const [metaMonto, setMetaMonto] = useState(0);
@@ -179,6 +181,28 @@ export default function PanelIndicadores() {
     return () => { activo = false; };
   }, [cargando, puedeVer]);
 
+  // Catálogo de costos por SKU: `items_licitacion` no guarda costo, así que el
+  // margen se calcula cruzando el SKU del ítem con el costo del producto.
+  useEffect(() => {
+    if (cargando || !puedeVer) return;
+    let activo = true;
+    (async () => {
+      try {
+        const prods = await api.get("/productos");
+        const m = {};
+        (prods || []).forEach((p) => {
+          const sku = String(p.sku || "").trim().toUpperCase();
+          if (sku) m[sku] = Number(p.costo || 0);
+        });
+        if (activo) setCostoBySku(m);
+      } catch (e) {
+        console.error("Error cargando costos de productos:", e);
+        if (activo) setCostoBySku({});
+      }
+    })();
+    return () => { activo = false; };
+  }, [cargando, puedeVer]);
+
   // Ventas por categoría del mes (ítems de cotizaciones adjudicadas del mes).
   useEffect(() => {
     if (cargando || !puedeVer) return;
@@ -191,7 +215,7 @@ export default function PanelIndicadores() {
       try {
         const items = await api.post("/licitaciones/items/filter", {
           licitacion_ids: idsMes,
-          fields: "licitacion_id,producto,categoria,total,costo,cantidad",
+          fields: "licitacion_id,producto,categoria,total,cantidad,sku",
         });
         const mapCat = {};      // cat -> total
         const mapCatProd = {};  // cat -> { producto -> monto }
@@ -204,7 +228,9 @@ export default function PanelIndicadores() {
           (mapCatProd[cat] = mapCatProd[cat] || {});
           mapCatProd[cat][prod] = (mapCatProd[cat][prod] || 0) + total;
           ventaNeta += total;
-          costoTotal += (Number(it.costo || 0) * (Number(it.cantidad) || 0));
+          const sku = String(it.sku || "").trim().toUpperCase();
+          const costoUnit = costoBySku[sku] || 0;
+          costoTotal += costoUnit * (Number(it.cantidad) || 0);
         });
         const margenMonto = Math.round(ventaNeta - costoTotal);
         const margenPct = ventaNeta > 0 ? (margenMonto / ventaNeta) * 100 : 0;
@@ -223,7 +249,7 @@ export default function PanelIndicadores() {
       }
     })();
     return () => { activo = false; };
-  }, [cargando, puedeVer, lics, adjDateByLic, enPeriodo, filtroTipo]);
+  }, [cargando, puedeVer, lics, adjDateByLic, enPeriodo, filtroTipo, costoBySku]);
 
   // Metas (donde existan): N° cotizaciones del equipo + monto neto de vendedores.
   useEffect(() => {
@@ -303,7 +329,8 @@ export default function PanelIndicadores() {
       const clientesMes = new Set();
       lics.forEach((l) => {
         if (!pasaTipo(l)) return;
-        if (pred(l.fecha)) cotizaciones++;
+        // Las cotizaciones descartadas no cuentan en el total.
+        if (pred(l.fecha) && l.estado !== "Descartada") cotizaciones++;
         if (pred(adjDateByLic[l.id])) {
           adjudicadas++;
           ventas += ventaDeLic(l);
@@ -368,21 +395,6 @@ export default function PanelIndicadores() {
     }
     return arr;
   }, [metricasMes, mesActual]);
-
-  // Embudo de conversión (cohorte de cotizaciones creadas en el mes).
-  const embudo = useMemo(() => {
-    const creadas = lics.filter((l) => pasaTipo(l) && enPeriodo(l.fecha));
-    const total = creadas.length;
-    const enProceso = creadas.filter((l) => ESTADOS_ABIERTOS.includes(l.estado)).length;
-    const adjudicadas = creadas.filter((l) => l.estado === "Adjudicada" || adjDateByLic[l.id]).length;
-    const perdidas = creadas.filter((l) => ESTADOS_PERDIDOS.includes(l.estado)).length;
-    return [
-      { etapa: "Cotizaciones creadas", n: total, color: "#28aeb1" },
-      { etapa: "En proceso", n: enProceso, color: "#6366f1" },
-      { etapa: "Adjudicadas (cierres)", n: adjudicadas, color: "#16a34a" },
-      { etapa: "No adjudicadas", n: perdidas, color: "#ef4444" },
-    ];
-  }, [lics, adjDateByLic, enPeriodo, filtroTipo]);
 
   // Top 5 clientes por venta del periodo.
   const topClientes = useMemo(() => {
@@ -475,7 +487,6 @@ export default function PanelIndicadores() {
   }
 
   const maxEvol = Math.max(1, ...evolucion.map((e) => e.ventas));
-  const maxEmbudo = Math.max(1, ...embudo.map((e) => e.n));
   const totalCat = catData.reduce((acc, c) => acc + c.monto, 0);
   const maxTop = Math.max(1, ...topClientes.map((c) => c.monto));
 
@@ -555,23 +566,8 @@ export default function PanelIndicadores() {
               <h3 className="surface-title" style={{ marginBottom: 14 }}>Evolución de ventas (6 meses)</h3>
               <LineChart data={evolucion} max={maxEvol} />
             </div>
-            {/* Embudo */}
-            <div className="surface" style={{ padding: 18 }}>
-              <h3 className="surface-title" style={{ marginBottom: 14 }}>Embudo de conversión ({periodoLabel.toLowerCase()})</h3>
-              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                {embudo.map((e, i) => (
-                  <div key={e.etapa}>
-                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 3 }}>
-                      <span style={{ color: "var(--text)" }}>{e.etapa}</span>
-                      <strong style={{ color: e.color }}>{fmtNum(e.n)}{i > 0 && embudo[0].n > 0 ? ` · ${((e.n / embudo[0].n) * 100).toFixed(0)}%` : ""}</strong>
-                    </div>
-                    <div style={{ height: 14, borderRadius: 7, background: "var(--bg)", overflow: "hidden" }}>
-                      <div style={{ height: "100%", width: `${clamp((e.n / maxEmbudo) * 100, 2, 100)}%`, background: e.color, borderRadius: 7 }} />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
+            {/* Embudo comercial (clientes particulares) */}
+            <EmbudoComercial periodo={periodo} />
             {/* Ventas por categoría */}
             <div className="surface" style={{ padding: 18 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, gap: 8 }}>

@@ -6,7 +6,7 @@ import { Target, ClipboardList, TrendingUp, Users } from "lucide-react";
 import Ventas from "./Ventas";
 
 // Estados que NO cuentan como cotización "ingresada" para la meta del equipo.
-const ESTADOS_NO_CUENTAN = ["Descartada", "Desierta"];
+const ESTADOS_NO_CUENTAN = ["Descartada", "Desierta", "Pendiente Aprobación"];
 const META_DEFECTO = 900;
 
 function mesActualISO() {
@@ -334,7 +334,7 @@ export default function CotizacionesPorVendedor() {
               border: "1px solid var(--border)", background: "var(--bg)",
               padding: "3px 12px", fontSize: "12px", color: "var(--text-muted)",
             }}>
-              {fmtFechaCorta(desde)} – {fmtFechaCorta(hasta)} · {tipoFiltro === "publico" ? "Mercado Público" : tipoFiltro === "particular" ? "Particular" : "Todas"} · No cuentan los estados Descartada y Desierta
+              {fmtFechaCorta(desde)} – {fmtFechaCorta(hasta)} · {tipoFiltro === "publico" ? "Mercado Público" : tipoFiltro === "particular" ? "Particular" : "Todas"} · No cuentan los estados Descartada, Desierta y Pendiente Aprobación
             </span>
           </div>
         </div>
