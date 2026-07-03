@@ -104,6 +104,12 @@ export default function SeguimientoPagos() {
   const [notasCreditoSumMap, setNotasCreditoSumMap] = useState({});
   // Suma de órdenes de compra por cotización (monto a cobrar de la columna Monto).
   const [montoOcMap, setMontoOcMap] = useState({});
+  // OC por id: permite resolver el monto de la factura pública que deriva de una
+  // OC concreta (deriva_de_id), en vez de sumar todas las OC de la cotización.
+  const [ocByIdMap, setOcByIdMap] = useState({});
+  // Guía por id: la factura pública deriva de una guía (deriva_de_id) y la guía
+  // deriva de la OC; sirve para encadenar factura → guía → OC → monto.
+  const [guiaByIdMap, setGuiaByIdMap] = useState({});
   // N° de OC por cotización (para los reportes). Varias OC → separadas por coma.
   const [ocNumMap, setOcNumMap] = useState({});
   const [licMap, setLicMap] = useState({});
@@ -220,6 +226,8 @@ export default function SeguimientoPagos() {
         const compMap = {};
         const compSum = {};
         const ocSum = {};
+        const ocById = {};
+        const guiaById = {};
         const ocNums = {};
         const ncList = {};
         const ncSum = {};
@@ -241,6 +249,7 @@ export default function SeguimientoPagos() {
               // Empresa despachadora de la cotización (de su guía de despacho).
               const emp = String(d.empresa_despacho || "").trim();
               if (emp && !empresaMap[lid]) empresaMap[lid] = emp;
+              guiaById[d.id] = d; // para encadenar factura → guía → OC
               return;
             }
             if (d.tipo === "factura" || d.tipo === "factura_boleta") {
@@ -250,6 +259,7 @@ export default function SeguimientoPagos() {
             if (d.tipo === "orden_compra") {
               // Monto de la cotización a efectos de pago = suma de sus OC.
               ocSum[lid] = (ocSum[lid] || 0) + Number(d.monto || 0);
+              ocById[d.id] = d; // para resolver la factura por su OC de origen
               const num = String(d.numero || "").trim();
               if (num) (ocNums[lid] = ocNums[lid] || []).push(num);
               return;
@@ -276,6 +286,8 @@ export default function SeguimientoPagos() {
         setComprobantesMap(compMap);
         setComprobantesSumMap(compSum);
         setMontoOcMap(ocSum);
+        setOcByIdMap(ocById);
+        setGuiaByIdMap(guiaById);
         setNotasCreditoMap(ncList);
         setNotasCreditoSumMap(ncSum);
         const ocNumFinal = {};
@@ -353,6 +365,51 @@ export default function SeguimientoPagos() {
   function montoBaseFactura(f, lic) {
     if (esClienteParticular(lic)) return Number(f.monto) || Number(lic?.total_con_iva) || 0;
     return montoNetoPago(montoOcMap[lic?.id], lic);
+  }
+  // Neto de la OC detrás de un id que puede ser una OC directa o una guía de
+  // despacho (la guía deriva de la OC). Devuelve 0 si no resuelve.
+  function ocNetoDesdeRef(refId) {
+    if (refId == null) return 0;
+    const oc = ocByIdMap[refId];
+    if (oc) return Number(oc.monto || 0);
+    const guia = guiaByIdMap[refId];
+    if (guia && guia.deriva_de_id != null) {
+      const ocDeGuia = ocByIdMap[guia.deriva_de_id];
+      if (ocDeGuia) return Number(ocDeGuia.monto || 0);
+    }
+    return 0;
+  }
+
+  // Monto MOSTRADO de la factura = bruto (con IVA) de ESA factura:
+  //  1) monto propio de la factura (neto) × 1,19 — caso particular (boleta).
+  //  2) público: la factura deriva de su guía (o de varias vía guias_ids) y la
+  //     guía de la OC. Se toma la suma de las OC distintas detrás de esas guías,
+  //     así cada factura refleja su propio monto y no la suma de toda la cotización.
+  //  3) fallback: suma de OC de la cotización × 1,19; o total con IVA.
+  // Se usa solo para mostrar/KPI; la reconciliación de saldos sigue en neto.
+  function montoFacturaBruto(f, lic) {
+    const neto = Number(f?.monto || 0);
+    if (neto > 0) return Math.round(neto * 1.19);
+    // Referencias de la factura a su(s) guía(s)/OC: guias_ids + deriva_de_id.
+    const refs = Array.isArray(f?.guias_ids) && f.guias_ids.length
+      ? f.guias_ids
+      : (f?.deriva_de_id != null ? [f.deriva_de_id] : []);
+    const ocsVistas = new Set();
+    let sumaPropia = 0;
+    refs.forEach((ref) => {
+      const oc = ocByIdMap[ref] || (guiaByIdMap[ref]?.deriva_de_id != null ? ocByIdMap[guiaByIdMap[ref].deriva_de_id] : null);
+      if (oc && !ocsVistas.has(oc.id)) {
+        ocsVistas.add(oc.id);
+        sumaPropia += Number(oc.monto || 0);
+      } else if (!oc) {
+        // Ref sin OC resoluble: intenta el neto directo por si acaso.
+        sumaPropia += ocNetoDesdeRef(ref);
+      }
+    });
+    if (sumaPropia > 0) return Math.round(sumaPropia * 1.19);
+    const ocNeto = Number(montoOcMap[lic?.id] || 0);
+    if (ocNeto > 0) return Math.round(ocNeto * 1.19);
+    return Number(lic?.total_con_iva || 0) || 0;
   }
   function notasCreditoDe(f) {
     return Number(notasCreditoSumMap[f.licitacion_id] || 0);
@@ -530,7 +587,7 @@ export default function SeguimientoPagos() {
         "Fecha Factura": fmtFecha(f.fecha_factura),
         "Vencimiento": venc ? venc.toISOString().slice(0, 10) : "",
         "Condición Venta": lic.condicion_venta || "",
-        "Monto": montoNetoPago(montoOcMap[lic.id], lic),
+        "Monto": montoFacturaBruto(f, lic),
         "Notas de crédito": nc || "",
         "Saldo por pagar": saldoPorPagar,
         "Estado": estado,
@@ -586,14 +643,12 @@ export default function SeguimientoPagos() {
       const lic = licMap[f.licitacion_id];
       if (!lic) return;
       licsEnVista.add(f.licitacion_id);
-      // Monto de cada KPI = valor neto de la OC (suma de OC), con fallback al
-      // neto de la cotización cuando no hay OC.
-      const monto = montoNetoPago(montoOcMap[f.licitacion_id], lic);
+      // Monto de cada KPI = bruto (con IVA) de la factura cargada.
+      const monto = montoFacturaBruto(f, lic);
       total++;
-      // Total facturado = valor base de la factura (particular: monto factura;
-      // público: neto de OC), antes de notas de crédito.
+      // Total facturado = bruto (con IVA) de la factura, antes de notas de crédito.
       totalFacturadoCount++;
-      totalFacturadoMonto += montoBaseFactura(f, lic);
+      totalFacturadoMonto += montoFacturaBruto(f, lic);
       // Pagada solo si los montos calzan (punto 17); si no, cae a pendiente.
       if (estaPagada(f, lic)) {
         pagadas++; montoPagadas += monto;
@@ -938,13 +993,13 @@ export default function SeguimientoPagos() {
           <div className="stat-label">Total facturado</div>
           <div className="stat-value" style={{ color: "var(--text)" }}>{stats.totalFacturadoCount}</div>
           <div className="stat-money" style={{ color: "var(--text)" }}>{fmtCLP(stats.totalFacturadoMonto)}</div>
-          <div className="stat-sub">facturas emitidas · monto base</div>
+          <div className="stat-sub">facturas emitidas · con IVA</div>
         </div>
         <div className="stat-card">
           <div className="stat-label">Pagadas</div>
           <div className="stat-value" style={{ color: "var(--success)" }}>{stats.pagadas}</div>
           <div className="stat-money" style={{ color: "var(--success)" }}>{fmtCLP(stats.montoPagadas)}</div>
-          <div className="stat-sub">facturas · valor OC neto</div>
+          <div className="stat-sub">facturas · con IVA</div>
         </div>
         <div className="stat-card">
           <div className="stat-label">Pendientes</div>
@@ -952,25 +1007,25 @@ export default function SeguimientoPagos() {
             {Math.max(0, stats.pendientes - stats.porVencer - stats.vencidas)}
           </div>
           <div className="stat-money" style={{ color: "var(--primary)" }}>{fmtCLP(stats.montoEnPlazo)}</div>
-          <div className="stat-sub">aún en plazo · valor OC neto</div>
+          <div className="stat-sub">aún en plazo · con IVA</div>
         </div>
         <div className="stat-card">
           <div className="stat-label">Por vencer</div>
           <div className="stat-value" style={{ color: "var(--warning)" }}>{stats.porVencer}</div>
           <div className="stat-money" style={{ color: "var(--warning)" }}>{fmtCLP(stats.montoPorVencer)}</div>
-          <div className="stat-sub">próximas a vencer · valor OC neto</div>
+          <div className="stat-sub">próximas a vencer · con IVA</div>
         </div>
         <div className="stat-card">
           <div className="stat-label">Vencidas</div>
           <div className="stat-value" style={{ color: "var(--danger)" }}>{stats.vencidas}</div>
           <div className="stat-money" style={{ color: "var(--danger)" }}>{fmtCLP(stats.montoVencidas)}</div>
-          <div className="stat-sub">fuera de plazo · valor OC neto</div>
+          <div className="stat-sub">fuera de plazo · con IVA</div>
         </div>
         <div className="stat-card">
           <div className="stat-label">Factoring</div>
           <div className="stat-value" style={{ color: "#7c3aed" }}>{stats.factoringCount}</div>
           <div className="stat-money" style={{ color: "#7c3aed" }}>{fmtCLP(stats.montoFactoring)}</div>
-          <div className="stat-sub">pagadas por factoring · valor OC neto</div>
+          <div className="stat-sub">pagadas por factoring · con IVA</div>
         </div>
         <div className="stat-card">
           <div className="stat-label">Notas de crédito</div>
@@ -1111,11 +1166,11 @@ export default function SeguimientoPagos() {
           </div>
         )}
         <div className="filter-field">
-          <label className="filter-label">Factura desde</label>
+          <label className="filter-label">Fecha Factura desde</label>
           <DateFilter value={filtroDesde} onChange={setFiltroDesde} maxDate={filtroHasta ? new Date(`${filtroHasta}T00:00:00`) : undefined} placeholder="Desde…" />
         </div>
         <div className="filter-field">
-          <label className="filter-label">Factura hasta</label>
+          <label className="filter-label">Fecha Factura hasta</label>
           <DateFilter value={filtroHasta} onChange={setFiltroHasta} minDate={filtroDesde ? new Date(`${filtroDesde}T00:00:00`) : undefined} placeholder="Hasta…" />
         </div>
       </div>
@@ -1308,8 +1363,8 @@ export default function SeguimientoPagos() {
                       </td>
                       <td style={{ verticalAlign: "middle", textAlign: "right", fontWeight: 600, whiteSpace: "nowrap" }}>
                         {(() => {
-                          // Monto = valor neto de la OC (suma de OC). Sin OC, neto de la cotización.
-                          const m = montoNetoPago(montoOcMap[lic.id], lic);
+                          // Monto = bruto (con IVA) de la factura cargada.
+                          const m = montoFacturaBruto(f, lic);
                           return m > 0 ? `$${m.toLocaleString("es-CL")}` : "—";
                         })()}
                       </td>

@@ -486,6 +486,56 @@ body {
 .nav-item:hover .nav-icon { opacity: 1; }
 .nav-item.is-active .nav-icon { opacity: 1; }
 
+/* ── Submenú anidado (padre con submódulos) ─────────────────────────── */
+.nav-parent { display: flex; flex-direction: column; }
+.nav-parent-row { display: flex; align-items: center; gap: 2px; }
+.nav-parent-link { flex: 1; min-width: 0; }
+.nav-parent-toggle {
+  flex-shrink: 0;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 6px;
+  margin-right: 4px;
+  color: #6b7280;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+}
+.nav-parent-toggle:hover { background: #f0fafa; color: var(--primary); }
+.nav-parent-chevron {
+  transition: transform .25s cubic-bezier(.4, 0, .2, 1);
+  opacity: .65;
+}
+.nav-parent:not(.is-open) .nav-parent-chevron { transform: rotate(-90deg); }
+.nav-parent:not(.is-open) .nav-children { display: none; }
+.nav-children {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 1px 0 5px 0;
+  padding-left: 22px;
+  position: relative;
+}
+.nav-children::before {
+  content: "";
+  position: absolute;
+  left: 15px;
+  top: 1px;
+  bottom: 7px;
+  width: 1.5px;
+  background: var(--border);
+  border-radius: 2px;
+}
+.nav-item-child { font-size: 13px; padding-top: 7px; padding-bottom: 7px; }
+.nav-item-child .nav-icon { width: 15px; height: 15px; }
+
+/* En modo rail (sidebar colapsada): ocultar el toggle y la guía, mostrar los
+   hijos como íconos centrados igual que el resto de ítems. */
+.app-shell.is-collapsed .nav-parent-toggle { display: none; }
+.app-shell.is-collapsed .nav-children { padding-left: 0; margin: 0; display: flex; }
+.app-shell.is-collapsed .nav-children::before { display: none; }
+
 /* Badge de mensajes sin leer (Chat Grupal) en el ítem del menú */
 .nav-item-badge {
   margin-left: auto;

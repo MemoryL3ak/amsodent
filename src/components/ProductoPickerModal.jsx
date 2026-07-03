@@ -8,7 +8,10 @@ import CrearProductoModal from "./CrearProductoModal";
 // que abrir el módulo de Productos. Muestra el catálogo con filtros; al hacer
 // clic en un producto lo devuelve vía onSelect.
 
-const MAX_FILAS = 200;
+const MAX_FILAS = 80;
+
+// Pre-normaliza el texto buscable de cada producto una sola vez (memo por
+// instancia del componente) — evita normalizar 20k strings en cada tecla.
 
 // Paleta de la plataforma (turquesa corporativo)
 const TEAL = "#25b7bd";
@@ -56,6 +59,7 @@ export default function ProductoPickerModal({
   onProductoCreado,
 }) {
   const [busqueda, setBusqueda] = useState("");
+  const [busquedaInput, setBusquedaInput] = useState(""); // input controlado (sin debounce)
   const [categoriasSel, setCategoriasSel] = useState([]); // array de strings
   const [marcasSel, setMarcasSel] = useState([]);
   const [mostrarCrear, setMostrarCrear] = useState(false);
@@ -63,27 +67,56 @@ export default function ProductoPickerModal({
   const listado = String(listadoInicial || "2");
   const infoTC = ETIQUETA_TIPO_COMPRA[tipoCompra] || null;
 
-  const categorias = useMemo(
-    () => [...new Set((productos || []).map((p) => p.categoria).filter(Boolean))].sort(),
-    [productos],
-  );
-  const marcas = useMemo(
-    () => [...new Set((productos || []).map((p) => p.marca).filter(Boolean))].sort(),
-    [productos],
-  );
+  // Debounce de la búsqueda: el input responde al instante pero el filtrado
+  // sobre 20k productos solo se dispara cuando deja de tipear ~150ms.
+  useEffect(() => {
+    const t = setTimeout(() => setBusqueda(busquedaInput), 150);
+    return () => clearTimeout(t);
+  }, [busquedaInput]);
+
+  // Pre-cómputo: categorías, marcas y texto normalizado por producto.
+  // Esto se hace una sola vez cuando cambia `productos` (no en cada tecla).
+  const { categorias, marcas, productosNorm } = useMemo(() => {
+    const cats = new Set();
+    const mar = new Set();
+    const norm = (productos || []).map((p) => {
+      if (p.categoria) cats.add(p.categoria);
+      if (p.marca) mar.add(p.marca);
+      return {
+        p,
+        texto: normalizar(`${p.sku || ""} ${p.nombre || ""} ${p.marca || ""}`),
+      };
+    });
+    return {
+      categorias: [...cats].sort(),
+      marcas: [...mar].sort(),
+      productosNorm: norm,
+    };
+  }, [productos]);
 
   const filtrados = useMemo(() => {
     const tokens = normalizar(busqueda).split(" ").filter(Boolean);
     const setCat = new Set(categoriasSel);
     const setMar = new Set(marcasSel);
-    return (productos || []).filter((p) => {
-      if (setCat.size > 0 && !setCat.has(p.categoria)) return false;
-      if (setMar.size > 0 && !setMar.has(p.marca)) return false;
-      if (tokens.length === 0) return true;
-      const texto = normalizar(`${p.sku || ""} ${p.nombre || ""} ${p.marca || ""}`);
-      return tokens.every((t) => texto.includes(t));
-    });
-  }, [productos, busqueda, categoriasSel, marcasSel]);
+    const hayCat = setCat.size > 0;
+    const hayMar = setMar.size > 0;
+    const hayTokens = tokens.length > 0;
+    const out = [];
+    for (let i = 0; i < productosNorm.length; i++) {
+      const { p, texto } = productosNorm[i];
+      if (hayCat && !setCat.has(p.categoria)) continue;
+      if (hayMar && !setMar.has(p.marca)) continue;
+      if (hayTokens) {
+        let ok = true;
+        for (let j = 0; j < tokens.length; j++) {
+          if (!texto.includes(tokens[j])) { ok = false; break; }
+        }
+        if (!ok) continue;
+      }
+      out.push(p);
+    }
+    return out;
+  }, [productosNorm, busqueda, categoriasSel, marcasSel]);
 
   const visibles = filtrados.slice(0, MAX_FILAS);
   const hayFiltros = busqueda || categoriasSel.length > 0 || marcasSel.length > 0;
@@ -231,8 +264,8 @@ export default function ProductoPickerModal({
             <input
               autoFocus
               type="text"
-              value={busqueda}
-              onChange={(e) => setBusqueda(e.target.value)}
+              value={busquedaInput}
+              onChange={(e) => setBusquedaInput(e.target.value)}
               placeholder="Buscar por SKU, nombre o marca…"
               className="ppm-input"
               style={{
@@ -331,7 +364,13 @@ export default function ProductoPickerModal({
             }}
           >
             {busqueda && (
-              <Chip onRemove={() => setBusqueda("")} icon={<Search size={11} />}>
+              <Chip
+                onRemove={() => {
+                  setBusqueda("");
+                  setBusquedaInput("");
+                }}
+                icon={<Search size={11} />}
+              >
                 {busqueda}
               </Chip>
             )}
@@ -358,6 +397,7 @@ export default function ProductoPickerModal({
                 type="button"
                 onClick={() => {
                   setBusqueda("");
+                  setBusquedaInput("");
                   setCategoriasSel([]);
                   setMarcasSel([]);
                 }}

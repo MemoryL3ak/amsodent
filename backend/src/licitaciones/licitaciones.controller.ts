@@ -42,6 +42,34 @@ export class LicitacionesController {
     return this.licitacionesService.moraPorRuts(body?.ruts || []);
   }
 
+  /* ── Licitaciones disponibles (listado para tomar/cargar) ── */
+  @Get('disponibles')
+  listarDisponibles() {
+    return this.licitacionesService.listarDisponibles();
+  }
+
+  @Post('disponibles/bulk')
+  bulkDisponibles(@Body() body: { rows: any[] }, @Req() req: any) {
+    const email = (req?.user?.email || '').toLowerCase();
+    return this.licitacionesService.bulkDisponibles(body?.rows || [], email);
+  }
+
+  @Put('disponibles/:dispId/cargar')
+  marcarDisponibleCargada(@Param('dispId', ParseIntPipe) dispId: number, @Req() req: any) {
+    const email = (req?.user?.email || '').toLowerCase();
+    return this.licitacionesService.marcarDisponibleCargada(dispId, email);
+  }
+
+  @Put('disponibles/:dispId/descargar')
+  desmarcarDisponible(@Param('dispId', ParseIntPipe) dispId: number) {
+    return this.licitacionesService.desmarcarDisponible(dispId);
+  }
+
+  @Delete('disponibles/:dispId')
+  eliminarDisponible(@Param('dispId', ParseIntPipe) dispId: number) {
+    return this.licitacionesService.eliminarDisponible(dispId);
+  }
+
   @Get(':id')
   findOne(@Param('id', ParseIntPipe) id: number) {
     return this.licitacionesService.findOne(id);

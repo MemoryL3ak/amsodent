@@ -326,7 +326,7 @@ export default function CrearProductoModal({ onClose, onCreado }) {
 
   const estadoMostradoBase = sku.trim()
     ? "Activo"
-    : margenVentaNum > 0 && margenVentaNum < 15
+    : margenVentaNum > 0 && margenVentaNum < 20
     ? "Pendiente Aprobación"
     : "Transitorio";
   const esPendienteAprobacion = estadoMostradoBase === "Pendiente Aprobación";
@@ -379,7 +379,7 @@ export default function CrearProductoModal({ onClose, onCreado }) {
     const skuLimpio = (sku ?? "").toString().trim().toUpperCase();
 
     let estadoFinal = skuLimpio ? "Activo" : "Transitorio";
-    if (!skuLimpio && margenVentaNum > 0 && margenVentaNum < 15) {
+    if (!skuLimpio && margenVentaNum > 0 && margenVentaNum < 20) {
       estadoFinal = "Pendiente Aprobación";
     }
 
@@ -676,7 +676,7 @@ export default function CrearProductoModal({ onClose, onCreado }) {
                         {esPendienteAprobacion && (
                           <div className="cpm-hint cpm-hint-warn">
                             <AlertTriangle size={11} />
-                            Requiere aprobación de admin (margen &lt; 15%).
+                            Requiere aprobación de admin (margen &lt; 20%).
                           </div>
                         )}
                       </div>
@@ -1055,7 +1055,7 @@ export default function CrearProductoModal({ onClose, onCreado }) {
               <div style={{ fontSize: 12, color: "#64748b" }}>
                 {esPendienteAprobacion ? (
                   <span style={{ color: "#92400e", fontWeight: 600 }}>
-                    ⚠ Quedará Pendiente Aprobación (margen &lt; 15%).
+                    ⚠ Quedará Pendiente Aprobación (margen &lt; 20%).
                   </span>
                 ) : (
                   "Los campos con * son obligatorios."

@@ -42,6 +42,8 @@ import {
   Landmark,
   LayoutDashboard,
   CalendarDays,
+  Inbox,
+  Percent,
 } from "lucide-react";
 import NotificacionesMenu from "./NotificacionesMenu";
 import RecordatoriosCorreo from "./RecordatoriosCorreo";
@@ -169,6 +171,8 @@ export default function SidebarLayout() {
   const comercialNav = [
     puede("cotizaciones") && { to: "/listar",      icon: ClipboardList, label: "Cotizaciones" },
     puede("crear_cotizacion") && { to: "/crear",       icon: FilePlus,      label: "Nueva Cotización" },
+    esAdmin && { to: "/licitaciones-disponibles", icon: Inbox, label: "Licitaciones disponibles" },
+    esAdmin && { to: "/ordenes-compra", icon: FileText, label: "Órdenes de Compra" },
     puede("clientes") && { to: "/clientes",    icon: Users,         label: "Clientes" },
     puede("mis_clientes") && { to: "/mis-clientes", icon: UserCheck,    label: "Mis clientes" },
     puede("bitacora") && { to: "/bitacora-actividades", icon: CalendarDays, label: "Bitácora actividades" },
@@ -191,10 +195,17 @@ export default function SidebarLayout() {
   const metasNav = [
     puede("metas") && { to: "/metas", icon: Target, label: "Definición de metas" },
     puede("resumen_canales") && { to: "/metas-canal", icon: SlidersHorizontal, label: "Resumen canales" },
+    (esAdmin || rolNorm === "jefe_ventas") && { to: "/comisiones", icon: Percent, label: "Comisiones" },
   ].filter(Boolean);
 
   const reportesNav = [
-    puede("panel_indicadores") && { to: "/panel-indicadores", icon: LayoutDashboard, label: "Panel de Indicadores" },
+    puede("panel_indicadores") && {
+      to: "/panel-indicadores", icon: LayoutDashboard, label: "Panel de Indicadores",
+      children: [
+        { to: "/panel-particular", icon: Users, label: "Cliente Particular" },
+        { to: "/panel-publica", icon: Landmark, label: "Entidad Pública" },
+      ],
+    },
     (puede("cotizaciones_vendedor") || puede("resumen_comercial")) && { to: "/cotizaciones-vendedor", icon: BarChart3, label: "Panel de Ejecutivos" },
   ].filter(Boolean);
 
@@ -219,10 +230,71 @@ export default function SidebarLayout() {
     puede("monitoreo_asistencia") && { to: "/monitoreo-marcajes", icon: MapPin,   label: "Monitoreo de Asistencia" },
   ].filter(Boolean);
 
+  // Ítem hoja del menú (o hijo anidado si `nested`).
+  function NavLeaf({ item, nested }) {
+    const { to, icon: Icon, label: itemLabel, badge } = item;
+    return (
+      <Link
+        to={to}
+        onClick={(e) => onNavClick(e, to)}
+        className={`nav-item ${nested ? "nav-item-child" : ""} ${isActive(to) ? "is-active" : ""}`}
+        data-label={itemLabel}
+        title={itemLabel}
+      >
+        <Icon size={nested ? 15 : 16} className="nav-icon" />
+        <span className="nav-item-label">{itemLabel}</span>
+        {badge > 0 && <span className="nav-item-badge">{badge > 99 ? "99+" : badge}</span>}
+      </Link>
+    );
+  }
+
+  // Ítem padre con submódulos anidados (ej. Panel de Indicadores → sub-paneles).
+  function NavParent({ item }) {
+    const { to, icon: Icon, label: itemLabel, children } = item;
+    const selfActive = isActive(to);
+    const childActive = children.some((c) => isActive(c.to));
+    const [open, setOpen] = useState(() => {
+      try {
+        const s = localStorage.getItem(`subnav_${to}`);
+        return s === null ? (selfActive || childActive) : s === "1";
+      } catch { return true; }
+    });
+    function toggle(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      const next = !open;
+      setOpen(next);
+      try { localStorage.setItem(`subnav_${to}`, next ? "1" : "0"); } catch {}
+    }
+    return (
+      <div className={`nav-parent ${open ? "is-open" : ""}`}>
+        <div className="nav-parent-row">
+          <Link
+            to={to}
+            onClick={(e) => onNavClick(e, to)}
+            className={`nav-item nav-parent-link ${selfActive ? "is-active" : ""}`}
+            data-label={itemLabel}
+            title={itemLabel}
+          >
+            <Icon size={16} className="nav-icon" />
+            <span className="nav-item-label">{itemLabel}</span>
+            {childActive && !open && <span className="nav-group-active-dot" aria-hidden />}
+          </Link>
+          <button type="button" className="nav-parent-toggle" onClick={toggle} aria-label={open ? "Contraer" : "Expandir"}>
+            <ChevronDown size={13} strokeWidth={2.6} className="nav-parent-chevron" />
+          </button>
+        </div>
+        <div className="nav-children">
+          {children.map((c) => <NavLeaf key={c.to} item={c} nested />)}
+        </div>
+      </div>
+    );
+  }
+
   function NavGroup({ label, items, collapsible, icon: GroupIcon, storageKey }) {
     if (items.length === 0) return null;
 
-    const algunActivo = items.some(({ to }) => isActive(to));
+    const algunActivo = items.some((it) => isActive(it.to) || (it.children || []).some((c) => isActive(c.to)));
 
     // Estado persistido en localStorage. Default abierto.
     const [open, setOpen] = useState(() => {
@@ -250,20 +322,9 @@ export default function SidebarLayout() {
       }
     }
 
-    const items_node = items.map(({ to, icon: Icon, label: itemLabel, badge }) => (
-      <Link
-        key={to}
-        to={to}
-        onClick={(e) => onNavClick(e, to)}
-        className={`nav-item ${isActive(to) ? "is-active" : ""}`}
-        data-label={itemLabel}
-        title={itemLabel}
-      >
-        <Icon size={16} className="nav-icon" />
-        <span className="nav-item-label">{itemLabel}</span>
-        {badge > 0 && <span className="nav-item-badge">{badge > 99 ? "99+" : badge}</span>}
-      </Link>
-    ));
+    const items_node = items.map((it) =>
+      it.children ? <NavParent key={it.to} item={it} /> : <NavLeaf key={it.to} item={it} />
+    );
 
     const badgeTotal = items.reduce((acc, it) => acc + (it.badge || 0), 0);
 

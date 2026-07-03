@@ -242,7 +242,8 @@ export default function ListarLicitaciones() {
 
   // ── Stats ─────────────────────────────────────────────────────
   const stats = useMemo(() => ({
-    total:       dataFiltrada.length,
+    // El total de cotizaciones no cuenta las descartadas ni las pendientes de aprobación.
+    total:       dataFiltrada.filter((l) => l.estado !== "Descartada" && l.estado !== "Pendiente Aprobación").length,
     adjudicadas: dataFiltrada.filter((l) => l.estado === "Adjudicada").length,
     enEspera:    dataFiltrada.filter((l) => l.estado === "En espera").length,
     perdidas:    dataFiltrada.filter((l) => l.estado === "Perdida").length,

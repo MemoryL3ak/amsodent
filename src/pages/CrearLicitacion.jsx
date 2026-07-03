@@ -727,11 +727,11 @@ export default function CrearLicitacion() {
     return r === "admin" || r === "administrador";
   }, [rol]);
 
-  // Solo admin y jefe_ventas_especial pueden cambiar las condiciones de venta
-  // cuando el cliente es Particular (el resto queda fijo en "Contado").
+  // La opción "30 días" para un Cliente Particular solo la puede habilitar el
+  // admin. El resto de los roles queda fijo en "Contado".
   const puedeEditarCondVenta = useMemo(() => {
     const r = (rol ?? "").toString().trim().toLowerCase();
-    return r === "admin" || r === "administrador" || r === "jefe_ventas_especial";
+    return r === "admin" || r === "administrador";
   }, [rol]);
 
   const [mostrarEntidad, setMostrarEntidad] = useState(true);
@@ -865,6 +865,9 @@ export default function CrearLicitacion() {
   // Si esta cotización se crea a partir de una solicitud del portal del cliente,
   // guardamos el id para vincularlas al guardar.
   const [solicitudStockId, setSolicitudStockId] = useState(null);
+  // Id de la fila del listado "Licitaciones disponibles" (si la cotización se
+  // originó desde ahí): al guardar, esa fila se marca como "cargada".
+  const [disponibleId, setDisponibleId] = useState(null);
 
   useEffect(() => {
     const draftDuplicado = location.state?.duplicarLicitacion;
@@ -874,6 +877,22 @@ export default function CrearLicitacion() {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(draftDuplicado));
     } catch (e) {
       console.error("Error preparando duplicado de licitación", e);
+    }
+  }, [location.state]);
+
+  // Prellenado desde el listado de "Licitaciones disponibles": arranca una
+  // cotización nueva con el ID de licitación y el nombre ya cargados.
+  useEffect(() => {
+    const prefill = location.state?.prefillLicitacion;
+    if (!prefill) return;
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({
+        idLicitacionInput: prefill.idLicitacionInput || "",
+        nombre: prefill.nombre || "",
+        disponible_id: prefill.disponibleId ?? null,
+      }));
+    } catch (e) {
+      console.error("Error preparando prellenado de licitación", e);
     }
   }, [location.state]);
 
@@ -889,6 +908,7 @@ export default function CrearLicitacion() {
       const data = JSON.parse(guardado);
 
       if (data.solicitud_stock_id != null) setSolicitudStockId(data.solicitud_stock_id);
+      if (data.disponible_id != null) setDisponibleId(data.disponible_id);
       setIdLicitacionInput(data.idLicitacionInput || "");
       setNombre(data.nombre || "");
       setFechaHoraCierre(data.fechaHoraCierre || "");
@@ -1786,6 +1806,17 @@ export default function CrearLicitacion() {
           console.warn("No se pudo vincular la solicitud del cliente:", errVinc?.message);
         }
         setSolicitudStockId(null);
+      }
+
+      // Marcar la fila del listado "Licitaciones disponibles" como cargada
+      // (solo ahora que la cotización quedó guardada).
+      if (disponibleId) {
+        try {
+          await api.put(`/licitaciones/disponibles/${disponibleId}/cargar`, {});
+        } catch (errDisp) {
+          console.warn("No se pudo marcar la licitación del listado como cargada:", errDisp?.message);
+        }
+        setDisponibleId(null);
       }
 
       if (requiereAprobacion) {
