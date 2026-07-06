@@ -2798,7 +2798,9 @@ export default function EditarLicitacion() {
           notificar_cliente_cotizacion: true,
           id_licitacion: idLicitacionInput,
           nombre,
-          fecha_hora_cierre: fechaHoraCierre,
+          // Cliente particular no tiene fecha de cierre: enviar null en vez de
+          // "" para no romper el timestamp en Postgres (invalid input syntax).
+          fecha_hora_cierre: fechaHoraCierre || null,
           monto: parseMontoCL(monto),
           lista_precios: Number(listado),
 

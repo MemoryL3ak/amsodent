@@ -350,6 +350,13 @@ export class LicitacionesService {
     const notificarCliente = body?.notificar_cliente_cotizacion === true;
     if ('notificar_cliente_cotizacion' in body) delete body.notificar_cliente_cotizacion;
 
+    // Los campos de fecha/timestamp vacíos ("") rompen Postgres
+    // ("invalid input syntax for type timestamp"). Se normalizan a null.
+    const CAMPOS_FECHA = ['fecha_hora_cierre', 'fecha_adjudicada', 'fecha_publicacion_resultados', 'fecha'];
+    for (const campo of CAMPOS_FECHA) {
+      if (campo in body && (body[campo] === '' || body[campo] === undefined)) body[campo] = null;
+    }
+
     // Estado previo para detectar una aprobación (Pendiente Aprobación → otro).
     let estadoPrevio: string | null = null;
     try {
