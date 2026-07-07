@@ -20,6 +20,17 @@ import {
 const TOKEN_TTL_SECONDS = 12 * 60 * 60; // 12h
 const RE_EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+// Precio en pesos (entero). Los precios CLP no llevan decimales; se toman solo
+// los dígitos para que "19.900" (separador de miles) se guarde como 19900 y no
+// como 19,9 (que descuadraría el total = stock × precio).
+function precioEnteroPesos(raw: any): number | null {
+  if (raw == null || raw === '') return null;
+  const digitos = String(raw).replace(/[^\d]/g, '');
+  if (!digitos) return null;
+  const n = Number(digitos);
+  return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
 export type SemaforoColor = 'verde' | 'amarillo' | 'rojo';
 
 export type ItemDeclaracion = {
@@ -978,10 +989,7 @@ export class StockClientesService {
         p.stock_alerta == null || p.stock_alerta === ''
           ? null
           : Number(p.stock_alerta),
-      precio_unitario:
-        p.precio_unitario == null || p.precio_unitario === ''
-          ? null
-          : Number(p.precio_unitario),
+      precio_unitario: precioEnteroPesos(p.precio_unitario),
       es_critico: !!p.es_critico,
       semaforo: calcularSemaforo(
         p.stock_actual,
@@ -1046,13 +1054,7 @@ export class StockClientesService {
           alertaNum != null && Number.isFinite(alertaNum) && alertaNum > 0
             ? alertaNum
             : null;
-        const precioRaw = it?.precio_unitario;
-        const precioNum =
-          precioRaw == null || precioRaw === '' ? null : Number(precioRaw);
-        const precio_unitario =
-          precioNum != null && Number.isFinite(precioNum) && precioNum >= 0
-            ? precioNum
-            : null;
+        const precio_unitario = precioEnteroPesos(it?.precio_unitario);
         const es_critico = it?.es_critico === true;
         const ubicacion_id =
           (it as any)?.ubicacion_id == null || (it as any)?.ubicacion_id === ''

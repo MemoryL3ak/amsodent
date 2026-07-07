@@ -123,6 +123,20 @@ function fmtMoneda(n) {
   });
 }
 
+// Precio en pesos (entero). Los precios CLP no llevan decimales, así que se
+// toman solo los dígitos: "19.900" → 19900. Evita que Number("19.900") se
+// interprete como 19,9 (el punto de miles como decimal) y descuadre el total.
+function parsePrecio(v) {
+  if (v == null || v === "") return 0;
+  const soloDigitos = String(v).replace(/[^\d]/g, "");
+  return soloDigitos ? Number(soloDigitos) : 0;
+}
+// Muestra el precio con separador de miles CL para el input ("19.900").
+function fmtPrecioInput(v) {
+  const n = parsePrecio(v);
+  return n ? n.toLocaleString("es-CL") : "";
+}
+
 const SEMAFORO_BADGES = {
   verde: { bg: "#dcfce7", color: "#15803d", icono: CheckCircle2, label: "OK" },
   amarillo: { bg: "#fef3c7", color: "#b45309", icono: AlertTriangle, label: "Bajo" },
@@ -1114,7 +1128,13 @@ function PantallaDeclaracion({ cliente, setToast }) {
             stock_actual: p.stock_actual ?? "",
             stock_bajo: p.stock_alerta ?? "",
             stock_minimo: p.stock_minimo ?? "",
-            precio_unitario: p.precio_unitario ?? "",
+            // El backend puede devolver el precio como numérico "19900.00";
+            // se normaliza a entero de pesos para que el estado siempre tenga
+            // dígitos limpios (evita que "19900.00" se lea como 1.990.000).
+            precio_unitario:
+              p.precio_unitario == null || p.precio_unitario === ""
+                ? ""
+                : String(Math.round(Number(p.precio_unitario))),
             ubicacion_id: p.ubicacion_id ?? "",
           }));
           setItems(mapeados);
@@ -1209,7 +1229,7 @@ function PantallaDeclaracion({ cliente, setToast }) {
       const s = semaforoColor(it.stock_actual, it.stock_minimo, it.stock_bajo);
       tot.total += 1;
       tot.valor +=
-        (Number(it.stock_actual) || 0) * (Number(it.precio_unitario) || 0);
+        (Number(it.stock_actual) || 0) * parsePrecio(it.precio_unitario);
       if (s === "rojo") {
         tot.rojos += 1;
         criticos.push(it);
@@ -1231,9 +1251,9 @@ function PantallaDeclaracion({ cliente, setToast }) {
         const bajoNum = Number(it.stock_bajo);
         const stock_alerta =
           Number.isFinite(bajoNum) && bajoNum > 0 ? bajoNum : null;
-        const precioNum = Number(it.precio_unitario);
-        const precio_unitario =
-          Number.isFinite(precioNum) && precioNum >= 0 ? precioNum : null;
+        // Precio como entero de pesos (sin separadores), nunca 19,9 por miles.
+        const precioNum = parsePrecio(it.precio_unitario);
+        const precio_unitario = precioNum > 0 ? precioNum : null;
         return {
           nombre: String(it.nombre || "").trim(),
           sku: String(it.sku || "").trim() || undefined,
@@ -1319,8 +1339,8 @@ function PantallaDeclaracion({ cliente, setToast }) {
       Number(r.stock_actual) || 0,
       r.stock_bajo || "",
       r.stock_minimo || "",
-      Number(r.precio_unitario) || 0,
-      (Number(r.stock_actual) || 0) * (Number(r.precio_unitario) || 0),
+      parsePrecio(r.precio_unitario),
+      (Number(r.stock_actual) || 0) * parsePrecio(r.precio_unitario),
       r.sem === "rojo" ? "Crítico" : "Bajo",
     ]);
     const fecha = new Date().toISOString().slice(0, 10);
@@ -1340,7 +1360,7 @@ function PantallaDeclaracion({ cliente, setToast }) {
     const nBajos = filas.filter((r) => r.sem === "amarillo").length;
     const valorAlerta = filas.reduce(
       (acc, r) =>
-        acc + (Number(r.stock_actual) || 0) * (Number(r.precio_unitario) || 0),
+        acc + (Number(r.stock_actual) || 0) * parsePrecio(r.precio_unitario),
       0,
     );
     const fecha = new Date().toISOString().slice(0, 10);
@@ -1385,7 +1405,7 @@ function PantallaDeclaracion({ cliente, setToast }) {
         Number(r.stock_actual) || 0,
         r.stock_bajo || "—",
         r.stock_minimo || "—",
-        fmtMoneda((Number(r.stock_actual) || 0) * (Number(r.precio_unitario) || 0)),
+        fmtMoneda((Number(r.stock_actual) || 0) * parsePrecio(r.precio_unitario)),
         r.sem === "rojo" ? "Crítico" : "Bajo",
       ]),
     });
@@ -1710,11 +1730,13 @@ function PantallaDeclaracion({ cliente, setToast }) {
                     </td>
                     <td style={styles.td}>
                       <input
-                        type="number"
-                        min="0"
-                        step="any"
-                        value={it.precio_unitario}
-                        onChange={(e) => actualizarItem(idx, "precio_unitario", e.target.value)}
+                        type="text"
+                        inputMode="numeric"
+                        // Precio en pesos enteros: se muestra con separador de
+                        // miles ("19.900") y se guarda solo con dígitos (19900),
+                        // evitando que "19.900" se lea como 19,9.
+                        value={fmtPrecioInput(it.precio_unitario)}
+                        onChange={(e) => actualizarItem(idx, "precio_unitario", e.target.value.replace(/[^\d]/g, ""))}
                         placeholder="0"
                         style={{ ...styles.cellInput, textAlign: "right" }}
                       />
@@ -1731,7 +1753,7 @@ function PantallaDeclaracion({ cliente, setToast }) {
                     >
                       {fmtMoneda(
                         (Number(it.stock_actual) || 0) *
-                          (Number(it.precio_unitario) || 0),
+                          parsePrecio(it.precio_unitario),
                       )}
                     </td>
                     <td style={{ ...styles.td, textAlign: "center" }}>
