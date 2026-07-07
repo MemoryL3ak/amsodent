@@ -142,7 +142,11 @@ export default function PortalStockCliente() {
   const [paso, setPaso] = useState(() => {
     if (!token) return "login";
     const p = safeJSON(localStorage.getItem(PENDIENTE_KEY)) || {};
-    if (p.cambiar) return "cambiar_clave";
+    // Si al reabrir el portal quedó un cambio de clave a medias (primer ingreso
+    // interrumpido), NO saltamos directo a esa pantalla: pedimos iniciar sesión
+    // de nuevo. Evita que el portal parezca "atrapado" en la clave sin pasar por
+    // el login (y que un token viejo impida completar el cambio).
+    if (p.cambiar) return "login";
     if (p.acuerdo) return "acuerdo";
     return "declaracion";
   });
@@ -245,6 +249,7 @@ export default function PortalStockCliente() {
               <PantallaCambiarClave
                 cliente={cliente}
                 onListo={claveCambiada}
+                onVolver={cerrarSesion}
                 setToast={setToast}
               />
             </div>
@@ -643,7 +648,7 @@ function claveCumplePolitica(s) {
   return REGLAS_CLAVE.every((r) => r.test(String(s || "")));
 }
 
-function PantallaCambiarClave({ cliente, onListo, setToast }) {
+function PantallaCambiarClave({ cliente, onListo, onVolver, setToast }) {
   const [clave, setClave] = useState("");
   const [confirmar, setConfirmar] = useState("");
   const [ver, setVer] = useState(false);
@@ -803,6 +808,25 @@ function PantallaCambiarClave({ cliente, onListo, setToast }) {
           >
             {enviando ? "Guardando…" : "Guardar y continuar"}
           </button>
+
+          {onVolver && (
+            <button
+              type="button"
+              onClick={onVolver}
+              disabled={enviando}
+              style={{
+                background: "none",
+                border: "none",
+                color: TEAL,
+                fontSize: 13,
+                fontWeight: 600,
+                cursor: "pointer",
+                marginTop: 2,
+              }}
+            >
+              Volver al inicio de sesión
+            </button>
+          )}
         </form>
       </div>
     </div>
