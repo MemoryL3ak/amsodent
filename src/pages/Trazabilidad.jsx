@@ -424,6 +424,7 @@ export default function Trazabilidad() {
   const [docTipoUp, setDocTipoUp] = useState("factura"); // "factura" | "guia_despacho"
   const [facturaNumero, setFacturaNumero] = useState("");
   const [facturaFecha, setFacturaFecha] = useState("");
+  const [facturaMonto, setFacturaMonto] = useState(""); // monto NETO de la factura (solo dígitos)
   const [facturaFile, setFacturaFile] = useState(null);
   const [facturaGuiaIds, setFacturaGuiaIds] = useState([]); // factura puede asociarse a varias guías
   const [guiaEmpresa, setGuiaEmpresa] = useState("Starken");
@@ -1059,6 +1060,7 @@ export default function Trazabilidad() {
     setDocTipoUp("factura");
     setFacturaNumero("");
     setFacturaFecha(new Date().toISOString().slice(0, 10));
+    setFacturaMonto("");
     setFacturaFile(null);
     setFacturaGuiaIds([]);
     setGuiaEmpresa("Starken");
@@ -1071,6 +1073,7 @@ export default function Trazabilidad() {
     setDocTipoUp("factura");
     setFacturaNumero("");
     setFacturaFecha("");
+    setFacturaMonto("");
     setFacturaFile(null);
     setFacturaGuiaIds([]);
     setGuiaEmpresa("Starken");
@@ -1108,16 +1111,23 @@ export default function Trazabilidad() {
         setToast({ type: "error", message: "Debes ingresar la fecha de la guía." });
         return;
       }
-    } else if (facturaGuiaIds.length > 0) {
-      // Factura: las guías son opcionales; si seleccionan, validamos que sean válidas.
-      const guias = getGuias(uploadingFor);
-      const todasValidas = facturaGuiaIds.every((gid) => {
-        const docOrigen = guias.find((d) => String(d.id) === String(gid));
-        return docOrigen && docOrigen.tipo === "guia_despacho";
-      });
-      if (!todasValidas) {
-        setToast({ type: "error", message: "Alguna guía de despacho seleccionada no es válida." });
+    } else {
+      // Factura: el monto neto es obligatorio.
+      if (!facturaMonto || Number(facturaMonto) <= 0) {
+        setToast({ type: "error", message: "Debes ingresar el monto neto de la factura." });
         return;
+      }
+      // Las guías son opcionales; si seleccionan, validamos que sean válidas.
+      if (facturaGuiaIds.length > 0) {
+        const guias = getGuias(uploadingFor);
+        const todasValidas = facturaGuiaIds.every((gid) => {
+          const docOrigen = guias.find((d) => String(d.id) === String(gid));
+          return docOrigen && docOrigen.tipo === "guia_despacho";
+        });
+        if (!todasValidas) {
+          setToast({ type: "error", message: "Alguna guía de despacho seleccionada no es válida." });
+          return;
+        }
       }
     }
 
@@ -1155,7 +1165,8 @@ export default function Trazabilidad() {
             licitacion_id: Number(uploadingFor),
             tipo: "factura",
             numero: (facturaNumero || "").trim() || null,
-            monto: null,
+            // Monto NETO de la factura (opcional). Solo dígitos → entero.
+            monto: facturaMonto ? Number(facturaMonto) : null,
             fecha_oc: null,
             fecha_factura: facturaFecha || null,
             // deriva_de_id = primera guía (compatibilidad); guias_ids = todas.
@@ -2123,29 +2134,40 @@ export default function Trazabilidad() {
                                     )}
                                   </>
                                 ) : (
-                                  guias.length > 0 && (
-                                    <Select
-                                      isMulti
-                                      options={guias.map((g) => ({
-                                        value: String(g.id),
-                                        label: `Guía${g.numero ? ` - ${g.numero}` : ""}`,
-                                      }))}
-                                      styles={customSelectStyles}
-                                      placeholder="Guía(s) (opcional)..."
-                                      menuPortalTarget={document.body}
-                                      isSearchable
-                                      isClearable
-                                      isDisabled={subiendoFactura}
-                                      noOptionsMessage={() => "Sin guías"}
-                                      value={guias
-                                        .map((g) => ({
+                                  <>
+                                    {guias.length > 0 && (
+                                      <Select
+                                        isMulti
+                                        options={guias.map((g) => ({
                                           value: String(g.id),
                                           label: `Guía${g.numero ? ` - ${g.numero}` : ""}`,
-                                        }))
-                                        .filter((o) => facturaGuiaIds.includes(o.value))}
-                                      onChange={(ops) => setFacturaGuiaIds((ops || []).map((o) => o.value))}
+                                        }))}
+                                        styles={customSelectStyles}
+                                        placeholder="Guía(s) (opcional)..."
+                                        menuPortalTarget={document.body}
+                                        isSearchable
+                                        isClearable
+                                        isDisabled={subiendoFactura}
+                                        noOptionsMessage={() => "Sin guías"}
+                                        value={guias
+                                          .map((g) => ({
+                                            value: String(g.id),
+                                            label: `Guía${g.numero ? ` - ${g.numero}` : ""}`,
+                                          }))
+                                          .filter((o) => facturaGuiaIds.includes(o.value))}
+                                        onChange={(ops) => setFacturaGuiaIds((ops || []).map((o) => o.value))}
+                                      />
+                                    )}
+                                    <input
+                                      type="text"
+                                      inputMode="numeric"
+                                      className="input"
+                                      value={facturaMonto ? Number(facturaMonto).toLocaleString("es-CL") : ""}
+                                      onChange={(e) => setFacturaMonto(e.target.value.replace(/[^\d]/g, ""))}
+                                      placeholder="Monto neto *"
+                                      disabled={subiendoFactura}
                                     />
-                                  )
+                                  </>
                                 )}
                                 <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                                   <input

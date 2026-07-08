@@ -15,8 +15,13 @@ import {
 
 const ACTIVIDADES_BUCKET = "chat-adjuntos";
 
-// Motivo de la gestión (opcional).
-const MOTIVOS = ["1er Contacto", "Solicitud de Reunión", "Presupuesto", "Presentación Empresa", "Gestión Administrativa", "Mapeo", "Visita Espontánea", "Referido"];
+// Motivo de la gestión. Se separa en generales y los propios de un Prospecto:
+// al elegir el tipo "Prospecto" el motivo se restringe a Mapeo / Visita
+// Espontánea / Referido; en el resto de tipos se usan los motivos generales.
+const MOTIVOS_GENERAL = ["1er Contacto", "Solicitud de Reunión", "Presupuesto", "Presentación Empresa", "Gestión Administrativa"];
+const MOTIVOS_PROSPECTO = ["Mapeo", "Visita Espontánea", "Referido"];
+// Unión, para los filtros de la vista (se puede filtrar por cualquiera).
+const MOTIVOS = [...MOTIVOS_GENERAL, ...MOTIVOS_PROSPECTO];
 
 // Color estable por usuario (para diferenciar en la vista de admin).
 const PALETA_USUARIOS = ["#2563eb", "#16a34a", "#db2777", "#9333ea", "#ea580c", "#0891b2", "#ca8a04", "#dc2626", "#4f46e5", "#0d9488"];
@@ -117,6 +122,7 @@ function Combo({ value, onChange, options, placeholder = "Selecciona…", isSear
 
 /* ── Tipos de actividad (color + etiqueta) ───────────────────────────── */
 const TIPOS = [
+  { value: "prospecto", label: "Prospecto", color: "#1e40af" },
   { value: "llamada", label: "Llamada", color: "#0ea5e9" },
   { value: "visita", label: "Visita", color: "#16a34a" },
   { value: "reunion", label: "Reunión", color: "#6366f1" },
@@ -170,6 +176,7 @@ export default function BitacoraActividades() {
   // Filtros
   const [filtroTipo, setFiltroTipo] = useState("");
   const [filtroCliente, setFiltroCliente] = useState("");
+  const [filtroTipoCliente, setFiltroTipoCliente] = useState(""); // filtra el selector de clientes por tipo
   const [filtroUsuario, setFiltroUsuario] = useState("");
   const [filtroMotivo, setFiltroMotivo] = useState("");
 
@@ -264,6 +271,21 @@ export default function BitacoraActividades() {
       .map((c) => ({ value: c.id, label: `${c.nombre || "—"}${c.rut ? ` · ${c.rut}` : ""}`, nombre: c.nombre || "", rut: c.rut || "", tipo: c.tipo_cliente || "" }))
       .sort((a, b) => a.nombre.localeCompare(b.nombre)),
     [clientes],
+  );
+
+  // Tipos de cliente disponibles (para el filtro rápido del selector de clientes).
+  const tiposClienteDisponibles = useMemo(() => {
+    const set = new Set();
+    clienteOptions.forEach((c) => { const t = (c.tipo || "").trim(); if (t) set.add(t); });
+    return [...set].sort();
+  }, [clienteOptions]);
+
+  // Opciones de cliente para el filtro, acotadas por tipo de cliente.
+  const clienteOptionsFiltro = useMemo(
+    () => (filtroTipoCliente
+      ? clienteOptions.filter((c) => (c.tipo || "") === filtroTipoCliente)
+      : clienteOptions),
+    [clienteOptions, filtroTipoCliente],
   );
 
   // En la vista global colapsamos las reuniones replicadas por participante
@@ -565,13 +587,24 @@ export default function BitacoraActividades() {
             options={[{ value: "", label: "Todos" }, ...TIPOS.map((t) => ({ value: t.value, label: t.label }))]}
           />
         </div>
+        <div className="filter-field" style={{ minWidth: 180 }}>
+          <label className="filter-label"><Filter size={11} style={{ marginRight: 4 }} />Tipo de cliente</label>
+          <Combo
+            value={filtroTipoCliente}
+            onChange={(v) => { setFiltroTipoCliente(v || ""); setFiltroCliente(""); }}
+            isSearchable={false}
+            isClearable
+            placeholder="Todos"
+            options={[{ value: "", label: "Todos" }, ...tiposClienteDisponibles.map((t) => ({ value: t, label: t }))]}
+          />
+        </div>
         <div className="filter-field" style={{ minWidth: 240 }}>
           <label className="filter-label">Cliente</label>
           <Combo
             value={filtroCliente}
             onChange={setFiltroCliente}
             placeholder="Todos"
-            options={[{ value: "", label: "Todos" }, ...clienteOptions]}
+            options={[{ value: "", label: "Todos" }, ...clienteOptionsFiltro]}
           />
         </div>
         <div className="filter-field" style={{ minWidth: 200 }}>
@@ -1106,18 +1139,22 @@ function ModalActividad({ inicial, clienteOptions, cotizacionOptions, perfiles, 
 
   const clienteSel = clienteOptions.find((c) => String(c.value) === String(clienteId)) || null;
 
-  // Cotizaciones del cliente seleccionado (match por RUT o nombre); si no hay
-  // cliente o no calza ninguna, se ofrecen todas.
+  // Cotizaciones del cliente seleccionado (match por RUT normalizado o por
+  // nombre). Si hay un cliente elegido, se muestran SOLO sus cotizaciones
+  // (aunque no haya ninguna); sin cliente se ofrecen todas.
   const cotizacionesFiltradas = useMemo(() => {
     const todas = cotizacionOptions || [];
     if (!clienteSel) return todas;
-    const rut = String(clienteSel.rut || "").trim();
+    const normRut = (v) => String(v || "").toLowerCase().replace(/[.\-\s]/g, "");
+    const rut = normRut(clienteSel.rut);
     const nombre = String(clienteSel.nombre || "").trim().toLowerCase();
-    const propias = todas.filter((c) =>
-      (rut && String(c.rut).trim() === rut) ||
-      (nombre && String(c.nombre_entidad).toLowerCase().includes(nombre)),
-    );
-    return propias.length ? propias : todas;
+    return todas.filter((c) => {
+      const cRut = normRut(c.rut);
+      const cNombre = String(c.nombre_entidad || "").trim().toLowerCase();
+      if (rut && cRut && cRut === rut) return true;
+      if (nombre && cNombre && (cNombre.includes(nombre) || nombre.includes(cNombre))) return true;
+      return false;
+    });
   }, [cotizacionOptions, clienteSel]);
 
   const participanteOptions = useMemo(
@@ -1185,44 +1222,7 @@ function ModalActividad({ inicial, clienteOptions, cotizacionOptions, perfiles, 
             </div>
           )}
 
-          <div className="field">
-            <label className="field-label">Título <span style={{ color: "var(--danger)" }}>*</span></label>
-            <input type="text" className="input" value={titulo} onChange={(e) => setTitulo(e.target.value)} placeholder="Ej: Llamada de seguimiento" autoFocus disabled={!!meetCreado} />
-          </div>
-
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-            <div className="field">
-              <label className="field-label">Tipo</label>
-              <Combo
-                value={tipo}
-                onChange={(v) => setTipo(v || "otro")}
-                isSearchable={false}
-                options={TIPOS.map((t) => ({ value: t.value, label: t.label }))}
-              />
-            </div>
-            <div className="field">
-              <label className="field-label">Estado</label>
-              <Combo
-                value={estado}
-                onChange={(v) => setEstado(v || "pendiente")}
-                isSearchable={false}
-                options={[{ value: "pendiente", label: "Pendiente" }, { value: "realizada", label: "Realizada" }]}
-              />
-            </div>
-          </div>
-
-          <div className="field">
-            <label className="field-label">Motivo</label>
-            <Combo
-              value={motivo}
-              onChange={(v) => setMotivo(v || "")}
-              isSearchable={false}
-              isClearable
-              placeholder="Sin motivo"
-              options={MOTIVOS.map((m) => ({ value: m, label: m }))}
-            />
-          </div>
-
+          {/* Cliente primero: seleccionar existente o crear uno nuevo. */}
           <div className="field">
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <label className="field-label">Cliente <span style={{ color: "var(--danger)" }}>*</span></label>
@@ -1270,12 +1270,63 @@ function ModalActividad({ inicial, clienteOptions, cotizacionOptions, perfiles, 
           </div>
 
           <div className="field">
+            <label className="field-label">Título <span style={{ color: "var(--danger)" }}>*</span></label>
+            <input type="text" className="input" value={titulo} onChange={(e) => setTitulo(e.target.value)} placeholder="Ej: Llamada de seguimiento" disabled={!!meetCreado} />
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <div className="field">
+              <label className="field-label">Tipo</label>
+              <Combo
+                value={tipo}
+                onChange={(v) => {
+                  const nt = v || "otro";
+                  setTipo(nt);
+                  // Al cambiar de/hacia Prospecto, si el motivo actual no aplica
+                  // al nuevo tipo, se limpia para evitar motivos inconsistentes.
+                  const permitidos = nt === "prospecto" ? MOTIVOS_PROSPECTO : MOTIVOS_GENERAL;
+                  if (motivo && !permitidos.includes(motivo)) setMotivo("");
+                }}
+                isSearchable={false}
+                options={TIPOS.map((t) => ({ value: t.value, label: t.label }))}
+              />
+            </div>
+            <div className="field">
+              <label className="field-label">Estado</label>
+              <Combo
+                value={estado}
+                onChange={(v) => setEstado(v || "pendiente")}
+                isSearchable={false}
+                options={[{ value: "pendiente", label: "Pendiente" }, { value: "realizada", label: "Realizada" }]}
+              />
+            </div>
+          </div>
+
+          <div className="field">
+            <label className="field-label">{tipo === "prospecto" ? "Origen del prospecto" : "Motivo"}</label>
+            <Combo
+              value={motivo}
+              onChange={(v) => setMotivo(v || "")}
+              isSearchable={false}
+              isClearable
+              placeholder={tipo === "prospecto" ? "Mapeo / Visita espontánea / Referido" : "Sin motivo"}
+              options={(tipo === "prospecto" ? MOTIVOS_PROSPECTO : MOTIVOS_GENERAL).map((m) => ({ value: m, label: m }))}
+            />
+          </div>
+
+          <div className="field">
             <label className="field-label">Cotización asociada</label>
             <Combo
               value={licitacionId ?? ""}
               onChange={(v) => setLicitacionId(v || "")}
               isClearable
-              placeholder="Opcional · busca por N° o nombre"
+              placeholder={
+                !clienteSel
+                  ? "Selecciona primero un cliente"
+                  : cotizacionesFiltradas.length
+                    ? "Opcional · cotizaciones del cliente"
+                    : "Este cliente no tiene cotizaciones"
+              }
               options={cotizacionesFiltradas}
             />
           </div>
