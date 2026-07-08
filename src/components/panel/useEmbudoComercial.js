@@ -15,7 +15,7 @@ import useAuth from "../../hooks/useAuth";
 import { mesDe, toDateISO, addMesKey, labelMesCorto } from "./panelKit";
 
 export const MOTIVOS_PROSPECTO = ["Mapeo", "Visita Espontánea", "Referido"];
-export const TIPOS_CONTACTO = ["llamada", "visita", "reunion", "correo"];
+export const TIPOS_CONTACTO = ["llamada", "whatsapp", "visita", "reunion", "correo"];
 export const MOTIVO_COTIZA = "Presupuesto";
 
 export const ETAPAS_EMBUDO = [

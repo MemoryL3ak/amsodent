@@ -863,6 +863,17 @@ body {
   padding: 15px 16px;
 }
 @media (max-width: 640px) {
+  /* Dos KPIs por fila en el teléfono (en vez de una columna muy larga). */
+  .bitacora-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .bitacora-kpi { padding: 12px; gap: 10px; }
+  /* Barra de control: apilar navegación y vistas, cada grupo a todo el ancho. */
+  .bitacora-controlbar { align-items: stretch !important; }
+  .bitacora-controlbar > div { width: 100%; }
+  /* Selector de vistas: ocupa el ancho, cada botón se reparte y puede scrollear. */
+  .bitacora-vistas { width: 100%; overflow-x: auto; }
+  .bitacora-vistas > button { flex: 1 1 0; justify-content: center; white-space: nowrap; }
+}
+@media (max-width: 380px) {
   .bitacora-kpis { grid-template-columns: 1fr; }
 }
 

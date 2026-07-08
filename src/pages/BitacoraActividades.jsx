@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import Select from "react-select";
+import CreatableSelect from "react-select/creatable";
+import { REGIONES_CHILE } from "../constants/regiones";
 import { api } from "../lib/api";
 import { supabase } from "../lib/supabase";
 import useAuth from "../hooks/useAuth";
@@ -124,6 +126,7 @@ function Combo({ value, onChange, options, placeholder = "Selecciona…", isSear
 const TIPOS = [
   { value: "prospecto", label: "Prospecto", color: "#1e40af" },
   { value: "llamada", label: "Llamada", color: "#0ea5e9" },
+  { value: "whatsapp", label: "WhatsApp", color: "#25d366" },
   { value: "visita", label: "Visita", color: "#16a34a" },
   { value: "reunion", label: "Reunión", color: "#6366f1" },
   { value: "correo", label: "Correo", color: "#f59e0b" },
@@ -543,14 +546,14 @@ export default function BitacoraActividades() {
       </div>
 
       {/* Barra de control: navegación + vistas */}
-      <div className="surface" style={{ padding: 12, marginBottom: 14, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      <div className="surface bitacora-controlbar" style={{ padding: 12, marginBottom: 14, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           <button type="button" className="btn btn-secondary btn-sm" onClick={() => navegar(-1)} title="Anterior"><ChevronLeft size={16} /></button>
           <button type="button" className="btn btn-secondary btn-sm" onClick={hoy}>Hoy</button>
           <button type="button" className="btn btn-secondary btn-sm" onClick={() => navegar(1)} title="Siguiente"><ChevronRight size={16} /></button>
           <strong style={{ fontSize: 15, marginLeft: 6, textTransform: "capitalize" }}>{tituloPeriodo}</strong>
         </div>
-        <div style={{ display: "flex", gap: 4, background: "var(--bg)", padding: 3, borderRadius: 8 }}>
+        <div className="bitacora-vistas" style={{ display: "flex", gap: 4, background: "var(--bg)", padding: 3, borderRadius: 8 }}>
           {[
             { v: "mes", label: "Mes", icon: CalendarDays },
             { v: "semana", label: "Semana", icon: CalendarRange },
@@ -578,7 +581,7 @@ export default function BitacoraActividades() {
       {/* Filtros */}
       <div className="filter-bar" style={{ marginBottom: 14 }}>
         <div className="filter-field" style={{ minWidth: 180 }}>
-          <label className="filter-label"><Filter size={11} style={{ marginRight: 4 }} />Tipo</label>
+          <label className="filter-label"><Filter size={11} style={{ marginRight: 4 }} />Acción</label>
           <Combo
             value={filtroTipo}
             onChange={setFiltroTipo}
@@ -727,7 +730,7 @@ function Chip({ a, onClick, compact, mostrarUsuario, draggable }) {
         <span style={{ fontSize: 10, fontWeight: 700, color, flexShrink: 0 }}>{fmtHora(a.hora_inicio)}</span>
       )}
       <span style={{ fontSize: 11.5, fontWeight: 500, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textDecoration: hecha ? "line-through" : "none" }}>
-        {a.titulo}
+        {a.titulo}{a.cliente_nombre ? ` - ${a.cliente_nombre}` : ""}
       </span>
     </button>
   );
@@ -1053,13 +1056,15 @@ function ModalActividad({ inicial, clienteOptions, cotizacionOptions, perfiles, 
   const [clienteId, setClienteId] = useState(inicial.cliente_id ?? null);
   // Alta rápida de cliente desde el modal.
   const [nuevoCli, setNuevoCli] = useState(false);
-  const [nc, setNc] = useState({ nombre: "", rut: "", email: "", telefono: "", direccion: "", tipo_cliente: "" });
+  // Cliente nuevo desde bitácora: por defecto Cliente Particular (obligatorio).
+  const [nc, setNc] = useState({ nombre: "", rut: "", email: "", telefono: "", region: "", comuna: "", direccion: "", oficina: "", tipo_cliente: "Cliente Particular" });
   const [ncGuardando, setNcGuardando] = useState(false);
   const [ncError, setNcError] = useState("");
 
   async function guardarNuevoCliente() {
     const nombre = nc.nombre.trim();
     if (!nombre) { setNcError("El nombre es obligatorio."); return; }
+    if (!nc.tipo_cliente) { setNcError("El tipo de cliente es obligatorio."); return; }
     setNcGuardando(true);
     setNcError("");
     try {
@@ -1068,14 +1073,20 @@ function ModalActividad({ inicial, clienteOptions, cotizacionOptions, perfiles, 
         rut: nc.rut.trim(),
         email: nc.email.trim(),
         telefono: nc.telefono.trim(),
+        region: nc.region.trim(),
+        comuna: nc.comuna.trim(),
         direccion: nc.direccion.trim(),
+        oficina: nc.oficina.trim(),
         tipo_cliente: nc.tipo_cliente || null,
       });
       if (creado?.id != null) {
         setClienteId(creado.id);
         setLicitacionId("");
         setNuevoCli(false);
-        setNc({ nombre: "", rut: "", email: "", telefono: "", direccion: "", tipo_cliente: "" });
+        // Un cliente recién creado desde la bitácora entra como Prospecto.
+        setTipo("prospecto");
+        setMotivo((m) => (MOTIVOS_PROSPECTO.includes(m) ? m : ""));
+        setNc({ nombre: "", rut: "", email: "", telefono: "", region: "", comuna: "", direccion: "", oficina: "", tipo_cliente: "Cliente Particular" });
       }
     } catch (e) {
       setNcError(e?.message || "No se pudo crear el cliente.");
@@ -1163,9 +1174,13 @@ function ModalActividad({ inicial, clienteOptions, cotizacionOptions, perfiles, 
       .map((p) => ({ value: (p.email || "").toLowerCase(), label: p.nombre || p.email, nombre: p.nombre || p.email })),
     [perfiles, miEmail],
   );
-  const participantesSel = participanteOptions.filter((o) =>
-    participantes.some((p) => String(p.email || "").toLowerCase() === o.value),
-  );
+  // Valor del selector construido desde el estado, para reflejar también los
+  // invitados EXTERNOS (correos escritos a mano, que no están en la lista).
+  const participantesSel = participantes.map((p) => {
+    const email = String(p.email || "").toLowerCase();
+    const externo = !participanteOptions.some((o) => o.value === email);
+    return { value: email, label: externo ? email : (p.nombre || email), nombre: p.nombre || email, externo };
+  });
 
   async function submit(e) {
     e.preventDefault();
@@ -1248,14 +1263,24 @@ function ModalActividad({ inicial, clienteOptions, cotizacionOptions, perfiles, 
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
                   <input className="input" placeholder="RUT (opcional)" value={nc.rut} onChange={(e) => setNc((p) => ({ ...p, rut: e.target.value }))} />
                   <select className="input" value={nc.tipo_cliente} onChange={(e) => setNc((p) => ({ ...p, tipo_cliente: e.target.value }))}>
-                    <option value="">Tipo (opcional)</option>
                     <option value="Cliente Particular">Cliente Particular</option>
                     <option value="Entidad Pública">Entidad Pública</option>
                   </select>
                   <input className="input" placeholder="Email (opcional)" value={nc.email} onChange={(e) => setNc((p) => ({ ...p, email: e.target.value }))} />
                   <input className="input" placeholder="Teléfono (opcional)" value={nc.telefono} onChange={(e) => setNc((p) => ({ ...p, telefono: e.target.value }))} />
                 </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                  <select className="input" value={nc.region} onChange={(e) => setNc((p) => ({ ...p, region: e.target.value, comuna: "" }))}>
+                    <option value="">Región (opcional)</option>
+                    {Object.keys(REGIONES_CHILE).map((r) => <option key={r} value={r}>{r}</option>)}
+                  </select>
+                  <select className="input" value={nc.comuna} disabled={!nc.region} onChange={(e) => setNc((p) => ({ ...p, comuna: e.target.value }))}>
+                    <option value="">{nc.region ? "Comuna (opcional)" : "Elige región primero"}</option>
+                    {nc.region && (REGIONES_CHILE[nc.region] || []).map((c) => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </div>
                 <input className="input" placeholder="Dirección (opcional)" value={nc.direccion} onChange={(e) => setNc((p) => ({ ...p, direccion: e.target.value }))} />
+                <input className="input" placeholder="Oficina / sucursal (opcional)" value={nc.oficina} onChange={(e) => setNc((p) => ({ ...p, oficina: e.target.value }))} />
                 <div className="field-hint" style={{ margin: 0 }}>
                   Sin RUT se guarda como <strong>cliente transitorio</strong> (a completar luego). Con RUT y datos de contacto queda como cliente normal.
                 </div>
@@ -1276,7 +1301,7 @@ function ModalActividad({ inicial, clienteOptions, cotizacionOptions, perfiles, 
 
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
             <div className="field">
-              <label className="field-label">Tipo</label>
+              <label className="field-label">Acción</label>
               <Combo
                 value={tipo}
                 onChange={(v) => {
@@ -1334,20 +1359,27 @@ function ModalActividad({ inicial, clienteOptions, cotizacionOptions, perfiles, 
           {tipo === "reunion" && (
             <div className="field">
               <label className="field-label">Participantes</label>
-              <Select
+              <CreatableSelect
                 isMulti
                 classNamePrefix="rs"
                 value={participantesSel}
-                onChange={(arr) => setParticipantes((arr || []).map((o) => ({ email: o.value, nombre: o.nombre })))}
+                onChange={(arr) => setParticipantes((arr || []).map((o) => {
+                  const email = String(o.value || "").toLowerCase();
+                  const interno = participanteOptions.some((p) => p.value === email);
+                  return { email, nombre: o.nombre || (interno ? o.label : email), externo: !interno };
+                }))}
                 options={participanteOptions}
-                placeholder="Agrega participantes…"
-                noOptionsMessage={() => "Sin usuarios"}
+                placeholder="Agrega usuarios o escribe un correo externo…"
+                noOptionsMessage={() => "Escribe un correo para invitar a un externo"}
+                // Solo permite crear (invitar) correos válidos.
+                isValidNewOption={(input) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(input || "").trim())}
+                formatCreateLabel={(input) => `Invitar externo: ${input}`}
                 menuPortalTarget={typeof document !== "undefined" ? document.body : undefined}
                 menuPosition="fixed"
                 styles={comboStyles}
                 theme={comboTheme}
               />
-              <div className="field-hint">La reunión se creará automáticamente en la agenda de cada participante.</div>
+              <div className="field-hint">Usuarios internos quedan agendados en su bitácora; los correos externos solo reciben la invitación al Meet.</div>
             </div>
           )}
 

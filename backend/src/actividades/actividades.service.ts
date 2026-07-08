@@ -206,9 +206,16 @@ export class ActividadesService {
     if (tipo === 'reunion' && participantes.length) {
       const grupo_id = randomUUID();
       const todos = [{ email, nombre: nombre || email }, ...participantes];
+      // Solo el creador y los participantes INTERNOS tienen fila en la bitácora.
+      // Los externos quedan como asistentes (jsonb) y reciben la invitación al
+      // Meet, pero no se les crea una actividad (no tienen cuenta).
+      const sujetos = [
+        { email, nombre: nombre || email },
+        ...participantes.filter((p: any) => !p.externo),
+      ];
       const vistos = new Set<string>();
       const filas: any[] = [];
-      for (const p of todos) {
+      for (const p of sujetos) {
         const e = String(p.email || '').toLowerCase();
         if (!e || vistos.has(e)) continue;
         vistos.add(e);
@@ -305,6 +312,13 @@ export class ActividadesService {
     const objetivo = new Map<string, string>();
     objetivo.set(selfEmail, selfNombre || selfEmail);
     const recibidos = Array.isArray(body.participantes) ? body.participantes : [];
+    // Correos externos: van al jsonb de asistentes y a la invitación del Meet,
+    // pero NO se les crea fila de bitácora (no tienen cuenta).
+    const externosSet = new Set<string>(
+      recibidos
+        .filter((p: any) => p?.externo)
+        .map((p: any) => String(p?.email || '').toLowerCase()),
+    );
     for (const p of recibidos) {
       const e = String(p?.email || '').toLowerCase();
       if (e) objetivo.set(e, p?.nombre || e);
@@ -332,7 +346,7 @@ export class ActividadesService {
     // 1) Crear filas para los participantes nuevos (copiando datos + Meet).
     const nuevas: any[] = [];
     for (const [email, nombre] of objetivo.entries()) {
-      if (existentes.has(email)) continue;
+      if (existentes.has(email) || externosSet.has(email)) continue;
       nuevas.push({
         cliente_id: plantilla.cliente_id ?? null,
         cliente_nombre: plantilla.cliente_nombre ?? null,

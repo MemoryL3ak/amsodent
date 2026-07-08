@@ -68,6 +68,7 @@ export class ClientesService {
     region?: string;
     comuna?: string;
     direccion?: string;
+    oficina?: string;
     tipo_cliente?: 'Cliente Particular' | 'Entidad Pública' | null;
   }) {
     const nombre = (body?.nombre || '').trim();
@@ -85,20 +86,25 @@ export class ClientesService {
       region: (body?.region || '').trim(),
       comuna: (body?.comuna || '').trim(),
       direccion: (body?.direccion || '').trim(),
+      oficina: (body?.oficina || '').trim(),
       tipo_cliente: body?.tipo_cliente || null,
       transitorio,
     };
     const intentar = (f: Record<string, any>) =>
       this.supabase.getClient().from('clientes').insert([f]).select().single();
-    let { data, error } = await intentar(fila);
-    if (error) {
+    // Tolera columnas aún no migradas (transitorio / oficina): si el error
+    // indica que una columna no existe, se quita y se reintenta.
+    const OPCIONALES = ['oficina', 'transitorio'];
+    let intento = await intentar(fila);
+    let data = intento.data;
+    let error = intento.error;
+    for (let i = 0; error && i < OPCIONALES.length; i++) {
       const msg = [error.message, (error as any).details, (error as any).hint, (error as any).code]
         .filter(Boolean).join(' ').toLowerCase();
-      if (msg.includes('transitorio') || msg.includes('42703')) {
-        const limpio = { ...fila };
-        delete limpio.transitorio;
-        ({ data, error } = await intentar(limpio));
-      }
+      const col = OPCIONALES.find((c) => c in fila && (msg.includes(c) || msg.includes('42703')));
+      if (!col) break;
+      delete fila[col];
+      ({ data, error } = await intentar(fila));
     }
     if (error) throw new BadRequestException(error.message);
     return data;
