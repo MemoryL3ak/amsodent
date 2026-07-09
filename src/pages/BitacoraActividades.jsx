@@ -446,6 +446,9 @@ export default function BitacoraActividades() {
       cargarMetricas();
       if (verTodas) { try { const u = await api.get("/actividades/usuarios"); setUsuarios(Array.isArray(u) ? u : []); } catch { /* */ } }
       // Si se generó un Meet, dejamos el modal abierto para mostrar/copiar la URL.
+      // En ese caso adoptamos el id devuelto para que un nuevo guardado sea una
+      // EDICIÓN (PUT) y no reintente crear el Meet (evita duplicados/errores).
+      if (r?.id) setModal((m) => (m ? { ...m, id: r.id, meet_url: r.meet_url ?? m.meet_url } : m));
       if (!r?.meet_url) setModal(null);
       return r;
     } catch (e) {

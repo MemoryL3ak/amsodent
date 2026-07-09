@@ -100,6 +100,12 @@ export class CalendarApiService {
           'La Google Calendar API no está habilitada en el proyecto de Google Cloud. Habilítala en console.cloud.google.com.',
         );
       }
+      // Refresh token expirado o revocado: la cuenta debe reconectarse.
+      if (txt.includes('invalid_grant') || txt.includes('token has been expired') || txt.includes('token has been revoked')) {
+        throw new BadRequestException(
+          'La conexión con Google expiró o fue revocada. Reconéctala en «Mi Correo» (Continuar con Google) y acepta el permiso de Calendar.',
+        );
+      }
       if (
         txt.includes('insufficient') ||
         txt.includes('insufficientpermissions') ||
