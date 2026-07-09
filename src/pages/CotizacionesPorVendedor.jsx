@@ -113,6 +113,7 @@ export default function CotizacionesPorVendedor() {
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState("");
   const [licitaciones, setLicitaciones] = useState([]);
+  const [adjDateByLic, setAdjDateByLic] = useState({}); // { [licId]: ISO } fecha de la 1ª OC / boleta / efectivo
   const [usuariosMap, setUsuariosMap] = useState({});
   const [desde, setDesde] = useState(inicioMesActualISO());
   const [hasta, setHasta] = useState(hoyISO());
@@ -151,6 +152,33 @@ export default function CotizacionesPorVendedor() {
         );
         const rows = lics || [];
 
+        // Fecha de adjudicación = fecha de la 1ª OC (público) o boleta/efectivo
+        // (particular), igual que en el Panel de Indicadores. Se deriva de los
+        // documentos cargados, no del estado ni de `fecha_adjudicada`.
+        const adj = {};
+        const ids = rows.map((l) => Number(l.id)).filter(Boolean);
+        if (ids.length) {
+          try {
+            const docs = await api.post("/licitaciones/documentos/filter", {
+              filter: {
+                licitacion_ids: ids,
+                tipo: ["orden_compra", "factura_boleta", "efectivo"],
+              },
+              fields: "licitacion_id,tipo,fecha_oc,created_at",
+            });
+            (docs || []).forEach((d) => {
+              const lid = Number(d.licitacion_id);
+              if (!lid) return;
+              if (d.tipo === "orden_compra" || d.tipo === "factura_boleta" || d.tipo === "efectivo") {
+                const f = toDateISO(d.fecha_oc) || toDateISO(d.created_at);
+                if (f && (!adj[lid] || f < adj[lid])) adj[lid] = f;
+              }
+            });
+          } catch (e) {
+            console.error("Error cargando documentos para adjudicación:", e);
+          }
+        }
+
         const emails = Array.from(
           new Set(rows.map((l) => (l.creado_por || "").trim().toLowerCase()).filter(Boolean))
         );
@@ -170,12 +198,14 @@ export default function CotizacionesPorVendedor() {
 
         if (!mounted) return;
         setLicitaciones(rows);
+        setAdjDateByLic(adj);
         setUsuariosMap(mapa);
       } catch (e) {
         console.error("Error cargando cotizaciones por vendedor:", e);
         if (mounted) {
           setErrorMsg("No se pudieron cargar las cotizaciones.");
           setLicitaciones([]);
+          setAdjDateByLic({});
           setUsuariosMap({});
         }
       } finally {
@@ -233,34 +263,56 @@ export default function CotizacionesPorVendedor() {
   // Agrupación por vendedor
   const resumenVendedores = useMemo(() => {
     const m = new Map();
-    cotizacionesPeriodo.forEach((l) => {
-      const email = (l.creado_por || "").trim().toLowerCase() || "__sin_creador__";
+    const getRow = (email) => {
       const nombre = (usuariosMap[email] || "").trim() ||
         (email === "__sin_creador__" ? "Sin asignar" : email);
-      const row = m.get(email) || {
-        email, nombre,
-        ingresadas: 0,   // cuentan para meta (excluye descartadas/desiertas)
-        total: 0,        // todas, incluidas las que no cuentan
-        adjudicadas: 0,
-        pendientes: 0,
-        perdidas: 0,
-        noCuentan: 0,
-      };
+      let row = m.get(email);
+      if (!row) {
+        row = {
+          email, nombre,
+          ingresadas: 0,   // cuentan para meta (excluye descartadas/desiertas)
+          total: 0,        // todas, incluidas las que no cuentan
+          adjudicadas: 0,
+          pendientes: 0,
+          perdidas: 0,
+          noCuentan: 0,
+        };
+        m.set(email, row);
+      }
+      return row;
+    };
+
+    // Cotizaciones INGRESADAS en el periodo (por fecha de creación).
+    cotizacionesPeriodo.forEach((l) => {
+      const email = (l.creado_por || "").trim().toLowerCase() || "__sin_creador__";
+      const row = getRow(email);
       row.total += 1;
       const estado = (l.estado || "").trim();
       const cuenta = !ESTADOS_NO_CUENTAN.includes(estado);
       if (cuenta) row.ingresadas += 1; else row.noCuentan += 1;
 
-      if (estado === "Adjudicada") row.adjudicadas += 1;
-      else if (estado === "Perdida") row.perdidas += 1;
+      if (estado === "Perdida") row.perdidas += 1;
       else if (estado === "En espera" || estado === "Pendiente Aprobación") row.pendientes += 1;
-
-      m.set(email, row);
     });
+
+    // ADJUDICADAS en el periodo: cotizaciones cuya 1ª OC / boleta / efectivo cae
+    // dentro del rango (independiente de cuándo se crearon), igual que el Panel
+    // de Indicadores. Se agrupan por el vendedor que creó la cotización.
+    licitaciones.forEach((l) => {
+      const fAdj = adjDateByLic[l.id];
+      if (!fAdj) return;
+      if (desde && fAdj < desde) return;
+      if (hasta && fAdj > hasta) return;
+      if (tipoFiltro === "particular" && !esLicParticular(l)) return;
+      if (tipoFiltro === "publico" && esLicParticular(l)) return;
+      const email = (l.creado_por || "").trim().toLowerCase() || "__sin_creador__";
+      getRow(email).adjudicadas += 1;
+    });
+
     return Array.from(m.values()).sort(
       (a, b) => b.ingresadas - a.ingresadas || b.total - a.total || a.nombre.localeCompare(b.nombre)
     );
-  }, [cotizacionesPeriodo, usuariosMap]);
+  }, [cotizacionesPeriodo, licitaciones, adjDateByLic, desde, hasta, tipoFiltro, usuariosMap]);
 
   const totales = useMemo(() => {
     const ingresadas = resumenVendedores.reduce((acc, r) => acc + r.ingresadas, 0);
@@ -442,7 +494,7 @@ export default function CotizacionesPorVendedor() {
                     <tr>
                       <th>Vendedor</th>
                       <th style={{ textAlign: "right" }}>Ingresadas</th>
-                      <th style={{ textAlign: "right" }}>Adj.</th>
+                      <th style={{ textAlign: "right" }} title="Adjudicadas según la fecha de la 1ª orden de compra (boleta/efectivo en particular) dentro del periodo.">Adj.</th>
                       <th style={{ textAlign: "right" }}>% Conv.</th>
                       <th style={{ textAlign: "right" }}>Pend.</th>
                       <th style={{ textAlign: "right" }}>Perd.</th>
