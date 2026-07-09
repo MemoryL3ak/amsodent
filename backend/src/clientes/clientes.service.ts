@@ -29,25 +29,36 @@ export class ClientesService {
     return data;
   }
 
-  async create(body: {
-    rut: string;
-    nombre: string;
-    departamento?: string;
-    municipalidad?: string;
-    region: string;
-    comuna: string;
-    direccion: string;
-    contacto: string;
-    email: string;
-    telefono?: string;
-    condiciones_venta?: string;
-    tipo_cliente?: 'Cliente Particular' | 'Entidad Pública' | null;
-    vendedor_asignado?: string | null;
-  }) {
+  async create(
+    body: {
+      rut: string;
+      nombre: string;
+      departamento?: string;
+      municipalidad?: string;
+      region: string;
+      comuna: string;
+      direccion: string;
+      contacto: string;
+      email: string;
+      telefono?: string;
+      condiciones_venta?: string;
+      tipo_cliente?: 'Cliente Particular' | 'Entidad Pública' | null;
+      vendedor_asignado?: string | null;
+    },
+    creadorEmail?: string,
+  ) {
+    const fila: Record<string, any> = { ...body };
+    // El cliente particular queda anexado a un vendedor: por defecto, el que lo
+    // crea (email de la sesión), si el formulario no envió uno. Se guarda el
+    // email en minúscula para que "Mis clientes" (que filtra por email) lo reconozca.
+    if (body?.tipo_cliente === 'Cliente Particular') {
+      const asignado = (body?.vendedor_asignado || creadorEmail || '').toString().trim().toLowerCase();
+      fila.vendedor_asignado = asignado || null;
+    }
     const { data, error } = await this.supabase
       .getClient()
       .from('clientes')
-      .insert([body])
+      .insert([fila])
       .select()
       .single();
 
@@ -59,24 +70,29 @@ export class ClientesService {
   // cliente con datos mínimos (solo el nombre). Si no trae RUT se marca como
   // "transitorio" (a completar luego); con RUT se considera un cliente normal.
   // Tolera que la columna `transitorio` aún no esté migrada (error 42703).
-  async crearRapido(body: {
-    nombre: string;
-    rut?: string;
-    email?: string;
-    telefono?: string;
-    contacto?: string;
-    region?: string;
-    comuna?: string;
-    direccion?: string;
-    oficina?: string;
-    tipo_cliente?: 'Cliente Particular' | 'Entidad Pública' | null;
-  }) {
+  async crearRapido(
+    body: {
+      nombre: string;
+      rut?: string;
+      email?: string;
+      telefono?: string;
+      contacto?: string;
+      region?: string;
+      comuna?: string;
+      direccion?: string;
+      oficina?: string;
+      tipo_cliente?: 'Cliente Particular' | 'Entidad Pública' | null;
+      vendedor_asignado?: string | null;
+    },
+    creadorEmail?: string,
+  ) {
     const nombre = (body?.nombre || '').trim();
     if (!nombre) throw new BadRequestException('El nombre es obligatorio.');
     const rut = (body?.rut || '').trim();
     // Cliente "transitorio" cuando faltan los datos clave (sin RUT). Con RUT y
     // datos de contacto se considera un cliente final/activo.
     const transitorio = !rut;
+    const esParticular = body?.tipo_cliente === 'Cliente Particular';
     const fila: Record<string, any> = {
       nombre,
       rut,
@@ -90,11 +106,17 @@ export class ClientesService {
       tipo_cliente: body?.tipo_cliente || null,
       transitorio,
     };
+    // El cliente particular queda anexado a un vendedor: por defecto, el que lo
+    // crea (email de la sesión). Se guarda el email, igual que en "Crear cliente".
+    if (esParticular) {
+      const asignado = (body?.vendedor_asignado || creadorEmail || '').toString().trim().toLowerCase();
+      if (asignado) fila.vendedor_asignado = asignado;
+    }
     const intentar = (f: Record<string, any>) =>
       this.supabase.getClient().from('clientes').insert([f]).select().single();
-    // Tolera columnas aún no migradas (transitorio / oficina): si el error
-    // indica que una columna no existe, se quita y se reintenta.
-    const OPCIONALES = ['oficina', 'transitorio'];
+    // Tolera columnas aún no migradas (transitorio / oficina / vendedor_asignado):
+    // si el error indica que una columna no existe, se quita y se reintenta.
+    const OPCIONALES = ['oficina', 'transitorio', 'vendedor_asignado'];
     let intento = await intentar(fila);
     let data = intento.data;
     let error = intento.error;

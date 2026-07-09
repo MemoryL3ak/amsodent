@@ -6,6 +6,7 @@ import {
   Delete,
   Body,
   Param,
+  Req,
   UseGuards,
   UseInterceptors,
   UploadedFile,
@@ -73,14 +74,17 @@ export class ClientesController {
   }
 
   @Post()
-  create(@Body() body: any) {
-    return this.clientesService.create(body);
+  create(@Body() body: any, @Req() req: any) {
+    const creadorEmail = (req?.user?.email || '').toString().trim().toLowerCase();
+    return this.clientesService.create(body, creadorEmail);
   }
 
   // Creación rápida (bitácora): datos mínimos → cliente transitorio.
+  // El cliente particular queda anexado (vendedor_asignado) al usuario que lo crea.
   @Post('rapido')
-  crearRapido(@Body() body: any) {
-    return this.clientesService.crearRapido(body);
+  crearRapido(@Body() body: any, @Req() req: any) {
+    const creadorEmail = (req?.user?.email || '').toString().trim().toLowerCase();
+    return this.clientesService.crearRapido(body, creadorEmail);
   }
 
   // Override del bloqueo por mora (desbloqueo manual). Solo admin.
