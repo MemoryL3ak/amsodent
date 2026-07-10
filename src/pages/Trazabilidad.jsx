@@ -70,7 +70,7 @@ function SLABadge({ fechaOc }) {
     </span>
   );
 }
-import { Upload, Eye, Trash2, ArrowUpDown, ArrowUp, ArrowDown, Calendar, FileCheck, ChevronDown, Truck, Download, Clock, CheckCircle2, Check } from "lucide-react";
+import { Upload, Eye, Trash2, ArrowUpDown, ArrowUp, ArrowDown, Calendar, FileCheck, ChevronDown, Truck, Download, Clock, CheckCircle2, Check, Pencil } from "lucide-react";
 
 // Mapping empresa courier → builder de URL de tracking. Si la empresa no
 // tiene URL o no hay número, devuelve "" (no renderizamos el link).
@@ -436,6 +436,10 @@ export default function Trazabilidad() {
 
   // Delete confirm
   const [confirmEliminar, setConfirmEliminar] = useState(null);
+  // Edición del monto neto de una factura ya cargada (para las que no lo tenían).
+  const [editFactura, setEditFactura] = useState(null); // doc factura en edición
+  const [editMonto, setEditMonto] = useState(""); // solo dígitos (monto neto)
+  const [guardandoMonto, setGuardandoMonto] = useState(false);
 
   useEffect(() => {
     const onClickOutside = (e) => {
@@ -1231,6 +1235,33 @@ export default function Trazabilidad() {
     await refrescarDocumentosLic(doc.licitacion_id);
   }
 
+  // Abre el modal para editar/agregar el monto neto de una factura ya cargada.
+  function abrirEditarMonto(factura) {
+    setEditFactura(factura);
+    setEditMonto(factura?.monto ? String(Math.round(Number(factura.monto))) : "");
+  }
+
+  async function guardarMontoFactura() {
+    if (!editFactura?.id) return;
+    if (!editMonto || Number(editMonto) <= 0) {
+      setToast({ type: "error", message: "Debes ingresar el monto neto de la factura." });
+      return;
+    }
+    setGuardandoMonto(true);
+    try {
+      await api.put(`/licitaciones/documentos/${editFactura.id}`, { monto: Number(editMonto) });
+      setToast({ type: "success", message: "Monto de la factura actualizado." });
+      const licId = editFactura.licitacion_id;
+      setEditFactura(null);
+      setEditMonto("");
+      await refrescarDocumentosLic(licId);
+    } catch (e) {
+      setToast({ type: "error", message: e?.message || "No se pudo actualizar el monto." });
+    } finally {
+      setGuardandoMonto(false);
+    }
+  }
+
   if (!cargando && !puedeVerTrazabilidad) {
     return (
       <div className="page">
@@ -1926,6 +1957,16 @@ export default function Trazabilidad() {
                                 {!soloLectura && (
                                   <button
                                     type="button"
+                                    onClick={() => abrirEditarMonto(factura)}
+                                    style={{ background: "none", border: "none", cursor: "pointer", color: "var(--primary-dark)", padding: 0 }}
+                                    title={factura.monto ? "Editar monto" : "Agregar monto"}
+                                  >
+                                    <Pencil size={12} />
+                                  </button>
+                                )}
+                                {!soloLectura && (
+                                  <button
+                                    type="button"
                                     onClick={() => setConfirmEliminar(factura)}
                                     style={{ background: "none", border: "none", cursor: "pointer", color: "#ef4444", padding: 0 }}
                                     title="Eliminar"
@@ -1940,6 +1981,11 @@ export default function Trazabilidad() {
                                   : factura.created_at
                                   ? formatearFechaCorta(factura.created_at)
                                   : ""}
+                              </div>
+                              <div style={{ fontSize: "11px", fontWeight: 600, color: factura.monto ? "#15803d" : "#b45309" }}>
+                                {factura.monto
+                                  ? `Neto $${Number(factura.monto).toLocaleString("es-CL")}`
+                                  : "Sin monto"}
                               </div>
                             </div>
                           ) : (
@@ -2234,6 +2280,40 @@ export default function Trazabilidad() {
           await eliminarFactura(doc);
         }}
       />
+
+      {/* Editar / agregar el monto neto de una factura ya cargada */}
+      {editFactura && (
+        <div
+          onClick={(e) => { if (e.target === e.currentTarget && !guardandoMonto) { setEditFactura(null); setEditMonto(""); } }}
+          style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,.55)", zIndex: 12000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+        >
+          <div style={{ width: 420, maxWidth: "100%", background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", boxShadow: "var(--shadow-lg)", padding: 22 }}>
+            <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, display: "flex", alignItems: "center", gap: 8 }}>
+              <Pencil size={16} /> {editFactura.monto ? "Editar monto de la factura" : "Agregar monto a la factura"}
+            </h3>
+            <p style={{ fontSize: 12.5, color: "var(--text-muted)", marginTop: 6, marginBottom: 14 }}>
+              Factura {editFactura.numero ? `N° ${editFactura.numero}` : "sin número"}. Ingresa el <strong>monto neto</strong> (sin IVA).
+            </p>
+            <label className="filter-label">Monto neto</label>
+            <input
+              className="input"
+              autoFocus
+              inputMode="numeric"
+              placeholder="Ej: 1.000.000"
+              value={editMonto ? Number(editMonto).toLocaleString("es-CL") : ""}
+              onChange={(e) => setEditMonto(e.target.value.replace(/[^\d]/g, ""))}
+              onKeyDown={(e) => { if (e.key === "Enter" && !guardandoMonto) guardarMontoFactura(); }}
+              style={{ width: "100%" }}
+            />
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 18 }}>
+              <button className="btn btn-secondary" onClick={() => { setEditFactura(null); setEditMonto(""); }} disabled={guardandoMonto}>Cancelar</button>
+              <button className="btn btn-primary" onClick={guardarMontoFactura} disabled={guardandoMonto || !editMonto || Number(editMonto) <= 0}>
+                {guardandoMonto ? "Guardando…" : "Guardar monto"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
