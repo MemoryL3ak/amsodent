@@ -430,13 +430,19 @@ export default function BitacoraActividades() {
     try {
       let r = null;
       if (form.id) {
-        await api.put(`/actividades/${form.id}`, form);
-        setToast({ type: "success", message: "Actividad actualizada." });
+        r = await api.put(`/actividades/${form.id}`, form);
+        if (r?._meet_error) {
+          setToast({ type: "error", message: r._meet_error });
+        } else if (r?._meet_generado) {
+          setToast({ type: "success", message: "Enlace de Google Meet generado." });
+        } else {
+          setToast({ type: "success", message: "Actividad actualizada." });
+        }
       } else {
         r = await api.post("/actividades", form);
         if (r?._meet_error) {
           setToast({ type: "error", message: r._meet_error });
-        } else if (r?.meet_url) {
+        } else if (r?._meet_generado) {
           setToast({ type: "success", message: "Reunión creada con Google Meet." });
         } else {
           setToast({ type: "success", message: "Actividad registrada." });
@@ -449,7 +455,7 @@ export default function BitacoraActividades() {
       // En ese caso adoptamos el id devuelto para que un nuevo guardado sea una
       // EDICIÓN (PUT) y no reintente crear el Meet (evita duplicados/errores).
       if (r?.id) setModal((m) => (m ? { ...m, id: r.id, meet_url: r.meet_url ?? m.meet_url } : m));
-      if (!r?.meet_url) setModal(null);
+      if (!r?._meet_generado) setModal(null);
       return r;
     } catch (e) {
       setToast({ type: "error", message: e?.message || "No se pudo guardar la actividad." });
@@ -1211,7 +1217,7 @@ function ModalActividad({ inicial, clienteOptions, cotizacionOptions, perfiles, 
       cliente_nombre: clienteSel.nombre,
       licitacion_id: licitacionId || null,
       participantes: tipo === "reunion" ? participantes : [],
-      crear_meet: tipo === "reunion" && !inicial.id ? crearMeet : false,
+      crear_meet: tipo === "reunion" && !inicial.meet_url ? crearMeet : false,
       fecha,
       todo_el_dia: todoDia,
       hora_inicio: todoDia ? null : (horaIni || null),
@@ -1222,7 +1228,7 @@ function ModalActividad({ inicial, clienteOptions, cotizacionOptions, perfiles, 
     };
     const res = await onSave(form);
     setGuardando(false);
-    if (res?.meet_url) setMeetCreado(res.meet_url);
+    if (res?._meet_generado && res?.meet_url) setMeetCreado(res.meet_url);
   }
 
   return (
@@ -1411,11 +1417,11 @@ function ModalActividad({ inicial, clienteOptions, cotizacionOptions, perfiles, 
             </div>
           )}
 
-          {tipo === "reunion" && !inicial.id && !inicial.meet_url && (
+          {tipo === "reunion" && !inicial.meet_url && !meetCreado && (
             <div>
               <label style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--text-soft)", fontWeight: 500, cursor: "pointer" }}>
                 <input type="checkbox" checked={crearMeet} onChange={(e) => setCrearMeet(e.target.checked)} />
-                <Video size={15} /> Crear Google Meet (usa tu cuenta conectada en «Mi Correo»)
+                <Video size={15} /> {inicial.id ? "Generar Google Meet" : "Crear Google Meet"} (usa tu cuenta conectada en «Mi Correo»)
               </label>
               {crearMeet && <div className="field-hint">El enlace del Meet se generará al guardar y aparecerá aquí mismo para copiarlo.</div>}
             </div>

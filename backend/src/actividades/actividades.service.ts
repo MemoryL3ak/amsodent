@@ -229,19 +229,19 @@ export class ActividadesService {
       }
       const data = await this.insertarFilas(filas);
       const propia = data.find((r: any) => String(r.user_email || '').toLowerCase() === email) || data[0];
-      return { ...propia, _meet_error: meetError };
+      return { ...propia, _meet_error: meetError, _meet_generado: Boolean(base.meet_url) };
     }
 
     const fila = { ...base, user_email: email, user_nombre: nombre || email };
     const data = await this.insertarFilas([fila]);
-    return { ...data[0], _meet_error: meetError };
+    return { ...data[0], _meet_error: meetError, _meet_generado: Boolean(base.meet_url) };
   }
 
   private async verificarPropiedad(user: Usuario, id: number) {
     const { data, error } = await this.supabase
       .getClient()
       .from('actividades_cliente')
-      .select('id, user_email, grupo_id')
+      .select('*')
       .eq('id', id)
       .maybeSingle();
     if (error) throw new BadRequestException(error.message);
@@ -279,6 +279,42 @@ export class ActividadesService {
     if (body.estado !== undefined) patch.estado = (body.estado || 'pendiente').trim();
     // participantes se reconcilia aparte (crea/borra filas), no como campo simple.
 
+    // Generar enlace de Meet al editar una reunión que aún no lo tiene (p. ej.
+    // porque la creación del Meet falló por token de Google expirado). Se crea
+    // el evento y se propaga meet_url/evento_google_id a todo el grupo.
+    let meetError: string | null = null;
+    let meetGenerado = false;
+    const tipoActual = (body.tipo ?? fila.tipo ?? '').toString().trim();
+    if (body.crear_meet && tipoActual === 'reunion' && !fila.meet_url) {
+      const cuenta = await this.cuentaGoogle(user.id);
+      if (!cuenta) {
+        meetError = 'No se generó el Meet: conecta tu cuenta de Google en «Mi Correo».';
+      } else if (cuenta.scopes && !cuenta.scopes.toLowerCase().includes('calendar')) {
+        meetError = 'No se generó el Meet: reconecta tu cuenta de Google en «Mi Correo» y acepta el permiso de Calendar.';
+      } else {
+        try {
+          const invitadosBody = Array.isArray(body.participantes)
+            ? body.participantes.map((p: any) => p?.email).filter(Boolean)
+            : Array.isArray(fila.participantes)
+            ? fila.participantes.map((p: any) => p?.email).filter(Boolean)
+            : [];
+          const ev = await this.calendar.crearEventoMeet(cuenta.refreshToken, {
+            titulo: (body.titulo ?? fila.titulo) || 'Reunión',
+            descripcion: (body.comentario ?? fila.comentario) || undefined,
+            fecha: body.fecha ?? fila.fecha,
+            horaInicio: (body.hora_inicio ?? fila.hora_inicio) || null,
+            horaFin: (body.hora_fin ?? fila.hora_fin) || null,
+            invitados: invitadosBody,
+          });
+          setCompartido('meet_url', ev.meetUrl);
+          setCompartido('evento_google_id', ev.eventId);
+          meetGenerado = Boolean(ev.meetUrl);
+        } catch (e: any) {
+          meetError = `No se generó el Meet: ${e?.message || 'error desconocido'}`;
+        }
+      }
+    }
+
     const data = await this.actualizarConTolerancia(patch, (q) => q.eq('id', id));
 
     // Reunión grupal: propagar los campos compartidos al resto del grupo.
@@ -293,7 +329,7 @@ export class ActividadesService {
     if (body.participantes !== undefined) {
       await this.reconciliarParticipantes(user, id, fila.grupo_id || null, body);
     }
-    return data[0];
+    return { ...data[0], _meet_error: meetError, _meet_generado: meetGenerado };
   }
 
   // Sincroniza las filas de una reunión grupal con la lista de participantes
