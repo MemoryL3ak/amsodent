@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   ShieldCheck,
@@ -1037,6 +1037,7 @@ function PantallaDeclaracion({ cliente, setToast }) {
   const [baseline, setBaseline] = useState([]);
   const [historial, setHistorial] = useState([]);
   const [solicitudes, setSolicitudes] = useState([]);
+  const [cotizacionesHist, setCotizacionesHist] = useState([]); // cotizaciones del sistema por RUT
   const [cargando, setCargando] = useState(true);
   const [cargandoSolicitudes, setCargandoSolicitudes] = useState(false);
   const [guardando, setGuardando] = useState(false);
@@ -1083,8 +1084,12 @@ function PantallaDeclaracion({ cliente, setToast }) {
   async function cargarSolicitudes() {
     setCargandoSolicitudes(true);
     try {
-      const data = await apiRequest("/stock-clientes/mis-solicitudes");
+      const [data, hist] = await Promise.all([
+        apiRequest("/stock-clientes/mis-solicitudes"),
+        apiRequest("/stock-clientes/mis-cotizaciones").catch(() => []),
+      ]);
       setSolicitudes(Array.isArray(data) ? data : []);
+      setCotizacionesHist(Array.isArray(hist) ? hist : []);
     } catch {
       // silencioso — no rompe la UI
     } finally {
@@ -1107,13 +1112,15 @@ function PantallaDeclaracion({ cliente, setToast }) {
       setCargando(true);
       try {
         const qs = `?sucursal_id=${sucursalId}`;
-        const [productos, decls, solics] = await Promise.all([
+        const [productos, decls, solics, cots] = await Promise.all([
           apiRequest(`/stock-clientes/mis-productos${qs}`),
           apiRequest(`/stock-clientes/mis-declaraciones${qs}`),
           apiRequest("/stock-clientes/mis-solicitudes").catch(() => []),
+          apiRequest("/stock-clientes/mis-cotizaciones").catch(() => []),
         ]);
         if (cancel) return;
         setSolicitudes(Array.isArray(solics) ? solics : []);
+        setCotizacionesHist(Array.isArray(cots) ? cots : []);
         const lista = Array.isArray(productos) ? productos : [];
         if (lista.length === 0) {
           const vacio = [crearItemVacio()];
@@ -1519,6 +1526,7 @@ function PantallaDeclaracion({ cliente, setToast }) {
       {tab === "solicitudes" ? (
         <PanelMisSolicitudes
           solicitudes={solicitudes}
+          cotizacionesHist={cotizacionesHist}
           cargando={cargandoSolicitudes}
           onSolicitarNueva={() => setMostrarSolicitud(true)}
         />
@@ -1991,7 +1999,191 @@ const tabStyles = {
   },
 };
 
-function PanelMisSolicitudes({ solicitudes, cargando, onSolicitarNueva }) {
+// Historial de cotizaciones del sistema principal a nombre del cliente (por RUT).
+// Cada fila se expande para ver los productos y descargar el PDF.
+function HistorialCotizacionesCliente({ cotizaciones }) {
+  const [expandidaId, setExpandidaId] = useState(null);
+  const [detalles, setDetalles] = useState({}); // { [id]: { datos } }
+  const [cargandoId, setCargandoId] = useState(null);
+  const [pdfId, setPdfId] = useState(null);
+  const [errorId, setErrorId] = useState(null);
+
+  const fmtF = (iso) => {
+    if (!iso) return "—";
+    const s = String(iso).slice(0, 10);
+    const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    return m ? `${m[3]}-${m[2]}-${m[1]}` : s;
+  };
+  const colorEstado = (e) => {
+    const t = (e || "").toLowerCase();
+    if (t.includes("adjud")) return { bg: "#dcfce7", fg: "#15803d" };
+    if (t.includes("perd") || t.includes("descart")) return { bg: "#fee2e2", fg: "#b91c1c" };
+    if (t.includes("espera") || t.includes("pendiente")) return { bg: "#fef9c3", fg: "#a16207" };
+    return { bg: "#e2e8f0", fg: "#334155" };
+  };
+
+  async function cargarDetalle(id) {
+    if (detalles[id]) return detalles[id];
+    setCargandoId(id);
+    setErrorId(null);
+    try {
+      const r = await apiRequest(`/stock-clientes/mis-cotizaciones/${id}`);
+      setDetalles((prev) => ({ ...prev, [id]: r }));
+      return r;
+    } catch {
+      setErrorId(id);
+      return null;
+    } finally {
+      setCargandoId(null);
+    }
+  }
+
+  function toggle(id) {
+    const abrir = expandidaId !== id;
+    setExpandidaId(abrir ? id : null);
+    if (abrir) cargarDetalle(id);
+  }
+
+  async function descargarPDF(id) {
+    setPdfId(id);
+    try {
+      const det = detalles[id] || (await cargarDetalle(id));
+      if (det?.datos) await generarPDFcotizacion(det.datos);
+    } catch {
+      setErrorId(id);
+    } finally {
+      setPdfId(null);
+    }
+  }
+
+  return (
+    <div style={histStyles.card}>
+      <div style={histStyles.header}>
+        <div>
+          <div style={histStyles.titulo}>Cotizaciones de Amsodent</div>
+          <div style={histStyles.sub}>
+            Todas las cotizaciones que nuestro equipo ha registrado a nombre de su institución.
+            Haga clic en una para ver sus productos y descargar el PDF.
+          </div>
+        </div>
+        <span style={histStyles.pill}>{cotizaciones.length}</span>
+      </div>
+      <div style={{ overflowX: "auto" }}>
+        <table style={histStyles.table}>
+          <thead>
+            <tr>
+              <th style={{ ...histStyles.th, width: 28 }} />
+              <th style={histStyles.th}>N° cotización</th>
+              <th style={histStyles.th}>Descripción</th>
+              <th style={{ ...histStyles.th, whiteSpace: "nowrap" }}>Fecha</th>
+              <th style={histStyles.th}>Estado</th>
+              <th style={{ ...histStyles.th, textAlign: "right", whiteSpace: "nowrap" }}>Monto con IVA</th>
+            </tr>
+          </thead>
+          <tbody>
+            {cotizaciones.map((c) => {
+              const col = colorEstado(c.estado);
+              const abierta = expandidaId === c.id;
+              const det = detalles[c.id];
+              const items = det?.datos?.items || [];
+              return (
+                <Fragment key={c.id}>
+                  <tr
+                    onClick={() => toggle(c.id)}
+                    style={{ cursor: "pointer", background: abierta ? "rgba(40,174,177,.06)" : undefined }}
+                  >
+                    <td style={{ ...histStyles.td, color: "#0f766e", textAlign: "center" }}>{abierta ? "▾" : "▸"}</td>
+                    <td style={{ ...histStyles.td, fontWeight: 700, whiteSpace: "nowrap", fontFamily: "ui-monospace, monospace" }}>{c.id_licitacion || `#${c.id}`}</td>
+                    <td style={histStyles.td}>{c.nombre || c.nombre_entidad || "—"}</td>
+                    <td style={{ ...histStyles.td, whiteSpace: "nowrap" }}>{fmtF(c.fecha)}</td>
+                    <td style={histStyles.td}>
+                      <span style={{ display: "inline-block", padding: "2px 9px", borderRadius: 999, fontSize: 11, fontWeight: 700, background: col.bg, color: col.fg }}>
+                        {c.estado || "—"}
+                      </span>
+                    </td>
+                    <td style={{ ...histStyles.td, textAlign: "right", fontWeight: 700, whiteSpace: "nowrap" }}>{fmtMoneda(c.total_con_iva)}</td>
+                  </tr>
+                  {abierta && (
+                    <tr>
+                      <td colSpan={6} style={{ padding: "0 12px 14px", background: "rgba(40,174,177,.04)" }}>
+                        {cargandoId === c.id && !det ? (
+                          <div style={{ padding: 14, fontSize: 12.5, color: "#64748b" }}>Cargando detalle…</div>
+                        ) : errorId === c.id && !det ? (
+                          <div style={{ padding: 14, fontSize: 12.5, color: "#b91c1c" }}>No se pudo cargar el detalle.</div>
+                        ) : (
+                          <div style={{ paddingTop: 12 }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 8 }}>
+                              <div style={{ fontSize: 12, fontWeight: 700, color: "#0f172a" }}>
+                                Productos ({items.length})
+                              </div>
+                              <button
+                                type="button"
+                                onClick={(e) => { e.stopPropagation(); descargarPDF(c.id); }}
+                                disabled={pdfId === c.id}
+                                style={histStyles.btnPdf}
+                                className="btn-hover"
+                              >
+                                {pdfId === c.id ? "Generando…" : "⬇ Descargar PDF"}
+                              </button>
+                            </div>
+                            {items.length === 0 ? (
+                              <div style={{ fontSize: 12.5, color: "#64748b", padding: "6px 0" }}>Sin productos registrados.</div>
+                            ) : (
+                              <div style={{ overflowX: "auto" }}>
+                                <table style={histStyles.table}>
+                                  <thead>
+                                    <tr>
+                                      <th style={histStyles.th}>SKU</th>
+                                      <th style={histStyles.th}>Producto</th>
+                                      <th style={histStyles.th}>Formato</th>
+                                      <th style={{ ...histStyles.th, textAlign: "right" }}>Cant.</th>
+                                      <th style={{ ...histStyles.th, textAlign: "right" }}>P. Unit.</th>
+                                      <th style={{ ...histStyles.th, textAlign: "right" }}>Total</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {items.map((it, i) => (
+                                      <tr key={i}>
+                                        <td style={{ ...histStyles.td, whiteSpace: "nowrap", fontFamily: "ui-monospace, monospace", fontSize: 12 }}>{it.sku || "—"}</td>
+                                        <td style={histStyles.td}>{it.producto || "—"}</td>
+                                        <td style={histStyles.td}>{it.formato || "—"}</td>
+                                        <td style={{ ...histStyles.td, textAlign: "right", whiteSpace: "nowrap" }}>{it.cantidad}</td>
+                                        <td style={{ ...histStyles.td, textAlign: "right", whiteSpace: "nowrap" }}>${it.precio_unitario}</td>
+                                        <td style={{ ...histStyles.td, textAlign: "right", whiteSpace: "nowrap", fontWeight: 600 }}>${it.total}</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+const histStyles = {
+  card: { background: "#fff", border: "1px solid #e2e8f0", borderRadius: 16, boxShadow: "0 10px 30px rgba(15,23,42,.06)", padding: "16px 18px", marginBottom: 6 },
+  header: { display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, marginBottom: 12 },
+  titulo: { fontSize: 14, fontWeight: 700, color: "#0f172a" },
+  sub: { fontSize: 12, color: "#64748b", marginTop: 2, maxWidth: 560 },
+  pill: { flex: "none", padding: "3px 10px", fontSize: 11, fontWeight: 700, background: "rgba(40,174,177,.12)", color: "#0f5f61", borderRadius: 999, border: "1px solid rgba(40,174,177,.25)" },
+  table: { width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 620 },
+  th: { textAlign: "left", fontSize: 10.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".05em", color: "#64748b", padding: "8px 12px", borderBottom: "1px solid #e2e8f0", whiteSpace: "nowrap" },
+  td: { padding: "10px 12px", borderBottom: "1px solid #f1f5f9", color: "#334155", verticalAlign: "top" },
+  btnPdf: { display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 13px", borderRadius: 9, fontSize: 12.5, fontWeight: 700, cursor: "pointer", border: "1px solid rgba(40,174,177,.35)", background: "#fff", color: "#0f5f61" },
+};
+
+function PanelMisSolicitudes({ solicitudes, cotizacionesHist = [], cargando, onSolicitarNueva }) {
   const [expandidaId, setExpandidaId] = useState(null);
 
   if (cargando) {
@@ -2002,16 +2194,20 @@ function PanelMisSolicitudes({ solicitudes, cargando, onSolicitarNueva }) {
     );
   }
 
-  if (!solicitudes || solicitudes.length === 0) {
+  const haySol = solicitudes && solicitudes.length > 0;
+  const hayHist = cotizacionesHist && cotizacionesHist.length > 0;
+
+  if (!haySol && !hayHist) {
     return (
       <div style={solStyles.vacioCard}>
         <div style={solStyles.vacioIcono}>
           <FileSpreadsheet size={28} />
         </div>
-        <div style={solStyles.vacioTitulo}>Aún no envió cotizaciones</div>
+        <div style={solStyles.vacioTitulo}>Aún no hay cotizaciones</div>
         <div style={solStyles.vacioMensaje}>
-          Cuando solicite una cotización desde la sección "Gestión de Stock",
-          aparecerá aquí con su estado de seguimiento.
+          Cuando solicite una cotización desde la sección "Gestión de Stock" —o
+          nuestro equipo genere una a su nombre— aparecerá aquí con su estado de
+          seguimiento.
         </div>
         <button
           type="button"
@@ -2027,7 +2223,15 @@ function PanelMisSolicitudes({ solicitudes, cargando, onSolicitarNueva }) {
 
   return (
     <div style={solStyles.lista}>
-      {solicitudes.map((s) => {
+      {hayHist && <HistorialCotizacionesCliente cotizaciones={cotizacionesHist} />}
+
+      {haySol && (
+        <div style={{ fontSize: 12, fontWeight: 700, color: "#0f766e", textTransform: "uppercase", letterSpacing: ".06em", margin: "6px 2px 0" }}>
+          Solicitudes de cotización de stock
+        </div>
+      )}
+
+      {(solicitudes || []).map((s) => {
         const expandida = expandidaId === s.id;
         const items = Array.isArray(s.items) ? s.items : [];
         const estado = ESTADOS_SOLICITUD[s.estado] || ESTADOS_SOLICITUD.pendiente;

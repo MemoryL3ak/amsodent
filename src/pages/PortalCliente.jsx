@@ -254,6 +254,10 @@ function PortalDetalle({ onLogout, setToast }) {
   const [documentos, setDocumentos] = useState([]);
   const [errorMsg, setErrorMsg] = useState("");
 
+  // Historial de cotizaciones del mismo cliente (mismo RUT).
+  const [historial, setHistorial] = useState([]);
+  const [licSelId, setLicSelId] = useState(null); // id de la cotización que se está viendo (null = la del login)
+
   // Upload
   const [archivo, setArchivo] = useState(null);
   const [tipoDoc, setTipoDoc] = useState("otro");
@@ -264,13 +268,14 @@ function PortalDetalle({ onLogout, setToast }) {
 
   const tipoRequiereNumero = tipoDoc === "orden_compra" || tipoDoc === "guia_despacho" || tipoDoc === "factura";
 
-  async function cargar() {
+  async function cargar(id = licSelId) {
     setLoading(true);
     setErrorMsg("");
     try {
+      const qs = id ? `?id=${encodeURIComponent(id)}` : "";
       const [det, docs] = await Promise.all([
-        apiRequest("/portal/cotizacion"),
-        apiRequest("/portal/documentos"),
+        apiRequest(`/portal/cotizacion${qs}`),
+        apiRequest(`/portal/documentos${qs}`),
       ]);
       setLicitacion(det?.licitacion || null);
       setProductos(det?.productos || []);
@@ -283,7 +288,27 @@ function PortalDetalle({ onLogout, setToast }) {
     }
   }
 
-  useEffect(() => { cargar(); /* eslint-disable-line */ }, []);
+  async function cargarHistorial() {
+    try {
+      const rows = await apiRequest("/portal/cotizaciones");
+      setHistorial(Array.isArray(rows) ? rows : []);
+    } catch (e) {
+      if (e.status === 401) { onLogout(); return; }
+      // El historial es complementario: si falla, no bloquea la vista principal.
+      console.error("No se pudo cargar el historial:", e?.message || e);
+    }
+  }
+
+  // Cambia la cotización que se está viendo (desde el historial).
+  function verCotizacion(id) {
+    if (id === licitacion?.id) return;
+    setLicSelId(id);
+    cargar(id);
+    // Sube al inicio para ver el detalle recién cargado.
+    if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  useEffect(() => { cargar(); cargarHistorial(); /* eslint-disable-line */ }, []);
 
   async function subir() {
     if (!archivo) { setToast({ type: "error", message: "Elige un archivo primero." }); return; }
@@ -297,6 +322,7 @@ function PortalDetalle({ onLogout, setToast }) {
       const fd = new FormData();
       fd.append("file", archivo);
       fd.append("tipo", tipoDoc);
+      if (licitacion?.id) fd.append("licitacion_id", String(licitacion.id));
       if (numeroDoc.trim()) fd.append("numero", numeroDoc.trim());
       if (descripcion.trim()) fd.append("descripcion", descripcion.trim());
       const res = await fetch(`${API_URL}/portal/documentos`, {
@@ -361,6 +387,61 @@ function PortalDetalle({ onLogout, setToast }) {
           </div>
         </div>
       </section>
+
+      {/* Historial de cotizaciones del cliente */}
+      {historial.length > 1 && (
+        <section className="portal-card animate-fade-up" style={{ animationDelay: "40ms" }}>
+          <div className="portal-card-header">
+            <div>
+              <div className="portal-card-title">
+                <FileText size={16} style={{ verticalAlign: "-3px", marginRight: 6 }} />
+                Historial de cotizaciones
+              </div>
+              <div className="portal-card-sub">
+                Todas las cotizaciones asociadas a tu RUT. Selecciona una para ver su detalle y documentos.
+              </div>
+            </div>
+            <span className="portal-pill">{historial.length}</span>
+          </div>
+          <div className="portal-table-wrap">
+            <table className="portal-table">
+              <thead>
+                <tr>
+                  <th>N° cotización</th>
+                  <th>Descripción</th>
+                  <th>Fecha</th>
+                  <th>Estado</th>
+                  <th className="t-right">Monto con IVA</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {historial.map((h) => {
+                  const activa = h.id === licitacion?.id;
+                  return (
+                    <tr
+                      key={h.id}
+                      onClick={() => verCotizacion(h.id)}
+                      className={activa ? "portal-hist-row is-active" : "portal-hist-row"}
+                    >
+                      <td className="t-strong" style={{ fontFamily: "ui-monospace, monospace" }}>{h.id_licitacion || `#${h.id}`}</td>
+                      <td>{h.nombre || h.nombre_entidad || "—"}</td>
+                      <td>{fmtFecha(h.fecha)}</td>
+                      <td><EstadoBadge estado={h.estado} /></td>
+                      <td className="t-right t-strong">{fmtCLP(h.total_con_iva)}</td>
+                      <td className="t-right">
+                        {activa
+                          ? <span className="portal-tag portal-tag-amsodent">Viendo</span>
+                          : <span className="portal-hist-link"><Eye size={13} /> Ver</span>}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
 
       {/* Productos */}
       {productos.length > 0 && (
@@ -949,6 +1030,17 @@ function PortalStyles() {
 .portal-table tbody tr:hover { background: rgba(40,174,177,.04); }
 .portal-table .t-right { text-align: right; }
 .portal-table .t-strong { font-weight: 700; color: var(--portal-text); }
+
+/* Historial (filas clickeables) */
+.portal-hist-row { cursor: pointer; transition: background .12s; }
+.portal-hist-row:hover { background: rgba(40,174,177,.06); }
+.portal-hist-row.is-active { background: rgba(40,174,177,.10); }
+.portal-hist-row.is-active td:first-child { box-shadow: inset 3px 0 0 var(--portal-primary); }
+.portal-hist-link {
+  display: inline-flex; align-items: center; gap: 4px;
+  color: var(--portal-primary-dark); font-weight: 600; font-size: 12.5px;
+  white-space: nowrap;
+}
 
 /* Upload */
 .portal-upload { padding: 18px 22px 22px; display: flex; flex-direction: column; gap: 14px; }

@@ -1449,8 +1449,41 @@ export class StockClientesService {
       .select('*')
       .eq('licitacion_id', lic.id)
       .order('orden', { ascending: true });
+    return {
+      cotizacion: { id: lic.id, id_licitacion: lic.id_licitacion, estado: lic.estado },
+      datos: this.construirDatosCotizacion(lic, items || []),
+    };
+  }
+
+  // Detalle de una cotización del historial del cliente (productos + datos para
+  // el PDF), validado por el RUT del token del portal.
+  async cotizacionDeLicitacion(licId: number, rutScope?: string) {
+    const client = this.supabase.getClient();
+    const { data: lic } = await client
+      .from('licitaciones')
+      .select('*')
+      .eq('id', licId)
+      .maybeSingle();
+    if (!lic) throw new NotFoundException('Cotización no encontrada.');
+    if (rutScope && normalizarRut(lic.rut_entidad) !== normalizarRut(rutScope)) {
+      throw new ForbiddenException('No autorizado.');
+    }
+    const { data: items } = await client
+      .from('items_licitacion')
+      .select('*')
+      .eq('licitacion_id', lic.id)
+      .order('orden', { ascending: true });
+    return {
+      cotizacion: { id: lic.id, id_licitacion: lic.id_licitacion, estado: lic.estado },
+      datos: this.construirDatosCotizacion(lic, items || []),
+    };
+  }
+
+  // Arma el objeto `datos` que consume el generador de PDF de cotización a
+  // partir de una licitación y sus ítems.
+  private construirDatosCotizacion(lic: any, items: any[]) {
     const fmt = (n: any) => Number(n || 0).toLocaleString('es-CL');
-    const datos = {
+    return {
       numero_licitacion: lic.id,
       id_licitacion: lic.id_licitacion || '',
       fecha_creacion: String(lic.created_at || '').slice(0, 10),
@@ -1480,10 +1513,6 @@ export class StockClientesService {
       afecto: fmt(lic.total_sin_iva),
       iva: fmt(lic.total_iva),
       total_con_iva: fmt(lic.total_con_iva),
-    };
-    return {
-      cotizacion: { id: lic.id, id_licitacion: lic.id_licitacion, estado: lic.estado },
-      datos,
     };
   }
 
@@ -1636,6 +1665,38 @@ export class StockClientesService {
       .limit(limit);
     if (error) throw new BadRequestException(error.message);
     return await this.enriquecerSolicitudes(data || [], 'cliente');
+  }
+
+  // Historial de cotizaciones del sistema principal a nombre del cliente. Se
+  // filtra por RUT normalizado porque en `licitaciones` el RUT puede venir con o
+  // sin puntos/guion. Incluye las creadas directamente por el equipo (bitácora /
+  // módulo de licitaciones), no solo las que nacen de una solicitud de stock.
+  async listarMisCotizaciones(rut: string, limit = 100) {
+    const rutN = normalizarRut(rut);
+    if (!rutN) return [];
+    const { data, error } = await this.supabase
+      .getClient()
+      .from('licitaciones')
+      .select(
+        'id, id_licitacion, nombre, nombre_entidad, rut_entidad, estado, fecha, fecha_adjudicada, total_con_iva, total_sin_iva',
+      )
+      .not('rut_entidad', 'is', null)
+      .order('fecha', { ascending: false, nullsFirst: false });
+    if (error) throw new BadRequestException(error.message);
+    return (data || [])
+      .filter((l: any) => normalizarRut(l.rut_entidad) === rutN)
+      .slice(0, limit)
+      .map((l: any) => ({
+        id: l.id,
+        id_licitacion: l.id_licitacion,
+        nombre: l.nombre,
+        nombre_entidad: l.nombre_entidad,
+        estado: l.estado,
+        fecha: l.fecha,
+        fecha_adjudicada: l.fecha_adjudicada,
+        total_con_iva: l.total_con_iva,
+        total_sin_iva: l.total_sin_iva,
+      }));
   }
 
   // Agrega a cada solicitud su cotización vinculada (id/estado) y la cantidad de

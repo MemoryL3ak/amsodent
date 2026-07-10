@@ -17,22 +17,33 @@ export class PortalController {
 
   // ── Endpoints autenticados con PortalGuard ───────────────────────────────
 
+  // Historial de todas las cotizaciones del cliente (mismo RUT del token).
+  @Get('cotizaciones')
+  @UseGuards(PortalGuard)
+  getHistorial(@Req() req: any) {
+    return this.portalService.getHistorialCotizaciones(String(req.portal.rut || ''));
+  }
+
   @Get('cotizacion')
   @UseGuards(PortalGuard)
-  getCotizacion(@Req() req: any) {
-    return this.portalService.getCotizacion(Number(req.portal.licitacion_id));
+  getCotizacion(@Req() req: any, @Query('id') id?: string) {
+    // Si se pide una cotización específica del historial, se valida por RUT;
+    // si no, se usa la del token (la del login).
+    const licId = id ? Number(id) : Number(req.portal.licitacion_id);
+    return this.portalService.getCotizacion(licId, String(req.portal.rut || ''));
   }
 
   @Get('documentos')
   @UseGuards(PortalGuard)
-  getDocumentos(@Req() req: any) {
-    return this.portalService.getDocumentos(Number(req.portal.licitacion_id));
+  getDocumentos(@Req() req: any, @Query('id') id?: string) {
+    const licId = id ? Number(id) : Number(req.portal.licitacion_id);
+    return this.portalService.getDocumentos(licId, String(req.portal.rut || ''));
   }
 
   @Get('documentos/signed-url')
   @UseGuards(PortalGuard)
   getSignedUrl(@Req() req: any, @Query('docId', ParseIntPipe) docId: number) {
-    return this.portalService.getSignedUrlDoc(Number(req.portal.licitacion_id), docId);
+    return this.portalService.getSignedUrlDoc(String(req.portal.rut || ''), docId);
   }
 
   @Post('documentos')
@@ -41,10 +52,13 @@ export class PortalController {
   upload(
     @Req() req: any,
     @UploadedFile() file: Express.Multer.File,
-    @Body() body: { tipo?: string; numero?: string; descripcion?: string },
+    @Body() body: { tipo?: string; numero?: string; descripcion?: string; licitacion_id?: string },
   ) {
+    // Permite subir a la cotización que el cliente está viendo (validada por RUT
+    // en el service); por defecto, la del token.
+    const licId = body?.licitacion_id ? Number(body.licitacion_id) : Number(req.portal.licitacion_id);
     return this.portalService.uploadDocumento(
-      Number(req.portal.licitacion_id),
+      licId,
       file,
       {
         tipo: body?.tipo,

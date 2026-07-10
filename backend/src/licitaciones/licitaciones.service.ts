@@ -44,17 +44,62 @@ export class LicitacionesService {
   }
 
   // Carga masiva desde xlsx. Inserta solo las que no existan (dedup por
-  // id_licitacion, case-insensitive). Devuelve cuántas se insertaron / omitieron.
-  async bulkDisponibles(rows: { id_licitacion?: string; nombre?: string }[], subidaPor: string) {
+  // id_licitacion, case-insensitive). Guarda las columnas adicionales del
+  // archivo (organismo, región, monto, cierre, etc.) en `datos` para
+  // prellenar luego la cotización. Devuelve cuántas se insertaron / omitieron.
+  // Determina si una fecha de cierre del portal ya pasó. Acepta "DD-MM-YYYY",
+  // "DD/MM/YYYY" (con hora opcional), ISO y timestamps. Si no se puede
+  // interpretar, se considera NO vencida (no bloquear por falta de dato).
+  private static postulacionVencida(cierreRaw: any): boolean {
+    const s = String(cierreRaw ?? '').trim();
+    if (!s) return false;
+    let cierre: Date | null = null;
+    const m = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/);
+    if (m) {
+      cierre = new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]));
+    } else {
+      const d = new Date(s);
+      cierre = isNaN(d.getTime()) ? null : d;
+    }
+    if (!cierre) return false;
+    const hoy = new Date();
+    const inicioHoy = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate());
+    const cierreDia = new Date(cierre.getFullYear(), cierre.getMonth(), cierre.getDate());
+    return cierreDia.getTime() < inicioHoy.getTime();
+  }
+
+  async bulkDisponibles(rows: any[], subidaPor: string) {
     const vistos = new Set<string>();
-    const limpias: { id_licitacion: string; nombre: string }[] = [];
+    const limpias: any[] = [];
     for (const r of rows || []) {
       const idl = String(r?.id_licitacion || '').trim();
       if (!idl) continue;
       const key = idl.toLowerCase();
       if (vistos.has(key)) continue;
       vistos.add(key);
-      limpias.push({ id_licitacion: idl, nombre: String(r?.nombre || '').trim() });
+      const val = (x: any) => (String(x ?? '').trim() || null);
+      // Trae TODAS las columnas: si el frontend ya mandó un objeto `datos`
+      // (parser nuevo, con columnas conocidas + extras), se usa tal cual
+      // limpiando vacíos; si no, se reconstruye desde los campos planos
+      // (compatibilidad con la versión anterior del parser).
+      let datos: Record<string, any>;
+      if (r?.datos && typeof r.datos === 'object') {
+        datos = {};
+        for (const [k, v] of Object.entries(r.datos)) datos[k] = val(v);
+      } else {
+        datos = {
+          descripcion: val(r?.descripcion),
+          organismo: val(r?.organismo),
+          tipo: val(r?.tipo),
+          region: val(r?.region),
+          monto: val(r?.monto),
+          cierre: val(r?.cierre),
+          publicacion: val(r?.publicacion),
+          url_ficha: val(r?.url_ficha),
+          lineas_negocio: val(r?.lineas_negocio),
+        };
+      }
+      limpias.push({ id_licitacion: idl, nombre: String(r?.nombre || '').trim(), datos });
     }
     if (!limpias.length) return { insertados: 0, duplicados: 0, total: 0 };
 
@@ -68,12 +113,32 @@ export class LicitacionesService {
     const duplicados = limpias.length - nuevas.length;
     if (nuevas.length) {
       const filas = nuevas.map((n) => ({ ...n, subida_por: subidaPor }));
-      const { error } = await this.supabase.getClient()
+      let { error } = await this.supabase.getClient()
         .from('licitaciones_disponibles')
         .insert(filas);
+      // Tolerar que la columna `datos` aún no esté migrada: reintenta sin ella.
+      if (error) {
+        const msg = [error.message, (error as any).details, (error as any).hint, (error as any).code]
+          .filter(Boolean).join(' ').toLowerCase();
+        if (msg.includes('datos') || msg.includes('42703')) {
+          const sinDatos = filas.map(({ datos, ...rest }) => rest);
+          ({ error } = await this.supabase.getClient().from('licitaciones_disponibles').insert(sinDatos));
+        }
+      }
       if (error) throw new BadRequestException(error.message);
     }
     return { insertados: nuevas.length, duplicados, total: limpias.length };
+  }
+
+  // Borra TODO el listado de postulaciones disponibles (solo admin, desde el
+  // frontend). Útil para reemplazar el listado del día completo.
+  async eliminarTodasDisponibles() {
+    const { error } = await this.supabase.getClient()
+      .from('licitaciones_disponibles')
+      .delete()
+      .gt('id', 0);
+    if (error) throw new BadRequestException(error.message);
+    return { deleted: true };
   }
 
   async marcarDisponibleCargada(id: number, cargadaPor: string) {
@@ -91,6 +156,85 @@ export class LicitacionesService {
     const { data, error } = await this.supabase.getClient()
       .from('licitaciones_disponibles')
       .update({ cargada: false, cargada_por: null, cargada_at: null })
+      .eq('id', id)
+      .select()
+      .single();
+    if (error) throw new BadRequestException(error.message);
+    return data;
+  }
+
+  // "Tomar" / liberar una postulación (reserva temporal por usuario). Cada
+  // usuario puede tener como máximo 3 postulaciones tomadas y pendientes.
+  async tomarDisponible(id: number, email: string, tomar: boolean) {
+    const client = this.supabase.getClient();
+    const correo = (email || '').trim().toLowerCase();
+    if (!correo) throw new BadRequestException('Sesión sin usuario válido.');
+
+    if (!tomar) {
+      // Liberar: solo si la tomó este usuario.
+      const { data, error } = await client
+        .from('licitaciones_disponibles')
+        .update({ tomada_por: null, tomada_at: null })
+        .eq('id', id)
+        .ilike('tomada_por', correo)
+        .select()
+        .maybeSingle();
+      if (error) throw new BadRequestException(error.message);
+      return data;
+    }
+
+    // Tomar: no debe estar tomada por otro.
+    // Se intenta traer `datos` para validar la vigencia por fecha de cierre; si la
+    // columna aún no está migrada (42703), se omite esa validación.
+    let row: any;
+    {
+      const r1 = await client
+        .from('licitaciones_disponibles')
+        .select('tomada_por, cargada, datos')
+        .eq('id', id)
+        .single();
+      if (r1.error) {
+        const msg = [r1.error.message, (r1.error as any).code].filter(Boolean).join(' ').toLowerCase();
+        if (msg.includes('datos') || msg.includes('42703')) {
+          const r2 = await client
+            .from('licitaciones_disponibles')
+            .select('tomada_por, cargada')
+            .eq('id', id)
+            .single();
+          if (r2.error) throw new BadRequestException(r2.error.message);
+          row = r2.data;
+        } else {
+          throw new BadRequestException(r1.error.message);
+        }
+      } else {
+        row = r1.data;
+      }
+    }
+    const dueno = (row?.tomada_por || '').trim().toLowerCase();
+    if (dueno && dueno !== correo) {
+      throw new BadRequestException(`Esta postulación ya fue tomada por ${row.tomada_por}.`);
+    }
+
+    // No se puede tomar una postulación vencida (fuera de la fecha de cierre).
+    if (row?.datos && LicitacionesService.postulacionVencida(row.datos.cierre)) {
+      throw new BadRequestException('Esta postulación está vencida (fuera de la fecha de cierre) y no se puede tomar.');
+    }
+
+    // Límite: máx. 3 tomadas pendientes por usuario (excluyendo esta).
+    const { count, error: errCount } = await client
+      .from('licitaciones_disponibles')
+      .select('id', { count: 'exact', head: true })
+      .ilike('tomada_por', correo)
+      .eq('cargada', false)
+      .neq('id', id);
+    if (errCount) throw new BadRequestException(errCount.message);
+    if ((count || 0) >= 3) {
+      throw new BadRequestException('Ya tienes 3 postulaciones tomadas. Crea la cotización de alguna para liberar un cupo.');
+    }
+
+    const { data, error } = await client
+      .from('licitaciones_disponibles')
+      .update({ tomada_por: correo, tomada_at: new Date().toISOString() })
       .eq('id', id)
       .select()
       .single();

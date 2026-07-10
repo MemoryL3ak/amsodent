@@ -5,7 +5,8 @@ import useAuth from "../hooks/useAuth";
 import Toast from "../components/Toast";
 import ConfirmModal from "../components/ConfirmModal";
 import ChatEquipo from "../components/ChatEquipo";
-import { Plus, Pencil, Trash2, X, Search, MessageSquare, ClipboardList } from "lucide-react";
+import LicitacionesDisponibles from "./LicitacionesDisponibles";
+import { Plus, Pencil, Trash2, X, Search, MessageSquare, ClipboardList, Inbox } from "lucide-react";
 
 const ESTADOS = ["Pendiente", "Ingresada"];
 
@@ -204,9 +205,17 @@ export default function BitacoraCotizaciones() {
           icon={ClipboardList}
           label="Registro"
         />
+        <TabBitacora
+          activo={tab === "postulaciones"}
+          onClick={() => setTab("postulaciones")}
+          icon={Inbox}
+          label="Postulaciones disponibles"
+        />
       </div>
 
       {tab === "chat" && <ChatEquipo onLicitacionRegistrada={cargar} />}
+
+      {tab === "postulaciones" && <LicitacionesDisponibles embedded />}
 
       {tab === "registro" && (
         <>

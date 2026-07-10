@@ -12,6 +12,7 @@ import CrearLicitacion from "./pages/CrearLicitacion";
 import LicitacionesDisponibles from "./pages/LicitacionesDisponibles";
 import OrdenesCompra from "./pages/OrdenesCompra";
 import CrearOrdenCompra from "./pages/CrearOrdenCompra";
+import Proveedores from "./pages/Proveedores";
 import ListarLicitaciones from "./pages/ListarLicitaciones";
 import DetalleLicitacion from "./pages/DetalleLicitacion";
 
@@ -114,6 +115,7 @@ export default function App() {
           <Route path="ordenes-compra" element={<OrdenesCompra />} />
           <Route path="ordenes-compra/nueva" element={<CrearOrdenCompra />} />
           <Route path="ordenes-compra/:id" element={<CrearOrdenCompra />} />
+          <Route path="proveedores" element={<Proveedores />} />
           <Route path="listar" element={<ListarLicitaciones />} />
           <Route path="detalle/:id" element={<DetalleLicitacionRoute />} />
 

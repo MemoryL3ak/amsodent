@@ -60,7 +60,7 @@ export default function CrearOrdenCompra() {
   const navigate = useNavigate();
   const { id } = useParams();
   const editando = Boolean(id);
-  const { rol, cargando } = useAuth();
+  const { rol, cargando, perfil, user } = useAuth();
   const rolNorm = (rol || "").toString().trim().toLowerCase();
   const puedeVer = ["admin", "administrador"].includes(rolNorm);
 
@@ -109,6 +109,8 @@ export default function CrearOrdenCompra() {
         } else {
           const r = await api.get("/ordenes-compra/next-numero");
           if (activo) setNumero(r?.numero || 1);
+          // OC nueva: el vendedor se asigna según la sesión del usuario.
+          if (activo) setVend({ nombre: perfil?.nombre || "", correo: perfil?.email || user?.email || "" });
         }
       } catch (e) {
         console.error(e);
@@ -194,13 +196,18 @@ export default function CrearOrdenCompra() {
     }
   }
 
-  function exportarPDF() {
-    generarPDFOrdenCompra({
-      numero: numero || 0, fecha_emision: fechaEmision,
-      proveedor_razon_social: prov.razon, proveedor_rut: prov.rut, proveedor_correo: prov.correo,
-      vendedor_nombre: vend.nombre, vendedor_correo: vend.correo,
-      items: totales.its, subtotal_neto: totales.subtotal, iva: totales.iva, total: totales.total, observaciones,
-    });
+  async function exportarPDF() {
+    try {
+      await generarPDFOrdenCompra({
+        numero: numero || 0, fecha_emision: fechaEmision,
+        proveedor_razon_social: prov.razon, proveedor_rut: prov.rut, proveedor_correo: prov.correo,
+        vendedor_nombre: vend.nombre, vendedor_correo: vend.correo,
+        items: totales.its, subtotal_neto: totales.subtotal, iva: totales.iva, total: totales.total, observaciones,
+      });
+    } catch (e) {
+      console.error("Error generando PDF de OC:", e);
+      setToast({ type: "error", message: "No se pudo generar el PDF. Revisa la consola." });
+    }
   }
 
   if (!cargando && !puedeVer) {
@@ -265,10 +272,10 @@ export default function CrearOrdenCompra() {
               <div className="field"><label className="field-label">Correo</label><input className={inputCls} value={prov.correo} onChange={(e) => setProv((p) => ({ ...p, correo: e.target.value }))} /></div>
             </div>
 
-            <h3 className="surface-title" style={{ margin: "16px 0 8px" }}>Datos Vendedor</h3>
+            <h3 className="surface-title" style={{ margin: "16px 0 8px" }}>Ejecutivo Solicitante <span style={{ fontSize: 12, fontWeight: 400, color: "var(--text-muted)" }}>· según la sesión</span></h3>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14 }}>
-              <div className="field"><label className="field-label">Nombre</label><input className={inputCls} value={vend.nombre} onChange={(e) => setVend((p) => ({ ...p, nombre: e.target.value }))} /></div>
-              <div className="field"><label className="field-label">Correo</label><input className={inputCls} value={vend.correo} onChange={(e) => setVend((p) => ({ ...p, correo: e.target.value }))} /></div>
+              <div className="field"><label className="field-label">Nombre</label><input className={inputCls} value={vend.nombre} readOnly title="Se asigna automáticamente según el usuario de la sesión" style={{ background: "var(--bg)" }} /></div>
+              <div className="field"><label className="field-label">Correo</label><input className={inputCls} value={vend.correo} readOnly title="Se asigna automáticamente según el usuario de la sesión" style={{ background: "var(--bg)" }} /></div>
             </div>
           </div>
 

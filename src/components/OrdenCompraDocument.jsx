@@ -11,6 +11,7 @@ const TEXT = "#1f1f1f";
 const PAD_X = 40;
 const PAD_Y = 36;
 const PAGE_W = 612;
+const PAGE_H = 792;
 
 const fmtCLP = (v) => `$ ${Number(v || 0).toLocaleString("es-CL")}`;
 const padNum = (n) => String(Number(n || 0)).padStart(4, "0");
@@ -74,13 +75,26 @@ const s = StyleSheet.create({
     borderTopWidth: 1, borderTopColor: BLUE_LINE, paddingTop: 8,
     textAlign: "center", color: BLUE_LINE, fontSize: 9, fontFamily: "Helvetica-Oblique",
   },
+  // Marca de agua centrada. IMPORTANTE: el ancho debe mantenerse holgadamente
+  // dentro del ancho de página (612). Un ancho muy grande (p.ej. 540) mete a
+  // @react-pdf en un bucle infinito al paginar. La cotización usa 460; aquí la
+  // dejamos igual de ancha pero con más opacidad para que se vea más marcada.
+  marcaAgua: {
+    position: "absolute",
+    top: PAGE_H * 0.3,
+    left: (PAGE_W - 460) / 2,
+    width: 460,
+    opacity: 0.3,
+  },
 });
 
-export function OrdenCompraDocument({ oc, logoSrc }) {
+export function OrdenCompraDocument({ oc, logoSrc, marcaAguaSrc }) {
   const items = Array.isArray(oc?.items) ? oc.items : [];
   return (
     <Document>
       <Page size="LETTER" style={s.page}>
+        {/* Marca de agua (se dibuja primero para quedar detrás del contenido). */}
+        {marcaAguaSrc ? <Image src={marcaAguaSrc} style={s.marcaAgua} /> : null}
         {/* Header */}
         <View style={s.header}>
           {logoSrc ? <Image src={logoSrc} style={s.logo} /> : <Text style={{ fontFamily: "Helvetica-Bold", fontSize: 18, color: BLUE_DARK }}>Amsodent</Text>}
@@ -103,8 +117,8 @@ export function OrdenCompraDocument({ oc, logoSrc }) {
         <View style={s.row}><Text style={s.label}>RUT:</Text><Text style={s.value}>{oc?.proveedor_rut || ""}</Text></View>
         <View style={s.row}><Text style={s.label}>Correo:</Text><Text style={s.value}>{oc?.proveedor_correo || ""}</Text></View>
 
-        {/* Vendedor */}
-        <Text style={s.sectionTitle}>Datos Vendedor</Text>
+        {/* Ejecutivo solicitante */}
+        <Text style={s.sectionTitle}>Ejecutivo Solicitante</Text>
         <View style={s.twoCol}>
           <View style={s.col}><Text style={[s.label, { width: 70 }]}>Nombre:</Text><Text style={s.value}>{oc?.vendedor_nombre || ""}</Text></View>
           <View style={s.col}><Text style={[s.label, { width: 60 }]}>Correo:</Text><Text style={s.value}>{oc?.vendedor_correo || ""}</Text></View>
@@ -146,7 +160,6 @@ export function OrdenCompraDocument({ oc, logoSrc }) {
           <Text>{oc?.observaciones || ""}</Text>
         </View>
 
-        <Text style={s.footer} fixed>Calidad que te acompaña, soluciones que te impulsan.</Text>
       </Page>
     </Document>
   );
@@ -167,8 +180,11 @@ async function urlToDataUrl(url) {
 }
 
 export async function generarPDFOrdenCompra(oc) {
-  const logoSrc = await urlToDataUrl(`${window.location.origin}/logo_superior_ficha.png`);
-  const blob = await pdf(<OrdenCompraDocument oc={oc} logoSrc={logoSrc} />).toBlob();
+  const [logoSrc, marcaAguaSrc] = await Promise.all([
+    urlToDataUrl(`${window.location.origin}/logo_superior_ficha.png`),
+    urlToDataUrl(`${window.location.origin}/logo_marca_agua.png`),
+  ]);
+  const blob = await pdf(<OrdenCompraDocument oc={oc} logoSrc={logoSrc} marcaAguaSrc={marcaAguaSrc} />).toBlob();
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;

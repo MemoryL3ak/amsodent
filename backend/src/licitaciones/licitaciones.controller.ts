@@ -65,6 +65,21 @@ export class LicitacionesController {
     return this.licitacionesService.desmarcarDisponible(dispId);
   }
 
+  @Delete('disponibles/todas')
+  eliminarTodasDisponibles() {
+    return this.licitacionesService.eliminarTodasDisponibles();
+  }
+
+  @Put('disponibles/:dispId/tomar')
+  tomarDisponible(
+    @Param('dispId', ParseIntPipe) dispId: number,
+    @Body() body: { tomar: boolean },
+    @Req() req: any,
+  ) {
+    const email = (req?.user?.email || '').toLowerCase();
+    return this.licitacionesService.tomarDisponible(dispId, email, !!body?.tomar);
+  }
+
   @Delete('disponibles/:dispId')
   eliminarDisponible(@Param('dispId', ParseIntPipe) dispId: number) {
     return this.licitacionesService.eliminarDisponible(dispId);

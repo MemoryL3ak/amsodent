@@ -885,6 +885,18 @@ body {
   align-items: start;
 }
 
+/* Panel Entidad Pública: el detalle de adjudicaciones (columna central) ocupa
+   más ancho que los gráficos laterales. Se apila en pantallas angostas. */
+.panel-publica-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.8fr) minmax(0, 1fr);
+  gap: 16px;
+  margin-bottom: 16px;
+}
+@media (max-width: 1024px) {
+  .panel-publica-grid { grid-template-columns: 1fr; }
+}
+
 .stat-sub {
   font-size: 12px;
   color: var(--text-soft);

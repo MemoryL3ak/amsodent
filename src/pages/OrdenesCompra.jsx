@@ -24,7 +24,10 @@ export default function OrdenesCompra() {
 
   const [lista, setLista] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [busqueda, setBusqueda] = useState("");
+  const [filtroNum, setFiltroNum] = useState("");
+  const [filtroProv, setFiltroProv] = useState("");
+  const [fechaDesde, setFechaDesde] = useState("");
+  const [fechaHasta, setFechaHasta] = useState("");
   const [toast, setToast] = useState(null);
 
   async function cargar() {
@@ -41,15 +44,24 @@ export default function OrdenesCompra() {
   }
   useEffect(() => { if (!cargando && puedeVer) cargar(); else if (!cargando) setLoading(false); }, [cargando, puedeVer]);
 
+  // Proveedores distintos presentes en las OC (para el filtro por proveedor).
+  const proveedoresUnicos = useMemo(() => {
+    const s = new Set();
+    lista.forEach((o) => { const p = String(o.proveedor_razon_social || "").trim(); if (p) s.add(p); });
+    return [...s].sort((a, b) => a.localeCompare(b));
+  }, [lista]);
+
   const filtradas = useMemo(() => {
-    const q = busqueda.trim().toLowerCase();
-    if (!q) return lista;
-    return lista.filter((o) =>
-      String(o.numero || "").includes(q) ||
-      String(o.proveedor_razon_social || "").toLowerCase().includes(q) ||
-      String(o.proveedor_rut || "").toLowerCase().includes(q)
-    );
-  }, [lista, busqueda]);
+    const num = filtroNum.replace(/[^\d]/g, "").trim();
+    return lista.filter((o) => {
+      if (num && !String(o.numero || "").includes(num)) return false;
+      if (filtroProv && String(o.proveedor_razon_social || "") !== filtroProv) return false;
+      const f = String(o.fecha_emision || "").slice(0, 10);
+      if (fechaDesde && (!f || f < fechaDesde)) return false;
+      if (fechaHasta && (!f || f > fechaHasta)) return false;
+      return true;
+    });
+  }, [lista, filtroNum, filtroProv, fechaDesde, fechaHasta]);
 
   async function eliminar(o) {
     try {
@@ -86,13 +98,35 @@ export default function OrdenesCompra() {
       </div>
 
       <div className="filter-bar">
-        <div className="filter-field" style={{ flex: 1, minWidth: 240 }}>
-          <label className="filter-label">Buscar</label>
+        <div className="filter-field" style={{ minWidth: 140 }}>
+          <label className="filter-label">N° de OC</label>
           <div style={{ position: "relative" }}>
             <Search size={15} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)" }} />
-            <input className="input" style={{ paddingLeft: 32 }} placeholder="N°, proveedor o RUT…" value={busqueda} onChange={(e) => setBusqueda(e.target.value)} />
+            <input className="input" style={{ paddingLeft: 32 }} inputMode="numeric" placeholder="Ej: 12" value={filtroNum} onChange={(e) => setFiltroNum(e.target.value)} />
           </div>
         </div>
+        <div className="filter-field" style={{ flex: 1, minWidth: 220 }}>
+          <label className="filter-label">Proveedor</label>
+          <select className="input" value={filtroProv} onChange={(e) => setFiltroProv(e.target.value)}>
+            <option value="">Todos</option>
+            {proveedoresUnicos.map((p) => <option key={p} value={p}>{p}</option>)}
+          </select>
+        </div>
+        <div className="filter-field" style={{ minWidth: 150 }}>
+          <label className="filter-label">Fecha desde</label>
+          <input type="date" className="input" value={fechaDesde} max={fechaHasta || undefined} onChange={(e) => setFechaDesde(e.target.value)} />
+        </div>
+        <div className="filter-field" style={{ minWidth: 150 }}>
+          <label className="filter-label">Fecha hasta</label>
+          <input type="date" className="input" value={fechaHasta} min={fechaDesde || undefined} onChange={(e) => setFechaHasta(e.target.value)} />
+        </div>
+        {(filtroNum || filtroProv || fechaDesde || fechaHasta) && (
+          <div className="filter-field" style={{ display: "flex", alignItems: "flex-end" }}>
+            <button className="btn btn-secondary btn-sm" onClick={() => { setFiltroNum(""); setFiltroProv(""); setFechaDesde(""); setFechaHasta(""); }}>
+              Limpiar filtros
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="surface" style={{ marginTop: 14, overflowX: "auto" }}>

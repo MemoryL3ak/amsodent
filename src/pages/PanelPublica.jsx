@@ -14,7 +14,8 @@ import {
   labelMesCorto, labelMesLargo, Delta, KpiCard, LineChart, BarChart,
 } from "../components/panel/panelKit";
 
-const ESTADOS_NO_PARTICIPA = ["Descartada", "Cancelada"];
+// Estados que NO cuentan como licitación participada.
+const ESTADOS_NO_PARTICIPA = ["Descartada", "Cancelada", "Pendiente Aprobación"];
 
 export default function PanelPublica() {
   const { rol, cargando } = useAuth();
@@ -167,15 +168,15 @@ export default function PanelPublica() {
           {/* KPIs */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 14, marginBottom: 22 }}>
             <KpiCard icon={FileText} color="#0e7490" label="Licitaciones Publicadas" sub="Registradas en el mes" value={fmtNum(m.publicadas)} delta={<Delta actual={m.publicadas} prev={mPrev.publicadas} />} />
-            <KpiCard icon={ClipboardCheck} color="#6366f1" label="Licitaciones Participadas" sub="Presentadas (excl. descartadas)" value={fmtNum(m.participadas)} delta={<Delta actual={m.participadas} prev={mPrev.participadas} />} />
+            <KpiCard icon={ClipboardCheck} color="#6366f1" label="Licitaciones Participadas" sub="Excl. descartadas y pend. aprobación" value={fmtNum(m.participadas)} delta={<Delta actual={m.participadas} prev={mPrev.participadas} />} />
             <KpiCard icon={Target} color="#16a34a" label="Adjudicaciones Obtenidas" sub="Cierres del mes" value={fmtNum(m.adjudicadas)} delta={<Delta actual={m.adjudicadas} prev={mPrev.adjudicadas} />} />
             <KpiCard icon={Trophy} color="#b45309" label="Tasa de Adjudicación" sub="Adjudicadas / participadas" value={fmtPct(m.tasaAdj)} delta={<Delta actual={m.tasaAdj} prev={mPrev.tasaAdj} unidadPp />} />
             <KpiCard icon={Banknote} color="#15803d" label="Monto Adjudicado" sub="Del mes · órdenes de compra" value={fmtCLP(m.montoAdj)} delta={<Delta actual={m.montoAdj} prev={mPrev.montoAdj} />} />
             <KpiCard icon={PieChart} color="#0ea5e9" label="Participación en Licitaciones" sub="Participadas / publicadas" value={fmtPct(m.participacion)} delta={<Delta actual={m.participacion} prev={mPrev.participacion} unidadPp />} />
           </div>
 
-          {/* Charts */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 16, marginBottom: 16 }}>
+          {/* Charts — el detalle de adjudicaciones ocupa más ancho que los gráficos. */}
+          <div className="panel-publica-grid">
             <div className="surface" style={{ padding: 18 }}>
               <h3 className="surface-title" style={{ marginBottom: 14 }}>Evolución de adjudicaciones (6 meses)</h3>
               <LineChart data={serie6} max={maxAdj} valueKey="adjudicadas" color="#28aeb1" />
@@ -186,14 +187,21 @@ export default function PanelPublica() {
                 <h3 className="surface-title" style={{ margin: 0 }}>Detalle de adjudicaciones ({labelMesLargo(mesActual).toLowerCase()})</h3>
                 <span style={{ fontSize: 11, color: "var(--text-muted)" }}>{detalleMes.length} licitación{detalleMes.length === 1 ? "" : "es"}</span>
               </div>
+              {/* tableLayout fijo + ellipsis: las 4 columnas caben sin scroll horizontal. */}
               <div style={{ overflowY: "auto", maxHeight: 300 }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, tableLayout: "fixed" }}>
+                  <colgroup>
+                    <col style={{ width: "26%" }} />
+                    <col style={{ width: "40%" }} />
+                    <col style={{ width: "16%" }} />
+                    <col style={{ width: "18%" }} />
+                  </colgroup>
                   <thead>
                     <tr style={{ color: "var(--text-muted)", textAlign: "left" }}>
-                      <th style={{ padding: "6px 8px", position: "sticky", top: 0, background: "var(--surface)", borderBottom: "1px solid var(--border)" }}>Licitación / Convenio</th>
+                      <th style={{ padding: "6px 8px", position: "sticky", top: 0, background: "var(--surface)", borderBottom: "1px solid var(--border)" }}>Licitación</th>
                       <th style={{ padding: "6px 8px", position: "sticky", top: 0, background: "var(--surface)", borderBottom: "1px solid var(--border)" }}>Entidad</th>
                       <th style={{ padding: "6px 8px", position: "sticky", top: 0, background: "var(--surface)", borderBottom: "1px solid var(--border)" }}>Estado</th>
-                      <th style={{ padding: "6px 8px", textAlign: "right", position: "sticky", top: 0, background: "var(--surface)", borderBottom: "1px solid var(--border)" }}>Monto Adjudicado</th>
+                      <th style={{ padding: "6px 8px", textAlign: "right", position: "sticky", top: 0, background: "var(--surface)", borderBottom: "1px solid var(--border)" }}>Monto</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -201,16 +209,16 @@ export default function PanelPublica() {
                       <tr><td colSpan={4} style={{ padding: "14px 8px", color: "var(--text-muted)" }}>Sin movimientos en el mes.</td></tr>
                     ) : detalleMes.map((f) => (
                       <tr key={f.id} style={{ borderBottom: "1px solid var(--border)" }}>
-                        <td style={{ padding: "6px 8px", fontWeight: 600, whiteSpace: "nowrap" }}>{f.codigo}</td>
-                        <td style={{ padding: "6px 8px", color: "var(--text-muted)" }}>{f.entidad}</td>
+                        <td style={{ padding: "6px 8px", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={f.codigo}>{f.codigo}</td>
+                        <td style={{ padding: "6px 8px", color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={f.entidad}>{f.entidad}</td>
                         <td style={{ padding: "6px 8px" }}>
                           <span style={{
-                            fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 999, whiteSpace: "nowrap",
+                            fontSize: 10.5, fontWeight: 700, padding: "2px 7px", borderRadius: 999, whiteSpace: "nowrap",
                             background: f.adjudicada ? "#dcfce7" : "#fef9c3",
                             color: f.adjudicada ? "#15803d" : "#a16207",
                           }}>{f.estado}</span>
                         </td>
-                        <td style={{ padding: "6px 8px", textAlign: "right", fontWeight: 600 }}>{f.adjudicada ? fmtCLP(f.monto) : "—"}</td>
+                        <td style={{ padding: "6px 8px", textAlign: "right", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={f.adjudicada ? fmtCLP(f.monto) : ""}>{f.adjudicada ? fmtCLP(f.monto) : "—"}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -225,7 +233,7 @@ export default function PanelPublica() {
           </div>
 
           <p style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>
-            * Indicadores enfocados en procesos de licitación pública y adjudicación. "Publicadas" = licitaciones registradas en el mes; "Participadas" = las presentadas (excluye descartadas/canceladas); "Monto adjudicado" = órdenes de compra del mes.
+            * Indicadores enfocados en procesos de licitación pública y adjudicación. "Publicadas" = licitaciones registradas en el mes; "Participadas" = las presentadas (excluye descartadas, canceladas y pendientes de aprobación); "Monto adjudicado" = órdenes de compra del mes.
           </p>
         </>
       )}

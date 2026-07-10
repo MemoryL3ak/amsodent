@@ -762,6 +762,14 @@ export default function CrearLicitacion() {
 
   const esParticular = tipoCliente.toLowerCase() === "cliente particular";
 
+  // Sugerencias de cliente para el autocompletado de la entidad, acotadas por el
+  // tipo de cotización elegido (Cliente Particular / Entidad Pública). Sin tipo
+  // elegido, se ofrecen todos.
+  const clientesSugeridos = useMemo(
+    () => (tipoCliente ? clientesLista.filter((c) => (c.tipo_cliente || "") === tipoCliente) : clientesLista),
+    [clientesLista, tipoCliente],
+  );
+
   // Cliente Particular ⇒ "Contado" obligatorio para roles no autorizados.
   // Admin / jefe_ventas_especial quedan libres de editarlo.
   useEffect(() => {
@@ -833,7 +841,7 @@ export default function CrearLicitacion() {
     (async () => {
       const { data } = await supabase
         .from("clientes")
-        .select("rut,nombre")
+        .select("rut,nombre,tipo_cliente")
         .order("nombre", { ascending: true });
       if (Array.isArray(data)) setClientesLista(data);
     })();
@@ -886,10 +894,31 @@ export default function CrearLicitacion() {
     const prefill = location.state?.prefillLicitacion;
     if (!prefill) return;
     try {
+      // Columnas adicionales del xlsx (organismo, región, monto, cierre, etc.)
+      // para prellenar la mayor cantidad de campos de la cotización.
+      const d = prefill.datos || {};
+      const soloDigitos = (s) => String(s || "").replace(/[^\d]/g, "");
+      const montoNum = soloDigitos(d.monto);
+      // Cierre "DD-MM-YYYY" → "YYYY-MM-DDT00:00" para el campo fecha/hora.
+      let fechaCierre = "";
+      const mc = String(d.cierre || "").match(/^(\d{2})-(\d{2})-(\d{4})/);
+      if (mc) fechaCierre = `${mc[3]}-${mc[2]}-${mc[1]}T00:00`;
+      // Región: quita el prefijo "Región de/del/de la ".
+      const region = String(d.region || "").replace(/^regi[oó]n\s+(de\s+la\s+|del\s+|de\s+)?/i, "").trim();
+      const obs = [d.descripcion, d.url_ficha ? `Ficha: ${d.url_ficha}` : ""].filter(Boolean).join("\n\n");
       localStorage.setItem(STORAGE_KEY, JSON.stringify({
         idLicitacionInput: prefill.idLicitacionInput || "",
         nombre: prefill.nombre || "",
         disponible_id: prefill.disponibleId ?? null,
+        // Las postulaciones disponibles son de mercado público → por defecto
+        // arranca como Entidad Pública (tipo de compra público).
+        tipoCliente: "Entidad Pública",
+        tipoCompra: "Compra ágil",
+        nombreEntidad: d.organismo || "",
+        region,
+        monto: montoNum ? Number(montoNum) : "",
+        fechaHoraCierre: fechaCierre,
+        observaciones: obs,
       }));
     } catch (e) {
       console.error("Error preparando prellenado de licitación", e);
@@ -2206,7 +2235,7 @@ export default function CrearLicitacion() {
               onChange={setRutEntidad}
               onPick={(c) => buscarClientePorRut(c.rut)}
               onBlur={() => buscarClientePorRut(rutEntidad)}
-              clientes={clientesLista}
+              clientes={clientesSugeridos}
               className="w-full rounded-md border border-gray-300 px-3 py-2"
               placeholder="Busca o escribe el RUT…"
             />
@@ -2222,7 +2251,7 @@ export default function CrearLicitacion() {
               onChange={setNombreEntidad}
               onPick={(c) => buscarClientePorRut(c.rut)}
               onBlur={() => buscarClientePorNombre(nombreEntidad)}
-              clientes={clientesLista}
+              clientes={clientesSugeridos}
               className="w-full rounded-md border border-gray-300 px-3 py-2"
               placeholder="Busca o escribe el nombre…"
             />

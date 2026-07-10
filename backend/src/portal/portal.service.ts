@@ -111,17 +111,68 @@ export class PortalService {
     };
   }
 
-  // ── Detalle completo de la cotización (lo que ve el cliente).
-  async getCotizacion(licitacionId: number) {
+  // ── Historial de cotizaciones del mismo cliente (por RUT del token).
+  // El RUT del token está normalizado (solo dígitos/K), así que traemos las
+  // cotizaciones con RUT y filtramos por RUT normalizado en memoria (los RUT en
+  // BD pueden venir con o sin puntos/guion).
+  async getHistorialCotizaciones(rutToken: string) {
+    const rutN = normalizarRut(rutToken);
+    if (!rutN) return [];
     const client = this.supabase.getClient();
+    const { data, error } = await client
+      .from('licitaciones')
+      .select('id, id_licitacion, nombre, nombre_entidad, rut_entidad, estado, fecha, fecha_adjudicada, total_con_iva, total_sin_iva')
+      .not('rut_entidad', 'is', null)
+      .order('fecha', { ascending: false, nullsFirst: false });
+    if (error) throw new BadRequestException(error.message);
+    return (data || [])
+      .filter((l: any) => normalizarRut(l.rut_entidad) === rutN)
+      .map((l: any) => ({
+        id: l.id,
+        id_licitacion: l.id_licitacion,
+        nombre: l.nombre,
+        nombre_entidad: l.nombre_entidad,
+        estado: l.estado,
+        fecha: l.fecha,
+        fecha_adjudicada: l.fecha_adjudicada,
+        total_con_iva: l.total_con_iva,
+        total_sin_iva: l.total_sin_iva,
+      }));
+  }
 
+  // ── Verifica que la cotización pertenezca al RUT del token y la devuelve.
+  private async cotizacionDelRut(rutToken: string, licitacionId: number) {
+    const client = this.supabase.getClient();
     const { data: lic, error } = await client
       .from('licitaciones')
       .select('*')
       .eq('id', licitacionId)
       .single();
-
     if (error || !lic) throw new BadRequestException('Cotización no disponible.');
+    if (normalizarRut(lic.rut_entidad) !== normalizarRut(rutToken)) {
+      throw new UnauthorizedException('Cotización ajena al cliente.');
+    }
+    return lic;
+  }
+
+  // ── Detalle completo de la cotización (lo que ve el cliente). Si se pasa el
+  // RUT del token, se valida que la cotización pertenezca a ese cliente (para
+  // poder navegar el historial sin volver a iniciar sesión).
+  async getCotizacion(licitacionId: number, rutToken?: string) {
+    const client = this.supabase.getClient();
+
+    let lic: any;
+    if (rutToken) {
+      lic = await this.cotizacionDelRut(rutToken, licitacionId);
+    } else {
+      const { data, error } = await client
+        .from('licitaciones')
+        .select('*')
+        .eq('id', licitacionId)
+        .single();
+      if (error || !data) throw new BadRequestException('Cotización no disponible.');
+      lic = data;
+    }
 
     // Productos asociados
     const { data: productos } = await client
@@ -135,7 +186,9 @@ export class PortalService {
   // ── Documentos de la cotización (sus subidos + los nuestros).
   // Reintenta sin la columna `descripcion` si todavía no se ejecutó la migración,
   // así el portal sigue funcionando aunque falte el schema.
-  async getDocumentos(licitacionId: number) {
+  async getDocumentos(licitacionId: number, rutToken?: string) {
+    // Si se pasa el RUT del token, validar que la cotización sea del cliente.
+    if (rutToken) await this.cotizacionDelRut(rutToken, licitacionId);
     const client = this.supabase.getClient();
     const baseCols = 'id, tipo, numero, fecha_oc, monto, storage_path, bucket, subido_por_cliente, empresa_despacho, n_seguimiento, created_at, deriva_de_id';
     const withDesc = `${baseCols}, descripcion`;
@@ -165,7 +218,9 @@ export class PortalService {
   }
 
   // ── URL firmada para descargar/visualizar un documento (cliente o nuestro).
-  async getSignedUrlDoc(licitacionId: number, docId: number, expiresIn = 3600) {
+  // Se valida por RUT del token: el documento debe pertenecer a una cotización
+  // del mismo cliente (permite abrir docs de cualquier cotización del historial).
+  async getSignedUrlDoc(rutToken: string, docId: number, expiresIn = 3600) {
     const client = this.supabase.getClient();
     const { data: doc, error } = await client
       .from('licitacion_documentos')
@@ -173,9 +228,8 @@ export class PortalService {
       .eq('id', docId)
       .single();
     if (error || !doc) throw new BadRequestException('Documento no encontrado.');
-    if (Number(doc.licitacion_id) !== Number(licitacionId)) {
-      throw new UnauthorizedException('Documento ajeno a la cotización.');
-    }
+    // La cotización del documento debe ser del mismo RUT del token.
+    await this.cotizacionDelRut(rutToken, Number(doc.licitacion_id));
     if (!doc.bucket || !doc.storage_path) {
       throw new BadRequestException('Documento sin archivo asociado.');
     }
@@ -211,10 +265,14 @@ export class PortalService {
     // Verificar que la licitación existe y rescatar creado_por para notificar.
     const { data: lic, error: errLic } = await client
       .from('licitaciones')
-      .select('id, id_licitacion, creado_por, nombre_entidad')
+      .select('id, id_licitacion, creado_por, nombre_entidad, rut_entidad')
       .eq('id', licitacionId)
       .single();
     if (errLic || !lic) throw new BadRequestException('Cotización no disponible.');
+    // El documento solo puede cargarse en una cotización del mismo cliente.
+    if (normalizarRut(lic.rut_entidad) !== normalizarRut(actorRut)) {
+      throw new UnauthorizedException('Cotización ajena al cliente.');
+    }
 
     const safeName = (file.originalname || 'archivo')
       .replace(/[^a-zA-Z0-9._-]/g, '_')

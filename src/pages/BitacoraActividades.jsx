@@ -1057,6 +1057,7 @@ function ModalActividad({ inicial, clienteOptions, cotizacionOptions, perfiles, 
   const [tipo, setTipo] = useState(inicial.tipo || "gestion");
   const [motivo, setMotivo] = useState(inicial.motivo || "");
   const [clienteId, setClienteId] = useState(inicial.cliente_id ?? null);
+  const [filtroTipoCli, setFiltroTipoCli] = useState(""); // filtra el selector de cliente por tipo
   // Alta rápida de cliente desde el modal.
   const [nuevoCli, setNuevoCli] = useState(false);
   // Cliente nuevo desde bitácora: por defecto Cliente Particular (obligatorio).
@@ -1152,6 +1153,17 @@ function ModalActividad({ inicial, clienteOptions, cotizacionOptions, perfiles, 
   }
 
   const clienteSel = clienteOptions.find((c) => String(c.value) === String(clienteId)) || null;
+
+  // Filtro de tipo de cliente para acotar el selector de cliente del modal.
+  const tiposClienteModal = useMemo(() => {
+    const s = new Set();
+    (clienteOptions || []).forEach((c) => { const t = (c.tipo || "").trim(); if (t) s.add(t); });
+    return [...s].sort();
+  }, [clienteOptions]);
+  const clienteOptionsModal = useMemo(
+    () => (filtroTipoCli ? (clienteOptions || []).filter((c) => (c.tipo || "") === filtroTipoCli) : clienteOptions),
+    [clienteOptions, filtroTipoCli],
+  );
 
   // Cotizaciones del cliente seleccionado (match por RUT normalizado o por
   // nombre). Si hay un cliente elegido, se muestran SOLO sus cotizaciones
@@ -1253,12 +1265,25 @@ function ModalActividad({ inicial, clienteOptions, cotizacionOptions, perfiles, 
               </button>
             </div>
             {!nuevoCli && (
-              <Combo
-                value={clienteId ?? ""}
-                onChange={(v) => { setClienteId(v || null); setLicitacionId(""); }}
-                placeholder="Selecciona un cliente…"
-                options={clienteOptions}
-              />
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {tiposClienteModal.length > 1 && (
+                  <select
+                    className="input"
+                    value={filtroTipoCli}
+                    onChange={(e) => { setFiltroTipoCli(e.target.value); setClienteId(null); setLicitacionId(""); }}
+                    style={{ fontSize: 12.5 }}
+                  >
+                    <option value="">Todos los tipos de cliente</option>
+                    {tiposClienteModal.map((t) => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                )}
+                <Combo
+                  value={clienteId ?? ""}
+                  onChange={(v) => { setClienteId(v || null); setLicitacionId(""); }}
+                  placeholder="Selecciona un cliente…"
+                  options={clienteOptionsModal}
+                />
+              </div>
             )}
             {nuevoCli && (
               <div style={{ border: "1px solid var(--border)", borderRadius: 8, padding: 12, background: "var(--bg)", display: "flex", flexDirection: "column", gap: 8 }}>

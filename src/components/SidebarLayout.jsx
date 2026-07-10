@@ -44,6 +44,7 @@ import {
   CalendarDays,
   Inbox,
   Percent,
+  Building2,
 } from "lucide-react";
 import NotificacionesMenu from "./NotificacionesMenu";
 import RecordatoriosCorreo from "./RecordatoriosCorreo";
@@ -171,8 +172,8 @@ export default function SidebarLayout() {
   const comercialNav = [
     puede("cotizaciones") && { to: "/listar",      icon: ClipboardList, label: "Cotizaciones" },
     puede("crear_cotizacion") && { to: "/crear",       icon: FilePlus,      label: "Nueva Cotización" },
-    esAdmin && { to: "/licitaciones-disponibles", icon: Inbox, label: "Licitaciones disponibles" },
     esAdmin && { to: "/ordenes-compra", icon: FileText, label: "Órdenes de Compra" },
+    esAdmin && { to: "/proveedores", icon: Building2, label: "Proveedores" },
     puede("clientes") && { to: "/clientes",    icon: Users,         label: "Clientes" },
     puede("mis_clientes") && { to: "/mis-clientes", icon: UserCheck,    label: "Mis clientes" },
     puede("bitacora") && { to: "/bitacora-actividades", icon: CalendarDays, label: "Bitácora actividades" },

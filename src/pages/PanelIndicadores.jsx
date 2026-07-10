@@ -556,7 +556,9 @@ export default function PanelIndicadores() {
             <KpiCard icon={RefreshCw} color="#0ea5e9" label="Recompra" sub="Clientes que repiten" value={fmtPct(cnr.recompra)} delta={mostrarDelta ? <Delta actual={cnr.recompra} prev={cnrPrev.recompra} unidadPp /> : null} />
             <KpiCard icon={Award} color="#b45309" label="Cotizaciones adjudicadas" sub={`Cierres del ${periodoLabel.toLowerCase()}`} value={fmtNum(m.adjudicadas)} delta={mostrarDelta ? <Delta actual={m.adjudicadas} prev={mPrev.adjudicadas} /> : null} />
             <KpiCard icon={TrendingUp} color="#7c3aed" label="Margen %" sub="(venta − costo) / venta · adjudicadas" value={fmtPct(margenMes.pct)} />
-            <KpiCard icon={Banknote} color="#0d9488" label="Margen $" sub="Venta neta − costo · adjudicadas" value={fmtCLP(margenMes.monto)} />
+            {!esJefatura && (
+              <KpiCard icon={Banknote} color="#0d9488" label="Margen $" sub="Venta neta − costo · adjudicadas" value={fmtCLP(margenMes.monto)} />
+            )}
           </div>
 
           {/* Charts row 1 */}

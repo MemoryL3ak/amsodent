@@ -162,6 +162,22 @@ export class StockClientesController {
     return await this.stockClientes.listarMisSolicitudes(req.stockPortal.rut);
   }
 
+  // Historial de todas las cotizaciones del sistema a nombre del cliente (por RUT),
+  // no solo las que nacen de una solicitud de stock.
+  @UseGuards(StockPortalGuard)
+  @Get('mis-cotizaciones')
+  async misCotizaciones(@Req() req: any) {
+    return await this.stockClientes.listarMisCotizaciones(req.stockPortal.rut);
+  }
+
+  // Detalle de una cotización del historial (productos + datos para el PDF),
+  // validado por el RUT del token.
+  @UseGuards(StockPortalGuard)
+  @Get('mis-cotizaciones/:id')
+  async miCotizacionHistorial(@Req() req: any, @Param('id', ParseIntPipe) id: number) {
+    return await this.stockClientes.cotizacionDeLicitacion(id, req.stockPortal.rut);
+  }
+
   @UseGuards(StockPortalGuard)
   @Post('declaracion')
   async crearDeclaracion(@Req() req: any, @Body() body: any) {
