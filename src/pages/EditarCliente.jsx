@@ -154,7 +154,7 @@ export default function EditarCliente() {
      GUARDAR CAMBIOS
   ============================================================ */
   async function guardarCambios() {
-    if (!tipoCliente || !rut || !nombre || !region || !comuna || !direccion || !contacto || !email) {
+    if (!tipoCliente || !rut || !nombre || !region || !comuna || !direccion) {
       setToast({ type: "error", message: "Debes completar todos los campos obligatorios." });
       return;
     }
@@ -297,12 +297,12 @@ export default function EditarCliente() {
             </div>
 
             <div className="field">
-              <label className="field-label">Contacto *</label>
+              <label className="field-label">Contacto</label>
               <input className="input" value={contacto} onChange={(e) => setContacto(e.target.value)} />
             </div>
 
             <div className="field">
-              <label className="field-label">Email *</label>
+              <label className="field-label">Email</label>
               <input type="email" className="input" value={email} onChange={(e) => setEmail(e.target.value)} />
             </div>
 

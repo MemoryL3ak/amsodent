@@ -1083,7 +1083,7 @@ function ModalEditarCliente({ cliente, esAdmin, vendedores, onCerrar, onGuardado
 
   async function guardar(e) {
     e.preventDefault();
-    if (!tipoCliente || !rut || !nombre || !region || !comuna || !direccion || !contacto || !email) {
+    if (!tipoCliente || !rut || !nombre || !region || !comuna || !direccion) {
       onError?.("Debes completar todos los campos obligatorios.");
       return;
     }
@@ -1143,8 +1143,8 @@ function ModalEditarCliente({ cliente, esAdmin, vendedores, onCerrar, onGuardado
             </select>
           </div>
           <div className="field"><label className="field-label">Dirección *</label><input className="input" value={direccion} onChange={(e) => setDireccion(e.target.value)} /></div>
-          <div className="field"><label className="field-label">Contacto *</label><input className="input" value={contacto} onChange={(e) => setContacto(e.target.value)} /></div>
-          <div className="field"><label className="field-label">Email *</label><input type="email" className="input" value={email} onChange={(e) => setEmail(e.target.value)} /></div>
+          <div className="field"><label className="field-label">Contacto</label><input className="input" value={contacto} onChange={(e) => setContacto(e.target.value)} /></div>
+          <div className="field"><label className="field-label">Email</label><input type="email" className="input" value={email} onChange={(e) => setEmail(e.target.value)} /></div>
           <div className="field"><label className="field-label">Teléfono</label><input className="input" value={telefono} onChange={(e) => setTelefono(e.target.value)} /></div>
           <div className="field">
             <label className="field-label">Condiciones de Venta</label>
