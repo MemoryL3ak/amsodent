@@ -179,6 +179,7 @@ export default function CrearProducto() {
   const [estado, setEstado] = useState("Transitorio");
   const [nombre, setNombre] = useState("");
   const [marca, setMarca] = useState("");
+  const [skuMarca, setSkuMarca] = useState("");
   const [categoria, setCategoria] = useState(""); // ✅ ahora viene del Select
   const [formato, setFormato] = useState("");
   const [costo, setCosto] = useState("");
@@ -390,6 +391,7 @@ export default function CrearProducto() {
       estado: estadoFinal,
       nombre,
       marca,
+      sku_marca: (skuMarca || "").trim() || null,
       categoria,
       formato,
       imagen_url: imagenUrl || null,
@@ -448,6 +450,7 @@ export default function CrearProducto() {
     setEstado(estadoFinal);
     setNombre("");
     setMarca("");
+    setSkuMarca("");
     setCategoria("");
     setFormato("");
     setCosto("");
@@ -569,6 +572,18 @@ export default function CrearProducto() {
                       value={marca}
                       onChange={(e) => setMarca(e.target.value)}
                       placeholder="Ej: Curaprox, Vitis, Dentaid"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      SKU Marca
+                    </label>
+                    <input
+                      className="w-full rounded-md border border-gray-300 bg-gray-50 px-3 py-2"
+                      value={skuMarca}
+                      onChange={(e) => setSkuMarca(e.target.value)}
+                      placeholder="Código del fabricante (opcional)"
                     />
                   </div>
 

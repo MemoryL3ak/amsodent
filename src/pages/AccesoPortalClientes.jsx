@@ -17,6 +17,7 @@ import {
   Eye,
   EyeOff,
   Copy,
+  Building2,
   AlertTriangle,
 } from "lucide-react";
 import { api } from "../lib/api";
@@ -89,6 +90,7 @@ export default function AccesoPortalClientes() {
 
   const [modalHabilitar, setModalHabilitar] = useState(null); // {cliente?} o {} para nuevo
   const [modalRegenerar, setModalRegenerar] = useState(null); // {rut, razon_social, recuperacion_id?}
+  const [modalSucursales, setModalSucursales] = useState(null); // {rut, razon_social}
 
   const cargar = useCallback(async () => {
     setCargando(true);
@@ -250,6 +252,9 @@ export default function AccesoPortalClientes() {
                         })
                       }
                       onDeshabilitar={() => deshabilitar(a.rut, a.razon_social)}
+                      onSucursales={() =>
+                        setModalSucursales({ rut: a.rut, razon_social: a.razon_social })
+                      }
                     />
                   ))}
                 </tbody>
@@ -308,6 +313,16 @@ export default function AccesoPortalClientes() {
         />
       )}
 
+      {modalSucursales && (
+        <ModalSucursalesHabilitar
+          rut={modalSucursales.rut}
+          razonSocial={modalSucursales.razon_social}
+          onCerrar={() => setModalSucursales(null)}
+          onOk={(msg) => setToast({ type: "success", message: msg })}
+          onError={(msg) => setToast({ type: "error", message: msg })}
+        />
+      )}
+
       {modalRegenerar && (
         <ModalRegenerar
           datos={modalRegenerar}
@@ -328,7 +343,7 @@ export default function AccesoPortalClientes() {
   );
 }
 
-function FilaAcceso({ a, onRegenerar, onReHabilitar, onDeshabilitar }) {
+function FilaAcceso({ a, onRegenerar, onReHabilitar, onDeshabilitar, onSucursales }) {
   let estado;
   if (!a.acceso_habilitado) {
     estado = { txt: "Deshabilitado", bg: "#f1f5f9", color: "#64748b", Icon: ShieldOff };
@@ -363,6 +378,9 @@ function FilaAcceso({ a, onRegenerar, onReHabilitar, onDeshabilitar }) {
       <td style={s.td}>{a.acceso_expira ? fmtFecha(a.acceso_expira) : "Sin término"}</td>
       <td style={s.td}>{a.ultimo_acceso ? fmtFechaHora(a.ultimo_acceso) : "Nunca"}</td>
       <td style={{ ...s.td, textAlign: "right", whiteSpace: "nowrap" }}>
+        <button style={s.accBtn} onClick={onSucursales} title="Habilitar sucursales para el portal">
+          <Building2 size={14} /> Sucursales
+        </button>
         <button style={s.accBtn} onClick={onRegenerar} title="Regenerar clave">
           <KeyRound size={14} /> Clave
         </button>
@@ -757,6 +775,90 @@ function Overlay({ children, onCerrar }) {
         {children}
       </div>
     </div>
+  );
+}
+
+// Habilita/deshabilita las sucursales del cliente para el portal. Las sucursales
+// se registran en la vista 360 del cliente; aquí solo se controla su visibilidad.
+function ModalSucursalesHabilitar({ rut, razonSocial, onCerrar, onOk, onError }) {
+  const [sucursales, setSucursales] = useState([]);
+  const [cargando, setCargando] = useState(true);
+  const [savingId, setSavingId] = useState(null);
+
+  async function cargar() {
+    setCargando(true);
+    try {
+      const data = await api.get(`/stock-clientes/sucursales-por-rut?rut=${encodeURIComponent(rut)}`);
+      setSucursales((Array.isArray(data) ? data : []).filter((x) => x.activo !== false));
+    } catch (e) {
+      onError?.(e?.message || "No se pudieron cargar las sucursales.");
+    } finally {
+      setCargando(false);
+    }
+  }
+  useEffect(() => { cargar(); /* eslint-disable-next-line */ }, [rut]);
+
+  async function toggle(sc) {
+    const nuevo = !sc.habilitada_portal;
+    setSavingId(sc.id);
+    // Optimista.
+    setSucursales((prev) => prev.map((x) => (x.id === sc.id ? { ...x, habilitada_portal: nuevo } : x)));
+    try {
+      await api.put(`/stock-clientes/admin/sucursales/${sc.id}/habilitar`, { rut, habilitada: nuevo });
+      onOk?.(nuevo ? "Sucursal habilitada en el portal." : "Sucursal deshabilitada del portal.");
+    } catch (e) {
+      // Revertir.
+      setSucursales((prev) => prev.map((x) => (x.id === sc.id ? { ...x, habilitada_portal: !nuevo } : x)));
+      onError?.(e?.message || "No se pudo actualizar la sucursal.");
+    } finally {
+      setSavingId(null);
+    }
+  }
+
+  return (
+    <Overlay onCerrar={onCerrar}>
+      <h2 style={s.modalTitle}>
+        <Building2 size={18} /> Sucursales · {razonSocial || "Cliente"}
+      </h2>
+      <div style={s.modalBody}>
+        <div style={{ fontSize: 12.5, color: "#64748b", marginBottom: 12 }}>
+          Marca las sucursales que estarán disponibles en el portal del cliente. Se registran en la vista 360 del cliente.
+        </div>
+        {cargando ? (
+          <div style={{ fontSize: 13, color: "#64748b", padding: "10px 0" }}>Cargando…</div>
+        ) : sucursales.length === 0 ? (
+          <div style={{ fontSize: 13, color: "#94a3b8", padding: "10px 0" }}>
+            Este cliente no tiene sucursales registradas. Regístralas en la vista 360 del cliente (sección «Sucursales — Portal de Stock»).
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {sucursales.map((sc) => (
+              <label
+                key={sc.id}
+                style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "10px 12px", border: "1px solid #e2e8f0", borderRadius: 10, cursor: savingId === sc.id ? "wait" : "pointer" }}
+              >
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 13.5, fontWeight: 600, color: "#0f172a" }}>{sc.nombre}</div>
+                  {(sc.direccion || sc.comuna) && (
+                    <div style={{ fontSize: 12, color: "#64748b" }}>{[sc.direccion, sc.comuna].filter(Boolean).join(", ")}</div>
+                  )}
+                </div>
+                <input
+                  type="checkbox"
+                  checked={!!sc.habilitada_portal}
+                  disabled={savingId === sc.id}
+                  onChange={() => toggle(sc)}
+                  style={{ width: 18, height: 18, cursor: "pointer", flexShrink: 0 }}
+                />
+              </label>
+            ))}
+          </div>
+        )}
+      </div>
+      <div style={s.modalFooter}>
+        <button style={s.btnGhost} onClick={onCerrar}>Cerrar</button>
+      </div>
+    </Overlay>
   );
 }
 

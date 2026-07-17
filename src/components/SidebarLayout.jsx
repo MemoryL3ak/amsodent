@@ -393,6 +393,9 @@ export default function SidebarLayout() {
         </div>
 
         {/* Navigation — todos los grupos son colapsables con persistencia */}
+        {/* Orden por flujo de venta: Comercial → Post-Venta → Logística →
+            Portal del Cliente → Reportes → Metas → Comunicación → Herramientas
+            → Administración (config/admin siempre al final). */}
         <NavGroup
           label="Comercial"
           items={comercialNav}
@@ -407,42 +410,6 @@ export default function SidebarLayout() {
             collapsible
             icon={Truck}
             storageKey="sidebar_group_postventa"
-          />
-        )}
-        {comunicacionNav.length > 0 && (
-          <NavGroup
-            label="Comunicación"
-            items={comunicacionNav}
-            collapsible
-            icon={Headphones}
-            storageKey="sidebar_group_comunicacion"
-          />
-        )}
-        {metasNav.length > 0 && (
-          <NavGroup
-            label="Metas"
-            items={metasNav}
-            collapsible
-            icon={Trophy}
-            storageKey="sidebar_group_metas"
-          />
-        )}
-        {reportesNav.length > 0 && (
-          <NavGroup
-            label="Reportes"
-            items={reportesNav}
-            collapsible
-            icon={BarChart3}
-            storageKey="sidebar_group_reportes"
-          />
-        )}
-        {herramientasNav.length > 0 && (
-          <NavGroup
-            label="Herramientas"
-            items={herramientasNav}
-            collapsible
-            icon={Wrench}
-            storageKey="sidebar_group_herramientas"
           />
         )}
         {logisticaNav.length > 0 && (
@@ -461,6 +428,42 @@ export default function SidebarLayout() {
             collapsible
             icon={PackageSearch}
             storageKey="sidebar_group_portal_cliente"
+          />
+        )}
+        {reportesNav.length > 0 && (
+          <NavGroup
+            label="Reportes"
+            items={reportesNav}
+            collapsible
+            icon={BarChart3}
+            storageKey="sidebar_group_reportes"
+          />
+        )}
+        {metasNav.length > 0 && (
+          <NavGroup
+            label="Metas"
+            items={metasNav}
+            collapsible
+            icon={Trophy}
+            storageKey="sidebar_group_metas"
+          />
+        )}
+        {comunicacionNav.length > 0 && (
+          <NavGroup
+            label="Comunicación"
+            items={comunicacionNav}
+            collapsible
+            icon={Headphones}
+            storageKey="sidebar_group_comunicacion"
+          />
+        )}
+        {herramientasNav.length > 0 && (
+          <NavGroup
+            label="Herramientas"
+            items={herramientasNav}
+            collapsible
+            icon={Wrench}
+            storageKey="sidebar_group_herramientas"
           />
         )}
         {adminNav.length > 0 && (

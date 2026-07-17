@@ -53,6 +53,36 @@ function plazoDias(condVenta) {
   return 30;
 }
 
+// Elimina facturas duplicadas para que los KPIs y la tabla no cuenten ni sumen
+// dos veces la misma. Una factura se considera repetida si tiene el MISMO número
+// dentro de la MISMA cotización (case-insensitive). Las facturas sin número no se
+// pueden identificar como duplicadas, así que se conservan todas. Entre repetidas
+// se conserva la más completa: primero la que tenga monto cargado; si empatan, la
+// de id menor (la primera que se cargó). También descarta filas con id repetido.
+function dedupFacturas(arr) {
+  const porId = new Map();
+  for (const f of arr || []) {
+    if (f?.id == null) continue;
+    if (!porId.has(f.id)) porId.set(f.id, f);
+  }
+  const porClave = new Map();
+  const sinNumero = [];
+  for (const f of porId.values()) {
+    const num = String(f?.numero || "").trim().toLowerCase();
+    if (!num) { sinNumero.push(f); continue; }
+    const clave = `${f.licitacion_id}::${num}`;
+    const prev = porClave.get(clave);
+    if (!prev) { porClave.set(clave, f); continue; }
+    const fTieneMonto = Number(f?.monto || 0) > 0;
+    const prevTieneMonto = Number(prev?.monto || 0) > 0;
+    let mejor;
+    if (fTieneMonto !== prevTieneMonto) mejor = fTieneMonto ? f : prev;
+    else mejor = Number(f.id) < Number(prev.id) ? f : prev;
+    porClave.set(clave, mejor);
+  }
+  return [...porClave.values(), ...sinNumero];
+}
+
 function calcularFechaVencimiento(fechaFacturaIso, condVenta) {
   if (!fechaFacturaIso) return null;
   const f = new Date(`${fechaFacturaIso}T00:00:00`);
@@ -281,7 +311,7 @@ export default function SeguimientoPagos() {
             }
           });
         }
-        setFacturas(allFacturas);
+        setFacturas(dedupFacturas(allFacturas));
         setEmpresaDespachoMap(empresaMap);
         setComprobantesMap(compMap);
         setComprobantesSumMap(compSum);
@@ -380,36 +410,14 @@ export default function SeguimientoPagos() {
     return 0;
   }
 
-  // Monto MOSTRADO de la factura = bruto (con IVA) de ESA factura:
-  //  1) monto propio de la factura (neto) × 1,19 — caso particular (boleta).
-  //  2) público: la factura deriva de su guía (o de varias vía guias_ids) y la
-  //     guía de la OC. Se toma la suma de las OC distintas detrás de esas guías,
-  //     así cada factura refleja su propio monto y no la suma de toda la cotización.
-  //  3) fallback: suma de OC de la cotización × 1,19; o total con IVA.
-  // Se usa solo para mostrar/KPI; la reconciliación de saldos sigue en neto.
-  function montoFacturaBruto(f, lic) {
+  // Monto MOSTRADO de la factura = bruto (con IVA) del monto (neto) que se cargó
+  // en Trazabilidad para ESA factura: neto × 1,19. TODOS los KPIs de este módulo
+  // se basan en este valor. Si la factura todavía no tiene su monto cargado en
+  // Trazabilidad, NO se estima con la OC ni con el total de la cotización: cuenta
+  // como $0 hasta que se cargue el monto real de la factura.
+  function montoFacturaBruto(f) {
     const neto = Number(f?.monto || 0);
-    if (neto > 0) return Math.round(neto * 1.19);
-    // Referencias de la factura a su(s) guía(s)/OC: guias_ids + deriva_de_id.
-    const refs = Array.isArray(f?.guias_ids) && f.guias_ids.length
-      ? f.guias_ids
-      : (f?.deriva_de_id != null ? [f.deriva_de_id] : []);
-    const ocsVistas = new Set();
-    let sumaPropia = 0;
-    refs.forEach((ref) => {
-      const oc = ocByIdMap[ref] || (guiaByIdMap[ref]?.deriva_de_id != null ? ocByIdMap[guiaByIdMap[ref].deriva_de_id] : null);
-      if (oc && !ocsVistas.has(oc.id)) {
-        ocsVistas.add(oc.id);
-        sumaPropia += Number(oc.monto || 0);
-      } else if (!oc) {
-        // Ref sin OC resoluble: intenta el neto directo por si acaso.
-        sumaPropia += ocNetoDesdeRef(ref);
-      }
-    });
-    if (sumaPropia > 0) return Math.round(sumaPropia * 1.19);
-    const ocNeto = Number(montoOcMap[lic?.id] || 0);
-    if (ocNeto > 0) return Math.round(ocNeto * 1.19);
-    return Number(lic?.total_con_iva || 0) || 0;
+    return neto > 0 ? Math.round(neto * 1.19) : 0;
   }
   function notasCreditoDe(f) {
     return Number(notasCreditoSumMap[f.licitacion_id] || 0);

@@ -75,9 +75,11 @@ export default function PanelPublica() {
     return () => { activo = false; };
   }, [cargando, puedeVer]);
 
-  // Fecha de adjudicación efectiva de una licitación (OC o fecha_adjudicada).
-  const fechaAdj = (l) => adjDateByLic[l.id] || toDateISO(l.fecha_adjudicada);
-  const esAdjudicada = (l) => l.estado === "Adjudicada" || Boolean(fechaAdj(l));
+  // Fecha de adjudicación = SIEMPRE la fecha de la primera OC cargada. Sin OC la
+  // licitación NO se considera adjudicada, aunque tenga estado "Adjudicada" o una
+  // fecha_adjudicada antigua (mismo criterio que el Panel de Gestión Comercial).
+  const fechaAdj = (l) => adjDateByLic[l.id] || null;
+  const esAdjudicada = (l) => Boolean(adjDateByLic[l.id]);
   const montoAdjudicado = (l) => {
     const oc = ocByLic[l.id] || 0;
     if (oc > 0) return oc;

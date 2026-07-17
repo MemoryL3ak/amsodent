@@ -5,10 +5,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../lib/api";
+import { supabase } from "../lib/supabase";
 import useAuth from "../hooks/useAuth";
 import DateFilter from "../components/DateFilter";
 import ConfirmModal from "../components/ConfirmModal";
-import { Upload, Search, FileSpreadsheet, Trash2, X, ClipboardList, Check, RotateCcw } from "lucide-react";
+import { Upload, Search, FileSpreadsheet, Trash2, X, ClipboardList, Check, RotateCcw, Ban } from "lucide-react";
 
 function fmtFecha(v) {
   if (!v) return "";
@@ -47,7 +48,7 @@ function estaVigente(row) {
 
 export default function LicitacionesDisponibles({ embedded = false }) {
   const navigate = useNavigate();
-  const { rol, user } = useAuth();
+  const { rol, user, perfil } = useAuth();
   const rolNorm = (rol || "").toString().trim().toLowerCase();
   // Ver y "tomar" está disponible para todo el equipo. La gestión (subir
   // listado, desmarcar, eliminar) queda para administración y jefatura de ventas.
@@ -108,6 +109,13 @@ export default function LicitacionesDisponibles({ embedded = false }) {
   const filtradas = useMemo(() => {
     const q = busqueda.trim().toLowerCase();
     const arr = lista.filter((l) => {
+      // "No aplica": descartadas por el equipo. Solo se ven en su propio filtro
+      // o en "Todas"; el resto de las vistas las oculta.
+      if (l.no_aplica) {
+        if (filtro !== "no_aplica" && filtro !== "todas") return false;
+      } else if (filtro === "no_aplica") {
+        return false;
+      }
       if (filtro === "pendientes" && l.cargada) return false;
       if (filtro === "cargadas" && !l.cargada) return false;
       if (filtro === "mias" && (l.tomada_por || "").toLowerCase() !== currentEmail) return false;
@@ -133,7 +141,7 @@ export default function LicitacionesDisponibles({ embedded = false }) {
 
   const stats = useMemo(() => ({
     total: lista.length,
-    pendientes: lista.filter((l) => !l.cargada).length,
+    pendientes: lista.filter((l) => !l.cargada && !l.no_aplica).length,
     cargadas: lista.filter((l) => l.cargada).length,
   }), [lista]);
 
@@ -182,6 +190,25 @@ export default function LicitacionesDisponibles({ embedded = false }) {
     }
   }
 
+  // Marca / desmarca "No Aplica" (descartada por el equipo). Sale del listado de
+  // pendientes; se puede revertir desde el filtro "No aplica".
+  async function toggleNoAplica(row) {
+    if (!esGestor) return;
+    const noAplica = !row.no_aplica;
+    const prev = { no_aplica: row.no_aplica ?? false, no_aplica_por: row.no_aplica_por ?? null, no_aplica_at: row.no_aplica_at ?? null };
+    setLista((ls) => ls.map((l) => (l.id === row.id
+      ? { ...l, no_aplica: noAplica, no_aplica_por: noAplica ? currentEmail : null, no_aplica_at: noAplica ? new Date().toISOString() : null }
+      : l)));
+    try {
+      await api.put(`/licitaciones/disponibles/${row.id}/no-aplica`, { noAplica });
+      setToast({ type: "success", message: noAplica ? "Marcada como No Aplica." : "Restaurada al listado." });
+    } catch (e) {
+      console.error(e);
+      setLista((ls) => ls.map((l) => (l.id === row.id ? { ...l, ...prev } : l)));
+      setToast({ type: "error", message: e?.message || "No se pudo actualizar. ¿Está aplicada la migración?" });
+    }
+  }
+
   async function eliminar(row) {
     if (!esGestor) return;
     try {
@@ -222,6 +249,36 @@ export default function LicitacionesDisponibles({ embedded = false }) {
     setConfirmTomar(row);
   }
 
+  // Publica en el Chat del equipo (sala general) que se tomó una postulación.
+  // Best-effort: si falla (RLS, sin sala), no interrumpe la toma.
+  async function publicarTomaEnChat(row) {
+    try {
+      const { data: salas } = await supabase
+        .from("chat_salas")
+        .select("id, es_general")
+        .order("es_general", { ascending: false })
+        .limit(1);
+      const salaId = salas?.[0]?.id;
+      if (!salaId) return;
+      // Se publica como TARJETA de licitación (mismo formato probado que ya usa
+      // el chat), más visible que un texto plano.
+      const { error } = await supabase.from("chat_mensajes").insert({
+        autor_email: currentEmail,
+        autor_nombre: perfil?.nombre || user?.email || "—",
+        tipo: "licitacion",
+        sala_id: salaId,
+        texto: row.nombre || null,
+        licitacion_id: row.id_licitacion,
+        licitacion_estado: "Tomada",
+      });
+      if (error) throw error;
+      setToast({ type: "success", message: "Aviso publicado en el Chat del equipo (sala General) 📌" });
+    } catch (e) {
+      console.error("No se pudo publicar en el chat:", e);
+      setToast({ type: "error", message: "Se tomó la postulación, pero no se pudo avisar en el chat." });
+    }
+  }
+
   async function toggleTomar(row) {
     const mia = (row.tomada_por || "").toLowerCase() === currentEmail;
     const tomar = !mia;
@@ -247,6 +304,8 @@ export default function LicitacionesDisponibles({ embedded = false }) {
           ? { ...l, tomada_por: actualizado.tomada_por ?? (tomar ? currentEmail : null), tomada_at: actualizado.tomada_at ?? null }
           : l)));
       }
+      // Al TOMAR (no al liberar) se publica el ID en el chat del equipo.
+      if (tomar) publicarTomaEnChat(row);
     } catch (e) {
       console.error(e);
       setLista((prev) => prev.map((l) => (l.id === row.id ? { ...l, ...prevTom } : l)));
@@ -333,6 +392,7 @@ export default function LicitacionesDisponibles({ embedded = false }) {
             <option value="pendientes">Pendientes</option>
             <option value="mias">Mis tomadas</option>
             <option value="cargadas">Cargadas</option>
+            <option value="no_aplica">No aplica</option>
             <option value="todas">Todas</option>
           </select>
         </div>
@@ -386,7 +446,7 @@ export default function LicitacionesDisponibles({ embedded = false }) {
                 const vencida = !estaVigente(row);
                 // Se bloquea marcar si la tomó otro o si está vencida (salvo que
                 // sea propia, para poder liberarla).
-                const bloqueada = deOtro || (vencida && !mia);
+                const bloqueada = deOtro || (vencida && !mia) || row.no_aplica;
                 const abrirBorrador = () => cargarLicitacion(row);
                 const celdaLink = { cursor: "pointer", color: "var(--primary-dark)", textDecoration: "underline", textUnderlineOffset: 2 };
                 return (
@@ -422,7 +482,14 @@ export default function LicitacionesDisponibles({ embedded = false }) {
                   </td>
                   <td style={{ whiteSpace: "nowrap", color: "var(--text-muted)", fontSize: 12.5 }}>{fmtFecha(row.created_at) || "—"}</td>
                   <td>
-                    {row.cargada ? (
+                    {row.no_aplica ? (
+                      <span
+                        title={`No aplica${row.no_aplica_por ? " · " + row.no_aplica_por : ""}`}
+                        style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11.5, fontWeight: 700, padding: "2px 8px", borderRadius: 999, background: "#e5e7eb", color: "#4b5563" }}
+                      >
+                        <Ban size={12} /> No aplica
+                      </span>
+                    ) : row.cargada ? (
                       <span
                         title={`${row.cargada_por || ""}${row.cargada_at ? " · " + fmtFecha(row.cargada_at) : ""}`}
                         style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11.5, fontWeight: 700, padding: "2px 8px", borderRadius: 999, background: "#dcfce7", color: "#15803d" }}
@@ -459,6 +526,16 @@ export default function LicitacionesDisponibles({ embedded = false }) {
                           style={{ padding: 6, lineHeight: 0 }}
                         >
                           <RotateCcw size={14} />
+                        </button>
+                      )}
+                      {esGestor && !row.cargada && (
+                        <button
+                          className="btn btn-sm btn-ghost"
+                          onClick={(e) => { e.stopPropagation(); toggleNoAplica(row); }}
+                          title={row.no_aplica ? "Restaurar al listado" : "Marcar «No Aplica»"}
+                          style={{ padding: 6, lineHeight: 0, color: row.no_aplica ? "#a16207" : "var(--text-muted)" }}
+                        >
+                          <Ban size={14} />
                         </button>
                       )}
                       {esGestor && (

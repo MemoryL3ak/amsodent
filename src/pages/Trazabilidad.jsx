@@ -867,20 +867,27 @@ export default function Trazabilidad() {
 
     if (cycles.length === 0) cycles.push({ oc: null, guia: null, factura: null, ocGroup: 0 });
 
-    // Marcar metadata + rowSpan para fusionar celdas (OC y Guía)
+    // Marcar metadata + rowSpan para fusionar celdas (OC, Guía y Factura). Una
+    // misma factura (mismo id) puede aparecer en varias filas (cuando cubre
+    // varias guías): se fusiona en una sola celda igual que la OC. Las facturas
+    // sin id (pendientes) usan una clave única por fila para no fusionarse.
     cycles.forEach((c, i) => {
       const ocKey = c.oc?.id ?? `null-${i}`;
       const guiaKey = c.guia?.id ?? `null-${i}`;
+      const facturaKey = c.factura?.id ?? `null-${i}`;
       c.ocKey = ocKey;
       c.guiaKey = guiaKey;
+      c.facturaKey = facturaKey;
     });
 
     // Calcular spans
     const ocCounts = {};
     const guiaCounts = {};
+    const facturaCounts = {};
     cycles.forEach((c) => {
       ocCounts[c.ocKey] = (ocCounts[c.ocKey] || 0) + 1;
       guiaCounts[c.guiaKey] = (guiaCounts[c.guiaKey] || 0) + 1;
+      facturaCounts[c.facturaKey] = (facturaCounts[c.facturaKey] || 0) + 1;
     });
 
     // Asignar índice de grupo de guía (0, 1, 2…) para alternar colores de fondo
@@ -896,14 +903,18 @@ export default function Trazabilidad() {
 
     let prevOcKey = null;
     let prevGuiaKey = null;
+    let prevFacturaKey = null;
     cycles.forEach((c, i) => {
       c.firstOfOc = c.ocKey !== prevOcKey;
       c.firstOfGuia = c.guiaKey !== prevGuiaKey;
+      c.firstOfFactura = c.facturaKey !== prevFacturaKey;
       c.ocSpan = c.firstOfOc ? ocCounts[c.ocKey] : 0;
       c.guiaSpan = c.firstOfGuia ? guiaCounts[c.guiaKey] : 0;
+      c.facturaSpan = c.firstOfFactura ? facturaCounts[c.facturaKey] : 0;
       c.cycleIdx = i;
       prevOcKey = c.ocKey;
       prevGuiaKey = c.guiaKey;
+      prevFacturaKey = c.facturaKey;
     });
 
     return cycles;
@@ -1713,7 +1724,7 @@ export default function Trazabilidad() {
 
                   return cycles.map((cycle, idx) => {
                     const isFirstRow = idx === 0;
-                    const { oc, guia, factura, firstOfOc, firstOfGuia, ocSpan, guiaSpan } = cycle;
+                    const { oc, guia, factura, firstOfOc, firstOfGuia, ocSpan, guiaSpan, firstOfFactura, facturaSpan } = cycle;
 
                     const hoverBg = "#f0fdfd";
                     const sameLic = hoverChain?.licId === lic.id;
@@ -1739,9 +1750,13 @@ export default function Trazabilidad() {
                         hoverGuia = hoverChain.guiaKey === cycle.guiaKey;
                         hoverFactura = hoverGuia; // todas las facturas de la guía
                       } else if (t === "factura") {
+                        // Una factura puede cubrir varias guías (guias_ids). Al
+                        // resaltarla se iluminan TODAS las guías que comparten esa
+                        // misma factura, no solo la primera de la celda fusionada.
+                        const enFactura = hoverChain.facturaKey != null && cycle.facturaKey === hoverChain.facturaKey;
                         hoverOc = hoverChain.ocKey === cycle.ocKey;
-                        hoverGuia = hoverChain.guiaKey === cycle.guiaKey;
-                        hoverFactura = hoverChain.idx === idx; // solo esa factura
+                        hoverGuia = enFactura;
+                        hoverFactura = enFactura;
                       }
                     }
 
@@ -1932,9 +1947,12 @@ export default function Trazabilidad() {
                           </td>
                         )}
 
-                        {/* Factura */}
+                        {/* Factura — una misma factura (mismo id) se fusiona en
+                            una sola celda aunque cubra varias guías (igual OC). */}
+                        {firstOfFactura && (
                         <td
-                          onMouseEnter={() => setHoverChain({ type: "factura", licId: lic.id, ocKey: cycle.ocKey, guiaKey: cycle.guiaKey, idx })}
+                          rowSpan={facturaSpan}
+                          onMouseEnter={() => setHoverChain({ type: "factura", licId: lic.id, ocKey: cycle.ocKey, guiaKey: cycle.guiaKey, facturaKey: cycle.facturaKey, idx })}
                           onMouseLeave={clearHover}
                           style={{
                             verticalAlign: "middle",
@@ -1992,6 +2010,7 @@ export default function Trazabilidad() {
                             <span className="badge badge-warning">Pendiente</span>
                           )}
                         </td>
+                        )}
 
                         {/* Comprobante de transferencia (solo Cliente Particular) — uno por cotización */}
                         {esSoloClienteParticular && isFirstRow && (() => {

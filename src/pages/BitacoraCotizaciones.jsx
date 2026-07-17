@@ -219,8 +219,9 @@ export default function BitacoraCotizaciones() {
 
       {tab === "registro" && (
         <>
-      {/* Stats */}
-      <div className="stats-row">
+      {/* Stats — 3 tarjetas: grilla de 3 columnas para que queden centradas y
+          alineadas con la barra de filtros (el .stats-row por defecto es de 4). */}
+      <div className="stats-row" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
         <div className="stat-card">
           <div className="stat-label">Total</div>
           <div className="stat-value">{stats.total}</div>
@@ -274,14 +275,14 @@ export default function BitacoraCotizaciones() {
       {/* Tabla */}
       <div className="table-wrap" style={{ marginTop: 12 }}>
         <div className="table-scroll" style={{ maxHeight: "calc(100vh - 360px)", minHeight: 240 }}>
-          <table className="data-table" style={{ tableLayout: "fixed", width: "100%" }}>
+          <table className="data-table" style={{ tableLayout: "fixed", width: "100%", minWidth: 820 }}>
             <colgroup>
-              <col style={{ width: 180 }} />
-              <col style={{ width: 110 }} />
-              <col style={{ width: 200 }} />
-              <col style={{ width: 160 }} />
-              <col />
-              <col style={{ width: 140 }} />
+              <col style={{ width: "16%" }} />
+              <col style={{ width: "11%" }} />
+              <col style={{ width: "20%" }} />
+              <col style={{ width: "17%" }} />
+              <col style={{ width: "27%" }} />
+              <col style={{ width: "9%" }} />
             </colgroup>
             <thead>
               <tr>

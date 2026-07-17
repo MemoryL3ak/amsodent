@@ -1215,19 +1215,9 @@ function DetalleDeclaracion({ declaracion, onCerrar, setToast }) {
           </table>
           </div>
 
-          {/* Sucursales del cliente — las gestiona el administrador */}
-          <GestionSucursalesAdmin
-            rut={declaracion.rut}
-            sucursales={Object.values(sucursalesMap)}
-            onRefrescar={async () => {
-              try {
-                const sucs = await api.get(`/stock-clientes/sucursales-por-rut?rut=${encodeURIComponent(declaracion.rut)}`);
-                const map = {};
-                (Array.isArray(sucs) ? sucs : []).forEach((s) => { map[s.id] = s; });
-                setSucursalesMap(map);
-              } catch { /* */ }
-            }}
-          />
+          {/* Las sucursales ahora se registran en la vista 360 del cliente y se
+              habilitan en «Acceso al Portal del Cliente». Aquí solo se muestran
+              (el nombre) junto a cada declaración. */}
 
           {/* Solicitudes de cotización del cliente */}
           <div style={{ marginTop: 22 }}>
@@ -2417,83 +2407,3 @@ const styles = {
   },
 };
 
-/* Gestión de sucursales del cliente desde la plataforma (solo admin/equipo).
-   El cliente ya no las crea desde su portal. */
-function GestionSucursalesAdmin({ rut, sucursales, onRefrescar }) {
-  const [form, setForm] = useState({ nombre: "", direccion: "", comuna: "" });
-  const [editId, setEditId] = useState(null);
-  const [guardando, setGuardando] = useState(false);
-  const [error, setError] = useState("");
-
-  const inputStyle = { width: "100%", height: 36, padding: "0 10px", border: "1px solid #cbd5e1", borderRadius: 8, fontSize: 13, outline: "none", boxSizing: "border-box" };
-  const activas = (sucursales || []).filter((s) => s.activo !== false);
-
-  async function guardar(e) {
-    e?.preventDefault?.();
-    const nombre = form.nombre.trim();
-    if (!nombre) { setError("Ingresa el nombre de la sucursal."); return; }
-    setGuardando(true);
-    setError("");
-    try {
-      if (editId) {
-        await api.put(`/stock-clientes/admin/sucursales/${editId}`, { rut, ...form, nombre });
-      } else {
-        await api.post(`/stock-clientes/admin/sucursales`, { rut, ...form, nombre });
-      }
-      setForm({ nombre: "", direccion: "", comuna: "" });
-      setEditId(null);
-      await onRefrescar?.();
-    } catch (err) {
-      setError(err?.message || "No se pudo guardar la sucursal.");
-    } finally {
-      setGuardando(false);
-    }
-  }
-
-  async function eliminar(s) {
-    if (activas.length <= 1) { setError("Debe existir al menos una sucursal."); return; }
-    try {
-      await api.delete(`/stock-clientes/admin/sucursales/${s.id}?rut=${encodeURIComponent(rut)}`);
-      if (editId === s.id) { setEditId(null); setForm({ nombre: "", direccion: "", comuna: "" }); }
-      await onRefrescar?.();
-    } catch (err) {
-      setError(err?.message || "No se pudo eliminar la sucursal.");
-    }
-  }
-
-  return (
-    <div style={{ marginTop: 22 }}>
-      <div style={styles.modalSeccionTitulo}>Sucursales del cliente</div>
-      <div style={{ fontSize: 12.5, color: "#64748b", marginBottom: 10 }}>
-        Las sucursales (catálogos por dirección) las habilita el administrador. El cliente solo las selecciona en su portal.
-      </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 }}>
-        {activas.length === 0 ? (
-          <div style={{ fontSize: 13, color: "#94a3b8" }}>Sin sucursales.</div>
-        ) : activas.map((s) => (
-          <div key={s.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "8px 12px", border: "1px solid #e2e8f0", borderRadius: 10 }}>
-            <div style={{ minWidth: 0 }}>
-              <div style={{ fontSize: 13.5, fontWeight: 600, color: "#0f172a" }}>{s.nombre}</div>
-              {(s.direccion || s.comuna) && (
-                <div style={{ fontSize: 12, color: "#64748b" }}>{[s.direccion, s.comuna].filter(Boolean).join(", ")}</div>
-              )}
-            </div>
-            <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-              <button type="button" onClick={() => { setEditId(s.id); setForm({ nombre: s.nombre || "", direccion: s.direccion || "", comuna: s.comuna || "" }); }} style={{ border: "1px solid #cbd5e1", background: "#fff", borderRadius: 8, padding: "4px 10px", fontSize: 12, cursor: "pointer" }}>Editar</button>
-              <button type="button" onClick={() => eliminar(s)} style={{ border: "1px solid #fecaca", background: "#fff", color: "#dc2626", borderRadius: 8, padding: "4px 10px", fontSize: 12, cursor: "pointer" }}>Eliminar</button>
-            </div>
-          </div>
-        ))}
-      </div>
-      <form onSubmit={guardar} style={{ borderTop: "1px solid #eef2f7", paddingTop: 14, display: "grid", gridTemplateColumns: "1fr 1fr 1fr auto", gap: 8, alignItems: "end" }}>
-        <input value={form.nombre} onChange={(e) => setForm((f) => ({ ...f, nombre: e.target.value }))} placeholder="Nombre (ej: Casa Matriz)" style={inputStyle} />
-        <input value={form.direccion} onChange={(e) => setForm((f) => ({ ...f, direccion: e.target.value }))} placeholder="Dirección" style={inputStyle} />
-        <input value={form.comuna} onChange={(e) => setForm((f) => ({ ...f, comuna: e.target.value }))} placeholder="Comuna" style={inputStyle} />
-        <button type="submit" disabled={guardando} style={{ border: "none", background: "#0ea5a4", color: "#fff", borderRadius: 8, padding: "9px 14px", fontSize: 13, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" }}>
-          {guardando ? "…" : editId ? "Guardar" : "Agregar"}
-        </button>
-      </form>
-      {error && <div style={{ fontSize: 12, color: "#dc2626", marginTop: 6 }}>{error}</div>}
-    </div>
-  );
-}

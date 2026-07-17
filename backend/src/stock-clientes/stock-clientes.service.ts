@@ -799,55 +799,185 @@ export class StockClientesService {
   // ── Sucursales del cliente (catálogos de stock por dirección) ──────────
   // Lista las sucursales activas. Si el cliente no tiene ninguna, crea una
   // "Casa Matriz" por defecto para que siempre exista al menos una.
+  // Sucursales visibles en el PORTAL del cliente: activas Y habilitadas por el
+  // admin. Tolera que la columna `habilitada_portal` aún no esté migrada (42703):
+  // en ese caso cae al comportamiento anterior (todas las activas).
   async listarSucursales(rut: string) {
     const rutN = normalizarRut(rut);
     if (!rutN) return [];
+    // Garantiza la Casa Matriz por defecto (con dirección/contacto del cliente).
+    await this.asegurarCasaMatriz(rutN);
     const client = this.supabase.getClient();
-    const { data, error } = await client
+    let { data, error } = await client
       .from('stock_sucursales')
       .select('*')
       .eq('rut', rutN)
       .eq('activo', true)
+      .eq('habilitada_portal', true)
       .order('created_at', { ascending: true });
+    if (error) {
+      const msg = [error.message, (error as any).code].filter(Boolean).join(' ').toLowerCase();
+      if (msg.includes('habilitada_portal') || msg.includes('42703')) {
+        ({ data, error } = await client
+          .from('stock_sucursales')
+          .select('*')
+          .eq('rut', rutN)
+          .eq('activo', true)
+          .order('created_at', { ascending: true }));
+      }
+    }
     if (error) throw new BadRequestException(error.message);
-    if (data && data.length > 0) return data;
-    // Sin sucursales → crear Casa Matriz por defecto.
-    const { data: nueva, error: errIns } = await client
-      .from('stock_sucursales')
-      .insert({ rut: rutN, nombre: 'Casa Matriz' })
-      .select()
-      .single();
-    if (errIns) throw new BadRequestException(errIns.message);
-    return [nueva];
+    return data || [];
   }
 
-  async crearSucursal(
-    rut: string,
-    body: { nombre?: string; direccion?: string; comuna?: string },
-  ) {
-    const rutN = normalizarRut(rut);
-    if (!rutN) throw new UnauthorizedException('Sesión inválida.');
-    const nombre = String(body?.nombre || '').trim().slice(0, 160);
-    if (!nombre) throw new BadRequestException('El nombre de la sucursal es obligatorio.');
+  // Datos generales del cliente CRM (dirección + contacto) para poblar la Casa
+  // Matriz por defecto. Empareja por RUT normalizado (el maestro guarda el RUT
+  // con formato). Devuelve null si el cliente no está en el maestro.
+  private async datosGeneralesCliente(
+    rutNorm: string,
+  ): Promise<{ direccion: string; comuna: string; contacto: string; telefono: string; email: string } | null> {
     const { data, error } = await this.supabase
       .getClient()
+      .from('clientes')
+      .select('*')
+      .range(0, 20000);
+    if (error) return null;
+    const c: any = (data || []).find((x: any) => normalizarRut(x?.rut) === rutNorm);
+    if (!c) return null;
+    return {
+      direccion: String(c.direccion || '').trim(),
+      comuna: String(c.comuna || '').trim(),
+      contacto: String(c.contacto || '').trim(),
+      telefono: String(c.telefono || '').trim(),
+      email: String(c.email || '').trim(),
+    };
+  }
+
+  // Inserta una sucursal tolerando columnas aún no migradas (42703): si la BD
+  // rechaza una columna, la quita del payload y reintenta.
+  private async insertarSucursalTolerante(row: any): Promise<any> {
+    const client = this.supabase.getClient();
+    const intento: any = { ...row };
+    for (let i = 0; i < 6; i++) {
+      const { data, error } = await client
+        .from('stock_sucursales')
+        .insert(intento)
+        .select()
+        .single();
+      if (!error) return data;
+      const msg = [error.message, (error as any).code].filter(Boolean).join(' ').toLowerCase();
+      const col = /column "([^"]+)"/.exec(error.message || '')?.[1];
+      if (col && col in intento && (msg.includes('42703') || msg.includes('does not exist'))) {
+        delete intento[col];
+        continue;
+      }
+      throw new BadRequestException(error.message);
+    }
+    throw new BadRequestException('No se pudo crear la sucursal.');
+  }
+
+  // Actualiza una sucursal tolerando columnas aún no migradas (42703).
+  private async actualizarSucursalTolerante(id: number, patch: any): Promise<any> {
+    const client = this.supabase.getClient();
+    const intento: any = { ...patch };
+    for (let i = 0; i < 6; i++) {
+      const { data, error } = await client
+        .from('stock_sucursales')
+        .update(intento)
+        .eq('id', id)
+        .select()
+        .single();
+      if (!error) return data;
+      const msg = [error.message, (error as any).code].filter(Boolean).join(' ').toLowerCase();
+      const col = /column "([^"]+)"/.exec(error.message || '')?.[1];
+      if (col && col in intento && (msg.includes('42703') || msg.includes('does not exist'))) {
+        delete intento[col];
+        continue;
+      }
+      throw new BadRequestException(error.message);
+    }
+    throw new BadRequestException('No se pudo actualizar la sucursal.');
+  }
+
+  // Garantiza que el cliente tenga al menos una sucursal. Si no tiene ninguna,
+  // crea "Casa Matriz" por defecto (habilitada en el portal) tomando la
+  // dirección y el contacto generales del cliente CRM. Devuelve la lista
+  // completa de sucursales del RUT (existentes o la recién creada).
+  private async asegurarCasaMatriz(rutN: string): Promise<any[]> {
+    const client = this.supabase.getClient();
+    const { data: existentes, error } = await client
       .from('stock_sucursales')
-      .insert({
-        rut: rutN,
-        nombre,
-        direccion: String(body?.direccion || '').trim().slice(0, 300) || null,
-        comuna: String(body?.comuna || '').trim().slice(0, 120) || null,
-      })
+      .select('*')
+      .eq('rut', rutN)
+      .order('created_at', { ascending: true });
+    if (error) throw new BadRequestException(error.message);
+    if (existentes && existentes.length > 0) return existentes;
+
+    const cli = await this.datosGeneralesCliente(rutN);
+    const creada = await this.insertarSucursalTolerante({
+      rut: rutN,
+      nombre: 'Casa Matriz',
+      direccion: cli?.direccion || null,
+      comuna: cli?.comuna || null,
+      contacto: cli?.contacto || null,
+      telefono: cli?.telefono || null,
+      email: cli?.email || null,
+      habilitada_portal: true,
+    });
+    return [creada];
+  }
+
+  // Habilita/deshabilita una sucursal para el portal (solo admin). No la borra,
+  // solo controla su visibilidad en el portal del cliente.
+  async habilitarSucursalPortal(rut: string, id: number, habilitada: boolean) {
+    const rutN = normalizarRut(rut);
+    const client = this.supabase.getClient();
+    const { data: suc } = await client
+      .from('stock_sucursales')
+      .select('id, rut')
+      .eq('id', id)
+      .maybeSingle();
+    if (!suc) throw new NotFoundException('Sucursal no encontrada.');
+    if (rutN && normalizarRut(suc.rut) !== rutN) throw new ForbiddenException('No autorizado.');
+    const { data, error } = await client
+      .from('stock_sucursales')
+      .update({ habilitada_portal: !!habilitada })
+      .eq('id', id)
       .select()
       .single();
     if (error) throw new BadRequestException(error.message);
     return data;
   }
 
+  async crearSucursal(
+    rut: string,
+    body: {
+      nombre?: string; direccion?: string; comuna?: string;
+      contacto?: string; telefono?: string; email?: string;
+    },
+  ) {
+    const rutN = normalizarRut(rut);
+    if (!rutN) throw new UnauthorizedException('Sesión inválida.');
+    const nombre = String(body?.nombre || '').trim().slice(0, 160);
+    if (!nombre) throw new BadRequestException('El nombre de la sucursal es obligatorio.');
+    return await this.insertarSucursalTolerante({
+      rut: rutN,
+      nombre,
+      direccion: String(body?.direccion || '').trim().slice(0, 300) || null,
+      comuna: String(body?.comuna || '').trim().slice(0, 120) || null,
+      contacto: String(body?.contacto || '').trim().slice(0, 160) || null,
+      telefono: String(body?.telefono || '').trim().slice(0, 60) || null,
+      email: String(body?.email || '').trim().slice(0, 160) || null,
+    });
+  }
+
   async actualizarSucursal(
     rut: string,
     id: number,
-    body: { nombre?: string; direccion?: string; comuna?: string },
+    body: {
+      nombre?: string; direccion?: string; comuna?: string;
+      contacto?: string; telefono?: string; email?: string;
+    },
   ) {
     const rutN = normalizarRut(rut);
     const client = this.supabase.getClient();
@@ -866,14 +996,10 @@ export class StockClientesService {
     }
     if (body?.direccion !== undefined) patch.direccion = String(body.direccion || '').trim().slice(0, 300) || null;
     if (body?.comuna !== undefined) patch.comuna = String(body.comuna || '').trim().slice(0, 120) || null;
-    const { data, error } = await client
-      .from('stock_sucursales')
-      .update(patch)
-      .eq('id', id)
-      .select()
-      .single();
-    if (error) throw new BadRequestException(error.message);
-    return data;
+    if (body?.contacto !== undefined) patch.contacto = String(body.contacto || '').trim().slice(0, 160) || null;
+    if (body?.telefono !== undefined) patch.telefono = String(body.telefono || '').trim().slice(0, 60) || null;
+    if (body?.email !== undefined) patch.email = String(body.email || '').trim().slice(0, 160) || null;
+    return await this.actualizarSucursalTolerante(id, patch);
   }
 
   async eliminarSucursal(rut: string, id: number) {
@@ -895,10 +1021,13 @@ export class StockClientesService {
     return { ok: true };
   }
 
-  // Sucursales por RUT para el dashboard admin (incluye inactivas).
+  // Sucursales por RUT para el dashboard admin (incluye inactivas). Garantiza
+  // la Casa Matriz por defecto (con dirección/contacto del cliente) si el
+  // cliente aún no tiene ninguna sucursal registrada.
   async listarSucursalesPorRut(rut: string) {
     const rutN = normalizarRut(rut);
     if (!rutN) return [];
+    await this.asegurarCasaMatriz(rutN);
     const { data, error } = await this.supabase
       .getClient()
       .from('stock_sucursales')

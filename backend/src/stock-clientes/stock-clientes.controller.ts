@@ -309,6 +309,16 @@ export class StockClientesController {
     return await this.stockClientes.eliminarSucursal(rut, id);
   }
 
+  // Habilita/deshabilita una sucursal para el portal del cliente.
+  @UseGuards(AuthGuard)
+  @Put('admin/sucursales/:id/habilitar')
+  async adminHabilitarSucursal(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { rut: string; habilitada: boolean },
+  ) {
+    return await this.stockClientes.habilitarSucursalPortal(body?.rut, id, !!body?.habilitada);
+  }
+
   // Ubicaciones de un cliente (para mostrarlas en el monitoreo admin).
   @UseGuards(AuthGuard)
   @Get('ubicaciones-por-rut')

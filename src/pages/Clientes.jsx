@@ -100,7 +100,11 @@ export default function Clientes() {
     const matchRut = c.rut.toLowerCase().includes(filtroRut.toLowerCase());
     const matchNombre = c.nombre.toLowerCase().includes(filtroNombre.toLowerCase());
     const matchRegion = filtroRegion ? c.region === filtroRegion : true;
-    const matchTipo = filtroTipo ? (c.tipo_cliente || "") === filtroTipo : true;
+    const matchTipo = !filtroTipo
+      ? true
+      : filtroTipo === "__sin_designar__"
+        ? !String(c.tipo_cliente || "").trim() // sin tipo asignado
+        : (c.tipo_cliente || "") === filtroTipo;
     return matchRut && matchNombre && matchRegion && matchTipo;
   });
 
@@ -192,6 +196,7 @@ export default function Clientes() {
             {tiposUnicos.map((t) => (
               <option key={t} value={t}>{t}</option>
             ))}
+            <option value="__sin_designar__">Sin designar</option>
           </select>
         </div>
       </div>

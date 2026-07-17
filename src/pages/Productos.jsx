@@ -572,6 +572,7 @@ export default function Productos() {
         const costo = faltaCosto ? costoPorId[p.id] ?? 0 : Number(p.costo ?? 0);
         const fila = {
           SKU: p.sku || "",
+          "SKU Marca": p.sku_marca || "",
           Producto: p.nombre || "",
           Marca: p.marca || "",
           Categoría: p.categoria || "",
@@ -740,6 +741,9 @@ export default function Productos() {
                 <th style={{cursor:"pointer", userSelect:"none"}} onClick={() => toggleSort("sku")}>
                   SKU{sortIndicator("sku")}
                 </th>
+                <th style={{cursor:"pointer", userSelect:"none"}} onClick={() => toggleSort("sku_marca")}>
+                  SKU Marca{sortIndicator("sku_marca")}
+                </th>
                 <th style={{cursor:"pointer", userSelect:"none"}} onClick={() => toggleSort("nombre")}>
                   Producto{sortIndicator("nombre")}
                 </th>
@@ -800,6 +804,7 @@ export default function Productos() {
                 return (
                   <tr key={p.id}>
                     <td style={{whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>{p.sku}</td>
+                    <td style={{whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>{p.sku_marca || "—"}</td>
                     <td style={{whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}} title={p.nombre}>
                       {p.nombre}
                     </td>

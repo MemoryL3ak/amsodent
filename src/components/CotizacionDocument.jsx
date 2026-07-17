@@ -341,6 +341,11 @@ export function CotizacionDocument({ datos, items, logoSrc, marcaAguaSrc }) {
                   <InfoLine label="Comuna:" value={datos.comuna} />
                   <InfoLine label="Cond. Venta:" value={datos.condicion_venta} />
                 </View>
+                {datos.sucursal ? (
+                  <View style={s.infoRow}>
+                    <InfoLine label="Sucursal:" value={datos.sucursal} />
+                  </View>
+                ) : null}
 
                 {/* Datos del Vendedor */}
                 <Text style={s.sectionTitle}>Datos de Vendedor</Text>

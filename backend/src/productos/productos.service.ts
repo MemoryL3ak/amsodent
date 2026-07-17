@@ -36,6 +36,7 @@ export class ProductosService {
     const sel = [
       'id',
       'sku',
+      'sku_marca',
       'nombre',
       'marca',
       'categoria',
@@ -59,6 +60,7 @@ export class ProductosService {
     return (data || []).map((p: any) => ({
       id: p.id,
       sku: p.sku,
+      sku_marca: p.sku_marca,
       // `descripcion` sirve de respaldo cuando no hay nombre (igual que el front).
       nombre: (p.nombre?.trim() || p.descripcion?.trim() || ''),
       marca: p.marca,

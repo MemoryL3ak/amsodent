@@ -448,6 +448,7 @@ export default function DetalleCliente() {
     { id: "documentos", label: `Documentos (${documentos.length})` },
     { id: "actividades", label: `Actividades (${actividades.length})` },
     { id: "productos", label: "Productos" },
+    { id: "sucursales", label: "Sucursales" },
   ];
 
   return (
@@ -839,6 +840,20 @@ export default function DetalleCliente() {
               )}
             </Seccion>
           )}
+
+          {tab === "sucursales" && (
+            cliente.rut ? (
+              <SeccionSucursales
+                rut={cliente.rut}
+                onOk={(m) => setToast({ type: "success", message: m })}
+                onError={(m) => setToast({ type: "error", message: m })}
+              />
+            ) : (
+              <Seccion titulo="Sucursales — Portal de Stock">
+                <Vacio texto="Este cliente no tiene RUT registrado. Agrégalo para gestionar sus sucursales." />
+              </Seccion>
+            )
+          )}
         </div>
 
         {/* ─── DERECHA ─── */}
@@ -944,6 +959,119 @@ function Seccion({ titulo, accion, children, pad0 }) {
       </div>
       <div className="surface-body" style={pad0 ? { padding: 0 } : undefined}>{children}</div>
     </div>
+  );
+}
+
+// Registro de sucursales del cliente (Portal de Stock). Aquí se registran TODAS
+// las sucursales; quedan deshabilitadas hasta que el admin las habilite en
+// «Acceso al Portal del Cliente» para que aparezcan en el portal.
+function SeccionSucursales({ rut, onOk, onError }) {
+  const [sucursales, setSucursales] = useState([]);
+  const FORM_VACIO = { nombre: "", direccion: "", comuna: "", contacto: "", telefono: "", email: "" };
+  const [form, setForm] = useState(FORM_VACIO);
+  const [editId, setEditId] = useState(null);
+  const [guardando, setGuardando] = useState(false);
+
+  async function cargar() {
+    try {
+      const data = await api.get(`/stock-clientes/sucursales-por-rut?rut=${encodeURIComponent(rut)}`);
+      setSucursales(Array.isArray(data) ? data : []);
+    } catch { /* silencioso */ }
+  }
+  useEffect(() => { if (rut) cargar(); /* eslint-disable-next-line */ }, [rut]);
+
+  const activas = sucursales.filter((s) => s.activo !== false);
+
+  async function guardar(e) {
+    e?.preventDefault?.();
+    const nombre = form.nombre.trim();
+    if (!nombre) { onError?.("Ingresa el nombre de la sucursal."); return; }
+    setGuardando(true);
+    try {
+      if (editId) {
+        await api.put(`/stock-clientes/admin/sucursales/${editId}`, { rut, ...form, nombre });
+        onOk?.("Sucursal actualizada.");
+      } else {
+        await api.post(`/stock-clientes/admin/sucursales`, { rut, ...form, nombre });
+        onOk?.("Sucursal registrada. Habilítala en «Acceso al Portal del Cliente» para que aparezca en el portal.");
+      }
+      setForm(FORM_VACIO);
+      setEditId(null);
+      await cargar();
+    } catch (err) {
+      onError?.(err?.message || "No se pudo guardar la sucursal.");
+    } finally {
+      setGuardando(false);
+    }
+  }
+
+  async function eliminar(s) {
+    if (activas.length <= 1) { onError?.("Debe existir al menos una sucursal."); return; }
+    try {
+      await api.delete(`/stock-clientes/admin/sucursales/${s.id}?rut=${encodeURIComponent(rut)}`);
+      if (editId === s.id) { setEditId(null); setForm(FORM_VACIO); }
+      onOk?.("Sucursal eliminada.");
+      await cargar();
+    } catch (err) {
+      onError?.(err?.message || "No se pudo eliminar la sucursal.");
+    }
+  }
+
+  return (
+    <Seccion titulo="Sucursales — Portal de Stock">
+      <div style={{ fontSize: 12.5, color: "var(--text-muted)", marginBottom: 12 }}>
+        Todo cliente parte con una <strong>Casa Matriz</strong> por defecto (con la dirección y el contacto generales). Registra aquí las demás sucursales: quedan <strong>deshabilitadas</strong> hasta que las habilites en <strong>«Acceso al Portal del Cliente»</strong> para usarlas en el portal.
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 }}>
+        {activas.length === 0 ? (
+          <div style={{ fontSize: 12.5, color: "var(--text-muted)" }}>Sin sucursales registradas.</div>
+        ) : activas.map((s) => (
+          <div key={s.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "8px 12px", border: "1px solid var(--border)", borderRadius: 10 }}>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 13.5, fontWeight: 600, color: "var(--text)" }}>{s.nombre}</span>
+                {s.habilitada_portal
+                  ? <span style={{ ...badge, background: "#dcfce7", color: "#15803d", fontSize: 10 }}>Habilitada en portal</span>
+                  : <span style={{ ...badge, background: "#fef9c3", color: "#a16207", fontSize: 10 }}>No habilitada</span>}
+              </div>
+              {(s.direccion || s.comuna) && (
+                <div style={{ fontSize: 12, color: "var(--text-soft)" }}>{[s.direccion, s.comuna].filter(Boolean).join(", ")}</div>
+              )}
+              {(s.contacto || s.telefono || s.email) && (
+                <div style={{ fontSize: 12, color: "var(--text-soft)" }}>{[s.contacto, s.telefono, s.email].filter(Boolean).join(" · ")}</div>
+              )}
+            </div>
+            <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+              <button type="button" className="btn btn-ghost btn-sm" style={{ padding: "3px 8px" }} onClick={() => { setEditId(s.id); setForm({ nombre: s.nombre || "", direccion: s.direccion || "", comuna: s.comuna || "", contacto: s.contacto || "", telefono: s.telefono || "", email: s.email || "" }); }}><Pencil size={12} /></button>
+              <button type="button" className="btn btn-ghost btn-sm" style={{ padding: "3px 8px", color: "var(--danger)" }} onClick={() => eliminar(s)}><Trash2 size={12} /></button>
+            </div>
+          </div>
+        ))}
+      </div>
+      <form onSubmit={guardar} style={{ borderTop: "1px solid var(--border)", paddingTop: 14, display: "flex", flexDirection: "column", gap: 8 }}>
+        <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px", color: "var(--text-muted)" }}>
+          {editId ? "Editar sucursal" : "Nueva sucursal"}
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+          <input className="input" value={form.nombre} onChange={(e) => setForm((f) => ({ ...f, nombre: e.target.value }))} placeholder="Nombre (ej: Sucursal Norte)" />
+          <input className="input" value={form.direccion} onChange={(e) => setForm((f) => ({ ...f, direccion: e.target.value }))} placeholder="Dirección" />
+          <input className="input" value={form.comuna} onChange={(e) => setForm((f) => ({ ...f, comuna: e.target.value }))} placeholder="Comuna" />
+          <input className="input" value={form.contacto} onChange={(e) => setForm((f) => ({ ...f, contacto: e.target.value }))} placeholder="Contacto" />
+          <input className="input" value={form.telefono} onChange={(e) => setForm((f) => ({ ...f, telefono: e.target.value }))} placeholder="Teléfono" />
+          <input className="input" value={form.email} onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} placeholder="Email" />
+        </div>
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+          {editId && (
+            <button type="button" className="btn btn-ghost btn-sm" onClick={() => { setEditId(null); setForm(FORM_VACIO); }}>
+              Cancelar
+            </button>
+          )}
+          <button type="submit" className="btn btn-primary btn-sm" disabled={guardando} style={{ whiteSpace: "nowrap" }}>
+            {guardando ? "…" : editId ? "Guardar cambios" : "Agregar sucursal"}
+          </button>
+        </div>
+      </form>
+    </Seccion>
   );
 }
 

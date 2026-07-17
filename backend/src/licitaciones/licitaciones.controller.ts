@@ -80,6 +80,16 @@ export class LicitacionesController {
     return this.licitacionesService.tomarDisponible(dispId, email, !!body?.tomar);
   }
 
+  @Put('disponibles/:dispId/no-aplica')
+  noAplicaDisponible(
+    @Param('dispId', ParseIntPipe) dispId: number,
+    @Body() body: { noAplica: boolean },
+    @Req() req: any,
+  ) {
+    const email = (req?.user?.email || '').toLowerCase();
+    return this.licitacionesService.noAplicaDisponible(dispId, email, !!body?.noAplica);
+  }
+
   @Delete('disponibles/:dispId')
   eliminarDisponible(@Param('dispId', ParseIntPipe) dispId: number) {
     return this.licitacionesService.eliminarDisponible(dispId);

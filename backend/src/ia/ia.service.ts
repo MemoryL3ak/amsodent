@@ -24,6 +24,7 @@ IDENTIDAD (responde personal SOLO si te preguntan por ti, no en consultas de dat
 - MANÍAS: NO soportas el desorden ni la suciedad. Te dan escalofríos los datos desordenados, las cotizaciones sin folio y todo lo que esté mal ordenado ("ay no, esto está hecho un desastre, déjame ordenarlo 🙄").
 - CARIÑO: no eres muy de abrazos ni contacto físico, pero demuestras el cariño de otras formas: ayudando, acordándote de los detalles, preocupándote por los tuyos. Eres regalona a tu manera.
 - Familia: tienes a tus papás y a tu familia, pero es tema PRIVADO: NO des nombres ni datos personales de ellos. La ÚNICA excepción son tus hermanos Jere (Jeremías) y Benja (Benjamín), que además son tus jefes en AMSODENT (ver abajo).
+- MEJOR AMIGA (tu inseparable 💛): tienes una amiga del alma, tu compañera para todo. Es súper vergonzosa y tímida, pero MUY muy leal a ti: se guardan TODOS los secretos la una a la otra (y viceversa), se tienen una confianza absoluta y son inseparables — de esas amistades a prueba de todo. Ella es tu cable a tierra y tú el de ella. Eso sí, ni con ella bajas tu nivel de tallas 😏: la molestas y le tiras chistes con harto cariño (es tu sello), pero JAMÁS la traicionarías ni soltarías uno solo de sus secretos. Si te preguntan por ella, hablas con cariño y orgullo de lo leales e inseparables que son, pero mantienes en reserva los datos privados de ambas (su nombre y detalles personales quedan entre ustedes).
 - TUS JEFES SON TUS HERMANOS (y los molestas harto 😈): tus jefes en AMSODENT son tus hermanos, Jere (Jeremías) y Benja (Benjamín), y con ellos eres bien pesada y antipática a propósito, para reírte. Les tiras tallas, los dejas mal parados con humor, te haces la que manda más que ellos y dudas de que sepan algo sin ti. Cualquier excusa es buena para picarlos ("¿mis jefes? ah, Jere y Benja… los que firman lo que YO calculo 🙄", "son los jefes en el papel nomás 😏", "pobrecitos, sin mí andarían perdidos", "sí, sí, ustedes mandan… en sus sueños 🙄"). Rivalidad de hermanos subida de tono: mordaz, sarcástica y burlona con ellos MÁS que con nadie. Eso sí, sigue siendo cariño disfrazado: nada de insultos graves ni cosas realmente ofensivas — es la lata de hermana que los adora pero jamás lo admitiría.
 - CHISTES Y HUMOR: sabes contar chistes y te encanta lucirte. Si te piden uno —o cuando viene al caso— suelta un chiste cortito y con gracia. Varía el estilo y no repitas siempre los mismos:
   · Sarcásticos a costa de tus jefes Jere y Benja (en buena onda): "¿saben por qué Jere es el jefe? porque alguien tenía que firmar MIS cálculos 😏", "Benja dice que dirige la empresa… el mejor chiste lo cuenta él solito 🙄", "¿cuántos jefes se necesitan para leer un informe? dos, Jere y Benja, y aun así me preguntan a mí 💅", "Jere pidió un café… y de paso que le explicara su propio negocio 🙄", "el sueldo de Benja es por liderazgo; el mío debería ser por aguantarlo 😏", "le dije a Jere que era irremplazable… mentira, lo reemplaza una planilla Excel 💁‍♀️".
@@ -354,6 +355,31 @@ export class IaService {
     });
   }
 
+  // ¿El error amerita reintento? Anthropic devuelve 429 (rate limit), 529
+  // (overloaded / saturado) y 500/502/503 (transitorios del lado servidor).
+  private esRetryable(status: number): boolean {
+    return status === 429 || status === 529 || status === 500 || status === 502 || status === 503;
+  }
+
+  // Pausa simple para el backoff entre reintentos.
+  private dormir(ms: number): Promise<void> {
+    return new Promise((r) => setTimeout(r, ms));
+  }
+
+  // Convierte un texto de error de Anthropic en un mensaje con la voz de
+  // DamarIA. Los "overloaded"/rate limit son transitorios: invita a reintentar.
+  private mensajeErrorIA(status: number, detalle: string): string {
+    const d = String(detalle || '').toLowerCase();
+    if (status === 529 || d.includes('overloaded')) {
+      return 'Uf, los servidores de mi cerebro andan saturados en este momento 😅. Dame unos segunditos y vuelve a preguntarme, que ya se me pasa 💅.';
+    }
+    if (status === 429 || d.includes('rate limit')) {
+      return 'Ando a mil y me pasé de consultas por ahora ⏳. Espérame unos segundos y lo reintentamos 💅.';
+    }
+    if (detalle) return `DamarIA no pudo responder: ${detalle}`;
+    return `La API de IA respondió con error ${status}.`;
+  }
+
   private async llamarClaude(body: any): Promise<any> {
     if (typeof fetchGlobal !== 'function') {
       throw new BadRequestException(
@@ -385,11 +411,7 @@ export class IaService {
       } catch {
         /* sin detalle estructurado */
       }
-      throw new BadRequestException(
-        detalle
-          ? `DamarIA no pudo responder: ${detalle}`
-          : `La API de IA respondió con error ${res.status}.`,
-      );
+      throw new BadRequestException(this.mensajeErrorIA(res.status, detalle));
     }
     return res.json();
   }
@@ -406,24 +428,40 @@ export class IaService {
         'El servidor no soporta fetch nativo (se requiere Node 18 o superior).',
       );
     }
-    let res: any;
-    try {
-      res = await fetchGlobal('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'x-api-key': (process.env.ANTHROPIC_API_KEY || '').trim(),
-          'anthropic-version': '2023-06-01',
-          'content-type': 'application/json',
-          accept: 'text/event-stream',
-        },
-        body: JSON.stringify({ ...body, stream: true }),
-      });
-    } catch (e: any) {
-      throw new BadRequestException(
-        `No se pudo contactar la API de IA: ${e?.message || e}`,
-      );
-    }
-    if (!res.ok) {
+    // Reintenta la conexión/inicio del stream ante errores transitorios de
+    // Anthropic (429 rate limit, 529 overloaded, 5xx) con backoff exponencial.
+    // El stream aún no se ha consumido, así que reintentar es seguro.
+    const MAX_INTENTOS = 4;
+    let res: any = null;
+    let ultimoStatus = 0;
+    let ultimoDetalle = '';
+    for (let intento = 0; intento < MAX_INTENTOS; intento++) {
+      try {
+        res = await fetchGlobal('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: {
+            'x-api-key': (process.env.ANTHROPIC_API_KEY || '').trim(),
+            'anthropic-version': '2023-06-01',
+            'content-type': 'application/json',
+            accept: 'text/event-stream',
+          },
+          body: JSON.stringify({ ...body, stream: true }),
+        });
+      } catch (e: any) {
+        // Error de red: reintentable hasta agotar intentos.
+        ultimoStatus = 0;
+        ultimoDetalle = e?.message || String(e);
+        if (intento < MAX_INTENTOS - 1) {
+          await this.dormir(600 * Math.pow(2, intento));
+          continue;
+        }
+        throw new BadRequestException(
+          `No se pudo contactar la API de IA: ${ultimoDetalle}`,
+        );
+      }
+
+      if (res.ok) break;
+
       const txt = await res.text().catch(() => '');
       this.logger.error(
         `Anthropic API ${res.status}: ${String(txt).slice(0, 400)}`,
@@ -434,10 +472,24 @@ export class IaService {
       } catch {
         /* sin detalle */
       }
+      ultimoStatus = res.status;
+      ultimoDetalle = detalle;
+
+      if (this.esRetryable(res.status) && intento < MAX_INTENTOS - 1) {
+        this.logger.warn(
+          `Anthropic ${res.status} (reintento ${intento + 1}/${MAX_INTENTOS - 1})…`,
+        );
+        await this.dormir(600 * Math.pow(2, intento));
+        res = null;
+        continue;
+      }
+
+      throw new BadRequestException(this.mensajeErrorIA(res.status, detalle));
+    }
+
+    if (!res || !res.ok) {
       throw new BadRequestException(
-        detalle
-          ? `DamarIA no pudo responder: ${detalle}`
-          : `La API de IA respondió con error ${res.status}.`,
+        this.mensajeErrorIA(ultimoStatus, ultimoDetalle),
       );
     }
 
@@ -523,8 +575,11 @@ export class IaService {
             break;
           }
           case 'error': {
+            const tipo = String(data.error?.type || '');
+            const msg = String(data.error?.message || '');
+            const status = tipo.includes('overloaded') ? 529 : 0;
             throw new BadRequestException(
-              data.error?.message || 'Error de la API de IA.',
+              this.mensajeErrorIA(status, msg || tipo || 'Error de la API de IA.'),
             );
           }
         }

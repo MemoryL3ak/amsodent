@@ -151,6 +151,7 @@ export default function EditarProducto() {
     estado: "",
     nombre: "",
     marca: "",
+    sku_marca: "",
     categoria: "",
     formato: "",
     imagen_url: "",
@@ -334,6 +335,7 @@ export default function EditarProducto() {
         estado: estadoDb,
         nombre: data.nombre ?? "",
         marca: data.marca ?? "",
+        sku_marca: data.sku_marca ?? "",
         categoria: data.categoria ?? "",
         formato: data.formato ?? "",
         imagen_url: data.imagen_url ?? "",
@@ -609,6 +611,7 @@ export default function EditarProducto() {
       estado: estadoFinal,
       nombre: producto.nombre,
       marca: producto.marca,
+      sku_marca: (producto.sku_marca || "").trim() || null,
       categoria: producto.categoria,
       formato: producto.formato,
       imagen_url: imagenUrl || null,
@@ -690,6 +693,7 @@ export default function EditarProducto() {
       sku: (data.sku ?? "").toString().trim(),
       nombre: data.nombre ?? "",
       marca: data.marca ?? "",
+      sku_marca: data.sku_marca ?? "",
       categoria: data.categoria ?? "",
       formato: data.formato ?? "",
       imagen_url: data.imagen_url ?? "",
@@ -901,6 +905,14 @@ try {
                   <input className="input" value={producto.marca}
                     disabled={esVentasNoTransitorio}
                     onChange={(e) => setProducto((prev) => ({ ...prev, marca: e.target.value }))} />
+                </div>
+
+                <div>
+                  <label className="label">SKU Marca</label>
+                  <input className="input" value={producto.sku_marca}
+                    disabled={esVentasNoTransitorio}
+                    placeholder="Código del fabricante (opcional)"
+                    onChange={(e) => setProducto((prev) => ({ ...prev, sku_marca: e.target.value }))} />
                 </div>
 
                 <div>

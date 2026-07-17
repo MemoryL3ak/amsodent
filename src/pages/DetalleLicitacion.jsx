@@ -756,6 +756,7 @@ export default function EditarLicitacion() {
       departamento: departamento || "",
       municipalidad: municipalidad || "",
       direccion: direccion || "",
+      sucursal: sucursal || "",
       contacto: contacto || "",
       email: email || "",
       telefono: telefono || "",
@@ -921,10 +922,64 @@ export default function EditarLicitacion() {
   const [region, setRegion] = useState("");
   const [comuna, setComuna] = useState("");
   const [direccion, setDireccion] = useState("");
+  const [sucursales, setSucursales] = useState([]);
+  const [sucursal, setSucursal] = useState("");
+  // Datos generales del cliente: respaldo cuando una sucursal no trae ese dato.
+  const [clienteBase, setClienteBase] = useState({});
   const [contacto, setContacto] = useState("");
   const [email, setEmail] = useState("");
   const [telefono, setTelefono] = useState("");
   const [condVenta, setCondVenta] = useState("");
+
+  // Puebla los datos de despacho con los de una sucursal. Determinista: setea
+  // TODOS los campos, usando el dato de la sucursal o, si no lo tiene, el dato
+  // general del cliente. Así al alternar entre sucursales los campos siempre
+  // reflejan la sucursal elegida.
+  function aplicarDatosSucursal(s) {
+    setDireccion((s?.direccion) || clienteBase.direccion || "");
+    setComuna((s?.comuna) || clienteBase.comuna || "");
+    setContacto((s?.contacto) || clienteBase.contacto || "");
+    setTelefono((s?.telefono) || clienteBase.telefono || "");
+    setEmail((s?.email) || clienteBase.email || "");
+  }
+
+  // Sucursales del cliente (por RUT). Se respeta la sucursal ya guardada en la
+  // cotización; si no hay ninguna, queda "Casa Matriz" por defecto (solo la
+  // etiqueta, sin pisar la dirección ya guardada de la cotización).
+  useEffect(() => {
+    const rut = (rutEntidad || "").trim();
+    if (!rut) { setSucursales([]); return; }
+    let activo = true;
+    (async () => {
+      try {
+        const [sucs, cli] = await Promise.all([
+          api.get(`/stock-clientes/sucursales-por-rut?rut=${encodeURIComponent(rut)}`).catch(() => []),
+          api.get(`/clientes?rut=${encodeURIComponent(rut)}`).catch(() => null),
+        ]);
+        if (!activo) return;
+        const lista = Array.isArray(sucs) ? sucs.filter((x) => x.activo !== false) : [];
+        setSucursales(lista);
+        if (cli) setClienteBase({
+          direccion: cli.direccion || "", comuna: cli.comuna || "",
+          contacto: cli.contacto || "", telefono: cli.telefono || "", email: cli.email || "",
+        });
+        if (!sucursal && lista.length) {
+          const cm = lista.find((s) => (s.nombre || "").trim().toLowerCase() === "casa matriz") || lista[0];
+          setSucursal(cm.nombre);
+        }
+      } catch {
+        if (activo) setSucursales([]);
+      }
+    })();
+    return () => { activo = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rutEntidad]);
+
+  // Elige una sucursal manualmente: guarda su nombre y trae sus datos de despacho.
+  function elegirSucursal(nombre) {
+    setSucursal(nombre || "");
+    aplicarDatosSucursal(sucursales.find((x) => x.nombre === nombre));
+  }
 
   /* ===============================
      FLETE
@@ -1040,6 +1095,13 @@ export default function EditarLicitacion() {
       setContacto(data.contacto || "");
       setEmail(data.email || "");
       setTelefono(data.telefono || "");
+      setClienteBase({
+        direccion: data.direccion || "",
+        comuna: data.comuna || "",
+        contacto: data.contacto || "",
+        telefono: data.telefono || "",
+        email: data.email || "",
+      });
       setCondVenta(data.condiciones_venta || "");
       const tc = (data.tipo_cliente || "").toString().trim();
       if (tc) setTipoCliente(tc);
@@ -1695,6 +1757,7 @@ export default function EditarLicitacion() {
       setRegion(data.region || "");
       setComuna(data.comuna || "");
       setDireccion(data.direccion || "");
+      setSucursal(data.sucursal || "");
       setContacto(data.contacto || "");
       setEmail(data.email || "");
       setTelefono(data.telefono || "");
@@ -1759,6 +1822,7 @@ export default function EditarLicitacion() {
       region,
       comuna,
       direccion,
+      sucursal,
       contacto,
       email,
       telefono,
@@ -1792,6 +1856,7 @@ export default function EditarLicitacion() {
     region,
     comuna,
     direccion,
+    sucursal,
     contacto,
     email,
     telefono,
@@ -1897,6 +1962,7 @@ export default function EditarLicitacion() {
     region,
     comuna,
     direccion,
+    sucursal,
     contacto,
     email,
     telefono,
@@ -1957,6 +2023,7 @@ export default function EditarLicitacion() {
     setRegion(lic.region || "");
     setComuna(lic.comuna || "");
     setDireccion(lic.direccion || "");
+    setSucursal(lic.sucursal || "");
     setContacto(lic.contacto || "");
     setEmail(lic.email || "");
     setTelefono(lic.telefono || "");
@@ -2146,6 +2213,7 @@ export default function EditarLicitacion() {
       setRegion(lic.region || "");
       setComuna(lic.comuna || "");
       setDireccion(lic.direccion || "");
+      setSucursal(lic.sucursal || "");
       setContacto(lic.contacto || "");
       setEmail(lic.email || "");
       setTelefono(lic.telefono || "");
@@ -2618,6 +2686,7 @@ export default function EditarLicitacion() {
         nombre_entidad: nombreEntidad,
         rut_entidad: rutEntidad,
         direccion,
+        sucursal,
         comuna,
         contacto,
         email,
@@ -2811,6 +2880,7 @@ export default function EditarLicitacion() {
           departamento,
           municipalidad,
           direccion,
+          sucursal: sucursal || null,
           tipo_compra: tipoCompra,
           region,
           comuna,
@@ -3460,6 +3530,34 @@ export default function EditarLicitacion() {
               value={opcionesComuna(region).find((o) => o.value === comuna) || null}
               onChange={(op) => setComuna(op ? op.value : "")}
             />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Sucursal
+            </label>
+            <Select
+              options={sucursales.map((s) => ({
+                value: s.nombre,
+                label: s.comuna ? `${s.nombre} — ${s.comuna}` : s.nombre,
+              }))}
+              styles={customStyles}
+              placeholder={
+                !rutEntidad ? "Sin cliente"
+                  : sucursales.length ? "Seleccione sucursal…"
+                  : "Sin sucursales registradas"
+              }
+              menuPortalTarget={document.body}
+              isSearchable
+              isClearable
+              filterOption={filtrarPorTerminos}
+              isDisabled={!esEditable || !rutEntidad || sucursales.length === 0}
+              value={sucursal ? { value: sucursal, label: sucursal } : null}
+              onChange={(op) => elegirSucursal(op ? op.value : "")}
+            />
+            <p className="text-xs text-gray-500 mt-1">
+              Al elegir una sucursal se completa la dirección de despacho.
+            </p>
           </div>
 
           <div>

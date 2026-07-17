@@ -755,6 +755,12 @@ export default function CrearLicitacion() {
   const [departamento, setDepartamento] = useState("");
   const [municipalidad, setMunicipalidad] = useState("");
   const [direccion, setDireccion] = useState("");
+  // Sucursales del cliente (por RUT) + la seleccionada para esta cotización.
+  const [sucursales, setSucursales] = useState([]);
+  const [sucursal, setSucursal] = useState(""); // nombre de la sucursal elegida
+  // Datos generales del cliente: respaldo cuando una sucursal no trae ese dato
+  // (ej. Casa Matriz sin dirección propia usa la dirección general del cliente).
+  const [clienteBase, setClienteBase] = useState({});
   const [contacto, setContacto] = useState("");
   const [email, setEmail] = useState("");
   const [telefono, setTelefono] = useState("");
@@ -820,6 +826,13 @@ export default function CrearLicitacion() {
     setContacto(data.contacto || "");
     setEmail(data.email || "");
     setTelefono(data.telefono || "");
+    setClienteBase({
+      direccion: data.direccion || "",
+      comuna: data.comuna || "",
+      contacto: data.contacto || "",
+      telefono: data.telefono || "",
+      email: data.email || "",
+    });
     setCondVenta(data.condiciones_venta || "");
     const tc = (data.tipo_cliente || "").toString().trim();
     if (tc) {
@@ -846,6 +859,53 @@ export default function CrearLicitacion() {
       if (Array.isArray(data)) setClientesLista(data);
     })();
   }, []);
+
+  // Puebla los datos de despacho con los de una sucursal. Determinista: setea
+  // TODOS los campos, usando el dato de la sucursal o, si no lo tiene, el dato
+  // general del cliente. Así al alternar entre sucursales los campos siempre
+  // reflejan la sucursal elegida (Casa Matriz sin dirección → dirección del cliente).
+  function aplicarDatosSucursal(s) {
+    setDireccion((s?.direccion) || clienteBase.direccion || "");
+    setComuna((s?.comuna) || clienteBase.comuna || "");
+    setContacto((s?.contacto) || clienteBase.contacto || "");
+    setTelefono((s?.telefono) || clienteBase.telefono || "");
+    setEmail((s?.email) || clienteBase.email || "");
+  }
+
+  // Carga las sucursales del cliente (por RUT). Al elegir/cambiar de cliente, por
+  // defecto queda seleccionada "Casa Matriz" (o la primera) y se traen sus datos.
+  // Si no hay RUT, se limpia todo.
+  useEffect(() => {
+    const rut = (rutEntidad || "").trim();
+    if (!rut) { setSucursales([]); setSucursal(""); return; }
+    let activo = true;
+    (async () => {
+      try {
+        const data = await api.get(`/stock-clientes/sucursales-por-rut?rut=${encodeURIComponent(rut)}`);
+        const lista = Array.isArray(data) ? data.filter((s) => s.activo !== false) : [];
+        if (!activo) return;
+        setSucursales(lista);
+        // Por defecto Casa Matriz (o la primera). Si la sucursal ya elegida sigue
+        // siendo válida para este cliente, se respeta.
+        const vigente = sucursal && lista.some((s) => s.nombre === sucursal);
+        if (!vigente && lista.length) {
+          const cm = lista.find((s) => (s.nombre || "").trim().toLowerCase() === "casa matriz") || lista[0];
+          setSucursal(cm.nombre);
+          aplicarDatosSucursal(cm);
+        }
+      } catch {
+        if (activo) { setSucursales([]); setSucursal(""); }
+      }
+    })();
+    return () => { activo = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rutEntidad]);
+
+  // Elige una sucursal manualmente: guarda su nombre y trae sus datos de despacho.
+  function elegirSucursal(nombre) {
+    setSucursal(nombre || "");
+    aplicarDatosSucursal(sucursales.find((x) => x.nombre === nombre));
+  }
 
   async function buscarClientePorRut(rut) {
     if (!rut) return;
@@ -958,6 +1018,7 @@ export default function CrearLicitacion() {
       setDepartamento(data.departamento || "");
       setMunicipalidad(data.municipalidad || "");
       setDireccion(data.direccion || "");
+      setSucursal(data.sucursal || "");
       setContacto(data.contacto || "");
       setEmail(data.email || "");
       setTelefono(data.telefono || "");
@@ -1004,6 +1065,7 @@ export default function CrearLicitacion() {
       departamento,
       municipalidad,
       direccion,
+      sucursal,
       contacto,
       email,
       telefono,
@@ -1037,6 +1099,7 @@ export default function CrearLicitacion() {
     departamento,
     municipalidad,
     direccion,
+    sucursal,
     contacto,
     email,
     telefono,
@@ -1539,6 +1602,8 @@ export default function CrearLicitacion() {
     setRegion("");
     setComuna("");
     setDireccion("");
+    setSucursal("");
+    setSucursales([]);
     setContacto("");
     setEmail("");
     setTelefono("");
@@ -1752,6 +1817,7 @@ export default function CrearLicitacion() {
             departamento,
             municipalidad,
             direccion,
+            sucursal: sucursal || null,
             tipo_compra: tipoCompra,
             region,
             comuna,
@@ -1877,6 +1943,7 @@ export default function CrearLicitacion() {
         nombre_entidad: nombreEntidad,
         rut_entidad: rutEntidad,
         direccion,
+        sucursal,
         comuna,
         contacto,
         email,
@@ -2330,6 +2397,34 @@ export default function CrearLicitacion() {
               value={opcionesComuna(region).find((o) => o.value === comuna) || null}
               onChange={(op) => setComuna(op ? op.value : "")}
             />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Sucursal
+            </label>
+            <Select
+              options={sucursales.map((s) => ({
+                value: s.nombre,
+                label: s.comuna ? `${s.nombre} — ${s.comuna}` : s.nombre,
+              }))}
+              styles={customStyles}
+              placeholder={
+                !rutEntidad ? "Seleccione el cliente primero"
+                  : sucursales.length ? "Seleccione sucursal…"
+                  : "Sin sucursales registradas"
+              }
+              menuPortalTarget={document.body}
+              isSearchable
+              isClearable
+              filterOption={filtrarPorTerminos}
+              isDisabled={!rutEntidad || sucursales.length === 0}
+              value={sucursal ? { value: sucursal, label: sucursal } : null}
+              onChange={(op) => elegirSucursal(op ? op.value : "")}
+            />
+            <p className="text-xs text-gray-500 mt-1">
+              Al elegir una sucursal se completa la dirección de despacho.
+            </p>
           </div>
 
           <div>

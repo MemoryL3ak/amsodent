@@ -326,11 +326,15 @@ export default function ChatEquipo({ onLicitacionRegistrada }) {
   //    sí aparece" al recargar.
   const sincronizarSala = useCallback(async (salaId, { merge = false } = {}) => {
     if (!salaId) return;
+    // Traemos los 300 mensajes MÁS RECIENTES (orden descendente + límite) y los
+    // invertimos para mostrarlos del más antiguo al más nuevo. Antes se pedía
+    // ascending + limit(300), que traía los 300 más ANTIGUOS: en salas con más de
+    // 300 mensajes los recientes nunca se cargaban (no aparecían los nuevos).
     const { data, error: e } = await supabase
       .from("chat_mensajes")
       .select("*")
       .eq("sala_id", salaId)
-      .order("created_at", { ascending: true })
+      .order("created_at", { ascending: false })
       .limit(300);
     // Si el usuario cambió de sala mientras cargaba, descartamos el resultado.
     if (salaActivaIdRef.current !== salaId) return;
@@ -338,16 +342,17 @@ export default function ChatEquipo({ onLicitacionRegistrada }) {
       if (!merge) setError(e.message || "No se pudo cargar el chat.");
       return;
     }
+    const filas = (data || []).slice().reverse();
     if (!merge) {
-      setMensajes(data || []);
+      setMensajes(filas);
       setError("");
       return;
     }
     setMensajes((prev) => {
-      if (!data || data.length === 0) return prev;
+      if (!filas.length) return prev;
       const porId = new Map(prev.map((x) => [x.id, x]));
       let hayNuevos = false;
-      for (const x of data) {
+      for (const x of filas) {
         if (!porId.has(x.id)) hayNuevos = true;
         porId.set(x.id, { ...porId.get(x.id), ...x });
       }
@@ -3922,7 +3927,10 @@ const ESTILOS = `
   @keyframes ch-float { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
   @keyframes ch-fade-up { from { opacity: 0; transform: translateY(10px) scale(.98); } to { opacity: 1; transform: none; } }
   .ch-msg { animation: ch-in .18s ease; }
-  .ch-msg .ch-msg-action { opacity: 0; transform: scale(.85); transition: opacity .16s ease, transform .16s ease, box-shadow .16s ease; }
+  /* Botón ⋮ (menú con Responder / Eliminar): siempre visible —aunque tenue— para
+     que se pueda usar también en pantallas táctiles (sin hover); al pasar el
+     mouse queda al 100%. */
+  .ch-msg .ch-msg-action { opacity: .45; transform: scale(.9); transition: opacity .16s ease, transform .16s ease, box-shadow .16s ease; }
   .ch-msg:hover .ch-msg-action { opacity: 1; transform: scale(1); }
   .ch-msg-action:hover { transform: scale(1.1) !important; box-shadow: 0 4px 12px rgba(15,23,42,.25) !important; }
   .ch-menu { animation: ch-pop .15s ease; }

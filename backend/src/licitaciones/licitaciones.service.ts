@@ -251,6 +251,22 @@ export class LicitacionesService {
     return { deleted: true };
   }
 
+  // Marca / desmarca una postulación como "No Aplica" (descartada por el equipo).
+  async noAplicaDisponible(id: number, email: string, noAplica: boolean) {
+    const correo = (email || '').trim().toLowerCase();
+    const patch = noAplica
+      ? { no_aplica: true, no_aplica_por: correo, no_aplica_at: new Date().toISOString() }
+      : { no_aplica: false, no_aplica_por: null, no_aplica_at: null };
+    const { data, error } = await this.supabase.getClient()
+      .from('licitaciones_disponibles')
+      .update(patch)
+      .eq('id', id)
+      .select()
+      .single();
+    if (error) throw new BadRequestException(error.message);
+    return data;
+  }
+
   // Detecta una columna inexistente a partir del error de Postgres
   // (código 42703 / "column ... does not exist"). Devuelve el nombre de la
   // columna o null si el error es de otro tipo.
@@ -475,6 +491,7 @@ export class LicitacionesService {
     const bodyWithout = { ...body };
     let removed = false;
     if (msg.includes('fecha_publicacion_resultados')) { delete bodyWithout.fecha_publicacion_resultados; removed = true; }
+    if (msg.includes('sucursal')) { delete bodyWithout.sucursal; removed = true; }
     if (removed) {
       const { data: d2, error: e2 } = await this.supabase.getClient()
         .from('licitaciones')
