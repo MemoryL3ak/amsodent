@@ -2,15 +2,17 @@
 // Sub-panel "Cliente Particular": embudo comercial basado en las MARCAS
 // secuenciales y acumuladas por cliente particular (ver useEmbudoComercial):
 //   Prospecto → Cliente Contactado → Clientes que Cotizan → Clientes que Compran
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { api } from "../lib/api";
 import useAuth from "../hooks/useAuth";
 import MonthCalendarPicker from "../components/MonthCalendarPicker";
 import { Users, PhoneCall, FileText, ShoppingCart } from "lucide-react";
 import {
-  fmtNum, fmtPct, inicioMesISO, mesDe, addMesKey, labelMesLargo, clamp,
-  Delta, KpiCard, FunnelShape,
+  fmtNum, fmtPct, inicioMesISO, mesDe, addMesKey, labelMesCorto, labelMesLargo, clamp,
+  Delta, KpiCard, FunnelShape, HBarList, BarChart,
 } from "../components/panel/panelKit";
 import useEmbudoComercial, { ETAPAS_EMBUDO } from "../components/panel/useEmbudoComercial";
+import { ModalEtapaEmbudo } from "../components/panel/EmbudoComercial";
 
 const ICONOS = { prospectos: Users, contactados: PhoneCall, cotizan: FileText, compran: ShoppingCart };
 
@@ -22,11 +24,68 @@ export default function PanelParticular() {
   const puedeVer = esAdmin || esJefatura;
 
   const [periodo, setPeriodo] = useState(inicioMesISO());
+  const [ejecutivo, setEjecutivo] = useState("");
+  const [filtroMotivo, setFiltroMotivo] = useState("");
   const mesActual = mesDe(periodo);
 
-  const { loading, emb, embPrev, evolucion, conv } = useEmbudoComercial(mesActual);
+  const { loading, emb, embPrev, evolucion, conv, opcionesEjecutivos, detalleEmbudo, nombresEjecutivos } = useEmbudoComercial(mesActual, ejecutivo);
+  const [etapaSel, setEtapaSel] = useState(null); // etapa del embudo abierta en el modal de detalle
 
-  const stages = ETAPAS_EMBUDO.map((e) => ({ label: e.label, color: e.color, value: emb[e.key] }));
+  // Cotizaciones perdidas de clientes particulares (con su motivo). No viene del
+  // hook del embudo, así que se carga aquí y se filtra a tipo_cliente particular.
+  const [perdidasRaw, setPerdidasRaw] = useState([]);
+  useEffect(() => {
+    if (cargando || !puedeVer) return;
+    let activo = true;
+    (async () => {
+      try {
+        const data = await api.get(
+          "/licitaciones/with-fields?fields=id,id_licitacion,nombre,nombre_entidad,rut_entidad,fecha,estado,tipo_cliente,motivo_perdida,motivo_perdida_otro"
+        );
+        const rows = (data || []).filter(
+          (l) => l.estado === "Perdida" && (l.tipo_cliente || "").toLowerCase().includes("particular"),
+        );
+        if (activo) setPerdidasRaw(rows);
+      } catch (e) {
+        console.error("Error cargando perdidas particulares:", e);
+        if (activo) setPerdidasRaw([]);
+      }
+    })();
+    return () => { activo = false; };
+  }, [cargando, puedeVer]);
+
+  // Perdidas del mes (por fecha de creación) agrupadas por motivo + detalle.
+  const perdidas = useMemo(() => {
+    const motivoCount = {};
+    const filas = [];
+    perdidasRaw.forEach((l) => {
+      if (mesDe(l.fecha) !== mesActual) return;
+      const motivo = l.motivo_perdida === "Otro" ? (l.motivo_perdida_otro || "Otro") : (l.motivo_perdida || "Sin motivo");
+      motivoCount[motivo] = (motivoCount[motivo] || 0) + 1;
+      filas.push({ id: l.id, codigo: l.id_licitacion || l.nombre || `Cot. ${l.id}`, cliente: l.nombre_entidad || l.rut_entidad || "—", motivo });
+    });
+    const items = Object.entries(motivoCount).map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value);
+    return { items, filas: filas.sort((a, b) => String(a.codigo).localeCompare(String(b.codigo))), total: filas.length };
+  }, [perdidasRaw, mesActual]);
+
+  // Evolución de perdidas (6 meses) para el gráfico de barras del detalle.
+  const seriePerdidas6 = useMemo(() => {
+    const arr = [];
+    for (let i = 5; i >= 0; i--) {
+      const k = addMesKey(mesActual, -i);
+      arr.push({ mes: k, label: labelMesCorto(k), perdidas: perdidasRaw.filter((l) => mesDe(l.fecha) === k).length });
+    }
+    return arr;
+  }, [perdidasRaw, mesActual]);
+  const maxPerdidas6 = Math.max(1, ...seriePerdidas6.map((s) => s.perdidas));
+
+  // Detalle filtrado por motivo.
+  const filasPerdidas = useMemo(
+    () => (filtroMotivo ? perdidas.filas.filter((f) => f.motivo === filtroMotivo) : perdidas.filas),
+    [perdidas.filas, filtroMotivo]
+  );
+
+  const stages = ETAPAS_EMBUDO.map((e) => ({ key: e.key, label: e.label, color: e.color, value: emb[e.key] }));
   const maxStack = Math.max(1, ...evolucion.map((e) => e.prospectos + e.contactados + e.cotizan + e.compran));
 
   if (!cargando && !puedeVer) {
@@ -46,9 +105,20 @@ export default function PanelParticular() {
           <h1 className="page-title">Embudo Comercial — Cliente Particular</h1>
           <p className="page-subtitle">Marcas secuenciales acumuladas por cliente · {labelMesLargo(mesActual)}</p>
         </div>
-        <div className="field" style={{ margin: 0 }}>
-          <label className="field-label">Mes</label>
-          <MonthCalendarPicker value={periodo} onChange={setPeriodo} />
+        <div style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
+          <div className="field" style={{ margin: 0 }}>
+            <label className="field-label">Ejecutivo</label>
+            <select className="input" value={ejecutivo} onChange={(e) => setEjecutivo(e.target.value)} style={{ minWidth: 180 }}>
+              <option value="">Todos</option>
+              {opcionesEjecutivos.map((op) => (
+                <option key={op.value} value={op.value}>{op.label}</option>
+              ))}
+            </select>
+          </div>
+          <div className="field" style={{ margin: 0 }}>
+            <label className="field-label">Mes</label>
+            <MonthCalendarPicker value={periodo} onChange={setPeriodo} />
+          </div>
         </div>
       </div>
 
@@ -74,7 +144,10 @@ export default function PanelParticular() {
             {/* Embudo (forma) */}
             <div className="surface" style={{ padding: 18, display: "flex", flexDirection: "column", justifyContent: "center" }}>
               <h3 className="surface-title" style={{ marginBottom: 16 }}>Embudo comercial ({labelMesLargo(mesActual).toLowerCase()})</h3>
-              <FunnelShape stages={stages} />
+              <FunnelShape stages={stages} onStageClick={setEtapaSel} />
+              <p style={{ fontSize: 11, color: "var(--text-muted)", textAlign: "center", marginTop: 8, marginBottom: 0 }}>
+                Haz clic en una etapa para ver el detalle de actividades.
+              </p>
             </div>
 
             {/* Evolución del embudo (6 meses) — barras apiladas de nuevos logros */}
@@ -87,6 +160,9 @@ export default function PanelParticular() {
                   const seg = (val) => (total > 0 ? (val / total) * 100 : 0);
                   return (
                     <div key={e.mes} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end", height: "100%" }} title={`Prospectos ${e.prospectos} · Contactados ${e.contactados} · Cotizan ${e.cotizan} · Compran ${e.compran}`}>
+                      <div style={{ fontSize: 10, fontWeight: 700, color: total > 0 ? "var(--text)" : "var(--text-muted)", marginBottom: 2 }}>
+                        {fmtNum(total)}
+                      </div>
                       <div style={{ width: "62%", maxWidth: 36, height: `${hTot}%`, display: "flex", flexDirection: "column", justifyContent: "flex-end", borderRadius: "5px 5px 0 0", overflow: "hidden" }}>
                         <div style={{ height: `${seg(e.prospectos)}%`, background: "#1e40af" }} />
                         <div style={{ height: `${seg(e.contactados)}%`, background: "#0d9488" }} />
@@ -132,6 +208,75 @@ export default function PanelParticular() {
               </div>
             </div>
           </div>
+
+          {/* Cotizaciones perdidas del mes, con su motivo */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 16, marginBottom: 16 }}>
+            <div className="surface" style={{ padding: 18 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 14, gap: 8 }}>
+                <h3 className="surface-title" style={{ margin: 0 }}>Perdidas por motivo</h3>
+                <span style={{ fontSize: 11, color: "var(--text-muted)" }}>{fmtNum(perdidas.total)} en el mes</span>
+              </div>
+              <HBarList items={perdidas.items} color="#dc2626" emptyText="Sin cotizaciones perdidas en el mes." />
+            </div>
+
+            <div className="surface" style={{ padding: 18 }}>
+              <h3 className="surface-title" style={{ marginBottom: 14 }}>Perdidas (6 meses)</h3>
+              <BarChart data={seriePerdidas6} max={maxPerdidas6} valueKey="perdidas" color="#dc2626" fmt={fmtNum} />
+            </div>
+
+            <div className="surface" style={{ padding: 18, display: "flex", flexDirection: "column" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, gap: 8, flexWrap: "wrap" }}>
+                <h3 className="surface-title" style={{ margin: 0 }}>Detalle de perdidas ({labelMesLargo(mesActual).toLowerCase()})</h3>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <select className="input" value={filtroMotivo} onChange={(e) => setFiltroMotivo(e.target.value)} style={{ fontSize: 12, height: 30, padding: "0 8px", maxWidth: 170 }}>
+                    <option value="">Todos los motivos</option>
+                    {perdidas.items.map((it) => (
+                      <option key={it.label} value={it.label}>{it.label}</option>
+                    ))}
+                  </select>
+                  <span style={{ fontSize: 11, color: "var(--text-muted)" }}>{filasPerdidas.length} cotización{filasPerdidas.length === 1 ? "" : "es"}</span>
+                </div>
+              </div>
+              <div style={{ overflowY: "auto", maxHeight: 300 }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, tableLayout: "fixed" }}>
+                  <colgroup>
+                    <col style={{ width: "30%" }} />
+                    <col style={{ width: "38%" }} />
+                    <col style={{ width: "32%" }} />
+                  </colgroup>
+                  <thead>
+                    <tr style={{ color: "var(--text-muted)", textAlign: "left" }}>
+                      <th style={{ padding: "6px 8px", position: "sticky", top: 0, background: "var(--surface)", borderBottom: "1px solid var(--border)" }}>Cotización</th>
+                      <th style={{ padding: "6px 8px", position: "sticky", top: 0, background: "var(--surface)", borderBottom: "1px solid var(--border)" }}>Cliente</th>
+                      <th style={{ padding: "6px 8px", position: "sticky", top: 0, background: "var(--surface)", borderBottom: "1px solid var(--border)" }}>Motivo</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filasPerdidas.length === 0 ? (
+                      <tr><td colSpan={3} style={{ padding: "14px 8px", color: "var(--text-muted)" }}>Sin cotizaciones perdidas en el mes.</td></tr>
+                    ) : filasPerdidas.map((f) => (
+                      <tr key={f.id} style={{ borderBottom: "1px solid var(--border)" }}>
+                        <td style={{ padding: "6px 8px", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={f.codigo}>{f.codigo}</td>
+                        <td style={{ padding: "6px 8px", color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={f.cliente}>{f.cliente}</td>
+                        <td style={{ padding: "6px 8px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={f.motivo}>
+                          <span style={{ fontSize: 10.5, fontWeight: 700, padding: "2px 7px", borderRadius: 999, whiteSpace: "nowrap", background: "#fee2e2", color: "#b91c1c" }}>{f.motivo}</span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          {etapaSel && (
+            <ModalEtapaEmbudo
+              etapa={etapaSel}
+              items={detalleEmbudo[etapaSel.key] || []}
+              nombresEjecutivos={nombresEjecutivos}
+              onClose={() => setEtapaSel(null)}
+            />
+          )}
 
           <p style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>
             * Solo clientes particulares. Marcas secuenciales y acumuladas: un cliente pasa a Contactado solo si ya es Prospecto, a Cotiza solo si ya es Contactado, y a Compra solo si ya Cotiza. Prospecto = motivo Mapeo / Visita Espontánea / Referido; Contactado = tipo Llamada / Visita / Reunión / Correo; Cotiza = motivo "Presupuesto"; Compra = la cotización asociada pasa a "Adjudicada". Acumulado hasta el fin del mes seleccionado.

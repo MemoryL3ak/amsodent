@@ -5,7 +5,39 @@ import { SupabaseService } from '../supabase/supabase.service';
 export class ClientesService {
   constructor(private supabase: SupabaseService) {}
 
-  async findAll() {
+  async findAll(rut?: string, nombre?: string) {
+    // Con ?rut= (o ?nombre=) devuelve SOLO ese cliente (objeto o null), para
+    // autocompletar/verificar sin traer el listado completo. Hay RUT
+    // duplicados en la tabla (ej. clientes de prueba), así que NO usamos
+    // maybeSingle(): devolvemos el más antiguo.
+    if (rut && String(rut).trim()) {
+      const { data, error } = await this.supabase
+        .getClient()
+        .from('clientes')
+        .select('*')
+        .eq('rut', String(rut).trim())
+        .order('id', { ascending: true })
+        .limit(1);
+      if (error) throw new BadRequestException(error.message);
+      return data?.[0] ?? null;
+    }
+
+    if (nombre && String(nombre).trim()) {
+      // Coincidencia exacta case-insensitive; se escapan los comodines de
+      // ilike (% y _) para que un nombre con esos caracteres no haga match
+      // parcial con otro cliente.
+      const patron = String(nombre).trim().replace(/[%_]/g, '\\$&');
+      const { data, error } = await this.supabase
+        .getClient()
+        .from('clientes')
+        .select('*')
+        .ilike('nombre', patron)
+        .order('id', { ascending: true })
+        .limit(1);
+      if (error) throw new BadRequestException(error.message);
+      return data?.[0] ?? null;
+    }
+
     const { data, error } = await this.supabase
       .getClient()
       .from('clientes')

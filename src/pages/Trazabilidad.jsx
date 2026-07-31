@@ -70,7 +70,7 @@ function SLABadge({ fechaOc }) {
     </span>
   );
 }
-import { Upload, Eye, Trash2, ArrowUpDown, ArrowUp, ArrowDown, Calendar, FileCheck, ChevronDown, Truck, Download, Clock, CheckCircle2, Check, Pencil } from "lucide-react";
+import { Upload, Eye, Trash2, ArrowUpDown, ArrowUp, ArrowDown, Calendar, FileCheck, ChevronDown, Truck, Download, Clock, CheckCircle2, Check, Pencil, X, AlertTriangle } from "lucide-react";
 
 // Mapping empresa courier → builder de URL de tracking. Si la empresa no
 // tiene URL o no hay número, devuelve "" (no renderizamos el link).
@@ -706,6 +706,50 @@ export default function Trazabilidad() {
     const r = (rol ?? "").toString().trim().toLowerCase();
     return r === "admin" || r === "administrador" || r === "jefe_ventas_especial";
   }, [rol]);
+
+  // Forzar cierre: exige adjuntar un archivo de respaldo (y motivo opcional)
+  // antes de cerrar. El archivo queda como documento tipo 'cierre_forzado'.
+  const [forzandoCierre, setForzandoCierre] = useState(null); // lic del modal
+  const [guardandoCierre, setGuardandoCierre] = useState(false);
+
+  async function confirmarForzarCierre(file, motivo) {
+    const lic = forzandoCierre;
+    if (!lic || !file) return;
+    setGuardandoCierre(true);
+    try {
+      const ext = (file.name.split(".").pop() || "pdf").toLowerCase();
+      const safeName = normalizarNombreArchivo(file.name.replace(/\.[^.]+$/, ""));
+      const fileName = `${Date.now()}-${Math.random().toString(36).slice(2)}-${safeName}.${ext}`;
+      const bucket = "factura";
+      const storagePath = `${lic.id}/${fileName}`;
+      const formData = new FormData();
+      formData.append("file", file);
+      await api.postForm(`/licitaciones/storage/upload?bucket=${bucket}&path=${encodeURIComponent(storagePath)}`, formData);
+      try {
+        await api.post("/licitaciones/documentos", {
+          licitacion_id: Number(lic.id),
+          tipo: "cierre_forzado",
+          numero: (motivo || "").trim() || null,
+          fecha_oc: new Date().toISOString().slice(0, 10),
+          bucket,
+          storage_path: storagePath,
+          file_name: file.name,
+          mime_type: file.type || "application/pdf",
+          size_bytes: Number(file.size || 0),
+        });
+      } catch (insErr) {
+        try { await api.delete(`/licitaciones/storage/file?bucket=${bucket}&path=${encodeURIComponent(storagePath)}`); } catch {}
+        throw insErr;
+      }
+      setForzandoCierre(null);
+      await cambiarCicloCerrado(lic.id, true);
+    } catch (e) {
+      console.error(e);
+      setToast({ type: "error", message: e?.message || "No se pudo registrar el respaldo del cierre forzado. ¿Está aplicada la migración?" });
+    } finally {
+      setGuardandoCierre(false);
+    }
+  }
 
   async function cambiarCicloCerrado(licId, valor) {
     let anterior;
@@ -2118,7 +2162,7 @@ export default function Trazabilidad() {
                                   type="button"
                                   className="btn btn-secondary btn-sm"
                                   style={{ flex: 1, width: "100%", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6 }}
-                                  onClick={() => cambiarCicloCerrado(lic.id, true)}
+                                  onClick={() => setForzandoCierre(lic)}
                                 >
                                   <Check size={14} /> Forzar Cierre
                                 </button>
@@ -2301,6 +2345,16 @@ export default function Trazabilidad() {
       />
 
       {/* Editar / agregar el monto neto de una factura ya cargada */}
+      {forzandoCierre && (
+        <ModalForzarCierre
+          lic={forzandoCierre}
+          monto={Math.max(0, montoPorConsumir(forzandoCierre).porConsumir)}
+          guardando={guardandoCierre}
+          onClose={() => { if (!guardandoCierre) setForzandoCierre(null); }}
+          onConfirm={confirmarForzarCierre}
+        />
+      )}
+
       {editFactura && (
         <div
           onClick={(e) => { if (e.target === e.currentTarget && !guardandoMonto) { setEditFactura(null); setEditMonto(""); } }}
@@ -2333,6 +2387,81 @@ export default function Trazabilidad() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/* ── Modal: forzar cierre del ciclo (respaldo obligatorio) ──────────────── */
+// Antes de forzar el cierre se exige un archivo de respaldo (autorización o
+// justificación) que queda guardado como documento 'cierre_forzado' de la
+// cotización; el motivo es opcional.
+function ModalForzarCierre({ lic, monto, guardando, onClose, onConfirm }) {
+  const [file, setFile] = useState(null);
+  const [motivo, setMotivo] = useState("");
+  const inputRef = useRef(null);
+
+  return (
+    <div
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+      style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,.55)", zIndex: 12000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+    >
+      <div style={{ width: 480, maxWidth: "100%", background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", boxShadow: "var(--shadow-lg)", padding: 22 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+          <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, display: "flex", alignItems: "center", gap: 8 }}>
+            <AlertTriangle size={17} style={{ color: "#b45309" }} /> Forzar cierre del ciclo
+          </h3>
+          <button className="btn btn-ghost" onClick={onClose} style={{ padding: 6 }} disabled={guardando}><X size={18} /></button>
+        </div>
+        <p style={{ fontSize: 12.5, color: "var(--text-muted)", marginTop: 2, marginBottom: 12 }}>
+          Cotización <strong>{lic.id_licitacion || `#${lic.id}`}</strong> · {lic.nombre_entidad || "—"}.
+          Se cerrará el ciclo capturando un monto forzado de <strong>${Number(monto || 0).toLocaleString("es-CL")}</strong> (neto
+          por consumir: OC − guías). Debes adjuntar un archivo de respaldo.
+        </p>
+
+        <div className="field" style={{ marginBottom: 10 }}>
+          <label className="field-label">Archivo de respaldo *</label>
+          <div
+            onClick={() => !guardando && inputRef.current?.click()}
+            style={{ border: "2px dashed var(--border)", borderRadius: 10, padding: "16px 14px", textAlign: "center", cursor: "pointer", background: "var(--bg)" }}
+          >
+            <Upload size={18} style={{ color: "var(--text-muted)" }} />
+            <div style={{ fontSize: 12.5, marginTop: 5 }}>
+              {file ? <strong>{file.name}</strong> : "Haz clic para adjuntar el respaldo (PDF o imagen)"}
+            </div>
+            <input
+              ref={inputRef}
+              type="file"
+              accept=".pdf,.png,.jpg,.jpeg"
+              style={{ display: "none" }}
+              onChange={(e) => setFile(e.target.files?.[0] || null)}
+            />
+          </div>
+        </div>
+
+        <div className="field" style={{ marginBottom: 14 }}>
+          <label className="field-label">Motivo (opcional)</label>
+          <input
+            className="input"
+            value={motivo}
+            onChange={(e) => setMotivo(e.target.value)}
+            placeholder="Ej: cliente no emitirá más OC, saldo no despachable…"
+            disabled={guardando}
+          />
+        </div>
+
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+          <button className="btn btn-secondary" onClick={onClose} disabled={guardando}>Cancelar</button>
+          <button
+            className="btn btn-primary"
+            onClick={() => onConfirm(file, motivo)}
+            disabled={guardando || !file}
+            title={!file ? "Adjunta el archivo de respaldo para continuar" : undefined}
+            style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
+          >
+            <Check size={15} /> {guardando ? "Cerrando…" : "Forzar cierre"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

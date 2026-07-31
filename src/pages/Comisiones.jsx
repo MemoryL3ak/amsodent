@@ -1,13 +1,15 @@
 // Comisiones.jsx
-// Configuración del módulo de comisiones (esquema "Ejecutivo Licitación Pública
-// y privado"). Edita las 4 tablas de referencia: Venta, Margen, Productividad y
-// Conversión de adjudicación. Solo admin y jefe_ventas.
-// Fórmula (etapa posterior): (Venta + Productividad) × Margen × Conversión.
+// Configuración del módulo de comisiones POR PERFIL de ejecutivo (un perfil por
+// cada canal de Metas: terreno, mixto, mercado público, etc.). Cada perfil tiene
+// sus propias 4 tablas de referencia: Venta, Margen, Productividad y Conversión
+// de adjudicación. Solo admin y jefe_ventas.
+// Fórmula: (Venta + Productividad) × Margen × Conversión.
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import useAuth from "../hooks/useAuth";
-import { Save, Plus, Trash2, BarChart3, DollarSign, TrendingUp, Target, Settings, Users } from "lucide-react";
+import { Save, Plus, Trash2, BarChart3, DollarSign, TrendingUp, Target, Settings, Users, Copy } from "lucide-react";
 import ComisionesCalculo from "./ComisionesCalculo";
+import { CANALES, CANAL_LABELS } from "../lib/canales";
 
 const fmtCLP = (v) => `$${Number(v || 0).toLocaleString("es-CL")}`;
 
@@ -42,6 +44,33 @@ const COLS = {
 };
 
 const filaVacia = (cols) => Object.fromEntries(cols.map((c) => [c.key, c.type === "text" ? "" : 0]));
+
+const TABLAS_VACIAS = { venta: [], margen: [], productividad: [], conversion: [] };
+
+// Normaliza el set de 4 tablas de un perfil (tolera datos parciales).
+function normTablas(t) {
+  return {
+    venta: Array.isArray(t?.venta) ? t.venta : [],
+    margen: Array.isArray(t?.margen) ? t.margen : [],
+    productividad: Array.isArray(t?.productividad) ? t.productividad : [],
+    conversion: Array.isArray(t?.conversion) ? t.conversion : [],
+  };
+}
+
+// Construye el mapa { canal: tablas } desde la config guardada. Compatibilidad:
+// si aún no existe `perfiles` (config antigua de un solo esquema), cada canal
+// parte con una copia de las tablas legacy para no arrancar de cero.
+function perfilesDesdeConfig(c) {
+  const legacy = normTablas(c);
+  const guardados = c?.perfiles && typeof c.perfiles === "object" ? c.perfiles : null;
+  const out = {};
+  CANALES.forEach((canal) => {
+    out[canal] = guardados?.[canal]
+      ? normTablas(guardados[canal])
+      : JSON.parse(JSON.stringify(legacy));
+  });
+  return out;
+}
 
 function TablaComision({ titulo, color, icon: Icon, cols, filas, onChange }) {
   function setCelda(i, key, valor) {
@@ -105,11 +134,16 @@ export default function Comisiones() {
   const puedeVer = ["admin", "administrador", "jefe_ventas"].includes(rolNorm);
 
   const [nombre, setNombre] = useState("");
-  const [tablas, setTablas] = useState({ venta: [], margen: [], productividad: [], conversion: [] });
+  const [perfiles, setPerfiles] = useState({}); // { canal: { venta, margen, productividad, conversion } }
+  const [perfilActivo, setPerfilActivo] = useState(CANALES[0]);
   const [loading, setLoading] = useState(true);
   const [guardando, setGuardando] = useState(false);
   const [toast, setToast] = useState(null);
   const [tab, setTab] = useState("config"); // "config" | "calculo"
+
+  const tablas = perfiles[perfilActivo] || TABLAS_VACIAS;
+  const setTablaPerfil = (key, filas) =>
+    setPerfiles((p) => ({ ...p, [perfilActivo]: { ...normTablas(p[perfilActivo]), [key]: filas } }));
 
   useEffect(() => {
     if (cargando || !puedeVer) { if (!cargando) setLoading(false); return; }
@@ -120,12 +154,7 @@ export default function Comisiones() {
         if (!activo) return;
         const c = r?.config || {};
         setNombre(r?.nombre || c.nombre || "Ejecutivo Licitación Pública y privado");
-        setTablas({
-          venta: Array.isArray(c.venta) ? c.venta : [],
-          margen: Array.isArray(c.margen) ? c.margen : [],
-          productividad: Array.isArray(c.productividad) ? c.productividad : [],
-          conversion: Array.isArray(c.conversion) ? c.conversion : [],
-        });
+        setPerfiles(perfilesDesdeConfig(c));
       } catch (e) {
         console.error(e);
         if (activo) setToast({ type: "error", message: "No se pudo cargar la configuración. ¿Está aplicada la migración?" });
@@ -139,23 +168,37 @@ export default function Comisiones() {
   async function guardar() {
     setGuardando(true);
     try {
+      // Se guarda el mapa de perfiles y, por compatibilidad, las tablas del
+      // perfil activo también en el nivel raíz (formato legacy).
+      const act = normTablas(perfiles[perfilActivo]);
       await api.put("/comisiones/config", {
         nombre,
         config: {
           formula: "(Venta + Productividad) × Margen × Conversión",
-          venta: tablas.venta,
-          margen: tablas.margen,
-          productividad: tablas.productividad,
-          conversion: tablas.conversion,
+          perfiles,
+          venta: act.venta,
+          margen: act.margen,
+          productividad: act.productividad,
+          conversion: act.conversion,
         },
       });
-      setToast({ type: "success", message: "Configuración de comisiones guardada." });
+      setToast({ type: "success", message: "Configuración de comisiones guardada (todos los perfiles)." });
     } catch (e) {
       console.error(e);
       setToast({ type: "error", message: "No se pudo guardar." });
     } finally {
       setGuardando(false);
     }
+  }
+
+  // Copia las 4 tablas de otro perfil hacia el perfil activo.
+  function copiarDesde(canalOrigen) {
+    if (!canalOrigen || canalOrigen === perfilActivo) return;
+    setPerfiles((p) => ({
+      ...p,
+      [perfilActivo]: JSON.parse(JSON.stringify(normTablas(p[canalOrigen]))),
+    }));
+    setToast({ type: "success", message: `Tablas copiadas desde «${CANAL_LABELS[canalOrigen]}». Recuerda guardar.` });
   }
 
   if (!cargando && !puedeVer) {
@@ -204,33 +247,65 @@ export default function Comisiones() {
       </div>
 
       {tab === "calculo" ? (
-        <ComisionesCalculo tablas={tablas} />
+        <ComisionesCalculo perfiles={perfiles} />
       ) : (
       <>
       {/* Fórmula */}
       <div className="surface" style={{ marginBottom: 16, padding: "12px 16px", background: "#eef6ff", border: "1px solid #bfdbfe", color: "#1e40af", fontSize: 13 }}>
         <strong>Fórmula de comisión:</strong> (Venta + Productividad) × Margen × Conversión.
-        <span style={{ color: "#3b5b8c" }}> La columna <strong>Desde</strong> es el umbral mínimo real de cada tramo (venta en $, productividad en N° de actividades, margen y conversión en %). El cálculo por vendedor usa estos umbrales.</span>
+        <span style={{ color: "#3b5b8c" }}> La columna <strong>Desde</strong> es el umbral mínimo real de cada tramo (venta en $, productividad en N° de actividades, margen y conversión en %). El cálculo por vendedor usa estos umbrales, según el perfil (canal) de cada vendedor.</span>
+      </div>
+
+      {/* Selector de perfil de ejecutivo (un set de tablas por canal de Metas) */}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 16 }}>
+        {CANALES.map((canal) => {
+          const activo = canal === perfilActivo;
+          return (
+            <button
+              key={canal}
+              type="button"
+              onClick={() => setPerfilActivo(canal)}
+              style={{
+                fontSize: 12.5, fontWeight: 700, padding: "6px 13px", borderRadius: 999, cursor: "pointer",
+                background: activo ? "var(--primary)" : "var(--surface)",
+                color: activo ? "#fff" : "var(--text-muted)",
+                border: `1px solid ${activo ? "var(--primary)" : "var(--border)"}`,
+              }}
+            >
+              {CANAL_LABELS[canal]}
+            </button>
+          );
+        })}
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 6, marginLeft: "auto", fontSize: 12, color: "var(--text-muted)" }}>
+          <Copy size={13} /> Copiar desde
+          <select className="input" defaultValue="" onChange={(e) => { copiarDesde(e.target.value); e.target.value = ""; }} style={{ minWidth: 180, padding: "4px 8px", fontSize: 12.5 }}>
+            <option value="" disabled>Elegir perfil…</option>
+            {CANALES.filter((c) => c !== perfilActivo).map((c) => (
+              <option key={c} value={c}>{CANAL_LABELS[c]}</option>
+            ))}
+          </select>
+        </span>
       </div>
 
       {loading ? (
         <div className="surface" style={{ padding: "40px 24px", color: "var(--text-muted)" }}>Cargando…</div>
       ) : (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))", gap: 16 }}>
-          <TablaComision titulo="Tabla de venta" color="#2563eb" icon={BarChart3}
-            cols={COLS.venta} filas={tablas.venta} onChange={(f) => setTablas((t) => ({ ...t, venta: f }))} />
-          <TablaComision titulo="Tabla de margen" color="#0d9488" icon={DollarSign}
-            cols={COLS.margen} filas={tablas.margen} onChange={(f) => setTablas((t) => ({ ...t, margen: f }))} />
-          <TablaComision titulo="Tabla de productividad" color="#7c3aed" icon={TrendingUp}
-            cols={COLS.productividad} filas={tablas.productividad} onChange={(f) => setTablas((t) => ({ ...t, productividad: f }))} />
-          <TablaComision titulo="Tabla de conversión de adjudicación" color="#1e3a8a" icon={Target}
-            cols={COLS.conversion} filas={tablas.conversion} onChange={(f) => setTablas((t) => ({ ...t, conversion: f }))} />
+          <TablaComision titulo={`Tabla de venta — ${CANAL_LABELS[perfilActivo]}`} color="#2563eb" icon={BarChart3}
+            cols={COLS.venta} filas={tablas.venta} onChange={(f) => setTablaPerfil("venta", f)} />
+          <TablaComision titulo={`Tabla de margen — ${CANAL_LABELS[perfilActivo]}`} color="#0d9488" icon={DollarSign}
+            cols={COLS.margen} filas={tablas.margen} onChange={(f) => setTablaPerfil("margen", f)} />
+          <TablaComision titulo={`Tabla de productividad — ${CANAL_LABELS[perfilActivo]}`} color="#7c3aed" icon={TrendingUp}
+            cols={COLS.productividad} filas={tablas.productividad} onChange={(f) => setTablaPerfil("productividad", f)} />
+          <TablaComision titulo={`Tabla de conversión de adjudicación — ${CANAL_LABELS[perfilActivo]}`} color="#1e3a8a" icon={Target}
+            cols={COLS.conversion} filas={tablas.conversion} onChange={(f) => setTablaPerfil("conversion", f)} />
         </div>
       )}
 
       {/* Vista previa de valores (formato) */}
       {!loading && (
         <p style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 14 }}>
+          Cada perfil (canal) guarda sus propias 4 tablas; «Guardar cambios» persiste todos los perfiles a la vez.
           Los montos se guardan como número (ej. 250000 → {fmtCLP(250000)}). Los multiplicadores admiten decimales (ej. 1,1). La columna META es descriptiva del umbral de cada tramo.
         </p>
       )}

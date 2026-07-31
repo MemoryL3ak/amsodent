@@ -95,6 +95,11 @@ export class LicitacionesController {
     return this.licitacionesService.eliminarDisponible(dispId);
   }
 
+  @Get(':id/hijas')
+  getHijas(@Param('id', ParseIntPipe) id: number) {
+    return this.licitacionesService.getHijas(id);
+  }
+
   @Get(':id')
   findOne(@Param('id', ParseIntPipe) id: number) {
     return this.licitacionesService.findOne(id);

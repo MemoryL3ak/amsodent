@@ -800,6 +800,14 @@ export default function CrearLicitacion() {
   // ✅ Observaciones generales
   const [observaciones, setObservaciones] = useState("");
 
+  // ── Cotizaciones madre/hija por productos equivalentes ──────────────────
+  // madreId: si está seteado, este formulario está creando una cotización HIJA
+  // (alternativa con equivalencias) de esa cotización madre. Las hijas no
+  // vuelven a analizar equivalencias al guardar.
+  const [madreId, setMadreId] = useState(null);
+  // Sugerencia post-guardado: {madreId, codigoMadre, form, items, conEquiv}.
+  const [sugerenciaEquiv, setSugerenciaEquiv] = useState(null);
+
   /* ============================================================
      ✅ Persistir items inmediatamente (para no perder orden si se cae)
 ============================================================ */
@@ -849,14 +857,23 @@ export default function CrearLicitacion() {
     }
   }
 
-  // Carga la lista de clientes (RUT + nombre) para las sugerencias de la entidad.
+  // Carga la lista de clientes (RUT + nombre) para las sugerencias de la
+  // entidad. Vía backend (service_role): la consulta directa a Supabase
+  // dependía de las políticas RLS del rol del usuario.
   useEffect(() => {
     (async () => {
-      const { data } = await supabase
-        .from("clientes")
-        .select("rut,nombre,tipo_cliente")
-        .order("nombre", { ascending: true });
-      if (Array.isArray(data)) setClientesLista(data);
+      try {
+        const data = await api.get("/clientes");
+        if (Array.isArray(data)) {
+          setClientesLista(
+            data
+              .map((c) => ({ rut: c.rut, nombre: c.nombre, tipo_cliente: c.tipo_cliente }))
+              .sort((a, b) => String(a.nombre || "").localeCompare(String(b.nombre || ""), "es"))
+          );
+        }
+      } catch (e) {
+        console.error("Error cargando lista de clientes:", e);
+      }
     })();
   }, []);
 
@@ -907,27 +924,28 @@ export default function CrearLicitacion() {
     aplicarDatosSucursal(sucursales.find((x) => x.nombre === nombre));
   }
 
+  // Búsquedas vía backend: la consulta directa a Supabase fallaba en silencio
+  // con RUT duplicados (maybeSingle) o según las políticas RLS del rol, y por
+  // eso "a veces" el cliente elegido no traía sus demás datos.
   async function buscarClientePorRut(rut) {
     if (!rut) return;
-    const { data, error } = await supabase
-      .from("clientes")
-      .select("*")
-      .eq("rut", rut)
-      .maybeSingle();
-    if (error || !data) return;
-    aplicarCliente(data);
+    try {
+      const data = await api.get(`/clientes?rut=${encodeURIComponent(rut)}`);
+      if (data) aplicarCliente(data);
+    } catch (e) {
+      console.error("Error buscando cliente por RUT:", e);
+    }
   }
 
   async function buscarClientePorNombre(nombre) {
     const n = (nombre || "").trim();
     if (!n) return;
-    const { data, error } = await supabase
-      .from("clientes")
-      .select("*")
-      .ilike("nombre", n) // coincidencia exacta (case-insensitive) con el nombre elegido
-      .limit(1);
-    if (error || !data || !data.length) return;
-    aplicarCliente(data[0]);
+    try {
+      const data = await api.get(`/clientes?nombre=${encodeURIComponent(n)}`);
+      if (data) aplicarCliente(data);
+    } catch (e) {
+      console.error("Error buscando cliente por nombre:", e);
+    }
   }
 
   // Si esta cotización se crea a partir de una solicitud del portal del cliente,
@@ -998,6 +1016,7 @@ export default function CrearLicitacion() {
 
       if (data.solicitud_stock_id != null) setSolicitudStockId(data.solicitud_stock_id);
       if (data.disponible_id != null) setDisponibleId(data.disponible_id);
+      if (data.madre_id != null) setMadreId(data.madre_id);
       setIdLicitacionInput(data.idLicitacionInput || "");
       setNombre(data.nombre || "");
       setFechaHoraCierre(data.fechaHoraCierre || "");
@@ -1076,6 +1095,7 @@ export default function CrearLicitacion() {
       comuna,
       items,
       observaciones,
+      madre_id: madreId,
     };
 
     const t = setTimeout(() => {
@@ -1110,6 +1130,7 @@ export default function CrearLicitacion() {
     comuna,
     items,
     observaciones,
+    madreId,
   ]);
 
   /* CARGA DE PRODUCTOS */
@@ -1119,7 +1140,7 @@ export default function CrearLicitacion() {
       // las fichas técnicas (textos largos) que disparan el tamaño del payload.
       const { data } = await supabase
         .from("productos")
-        .select("id, sku, nombre, marca, categoria, formato, costo, lista1, lista2, lista3")
+        .select("id, sku, nombre, marca, categoria, formato, costo, lista1, lista2, lista3, equivalente_1, equivalente_2, equivalente_3")
         .in("estado", ["Activo", "Transitorio"])
         .order("id")
         .limit(20000);
@@ -1534,13 +1555,12 @@ export default function CrearLicitacion() {
   async function crearClienteSiNoExiste() {
     if (!rutEntidad) return;
 
-    const { data: existe, error: errExiste } = await supabase
-      .from("clientes")
-      .select("id, tipo_cliente")
-      .eq("rut", rutEntidad)
-      .maybeSingle();
-
-    if (errExiste) {
+    // Verificación vía backend (service_role): la consulta directa a Supabase
+    // fallaba por RLS según el rol del usuario y abortaba el guardado.
+    let existe = null;
+    try {
+      existe = await api.get(`/clientes?rut=${encodeURIComponent(rutEntidad)}`);
+    } catch (errExiste) {
       console.error("Error verificando cliente:", errExiste);
       throw new Error("No se pudo verificar el cliente");
     }
@@ -1613,6 +1633,7 @@ export default function CrearLicitacion() {
     setItems([crearItemVacio()]);
 
     setObservaciones("");
+    setMadreId(null);
 
     if (showToast) {
       setToast({
@@ -1620,6 +1641,110 @@ export default function CrearLicitacion() {
         message: "Los datos fueron limpiados correctamente.",
       });
     }
+  }
+
+  /* ============================================================
+     PRODUCTOS EQUIVALENTES → COTIZACIÓN HIJA
+============================================================ */
+  const buscarProductoPorSku = (sku) =>
+    productos.find((p) => String(p.sku || "").trim() === String(sku || "").trim()) || null;
+
+  // Equivalencias válidas de un SKU: las declaradas en el producto que además
+  // existan en el catálogo activo.
+  function equivalenciasDeSku(sku) {
+    const p = buscarProductoPorSku(sku);
+    if (!p) return [];
+    return [p.equivalente_1, p.equivalente_2, p.equivalente_3]
+      .map((s) => String(s || "").trim())
+      .filter(Boolean)
+      .filter((s) => s !== String(sku || "").trim())
+      .filter((s) => buscarProductoPorSku(s));
+  }
+
+  // Tras guardar una cotización MADRE: si algún ítem tiene equivalencias,
+  // arma la sugerencia para crear la cotización alternativa (hija).
+  // Las equivalencias aplican solamente a cotizaciones de ENTIDAD PÚBLICA.
+  function construirSugerenciaHija(licId, itemsGuardados) {
+    const esParticular =
+      (tipoCliente || "").toLowerCase() === "cliente particular" || tipoCompra === "Cliente particular";
+    if (esParticular) return null;
+    const conEquiv = [];
+    const itemsHija = itemsGuardados.map((it) => {
+      const eqs = equivalenciasDeSku(it.sku);
+      if (!eqs.length) return { ...it };
+      conEquiv.push({ sku: it.sku, producto: it.producto, equivalencias: eqs });
+      // equivOpciones: SKU original + equivalencias — el selector del ítem
+      // permite alternar entre ellas en la hija.
+      return { ...it, equivOpciones: [String(it.sku || "").trim(), ...eqs] };
+    });
+    if (!conEquiv.length) return null;
+    return {
+      madreId: licId,
+      codigoMadre: idLicitacionInput || String(licId),
+      conEquiv,
+      items: itemsHija,
+      form: {
+        nombre, fechaHoraCierre, monto, listado, rutEntidad, nombreEntidad, giro,
+        tipoCliente, departamento, municipalidad, direccion, sucursal, contacto,
+        email, telefono, condVenta, fleteEstimado, tipoCompra, region, comuna,
+        observaciones, fechaPublicacionResultados,
+      },
+    };
+  }
+
+  // Confirmación del usuario: repuebla el formulario como cotización HIJA de la
+  // madre recién guardada, destacando los ítems con equivalencias.
+  async function crearCotizacionHija() {
+    const s = sugerenciaEquiv;
+    setSugerenciaEquiv(null);
+    if (!s) return;
+    const f = s.form;
+    setMadreId(s.madreId);
+    // ID de la hija: correlativo por defecto derivado de la madre
+    // (<código madre>-1, -2, …) según cuántas hijas ya existen. Editable.
+    let correlativo = 1;
+    try {
+      const hijas = await api.get(`/licitaciones/${s.madreId}/hijas`);
+      correlativo = (Array.isArray(hijas) ? hijas.length : 0) + 1;
+    } catch {
+      // sin datos de hijas: se asume la primera
+    }
+    setIdLicitacionInput(`${s.codigoMadre}-${correlativo}`);
+    setNombre(f.nombre || "");
+    setFechaHoraCierre(f.fechaHoraCierre || "");
+    setMonto(typeof f.monto === "number" ? Number(f.monto).toLocaleString("es-CL") : f.monto || "");
+    setListado(String(f.listado || "1"));
+    setRutEntidad(f.rutEntidad || "");
+    setNombreEntidad(f.nombreEntidad || "");
+    setGiro(f.giro || "");
+    setTipoCliente(f.tipoCliente || "");
+    setDepartamento(f.departamento || "");
+    setMunicipalidad(f.municipalidad || "");
+    setDireccion(f.direccion || "");
+    setSucursal(f.sucursal || "");
+    setContacto(f.contacto || "");
+    setEmail(f.email || "");
+    setTelefono(f.telefono || "");
+    setCondVenta(f.condVenta || "");
+    setFleteEstimado(f.fleteEstimado || 0);
+    setTipoCompra(f.tipoCompra || "");
+    setRegion(f.region || "");
+    setComuna(f.comuna || "");
+    setObservaciones(f.observaciones || "");
+    setFechaPublicacionResultados(f.fechaPublicacionResultados || "");
+    setItems(s.items.map((it) => ({ ...it })));
+    setToast({
+      type: "info",
+      message: "Cotización alternativa: los ítems destacados tienen equivalencias — elige en cada uno el producto equivalente que quieras usar y guarda.",
+    });
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  // Cambia el ítem al SKU elegido (equivalente u original) manteniendo el
+  // selector disponible.
+  function aplicarEquivalencia(index, sku) {
+    if (!sku) return;
+    actualizarItem(index, "sku", sku);
   }
 
   /* ============================================================
@@ -1829,6 +1954,10 @@ export default function CrearLicitacion() {
             fecha: fechaHoy,
             creado_por: vendedorCorreoFinal,
             estado: requiereAprobacion ? "Pendiente Aprobación" : "En espera",
+            // Jerarquía por equivalencias: la hija referencia a su madre y no
+            // vuelve a analizar sus propias equivalencias al guardarse.
+            madre_id: madreId || null,
+            jerarquia: madreId ? "hija" : "madre",
             flete_estimado: Number(fleteEstimado),
             total_con_iva: totalConIVA,
             total_sin_iva: totalNeto,
@@ -1923,7 +2052,10 @@ export default function CrearLicitacion() {
           message: `Licitación pendiente de aprobación porque el margen general es inferior al 20%.${detalleLineas}`,
         });
         localStorage.removeItem(STORAGE_KEY);
+        // Solo las cotizaciones MADRE analizan equivalencias (las hijas no).
+        const sugerenciaAprob = !madreId ? construirSugerenciaHija(idLicitacion, itemsParaGuardar) : null;
         limpiarDatos(false);
+        if (sugerenciaAprob) setSugerenciaEquiv(sugerenciaAprob);
         return;
       }
 
@@ -1974,7 +2106,10 @@ export default function CrearLicitacion() {
       });
 
       localStorage.removeItem(STORAGE_KEY);
+      // Solo las cotizaciones MADRE analizan equivalencias (las hijas no).
+      const sugerencia = !madreId ? construirSugerenciaHija(idLicitacion, itemsParaGuardar) : null;
       limpiarDatos();
+      if (sugerencia) setSugerenciaEquiv(sugerencia);
     } finally {
       setGenerandoPDF(false);
       setGuardando(false);
@@ -2089,6 +2224,68 @@ export default function CrearLicitacion() {
         />
       )}
 
+      {/* Sugerencia post-guardado: crear cotización alternativa con equivalencias */}
+      {sugerenciaEquiv && (
+        <div
+          onClick={(e) => { if (e.target === e.currentTarget) setSugerenciaEquiv(null); }}
+          style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,.55)", zIndex: 12000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+        >
+          <div style={{ width: 560, maxWidth: "100%", background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", boxShadow: "var(--shadow-lg)", padding: 22 }}>
+            <h3 style={{ margin: 0, fontSize: 17, fontWeight: 700, display: "flex", alignItems: "center", gap: 8 }}>
+              ⇄ Se detectaron productos con equivalencias
+            </h3>
+            <p style={{ fontSize: 13, color: "var(--text-muted)", marginTop: 8, marginBottom: 12 }}>
+              La cotización <strong>{sugerenciaEquiv.codigoMadre}</strong> quedó guardada. {sugerenciaEquiv.conEquiv.length === 1 ? "1 ítem tiene" : `${sugerenciaEquiv.conEquiv.length} ítems tienen`} productos equivalentes registrados.
+              ¿Quieres crear una <strong>cotización alternativa (hija)</strong> usando esas equivalencias?
+            </p>
+            <div style={{ maxHeight: 260, overflowY: "auto", border: "1px solid var(--border)", borderRadius: 8, marginBottom: 16 }}>
+              {sugerenciaEquiv.conEquiv.map((c) => {
+                // Precios según la lista de la cotización recién guardada (el
+                // formulario ya se limpió, así que se usa la capturada).
+                const listaPrecio = sugerenciaEquiv.form?.listado || listado;
+                const prodOrig = buscarProductoPorSku(c.sku);
+                const precioOrig = prodOrig ? getPrecioBaseParaSKU(prodOrig, listaPrecio, campaignPrices) : 0;
+                const fmtP = (v) => `$${Math.round(Number(v || 0)).toLocaleString("es-CL")}`;
+                return (
+                  <div key={c.sku} style={{ padding: "10px 12px", borderBottom: "1px solid var(--border)", fontSize: 12.5 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
+                      <span style={{ fontWeight: 600 }}>{c.sku} — {c.producto}</span>
+                      <span style={{ fontWeight: 700, whiteSpace: "nowrap" }}>{fmtP(precioOrig)}</span>
+                    </div>
+                    <div style={{ fontSize: 11.5, color: "var(--text-muted)", margin: "4px 0 2px" }}>
+                      Equivalencias (precios lista {listaPrecio}):
+                    </div>
+                    <ul style={{ listStyle: "disc", margin: 0, paddingLeft: 20, display: "flex", flexDirection: "column", gap: 3 }}>
+                      {c.equivalencias.map((sku) => {
+                        const p = buscarProductoPorSku(sku);
+                        const precio = p ? getPrecioBaseParaSKU(p, listaPrecio, campaignPrices) : 0;
+                        return (
+                          <li key={sku} style={{ color: "var(--text-muted)" }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
+                              <span>
+                                <strong style={{ color: "var(--text)" }}>{sku}</strong>
+                                {p ? ` — ${p.nombre}` : ""}
+                              </span>
+                              <span style={{ fontWeight: 700, color: precio > 0 && precioOrig > 0 && precio < precioOrig ? "#15803d" : "var(--text)", whiteSpace: "nowrap" }}>
+                                {fmtP(precio)}
+                              </span>
+                            </div>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              <button className="btn btn-secondary" onClick={() => setSugerenciaEquiv(null)}>No, gracias</button>
+              <button className="btn btn-primary" onClick={crearCotizacionHija}>Crear cotización con equivalencias</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {pickerIndex !== null && (
         <ProductoPickerModal
           productos={productos}
@@ -2103,6 +2300,21 @@ export default function CrearLicitacion() {
       <div className="page-header">
         <div>
           <h1 className="page-title">Crear Cotización</h1>
+          {madreId && (
+            <p className="page-subtitle" style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 4 }}>
+              <span style={{ fontSize: 12, fontWeight: 700, padding: "3px 10px", borderRadius: 999, background: "#fef3c7", color: "#a16207", border: "1px solid #fde68a" }}>
+                Cotización Alternativa · Hija de la Cotización #{madreId}
+              </span>
+              <button
+                type="button"
+                onClick={() => setMadreId(null)}
+                title="Desvincular de la cotización madre"
+                style={{ fontSize: 11, color: "var(--text-muted)", background: "none", border: "none", cursor: "pointer", textDecoration: "underline" }}
+              >
+                Desvincular
+              </button>
+            </p>
+          )}
         </div>
       </div>
 
@@ -2517,6 +2729,12 @@ export default function CrearLicitacion() {
             {items.map((it, index) => {
               const margenItem = calcularMargenItem(it);
               const isLowMargin = margenItem > 0 && margenItem < 20;
+              // Cotización hija: ítems con equivalencias disponibles se destacan
+              // y ofrecen el selector para cambiar al producto equivalente.
+              const equivOpciones = Array.isArray(it.equivOpciones)
+                ? it.equivOpciones.map((sku) => buscarProductoPorSku(sku)).filter(Boolean)
+                : [];
+              const tieneEquiv = equivOpciones.length > 1;
 
               return (
                 <SortableItem
@@ -2528,9 +2746,33 @@ export default function CrearLicitacion() {
                   {({ dragHandleProps, onInsertAfter }) => (
                     <div
                       className={`bg-white border rounded-lg p-4 shadow-sm space-y-3 ${
-                        isLowMargin ? "border-red-400 bg-red-50" : "border-gray-200"
+                        isLowMargin ? "border-red-400 bg-red-50" : tieneEquiv ? "border-amber-400 bg-amber-50" : "border-gray-200"
                       }`}
                     >
+                    {tieneEquiv && (
+                      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", padding: "6px 10px", borderRadius: 8, background: "#fffbeb", border: "1px solid #fde68a" }}>
+                        <span style={{ fontSize: 11.5, fontWeight: 700, color: "#a16207" }}>
+                          ⇄ Producto con equivalencias
+                        </span>
+                        <select
+                          className="input"
+                          value={String(it.sku || "").trim()}
+                          onChange={(e) => aplicarEquivalencia(index, e.target.value)}
+                          style={{ fontSize: 12, maxWidth: 460, padding: "4px 8px" }}
+                          title="Elegir el producto equivalente para esta cotización alternativa"
+                        >
+                          {equivOpciones.map((p, i) => {
+                            const skuOp = String(p.sku || "").trim();
+                            const precioOp = getPrecioBaseParaSKU(p, listado, campaignPrices);
+                            return (
+                              <option key={skuOp} value={skuOp}>
+                                {i === 0 ? "(Original) " : `(Equiv. ${i}) `}{skuOp} — {p.nombre} — ${Number(precioOp || 0).toLocaleString("es-CL")}
+                              </option>
+                            );
+                          })}
+                        </select>
+                      </div>
+                    )}
                     <div className="grid grid-cols-1 md:grid-cols-[repeat(24,minmax(0,1fr))] gap-4 items-end">
                       <div className="md:col-span-1">
                         <label className="block text-xs text-gray-600 mb-1">

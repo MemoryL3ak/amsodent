@@ -25,6 +25,7 @@ export const MODULOS: string[] = [
   'marcaje',
   'despachos_choferes',
   'tracking_choferes',
+  'costeo_fletes',
   'monitoreo_stock',
   'portal_accesos',
   'usuarios',

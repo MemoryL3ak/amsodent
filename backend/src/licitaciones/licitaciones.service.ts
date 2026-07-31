@@ -54,18 +54,20 @@ export class LicitacionesService {
     const s = String(cierreRaw ?? '').trim();
     if (!s) return false;
     let cierre: Date | null = null;
-    const m = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/);
+    // "DD-MM-YYYY[ HH:mm]" o "DD-MM-YY HH:mm" (año de 2 dígitos, formato
+    // actual del portal). Sin hora se asume 23:59 (vigente todo el día).
+    const m = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4}|\d{2})(?:[ T](\d{1,2}):(\d{2}))?/);
     if (m) {
-      cierre = new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]));
+      const anio = m[3].length === 2 ? 2000 + Number(m[3]) : Number(m[3]);
+      const hh = m[4] != null ? Number(m[4]) : 23;
+      const mi = m[5] != null ? Number(m[5]) : 59;
+      cierre = new Date(anio, Number(m[2]) - 1, Number(m[1]), hh, mi);
     } else {
       const d = new Date(s);
       cierre = isNaN(d.getTime()) ? null : d;
     }
     if (!cierre) return false;
-    const hoy = new Date();
-    const inicioHoy = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate());
-    const cierreDia = new Date(cierre.getFullYear(), cierre.getMonth(), cierre.getDate());
-    return cierreDia.getTime() < inicioHoy.getTime();
+    return cierre.getTime() < Date.now();
   }
 
   async bulkDisponibles(rows: any[], subidaPor: string) {
@@ -463,6 +465,20 @@ export class LicitacionesService {
     };
   }
 
+  // Cotizaciones hijas (alternativas por equivalencias) de una madre.
+  async getHijas(madreId: number) {
+    const { data, error } = await this.supabase.getClient()
+      .from('licitaciones')
+      .select('id,id_licitacion,estado,fecha,creado_por')
+      .eq('madre_id', madreId)
+      .order('id', { ascending: true });
+    if (error) {
+      // madre_id aún no migrado: sin hijas.
+      return [];
+    }
+    return data || [];
+  }
+
   async create(body: Record<string, any>) {
     // Bloqueo por mora: no permitir cotizar a clientes con atraso ≥ umbral
     // (120 días mercado público / 60 días cliente particular), salvo override
@@ -492,6 +508,8 @@ export class LicitacionesService {
     let removed = false;
     if (msg.includes('fecha_publicacion_resultados')) { delete bodyWithout.fecha_publicacion_resultados; removed = true; }
     if (msg.includes('sucursal')) { delete bodyWithout.sucursal; removed = true; }
+    if (msg.includes('jerarquia')) { delete bodyWithout.jerarquia; removed = true; }
+    if (msg.includes('madre_id')) { delete bodyWithout.madre_id; removed = true; }
     if (removed) {
       const { data: d2, error: e2 } = await this.supabase.getClient()
         .from('licitaciones')

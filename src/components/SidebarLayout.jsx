@@ -45,6 +45,7 @@ import {
   Inbox,
   Percent,
   Building2,
+  Banknote,
 } from "lucide-react";
 import NotificacionesMenu from "./NotificacionesMenu";
 import RecordatoriosCorreo from "./RecordatoriosCorreo";
@@ -218,6 +219,7 @@ export default function SidebarLayout() {
   const logisticaNav = [
     puede("despachos_choferes") && { to: "/despachos-choferes", icon: Truck, label: "Despachos y Choferes" },
     puede("tracking_choferes") && { to: "/tracking-choferes", icon: MapPin, label: "Tracking en Vivo" },
+    puede("costeo_fletes") && { to: "/costeo-fletes", icon: Banknote, label: "Conciliación de Fletes" },
   ].filter(Boolean);
 
   const portalClienteNav = [

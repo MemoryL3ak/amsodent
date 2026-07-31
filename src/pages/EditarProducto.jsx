@@ -8,6 +8,7 @@ import Select from "react-select";
 import { pdf } from "@react-pdf/renderer";
 import { FichaTecnicaDocument } from "../components/FichaTecnica";
 import { FACTOR_LISTA_3, calcularLista3 } from "../lib/listas";
+import EquivalentesProducto from "../components/EquivalentesProducto";
 
 /* ============================================================
    BUSCADOR MEJORADO (igual que licitaciones)
@@ -152,6 +153,9 @@ export default function EditarProducto() {
     nombre: "",
     marca: "",
     sku_marca: "",
+    equivalente_1: "",
+    equivalente_2: "",
+    equivalente_3: "",
     categoria: "",
     formato: "",
     imagen_url: "",
@@ -336,6 +340,9 @@ export default function EditarProducto() {
         nombre: data.nombre ?? "",
         marca: data.marca ?? "",
         sku_marca: data.sku_marca ?? "",
+        equivalente_1: data.equivalente_1 ?? "",
+        equivalente_2: data.equivalente_2 ?? "",
+        equivalente_3: data.equivalente_3 ?? "",
         categoria: data.categoria ?? "",
         formato: data.formato ?? "",
         imagen_url: data.imagen_url ?? "",
@@ -508,7 +515,9 @@ export default function EditarProducto() {
         setImagenDisplayUrl(signedData?.signedUrl || "");
       } catch (error) {
         if (!alive) return;
-        console.error("Error creando signed URL:", error);
+        // La ruta guardada apunta a un archivo que ya no existe en el storage
+        // (imagen borrada o nunca subida): se muestra sin imagen, no es fatal.
+        console.warn(`Imagen del producto no encontrada en storage (${raw}):`, error?.message || error);
         setImagenDisplayUrl("");
       }
     }
@@ -633,6 +642,9 @@ export default function EditarProducto() {
       // Lista 3 siempre derivada (Lista 2 × 1.08); guardamos 0 y el frontend
       // hace fallback al leer.
       lista3: 0,
+      equivalente_1: (producto.equivalente_1 || "").trim() || null,
+      equivalente_2: (producto.equivalente_2 || "").trim() || null,
+      equivalente_3: (producto.equivalente_3 || "").trim() || null,
     };
 
     if (esAdmin || (esVentasOJefe && (esProductoTransitorio || esPendienteAprobacion))) {
@@ -913,6 +925,14 @@ try {
                     disabled={esVentasNoTransitorio}
                     placeholder="Código del fabricante (opcional)"
                     onChange={(e) => setProducto((prev) => ({ ...prev, sku_marca: e.target.value }))} />
+                </div>
+
+                <div className="md:col-span-2">
+                  <EquivalentesProducto
+                    value={[producto.equivalente_1, producto.equivalente_2, producto.equivalente_3]}
+                    onChange={(eqs) => setProducto((prev) => ({ ...prev, equivalente_1: eqs[0] || "", equivalente_2: eqs[1] || "", equivalente_3: eqs[2] || "" }))}
+                    excludeSku={producto.sku}
+                  />
                 </div>
 
                 <div>

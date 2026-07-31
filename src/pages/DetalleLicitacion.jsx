@@ -663,6 +663,8 @@ const DOC_TIPOS = {
   webpay: "Webpay",
   efectivo: "Efectivo",
   info_despacho: "Información de Despacho",
+  nota_credito: "Nota de Crédito",
+  cierre_forzado: "Respaldo Cierre Forzado",
 };
 const DOC_BUCKET_BY_TIPO = {
   orden_compra: "orden-compra",
@@ -1036,6 +1038,15 @@ export default function EditarLicitacion() {
     }
     // El comprobante de transferencia se asocia a la boleta/factura que paga.
     if (docTipo === "comprobante_pago") {
+      return documentos.filter((d) => d.tipo === "factura_boleta");
+    }
+    // El pago en efectivo puede asociarse a la factura o boleta que paga.
+    if (docTipo === "efectivo") {
+      return documentos.filter((d) => d.tipo === "factura_boleta");
+    }
+    // La información de despacho (particular) puede asociarse a la
+    // factura/boleta que se despacha.
+    if (docTipo === "info_despacho") {
       return documentos.filter((d) => d.tipo === "factura_boleta");
     }
     return [];
@@ -1498,6 +1509,8 @@ export default function EditarLicitacion() {
           tipo: "info_despacho",
           empresa_despacho: empresa,
           n_seguimiento: esInterno ? null : ((docNumSeguimiento || "").trim() || null),
+          // Factura/boleta asociada al despacho (opcional).
+          deriva_de_id: docDerivaDeId ? Number(docDerivaDeId) : null,
           bucket,
           storage_path: storagePath,
           file_name: fileName,
@@ -1506,6 +1519,7 @@ export default function EditarLicitacion() {
         });
         setDocEmpresa("Starken");
         setDocNumSeguimiento("");
+        setDocDerivaDeId("");
         setDocFile(null);
         if (fileInputRef.current) fileInputRef.current.value = "";
         setToast({ type: "success", message: "Información de despacho registrada." });
@@ -1632,6 +1646,21 @@ export default function EditarLicitacion() {
         setToast({
           type: "error",
           message: "El comprobante debe vincularse a una boleta o factura válida.",
+        });
+        return;
+      }
+    }
+
+    // Efectivo: la factura/boleta asociada es opcional, pero si se elige debe
+    // ser válida.
+    if (tipo === "efectivo" && docDerivaDeId) {
+      const docOrigen = documentos.find(
+        (d) => String(d.id) === String(docDerivaDeId)
+      );
+      if (!docOrigen || docOrigen.tipo !== "factura_boleta") {
+        setToast({
+          type: "error",
+          message: "El pago en efectivo debe vincularse a una boleta o factura válida.",
         });
         return;
       }
@@ -4187,6 +4216,41 @@ export default function EditarLicitacion() {
           {/* Cliente particular — Factura/Boleta y Efectivo: mismos campos (monto + fecha) */}
           {(docTipo === "factura_boleta" || docTipo === "efectivo") && (
             <>
+              {docTipo === "efectivo" && (
+                <div className="md:col-span-3">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Factura / Boleta asociada</label>
+                  <Select
+                    options={opcionesDerivaSelect}
+                    styles={{
+                      ...customStyles,
+                      control: (base, state) => ({
+                        ...customStyles.control(base, state),
+                        minHeight: "38px",
+                        height: "38px",
+                      }),
+                      valueContainer: (base) => ({
+                        ...customStyles.valueContainer(base),
+                        padding: "0 8px",
+                      }),
+                      indicatorsContainer: (base) => ({
+                        ...base,
+                        height: "38px",
+                      }),
+                    }}
+                    placeholder="Buscar factura/boleta (opcional)"
+                    menuPortalTarget={document.body}
+                    isSearchable={true}
+                    filterOption={filtrarPorTerminos}
+                    isClearable={true}
+                    isDisabled={subiendoDoc}
+                    noOptionsMessage={() => "Sin boletas/facturas disponibles"}
+                    value={
+                      opcionesDerivaSelect.find((o) => o.value === String(docDerivaDeId)) || null
+                    }
+                    onChange={(op) => setDocDerivaDeId(op?.value || "")}
+                  />
+                </div>
+              )}
               <div className="md:col-span-2">
                 <label className="block text-sm font-medium text-gray-700 mb-1">Monto Neto *</label>
                 <input
@@ -4328,7 +4392,7 @@ export default function EditarLicitacion() {
                 </select>
               </div>
               {docEmpresa !== "Despacho interno" && (
-                <div className="md:col-span-6">
+                <div className="md:col-span-3">
                   <label className="block text-sm font-medium text-gray-700 mb-1">N° Seguimiento</label>
                   <input
                     type="text"
@@ -4341,12 +4405,45 @@ export default function EditarLicitacion() {
                 </div>
               )}
               {docEmpresa === "Despacho interno" && (
-                <div className="md:col-span-6 flex items-end">
+                <div className="md:col-span-3 flex items-end">
                   <p className="text-xs text-gray-500">
                     Se generará automáticamente un N° de seguimiento interno (AMSO…) al guardar.
                   </p>
                 </div>
               )}
+              <div className="md:col-span-3">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Factura / Boleta asociada</label>
+                <Select
+                  options={opcionesDerivaSelect}
+                  styles={{
+                    ...customStyles,
+                    control: (base, state) => ({
+                      ...customStyles.control(base, state),
+                      minHeight: "38px",
+                      height: "38px",
+                    }),
+                    valueContainer: (base) => ({
+                      ...customStyles.valueContainer(base),
+                      padding: "0 8px",
+                    }),
+                    indicatorsContainer: (base) => ({
+                      ...base,
+                      height: "38px",
+                    }),
+                  }}
+                  placeholder="Asociar despacho a factura (opcional)"
+                  menuPortalTarget={document.body}
+                  isSearchable={true}
+                  filterOption={filtrarPorTerminos}
+                  isClearable={true}
+                  isDisabled={subiendoDoc}
+                  noOptionsMessage={() => "Sin boletas/facturas disponibles"}
+                  value={
+                    opcionesDerivaSelect.find((o) => o.value === String(docDerivaDeId)) || null
+                  }
+                  onChange={(op) => setDocDerivaDeId(op?.value || "")}
+                />
+              </div>
             </>
           )}
 

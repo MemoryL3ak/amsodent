@@ -17,14 +17,17 @@ function normalizarNombreArchivo(nombre) {
   return base || "archivo";
 }
 
-// Monto (neto) de una cotización para pagos = suma de sus OC (que se guardan
-// netas). Sin OC, cae al neto de la cotización (total_sin_iva, o total_con_iva/1.19).
-function montoNetoPago(ocSum, lic) {
+// Monto BRUTO de una cotización para pagos. Convención de los datos:
+//  - La OC se carga NETA ("Monto Neto OC") → bruto = OC × 1,19.
+//  - Los comprobantes/pagos se digitan y guardan en BRUTO (lo transferido).
+// El saldo siempre compara bruto contra bruto. Sin OC, cae al bruto de la
+// cotización (total_con_iva, o total_sin_iva × 1,19).
+function montoBrutoPago(ocSum, lic) {
   const oc = Number(ocSum || 0);
-  if (oc > 0) return oc;
-  const sinIva = Number(lic?.total_sin_iva || 0);
-  if (sinIva > 0) return sinIva;
-  return Math.round(Number(lic?.total_con_iva || 0) / 1.19);
+  if (oc > 0) return Math.round(oc * 1.19);
+  const conIva = Number(lic?.total_con_iva || 0);
+  if (conIva > 0) return conIva;
+  return Math.round(Number(lic?.total_sin_iva || 0) * 1.19);
 }
 
 const FORMAS_PAGO = [
@@ -296,11 +299,14 @@ export default function SeguimientoPagos() {
             }
             if (d.tipo === "nota_credito") {
               // Nota de crédito: descuenta del monto a cobrar de la factura.
+              // Se usa TAL CUAL está cargada: estos montos se ingresan brutos.
               (ncList[lid] = ncList[lid] || []).push(d);
               ncSum[lid] = (ncSum[lid] || 0) + Number(d.monto || 0);
               return;
             }
             // Comprobantes de pago: acumulamos el monto pagado por cotización.
+            // Los comprobantes se digitan y guardan en BRUTO (lo realmente
+            // transferido) → se usan tal cual, sin conversión.
             compSum[lid] = (compSum[lid] || 0) + Number(d.monto || 0);
             if (d.tipo === "comprobante_pago") {
               // Para la columna "Pago" nos quedamos con el comprobante más reciente.
@@ -390,11 +396,13 @@ export default function SeguimientoPagos() {
   }, [empresaDespachoMap]);
 
   // ── Notas de crédito / reconciliación de montos ──────────────────────────
-  // Monto base a cobrar (antes de notas de crédito): particular → monto de la
-  // factura/boleta; público → valor neto de la OC.
+  // Monto base a cobrar (antes de notas de crédito), en BRUTO: particular →
+  // bruto de la factura/boleta; público → bruto de la OC. Los pagos ingresados
+  // (comprobantes) son brutos, así que la base debe ser bruta para que el
+  // saldo cuadre.
   function montoBaseFactura(f, lic) {
-    if (esClienteParticular(lic)) return Number(f.monto) || Number(lic?.total_con_iva) || 0;
-    return montoNetoPago(montoOcMap[lic?.id], lic);
+    if (esClienteParticular(lic)) return montoFacturaBruto(f) || Number(lic?.total_con_iva) || 0;
+    return montoBrutoPago(montoOcMap[lic?.id], lic);
   }
   // Neto de la OC detrás de un id que puede ser una OC directa o una guía de
   // despacho (la guía deriva de la OC). Devuelve 0 si no resuelve.
@@ -738,9 +746,11 @@ export default function SeguimientoPagos() {
         diasAtraso = Math.round((fp.getTime() - venc.getTime()) / (1000 * 60 * 60 * 24));
       }
     }
-    // Monto del pago (opcional). Si se ingresa, lo registramos como un
-    // comprobante de pago para que cuadre con el total a cobrar (punto 17): si
-    // no cubre el total, la factura queda "pendiente de pago".
+    // Monto del pago (opcional), ingresado en BRUTO (lo que realmente se
+    // transfirió). Se registra como comprobante de pago con ese mismo bruto
+    // (los comprobantes se guardan brutos) para que cuadre con el total a
+    // cobrar (punto 17): si no cubre el total, la factura queda "pendiente
+    // de pago".
     const montoNum = Math.round(Number(String(montoPago).replace(/[^\d]/g, "")) || 0);
     try {
       await api.put(`/licitaciones/documentos/${f.id}`, {
@@ -753,7 +763,7 @@ export default function SeguimientoPagos() {
         await api.post("/licitaciones/documentos", {
           licitacion_id: Number(f.licitacion_id),
           tipo: "comprobante_pago",
-          monto: montoNum,
+          monto: montoNum, // bruto, tal como se digitó
           fecha_oc: fechaPago,
           deriva_de_id: Number(f.id),
         });
@@ -1275,7 +1285,10 @@ export default function SeguimientoPagos() {
                   const fechaPagoMostrar = particular
                     ? (comprobante?.fecha_oc ? String(comprobante.fecha_oc).slice(0, 10) : f.fecha_pago)
                     : f.fecha_pago;
-                  const montoParticular = comprobante?.monto != null ? comprobante.monto : f.monto;
+                  // Monto del pago mostrado: el comprobante ya viene en bruto.
+                  const montoParticular = comprobante?.monto != null
+                    ? Number(comprobante.monto)
+                    : montoFacturaBruto(f);
 
                   return (
                     <tr key={f.id}>
