@@ -6,6 +6,7 @@ import {
   Delete,
   Body,
   Param,
+  Query,
   Req,
   UseGuards,
   UseInterceptors,
@@ -25,8 +26,8 @@ export class ClientesController {
   constructor(private clientesService: ClientesService) {}
 
   @Get()
-  findAll() {
-    return this.clientesService.findAll();
+  findAll(@Query('rut') rut?: string, @Query('nombre') nombre?: string) {
+    return this.clientesService.findAll(rut, nombre);
   }
 
   // ── Contactos clave (rutas literales antes de ':id' para evitar colisiones) ──

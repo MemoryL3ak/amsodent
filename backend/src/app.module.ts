@@ -26,6 +26,7 @@ import { ActividadesModule } from './actividades/actividades.module';
 import { OrdenesCompraModule } from './ordenes-compra/ordenes-compra.module';
 import { ComisionesModule } from './comisiones/comisiones.module';
 import { ProveedoresModule } from './proveedores/proveedores.module';
+import { FletesModule } from './fletes/fletes.module';
 
 @Module({
   imports: [
@@ -56,6 +57,7 @@ import { ProveedoresModule } from './proveedores/proveedores.module';
     OrdenesCompraModule,
     ComisionesModule,
     ProveedoresModule,
+    FletesModule,
   ],
 })
 export class AppModule {}

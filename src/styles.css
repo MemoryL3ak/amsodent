@@ -897,6 +897,34 @@ body {
   .panel-publica-grid { grid-template-columns: 1fr; }
 }
 
+/* Grillas de paneles con proporciones fijas: colapsan a una columna en
+   pantallas angostas (los auto-fit ya son responsivos por sí solos). */
+.panel-grid-2-1 {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  gap: 16px;
+}
+.panel-grid-1-2 {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(0, 2fr);
+  gap: 16px;
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .panel-grid-2-1,
+  .panel-grid-1-2 { grid-template-columns: 1fr; }
+}
+
+/* La grilla base de KPIs (4 columnas) no tenía breakpoints — en pantallas
+   chicas las tarjetas quedaban ilegibles. Las variantes stats-5..8 ganan por
+   especificidad donde definen los suyos. */
+@media (max-width: 1024px) {
+  .stats-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 480px) {
+  .stats-row { grid-template-columns: 1fr; }
+}
+
 .stat-sub {
   font-size: 12px;
   color: var(--text-soft);

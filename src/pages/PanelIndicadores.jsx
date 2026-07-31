@@ -104,6 +104,10 @@ export default function PanelIndicadores() {
   const [mostrarProductos, setMostrarProductos] = useState(false);
   const [metaCotizaciones, setMetaCotizaciones] = useState(0);
   const [metaMonto, setMetaMonto] = useState(0);
+  const [margenPorLic, setMargenPorLic] = useState([]); // [{licId, venta, costo}] adjudicadas del periodo
+  const [margenOpen, setMargenOpen] = useState(false); // modal de desglose del margen
+  const [nombresVendedores, setNombresVendedores] = useState({}); // email → nombre
+  const [disponibles, setDisponibles] = useState([]); // postulaciones del listado (tomadas / no aplica / vencidas)
 
   // Público vs particular según tipo_cliente de la licitación.
   const esParticular = (l) => (l?.tipo_cliente || "").toLowerCase().includes("particular");
@@ -211,7 +215,7 @@ export default function PanelIndicadores() {
       const idsMes = lics
         .filter((l) => pasaTipo(l) && enPeriodo(adjDateByLic[l.id]))
         .map((l) => Number(l.id));
-      if (!idsMes.length) { if (activo) { setCatData([]); setMargenMes({ monto: 0, pct: 0 }); } return; }
+      if (!idsMes.length) { if (activo) { setCatData([]); setMargenMes({ monto: 0, pct: 0 }); setMargenPorLic([]); } return; }
       try {
         const items = await api.post("/licitaciones/items/filter", {
           licitacion_ids: idsMes,
@@ -219,6 +223,7 @@ export default function PanelIndicadores() {
         });
         const mapCat = {};      // cat -> total
         const mapCatProd = {};  // cat -> { producto -> monto }
+        const porLic = {};      // licId -> { venta, costo } (desglose del margen)
         let ventaNeta = 0, costoTotal = 0; // para el margen del mes
         (items || []).forEach((it) => {
           const total = Number(it.total || 0);
@@ -230,11 +235,19 @@ export default function PanelIndicadores() {
           ventaNeta += total;
           const sku = String(it.sku || "").trim().toUpperCase();
           const costoUnit = costoBySku[sku] || 0;
-          costoTotal += costoUnit * (Number(it.cantidad) || 0);
+          const costoItem = costoUnit * (Number(it.cantidad) || 0);
+          costoTotal += costoItem;
+          const lid = Number(it.licitacion_id);
+          if (lid) {
+            const acc = (porLic[lid] = porLic[lid] || { venta: 0, costo: 0 });
+            acc.venta += total;
+            acc.costo += costoItem;
+          }
         });
         const margenMonto = Math.round(ventaNeta - costoTotal);
         const margenPct = ventaNeta > 0 ? (margenMonto / ventaNeta) * 100 : 0;
         if (activo) setMargenMes({ monto: margenMonto, pct: margenPct });
+        if (activo) setMargenPorLic(Object.entries(porLic).map(([licId, v]) => ({ licId: Number(licId), ...v })));
         const arrCat = Object.entries(mapCat).map(([categoria, monto]) => ({
           categoria,
           monto,
@@ -250,6 +263,37 @@ export default function PanelIndicadores() {
     })();
     return () => { activo = false; };
   }, [cargando, puedeVer, lics, adjDateByLic, enPeriodo, filtroTipo, costoBySku]);
+
+  // Nombres de los vendedores (para el desglose del margen).
+  useEffect(() => {
+    if (cargando || !puedeVer) return;
+    const emails = Array.from(new Set(
+      lics.map((l) => (l.creado_por || "").trim().toLowerCase()).filter(Boolean)
+    ));
+    if (!emails.length) { setNombresVendedores({}); return; }
+    let activo = true;
+    api.post("/usuarios/profiles/by-emails", { emails })
+      .then((perfiles) => {
+        if (!activo) return;
+        const m = {};
+        (perfiles || []).forEach((p) => {
+          m[(p.email || "").trim().toLowerCase()] = (p.nombre || "").trim();
+        });
+        setNombresVendedores(m);
+      })
+      .catch(() => {});
+    return () => { activo = false; };
+  }, [cargando, puedeVer, lics]);
+
+  // Listado de postulaciones disponibles (mercado público): tomadas / no aplica / vencidas.
+  useEffect(() => {
+    if (cargando || !puedeVer) return;
+    let activo = true;
+    api.get("/licitaciones/disponibles")
+      .then((rows) => { if (activo) setDisponibles(Array.isArray(rows) ? rows : []); })
+      .catch(() => { if (activo) setDisponibles([]); });
+    return () => { activo = false; };
+  }, [cargando, puedeVer]);
 
   // Metas (donde existan): N° cotizaciones del equipo + monto neto de vendedores.
   useEffect(() => {
@@ -490,6 +534,69 @@ export default function PanelIndicadores() {
   const totalCat = catData.reduce((acc, c) => acc + c.monto, 0);
   const maxTop = Math.max(1, ...topClientes.map((c) => c.monto));
 
+  // Desglose del margen: por cotización, por vendedor y por tipo de cotización.
+  const margenDesglose = useMemo(() => {
+    const licById = new Map(lics.map((l) => [Number(l.id), l]));
+    const filas = margenPorLic.map((r) => {
+      const l = licById.get(r.licId) || {};
+      const email = (l.creado_por || "").trim().toLowerCase();
+      const monto = r.venta - r.costo;
+      return {
+        licId: r.licId,
+        codigo: l.id_licitacion || `Cot. ${r.licId}`,
+        cliente: l.nombre_entidad || l.rut_entidad || "—",
+        vendedor: nombresVendedores[email] || email || "Sin vendedor",
+        tipo: l.tipo_compra || (esParticular(l) ? "Cliente particular" : "Sin tipo"),
+        venta: r.venta,
+        costo: r.costo,
+        monto,
+        pct: r.venta > 0 ? (monto / r.venta) * 100 : 0,
+      };
+    }).sort((a, b) => b.venta - a.venta);
+    const agrupar = (key) => {
+      const m = {};
+      filas.forEach((f) => {
+        const k = f[key] || "—";
+        const e = (m[k] = m[k] || { label: k, venta: 0, costo: 0, cotizaciones: 0 });
+        e.venta += f.venta;
+        e.costo += f.costo;
+        e.cotizaciones += 1;
+      });
+      return Object.values(m)
+        .map((e) => ({ ...e, monto: e.venta - e.costo, pct: e.venta > 0 ? ((e.venta - e.costo) / e.venta) * 100 : 0 }))
+        .sort((a, b) => b.venta - a.venta);
+    };
+    return { filas, porVendedor: agrupar("vendedor"), porTipo: agrupar("tipo") };
+  }, [margenPorLic, lics, nombresVendedores]);
+
+  // Postulaciones del listado: tomadas / no aplica / vencidas (sin cargar).
+  const disponiblesStats = useMemo(() => {
+    const fechaCierre = (row) => {
+      const raw = row?.datos?.cierre;
+      if (!raw) return null;
+      const s = String(raw).trim();
+      // "DD-MM-YYYY[ HH:mm]" o "DD-MM-YY HH:mm" (año de 2 dígitos).
+      const m2 = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4}|\d{2})(?:[ T](\d{1,2}):(\d{2}))?/);
+      if (m2) {
+        const anio = m2[3].length === 2 ? 2000 + Number(m2[3]) : Number(m2[3]);
+        const hh = m2[4] != null ? Number(m2[4]) : 23;
+        const mi = m2[5] != null ? Number(m2[5]) : 59;
+        return new Date(anio, Number(m2[2]) - 1, Number(m2[1]), hh, mi);
+      }
+      const d = new Date(s);
+      return Number.isNaN(d.getTime()) ? null : d;
+    };
+    const ahora = new Date();
+    let tomadas = 0, noAplica = 0, vencidas = 0;
+    disponibles.forEach((r) => {
+      if (r.tomada_por) tomadas++;
+      if (r.no_aplica) { noAplica++; return; }
+      const fc = fechaCierre(r);
+      if (fc && fc < ahora && !r.cargada) vencidas++;
+    });
+    return { tomadas, noAplica, vencidas, total: disponibles.length };
+  }, [disponibles]);
+
   return (
     <div className="page">
       <div className="page-header" style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
@@ -555,9 +662,13 @@ export default function PanelIndicadores() {
             <KpiCard icon={UserPlus} color="#d97706" label="Clientes Nuevos" sub={`Primera compra el ${periodoLabel.toLowerCase()}`} value={fmtNum(cnr.nuevos)} delta={mostrarDelta ? <Delta actual={cnr.nuevos} prev={cnrPrev.nuevos} /> : null} />
             <KpiCard icon={RefreshCw} color="#0ea5e9" label="Recompra" sub="Clientes que repiten" value={fmtPct(cnr.recompra)} delta={mostrarDelta ? <Delta actual={cnr.recompra} prev={cnrPrev.recompra} unidadPp /> : null} />
             <KpiCard icon={Award} color="#b45309" label="Cotizaciones adjudicadas" sub={`Cierres del ${periodoLabel.toLowerCase()}`} value={fmtNum(m.adjudicadas)} delta={mostrarDelta ? <Delta actual={m.adjudicadas} prev={mPrev.adjudicadas} /> : null} />
-            <KpiCard icon={TrendingUp} color="#7c3aed" label="Margen %" sub="(venta − costo) / venta · adjudicadas" value={fmtPct(margenMes.pct)} />
+            <div onClick={() => setMargenOpen(true)} style={{ cursor: "pointer" }} title="Ver desglose del margen por cotización, vendedor y tipo">
+              <KpiCard icon={TrendingUp} color="#7c3aed" label="Margen %" sub="(venta − costo) / venta · clic para desglose" value={fmtPct(margenMes.pct)} />
+            </div>
             {!esJefatura && (
-              <KpiCard icon={Banknote} color="#0d9488" label="Margen $" sub="Venta neta − costo · adjudicadas" value={fmtCLP(margenMes.monto)} />
+              <div onClick={() => setMargenOpen(true)} style={{ cursor: "pointer" }} title="Ver desglose del margen por cotización, vendedor y tipo">
+                <KpiCard icon={Banknote} color="#0d9488" label="Margen $" sub="Venta neta − costo · clic para desglose" value={fmtCLP(margenMes.monto)} />
+              </div>
             )}
           </div>
 
@@ -570,12 +681,49 @@ export default function PanelIndicadores() {
             </div>
             {/* Embudo comercial (clientes particulares) */}
             <EmbudoComercial periodo={periodo} />
+            {/* Licitaciones del listado de postulaciones: tomadas / no aplica / vencidas */}
+            <div className="surface" style={{ padding: 18 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 14, gap: 8 }}>
+                <h3 className="surface-title" style={{ margin: 0 }}>Licitaciones disponibles</h3>
+                <span style={{ fontSize: 11, color: "var(--text-muted)" }}>{fmtNum(disponiblesStats.total)} en el listado</span>
+              </div>
+              {disponiblesStats.total === 0 ? (
+                <p style={{ color: "var(--text-muted)", fontSize: 13 }}>Sin postulaciones en el listado.</p>
+              ) : (
+                <>
+                  <div style={{ display: "flex", alignItems: "flex-end", gap: 18, height: 150, padding: "0 6px" }}>
+                    {[
+                      { label: "Tomadas", value: disponiblesStats.tomadas, color: "#16a34a" },
+                      { label: "No aplica", value: disponiblesStats.noAplica, color: "#a16207" },
+                      { label: "Vencidas", value: disponiblesStats.vencidas, color: "#dc2626" },
+                    ].map((b) => {
+                      const maxV = Math.max(1, disponiblesStats.tomadas, disponiblesStats.noAplica, disponiblesStats.vencidas);
+                      const h = clamp((b.value / maxV) * 100, b.value > 0 ? 5 : 0, 100);
+                      return (
+                        <div key={b.label} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end", height: "100%" }} title={`${b.label}: ${fmtNum(b.value)}`}>
+                          <div style={{ fontSize: 13, fontWeight: 700, color: b.color, marginBottom: 4 }}>{fmtNum(b.value)}</div>
+                          <div style={{ width: "58%", maxWidth: 52, height: `${h}%`, background: b.color, borderRadius: "6px 6px 0 0" }} />
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div style={{ display: "flex", gap: 18, marginTop: 8, padding: "0 6px" }}>
+                    {["Tomadas", "No aplica", "Vencidas"].map((t) => (
+                      <span key={t} style={{ flex: 1, fontSize: 11, color: "var(--text-muted)", textAlign: "center" }}>{t}</span>
+                    ))}
+                  </div>
+                  <p style={{ fontSize: 10.5, color: "var(--text-muted)", marginTop: 10, marginBottom: 0 }}>
+                    "Vencidas" = postulaciones con fecha de cierre pasada que no se cargaron ni se marcaron como "No aplica".
+                  </p>
+                </>
+              )}
+            </div>
             {/* Ventas por categoría */}
             <div className="surface" style={{ padding: 18 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, gap: 8 }}>
-                <h3 className="surface-title" style={{ margin: 0 }}>Ventas por categoría ({periodoLabel.toLowerCase()})</h3>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, gap: 8, flexWrap: "wrap" }}>
+                <h3 className="surface-title" style={{ margin: 0, flex: "1 1 auto", minWidth: 160 }}>Ventas por categoría ({periodoLabel.toLowerCase()})</h3>
                 {catData.length > 0 && (
-                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
                     <button
                       type="button"
                       onClick={() => descargarTopVentas("xlsx")}
@@ -642,7 +790,7 @@ export default function PanelIndicadores() {
           </div>
 
           {/* Indicadores + resumen */}
-          <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 2fr) minmax(0, 1fr)", gap: 16 }}>
+          <div className="panel-grid-2-1">
             {/* Tabla indicadores */}
             <div className="surface">
               <div className="surface-header"><h3 className="surface-title">Indicadores detallados</h3></div>
@@ -780,6 +928,122 @@ export default function PanelIndicadores() {
           onCerrar={() => setMostrarProductos(false)}
         />
       )}
+
+      {margenOpen && (
+        <ModalMargenDesglose
+          desglose={margenDesglose}
+          margen={margenMes}
+          mostrarMonto={!esJefatura}
+          onCerrar={() => setMargenOpen(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+/* ── Modal: desglose del margen (por cotización / vendedor / tipo) ──────── */
+function ModalMargenDesglose({ desglose, margen, mostrarMonto, onCerrar }) {
+  const [vista, setVista] = useState("cotizaciones"); // cotizaciones | vendedor | tipo
+  const TABS = [
+    { key: "cotizaciones", label: "Por cotización" },
+    { key: "vendedor", label: "Por vendedor" },
+    { key: "tipo", label: "Por tipo de cotización" },
+  ];
+  const colorPct = (pct) => (pct >= 20 ? "#15803d" : pct > 0 ? "#b45309" : "#dc2626");
+
+  const TablaAgrupada = ({ filas, etiqueta }) => (
+    <table className="data-table" style={{ width: "100%" }}>
+      <thead>
+        <tr>
+          <th style={{ textAlign: "left" }}>{etiqueta}</th>
+          <th style={{ textAlign: "right" }}>Cotizaciones</th>
+          <th style={{ textAlign: "right" }}>Venta neta</th>
+          {mostrarMonto && <th style={{ textAlign: "right" }}>Costo</th>}
+          {mostrarMonto && <th style={{ textAlign: "right" }}>Margen $</th>}
+          <th style={{ textAlign: "right" }}>Margen %</th>
+        </tr>
+      </thead>
+      <tbody>
+        {filas.length === 0 ? (
+          <tr><td colSpan={mostrarMonto ? 6 : 4} style={{ padding: "14px 8px", color: "var(--text-muted)" }}>Sin adjudicaciones en el periodo.</td></tr>
+        ) : filas.map((f) => (
+          <tr key={f.label}>
+            <td style={{ fontWeight: 600, maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={f.label}>{f.label}</td>
+            <td style={{ textAlign: "right" }}>{fmtNum(f.cotizaciones)}</td>
+            <td style={{ textAlign: "right", fontWeight: 600 }}>{fmtCLP(f.venta)}</td>
+            {mostrarMonto && <td style={{ textAlign: "right" }}>{fmtCLP(f.costo)}</td>}
+            {mostrarMonto && <td style={{ textAlign: "right", fontWeight: 600 }}>{fmtCLP(f.monto)}</td>}
+            <td style={{ textAlign: "right", fontWeight: 700, color: colorPct(f.pct) }}>{fmtPct(f.pct)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+
+  return (
+    <div
+      onClick={(e) => { if (e.target === e.currentTarget) onCerrar(); }}
+      style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,.55)", zIndex: 12000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+    >
+      <div style={{ width: 860, maxWidth: "100%", maxHeight: "86vh", display: "flex", flexDirection: "column", background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", boxShadow: "var(--shadow-lg)", padding: 22 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+          <h3 style={{ margin: 0, fontSize: 17, fontWeight: 700 }}>Desglose del margen</h3>
+          <button className="btn btn-ghost" onClick={onCerrar} style={{ padding: 6 }}><X size={18} /></button>
+        </div>
+        <p style={{ fontSize: 12.5, color: "var(--text-muted)", marginTop: 2, marginBottom: 12 }}>
+          Margen del periodo: <strong style={{ color: colorPct(margen.pct) }}>{fmtPct(margen.pct)}</strong>
+          {mostrarMonto ? <> · <strong>{fmtCLP(margen.monto)}</strong></> : null}. Calculado sobre los ítems de las cotizaciones adjudicadas del periodo (costo del catálogo por SKU).
+        </p>
+        <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
+          {TABS.map((t) => (
+            <button key={t.key} type="button" onClick={() => setVista(t.key)}
+              style={{
+                fontSize: 12.5, fontWeight: 700, padding: "6px 14px", borderRadius: 999, cursor: "pointer",
+                background: vista === t.key ? "var(--primary)" : "var(--surface)",
+                color: vista === t.key ? "#fff" : "var(--text-muted)",
+                border: `1px solid ${vista === t.key ? "var(--primary)" : "var(--border)"}`,
+              }}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+        <div style={{ overflowY: "auto", overflowX: "auto", flex: 1, border: "1px solid var(--border)", borderRadius: 10 }}>
+          {vista === "cotizaciones" ? (
+            <table className="data-table" style={{ width: "100%" }}>
+              <thead>
+                <tr>
+                  <th style={{ textAlign: "left" }}>Cotización</th>
+                  <th style={{ textAlign: "left" }}>Cliente</th>
+                  <th style={{ textAlign: "left" }}>Vendedor</th>
+                  <th style={{ textAlign: "right" }}>Venta neta</th>
+                  {mostrarMonto && <th style={{ textAlign: "right" }}>Costo</th>}
+                  {mostrarMonto && <th style={{ textAlign: "right" }}>Margen $</th>}
+                  <th style={{ textAlign: "right" }}>Margen %</th>
+                </tr>
+              </thead>
+              <tbody>
+                {desglose.filas.length === 0 ? (
+                  <tr><td colSpan={mostrarMonto ? 7 : 5} style={{ padding: "14px 8px", color: "var(--text-muted)" }}>Sin adjudicaciones en el periodo.</td></tr>
+                ) : desglose.filas.map((f) => (
+                  <tr key={f.licId}>
+                    <td style={{ fontWeight: 600, whiteSpace: "nowrap" }}>{f.codigo}</td>
+                    <td style={{ maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--text-muted)" }} title={f.cliente}>{f.cliente}</td>
+                    <td style={{ maxWidth: 150, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={f.vendedor}>{f.vendedor}</td>
+                    <td style={{ textAlign: "right", fontWeight: 600 }}>{fmtCLP(f.venta)}</td>
+                    {mostrarMonto && <td style={{ textAlign: "right" }}>{fmtCLP(f.costo)}</td>}
+                    {mostrarMonto && <td style={{ textAlign: "right", fontWeight: 600 }}>{fmtCLP(f.monto)}</td>}
+                    <td style={{ textAlign: "right", fontWeight: 700, color: colorPct(f.pct) }}>{fmtPct(f.pct)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : vista === "vendedor" ? (
+            <TablaAgrupada filas={desglose.porVendedor} etiqueta="Vendedor" />
+          ) : (
+            <TablaAgrupada filas={desglose.porTipo} etiqueta="Tipo de cotización" />
+          )}
+        </div>
+      </div>
     </div>
   );
 }

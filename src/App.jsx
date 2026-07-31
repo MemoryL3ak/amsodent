@@ -74,6 +74,7 @@ import MonitoreoStockClientes from "./pages/MonitoreoStockClientes";
 import AccesoPortalClientes from "./pages/AccesoPortalClientes";
 // DESPACHOS INTERNOS / CHOFERES
 import DespachosChoferes from "./pages/DespachosChoferes";
+import CosteoFletes from "./pages/CosteoFletes";
 import TrackingChoferes from "./pages/TrackingChoferes";
 import PortalChofer from "./pages/PortalChofer";
 
@@ -194,6 +195,14 @@ export default function App() {
             element={
               <RequireModulo modulo="tracking_choferes">
                 <TrackingChoferes />
+              </RequireModulo>
+            }
+          />
+          <Route
+            path="costeo-fletes"
+            element={
+              <RequireModulo modulo="costeo_fletes">
+                <CosteoFletes />
               </RequireModulo>
             }
           />

@@ -726,23 +726,24 @@ export default function Productos() {
       <div className="table-wrap">
         <div className="table-scroll" style={{maxHeight: 760}}>
           <table className="data-table" style={{tableLayout: "fixed", width: "100%", minWidth: 1340}}>
+            {/* SKU · Producto · Marca · Categoría · Formato · Precio Neto ·
+                Precio Bruto · Acciones. Sin comentarios inline dentro del
+                colgroup: el espacio antes de {} genera un text node inválido
+                como hijo de <colgroup> (warning de hidratación de React). */}
             <colgroup>
-              <col style={{width: 110}} />   {/* SKU */}
-              <col style={{width: 300}} />   {/* Producto */}
-              <col style={{width: 140}} />   {/* Marca */}
-              <col style={{width: 140}} />   {/* Categoría */}
-              <col style={{width: 100}} />   {/* Formato */}
-              <col style={{width: 130}} />   {/* Precio Neto */}
-              <col style={{width: 130}} />   {/* Precio Bruto */}
-              <col style={{width: 290}} />   {/* Acciones */}
+              <col style={{width: 110}} />
+              <col style={{width: 300}} />
+              <col style={{width: 140}} />
+              <col style={{width: 140}} />
+              <col style={{width: 100}} />
+              <col style={{width: 130}} />
+              <col style={{width: 130}} />
+              <col style={{width: 290}} />
             </colgroup>
             <thead>
               <tr>
                 <th style={{cursor:"pointer", userSelect:"none"}} onClick={() => toggleSort("sku")}>
                   SKU{sortIndicator("sku")}
-                </th>
-                <th style={{cursor:"pointer", userSelect:"none"}} onClick={() => toggleSort("sku_marca")}>
-                  SKU Marca{sortIndicator("sku_marca")}
                 </th>
                 <th style={{cursor:"pointer", userSelect:"none"}} onClick={() => toggleSort("nombre")}>
                   Producto{sortIndicator("nombre")}
@@ -804,7 +805,6 @@ export default function Productos() {
                 return (
                   <tr key={p.id}>
                     <td style={{whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>{p.sku}</td>
-                    <td style={{whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>{p.sku_marca || "—"}</td>
                     <td style={{whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}} title={p.nombre}>
                       {p.nombre}
                     </td>

@@ -6,6 +6,7 @@ import Toast from "../components/Toast";
 import { Link } from "react-router-dom";
 import Select from "react-select";
 import { FACTOR_LISTA_3, calcularLista3 } from "../lib/listas";
+import EquivalentesProducto from "../components/EquivalentesProducto";
 
 /* ============================================================
    BUSCADOR MEJORADO (igual que CrearLicitacion)
@@ -177,6 +178,7 @@ const customStyles = {
 export default function CrearProducto() {
   const [sku, setSku] = useState("");
   const [estado, setEstado] = useState("Transitorio");
+  const [equivalentes, setEquivalentes] = useState(["", "", ""]); // SKUs equivalentes 1-3
   const [nombre, setNombre] = useState("");
   const [marca, setMarca] = useState("");
   const [skuMarca, setSkuMarca] = useState("");
@@ -415,6 +417,9 @@ export default function CrearProducto() {
       // frontend hace fallback al leer.
       lista3: 0,
       lista4: 0,
+      equivalente_1: (equivalentes[0] || "").trim() || null,
+      equivalente_2: (equivalentes[1] || "").trim() || null,
+      equivalente_3: (equivalentes[2] || "").trim() || null,
       creado_por: userEmail || null,
     };
 
@@ -616,6 +621,10 @@ export default function CrearProducto() {
                       onChange={(e) => setFormato(e.target.value)}
                     />
                   </div>
+                </div>
+
+                <div className="mt-5 pt-4 border-t border-gray-200">
+                  <EquivalentesProducto value={equivalentes} onChange={setEquivalentes} excludeSku={sku} />
                 </div>
               </div>
 

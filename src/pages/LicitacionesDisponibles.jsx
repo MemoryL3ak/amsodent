@@ -17,33 +17,54 @@ function fmtFecha(v) {
   return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString("es-CL", { day: "2-digit", month: "2-digit", year: "numeric" });
 }
 
+// ¿El dato de cierre del xlsx trae hora explícita? (parseCierre asume 23:59
+// cuando no hay hora, por eso solo mostramos la hora si venía en el origen.)
+// Acepta año de 4 o de 2 dígitos ("27-07-26 11:30").
+function cierreTraeHora(raw) {
+  const s = String(raw || "").trim();
+  if (!s) return false;
+  return /\d{1,2}[-/]\d{1,2}[-/]\d{2,4}[ T]\d{1,2}:\d{2}/.test(s) || /\d{4}-\d{2}-\d{2}[ T]\d{1,2}:\d{2}/.test(s);
+}
+
+// Fecha con hora opcional (24h). Si conHora es false, solo la fecha.
+function fmtFechaHora(v, conHora) {
+  if (!v) return "";
+  const d = v instanceof Date ? v : new Date(v);
+  if (Number.isNaN(d.getTime())) return "";
+  const fecha = d.toLocaleDateString("es-CL", { day: "2-digit", month: "2-digit", year: "numeric" });
+  if (!conHora) return fecha;
+  const hora = d.toLocaleTimeString("es-CL", { hour: "2-digit", minute: "2-digit", hour12: false });
+  return `${fecha} ${hora}`;
+}
+
 // Interpreta la fecha de "Cierre" que viene del xlsx (datos.cierre). Acepta
-// formatos "DD-MM-YYYY[ HH:mm]", "DD/MM/YYYY", ISO "YYYY-MM-DD..." y timestamps.
+// "DD-MM-YYYY[ HH:mm]", "DD-MM-YY HH:mm" (año de 2 dígitos, formato actual
+// del portal), "DD/MM/YYYY", ISO "YYYY-MM-DD..." y timestamps.
 // Devuelve un Date o null si no se puede interpretar.
 function parseCierre(raw) {
   if (!raw) return null;
   const s = String(raw).trim();
   if (!s) return null;
-  // DD-MM-YYYY o DD/MM/YYYY, con hora opcional.
-  let m = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})(?:[ T](\d{1,2}):(\d{2}))?/);
+  // DD-MM-YYYY o DD-MM-YY (también con "/"), con hora opcional.
+  let m = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4}|\d{2})(?:[ T](\d{1,2}):(\d{2}))?/);
   if (m) {
-    const [, dd, mm, yyyy, hh = "23", mi = "59"] = m;
-    const d = new Date(Number(yyyy), Number(mm) - 1, Number(dd), Number(hh), Number(mi));
+    const [, dd, mm, yy, hh = "23", mi = "59"] = m;
+    const anio = yy.length === 2 ? 2000 + Number(yy) : Number(yy);
+    const d = new Date(anio, Number(mm) - 1, Number(dd), Number(hh), Number(mi));
     return Number.isNaN(d.getTime()) ? null : d;
   }
   const d = new Date(s);
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
-// Una postulación está "vigente" si su fecha de cierre es hoy o futura (o si no
-// tiene fecha de cierre registrada, para no ocultarla por falta de dato).
+// Una postulación está "vigente" si su cierre aún no pasa (o si no tiene fecha
+// de cierre registrada, para no ocultarla por falta de dato). Si el cierre
+// trae hora, la vigencia respeta la hora exacta; sin hora, dura hasta las
+// 23:59 de ese día (default de parseCierre).
 function estaVigente(row) {
   const cierre = parseCierre(row?.datos?.cierre);
   if (!cierre) return true;
-  const hoy = new Date();
-  const inicioHoy = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate());
-  const cierreDia = new Date(cierre.getFullYear(), cierre.getMonth(), cierre.getDate());
-  return cierreDia.getTime() >= inicioHoy.getTime();
+  return cierre.getTime() >= Date.now();
 }
 
 export default function LicitacionesDisponibles({ embedded = false }) {
@@ -67,6 +88,7 @@ export default function LicitacionesDisponibles({ embedded = false }) {
   const [toast, setToast] = useState(null);
   const [loadSeq, setLoadSeq] = useState(0); // se incrementa en cada carga (no en cada toma)
   const [confirmTomar, setConfirmTomar] = useState(null); // fila a confirmar antes de tomar
+  const [confirmNoAplica, setConfirmNoAplica] = useState(null); // fila a confirmar antes de marcar "No Aplica"
   const [confirmBorrarTodas, setConfirmBorrarTodas] = useState(false);
   const [creadasHoy, setCreadasHoy] = useState(0); // cotizaciones creadas hoy por el usuario
 
@@ -433,7 +455,7 @@ export default function LicitacionesDisponibles({ embedded = false }) {
                 <th style={{ textAlign: "left", width: 150 }}>Región</th>
                 <th style={{ textAlign: "right", whiteSpace: "nowrap", width: 120 }}>Monto</th>
                 <th style={{ textAlign: "left", width: 100 }}>Tipo</th>
-                <th style={{ textAlign: "left", whiteSpace: "nowrap", width: 125 }}>Cierre</th>
+                <th style={{ textAlign: "left", whiteSpace: "nowrap", width: 150 }}>Cierre</th>
                 <th style={{ textAlign: "left", whiteSpace: "nowrap", width: 105 }}>Fecha carga</th>
                 <th style={{ textAlign: "left", width: 120 }}>Estado</th>
                 <th style={{ textAlign: "left", width: 90 }}>Acciones</th>
@@ -472,9 +494,10 @@ export default function LicitacionesDisponibles({ embedded = false }) {
                       const c = parseCierre(row?.datos?.cierre);
                       if (!c) return <span style={{ color: "var(--text-muted)" }}>—</span>;
                       const vig = estaVigente(row);
+                      const conHora = cierreTraeHora(row?.datos?.cierre);
                       return (
                         <span style={{ display: "inline-flex", alignItems: "center", gap: 5, color: vig ? "var(--text)" : "var(--danger)", fontWeight: vig ? 500 : 700 }}>
-                          {fmtFecha(c)}
+                          {fmtFechaHora(c, conHora)}
                           {!vig && <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 999, background: "#fee2e2", color: "#b91c1c" }}>Vencida</span>}
                         </span>
                       );
@@ -531,7 +554,7 @@ export default function LicitacionesDisponibles({ embedded = false }) {
                       {esGestor && !row.cargada && (
                         <button
                           className="btn btn-sm btn-ghost"
-                          onClick={(e) => { e.stopPropagation(); toggleNoAplica(row); }}
+                          onClick={(e) => { e.stopPropagation(); if (row.no_aplica) toggleNoAplica(row); else setConfirmNoAplica(row); }}
                           title={row.no_aplica ? "Restaurar al listado" : "Marcar «No Aplica»"}
                           style={{ padding: 6, lineHeight: 0, color: row.no_aplica ? "#a16207" : "var(--text-muted)" }}
                         >
@@ -567,6 +590,17 @@ export default function LicitacionesDisponibles({ embedded = false }) {
         confirmTone="primary"
         onConfirm={() => { const r = confirmTomar; setConfirmTomar(null); if (r) toggleTomar(r); }}
         onCancel={() => setConfirmTomar(null)}
+      />
+
+      <ConfirmModal
+        open={!!confirmNoAplica}
+        title="Marcar «No Aplica»"
+        message={`¿Marcar la postulación ${confirmNoAplica?.id_licitacion || ""} como «No Aplica»? Saldrá del listado de pendientes. Podrás restaurarla luego desde el filtro «No aplica».`}
+        confirmText="Marcar No Aplica"
+        cancelText="Cancelar"
+        confirmTone="danger"
+        onConfirm={() => { const r = confirmNoAplica; setConfirmNoAplica(null); if (r) toggleNoAplica(r); }}
+        onCancel={() => setConfirmNoAplica(null)}
       />
 
       <ConfirmModal

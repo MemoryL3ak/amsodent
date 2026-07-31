@@ -25,6 +25,7 @@ export const MODULOS = [
   { key: "marcaje", label: "Marcar Asistencia", grupo: "Herramientas" },
   { key: "despachos_choferes", label: "Despachos y Choferes", grupo: "Logística" },
   { key: "tracking_choferes", label: "Tracking en Vivo", grupo: "Logística" },
+  { key: "costeo_fletes", label: "Conciliación de Fletes", grupo: "Logística" },
   { key: "monitoreo_stock", label: "Monitoreo Stock Clientes", grupo: "Portal del Cliente" },
   { key: "portal_accesos", label: "Acceso Portal Clientes", grupo: "Portal del Cliente" },
   { key: "usuarios", label: "Usuarios", grupo: "Administración" },

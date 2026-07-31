@@ -107,7 +107,8 @@ export function LineChart({ data, max, color = "#28aeb1", valueKey = "valor", he
 }
 
 /* ── Forma de embudo (trapecios apilados que se estrechan) ────────────── */
-export function FunnelShape({ stages }) {
+// onStageClick(stage): opcional — hace cada etapa cliqueable (ver detalle).
+export function FunnelShape({ stages, onStageClick }) {
   const n = stages.length;
   const wTop = 100, wBot = 34; // anchos (%) del tope y del fondo del embudo
   const widths = [];
@@ -120,11 +121,13 @@ export function FunnelShape({ stages }) {
         return (
           <div
             key={s.label}
-            title={`${s.label}: ${fmtNum(s.value)}`}
+            title={onStageClick ? `${s.label}: ${fmtNum(s.value)} · clic para ver el detalle` : `${s.label}: ${fmtNum(s.value)}`}
+            onClick={onStageClick ? () => onStageClick(s) : undefined}
             style={{
               height: 60, background: s.color, clipPath: clip, WebkitClipPath: clip,
               display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
               color: "#fff", textAlign: "center",
+              cursor: onStageClick ? "pointer" : "default",
             }}
           >
             <div style={{ fontSize: 11.5, fontWeight: 600, letterSpacing: ".3px", textTransform: "uppercase", opacity: .95 }}>{s.label}</div>
@@ -136,9 +139,47 @@ export function FunnelShape({ stages }) {
   );
 }
 
+/* ── Barras horizontales por categoría (p. ej. motivos de pérdida/descarte) ─ */
+// items: [{ label, value, color? }]. Ordena tú la lista antes de pasarla.
+export function HBarList({ items, color = "#28aeb1", fmt = fmtNum, emptyText = "Sin registros en el período." }) {
+  const list = items || [];
+  if (!list.length) {
+    return <div style={{ fontSize: 12.5, color: "var(--text-muted)", padding: "10px 2px" }}>{emptyText}</div>;
+  }
+  const max = Math.max(1, ...list.map((i) => i.value || 0));
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      {list.map((it) => (
+        <div key={it.label}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", fontSize: 12, marginBottom: 4, gap: 8 }}>
+            <span title={it.label} style={{ color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.label}</span>
+            <strong style={{ color: it.color || color, flexShrink: 0 }}>{fmt(it.value || 0)}</strong>
+          </div>
+          <div style={{ height: 11, borderRadius: 6, background: "var(--bg)", overflow: "hidden" }}>
+            <div style={{ height: "100%", width: `${clamp(((it.value || 0) / max) * 100, (it.value || 0) > 0 ? 6 : 0, 100)}%`, background: it.color || color, borderRadius: 6, transition: "width .3s" }} />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /* ── Barras verticales (montos por mes) ───────────────────────────────── */
+// Valor compacto para la etiqueta sobre cada barra ($4,2M · $850k · 12).
+export function fmtCompacto(v, esMoneda = false) {
+  const n = Number(v || 0);
+  const abs = Math.abs(n);
+  const pre = esMoneda ? "$" : "";
+  if (abs >= 1_000_000_000) return `${pre}${(n / 1_000_000_000).toLocaleString("es-CL", { maximumFractionDigits: 1 })}MM`;
+  if (abs >= 1_000_000) return `${pre}${(n / 1_000_000).toLocaleString("es-CL", { maximumFractionDigits: 1 })}M`;
+  if (abs >= 10_000) return `${pre}${Math.round(n / 1_000).toLocaleString("es-CL")}k`;
+  return `${pre}${n.toLocaleString("es-CL")}`;
+}
+
 export function BarChart({ data, max, color = "#28aeb1", valueKey = "valor", fmt = fmtNum, height = 150 }) {
   const safeMax = Math.max(1, max);
+  // Si el formato entrega moneda ("$…"), la etiqueta usa la versión compacta.
+  const esMoneda = String(fmt(1000)).trim().startsWith("$");
   return (
     <div>
       <div style={{ display: "flex", alignItems: "flex-end", gap: 8, height, padding: "0 2px" }}>
@@ -147,6 +188,9 @@ export function BarChart({ data, max, color = "#28aeb1", valueKey = "valor", fmt
           const h = clamp((v / safeMax) * 100, v > 0 ? 4 : 0, 100);
           return (
             <div key={d.label} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end", height: "100%" }} title={fmt(v)}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: v > 0 ? "var(--text)" : "var(--text-muted)", marginBottom: 2, whiteSpace: "nowrap" }}>
+                {fmtCompacto(v, esMoneda)}
+              </div>
               <div style={{ width: "70%", maxWidth: 34, height: `${h}%`, background: color, borderRadius: "5px 5px 0 0", minHeight: v > 0 ? 3 : 0, transition: "height .3s" }} />
             </div>
           );
