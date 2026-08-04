@@ -19,7 +19,8 @@ function normalizarNombreArchivo(nombre) {
 
 // Monto BRUTO de una cotización para pagos. Convención de los datos:
 //  - La OC se carga NETA ("Monto Neto OC") → bruto = OC × 1,19.
-//  - Los comprobantes/pagos se digitan y guardan en BRUTO (lo transferido).
+//  - Los comprobantes/pagos (transferencia, webpay, efectivo) se guardan
+//    NETOS, igual que la factura → bruto = neto × 1,19 al leerlos aquí.
 // El saldo siempre compara bruto contra bruto. Sin OC, cae al bruto de la
 // cotización (total_con_iva, o total_sin_iva × 1,19).
 function montoBrutoPago(ocSum, lic) {
@@ -304,10 +305,11 @@ export default function SeguimientoPagos() {
               ncSum[lid] = (ncSum[lid] || 0) + Number(d.monto || 0);
               return;
             }
-            // Comprobantes de pago: acumulamos el monto pagado por cotización.
-            // Los comprobantes se digitan y guardan en BRUTO (lo realmente
-            // transferido) → se usan tal cual, sin conversión.
-            compSum[lid] = (compSum[lid] || 0) + Number(d.monto || 0);
+            // Comprobantes de pago (transferencia/webpay/efectivo): acumulamos
+            // el monto pagado por cotización. Se guardan NETOS (igual que la
+            // factura) → se convierten a bruto ×1,19 para comparar contra el
+            // bruto de la factura.
+            compSum[lid] = (compSum[lid] || 0) + Math.round(Number(d.monto || 0) * 1.19);
             if (d.tipo === "comprobante_pago") {
               // Para la columna "Pago" nos quedamos con el comprobante más reciente.
               const fa = String(d.fecha_oc || d.created_at || "");
@@ -397,9 +399,9 @@ export default function SeguimientoPagos() {
 
   // ── Notas de crédito / reconciliación de montos ──────────────────────────
   // Monto base a cobrar (antes de notas de crédito), en BRUTO: particular →
-  // bruto de la factura/boleta; público → bruto de la OC. Los pagos ingresados
-  // (comprobantes) son brutos, así que la base debe ser bruta para que el
-  // saldo cuadre.
+  // bruto de la factura/boleta; público → bruto de la OC. Los comprobantes se
+  // guardan netos y se convierten a bruto al acumularlos, así que la base
+  // debe ser bruta para que el saldo cuadre.
   function montoBaseFactura(f, lic) {
     if (esClienteParticular(lic)) return montoFacturaBruto(f) || Number(lic?.total_con_iva) || 0;
     return montoBrutoPago(montoOcMap[lic?.id], lic);
@@ -747,11 +749,12 @@ export default function SeguimientoPagos() {
       }
     }
     // Monto del pago (opcional), ingresado en BRUTO (lo que realmente se
-    // transfirió). Se registra como comprobante de pago con ese mismo bruto
-    // (los comprobantes se guardan brutos) para que cuadre con el total a
-    // cobrar (punto 17): si no cubre el total, la factura queda "pendiente
-    // de pago".
+    // transfirió). Los comprobantes se guardan NETOS (convención de toda la
+    // app), así que se divide por 1,19 antes de registrar; al leerlo, este
+    // módulo lo vuelve a multiplicar por 1,19 y cuadra con el total a cobrar
+    // (punto 17): si no cubre el total, la factura queda "pendiente de pago".
     const montoNum = Math.round(Number(String(montoPago).replace(/[^\d]/g, "")) || 0);
+    const montoNetoPago = Math.round(montoNum / 1.19);
     try {
       await api.put(`/licitaciones/documentos/${f.id}`, {
         pagada: true,
@@ -763,7 +766,7 @@ export default function SeguimientoPagos() {
         await api.post("/licitaciones/documentos", {
           licitacion_id: Number(f.licitacion_id),
           tipo: "comprobante_pago",
-          monto: montoNum, // bruto, tal como se digitó
+          monto: montoNetoPago, // neto: bruto digitado ÷ 1,19
           fecha_oc: fechaPago,
           deriva_de_id: Number(f.id),
         });
@@ -872,7 +875,10 @@ export default function SeguimientoPagos() {
           licitacion_id: Number(voucherFor.licitacion_id),
           tipo: esNC ? "nota_credito" : "comprobante_pago",
           numero: (vNumero || "").trim() || null,
-          monto: montoNum,
+          // El comprobante se digita en BRUTO (lo transferido) pero se guarda
+          // NETO (÷1,19), la convención de toda la app. La nota de crédito se
+          // usa en bruto tal cual se digita.
+          monto: esNC ? montoNum : Math.round(montoNum / 1.19),
           fecha_oc: vFecha,
           deriva_de_id: Number(voucherFor.id),
           bucket: storagePath ? bucket : null,
@@ -1285,9 +1291,9 @@ export default function SeguimientoPagos() {
                   const fechaPagoMostrar = particular
                     ? (comprobante?.fecha_oc ? String(comprobante.fecha_oc).slice(0, 10) : f.fecha_pago)
                     : f.fecha_pago;
-                  // Monto del pago mostrado: el comprobante ya viene en bruto.
+                  // Monto del pago mostrado: el comprobante se guarda neto → ×1,19.
                   const montoParticular = comprobante?.monto != null
-                    ? Number(comprobante.monto)
+                    ? Math.round(Number(comprobante.monto) * 1.19)
                     : montoFacturaBruto(f);
 
                   return (
@@ -1641,7 +1647,7 @@ export default function SeguimientoPagos() {
                 </div>
               </div>
               <label style={{ fontSize: 13, fontWeight: 600 }}>
-                Monto
+                {voucherTipo === "nota_credito" ? "Monto" : "Monto bruto (lo transferido)"}
                 <input type="text" inputMode="numeric" className="input" value={vMonto} onChange={(e) => setVMonto(e.target.value.replace(/[^\d]/g, ""))} placeholder="0" style={{ marginTop: 4 }} />
               </label>
               <label style={{ fontSize: 13, fontWeight: 600 }}>
