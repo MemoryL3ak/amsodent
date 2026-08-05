@@ -8,6 +8,7 @@ import Select, { components } from "react-select";
 import { generarPDFcotizacion } from "../utils/generarPDFcotizacion";
 import { calcularLista3 } from "../lib/listas";
 import ProductoPickerModal from "../components/ProductoPickerModal";
+import CalculadoraFlete from "../components/CalculadoraFlete";
 
 import {
   DndContext,
@@ -1140,7 +1141,7 @@ export default function CrearLicitacion() {
       // las fichas técnicas (textos largos) que disparan el tamaño del payload.
       const { data } = await supabase
         .from("productos")
-        .select("id, sku, nombre, marca, categoria, formato, costo, lista1, lista2, lista3, equivalente_1, equivalente_2, equivalente_3")
+        .select("id, sku, nombre, marca, categoria, formato, costo, lista1, lista2, lista3, equivalente_1, equivalente_2, equivalente_3, peso, metro_cubico")
         .in("estado", ["Activo", "Transitorio"])
         .order("id")
         .limit(20000);
@@ -1423,6 +1424,16 @@ export default function CrearLicitacion() {
     return normalizarVolumenCm3(prod?.metro_cubico ?? 0);
   }
 
+  function getPesoParaItem(item) {
+    const sku = String(item?.sku || "").trim();
+    const prod =
+      (sku
+        ? productos.find((p) => String(p.sku || "").trim() === sku)
+        : null) || (item?.producto ? productos.find((p) => p.nombre === item.producto) : null);
+    const n = Number(prod?.peso ?? 0);
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  }
+
   function calcularMargenItem(item) {
     const costo = getCostoParaItem(item);
     const precioBase = Number(item?.precio || 0);
@@ -1537,6 +1548,16 @@ export default function CrearLicitacion() {
       items.reduce((acc, it) => {
         const cantidad = Math.max(1, Number(it.cantidad || 1));
         return acc + getMetroCubicoParaItem(it) * cantidad;
+      }, 0),
+    [items, productos]
+  );
+
+  // Peso total del envío (kg): peso del producto × cantidad, para el cálculo de flete.
+  const pesoTotalGeneral = useMemo(
+    () =>
+      items.reduce((acc, it) => {
+        const cantidad = Math.max(1, Number(it.cantidad || 1));
+        return acc + getPesoParaItem(it) * cantidad;
       }, 0),
     [items, productos]
   );
@@ -3108,7 +3129,25 @@ export default function CrearLicitacion() {
                 {metroCubicoGeneral.toFixed(2)}
               </div>
             </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Peso total (kg)
+              </label>
+              <div className="form-display form-display-value">
+                {pesoTotalGeneral.toFixed(2)}
+              </div>
+            </div>
           </div>
+
+          <CalculadoraFlete
+            pesoTotal={pesoTotalGeneral}
+            volumenTotal={metroCubicoGeneral}
+            regionCliente={region}
+            comunaCliente={comuna}
+            direccionCliente={direccion}
+            onAplicar={(neto) => setFleteEstimado(neto)}
+          />
         </div>
 
         <div>
