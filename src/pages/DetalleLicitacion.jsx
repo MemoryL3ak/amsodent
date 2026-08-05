@@ -18,6 +18,7 @@ import ConfirmModal from "../components/ConfirmModal";
 import DateFilter from "../components/DateFilter";
 import Select, { components } from "react-select";
 import ProductoPickerModal from "../components/ProductoPickerModal";
+import CalculadoraFlete from "../components/CalculadoraFlete";
 import { generarPDFcotizacion } from "../utils/generarPDFcotizacion";
 import { calcularLista3 } from "../lib/listas";
 import { useUnsavedChanges } from "../context/UnsavedChangesContext";
@@ -902,6 +903,15 @@ export default function EditarLicitacion() {
   // confirme. Si el usuario cancela el modal, restauramos el estado anterior.
   const estadoPrevioRef = useRef("En espera");
 
+  // Una cotización es Cliente Particular si lo dice el Tipo de Cotización
+  // (tipo_cliente) O el tipo de compra. No basta tipo_compra: en cotizaciones
+  // convertidas a particular estando bloqueadas ("Guardar Tipo de Cotización"
+  // solo persistía tipo_cliente), tipo_compra quedó con un valor de licitación
+  // y la sección Documentos ofrecía OC/Guía en vez de Factura o Boleta.
+  const esCotizacionParticular =
+    tipoCompra === "Cliente particular" ||
+    tipoCliente.trim().toLowerCase() === "cliente particular";
+
   // Sincroniza el tipo de documento default con el tipo de compra: si la cotización
   // es Cliente Particular, los tipos son factura_boleta / comprobante_pago.
   // Si el usuario tenía un tipo no aplicable (ej. orden_compra) lo reajustamos.
@@ -909,7 +919,7 @@ export default function EditarLicitacion() {
   // evitar "Cannot access 'tipoCompra' before initialization" en producción.
   useEffect(() => {
     const tiposParticular = ["factura_boleta", "comprobante_pago", "webpay", "efectivo", "info_despacho"];
-    if (tipoCompra === "Cliente particular") {
+    if (esCotizacionParticular) {
       if (!tiposParticular.includes(docTipo)) {
         setDocTipo("factura_boleta");
       }
@@ -919,7 +929,7 @@ export default function EditarLicitacion() {
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tipoCompra]);
+  }, [esCotizacionParticular]);
   const [municipalidad, setMunicipalidad] = useState("");
   const [region, setRegion] = useState("");
   const [comuna, setComuna] = useState("");
@@ -1176,7 +1186,18 @@ export default function EditarLicitacion() {
     if (!tipoCliente || tipoCliente === tipoClienteGuardado) return;
     setGuardandoTipoCliente(true);
     try {
-      await api.put(`/licitaciones/${id}`, { tipo_cliente: tipoCliente });
+      const payload = { tipo_cliente: tipoCliente };
+      // Alinear tipo_compra con el nuevo tipo de cotización: si queda solo
+      // tipo_cliente, Documentos (y otros gates por tipo_compra) siguen
+      // tratando la cotización como licitación pública y no dejan cargar
+      // Factura o Boleta.
+      if (tipoCliente.toLowerCase() === "cliente particular" && tipoCompra !== "Cliente particular") {
+        payload.tipo_compra = "Cliente particular";
+      } else if (tipoCliente.toLowerCase() === "entidad pública" && tipoCompra === "Cliente particular") {
+        payload.tipo_compra = "Compra ágil";
+      }
+      await api.put(`/licitaciones/${id}`, payload);
+      if (payload.tipo_compra) setTipoCompra(payload.tipo_compra);
       if (rutEntidad) {
         try {
           const existe = await api.get(`/clientes?rut=${encodeURIComponent(rutEntidad)}`);
@@ -1312,6 +1333,16 @@ export default function EditarLicitacion() {
         ? productos.find((p) => String(p.sku || "").trim() === sku)
         : null) || (item?.producto ? productos.find((p) => p.nombre === item.producto) : null);
     return normalizarVolumenCm3(prod?.metro_cubico ?? 0);
+  }
+
+  function getPesoParaItem(item) {
+    const sku = String(item?.sku || "").trim();
+    const prod =
+      (sku
+        ? productos.find((p) => String(p.sku || "").trim() === sku)
+        : null) || (item?.producto ? productos.find((p) => p.nombre === item.producto) : null);
+    const n = Number(prod?.peso ?? 0);
+    return Number.isFinite(n) && n > 0 ? n : 0;
   }
 
   function calcularMargenItem(item) {
@@ -2439,6 +2470,15 @@ export default function EditarLicitacion() {
       }, 0),
     [items, productos]
   );
+  // Peso total del envío (kg) para el cálculo de flete por courier.
+  const pesoTotalGeneral = useMemo(
+    () =>
+      items.reduce((acc, it) => {
+        const cantidad = Math.max(1, Number(it.cantidad || 1));
+        return acc + getPesoParaItem(it) * cantidad;
+      }, 0),
+    [items, productos]
+  );
   // Consumido = guías de despacho + facturas/boletas + efectivo (no la OC).
   const montoConsumidoNeto = useMemo(
     () =>
@@ -2770,7 +2810,7 @@ export default function EditarLicitacion() {
     if (!tipoCliente) errores.push("Tipo de Cotización");
     if (!rutEntidad) errores.push("RUT Entidad");
     if (!nombreEntidad) errores.push("Nombre Entidad");
-    if (tipoCompra !== "Cliente particular" && !departamento) errores.push("Departamento");
+    if (!esCotizacionParticular && !departamento) errores.push("Departamento");
     if (!tipoCompra) errores.push("Tipo de Compra");
     if (!region) errores.push("Región");
     if (!comuna) errores.push("Comuna");
@@ -3498,14 +3538,14 @@ export default function EditarLicitacion() {
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              Departamento{tipoCompra !== "Cliente particular" ? " *" : ""}
+              Departamento{!esCotizacionParticular ? " *" : ""}
             </label>
             <input
               className={inputClass}
               value={departamento}
               onChange={(e) => setDepartamento(e.target.value)}
-              disabled={!esEditable || tipoCompra === "Cliente particular"}
-              placeholder={tipoCompra === "Cliente particular" ? "No aplica para cliente particular" : ""}
+              disabled={!esEditable || esCotizacionParticular}
+              placeholder={esCotizacionParticular ? "No aplica para cliente particular" : ""}
             />
           </div>
 
@@ -4045,7 +4085,26 @@ export default function EditarLicitacion() {
                 {metroCubicoGeneral.toFixed(2)}
               </div>
             </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Peso total (kg)
+              </label>
+              <div className="form-display form-display-value" style={{fontWeight:600}}>
+                {pesoTotalGeneral.toFixed(2)}
+              </div>
+            </div>
           </div>
+
+          <CalculadoraFlete
+            pesoTotal={pesoTotalGeneral}
+            volumenTotal={metroCubicoGeneral}
+            regionCliente={region}
+            comunaCliente={comuna}
+            direccionCliente={direccion}
+            deshabilitado={!esEditable}
+            onAplicar={(neto) => setFleteEstimado(neto)}
+          />
         </div>
 
         <div className="mb-6">
@@ -4176,7 +4235,7 @@ export default function EditarLicitacion() {
               onChange={(e) => setDocTipo(e.target.value)}
               disabled={subiendoDoc}
             >
-              {tipoCompra === "Cliente particular" ? (
+              {esCotizacionParticular ? (
                 <>
                   <option value="factura_boleta">Factura o Boleta</option>
                   <option value="comprobante_pago">Comprobante de Transferencia</option>
