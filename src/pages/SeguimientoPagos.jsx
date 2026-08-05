@@ -165,6 +165,7 @@ export default function SeguimientoPagos() {
   const [filtroEstado, setFiltroEstado] = useState("todas");
   const [filtroCierreForzado, setFiltroCierreForzado] = useState("todas"); // todas | forzado | abiertos
   const [filtroEntidad, setFiltroEntidad] = useState("");
+  const [filtroRut, setFiltroRut] = useState("");
   const [filtroNumero, setFiltroNumero] = useState("");
   const [filtroTipoCotizacion, setFiltroTipoCotizacion] = useState("");
   const [filtroTipoCompra, setFiltroTipoCompra] = useState("");
@@ -234,13 +235,13 @@ export default function SeguimientoPagos() {
       try {
         // 1. Cotizaciones adjudicadas
         const lics = await api.get(
-          "/licitaciones/with-fields?fields=id,id_licitacion,nombre_entidad,fecha_adjudicada,total_con_iva,total_sin_iva,creado_por,condicion_venta,comuna,tipo_compra,tipo_cliente"
+          "/licitaciones/with-fields?fields=id,id_licitacion,nombre_entidad,rut_entidad,fecha_adjudicada,total_con_iva,total_sin_iva,creado_por,condicion_venta,comuna,tipo_compra,tipo_cliente"
         );
         let rows = (lics || []).filter((l) => l.estado === "Adjudicada" || l.estado == null);
 
         // Cotizaciones adjudicadas reales
         const licsAdj = await api.get(
-          "/licitaciones/with-fields?fields=id,id_licitacion,nombre_entidad,fecha_adjudicada,total_con_iva,total_sin_iva,creado_por,condicion_venta,comuna,estado,tipo_compra,tipo_cliente,ciclo_cerrado,monto_forzado"
+          "/licitaciones/with-fields?fields=id,id_licitacion,nombre_entidad,rut_entidad,fecha_adjudicada,total_con_iva,total_sin_iva,creado_por,condicion_venta,comuna,estado,tipo_compra,tipo_cliente,ciclo_cerrado,monto_forzado"
         );
         rows = (licsAdj || []).filter((l) => l.estado === "Adjudicada");
 
@@ -465,6 +466,16 @@ export default function SeguimientoPagos() {
       const entidad = (lic.nombre_entidad || "").toLowerCase();
       if (filtroEntidad && !entidad.includes(filtroEntidad.toLowerCase())) return false;
 
+      // RUT: comparación normalizada (solo dígitos y K), para que
+      // "76.123.456-7" calce con "761234567" y viceversa.
+      if (filtroRut) {
+        const rutBuscado = filtroRut.replace(/[^0-9kK]/g, "").toLowerCase();
+        if (rutBuscado) {
+          const rutLic = String(lic.rut_entidad || "").replace(/[^0-9kK]/g, "").toLowerCase();
+          if (!rutLic.includes(rutBuscado)) return false;
+        }
+      }
+
       if (filtroTipoCotizacion && (lic.tipo_cliente || "").toString().trim() !== filtroTipoCotizacion) {
         return false;
       }
@@ -500,7 +511,7 @@ export default function SeguimientoPagos() {
 
       return true;
     });
-  }, [facturas, licMap, filtroEntidad, filtroNumero, filtroTipoCotizacion, filtroTipoCompra, filtroFormaPago, filtroEmpresaDespacho, empresaDespachoMap, filtroDesde, filtroHasta, filtroCierreForzado]);
+  }, [facturas, licMap, filtroEntidad, filtroRut, filtroNumero, filtroTipoCotizacion, filtroTipoCompra, filtroFormaPago, filtroEmpresaDespacho, empresaDespachoMap, filtroDesde, filtroHasta, filtroCierreForzado]);
 
   // Filtros aplicados a la tabla = base + filtro de estado.
   const facturasFiltradas = useMemo(() => {
@@ -1093,6 +1104,16 @@ export default function SeguimientoPagos() {
             placeholder="Buscar entidad..."
             value={filtroEntidad}
             onChange={(e) => setFiltroEntidad(e.target.value)}
+          />
+        </div>
+        <div className="filter-field">
+          <label className="filter-label">RUT</label>
+          <input
+            type="text"
+            className="input"
+            placeholder="Buscar RUT..."
+            value={filtroRut}
+            onChange={(e) => setFiltroRut(e.target.value)}
           />
         </div>
         <div className="filter-field">
