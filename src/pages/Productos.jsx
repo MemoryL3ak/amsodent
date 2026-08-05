@@ -918,9 +918,21 @@ export default function Productos() {
    ─ Acepta .xlsx, .xls o .csv
    ─ Match por SKU; si no existe → crea (upsert)
    ─ Campos editables: sku, nombre, categoria, marca, formato, costo,
-     lista1, lista2, estado
+     lista1, lista2, estado, peso (kg), alto/largo/ancho (cm)
 ============================================================ */
-const COLUMNAS_PLANTILLA = ["sku", "nombre", "categoria", "marca", "formato", "costo", "lista1", "lista2", "estado"];
+const COLUMNAS_PLANTILLA = ["sku", "nombre", "categoria", "marca", "formato", "costo", "lista1", "lista2", "estado", "peso", "alto", "largo", "ancho"];
+// Numéricos con decimales (peso en kg, dimensiones en cm): "0,5" y "0.5" valen 0.5.
+const COLUMNAS_DECIMALES = ["peso", "alto", "largo", "ancho"];
+
+function parseDecimal(valor) {
+  let s = String(valor).replace(/[^\d.,-]/g, "");
+  if (s === "") return null;
+  // Con punto Y coma → punto = miles, coma = decimal ("1.234,5" → 1234.5).
+  if (s.includes(".") && s.includes(",")) s = s.replace(/\./g, "").replace(",", ".");
+  else s = s.replace(",", ".");
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+}
 
 function CargaMasivaProductosModal({ onClose, onSuccess, onToast }) {
   const [archivo, setArchivo] = useState(null);
@@ -959,6 +971,11 @@ function CargaMasivaProductosModal({ onClose, onSuccess, onToast }) {
             if (!Number.isFinite(n)) continue;
             val = Math.round(n);
           }
+          if (COLUMNAS_DECIMALES.includes(key)) {
+            const n = parseDecimal(val);
+            if (n == null || n < 0) continue;
+            val = n;
+          }
           out[key] = val;
         }
         return out;
@@ -989,7 +1006,7 @@ function CargaMasivaProductosModal({ onClose, onSuccess, onToast }) {
     try {
       const XLSX = await import("xlsx");
       const ejemplo = [
-        { sku: "EJ-001", nombre: "Producto ejemplo", categoria: "Categoría", marca: "Marca", formato: "1 unidad", costo: 1000, lista1: 2000, lista2: 2500, estado: "Activo" },
+        { sku: "EJ-001", nombre: "Producto ejemplo", categoria: "Categoría", marca: "Marca", formato: "1 unidad", costo: 1000, lista1: 2000, lista2: 2500, estado: "Activo", peso: 0.5, alto: 10, largo: 20, ancho: 15 },
       ];
       const ws = XLSX.utils.json_to_sheet(ejemplo, { header: COLUMNAS_PLANTILLA });
       const wb = XLSX.utils.book_new();

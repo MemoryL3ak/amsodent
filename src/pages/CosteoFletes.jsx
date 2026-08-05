@@ -12,6 +12,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../lib/api";
 import { Truck, Upload, Search, X, FileSpreadsheet, CircleDollarSign, Link2, Trash2, Lock, Unlock, BarChart3, AlertTriangle, Eye, ExternalLink } from "lucide-react";
+import TarifasFlete from "../components/TarifasFlete";
 
 const fmtCLP = (v) => `$${Math.round(Number(v || 0)).toLocaleString("es-CL")}`;
 const fmtFecha = (v) => {
@@ -289,6 +290,7 @@ export default function CosteoFletes() {
     { key: "costeo", label: `Conciliación (${abiertas.length})`, icon: Truck },
     { key: "analisis", label: `Análisis (${cerradas.length})`, icon: BarChart3 },
     { key: "sinmatch", label: `Sin match (${cobrosSinMatch.length})`, icon: AlertTriangle },
+    { key: "tarifas", label: "Tarifas", icon: CircleDollarSign },
   ];
 
   return (
@@ -364,7 +366,7 @@ export default function CosteoFletes() {
       </div>
 
       {/* Filtros: búsqueda + rango de fechas + segmento por empresa de despacho */}
-      {vista !== "sinmatch" && (
+      {vista !== "sinmatch" && vista !== "tarifas" && (
         <div className="filter-bar" style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end", marginTop: 10 }}>
           <div className="filter-field" style={{ flex: 2, minWidth: 220 }}>
             <label className="filter-label">Buscar</label>
@@ -582,6 +584,9 @@ export default function CosteoFletes() {
           )}
         </div>
       )}
+
+      {/* ── Vista: Tarifas (administración del tarifario por courier) ── */}
+      {vista === "tarifas" && <TarifasFlete onToast={setToast} />}
 
       {preview && (
         <ModalVistaCotizacion fila={preview} onClose={() => setPreview(null)} />

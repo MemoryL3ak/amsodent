@@ -222,6 +222,14 @@ export class ProductosService {
           if (!canonMarcas.has(k)) canonMarcas.set(k, limpia);
           limpio.marca = canonMarcas.get(k) || limpia;
         }
+        // Volumen (cm³) derivado cuando el archivo trae las tres dimensiones,
+        // igual que el formulario de edición de producto.
+        const alto = Number(limpio.alto) || 0;
+        const largo = Number(limpio.largo) || 0;
+        const ancho = Number(limpio.ancho) || 0;
+        if (alto > 0 && largo > 0 && ancho > 0) {
+          limpio.metro_cubico = Math.round(alto * largo * ancho * 100) / 100;
+        }
         if (id) aActualizar.push({ id, body: limpio });
         else aInsertar.push({ ...limpio, sku });
       }
