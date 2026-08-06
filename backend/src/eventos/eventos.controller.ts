@@ -52,4 +52,37 @@ export class EventosController {
   reenviar(@Param('id', ParseIntPipe) id: number) {
     return this.eventosService.reenviarConfirmacion(id);
   }
+
+  // ADMIN: catálogo de eventos (Santiago / Brasil) con sus rutas públicas
+  @Get('catalogo')
+  @UseGuards(AuthGuard)
+  listarEventos() {
+    return this.eventosService.listarEventos();
+  }
+
+  // ADMIN: invitaciones (agregar correos → se envía el correo de inscripción)
+  @Get('invitaciones')
+  @UseGuards(AuthGuard)
+  listarInvitaciones() {
+    return this.eventosService.listarInvitaciones();
+  }
+
+  @Post('invitaciones')
+  @UseGuards(AuthGuard)
+  agregarInvitaciones(@Body() body: any, @Req() req: any) {
+    const email = (req?.user?.email || '').toLowerCase();
+    return this.eventosService.agregarInvitaciones(body || {}, email);
+  }
+
+  @Post('invitaciones/:id/reenviar')
+  @UseGuards(AuthGuard)
+  reenviarInvitacion(@Param('id', ParseIntPipe) id: number) {
+    return this.eventosService.reenviarInvitacion(id);
+  }
+
+  @Delete('invitaciones/:id')
+  @UseGuards(AuthGuard)
+  eliminarInvitacion(@Param('id', ParseIntPipe) id: number) {
+    return this.eventosService.eliminarInvitacion(id);
+  }
 }
