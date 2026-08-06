@@ -129,6 +129,13 @@ export class MailingsController {
       .map((e) => String(e || '').trim().toLowerCase())
       .filter(Boolean);
 
+    // Link opcional del flyer: si viene, la imagen completa queda clickeable
+    // (p. ej. invitación a evento → portal de inscripción).
+    const flyerLinkRaw = String(body?.flyerLink || '').trim();
+    const flyerLink = /^https?:\/\//i.test(flyerLinkRaw)
+      ? flyerLinkRaw.replace(/"/g, '%22')
+      : '';
+
     // Flyer inline (imagen): valida y embebe como CID.
     let inlineAttachments: any[] | undefined;
     if (flyer) {
@@ -140,7 +147,10 @@ export class MailingsController {
       }
       // Sólo auto-inyectamos el <img> si el cuerpo NO referencia ya el CID.
       if (!cuerpoHtml.includes(`cid:${FLYER_CID}`)) {
-        const imgTag = `<img src="cid:${FLYER_CID}" alt="" style="max-width:100%; height:auto; display:block; margin:0 auto;" />`;
+        let imgTag = `<img src="cid:${FLYER_CID}" alt="" style="max-width:100%; height:auto; display:block; margin:0 auto; border:0;" />`;
+        if (flyerLink) {
+          imgTag = `<a href="${flyerLink}" target="_blank" style="text-decoration:none;">${imgTag}</a>`;
+        }
         if (flyerPosicion === 'abajo') {
           cuerpoHtml = `${cuerpoHtml || ''}<br/>${imgTag}`;
         } else {

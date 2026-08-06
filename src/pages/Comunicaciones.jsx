@@ -37,6 +37,9 @@ export default function Comunicaciones() {
   const [flyerHtml, setFlyerHtml] = useState("");            // HTML que ya incluye CID + overlays
   const [flyerLinksCount, setFlyerLinksCount] = useState(0); // hipervínculos detectados en el PDF
   const [flyerPosicion, setFlyerPosicion] = useState("arriba");
+  // Link opcional: al definirlo, el flyer completo queda clickeable en el
+  // correo (p. ej. invitación a evento → https://…/evento).
+  const [flyerLink, setFlyerLink] = useState("");
   const [procesandoFlyer, setProcesandoFlyer] = useState(false);
   const flyerInputRef = useRef(null);
 
@@ -209,6 +212,7 @@ export default function Comunicaciones() {
     setFlyerPreview("");
     setFlyerHtml("");
     setFlyerLinksCount(0);
+    setFlyerLink("");
     if (flyerInputRef.current) flyerInputRef.current.value = "";
   }
 
@@ -281,19 +285,26 @@ export default function Comunicaciones() {
           // Modos inline (imagen con PDF source o html_enriquecido):
           // el frontend ya construyó el HTML con CID + overlays de links.
           // Lo combinamos con el texto del usuario según posición.
+          // Si el usuario definió un link global y el PDF no traía
+          // hipervínculos propios, el flyer completo queda clickeable.
+          const flyerHtmlFinal =
+            flyerLink.trim() && flyerLinksCount === 0
+              ? `<a href="${flyerLink.trim().replace(/"/g, "%22")}" target="_blank" style="text-decoration:none;">${flyerHtml}</a>`
+              : flyerHtml;
           let htmlFinal;
           if (flyerPosicion === "abajo") {
-            htmlFinal = `${cuerpoHtml || ""}<br/>${flyerHtml}`;
+            htmlFinal = `${cuerpoHtml || ""}<br/>${flyerHtmlFinal}`;
           } else {
-            htmlFinal = `${flyerHtml}${cuerpoHtml ? `<br/>${cuerpoHtml}` : ""}`;
+            htmlFinal = `${flyerHtmlFinal}${cuerpoHtml ? `<br/>${cuerpoHtml}` : ""}`;
           }
           fd.append("cuerpoHtml", htmlFinal);
           fd.append("flyer", flyerBlob, flyerNombre || "flyer.png");
         } else {
           // Modo imagen con source = imagen subida directa (sin metadata de links).
-          // Backend auto-inyecta el <img>.
+          // Backend auto-inyecta el <img> (y lo envuelve en <a> si va flyerLink).
           fd.append("cuerpoHtml", cuerpoHtml);
           fd.append("flyerPosicion", flyerPosicion);
+          if (flyerLink.trim()) fd.append("flyerLink", flyerLink.trim());
           fd.append("flyer", flyerBlob, flyerNombre || "flyer.png");
         }
         r = await api.postForm("/mailings/custom", fd);
@@ -690,6 +701,25 @@ export default function Comunicaciones() {
                         <option value="arriba">Arriba del texto</option>
                         <option value="abajo">Debajo del texto</option>
                       </select>
+                    </div>
+                  )}
+                  {flyerModo !== "adjunto_pdf" && flyerLinksCount === 0 && (
+                    <div>
+                      <label className="filter-label" style={{ marginBottom: 2 }}>
+                        Link al pinchar el flyer (opcional)
+                      </label>
+                      <input
+                        type="url"
+                        className="input"
+                        value={flyerLink}
+                        onChange={(e) => setFlyerLink(e.target.value)}
+                        disabled={enviando}
+                        placeholder="https://tu-plataforma.cl/evento"
+                        style={{ width: 320, maxWidth: "100%" }}
+                      />
+                      <div style={{ fontSize: 11, color: "var(--text-soft)", marginTop: 3 }}>
+                        Toda la imagen queda clickeable hacia esta URL (ideal para invitaciones con formulario de inscripción).
+                      </div>
                     </div>
                   )}
                   <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
