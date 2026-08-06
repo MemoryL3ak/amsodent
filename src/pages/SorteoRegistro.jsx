@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Gift, CheckCircle2, Sparkles, Mail, User, ShieldCheck, GraduationCap, Building2, Stethoscope, ChevronDown } from "lucide-react";
 
-const ESPECIALIDADES = [
+// Exportado: lo reutiliza el portal de inscripción a eventos (EventoRegistro).
+export const ESPECIALIDADES = [
   "Odontología general",
   "Ortodoncia",
   "Endodoncia",

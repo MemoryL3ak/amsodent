@@ -46,6 +46,7 @@ import {
   Percent,
   Building2,
   Banknote,
+  CalendarCheck,
 } from "lucide-react";
 import NotificacionesMenu from "./NotificacionesMenu";
 import RecordatoriosCorreo from "./RecordatoriosCorreo";
@@ -213,6 +214,7 @@ export default function SidebarLayout() {
 
   const herramientasNav = [
     puede("sorteo") && { to: "/sorteo-registros", icon: Gift, label: "Sorteo" },
+    puede("eventos") && { to: "/evento-inscripciones", icon: CalendarCheck, label: "Evento" },
     puede("marcaje") && { to: "/marcaje", icon: Clock, label: "Marcar Asistencia" },
   ].filter(Boolean);
 

@@ -55,6 +55,9 @@ import Buzon from "./pages/Buzon";
 
 // SORTEO
 import SorteoRegistro from "./pages/SorteoRegistro";
+// EVENTO (inscripciones)
+import EventoRegistro from "./pages/EventoRegistro";
+import EventoInscripciones from "./pages/EventoInscripciones";
 import PortalCliente from "./pages/PortalCliente";
 import PortalDespachos from "./pages/PortalDespachos";
 import SorteoRegistros from "./pages/SorteoRegistros";
@@ -94,6 +97,7 @@ export default function App() {
         <Route path="/login" element={<Login />} />
         <Route path="/reset-password" element={<ResetPassword />} />
         <Route path="/sorteo" element={<SorteoRegistro />} />
+        <Route path="/evento" element={<EventoRegistro />} />
         <Route path="/portal" element={<PortalCliente />} />
         <Route path="/despachos" element={<PortalDespachos />} />
         <Route path="/portal-cliente" element={<PortalStockCliente />} />
@@ -250,6 +254,16 @@ export default function App() {
             element={
               <RequireModulo modulo="sorteo">
                 <SorteoRegistros />
+              </RequireModulo>
+            }
+          />
+
+          {/* EVENTO: inscripciones del portal público /evento */}
+          <Route
+            path="evento-inscripciones"
+            element={
+              <RequireModulo modulo="eventos">
+                <EventoInscripciones />
               </RequireModulo>
             }
           />

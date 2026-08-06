@@ -22,6 +22,7 @@ export const MODULOS: string[] = [
   'resumen_comercial',
   'cotizaciones_vendedor',
   'sorteo',
+  'eventos',
   'marcaje',
   'despachos_choferes',
   'tracking_choferes',
