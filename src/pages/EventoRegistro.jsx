@@ -32,7 +32,8 @@ export default function EventoRegistro() {
   const [form, setForm] = useState({
     nombre: "",
     apellido: "",
-    telefono: "",
+    telefono: "+56 ", // prefijo de Chile precargado
+
     correo: "",
     especialidad: "",
     es_profesor: "",          // "si" | "no"
