@@ -317,17 +317,29 @@ export class MailingsService {
     const transporter = this.getTransporter();
     const from = this.buildFrom({ remitenteNombre: opts.remitenteNombre } as SendBulkOptions);
 
-    const info = await transporter.sendMail({
-      from,
-      to: para,
-      cc: cc.length > 0 ? cc : undefined,
-      replyTo: opts.replyTo?.trim() || undefined,
-      subject: opts.asunto.trim(),
-      html: opts.cuerpoHtml,
-      text: opts.cuerpoTexto || stripHtml(opts.cuerpoHtml),
-      attachments:
-        opts.attachments && opts.attachments.length > 0 ? opts.attachments : undefined,
-    });
+    let info: any;
+    try {
+      info = await transporter.sendMail({
+        from,
+        to: para,
+        cc: cc.length > 0 ? cc : undefined,
+        replyTo: opts.replyTo?.trim() || undefined,
+        subject: opts.asunto.trim(),
+        html: opts.cuerpoHtml,
+        text: opts.cuerpoTexto || stripHtml(opts.cuerpoHtml),
+        attachments:
+          opts.attachments && opts.attachments.length > 0 ? opts.attachments : undefined,
+      });
+    } catch (e: any) {
+      // Anexar host:puerto al error de conexión: permite distinguir en el
+      // toast qué configuración SMTP estaba activa (587 vs 465, etc.).
+      const host = process.env.SMTP_HOST || 'smtp.gmail.com';
+      const port = Number(process.env.SMTP_PORT || 465);
+      if (e && typeof e.message === 'string' && !e.message.includes(host)) {
+        e.message = `${e.message} [${host}:${port}]`;
+      }
+      throw e;
+    }
 
     this.logger.log(`Correo transaccional enviado a ${para}: ${info?.messageId || 'ok'}`);
     return { enviado: true, messageId: info?.messageId };
