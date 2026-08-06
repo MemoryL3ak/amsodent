@@ -143,7 +143,7 @@ export class EventosService {
       await this.mailings.enviarUno({
         para: correo,
         asunto: `Confirmación de inscripción · ${EVENTO.nombre}`,
-        remitenteNombre: 'AMSODENT',
+        remitenteNombre: 'Amsodent Medical',
         cuerpoHtml: this.htmlConfirmacion({ nombre, apellido, especialidad, esProfesor, universidad, confirmaAsistencia }),
       });
       correoEnviado = true;
@@ -287,7 +287,7 @@ export class EventosService {
       await this.mailings.enviarUno({
         para: data.correo,
         asunto: `Confirmación de inscripción · ${EVENTO.nombre}`,
-        remitenteNombre: 'AMSODENT',
+        remitenteNombre: 'Amsodent Medical',
         cuerpoHtml: this.htmlConfirmacion({
           nombre: data.nombre,
           apellido: data.apellido,
