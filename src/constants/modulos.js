@@ -22,6 +22,7 @@ export const MODULOS = [
   { key: "resumen_comercial", label: "Resumen Comercial (incluido en Panel de Ejecutivos)", grupo: "Reportes" },
   { key: "cotizaciones_vendedor", label: "Panel de Ejecutivos", grupo: "Reportes" },
   { key: "sorteo", label: "Sorteo", grupo: "Herramientas" },
+  { key: "eventos", label: "Evento (inscripciones)", grupo: "Herramientas" },
   { key: "marcaje", label: "Marcar Asistencia", grupo: "Herramientas" },
   { key: "despachos_choferes", label: "Despachos y Choferes", grupo: "Logística" },
   { key: "tracking_choferes", label: "Tracking en Vivo", grupo: "Logística" },
