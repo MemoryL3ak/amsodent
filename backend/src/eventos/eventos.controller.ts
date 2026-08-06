@@ -53,7 +53,7 @@ export class EventosController {
     return this.eventosService.reenviarConfirmacion(id);
   }
 
-  // ADMIN: catálogo de eventos (Santiago / Brasil) con sus rutas públicas
+  // ADMIN: catálogo de eventos (Santiago / Viña del Mar) con sus rutas públicas
   @Get('catalogo')
   @UseGuards(AuthGuard)
   listarEventos() {

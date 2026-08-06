@@ -98,7 +98,9 @@ export default function App() {
         <Route path="/reset-password" element={<ResetPassword />} />
         <Route path="/sorteo" element={<SorteoRegistro />} />
         <Route path="/evento" element={<EventoRegistro evento="santiago" />} />
-        <Route path="/evento-brasil" element={<EventoRegistro evento="brasil" />} />
+        <Route path="/evento-vina" element={<EventoRegistro evento="vina" />} />
+        {/* Alias antiguo: el evento de Viña del Mar se publicó primero como "Brasil". */}
+        <Route path="/evento-brasil" element={<EventoRegistro evento="vina" />} />
         <Route path="/portal" element={<PortalCliente />} />
         <Route path="/despachos" element={<PortalDespachos />} />
         <Route path="/portal-cliente" element={<PortalStockCliente />} />

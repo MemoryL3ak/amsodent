@@ -23,9 +23,9 @@ import {
 } from "lucide-react";
 
 /* ============================================================
-   Submódulo: eventos AMSODENT (Santiago y Brasil).
+   Submódulo: eventos AMSODENT (Santiago y Viña del Mar).
    ─ Inscripciones: registros de los portales públicos /evento y
-     /evento-brasil, con filtros (incluido evento), export a
+     /evento-vina, con filtros (incluido evento), export a
      Excel, reenvío del correo de confirmación y eliminación.
    ─ Invitaciones: agregar correos y enviarles el correo de
      invitación (formato de marca) con el link al formulario del
@@ -37,7 +37,7 @@ import {
 // Debe calzar con EVENTOS del backend (eventos.service.ts).
 const EVENTOS = [
   { key: "santiago", etiqueta: "Evento Santiago", ruta: "/evento" },
-  { key: "brasil", etiqueta: "Evento Brasil", ruta: "/evento-brasil" },
+  { key: "vina", etiqueta: "Evento Viña del Mar", ruta: "/evento-vina" },
 ];
 const eventoInfo = (key) => EVENTOS.find((e) => e.key === key) || EVENTOS[0];
 
@@ -304,10 +304,10 @@ export default function EventoInscripciones() {
         <div>
           <h1 className="page-title" style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <CalendarCheck size={22} style={{ color: "var(--primary)" }} />
-            Eventos · Santiago y Brasil
+            Eventos · Santiago y Viña del Mar
           </h1>
           <p className="page-subtitle">
-            {stats.total} inscrito{stats.total !== 1 ? "s" : ""} · portales públicos /evento y /evento-brasil
+            {stats.total} inscrito{stats.total !== 1 ? "s" : ""} · portales públicos /evento y /evento-vina
           </p>
         </div>
         <div className="page-actions" style={{ gap: 8 }}>
@@ -426,8 +426,8 @@ export default function EventoInscripciones() {
               filtrada.map((p) => (
                 <tr key={p.id} style={{ borderTop: "1px solid var(--border)" }}>
                   <td style={{ padding: "7px 12px" }}>
-                    {(p.evento || "santiago") === "brasil"
-                      ? <Badge color="#7c3aed" bg="#ede9fe">Brasil</Badge>
+                    {["vina", "brasil"].includes(p.evento || "santiago")
+                      ? <Badge color="#7c3aed" bg="#ede9fe">Viña del Mar</Badge>
                       : <Badge color="#1e9295" bg="#e6f6f6">Santiago</Badge>}
                   </td>
                   <td style={{ padding: "7px 12px", fontWeight: 600 }}>{p.nombre} {p.apellido}</td>
@@ -551,8 +551,8 @@ export default function EventoInscripciones() {
                 <tr key={inv.id} style={{ borderTop: "1px solid var(--border)" }}>
                   <td style={{ padding: "7px 12px", fontWeight: 600 }}>{inv.correo}</td>
                   <td style={{ padding: "7px 12px" }}>
-                    {inv.evento === "brasil"
-                      ? <Badge color="#7c3aed" bg="#ede9fe">Brasil</Badge>
+                    {["vina", "brasil"].includes(inv.evento)
+                      ? <Badge color="#7c3aed" bg="#ede9fe">Viña del Mar</Badge>
                       : <Badge color="#1e9295" bg="#e6f6f6">Santiago</Badge>}
                   </td>
                   <td style={{ padding: "7px 12px" }}>
