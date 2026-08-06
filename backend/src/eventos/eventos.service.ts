@@ -19,9 +19,9 @@ const RATE_WINDOW_MS = 60 * 60 * 1000;
 const RATE_MAX_HITS = 8;
 
 // Son DOS eventos con formularios de inscripción separados (Santiago y
-// Brasil); la clave (`santiago` | `brasil`) viaja en el registro y queda en
-// evento_inscripciones.evento. Si cambian fecha/lugar, se actualizan aquí.
-export type EventoKey = 'santiago' | 'brasil';
+// Viña del Mar); la clave (`santiago` | `vina`) viaja en el registro y queda
+// en evento_inscripciones.evento. Si cambian fecha/lugar, se actualizan aquí.
+export type EventoKey = 'santiago' | 'vina';
 
 type EventoInfo = {
   key: EventoKey;
@@ -47,21 +47,24 @@ const EVENTOS: Record<EventoKey, EventoInfo> = {
     lugarUrl: 'https://maps.google.com/?q=Best+Western+Premier+Las+Condes',
     ruta: '/evento',
   },
-  brasil: {
-    key: 'brasil',
-    etiqueta: 'Evento Brasil',
-    nombre: 'American Burrs · Evento Brasil',
-    descripcion: 'Experiencia internacional American Burrs junto a Amsodent Medical',
-    fecha: 'Por confirmar',
-    hora: 'Por confirmar',
-    lugar: 'Brasil',
-    lugarUrl: 'https://maps.google.com/?q=Brasil',
-    ruta: '/evento-brasil',
+  vina: {
+    key: 'vina',
+    etiqueta: 'Evento Viña del Mar',
+    nombre: 'American Burrs llega a Chile',
+    descripcion: 'Lanzamiento oficial y charla internacional junto al Dr. Amilcar Freitas',
+    fecha: 'Miércoles 19 de agosto',
+    hora: '19:30 hrs',
+    lugar: 'Veranda Hotel · Calle 6 Norte 745, Viña del Mar',
+    lugarUrl: 'https://maps.google.com/?q=Veranda+Hotel+Calle+6+Norte+745+Vina+del+Mar',
+    ruta: '/evento-vina',
   },
 };
 
 function eventoDe(raw: unknown): EventoInfo {
   const key = String(raw || '').trim().toLowerCase();
+  // Compatibilidad: el evento de Viña del Mar se llamó "brasil" al inicio
+  // (links /evento-brasil ya compartidos siguen llegando con esa clave).
+  if (key === 'brasil') return EVENTOS.vina;
   return EVENTOS[(key as EventoKey)] || EVENTOS.santiago;
 }
 
@@ -382,7 +385,7 @@ export class EventosService {
   /* ===========================================================
      INVITACIONES: correos agregados desde el módulo a los que se
      les envía el correo con el link al formulario de inscripción
-     del evento elegido (Santiago o Brasil). El envío sale por
+     del evento elegido (Santiago o Viña del Mar). El envío sale por
      SMTP desde contacto@amsodentmedical.cl (SMTP_USER).
   =========================================================== */
 

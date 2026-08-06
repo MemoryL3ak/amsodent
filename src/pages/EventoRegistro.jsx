@@ -28,11 +28,12 @@ const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3001/api";
 // mide 186×63 y se pixelea en pantallas retina.
 const AMSODENT_LOGO = "/logo_superior_ficha.png";
 
-// Dos eventos con formularios separados: /evento (Santiago) y /evento-brasil
-// (Brasil). La clave viaja en el registro para distinguir las inscripciones.
+// Dos eventos con formularios separados: /evento (Santiago) y /evento-vina
+// (Viña del Mar). La clave viaja en el registro para distinguir las
+// inscripciones. "/evento-brasil" quedó como alias del de Viña del Mar.
 const EVENTOS_INFO = {
   santiago: { badge: "Evento Santiago", titulo: <>Inscríbete a nuestro <span>evento en Santiago</span></> },
-  brasil: { badge: "Evento Brasil", titulo: <>Inscríbete a nuestro <span>evento en Brasil</span></> },
+  vina: { badge: "Evento Viña del Mar", titulo: <>Inscríbete a nuestro <span>evento en Viña del Mar</span></> },
 };
 
 export default function EventoRegistro({ evento = "santiago" }) {
