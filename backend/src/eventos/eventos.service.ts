@@ -136,27 +136,50 @@ export class EventosService {
       throw new BadRequestException(error.message);
     }
 
-    // Correo de confirmación: si el SMTP falla, la inscripción vale igual
-    // (correo_enviado queda en false y se ve en el listado admin).
-    let correoEnviado = false;
+    // Correo de confirmación EN SEGUNDO PLANO: el registro responde de
+    // inmediato aunque el SMTP esté lento o caído (los timeouts de conexión
+    // pueden tardar 20-60 s). Si el envío falla, correo_enviado queda en
+    // false y se reenvía desde el módulo Evento.
+    void this.enviarConfirmacionInscripcion(data.id, {
+      nombre,
+      apellido,
+      correo,
+      especialidad,
+      esProfesor,
+      universidad,
+      confirmaAsistencia,
+    });
+
+    return { id: data.id, nombre: data.nombre, ok: true };
+  }
+
+  private async enviarConfirmacionInscripcion(
+    id: number,
+    p: {
+      nombre: string;
+      apellido: string;
+      correo: string;
+      especialidad: string;
+      esProfesor: boolean;
+      universidad: string | null;
+      confirmaAsistencia: boolean;
+    },
+  ) {
     try {
       await this.mailings.enviarUno({
-        para: correo,
+        para: p.correo,
         asunto: `Confirmación de inscripción · ${EVENTO.nombre}`,
         remitenteNombre: 'Amsodent Medical',
-        cuerpoHtml: this.htmlConfirmacion({ nombre, apellido, especialidad, esProfesor, universidad, confirmaAsistencia }),
+        cuerpoHtml: this.htmlConfirmacion(p),
       });
-      correoEnviado = true;
       await this.supabase
         .getClient()
         .from('evento_inscripciones')
         .update({ correo_enviado: true })
-        .eq('id', data.id);
+        .eq('id', id);
     } catch (e: any) {
-      this.logger.warn(`Inscripción ${data.id}: no se pudo enviar la confirmación a ${correo}: ${e?.message || e}`);
+      this.logger.warn(`Inscripción ${id}: no se pudo enviar la confirmación a ${p.correo}: ${e?.message || e}`);
     }
-
-    return { id: data.id, nombre: data.nombre, ok: true, correo_enviado: correoEnviado };
   }
 
   // HTML del correo de confirmación (email-safe: tablas + estilos inline).
