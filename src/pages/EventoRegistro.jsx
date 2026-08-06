@@ -28,7 +28,15 @@ const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3001/api";
 // mide 186×63 y se pixelea en pantallas retina.
 const AMSODENT_LOGO = "/logo_superior_ficha.png";
 
-export default function EventoRegistro() {
+// Dos eventos con formularios separados: /evento (Santiago) y /evento-brasil
+// (Brasil). La clave viaja en el registro para distinguir las inscripciones.
+const EVENTOS_INFO = {
+  santiago: { badge: "Evento Santiago", titulo: <>Inscríbete a nuestro <span>evento en Santiago</span></> },
+  brasil: { badge: "Evento Brasil", titulo: <>Inscríbete a nuestro <span>evento en Brasil</span></> },
+};
+
+export default function EventoRegistro({ evento = "santiago" }) {
+  const info = EVENTOS_INFO[evento] || EVENTOS_INFO.santiago;
   const [form, setForm] = useState({
     nombre: "",
     apellido: "",
@@ -77,6 +85,7 @@ export default function EventoRegistro() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          evento,
           nombre: form.nombre.trim(),
           apellido: form.apellido.trim(),
           telefono: form.telefono.trim(),
@@ -114,11 +123,9 @@ export default function EventoRegistro() {
               <img src={AMSODENT_LOGO} alt="AMSODENT" className="evt-logo" />
               <div className="evt-badge">
                 <CalendarCheck size={13} />
-                <span>Evento Amsodent</span>
+                <span>{info.badge}</span>
               </div>
-              <h1 className="evt-title">
-                Inscríbete a nuestro <span>evento</span>
-              </h1>
+              <h1 className="evt-title">{info.titulo}</h1>
               <p className="evt-sub">
                 Completa tus datos y recibirás la confirmación de tu inscripción en tu correo.
               </p>

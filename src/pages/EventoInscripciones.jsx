@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../lib/api";
 import * as XLSX from "xlsx";
 import QRCode from "qrcode";
@@ -18,24 +18,38 @@ import {
   ExternalLink,
   CheckCircle2,
   AlertTriangle,
+  ChevronDown,
+  AtSign,
 } from "lucide-react";
 
 /* ============================================================
-   Submódulo: inscripciones al evento AMSODENT.
-   ─ Lista los registros del portal público /evento (GET
-     /eventos/inscripciones), con filtros, export a Excel,
-     reenvío del correo de confirmación y eliminación.
-   ─ Tarjeta QR: genera el código con el link al portal público
-     para imprimirlo o compartirlo (librería qrcode, local).
+   Submódulo: eventos AMSODENT (Santiago y Brasil).
+   ─ Inscripciones: registros de los portales públicos /evento y
+     /evento-brasil, con filtros (incluido evento), export a
+     Excel, reenvío del correo de confirmación y eliminación.
+   ─ Invitaciones: agregar correos y enviarles el correo de
+     invitación (formato de marca) con el link al formulario del
+     evento elegido; sale desde contacto@amsodentmedical.cl.
+   ─ Tarjeta QR: genera el código con el link al portal del
+     evento seleccionado (librería qrcode, local).
 ============================================================ */
+
+// Debe calzar con EVENTOS del backend (eventos.service.ts).
+const EVENTOS = [
+  { key: "santiago", etiqueta: "Evento Santiago", ruta: "/evento" },
+  { key: "brasil", etiqueta: "Evento Brasil", ruta: "/evento-brasil" },
+];
+const eventoInfo = (key) => EVENTOS.find((e) => e.key === key) || EVENTOS[0];
 
 const fmtFecha = (iso) =>
   iso ? new Date(iso).toLocaleString("es-CL", { dateStyle: "short", timeStyle: "short" }) : "—";
 
 export default function EventoInscripciones() {
+  const [tab, setTab] = useState("inscripciones"); // inscripciones | invitaciones
   const [data, setData] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filtro, setFiltro] = useState("");
+  const [filtroEvento, setFiltroEvento] = useState("");
   const [fechaDesde, setFechaDesde] = useState("");
   const [fechaHasta, setFechaHasta] = useState("");
   const [soloConfirmados, setSoloConfirmados] = useState(false);
@@ -43,8 +57,19 @@ export default function EventoInscripciones() {
   const [confirmar, setConfirmar] = useState(null); // { title, message, onConfirm }
   const [reenviandoId, setReenviandoId] = useState(null);
 
-  // QR del portal público. El link usa el dominio actual de la plataforma.
-  const urlPortal = `${window.location.origin}/evento`;
+  // Invitaciones: correos agregados a mano a los que se les envía el
+  // correo con el link al formulario de inscripción.
+  const [invitaciones, setInvitaciones] = useState([]);
+  const [loadingInv, setLoadingInv] = useState(false);
+  const [invCorreos, setInvCorreos] = useState("");
+  const [invEvento, setInvEvento] = useState("santiago");
+  const [agregando, setAgregando] = useState(false);
+  const [reenviandoInvId, setReenviandoInvId] = useState(null);
+
+  // QR del portal público del evento seleccionado. El link usa el dominio
+  // actual de la plataforma (descargarlo desde producción, no localhost).
+  const [qrEvento, setQrEvento] = useState("santiago");
+  const urlPortal = `${window.location.origin}${eventoInfo(qrEvento).ruta}`;
   const [qrDataUrl, setQrDataUrl] = useState("");
   const [mostrarQR, setMostrarQR] = useState(false);
 
@@ -56,7 +81,28 @@ export default function EventoInscripciones() {
 
   useEffect(() => {
     cargar();
+    cargarInvitaciones();
   }, []);
+
+  // El envío de la invitación corre en segundo plano en el backend: mientras
+  // haya filas "Enviando…" (sin enviado ni error) se re-consulta cada 4 s para
+  // que el estado pase solo a "Enviada"/"Error" (con tope, por si el backend
+  // nunca actualiza la fila).
+  const pollsRef = useRef(0);
+  useEffect(() => {
+    const pendientes = invitaciones.some((i) => !i.enviado && !i.error);
+    if (!pendientes) {
+      pollsRef.current = 0;
+      return;
+    }
+    if (pollsRef.current >= 20) return; // ~80 s; después queda el botón Actualizar
+    const t = setTimeout(() => {
+      pollsRef.current += 1;
+      cargarInvitaciones(true);
+    }, 4000);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [invitaciones]);
 
   async function cargar() {
     setLoading(true);
@@ -70,11 +116,90 @@ export default function EventoInscripciones() {
     }
   }
 
+  // `silencioso` = refresco de fondo (sin spinner ni toast), usado por el
+  // auto-refresh de las invitaciones en estado "Enviando…".
+  async function cargarInvitaciones(silencioso = false) {
+    if (!silencioso) setLoadingInv(true);
+    try {
+      const rows = await api.get("/eventos/invitaciones");
+      setInvitaciones(Array.isArray(rows) ? rows : []);
+    } catch (e) {
+      if (silencioso) return;
+      // Silencioso si falta la migración; el toast aparece al usar la pestaña.
+      setInvitaciones([]);
+      if (tab === "invitaciones") {
+        setToast({ type: "error", message: e?.message || "Error cargando invitaciones." });
+      }
+    } finally {
+      if (!silencioso) setLoadingInv(false);
+    }
+  }
+
+  // Agrega los correos pegados (separados por coma, espacio o salto de línea)
+  // y dispara el envío de la invitación del evento elegido.
+  async function agregarInvitaciones() {
+    const correos = invCorreos
+      .split(/[\s,;]+/)
+      .map((c) => c.trim())
+      .filter(Boolean);
+    if (correos.length === 0) {
+      setToast({ type: "error", message: "Pega al menos un correo." });
+      return;
+    }
+    setAgregando(true);
+    try {
+      const res = await api.post("/eventos/invitaciones", { evento: invEvento, correos });
+      const partes = [];
+      if (res?.agregados) partes.push(`${res.agregados} invitación(es) enviándose`);
+      if (res?.duplicados) partes.push(`${res.duplicados} ya estaban agregadas`);
+      if (res?.invalidos) partes.push(`${res.invalidos} correo(s) inválido(s)`);
+      setToast({ type: res?.agregados ? "success" : "info", message: partes.join(" · ") || "Sin cambios." });
+      setInvCorreos("");
+      pollsRef.current = 0; // reinicia el auto-refresh para las recién agregadas
+      await cargarInvitaciones();
+    } catch (e) {
+      setToast({ type: "error", message: e?.message || "No se pudieron agregar los correos." });
+    } finally {
+      setAgregando(false);
+    }
+  }
+
+  async function reenviarInvitacion(inv) {
+    setReenviandoInvId(inv.id);
+    try {
+      await api.post(`/eventos/invitaciones/${inv.id}/reenviar`, {});
+      setInvitaciones((prev) => prev.map((x) => (x.id === inv.id ? { ...x, enviado: true, error: null, enviado_at: new Date().toISOString() } : x)));
+      setToast({ type: "success", message: `Invitación enviada a ${inv.correo}.` });
+    } catch (e) {
+      setToast({ type: "error", message: e?.message || "No se pudo enviar la invitación." });
+      cargarInvitaciones();
+    } finally {
+      setReenviandoInvId(null);
+    }
+  }
+
+  function eliminarInvitacion(inv) {
+    setConfirmar({
+      title: "Eliminar invitación",
+      message: `¿Quitar a ${inv.correo} del listado de invitaciones (${eventoInfo(inv.evento).etiqueta})?`,
+      onConfirm: async () => {
+        try {
+          await api.delete(`/eventos/invitaciones/${inv.id}`);
+          setInvitaciones((prev) => prev.filter((x) => x.id !== inv.id));
+          setToast({ type: "success", message: "Invitación eliminada." });
+        } catch (e) {
+          setToast({ type: "error", message: e?.message || "No se pudo eliminar." });
+        }
+      },
+    });
+  }
+
   const filtrada = useMemo(() => {
     const q = filtro.trim().toLowerCase();
     const desde = fechaDesde ? new Date(`${fechaDesde}T00:00:00`) : null;
     const hasta = fechaHasta ? new Date(`${fechaHasta}T23:59:59.999`) : null;
     return data.filter((p) => {
+      if (filtroEvento && (p.evento || "santiago") !== filtroEvento) return false;
       if (soloConfirmados && !p.confirma_asistencia) return false;
       if (q) {
         const hay = [p.nombre, p.apellido, p.correo, p.telefono, p.especialidad, p.universidad].map(
@@ -90,7 +215,7 @@ export default function EventoInscripciones() {
       }
       return true;
     });
-  }, [data, filtro, fechaDesde, fechaHasta, soloConfirmados]);
+  }, [data, filtro, filtroEvento, fechaDesde, fechaHasta, soloConfirmados]);
 
   const stats = useMemo(
     () => ({
@@ -107,6 +232,7 @@ export default function EventoInscripciones() {
       return;
     }
     const rows = filtrada.map((p) => ({
+      Evento: eventoInfo(p.evento || "santiago").etiqueta,
       Nombre: p.nombre,
       Apellido: p.apellido,
       "Teléfono": p.telefono,
@@ -166,7 +292,7 @@ export default function EventoInscripciones() {
     if (!qrDataUrl) return;
     const a = document.createElement("a");
     a.href = qrDataUrl;
-    a.download = "qr_evento_amsodent.png";
+    a.download = `qr_evento_${qrEvento}_amsodent.png`;
     a.click();
   }
 
@@ -178,10 +304,10 @@ export default function EventoInscripciones() {
         <div>
           <h1 className="page-title" style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <CalendarCheck size={22} style={{ color: "var(--primary)" }} />
-            Evento · Inscripciones
+            Eventos · Santiago y Brasil
           </h1>
           <p className="page-subtitle">
-            {stats.total} inscrito{stats.total !== 1 ? "s" : ""} · registros del portal público /evento
+            {stats.total} inscrito{stats.total !== 1 ? "s" : ""} · portales públicos /evento y /evento-brasil
           </p>
         </div>
         <div className="page-actions" style={{ gap: 8 }}>
@@ -189,7 +315,7 @@ export default function EventoInscripciones() {
             <QrCode size={14} />
             QR del portal
           </button>
-          <button className="btn btn-secondary" onClick={cargar} disabled={loading}>
+          <button className="btn btn-secondary" onClick={() => { cargar(); cargarInvitaciones(); }} disabled={loading}>
             <RefreshCw size={14} />
             Actualizar
           </button>
@@ -205,8 +331,32 @@ export default function EventoInscripciones() {
         <StatCard icon={<Users size={18} />} label="Inscritos totales" value={stats.total} tone="teal" />
         <StatCard icon={<CheckCircle2 size={18} />} label="Asistencia confirmada" value={stats.confirmados} tone="green" />
         <StatCard icon={<GraduationCap size={18} />} label="Profesores universitarios" value={stats.profesores} tone="violet" />
+        <StatCard icon={<Mail size={18} />} label="Invitaciones enviadas" value={invitaciones.filter((i) => i.enviado).length} tone="teal" />
       </div>
 
+      {/* Pestañas */}
+      <div style={{ display: "inline-flex", borderRadius: 9, overflow: "hidden", border: "1px solid var(--border)", marginBottom: 4 }}>
+        {[
+          ["inscripciones", `Inscripciones (${data.length})`],
+          ["invitaciones", `Invitaciones (${invitaciones.length})`],
+        ].map(([key, label]) => (
+          <button
+            key={key}
+            type="button"
+            onClick={() => setTab(key)}
+            style={{
+              padding: "7px 18px", fontSize: 13, fontWeight: 700, cursor: "pointer", border: "none",
+              background: tab === key ? "var(--primary)" : "var(--surface)",
+              color: tab === key ? "#fff" : "var(--text-muted)",
+            }}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {tab === "inscripciones" && (
+      <>
       {/* Filtros */}
       <div className="filter-bar">
         <div className="filter-field" style={{ flex: 1, minWidth: 220 }}>
@@ -221,6 +371,15 @@ export default function EventoInscripciones() {
               onChange={(e) => setFiltro(e.target.value)}
             />
           </div>
+        </div>
+        <div className="filter-field">
+          <label className="filter-label">Evento</label>
+          <select className="input" value={filtroEvento} onChange={(e) => setFiltroEvento(e.target.value)} style={{ minWidth: 150 }}>
+            <option value="">Todos</option>
+            {EVENTOS.map((ev) => (
+              <option key={ev.key} value={ev.key}>{ev.etiqueta}</option>
+            ))}
+          </select>
         </div>
         <div className="filter-field">
           <label className="filter-label">Desde</label>
@@ -244,6 +403,7 @@ export default function EventoInscripciones() {
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, whiteSpace: "nowrap" }}>
           <thead>
             <tr style={{ background: "var(--bg)", color: "var(--text-muted)", textAlign: "left" }}>
+              <th style={{ padding: "9px 12px" }}>Evento</th>
               <th style={{ padding: "9px 12px" }}>Nombre</th>
               <th style={{ padding: "9px 12px" }}>Teléfono</th>
               <th style={{ padding: "9px 12px" }}>Correo</th>
@@ -257,14 +417,19 @@ export default function EventoInscripciones() {
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={9} style={{ padding: 26, textAlign: "center", color: "var(--text-muted)" }}>Cargando inscripciones…</td></tr>
+              <tr><td colSpan={10} style={{ padding: 26, textAlign: "center", color: "var(--text-muted)" }}>Cargando inscripciones…</td></tr>
             ) : filtrada.length === 0 ? (
-              <tr><td colSpan={9} style={{ padding: 26, textAlign: "center", color: "var(--text-muted)" }}>
+              <tr><td colSpan={10} style={{ padding: 26, textAlign: "center", color: "var(--text-muted)" }}>
                 Sin inscripciones{data.length > 0 ? " en el filtro actual" : " todavía. Comparte el QR o el link del portal para recibir registros"}.
               </td></tr>
             ) : (
               filtrada.map((p) => (
                 <tr key={p.id} style={{ borderTop: "1px solid var(--border)" }}>
+                  <td style={{ padding: "7px 12px" }}>
+                    {(p.evento || "santiago") === "brasil"
+                      ? <Badge color="#7c3aed" bg="#ede9fe">Brasil</Badge>
+                      : <Badge color="#1e9295" bg="#e6f6f6">Santiago</Badge>}
+                  </td>
                   <td style={{ padding: "7px 12px", fontWeight: 600 }}>{p.nombre} {p.apellido}</td>
                   <td style={{ padding: "7px 12px" }}>{p.telefono}</td>
                   <td style={{ padding: "7px 12px" }}>{p.correo}</td>
@@ -312,6 +477,122 @@ export default function EventoInscripciones() {
           </tbody>
         </table>
       </div>
+      </>
+      )}
+
+      {tab === "invitaciones" && (
+      <>
+      {/* Agregar correos: se envía la invitación del evento elegido */}
+      <div style={{ border: "1px solid var(--border)", borderRadius: 10, background: "var(--surface)", padding: "14px 16px", marginTop: 12 }}>
+        <div style={{ fontSize: 13.5, fontWeight: 700, marginBottom: 4 }}>Agregar correos e invitar</div>
+        <div style={{ fontSize: 12.5, color: "var(--text-muted)", marginBottom: 10 }}>
+          Pega uno o varios correos (separados por coma, espacio o salto de línea), elige el evento y
+          se les enviará el correo de invitación con el link a su formulario de inscripción
+          desde <b>contacto@amsodentmedical.cl</b>.
+        </div>
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end" }}>
+          <div style={{ flex: 2, minWidth: 280 }}>
+            <label className="filter-label">Correos</label>
+            <div className="evtadm-inputwrap is-area">
+              <AtSign size={15} className="evtadm-input-ic" />
+              <textarea
+                className="evtadm-textarea"
+                placeholder={"doctor@clinica.cl, otra@correo.cl\nuna@porlinea.cl"}
+                value={invCorreos}
+                onChange={(e) => setInvCorreos(e.target.value)}
+              />
+            </div>
+          </div>
+          <div style={{ minWidth: 210 }}>
+            <label className="filter-label">Evento (formulario que recibirá)</label>
+            <div className="evtadm-inputwrap">
+              <CalendarCheck size={15} className="evtadm-input-ic" />
+              <select className="evtadm-select" value={invEvento} onChange={(e) => setInvEvento(e.target.value)}>
+                {EVENTOS.map((ev) => (
+                  <option key={ev.key} value={ev.key}>{ev.etiqueta}</option>
+                ))}
+              </select>
+              <ChevronDown size={15} className="evtadm-select-chevron" aria-hidden />
+            </div>
+          </div>
+          <button
+            className="btn btn-primary"
+            onClick={agregarInvitaciones}
+            disabled={agregando || !invCorreos.trim()}
+            style={{ display: "inline-flex", alignItems: "center", gap: 7, height: 46, borderRadius: 12, padding: "0 20px" }}
+          >
+            <Mail size={14} /> {agregando ? "Agregando…" : "Agregar y enviar"}
+          </button>
+        </div>
+      </div>
+
+      {/* Tabla de invitaciones */}
+      <div style={{ border: "1px solid var(--border)", borderRadius: 10, overflowX: "auto", background: "var(--surface)", marginTop: 12 }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, whiteSpace: "nowrap" }}>
+          <thead>
+            <tr style={{ background: "var(--bg)", color: "var(--text-muted)", textAlign: "left" }}>
+              <th style={{ padding: "9px 12px" }}>Correo</th>
+              <th style={{ padding: "9px 12px" }}>Evento</th>
+              <th style={{ padding: "9px 12px" }}>Estado</th>
+              <th style={{ padding: "9px 12px" }}>Agregado por</th>
+              <th style={{ padding: "9px 12px" }}>Agregado</th>
+              <th style={{ padding: "9px 12px" }} />
+            </tr>
+          </thead>
+          <tbody>
+            {loadingInv ? (
+              <tr><td colSpan={6} style={{ padding: 26, textAlign: "center", color: "var(--text-muted)" }}>Cargando invitaciones…</td></tr>
+            ) : invitaciones.length === 0 ? (
+              <tr><td colSpan={6} style={{ padding: 26, textAlign: "center", color: "var(--text-muted)" }}>
+                Aún no agregas correos. Pega los correos arriba, elige el evento y presiona "Agregar y enviar".
+              </td></tr>
+            ) : (
+              invitaciones.map((inv) => (
+                <tr key={inv.id} style={{ borderTop: "1px solid var(--border)" }}>
+                  <td style={{ padding: "7px 12px", fontWeight: 600 }}>{inv.correo}</td>
+                  <td style={{ padding: "7px 12px" }}>
+                    {inv.evento === "brasil"
+                      ? <Badge color="#7c3aed" bg="#ede9fe">Brasil</Badge>
+                      : <Badge color="#1e9295" bg="#e6f6f6">Santiago</Badge>}
+                  </td>
+                  <td style={{ padding: "7px 12px" }}>
+                    {inv.enviado ? (
+                      <Badge color="#16a34a" bg="#dcfce7">Enviada{inv.enviado_at ? ` · ${fmtFecha(inv.enviado_at)}` : ""}</Badge>
+                    ) : inv.error ? (
+                      <span title={inv.error}><Badge color="#dc2626" bg="#fee2e2">Error al enviar</Badge></span>
+                    ) : (
+                      <Badge color="#b45309" bg="#fef3c7">Enviando…</Badge>
+                    )}
+                  </td>
+                  <td style={{ padding: "7px 12px", color: "var(--text-muted)" }}>{inv.agregado_por || "—"}</td>
+                  <td style={{ padding: "7px 12px", color: "var(--text-muted)" }}>{fmtFecha(inv.created_at)}</td>
+                  <td style={{ padding: "7px 12px", textAlign: "right" }}>
+                    <button
+                      className="btn btn-sm btn-ghost"
+                      title="Enviar / reenviar la invitación"
+                      style={{ padding: 5 }}
+                      disabled={reenviandoInvId === inv.id}
+                      onClick={() => reenviarInvitacion(inv)}
+                    >
+                      <Mail size={14} />
+                    </button>
+                    <button
+                      className="btn btn-sm btn-ghost"
+                      title="Eliminar invitación"
+                      style={{ padding: 5, color: "var(--danger)" }}
+                      onClick={() => eliminarInvitacion(inv)}
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+      </>
+      )}
 
       {/* Modal QR */}
       {mostrarQR && (
@@ -323,9 +604,25 @@ export default function EventoInscripciones() {
             <h3 style={{ margin: "0 0 4px", fontSize: 16, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
               <QrCode size={18} /> QR del portal de inscripción
             </h3>
-            <p style={{ margin: "0 0 14px", fontSize: 12.5, color: "var(--text-muted)" }}>
+            <p style={{ margin: "0 0 10px", fontSize: 12.5, color: "var(--text-muted)" }}>
               Imprímelo o compártelo: al escanearlo abre el formulario público del evento.
             </p>
+            <div style={{ display: "inline-flex", borderRadius: 9, overflow: "hidden", border: "1px solid var(--border)", marginBottom: 12 }}>
+              {EVENTOS.map((ev) => (
+                <button
+                  key={ev.key}
+                  type="button"
+                  onClick={() => setQrEvento(ev.key)}
+                  style={{
+                    padding: "6px 14px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", border: "none",
+                    background: qrEvento === ev.key ? "var(--primary)" : "var(--surface)",
+                    color: qrEvento === ev.key ? "#fff" : "var(--text-muted)",
+                  }}
+                >
+                  {ev.etiqueta}
+                </button>
+              ))}
+            </div>
             {qrDataUrl ? (
               <img src={qrDataUrl} alt="QR del portal del evento" style={{ width: 240, height: 240, borderRadius: 10, border: "1px solid var(--border)" }} />
             ) : (
@@ -413,6 +710,63 @@ const EVTADM_STYLES = `
 }
 .evtadm-stat-label {
   font-size: 12px; color: var(--text-soft, var(--text-muted));
+}
+
+/* Inputs custom del panel de invitaciones: mismo lenguaje visual del portal
+   /evento (icono adentro, bordes redondeados y anillo de foco teal). */
+.evtadm-inputwrap { position: relative; display: block; }
+.evtadm-input-ic {
+  position: absolute;
+  left: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #98a2b3;
+  pointer-events: none;
+  transition: color .15s;
+}
+.evtadm-inputwrap.is-area .evtadm-input-ic { top: 16px; transform: none; }
+.evtadm-inputwrap:focus-within .evtadm-input-ic { color: #1e9295; }
+
+.evtadm-textarea,
+.evtadm-select {
+  width: 100%;
+  border: 1.5px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg, #f8fafc);
+  color: var(--text);
+  font-size: 13.5px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color .15s, box-shadow .15s, background .15s;
+}
+.evtadm-textarea {
+  min-height: 74px;
+  resize: vertical;
+  padding: 11px 14px 11px 40px;
+  line-height: 1.5;
+}
+.evtadm-select {
+  appearance: none;
+  -webkit-appearance: none;
+  height: 46px;
+  padding: 0 38px 0 40px;
+  cursor: pointer;
+  font-weight: 600;
+}
+.evtadm-textarea::placeholder { color: #98a2b3; }
+.evtadm-textarea:focus,
+.evtadm-select:focus {
+  border-color: #28aeb1;
+  background: var(--surface, #fff);
+  box-shadow: 0 0 0 4px rgba(40, 174, 177, .14);
+}
+.evtadm-select-chevron {
+  position: absolute;
+  right: 13px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #98a2b3;
+  pointer-events: none;
 }
 `;
 
