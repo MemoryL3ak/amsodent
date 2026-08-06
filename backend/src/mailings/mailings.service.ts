@@ -70,10 +70,18 @@ export class MailingsService {
       // ignoran el setting global.
       family: 4,
       lookup: (hostname: string, options: any, callback: any) => {
-        // Asegura family:4 incluso si el caller no lo pasó.
-        const opts = typeof options === 'function' ? {} : options || {};
         const cb = typeof options === 'function' ? options : callback;
-        return dns.lookup(hostname, { ...opts, family: 4 }, cb);
+        // dns.resolve4 consulta DIRECTO los registros A (solo IPv4), sin pasar
+        // por getaddrinfo: aunque el sistema/Node prefiera IPv6 (Happy
+        // Eyeballs, resolvers raros), aquí jamás puede salir una dirección
+        // IPv6. Fallback a dns.lookup con family:4 si la consulta falla.
+        dns.resolve4(hostname, (err: any, addrs: string[]) => {
+          if (err || !addrs || addrs.length === 0) {
+            const opts = typeof options === 'function' ? {} : options || {};
+            return dns.lookup(hostname, { ...opts, family: 4, all: false }, cb);
+          }
+          cb(null, addrs[0], 4);
+        });
       },
       // Si la red está bloqueada o lenta, queremos fallar rápido y no dejar
       // la petición HTTP colgada minutos.
