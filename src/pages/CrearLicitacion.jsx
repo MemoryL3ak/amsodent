@@ -695,6 +695,11 @@ export default function CrearLicitacion() {
 
   // ✅ estados para mostrar generación PDF / evitar doble click
   const [guardando, setGuardando] = useState(false);
+  // Guard SINCRÓNICO contra doble clic al guardar: `guardando` es estado de
+  // React y no cambia hasta el próximo render, así que dos clics seguidos
+  // (antes de que el botón se deshabilite) ejecutaban el guardado dos veces
+  // y la cotización quedaba duplicada.
+  const guardandoRef = useRef(false);
   const [generandoPDF, setGenerandoPDF] = useState(false);
 
   useEffect(() => {
@@ -1776,9 +1781,13 @@ export default function CrearLicitacion() {
   async function guardarLicitacion() {
     setToast(null);
 
-    if (guardando || generandoPDF) return;
+    if (guardando || generandoPDF || guardandoRef.current) return;
+    guardandoRef.current = true;
+    setGuardando(true);
 
     if (!puedeCrearLicitacion) {
+      guardandoRef.current = false;
+      setGuardando(false);
       setToast({
         type: "error",
         message: "No tienes permisos para crear licitaciones.",
@@ -1808,6 +1817,8 @@ export default function CrearLicitacion() {
     if (!comuna) errores.push("Comuna");
 
     if (errores.length > 0) {
+      guardandoRef.current = false;
+      setGuardando(false);
       setToast({
         type: "error",
         message: "Faltan campos obligatorios:\n\n• " + errores.join("\n• "),
@@ -1822,6 +1833,8 @@ export default function CrearLicitacion() {
     const vendedorCelularFinal = (perfilCelular || "").toString().trim();
 
     if (!vendedorCorreoFinal) {
+      guardandoRef.current = false;
+      setGuardando(false);
       setToast({ type: "error", message: "Sesión no válida. Vuelve a iniciar." });
       return;
     }
@@ -1833,6 +1846,8 @@ export default function CrearLicitacion() {
         `/licitaciones/cliente-mora?rut=${encodeURIComponent(rutEntidad)}&tipo=${encodeURIComponent(tipoCliente || "")}`
       );
       if (estadoMora?.bloqueado) {
+        guardandoRef.current = false;
+        setGuardando(false);
         setToast({
           type: "error",
           message: `Cliente bloqueado por deuda: ${estadoMora.diasAtrasoMax} días de atraso (máximo ${estadoMora.umbral}). Regulariza en Cobranza o solicita desbloqueo a un administrador.`,
@@ -1841,7 +1856,6 @@ export default function CrearLicitacion() {
       }
     } catch { /* si el check falla, no bloqueamos aquí; el backend decide al guardar */ }
 
-    setGuardando(true);
     setToast({ type: "info", message: "Guardando licitación…" });
 
     try {
@@ -2132,6 +2146,7 @@ export default function CrearLicitacion() {
       limpiarDatos();
       if (sugerencia) setSugerenciaEquiv(sugerencia);
     } finally {
+      guardandoRef.current = false;
       setGenerandoPDF(false);
       setGuardando(false);
     }
