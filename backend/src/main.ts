@@ -8,6 +8,7 @@ dotenv.config({ path: path.resolve(__dirname, '..', '.env') });
 
 import { NestFactory } from '@nestjs/core';
 import * as dns from 'dns';
+import * as net from 'net';
 import compression from 'compression';
 import { json, urlencoded } from 'express';
 import { AppModule } from './app.module';
@@ -28,6 +29,14 @@ process.on('uncaughtException', (err) => {
 // llamadas a Gmail SMTP (smtp.gmail.com), Boostr (api.boostr.cl), etc. con
 // ENETUNREACH. Forzamos IPv4 a nivel global.
 dns.setDefaultResultOrder('ipv4first');
+
+// Node >= 20 además activa "Happy Eyeballs" (autoSelectFamily): al conectar
+// prueba direcciones alternando IPv4/IPv6 aunque el orden DNS sea ipv4first,
+// por lo que en Railway igual aparecían ENETUNREACH hacia IPv6 de Gmail
+// (connect ENETUNREACH 2607:f8b0:...:587). Se desactiva globalmente.
+if (typeof (net as any).setDefaultAutoSelectFamily === 'function') {
+  (net as any).setDefaultAutoSelectFamily(false);
+}
 
 async function bootstrap() {
   // Desactivamos el body parser default (límite 100kb) para registrar el
