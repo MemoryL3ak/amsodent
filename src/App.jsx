@@ -41,6 +41,7 @@ import CrearCampana from "./pages/CrearCampana";
 import EditarCampana from "./pages/EditarCampana";
 import CotizacionesPorVendedor from "./pages/CotizacionesPorVendedor";
 import PanelIndicadores from "./pages/PanelIndicadores";
+import AnalisisMercadoPublico from "./pages/AnalisisMercadoPublico";
 import PanelParticular from "./pages/PanelParticular";
 import Comisiones from "./pages/Comisiones";
 import PanelPublica from "./pages/PanelPublica";
@@ -221,6 +222,14 @@ export default function App() {
               <RequireModulo modulo={["cotizaciones_vendedor", "resumen_comercial"]}>
                 <CotizacionesPorVendedor />
               </RequireModulo>
+            }
+          />
+          <Route
+            path="analisis-mercado-publico"
+            element={
+              <RequireRole allow={["admin"]}>
+                <AnalisisMercadoPublico />
+              </RequireRole>
             }
           />
           <Route

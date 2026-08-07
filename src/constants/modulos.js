@@ -21,6 +21,8 @@ export const MODULOS = [
   { key: "panel_indicadores", label: "Panel de Indicadores", grupo: "Reportes" },
   { key: "resumen_comercial", label: "Resumen Comercial (incluido en Panel de Ejecutivos)", grupo: "Reportes" },
   { key: "cotizaciones_vendedor", label: "Panel de Ejecutivos", grupo: "Reportes" },
+  // "Análisis Mercado Público" NO es asignable por perfil: es solo admin
+  // (RequireRole en la ruta + AdminGuard en el backend).
   { key: "sorteo", label: "Sorteo", grupo: "Herramientas" },
   { key: "eventos", label: "Evento (inscripciones)", grupo: "Herramientas" },
   { key: "marcaje", label: "Marcar Asistencia", grupo: "Herramientas" },
