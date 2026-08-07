@@ -1,0 +1,28 @@
+{
+  "expo": {
+    "name": "Amsodent",
+    "slug": "amsodent-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.amsodent.app",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    },
+    "android": {
+      "package": "com.amsodent.app"
+    },
+    "plugins": ["expo-router"],
+    "scheme": "amsodent",
+    "newArchEnabled": false,
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "REEMPLAZA-CON-EL-ID-DE-eas-init"
+      }
+    }
+  }
+}
