@@ -297,7 +297,8 @@ export class MailingsService {
     replyTo?: string;
     remitenteNombre?: string;
     cc?: string[];
-    attachments?: Array<{ filename: string; content: Buffer; contentType?: string }>;
+    // `cid` permite referenciar el adjunto como imagen inline (src="cid:...").
+    attachments?: Array<{ filename: string; content: Buffer; contentType?: string; cid?: string }>;
   }): Promise<{ enviado: boolean; messageId?: string }> {
     const para = String(opts.para || '').trim().toLowerCase();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(para)) {
