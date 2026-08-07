@@ -850,6 +850,8 @@ export default function EditarLicitacion() {
   const [fechaAdjudicada, setFechaAdjudicada] = useState(null);
   const [fechaCreacionLic, setFechaCreacionLic] = useState(null);
   const [margenAprobado, setMargenAprobado] = useState(false);
+  // Ciclo cerrado de forma forzada (Trazabilidad): fuerza el saldo por consumir a $0.
+  const [cicloCerrado, setCicloCerrado] = useState(false);
   const [tipoCompra, setTipoCompra] = useState("Compra ágil");
   const [montoAdicionalOC, setMontoAdicionalOC] = useState("");
 
@@ -2071,6 +2073,7 @@ export default function EditarLicitacion() {
     setFechaAdjudicada(lic.fecha_adjudicada || null);
     setFechaCreacionLic(lic.fecha || lic.created_at || null);
     setMargenAprobado(Boolean(lic.margen_aprobado));
+    setCicloCerrado(Boolean(lic.ciclo_cerrado));
     setTipoCompra(lic.tipo_compra || "Compra ágil");
 
     setRutEntidad(lic.rut_entidad || "");
@@ -2261,6 +2264,7 @@ export default function EditarLicitacion() {
       setFechaAdjudicada(lic.fecha_adjudicada || null);
     setFechaCreacionLic(lic.fecha || lic.created_at || null);
       setMargenAprobado(Boolean(lic.margen_aprobado));
+      setCicloCerrado(Boolean(lic.ciclo_cerrado));
       setTipoCompra(lic.tipo_compra || "Compra ágil");
 
       setRutEntidad(lic.rut_entidad || "");
@@ -2493,7 +2497,8 @@ export default function EditarLicitacion() {
   const montoConsumido = calcularBrutoDesdeNeto(montoConsumidoNeto);
   const montoPresupuesto = parseMontoCL(monto);
   const saldoPresupuesto = montoPresupuesto - totalConIVA;
-  const saldoPorConsumirResumen = Math.max(0, totalConIVA - montoConsumido);
+  // Ciclo cerrado de forma forzada: el saldo por consumir queda en $0.
+  const saldoPorConsumirResumen = cicloCerrado ? 0 : Math.max(0, totalConIVA - montoConsumido);
   const montoNetoOCFormulario = parseMontoCL(docMonto);
   const montoBrutoOCFormulario = calcularBrutoDesdeNeto(montoNetoOCFormulario);
 
