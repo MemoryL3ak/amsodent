@@ -28,6 +28,7 @@ import { ComisionesModule } from './comisiones/comisiones.module';
 import { ProveedoresModule } from './proveedores/proveedores.module';
 import { FletesModule } from './fletes/fletes.module';
 import { EventosModule } from './eventos/eventos.module';
+import { MercadopublicoModule } from './mercadopublico/mercadopublico.module';
 
 @Module({
   imports: [
@@ -60,6 +61,7 @@ import { EventosModule } from './eventos/eventos.module';
     ProveedoresModule,
     FletesModule,
     EventosModule,
+    MercadopublicoModule,
   ],
 })
 export class AppModule {}

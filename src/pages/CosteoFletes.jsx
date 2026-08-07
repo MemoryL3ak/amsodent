@@ -13,6 +13,7 @@ import { Link } from "react-router-dom";
 import { api } from "../lib/api";
 import { Truck, Upload, Search, X, FileSpreadsheet, CircleDollarSign, Link2, Trash2, Lock, Unlock, BarChart3, AlertTriangle, Eye, ExternalLink } from "lucide-react";
 import TarifasFlete from "../components/TarifasFlete";
+import useAuth from "../hooks/useAuth";
 
 const fmtCLP = (v) => `$${Math.round(Number(v || 0)).toLocaleString("es-CL")}`;
 const fmtFecha = (v) => {
@@ -41,6 +42,10 @@ const badgeEmpresa = (empresa) => ({
 });
 
 export default function CosteoFletes() {
+  // La pestaña "Tarifas" (administración del tarifario, reajuste y despacho
+  // interno) es SOLO para administradores; el backend también lo exige.
+  const { rol } = useAuth();
+  const esAdmin = ["admin", "administrador"].includes(String(rol || "").trim().toLowerCase());
   const [loading, setLoading] = useState(true);
   const [lics, setLics] = useState([]); // adjudicadas
   const [docs, setDocs] = useState([]); // OCs + guías de las adjudicadas
@@ -290,7 +295,7 @@ export default function CosteoFletes() {
     { key: "costeo", label: `Conciliación (${abiertas.length})`, icon: Truck },
     { key: "analisis", label: `Análisis (${cerradas.length})`, icon: BarChart3 },
     { key: "sinmatch", label: `Sin match (${cobrosSinMatch.length})`, icon: AlertTriangle },
-    { key: "tarifas", label: "Tarifas", icon: CircleDollarSign },
+    ...(esAdmin ? [{ key: "tarifas", label: "Tarifas", icon: CircleDollarSign }] : []),
   ];
 
   return (

@@ -41,6 +41,7 @@ import {
   KeyRound,
   Landmark,
   LayoutDashboard,
+  Scale,
   CalendarDays,
   Inbox,
   Percent,
@@ -209,6 +210,7 @@ export default function SidebarLayout() {
         { to: "/panel-publica", icon: Landmark, label: "Entidad Pública" },
       ],
     },
+    esAdmin && { to: "/analisis-mercado-publico", icon: Scale, label: "Análisis Mercado Público" },
     (puede("cotizaciones_vendedor") || puede("resumen_comercial")) && { to: "/cotizaciones-vendedor", icon: BarChart3, label: "Panel de Ejecutivos" },
   ].filter(Boolean);
 

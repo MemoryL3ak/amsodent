@@ -368,6 +368,7 @@ export default function EditarProducto() {
         link_referencia: data.link_referencia ?? "",
         creado_por: data.creado_por ?? "",
         created_at: data.created_at ?? "",
+        precio_actualizado_at: data.precio_actualizado_at ?? "",
       });
 
       setLoading(false);
@@ -1114,8 +1115,17 @@ try {
       {/* LISTA DE PRECIOS — oculto para ventas en productos no transitorios */}
       {!esVentasNoTransitorio && (
         <div className="surface">
-          <div className="surface-header">
+          <div className="surface-header" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
             <h3 className="surface-title">Lista de Precios</h3>
+            {producto.precio_actualizado_at && (
+              <span
+                title="Se estampa automáticamente al cambiar costo o listas"
+                style={{ fontSize: 12.5, color: "var(--text-muted)" }}
+              >
+                Última actualización de precio:{" "}
+                <b>{new Date(producto.precio_actualizado_at).toLocaleDateString("es-CL", { day: "2-digit", month: "2-digit", year: "numeric" })}</b>
+              </span>
+            )}
           </div>
           <div className="surface-body">
             <div className={`grid grid-cols-1 ${mostrarMargen ? "md:grid-cols-3" : "md:grid-cols-2"} gap-4`}>
