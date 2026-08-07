@@ -1012,9 +1012,17 @@ export default function Trazabilidad() {
   function getComprobantes(licId) {
     return getDocsForLic(licId).filter((d) => d.tipo === "comprobante_pago");
   }
+  // Respaldo adjuntado al forzar el cierre del ciclo (el más reciente si hay varios).
+  function getCierreForzado(licId) {
+    const docs = getDocsForLic(licId).filter((d) => d.tipo === "cierre_forzado");
+    if (docs.length === 0) return null;
+    return [...docs].sort((a, b) => Number(b.id) - Number(a.id))[0];
+  }
 
   // Monto (neto) que aún falta despachar: suma de OC cargadas − suma de guías de
-  // despacho cargadas. OC y guías guardan su monto neto.
+  // despacho cargadas. OC y guías guardan su monto neto. Si el ciclo se cerró
+  // de forma forzada, el saldo por consumir queda en $0 (el valor que había al
+  // momento del cierre quedó guardado en monto_forzado).
   function montoPorConsumir(lic) {
     const sumaOC = getOrdenes(lic.id).reduce((acc, o) => acc + Number(o.monto || 0), 0);
     const sumaGuias = getGuias(lic.id).reduce((acc, g) => acc + Number(g.monto || 0), 0);
@@ -1022,7 +1030,7 @@ export default function Trazabilidad() {
       hayOC: getOrdenes(lic.id).length > 0,
       sumaOC,
       sumaGuias,
-      porConsumir: Math.round(sumaOC - sumaGuias),
+      porConsumir: lic.ciclo_cerrado ? 0 : Math.round(sumaOC - sumaGuias),
     };
   }
 
@@ -1902,6 +1910,11 @@ export default function Trazabilidad() {
                                   >
                                     <div>OC neto ${m.sumaOC.toLocaleString("es-CL")}</div>
                                     <div>Guías neto ${m.sumaGuias.toLocaleString("es-CL")}</div>
+                                    {lic.ciclo_cerrado && (
+                                      <div style={{ color: "#b91c1c", fontWeight: 600 }} title="Ciclo cerrado de forma forzada: el saldo por consumir queda en $0">
+                                        Cierre forzado
+                                      </div>
+                                    )}
                                   </div>
                                 </>
                               );
@@ -2143,8 +2156,23 @@ export default function Trazabilidad() {
                             <div style={{ display: "flex", flexDirection: (uploadingFor === lic.id || lic.ciclo_cerrado) ? "column" : "row", gap: 6, alignItems: "stretch" }}>
                             {lic.ciclo_cerrado ? (
                               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-                                <span className="badge badge-success" style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-                                  <CheckCircle2 size={13} /> Ciclo cerrado
+                                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                                  <span className="badge badge-success" style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                                    <CheckCircle2 size={13} /> Ciclo cerrado
+                                  </span>
+                                  {(() => {
+                                    const respaldo = getCierreForzado(lic.id);
+                                    return respaldo?.bucket && respaldo?.storage_path ? (
+                                      <button
+                                        type="button"
+                                        onClick={() => abrirDocumento(respaldo)}
+                                        style={{ background: "none", border: "none", cursor: "pointer", color: "var(--primary)", padding: 0 }}
+                                        title={`Ver respaldo del cierre forzado${respaldo.numero ? ` · ${respaldo.numero}` : ""}`}
+                                      >
+                                        <Eye size={13} />
+                                      </button>
+                                    ) : null;
+                                  })()}
                                 </span>
                                 {puedeCerrarCiclo && (
                                   <button
