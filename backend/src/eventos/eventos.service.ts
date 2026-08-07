@@ -33,6 +33,7 @@ type EventoInfo = {
   lugar: string;
   lugarUrl: string;
   ruta: string; // ruta del formulario público en el frontend
+  flyer: string; // imagen en public/ del frontend (URL = APP_URL + '/' + flyer)
 };
 
 const EVENTOS: Record<EventoKey, EventoInfo> = {
@@ -46,6 +47,7 @@ const EVENTOS: Record<EventoKey, EventoInfo> = {
     lugar: 'Best Western Premier Las Condes',
     lugarUrl: 'https://maps.google.com/?q=Best+Western+Premier+Las+Condes',
     ruta: '/evento',
+    flyer: 'evento_invitacion.jpg',
   },
   vina: {
     key: 'vina',
@@ -57,6 +59,7 @@ const EVENTOS: Record<EventoKey, EventoInfo> = {
     lugar: 'Veranda Hotel · Calle 6 Norte 745, Viña del Mar',
     lugarUrl: 'https://maps.google.com/?q=Veranda+Hotel+Calle+6+Norte+745+Vina+del+Mar',
     ruta: '/evento-vina',
+    flyer: 'evento_invitacion_vina.jpg',
   },
 };
 
@@ -558,9 +561,10 @@ export class EventosService {
   }
 
   // Correo de invitación: mismo formato de marca del correo de confirmación,
-  // con botón que lleva al formulario de inscripción del evento.
+  // con el flyer del evento (clickeable) y botón al formulario de inscripción.
   private htmlInvitacion(evento: EventoInfo): string {
     const urlForm = `${APP_URL}${evento.ruta}`;
+    const urlFlyer = `${APP_URL}/${evento.flyer}`;
     const filaEvento = (emoji: string, etiqueta: string, valor: string) => `
       <tr>
         <td style="padding:7px 0;font-size:13px;color:rgba(255,255,255,.75);width:90px;white-space:nowrap;">${emoji}&nbsp; ${etiqueta}</td>
@@ -578,6 +582,14 @@ export class EventosService {
       <!-- Logo sobre blanco -->
       <tr><td align="center" style="padding:26px 24px 18px;">
         <img src="${LOGO_URL}" alt="AMSODENT" width="170" style="display:block;width:170px;max-width:60%;height:auto;" />
+      </td></tr>
+
+      <!-- Flyer del evento (clickeable, lleva al formulario) -->
+      <tr><td align="center" style="padding:0 24px 16px;">
+        <a href="${urlForm}" target="_blank" style="text-decoration:none;">
+          <img src="${urlFlyer}" alt="${escapeHtml(evento.nombre)} — ${escapeHtml(evento.fecha)}, ${escapeHtml(evento.hora)}, ${escapeHtml(evento.lugar)}. Haz clic para inscribirte."
+               width="552" style="display:block;width:100%;max-width:552px;height:auto;border:0;border-radius:14px;" />
+        </a>
       </td></tr>
 
       <!-- Hero del evento (fondo oscuro corporativo) -->
