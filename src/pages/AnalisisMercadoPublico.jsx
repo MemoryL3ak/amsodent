@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   Trophy, TrendingDown, RefreshCw, Search, ChevronDown, ChevronRight,
   Target, Percent, AlertTriangle, KeyRound, Crown, Building2, Scale,
+  ArrowUp, ArrowDown, ArrowUpDown, Download,
 } from "lucide-react";
 import { api } from "../lib/api";
 import Toast from "../components/Toast";
@@ -59,6 +60,8 @@ export default function AnalisisMercadoPublico() {
   const [filtroTipo, setFiltroTipo] = useState("");
   const [expandida, setExpandida] = useState(null);
   const [donaPorMonto, setDonaPorMonto] = useState(false);
+  // Orden de la tabla: por defecto los cierres más recientes primero.
+  const [orden, setOrden] = useState({ campo: "cierre", dir: "desc" });
   // Rango de cotizaciones internas a sincronizar (vacío = últimos 8 meses).
   const [syncDesde, setSyncDesde] = useState("");
   const [syncHasta, setSyncHasta] = useState("");
@@ -173,6 +176,23 @@ export default function AnalisisMercadoPublico() {
     [filas],
   );
 
+  // Evolución mensual (por fecha de cierre del proceso), últimos 8 meses con datos.
+  const tendencia = useMemo(() => {
+    const mapa = new Map();
+    for (const f of filas) {
+      const iso = f.fecha_cierre || f.consultado_at;
+      const d = iso ? new Date(iso) : null;
+      if (!d || Number.isNaN(d.getTime())) continue;
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      const b = mapa.get(key) || { key, ganadas: 0, perdidas: 0, otras: 0 };
+      if (f.clase === "ganada") b.ganadas += 1;
+      else if (f.clase === "perdida") b.perdidas += 1;
+      else b.otras += 1;
+      mapa.set(key, b);
+    }
+    return [...mapa.values()].sort((a, b) => a.key.localeCompare(b.key)).slice(-8);
+  }, [filas]);
+
   const filtradas = useMemo(() => {
     const q = busqueda.trim().toLowerCase();
     return filas.filter((f) => {
@@ -184,6 +204,50 @@ export default function AnalisisMercadoPublico() {
         .some((s) => s.includes(q));
     });
   }, [filas, busqueda, filtroClase, filtroTipo]);
+
+  const ordenadas = useMemo(() => {
+    const val = (f) => {
+      switch (orden.campo) {
+        case "cierre": { const t = f.fecha_cierre ? new Date(f.fecha_cierre).getTime() : NaN; return Number.isFinite(t) ? t : null; }
+        case "nuestra": return f.monto_nuestro != null ? Number(f.monto_nuestro) : null;
+        case "ganadora": return f.monto_ganador != null ? Number(f.monto_ganador) : null;
+        case "brecha": return Number.isFinite(f.brecha) ? f.brecha : null;
+        default: return null;
+      }
+    };
+    const dir = orden.dir === "asc" ? 1 : -1;
+    return [...filtradas].sort((a, b) => {
+      const va = val(a), vb = val(b);
+      if (va == null && vb == null) return 0;
+      if (va == null) return 1; // sin dato siempre al final
+      if (vb == null) return -1;
+      return (va - vb) * dir;
+    });
+  }, [filtradas, orden]);
+
+  function toggleOrden(campo) {
+    setOrden((o) => (o.campo === campo ? { campo, dir: o.dir === "asc" ? "desc" : "asc" } : { campo, dir: "desc" }));
+  }
+
+  function exportarCsv() {
+    const enc = (s) => `"${String(s ?? "").replace(/"/g, '""')}"`;
+    const filasCsv = [
+      ["Código", "Tipo", "Cotización interna", "Organismo", "Cierre", "Nuestra oferta", "Oferta ganadora", "Brecha %", "Ganador", "RUT ganador", "Resultado"],
+      ...ordenadas.map((f) => [
+        f.codigo_mp, f.tipo === "compra_agil" ? "Compra Ágil" : "Licitación", f.interna?.nombre || "", f.organismo || "",
+        f.fecha_cierre ? fmtFecha(f.fecha_cierre) : "", f.monto_nuestro ?? "", f.monto_ganador ?? "",
+        Number.isFinite(f.brecha) ? f.brecha.toFixed(1) : "", f.ganador_nombre || "", f.ganador_rut || "", CLASES[f.clase].label,
+      ]),
+    ];
+    // BOM + ";" para que Excel es-CL lo abra directo con tildes correctas.
+    const csv = String.fromCharCode(0xfeff) + filasCsv.map((r) => r.map(enc).join(";")).join("\r\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "analisis-mercado-publico.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  }
 
   const sinConfig = estadoApi && !estadoApi.ticket_configurado;
 
@@ -240,14 +304,17 @@ export default function AnalisisMercadoPublico() {
         </div>
       )}
 
-      {/* ── KPIs ── */}
+      {/* ── KPIs (clic = filtrar la tabla) ── */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12, marginBottom: 16 }}>
         <Kpi icon={<Target size={17} />} tono="#1e9295" fondo="#e6f6f6" label="Procesos analizados" valor={stats.total}
-          sub={`${stats.enCurso} en curso`} />
+          sub={`${stats.enCurso} en curso`}
+          onClick={() => { setFiltroClase(""); setBusqueda(""); }} />
         <Kpi icon={<Trophy size={17} />} tono="#15803d" fondo="#dcfce7" label="Ganadas" valor={stats.ganadas}
-          sub={fmt$(stats.montoGanado) + " adjudicado"} />
+          sub={fmt$(stats.montoGanado) + " adjudicado"} activo={filtroClase === "ganada"}
+          onClick={() => setFiltroClase((v) => (v === "ganada" ? "" : "ganada"))} />
         <Kpi icon={<TrendingDown size={17} />} tono="#b91c1c" fondo="#fee2e2" label="Perdidas" valor={stats.perdidas}
-          sub={fmt$(stats.oportunidadPerdida) + " se llevó la competencia"} />
+          sub={fmt$(stats.oportunidadPerdida) + " se llevó la competencia"} activo={filtroClase === "perdida"}
+          onClick={() => setFiltroClase((v) => (v === "perdida" ? "" : "perdida"))} />
         <Kpi icon={<Percent size={17} />} tono="#6d28d9" fondo="#ede9fe" label="Tasa de éxito"
           valor={stats.tasa == null ? "—" : `${stats.tasa.toFixed(0)}%`} sub="sobre procesos decididos" />
         <Kpi icon={<Scale size={17} />} tono="#b45309" fondo="#fef3c7" label="Brecha prom. al perder"
@@ -259,13 +326,13 @@ export default function AnalisisMercadoPublico() {
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 12, marginBottom: 16 }}>
         <Panel titulo="Resultado global" extra={
           <button className="btn btn-ghost" style={{ fontSize: 11.5, padding: "3px 10px" }} onClick={() => setDonaPorMonto((v) => !v)}>
-            {donaPorMonto ? "por monto $" : "por cantidad"}
+            {donaPorMonto ? "Por Monto" : "Por Cantidad"}
           </button>
         }>
           <DonaResultados filas={filas} porMonto={donaPorMonto} />
         </Panel>
 
-        <Panel titulo="Perdidas más estrechas" sub="qué tan cerca estuvimos (brecha vs ganador)">
+        <Panel titulo="Perdidas más estrechas" sub="Qué tan cerca estuvimos (brecha vs ganador)">
           {perdidasEstrechas.length === 0 ? (
             <Vacio texto="Sin perdidas con brecha calculable aún." />
           ) : (
@@ -284,7 +351,15 @@ export default function AnalisisMercadoPublico() {
           )}
         </Panel>
 
-        <Panel titulo="Quién nos gana" sub="competidores con más victorias sobre nosotros">
+        <Panel titulo="Evolución mensual" sub="Resultados por mes de cierre del proceso">
+          {tendencia.length === 0 ? (
+            <Vacio texto="Sin procesos con fecha de cierre aún." />
+          ) : (
+            <TendenciaMensual meses={tendencia} />
+          )}
+        </Panel>
+
+        <Panel titulo="Quién nos gana" sub="Competidores con más victorias sobre nosotros">
           {competidores.length === 0 ? (
             <Vacio texto="Aún no hay perdidas con ganador identificado." />
           ) : (
@@ -332,32 +407,41 @@ export default function AnalisisMercadoPublico() {
       </div>
 
       {/* ── Tabla ── */}
-      <div style={{ border: "1px solid var(--border)", borderRadius: 10, overflowX: "auto", background: "var(--surface)", marginTop: 12 }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, whiteSpace: "nowrap" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, marginBottom: 6, gap: 10 }}>
+        <div style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 600 }}>
+          {loading ? "" : `${filtradas.length} proceso${filtradas.length === 1 ? "" : "s"}${filtradas.length !== filas.length ? ` (de ${filas.length})` : ""}`}
+        </div>
+        <button className="btn btn-ghost" onClick={exportarCsv} disabled={!filtradas.length}
+          style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, padding: "5px 12px" }}>
+          <Download size={13} /> Exportar CSV
+        </button>
+      </div>
+      <div className="mp-tabla-wrap">
+        <table className="mp-tabla">
           <thead>
-            <tr style={{ background: "var(--bg)", color: "var(--text-muted)", textAlign: "left" }}>
-              <th style={{ padding: "9px 12px", width: 26 }} />
-              <th style={{ padding: "9px 12px" }}>Proceso</th>
-              <th style={{ padding: "9px 12px" }}>Organismo</th>
-              <th style={{ padding: "9px 12px" }}>Cierre</th>
-              <th style={{ padding: "9px 12px", textAlign: "right" }}>Nuestra oferta</th>
-              <th style={{ padding: "9px 12px", textAlign: "right" }}>Oferta ganadora</th>
-              <th style={{ padding: "9px 12px", textAlign: "right" }}>Brecha</th>
-              <th style={{ padding: "9px 12px" }}>Ganador</th>
-              <th style={{ padding: "9px 12px" }}>Resultado</th>
+            <tr>
+              <th style={{ width: 26 }} />
+              <th>Proceso</th>
+              <th>Organismo</th>
+              <ThOrden campo="cierre" orden={orden} onOrden={toggleOrden}>Cierre</ThOrden>
+              <ThOrden campo="nuestra" orden={orden} onOrden={toggleOrden} right>Nuestra oferta</ThOrden>
+              <ThOrden campo="ganadora" orden={orden} onOrden={toggleOrden} right>Oferta ganadora</ThOrden>
+              <ThOrden campo="brecha" orden={orden} onOrden={toggleOrden} right>Brecha</ThOrden>
+              <th>Ganador</th>
+              <th>Resultado</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
               <tr><td colSpan={9} style={{ padding: 26, textAlign: "center", color: "var(--text-muted)" }}>Cargando análisis…</td></tr>
-            ) : filtradas.length === 0 ? (
+            ) : ordenadas.length === 0 ? (
               <tr><td colSpan={9} style={{ padding: 26, textAlign: "center", color: "var(--text-muted)" }}>
                 {resultados.length === 0
                   ? "Sin datos todavía. Usa \"Sincronizar con Mercado Público\" para consultar tus postulaciones."
                   : "Sin resultados con los filtros actuales."}
               </td></tr>
             ) : (
-              filtradas.map((f) => {
+              ordenadas.map((f) => {
                 const cl = CLASES[f.clase];
                 const abierta = expandida === f.id;
                 return (
@@ -377,7 +461,26 @@ export default function AnalisisMercadoPublico() {
         (cuida la cuota diaria del ticket).
       </p>
 
-      <style>{`.girando { animation: mp-spin 1s linear infinite; } @keyframes mp-spin { to { transform: rotate(360deg); } }`}</style>
+      <style>{`
+        .girando { animation: mp-spin 1s linear infinite; }
+        @keyframes mp-spin { to { transform: rotate(360deg); } }
+        .mp-tabla-wrap {
+          border: 1px solid var(--border); border-radius: 10px; background: var(--surface);
+          max-height: 62vh; overflow: auto;
+        }
+        .mp-tabla { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13px; white-space: nowrap; }
+        .mp-tabla thead th {
+          position: sticky; top: 0; z-index: 2;
+          background: var(--bg); color: var(--text-muted); text-align: left;
+          padding: 9px 12px; font-weight: 600;
+          box-shadow: inset 0 -1px 0 var(--border);
+        }
+        .mp-tabla thead th.mp-th-orden { cursor: pointer; user-select: none; }
+        .mp-tabla thead th.mp-th-orden:hover { color: var(--text); }
+        .mp-tabla tbody tr:not(:first-child) > td { border-top: 1px solid var(--border); }
+        .mp-tabla tbody tr.mp-det > td { border-top: none; }
+        .mp-fila:hover > td { background: color-mix(in srgb, var(--primary, #1e9295) 5%, transparent); }
+      `}</style>
     </div>
   );
 }
@@ -391,7 +494,7 @@ function FilaProceso({ f, cl, abierta, onToggle }) {
 
   return (
     <>
-      <tr style={{ borderTop: "1px solid var(--border)", cursor: tieneDetalle ? "pointer" : "default", background: abierta ? "var(--bg)" : undefined }}
+      <tr className="mp-fila" style={{ cursor: tieneDetalle ? "pointer" : "default", background: abierta ? "var(--bg)" : undefined }}
         onClick={tieneDetalle ? onToggle : undefined}>
         <td style={{ padding: "7px 4px 7px 12px", color: "var(--text-muted)" }}>
           {tieneDetalle ? (abierta ? <ChevronDown size={14} /> : <ChevronRight size={14} />) : null}
@@ -426,7 +529,7 @@ function FilaProceso({ f, cl, abierta, onToggle }) {
       </tr>
 
       {abierta && (
-        <tr style={{ background: "var(--bg)" }}>
+        <tr className="mp-det" style={{ background: "var(--bg)" }}>
           <td colSpan={9} style={{ padding: "6px 16px 16px 40px" }}>
             <DetalleProceso f={f} />
           </td>
@@ -564,9 +667,17 @@ function DetalleProceso({ f }) {
 }
 
 /* ── Componentes de visualización ── */
-function Kpi({ icon, tono, fondo, label, valor, sub }) {
+function Kpi({ icon, tono, fondo, label, valor, sub, onClick, activo }) {
   return (
-    <div style={{ border: "1px solid var(--border)", borderRadius: 12, background: "var(--surface)", padding: "13px 15px", display: "flex", gap: 12, alignItems: "center" }}>
+    <div onClick={onClick}
+      title={onClick ? "Clic para filtrar la tabla" : undefined}
+      style={{
+        border: "1px solid var(--border)", borderRadius: 12, background: "var(--surface)", padding: "13px 15px",
+        display: "flex", gap: 12, alignItems: "center",
+        cursor: onClick ? "pointer" : "default",
+        boxShadow: activo ? `0 0 0 2px ${tono}66` : undefined,
+        transition: "box-shadow .15s ease",
+      }}>
       <div style={{ width: 38, height: 38, borderRadius: 10, background: fondo, color: tono, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
         {icon}
       </div>
@@ -596,6 +707,57 @@ function Panel({ titulo, sub, extra, children }) {
 
 function Vacio({ texto }) {
   return <div style={{ padding: "26px 0", textAlign: "center", color: "var(--text-muted)", fontSize: 12.5 }}>{texto}</div>;
+}
+
+// Cabecera de columna ordenable.
+function ThOrden({ campo, orden, onOrden, right, children }) {
+  const activo = orden.campo === campo;
+  const Flecha = !activo ? ArrowUpDown : orden.dir === "asc" ? ArrowUp : ArrowDown;
+  return (
+    <th className="mp-th-orden" onClick={() => onOrden(campo)} style={{ textAlign: right ? "right" : "left" }}>
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 4, color: activo ? "var(--text)" : undefined }}>
+        {children}
+        <Flecha size={11} style={{ opacity: activo ? 1 : 0.4, flexShrink: 0 }} />
+      </span>
+    </th>
+  );
+}
+
+// Barras verticales apiladas por mes: ganadas / perdidas / resto.
+function TendenciaMensual({ meses }) {
+  const MESES_CORTOS = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
+  const max = Math.max(...meses.map((m) => m.ganadas + m.perdidas + m.otras), 1);
+  const ALTO = 110;
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "flex-end", gap: 10, height: ALTO + 34, paddingTop: 6 }}>
+        {meses.map((m) => {
+          const total = m.ganadas + m.perdidas + m.otras;
+          const [anio, mes] = m.key.split("-");
+          const h = (v) => Math.round((v / max) * ALTO);
+          return (
+            <div key={m.key} style={{ flex: 1, minWidth: 26, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}
+              title={`${MESES_CORTOS[Number(mes) - 1]} ${anio}: ${m.ganadas} ganadas · ${m.perdidas} perdidas · ${m.otras} otras`}>
+              <div style={{ fontSize: 10.5, fontWeight: 700, color: "var(--text-muted)" }}>{total}</div>
+              <div style={{ width: "100%", maxWidth: 34, display: "flex", flexDirection: "column", justifyContent: "flex-end", borderRadius: 6, overflow: "hidden" }}>
+                {m.otras > 0 && <div style={{ height: h(m.otras), background: "#cbd5e1" }} />}
+                {m.perdidas > 0 && <div style={{ height: h(m.perdidas), background: "#ef4444" }} />}
+                {m.ganadas > 0 && <div style={{ height: h(m.ganadas), background: "#15803d" }} />}
+              </div>
+              <div style={{ fontSize: 10.5, color: "var(--text-muted)", whiteSpace: "nowrap" }}>
+                {MESES_CORTOS[Number(mes) - 1]} {String(anio).slice(2)}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <div style={{ display: "flex", gap: 14, marginTop: 8, fontSize: 11.5, color: "var(--text-muted)" }}>
+        <span><i style={{ display: "inline-block", width: 9, height: 9, borderRadius: 2, background: "#15803d", marginRight: 5 }} />Ganadas</span>
+        <span><i style={{ display: "inline-block", width: 9, height: 9, borderRadius: 2, background: "#ef4444", marginRight: 5 }} />Perdidas</span>
+        <span><i style={{ display: "inline-block", width: 9, height: 9, borderRadius: 2, background: "#cbd5e1", marginRight: 5 }} />En curso / otras</span>
+      </div>
+    </div>
+  );
 }
 
 // Dona SVG: ganadas / perdidas / en curso / otras.
