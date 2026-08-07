@@ -52,6 +52,17 @@ export class FletesController {
     return this.fletesService.calcularFlete(body || {});
   }
 
+  // Reajuste porcentual por courier (se aplica sobre el tarifario al calcular).
+  @Get('reajuste')
+  obtenerReajuste(@Query('empresa') empresa?: string) {
+    return this.fletesService.obtenerReajuste(String(empresa || ''));
+  }
+
+  @Put('reajuste')
+  guardarReajuste(@Body() body: any) {
+    return this.fletesService.guardarReajuste(String(body?.empresa || ''), body?.porcentaje);
+  }
+
   // Despacho interno: configuración (origen, $/km extra) y distancia en km.
   @Get('interno/config')
   internoConfig() {

@@ -95,6 +95,20 @@ export class LicitacionesController {
     return this.licitacionesService.eliminarDisponible(dispId);
   }
 
+  // Buscador de procesos en Mercado Público (sección Explorar). Debe ir ANTES
+  // de 'mercado-publico/:codigo' para que "buscar" no se tome como código.
+  @Get('mercado-publico/buscar')
+  mercadoPublicoBuscar(@Query() query: any) {
+    return this.licitacionesService.mercadoPublicoBuscar(query || {});
+  }
+
+  // Ficha en vivo desde Mercado Público (proxy: el ticket vive solo en el
+  // backend). Debe declararse ANTES de @Get(':id').
+  @Get('mercado-publico/:codigo')
+  mercadoPublicoDetalle(@Param('codigo') codigo: string) {
+    return this.licitacionesService.mercadoPublicoDetalle(codigo);
+  }
+
   @Get(':id/hijas')
   getHijas(@Param('id', ParseIntPipe) id: number) {
     return this.licitacionesService.getHijas(id);

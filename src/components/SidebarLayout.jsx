@@ -221,7 +221,7 @@ export default function SidebarLayout() {
   const logisticaNav = [
     puede("despachos_choferes") && { to: "/despachos-choferes", icon: Truck, label: "Despachos y Choferes" },
     puede("tracking_choferes") && { to: "/tracking-choferes", icon: MapPin, label: "Tracking en Vivo" },
-    puede("costeo_fletes") && { to: "/costeo-fletes", icon: Banknote, label: "Conciliación de Fletes" },
+    puede("costeo_fletes") && { to: "/costeo-fletes", icon: Banknote, label: "Fletes" },
   ].filter(Boolean);
 
   const portalClienteNav = [

@@ -4102,6 +4102,8 @@ export default function EditarLicitacion() {
             regionCliente={region}
             comunaCliente={comuna}
             direccionCliente={direccion}
+            tipoCotizacion={esCotizacionParticular ? "particular" : "publico"}
+            totalCompra={totalConIVA}
             deshabilitado={!esEditable}
             onAplicar={(neto) => setFleteEstimado(neto)}
           />
