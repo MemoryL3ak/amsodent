@@ -6,6 +6,8 @@ import {
   HttpException,
   HttpStatus,
 } from '@nestjs/common';
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import { SupabaseService } from '../supabase/supabase.service';
 import { MailingsService } from '../mailings/mailings.service';
 
@@ -489,13 +491,39 @@ export class EventosService {
     };
   }
 
+  // El flyer viaja DENTRO del correo (adjunto inline con cid): así se muestra
+  // aunque la URL pública aún no exista o el proxy de imágenes falle. Los jpg
+  // se copian a dist/eventos/flyers vía "assets" de nest-cli.json.
+  private flyerAdjunto(evento: EventoInfo): { html: string; attachments?: any[] } {
+    try {
+      const buf = readFileSync(join(__dirname, 'flyers', evento.flyer));
+      return {
+        html: this.htmlInvitacion(evento, `cid:flyer-${evento.key}`),
+        attachments: [
+          {
+            filename: evento.flyer,
+            content: buf,
+            contentType: 'image/jpeg',
+            cid: `flyer-${evento.key}`,
+          },
+        ],
+      };
+    } catch (e: any) {
+      // Sin archivo local (p. ej. dist antiguo): se referencia por URL pública.
+      this.logger.warn(`Flyer ${evento.flyer} no disponible en disco: ${e?.message || e}`);
+      return { html: this.htmlInvitacion(evento, `${APP_URL}/${evento.flyer}`) };
+    }
+  }
+
   private async enviarInvitacion(id: number, evento: EventoInfo, correo: string) {
     try {
+      const { html, attachments } = this.flyerAdjunto(evento);
       await this.mailings.enviarUno({
         para: correo,
         asunto: `Invitación · ${evento.nombre}`,
         remitenteNombre: 'Amsodent Medical',
-        cuerpoHtml: this.htmlInvitacion(evento),
+        cuerpoHtml: html,
+        attachments,
       });
       await this.supabase
         .getClient()
@@ -526,11 +554,13 @@ export class EventosService {
 
     const evento = eventoDe(data.evento);
     try {
+      const { html, attachments } = this.flyerAdjunto(evento);
       await this.mailings.enviarUno({
         para: data.correo,
         asunto: `Invitación · ${evento.nombre}`,
         remitenteNombre: 'Amsodent Medical',
-        cuerpoHtml: this.htmlInvitacion(evento),
+        cuerpoHtml: html,
+        attachments,
       });
     } catch (e: any) {
       const motivo = String(e?.message || e).slice(0, 300);
@@ -562,9 +592,10 @@ export class EventosService {
 
   // Correo de invitación: mismo formato de marca del correo de confirmación,
   // con el flyer del evento (clickeable) y botón al formulario de inscripción.
-  private htmlInvitacion(evento: EventoInfo): string {
+  // `srcFlyer` es "cid:..." (adjunto inline) o la URL pública como respaldo.
+  private htmlInvitacion(evento: EventoInfo, srcFlyer: string): string {
     const urlForm = `${APP_URL}${evento.ruta}`;
-    const urlFlyer = `${APP_URL}/${evento.flyer}`;
+    const urlFlyer = srcFlyer;
     const filaEvento = (emoji: string, etiqueta: string, valor: string) => `
       <tr>
         <td style="padding:7px 0;font-size:13px;color:rgba(255,255,255,.75);width:90px;white-space:nowrap;">${emoji}&nbsp; ${etiqueta}</td>
