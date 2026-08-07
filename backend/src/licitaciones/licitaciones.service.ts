@@ -253,6 +253,381 @@ export class LicitacionesService {
     return { deleted: true };
   }
 
+  /* ===========================================================
+     FICHA EN VIVO DESDE MERCADO PÚBLICO
+     Dos APIs según el tipo de proceso (mismo ticket, env
+     MERCADO_PUBLICO_TICKET — nunca llega al frontend):
+     - Códigos ...-COTxx  → API Compra Ágil v2 (api2.mercadopublico.cl)
+     - Resto (LE/LP/LQ/LR/L1/CO…) → API Licitaciones v1
+       (api.mercadopublico.cl/servicios/v1/publico/licitaciones.json)
+     Ambas respuestas se normalizan a una "ficha" común que el
+     frontend solo renderiza: { fuente, codigo, nombre, descripcion,
+     estado, tono, chips[], secciones[{titulo, filas[[k,v]]}],
+     productos[], url_acta }.
+  =========================================================== */
+
+  private static fmtFechaMP(v: any): string {
+    if (!v) return '';
+    const d = new Date(v);
+    if (Number.isNaN(d.getTime())) return String(v);
+    return d.toLocaleString('es-CL', { dateStyle: 'short', timeStyle: 'short' });
+  }
+
+  private static fmtMontoMP(n: any, moneda = ''): string {
+    const num = Number(n);
+    if (!Number.isFinite(num) || num <= 0) return '';
+    return `$${Math.round(num).toLocaleString('es-CL')}${moneda ? ` ${moneda}` : ''}`;
+  }
+
+  private mpTicket(): string {
+    const ticket = (process.env.MERCADO_PUBLICO_TICKET || '').trim();
+    if (!ticket) {
+      throw new BadRequestException(
+        'MERCADO_PUBLICO_TICKET no está configurado en el servidor; agrega el ticket de la API de ChileCompra.',
+      );
+    }
+    return ticket;
+  }
+
+  private async mpFetch(url: string, headers: Record<string, string> = {}): Promise<any> {
+    let res: globalThis.Response;
+    try {
+      res = await fetch(url, { headers, signal: AbortSignal.timeout(20000) });
+    } catch (e: any) {
+      throw new BadRequestException(
+        `No se pudo consultar Mercado Público: ${String(e?.message || e).slice(0, 120)}`,
+      );
+    }
+    const json: any = await res.json().catch(() => null);
+    if (res.status === 429) {
+      throw new BadRequestException(
+        'Se agotó la cuota diaria del ticket de Mercado Público; se restablece al día siguiente.',
+      );
+    }
+    return { res, json };
+  }
+
+  async mercadoPublicoDetalle(codigo: string) {
+    const ticket = this.mpTicket();
+    const cod = String(codigo || '').trim();
+    if (!/^[A-Za-z0-9-]{3,40}$/.test(cod)) {
+      throw new BadRequestException('Código de proceso inválido.');
+    }
+    return /-COT\w*$/i.test(cod)
+      ? this.fichaCompraAgil(cod, ticket)
+      : this.fichaLicitacion(cod, ticket);
+  }
+
+  // ── Buscador (sección "Explorar Mercado Público") ───────────────────────
+  // - fuente 'agil': búsqueda server-side de la API v2 (keyword q, región,
+  //   estado, paginación real).
+  // - fuente 'licitaciones': la API v1 NO busca por keyword; se descarga el
+  //   listado de licitaciones ACTIVAS (1 request), se cachea 10 minutos en
+  //   memoria (cuida la cuota diaria del ticket) y se filtra/pagina aquí.
+  private static readonly ESTADOS_V1: Record<number, string> = {
+    5: 'Publicada', 6: 'Cerrada', 7: 'Desierta', 8: 'Adjudicada', 18: 'Revocada', 19: 'Suspendida',
+  };
+  private mpCacheActivas: { data: any[]; ts: number } | null = null;
+
+  async mercadoPublicoBuscar(params: {
+    fuente?: string;
+    q?: string;
+    region?: string;
+    estado?: string;
+    pagina?: string | number;
+    tamano?: string | number;
+  }) {
+    const ticket = this.mpTicket();
+    const fuente = params?.fuente === 'licitaciones' ? 'licitaciones' : 'agil';
+    const q = String(params?.q || '').trim().slice(0, 120);
+    const pagina = Math.max(1, Number(params?.pagina) || 1);
+    const tamano = Math.min(50, Math.max(5, Number(params?.tamano) || 15));
+
+    if (fuente === 'agil') {
+      const qp = new URLSearchParams();
+      if (q) qp.set('q', q);
+      const region = Number(params?.region);
+      if (Number.isFinite(region) && region >= 1 && region <= 16) qp.set('region', String(region));
+      const estado = String(params?.estado || '').trim();
+      if (estado) qp.set('estado', estado);
+      qp.set('tamano_pagina', String(tamano));
+      qp.set('numero_pagina', String(pagina));
+      qp.set('ordenar_por', 'FechaPublicacion');
+      const { res, json } = await this.mpFetch(
+        `https://api2.mercadopublico.cl/v2/compra-agil?${qp.toString()}`,
+        { ticket },
+      );
+      if (!res.ok || json?.success !== 'OK' || !json?.payload) {
+        const err = json?.errors?.[0];
+        throw new BadRequestException(
+          `Mercado Público respondió ${err?.codigo || res.status}: ${err?.mensaje || 'error desconocido.'}`,
+        );
+      }
+      const pg = json.payload?.paginacion || {};
+      return {
+        fuente,
+        items: (json.payload?.items || []).map((it: any) => ({
+          codigo: it?.codigo || '',
+          nombre: it?.nombre || '',
+          estado: it?.estado?.glosa || it?.estado?.codigo || '',
+          estado_codigo: it?.estado?.codigo || '',
+          convocatoria: it?.convocatoria?.descripcion || '',
+          organismo: it?.institucion?.organismo_comprador || '',
+          region: it?.institucion?.nombre_region || '',
+          monto_clp: it?.montos?.monto_disponible_clp ?? null,
+          fecha_publicacion: it?.fechas?.fecha_publicacion || null,
+          fecha_cierre: it?.fechas?.fecha_cierre || null,
+          ofertas: it?.resumen?.total_ofertas_recibidas ?? null,
+        })),
+        paginacion: {
+          numero_pagina: pg?.numero_pagina ?? pagina,
+          total_paginas: pg?.total_paginas ?? 1,
+          total_resultados: pg?.total_resultados ?? 0,
+        },
+      };
+    }
+
+    // Licitaciones LE/LP/LQ activas (v1) con caché de 10 minutos.
+    const CACHE_MS = 10 * 60 * 1000;
+    if (!this.mpCacheActivas || Date.now() - this.mpCacheActivas.ts > CACHE_MS) {
+      const { res, json } = await this.mpFetch(
+        `https://api.mercadopublico.cl/servicios/v1/publico/licitaciones.json?estado=activas&ticket=${encodeURIComponent(ticket)}`,
+      );
+      if (!res.ok || !Array.isArray(json?.Listado)) {
+        throw new BadRequestException(
+          `Mercado Público respondió ${res.status}: ${String(json?.Mensaje || 'no se pudo obtener el listado de licitaciones activas.').slice(0, 160)}`,
+        );
+      }
+      this.mpCacheActivas = { data: json.Listado, ts: Date.now() };
+    }
+    const norm = (s: any) =>
+      String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+    const nq = norm(q);
+    const filtradas = nq
+      ? this.mpCacheActivas.data.filter(
+          (l: any) => norm(l?.Nombre).includes(nq) || norm(l?.CodigoExterno).includes(nq),
+        )
+      : this.mpCacheActivas.data;
+    const total = filtradas.length;
+    const desde = (pagina - 1) * tamano;
+    return {
+      fuente,
+      items: filtradas.slice(desde, desde + tamano).map((l: any) => ({
+        codigo: l?.CodigoExterno || '',
+        nombre: l?.Nombre || '',
+        estado: LicitacionesService.ESTADOS_V1[Number(l?.CodigoEstado)] || `Estado ${l?.CodigoEstado ?? '?'}`,
+        estado_codigo: String(l?.CodigoEstado ?? ''),
+        convocatoria: '',
+        organismo: '',
+        region: '',
+        monto_clp: null,
+        fecha_publicacion: null,
+        fecha_cierre: l?.FechaCierre || null,
+        ofertas: null,
+      })),
+      paginacion: {
+        numero_pagina: pagina,
+        total_paginas: Math.max(1, Math.ceil(total / tamano)),
+        total_resultados: total,
+      },
+      actualizado: new Date(this.mpCacheActivas.ts).toISOString(),
+    };
+  }
+
+  // ── Compra Ágil (API v2) ────────────────────────────────────────────────
+  private async fichaCompraAgil(cod: string, ticket: string) {
+    const { res, json } = await this.mpFetch(
+      `https://api2.mercadopublico.cl/v2/compra-agil/${encodeURIComponent(cod)}`,
+      { ticket },
+    );
+    if (res.status === 404) {
+      throw new NotFoundException('Mercado Público no tiene una Compra Ágil con ese código.');
+    }
+    if (!res.ok || json?.success !== 'OK' || !json?.payload) {
+      const err = json?.errors?.[0];
+      throw new BadRequestException(
+        `Mercado Público respondió ${err?.codigo || res.status}: ${err?.mensaje || 'error desconocido.'}`,
+      );
+    }
+    const d: any = json.payload;
+    const f = LicitacionesService.fmtFechaMP;
+    const estadoCod = String(d?.estado?.codigo || '');
+    const tono = estadoCod === 'publicada' ? 'green'
+      : estadoCod === 'proveedor_seleccionado' ? 'blue'
+      : estadoCod === 'cerrada' ? 'amber'
+      : estadoCod ? 'red' : 'gray';
+    const ocEmitida = d?.orden_compra?.id_orden_compra != null;
+    const filtrar = (filas: any[][]) => filas.filter(([, v]) => String(v ?? '').trim() !== '');
+
+    const secciones = [
+      {
+        titulo: 'Organismo comprador',
+        filas: filtrar([
+          ['Organismo', d?.institucion?.organismo_comprador],
+          ['Unidad de compra', d?.institucion?.unidad_compra],
+          ['RUT', d?.institucion?.rut],
+          ['Región', d?.institucion?.nombre_region],
+        ]),
+      },
+      {
+        titulo: 'Fechas',
+        filas: filtrar([
+          ['Publicación', f(d?.fechas?.fecha_publicacion)],
+          ['Cierre vigente', f(d?.fechas?.fecha_cierre)],
+          ['Cierre 1er llamado', f(d?.convocatoria?.fecha_cierre_primer_llamado)],
+          ['Cierre 2º llamado', f(d?.convocatoria?.fecha_cierre_segundo_llamado)],
+          ['Cancelación', f(d?.fechas?.fecha_cancelacion)],
+        ]),
+      },
+      {
+        titulo: 'Presupuesto y entrega',
+        filas: filtrar([
+          ['Tipo de presupuesto', d?.presupuesto?.tipo_presupuesto],
+          ['Monto disponible', LicitacionesService.fmtMontoMP(d?.presupuesto?.monto_disponible_clp ?? d?.presupuesto?.presupuesto_estimado, d?.presupuesto?.moneda || 'CLP')],
+          ['Dirección de entrega', d?.entrega?.direccion_entrega],
+          ['Plazo de entrega', d?.entrega?.plazo_entrega_dias != null ? `${d.entrega.plazo_entrega_dias} días` : ''],
+        ]),
+      },
+      {
+        titulo: 'Resumen',
+        filas: filtrar([
+          ['Ofertas recibidas', d?.resumen?.total_ofertas_recibidas],
+          ['Motivo cancelación', d?.motivos?.motivo_cancelacion],
+          ['Motivo desierta', d?.motivos?.motivo_desierta],
+        ]),
+      },
+    ].filter((s) => s.filas.length > 0);
+
+    return {
+      fuente: 'API Compra Ágil v2',
+      codigo: d?.codigo || cod,
+      nombre: d?.nombre || '',
+      descripcion: d?.descripcion || '',
+      estado: d?.estado?.glosa || estadoCod || 'Sin estado',
+      tono,
+      chips: [
+        d?.convocatoria?.descripcion,
+        ocEmitida ? `OC emitida · id ${d.orden_compra.id_orden_compra}` : 'Sin OC emitida',
+      ].filter(Boolean),
+      secciones,
+      productos: (d?.productos_solicitados || []).map((p: any) => ({
+        codigo: p?.codigo_producto ?? '',
+        nombre: p?.nombre || '',
+        descripcion: p?.descripcion || '',
+        cantidad: p?.cantidad ?? '',
+        unidad: p?.unidad_medida || '',
+        adjudicacion: null,
+      })),
+      url_acta: null,
+    };
+  }
+
+  // ── Licitaciones LE/LP/LQ/LR (API v1) ───────────────────────────────────
+  private async fichaLicitacion(cod: string, ticket: string) {
+    const { res, json } = await this.mpFetch(
+      `https://api.mercadopublico.cl/servicios/v1/publico/licitaciones.json?codigo=${encodeURIComponent(cod)}&ticket=${encodeURIComponent(ticket)}`,
+    );
+    if (!res.ok || !json) {
+      throw new BadRequestException(
+        `Mercado Público respondió ${res.status}: ${String(json?.Mensaje || json?.mensaje || 'error desconocido.').slice(0, 160)}`,
+      );
+    }
+    const l: any = json?.Listado?.[0];
+    if (!l) {
+      throw new NotFoundException(
+        `Mercado Público no encontró una licitación con el código ${cod}.`,
+      );
+    }
+    const f = LicitacionesService.fmtFechaMP;
+    const fe = l?.Fechas || {};
+    const comprador = l?.Comprador || {};
+    const codigoEstado = Number(l?.CodigoEstado);
+    // Estados API v1: 5 publicada, 6 cerrada, 7 desierta, 8 adjudicada,
+    // 18 revocada, 19 suspendida.
+    const tono = codigoEstado === 5 ? 'green'
+      : codigoEstado === 8 ? 'blue'
+      : codigoEstado === 6 ? 'amber'
+      : [7, 18, 19].includes(codigoEstado) ? 'red' : 'gray';
+    const filtrar = (filas: any[][]) => filas.filter(([, v]) => String(v ?? '').trim() !== '');
+
+    const secciones = [
+      {
+        titulo: 'Organismo demandante',
+        filas: filtrar([
+          ['Razón social', comprador?.NombreOrganismo],
+          ['Unidad de compra', comprador?.NombreUnidad],
+          ['RUT', comprador?.RutUnidad],
+          ['Dirección', comprador?.DireccionUnidad],
+          ['Comuna', comprador?.ComunaUnidad],
+          ['Región', comprador?.RegionUnidad],
+        ]),
+      },
+      {
+        titulo: 'Etapas y plazos',
+        filas: filtrar([
+          ['Publicación', f(fe?.FechaPublicacion)],
+          ['Cierre recepción de ofertas', f(fe?.FechaCierre)],
+          ['Inicio de preguntas', f(fe?.FechaInicio)],
+          ['Fin de preguntas', f(fe?.FechaFinal)],
+          ['Publicación de respuestas', f(fe?.FechaPubRespuestas)],
+          ['Apertura técnica', f(fe?.FechaActoAperturaTecnica)],
+          ['Apertura económica', f(fe?.FechaActoAperturaEconomica)],
+          ['Adjudicación', f(fe?.FechaAdjudicacion)],
+          ['Adjudicación (estimada)', f(fe?.FechaEstimadaAdjudicacion)],
+          ['Firma de contrato (estimada)', f(fe?.FechaEstimadaFirma)],
+        ]),
+      },
+      {
+        titulo: 'Montos y contrato',
+        filas: filtrar([
+          ['Monto estimado', LicitacionesService.fmtMontoMP(l?.MontoEstimado, l?.Moneda)],
+          ['Fuente de financiamiento', l?.FuenteFinanciamiento],
+          ['Duración del contrato', l?.TiempoDuracionContrato],
+          ['Responsable de pago', [l?.NombreResponsablePago, l?.EmailResponsablePago].filter(Boolean).join(' · ')],
+          ['Responsable del contrato', [l?.NombreResponsableContrato, l?.EmailResponsableContrato, l?.FonoResponsableContrato].filter(Boolean).join(' · ')],
+        ]),
+      },
+      ...(l?.Adjudicacion ? [{
+        titulo: 'Adjudicación',
+        filas: filtrar([
+          ['Fecha', f(l.Adjudicacion?.Fecha)],
+          ['N° de oferentes', l.Adjudicacion?.NumeroOferentes],
+          ['N° resolución', l.Adjudicacion?.Numero],
+        ]),
+      }] : []),
+    ].filter((s) => s.filas.length > 0);
+
+    const items: any[] = l?.Items?.Listado || [];
+    return {
+      fuente: 'API Licitaciones v1',
+      codigo: l?.CodigoExterno || cod,
+      nombre: l?.Nombre || '',
+      descripcion: l?.Descripcion || '',
+      estado: l?.Estado || (codigoEstado ? `Estado ${codigoEstado}` : 'Sin estado'),
+      tono,
+      chips: [
+        l?.Tipo ? `Tipo ${l.Tipo}` : null,
+        l?.CantidadReclamos != null ? `${l.CantidadReclamos} reclamos del organismo` : null,
+      ].filter(Boolean),
+      secciones,
+      productos: items.map((it: any) => ({
+        codigo: it?.CodigoProducto ?? '',
+        nombre: it?.NombreProducto || it?.Categoria || '',
+        descripcion: it?.Descripcion || '',
+        cantidad: it?.Cantidad ?? '',
+        unidad: it?.UnidadMedida || '',
+        adjudicacion: it?.Adjudicacion
+          ? [
+              it.Adjudicacion?.NombreProveedor,
+              it.Adjudicacion?.CantidadAdjudicada != null ? `${it.Adjudicacion.CantidadAdjudicada} adjudicadas` : null,
+              LicitacionesService.fmtMontoMP(it.Adjudicacion?.MontoUnitario) ? `${LicitacionesService.fmtMontoMP(it.Adjudicacion.MontoUnitario)} c/u` : null,
+            ].filter(Boolean).join(' · ')
+          : null,
+      })),
+      url_acta: l?.Adjudicacion?.UrlActa || null,
+    };
+  }
+
   // Marca / desmarca una postulación como "No Aplica" (descartada por el equipo).
   async noAplicaDisponible(id: number, email: string, noAplica: boolean) {
     const correo = (email || '').trim().toLowerCase();

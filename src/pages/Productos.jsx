@@ -820,6 +820,14 @@ export default function Productos() {
                             <span style={{fontSize: 11, fontWeight: 500}}>(Campaña)</span>
                           </div>
                         )}
+                        {p.precio_actualizado_at && (
+                          <div
+                            title="Última actualización de precio (costo o listas)"
+                            style={{fontSize: 11, fontWeight: 400, color: "var(--text-muted)"}}
+                          >
+                            Act. {new Date(p.precio_actualizado_at).toLocaleDateString("es-CL", { day: "2-digit", month: "2-digit", year: "numeric" })}
+                          </div>
+                        )}
                       </div>
                     </td>
 

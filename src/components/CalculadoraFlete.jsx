@@ -8,10 +8,14 @@ import { api } from "../lib/api";
      NETA por región + localidad + tramo (tabla fletes_tarifas_starken).
    ─ Blue: solo peso físico; tarifa NETA por región y tramo
      (tabla fletes_tarifas_blue, ya convertida al importar).
-   ─ Interno: flete NETO = km bodega→cliente (ida) × 2 × valor por km
+   ─ Interno: flete NETO = km bodega→cliente (solo ida) × valor por km
      (fletes_interno_config). Los km se obtienen por Google Maps desde
      la dirección del cliente (POST /fletes/interno/distancia) y son
-     editables a mano; el ×2 (ida y vuelta) lo aplica el backend.
+     editables a mano.
+   ─ Reglas de despacho GRATIS (las resuelve el backend):
+     · particular con compra ≥ $70.000 (bruto) → $0;
+     · interno hacia comunas de la provincia de Santiago → $0;
+     · cotización pública con destino en la provincia de Santiago → $0.
    El cálculo corre en el backend (POST /fletes/tarifas/calcular); al
    obtener el valor se aplica al Flete Estimado vía onAplicar(neto).
    La región/localidad se precargan desde la dirección del cliente
@@ -51,6 +55,8 @@ export default function CalculadoraFlete({
   regionCliente = "",
   comunaCliente = "",
   direccionCliente = "",
+  tipoCotizacion = "", // "particular" | "publico" (para las reglas de despacho gratis)
+  totalCompra = 0, // total BRUTO de la cotización (regla particular ≥ $70.000)
 }) {
   const [empresa, setEmpresa] = useState("");
   const [regiones, setRegiones] = useState([]);
@@ -153,24 +159,20 @@ export default function CalculadoraFlete({
   async function calcular() {
     setError("");
     setResultado(null);
-    if (empresa === "Interno") {
-      if (!(Number(km) > 0)) {
-        setError("Indica los kilómetros: usa \"Obtener distancia\" o digítalos.");
-        return;
-      }
-    } else if (!empresa || !region || (empresa === "Starken" && !localidad)) {
-      setError("Selecciona courier, región" + (empresa === "Starken" ? " y localidad." : "."));
-      return;
-    }
+    // Las validaciones de región/localidad/km las hace el backend: si aplica
+    // alguna regla de despacho gratis, el cálculo responde $0 sin esos datos.
     setCalculando(true);
     try {
       const res = await api.post("/fletes/tarifas/calcular", {
         empresa,
         region: empresa === "Interno" ? undefined : region,
         localidad: empresa === "Interno" ? undefined : (localidad || undefined),
-        km: empresa === "Interno" ? Number(km) : undefined,
+        km: empresa === "Interno" ? (Number(km) || undefined) : undefined,
         peso: Number(pesoTotal) || 0,
         volumen_cm3: Number(volumenTotal) || 0,
+        comuna: comunaCliente || undefined,
+        tipo_cotizacion: tipoCotizacion || undefined,
+        total_compra: Number(totalCompra) || 0,
       });
       setResultado(res);
       onAplicar?.(Number(res?.neto) || 0, res);
@@ -257,7 +259,7 @@ export default function CalculadoraFlete({
               value={km}
               onChange={(e) => setKm(e.target.value.replace(/[^\d.,]/g, "").replace(",", "."))}
               placeholder="Km (ida)"
-              title="Kilómetros de ida; el cálculo aplica ida y vuelta (×2)"
+              title="Kilómetros de ida (el flete se calcula solo con la ida)"
               disabled={deshabilitado}
             />
           </>
@@ -309,8 +311,8 @@ export default function CalculadoraFlete({
 
       {resultado && (
         <div style={{ marginTop: 8, fontSize: 12.5, color: "var(--text)" }}>
-          <b style={{ color: "var(--primary-dark, #1e9295)" }}>
-            Flete neto: ${Number(resultado.neto || 0).toLocaleString("es-CL")}
+          <b style={{ color: resultado.gratis ? "#15803d" : "var(--primary-dark, #1e9295)" }}>
+            {resultado.gratis ? "Despacho GRATIS ($0)" : `Flete neto: $${Number(resultado.neto || 0).toLocaleString("es-CL")}`}
           </b>
           <span style={{ color: "var(--text-muted)" }}> — {resultado.detalle}</span>
           <span style={{ color: "var(--text-muted)" }}> (aplicado al Flete Estimado)</span>

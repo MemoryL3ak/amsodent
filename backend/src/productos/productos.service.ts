@@ -16,6 +16,21 @@ export class ProductosService {
     return data;
   }
 
+  // Campos de precio: cualquier cambio en ellos estampa precio_actualizado_at.
+  private static readonly CAMPOS_PRECIO = ['costo', 'lista1', 'lista2', 'lista3'];
+
+  // ¿El body trae algún precio distinto al actual? (compara numéricamente;
+  // los campos ausentes en el body no cuentan como cambio).
+  private static cambioDePrecio(body: Record<string, any>, actual: Record<string, any> | null): boolean {
+    for (const campo of ProductosService.CAMPOS_PRECIO) {
+      if (body?.[campo] === undefined || body?.[campo] === null) continue;
+      const nuevo = Number(body[campo]) || 0;
+      const previo = Number(actual?.[campo]) || 0;
+      if (nuevo !== previo) return true;
+    }
+    return false;
+  }
+
   // Campos cuyo llenado define una ficha técnica "completa".
   private static readonly CAMPOS_FICHA = [
     'presentacion',
@@ -46,6 +61,7 @@ export class ProductosService {
       'lista1',
       'lista2',
       'lista3',
+      'precio_actualizado_at',
       ...ProductosService.CAMPOS_FICHA,
     ].join(', ');
 
@@ -70,6 +86,7 @@ export class ProductosService {
       lista1: p.lista1,
       lista2: p.lista2,
       lista3: p.lista3,
+      precio_actualizado_at: p.precio_actualizado_at,
       ficha_completa: ProductosService.CAMPOS_FICHA.every(
         (k) => String(p?.[k] ?? '').trim().length > 0,
       ),
@@ -150,6 +167,9 @@ export class ProductosService {
     if (body && body.marca != null) {
       body = { ...body, marca: await this.marcaCanonica(body.marca) };
     }
+    if (ProductosService.cambioDePrecio(body || {}, null)) {
+      body = { ...body, precio_actualizado_at: new Date().toISOString() };
+    }
     const { data, error } = await this.supabase
       .getClient()
       .from('productos')
@@ -177,16 +197,21 @@ export class ProductosService {
 
     const skus = Array.from(new Set(validRows.map((r) => r.sku.trim())));
 
-    // Productos existentes para clasificar creados vs actualizados.
+    // Productos existentes para clasificar creados vs actualizados (con sus
+    // precios actuales, para detectar cambios reales de precio).
     const { data: existentes, error: errFetch } = await this.supabase
       .getClient()
       .from('productos')
-      .select('id, sku')
+      .select('id, sku, costo, lista1, lista2, lista3')
       .in('sku', skus);
     if (errFetch) throw new BadRequestException(errFetch.message);
 
     const mapaSkuId = new Map<string, number>();
-    (existentes || []).forEach((p: any) => mapaSkuId.set(p.sku, p.id));
+    const mapaSkuPrecios = new Map<string, Record<string, any>>();
+    (existentes || []).forEach((p: any) => {
+      mapaSkuId.set(p.sku, p.id);
+      mapaSkuPrecios.set(p.sku, p);
+    });
 
     // Mapa de marcas canónicas para no duplicar variantes al importar.
     const canonMarcas = await this.mapaMarcasCanonicas();
@@ -230,6 +255,9 @@ export class ProductosService {
         if (alto > 0 && largo > 0 && ancho > 0) {
           limpio.metro_cubico = Math.round(alto * largo * ancho * 100) / 100;
         }
+        if (ProductosService.cambioDePrecio(limpio, mapaSkuPrecios.get(sku) || null)) {
+          limpio.precio_actualizado_at = new Date().toISOString();
+        }
         if (id) aActualizar.push({ id, body: limpio });
         else aInsertar.push({ ...limpio, sku });
       }
@@ -261,6 +289,19 @@ export class ProductosService {
   async update(id: number, body: Record<string, any>) {
     if (body && body.marca != null) {
       body = { ...body, marca: await this.marcaCanonica(body.marca) };
+    }
+    // Estampar la fecha de actualización de precio SOLO si algún precio cambió
+    // de verdad (editar otros campos del producto no la mueve).
+    if (body && ProductosService.CAMPOS_PRECIO.some((k) => body[k] !== undefined && body[k] !== null)) {
+      const { data: actual } = await this.supabase
+        .getClient()
+        .from('productos')
+        .select(ProductosService.CAMPOS_PRECIO.join(', '))
+        .eq('id', id)
+        .maybeSingle();
+      if (ProductosService.cambioDePrecio(body, actual as any)) {
+        body = { ...body, precio_actualizado_at: new Date().toISOString() };
+      }
     }
     const { data, error } = await this.supabase
       .getClient()

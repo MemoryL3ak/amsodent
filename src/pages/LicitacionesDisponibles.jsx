@@ -9,7 +9,7 @@ import { supabase } from "../lib/supabase";
 import useAuth from "../hooks/useAuth";
 import DateFilter from "../components/DateFilter";
 import ConfirmModal from "../components/ConfirmModal";
-import { Upload, Search, FileSpreadsheet, Trash2, X, ClipboardList, Check, RotateCcw, Ban } from "lucide-react";
+import { Upload, Search, FileSpreadsheet, Trash2, X, ClipboardList, Check, RotateCcw, Ban, FilePlus2, ExternalLink, FileDown } from "lucide-react";
 
 function fmtFecha(v) {
   if (!v) return "";
@@ -67,6 +67,17 @@ function estaVigente(row) {
   return cierre.getTime() >= Date.now();
 }
 
+// Regiones de la API de Mercado Público (código 1-16).
+const MP_REGIONES = [
+  [13, "Metropolitana"], [1, "Tarapacá"], [2, "Antofagasta"], [3, "Atacama"],
+  [4, "Coquimbo"], [5, "Valparaíso"], [6, "O'Higgins"], [7, "Maule"],
+  [8, "Biobío"], [9, "Araucanía"], [10, "Los Lagos"], [11, "Aysén"],
+  [12, "Magallanes y Antártica"], [14, "Los Ríos"], [15, "Arica y Parinacota"], [16, "Ñuble"],
+];
+
+// Keywords sugeridas para el rubro (la API busca en nombre/descripción).
+const MP_KEYWORDS = ["dental", "odontolog", "insumos dentales", "resina", "anestesia", "ortodoncia", "implante", "fresas"];
+
 export default function LicitacionesDisponibles({ embedded = false }) {
   const navigate = useNavigate();
   const { rol, user, perfil } = useAuth();
@@ -80,7 +91,8 @@ export default function LicitacionesDisponibles({ embedded = false }) {
   const [lista, setLista] = useState([]);
   const [loading, setLoading] = useState(true);
   const [busqueda, setBusqueda] = useState("");
-  const [filtro, setFiltro] = useState("pendientes"); // pendientes | cargadas | todas
+  const [filtro, setFiltro] = useState("pendientes"); // pendientes | mias | cargadas | caducadas | no_aplica | todas
+  const [filtroTipo, setFiltroTipo] = useState(""); // tipo de licitación (datos.tipo del xlsx)
   const [dispon, setDispon] = useState("vigentes"); // vigentes | vencidas | todas (por fecha de cierre)
   const [fechaDesde, setFechaDesde] = useState(""); // filtro por fecha de carga del archivo
   const [fechaHasta, setFechaHasta] = useState("");
@@ -91,6 +103,118 @@ export default function LicitacionesDisponibles({ embedded = false }) {
   const [confirmNoAplica, setConfirmNoAplica] = useState(null); // fila a confirmar antes de marcar "No Aplica"
   const [confirmBorrarTodas, setConfirmBorrarTodas] = useState(false);
   const [creadasHoy, setCreadasHoy] = useState(0); // cotizaciones creadas hoy por el usuario
+  // Botón junto al ID: abre la ficha del proceso en mercadopublico.cl (nueva
+  // pestaña), usando la columna "URL Ficha" que trae el xlsx del portal.
+  function abrirPortalMP(row) {
+    const url = String(row?.datos?.url_ficha || "").trim();
+    if (/^https?:\/\//i.test(url)) {
+      window.open(url, "_blank", "noopener");
+      return;
+    }
+    setToast({
+      type: "error",
+      message: "Esta postulación no trae la URL de la ficha; vuelve a subir el listado con la columna \"URL Ficha\" del portal.",
+    });
+  }
+
+  // Click en el ID: popup con la ficha completa consultada en vivo a Mercado
+  // Público (API Licitaciones v1 para LE/LP/LQ, API Compra Ágil v2 para COT;
+  // el ticket vive en el backend, env MERCADO_PUBLICO_TICKET).
+  const [mpFicha, setMpFicha] = useState(null); // { codigo, urlFicha, loading, data, error }
+  const [descargandoFicha, setDescargandoFicha] = useState(false);
+
+  // ── Sección "Explorar Mercado Público": búsqueda en vivo vía la API ──
+  const [vista, setVista] = useState("listado"); // listado | explorar
+  const [mpFuente, setMpFuente] = useState("agil"); // agil | licitaciones
+  const [mpQ, setMpQ] = useState("");
+  const [mpRegion, setMpRegion] = useState("");
+  const [mpEstado, setMpEstado] = useState("publicada");
+  const [mpRes, setMpRes] = useState(null); // { items, paginacion, actualizado }
+  const [mpBuscando, setMpBuscando] = useState(false);
+  const [agregandoCodigo, setAgregandoCodigo] = useState(null);
+
+  async function buscarMP(pagina = 1, qOverride = null) {
+    if (mpBuscando) return;
+    setMpBuscando(true);
+    try {
+      const qp = new URLSearchParams({ fuente: mpFuente, pagina: String(pagina), tamano: "15" });
+      const q = (qOverride ?? mpQ).trim();
+      if (q) qp.set("q", q);
+      if (mpFuente === "agil") {
+        if (mpRegion) qp.set("region", mpRegion);
+        if (mpEstado) qp.set("estado", mpEstado);
+      }
+      const data = await api.get(`/licitaciones/mercado-publico/buscar?${qp.toString()}`);
+      setMpRes(data);
+    } catch (e) {
+      setToast({ type: "error", message: e?.message || "No se pudo buscar en Mercado Público." });
+    } finally {
+      setMpBuscando(false);
+    }
+  }
+
+  // Copia el proceso encontrado al listado interno de Postulaciones (mismo
+  // flujo de siempre: tomar → crear borrador). La API no permite ofertar:
+  // eso se hace con sesión en mercadopublico.cl.
+  async function agregarAPostulaciones(item) {
+    setAgregandoCodigo(item.codigo);
+    try {
+      const res = await api.post("/licitaciones/disponibles/bulk", {
+        rows: [{
+          id_licitacion: item.codigo,
+          nombre: item.nombre,
+          datos: {
+            organismo: item.organismo || "",
+            region: item.region || "",
+            monto: item.monto_clp != null ? `$${Number(item.monto_clp).toLocaleString("es-CL")}` : "",
+            cierre: item.fecha_cierre || "",
+            publicacion: item.fecha_publicacion || "",
+            tipo: mpFuente === "agil" ? "Compra Ágil" : "Licitación",
+          },
+        }],
+      });
+      if (res?.insertados > 0) {
+        setToast({ type: "success", message: `${item.codigo} agregada al listado de Postulaciones.` });
+        cargar();
+      } else {
+        setToast({ type: "error", message: `${item.codigo} ya estaba en el listado.` });
+      }
+    } catch (e) {
+      setToast({ type: "error", message: e?.message || "No se pudo agregar al listado." });
+    } finally {
+      setAgregandoCodigo(null);
+    }
+  }
+
+  // Descarga la ficha del popup como PDF vectorial con identidad Amsodent.
+  async function descargarFichaPDF() {
+    if (!mpFicha?.data || descargandoFicha) return;
+    setDescargandoFicha(true);
+    try {
+      const { descargarFichaMercadoPublicoPDF } = await import("../lib/fichaMercadoPublicoPDF");
+      await descargarFichaMercadoPublicoPDF(mpFicha.data, { urlFicha: mpFicha.urlFicha });
+    } catch (e) {
+      console.error(e);
+      setToast({ type: "error", message: "No se pudo generar el PDF de la ficha." });
+    } finally {
+      setDescargandoFicha(false);
+    }
+  }
+
+  async function verFichaMP(row) {
+    const codigo = String(row.id_licitacion || "").trim();
+    if (!codigo) return;
+    const urlFicha = String(row?.datos?.url_ficha || "").trim();
+    setMpFicha({ codigo, urlFicha, loading: true, data: null, error: "" });
+    try {
+      const data = await api.get(`/licitaciones/mercado-publico/${encodeURIComponent(codigo)}`);
+      setMpFicha((prev) => (prev?.codigo === codigo ? { ...prev, loading: false, data } : prev));
+    } catch (e) {
+      setMpFicha((prev) => (prev?.codigo === codigo
+        ? { ...prev, loading: false, error: e?.message || "No se pudo consultar Mercado Público." }
+        : prev));
+    }
+  }
 
   async function cargar() {
     setLoading(true);
@@ -128,6 +252,13 @@ export default function LicitacionesDisponibles({ embedded = false }) {
     return () => { activo = false; };
   }, [currentEmail, loadSeq]);
 
+  // Tipos de licitación presentes en el listado (columna Tipo del xlsx).
+  const tiposDisponibles = useMemo(
+    () => [...new Set(lista.map((l) => String(l?.datos?.tipo || "").trim()).filter(Boolean))]
+      .sort((a, b) => a.localeCompare(b, "es")),
+    [lista],
+  );
+
   const filtradas = useMemo(() => {
     const q = busqueda.trim().toLowerCase();
     const arr = lista.filter((l) => {
@@ -141,12 +272,17 @@ export default function LicitacionesDisponibles({ embedded = false }) {
       if (filtro === "pendientes" && l.cargada) return false;
       if (filtro === "cargadas" && !l.cargada) return false;
       if (filtro === "mias" && (l.tomada_por || "").toLowerCase() !== currentEmail) return false;
-      // Disponibilidad según la fecha de Cierre del portal (datos.cierre).
-      if (dispon !== "todas") {
+      // "Caducadas": no alcanzaron a cargarse antes de la fecha de cierre.
+      // Ignora el filtro de Disponibilidad (una caducada es siempre vencida).
+      if (filtro === "caducadas") {
+        if (l.cargada || estaVigente(l)) return false;
+      } else if (dispon !== "todas") {
+        // Disponibilidad según la fecha de Cierre del portal (datos.cierre).
         const vig = estaVigente(l);
         if (dispon === "vigentes" && !vig) return false;
         if (dispon === "vencidas" && vig) return false;
       }
+      if (filtroTipo && String(l?.datos?.tipo || "").trim() !== filtroTipo) return false;
       const fCarga = String(l.created_at || "").slice(0, 10);
       if (fechaDesde && fCarga && fCarga < fechaDesde) return false;
       if (fechaHasta && fCarga && fCarga > fechaHasta) return false;
@@ -159,7 +295,7 @@ export default function LicitacionesDisponibles({ embedded = false }) {
     // NO se reordena aquí: el orden "tomadas primero" se aplica solo al cargar
     // (ver efecto abajo), para que marcar/desmarcar no mueva las filas de golpe.
     return arr;
-  }, [lista, busqueda, filtro, dispon, fechaDesde, fechaHasta, currentEmail]);
+  }, [lista, busqueda, filtro, filtroTipo, dispon, fechaDesde, fechaHasta, currentEmail]);
 
   const stats = useMemo(() => ({
     total: lista.length,
@@ -375,6 +511,27 @@ export default function LicitacionesDisponibles({ embedded = false }) {
         </div>
       </div>
 
+      {/* Pestañas: listado interno / explorador en vivo de Mercado Público
+          (visible también en modo embedded, p. ej. dentro del Chat Grupal). */}
+      <div style={{ display: "inline-flex", borderRadius: 9, overflow: "hidden", border: "1px solid var(--border)", marginBottom: 14 }}>
+        {[["listado", `Listado (${lista.length})`], ["explorar", "Explorar Mercado Público"]].map(([key, label]) => (
+          <button
+            key={key}
+            type="button"
+            onClick={() => setVista(key)}
+            style={{
+              padding: "7px 18px", fontSize: 13, fontWeight: 700, cursor: "pointer", border: "none",
+              background: vista === key ? "var(--primary)" : "var(--surface)",
+              color: vista === key ? "#fff" : "var(--text-muted)",
+            }}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {vista === "listado" && (
+      <>
       {/* Stats */}
       <div className="stats-row">
         <div className="stat-card">
@@ -414,8 +571,18 @@ export default function LicitacionesDisponibles({ embedded = false }) {
             <option value="pendientes">Pendientes</option>
             <option value="mias">Mis tomadas</option>
             <option value="cargadas">Cargadas</option>
+            <option value="caducadas">Caducadas</option>
             <option value="no_aplica">No aplica</option>
             <option value="todas">Todas</option>
+          </select>
+        </div>
+        <div className="filter-field">
+          <label className="filter-label">Tipo</label>
+          <select className="input" value={filtroTipo} onChange={(e) => setFiltroTipo(e.target.value)} style={{ minWidth: 130 }} title="Tipo de licitación (columna Tipo del portal)">
+            <option value="">Todos</option>
+            {tiposDisponibles.map((t) => (
+              <option key={t} value={t}>{t}</option>
+            ))}
           </select>
         </div>
         <div className="filter-field">
@@ -445,7 +612,7 @@ export default function LicitacionesDisponibles({ embedded = false }) {
             {lista.length === 0 ? "No hay postulaciones en el listado. Sube un xlsx para comenzar." : "Sin resultados para el filtro."}
           </div>
         ) : (
-          <table className="data-table" style={{ width: "100%", minWidth: 1280, tableLayout: "fixed" }}>
+          <table className="data-table" style={{ width: "100%", minWidth: 1180, tableLayout: "fixed" }}>
             <thead>
               <tr>
                 <th style={{ textAlign: "center", width: 64 }}>Tomar</th>
@@ -456,9 +623,8 @@ export default function LicitacionesDisponibles({ embedded = false }) {
                 <th style={{ textAlign: "right", whiteSpace: "nowrap", width: 120 }}>Monto</th>
                 <th style={{ textAlign: "left", width: 100 }}>Tipo</th>
                 <th style={{ textAlign: "left", whiteSpace: "nowrap", width: 150 }}>Cierre</th>
-                <th style={{ textAlign: "left", whiteSpace: "nowrap", width: 105 }}>Fecha carga</th>
                 <th style={{ textAlign: "left", width: 120 }}>Estado</th>
-                <th style={{ textAlign: "left", width: 90 }}>Acciones</th>
+                <th style={{ textAlign: "left", width: 118 }}>Acciones</th>
               </tr>
             </thead>
             <tbody>
@@ -469,8 +635,8 @@ export default function LicitacionesDisponibles({ embedded = false }) {
                 // Se bloquea marcar si la tomó otro o si está vencida (salvo que
                 // sea propia, para poder liberarla).
                 const bloqueada = deOtro || (vencida && !mia) || row.no_aplica;
-                const abrirBorrador = () => cargarLicitacion(row);
-                const celdaLink = { cursor: "pointer", color: "var(--primary-dark)", textDecoration: "underline", textUnderlineOffset: 2 };
+                // Caducada: se venció sin llegar a cargarse (no se pudo tomar a tiempo).
+                const caducada = vencida && !row.cargada && !row.no_aplica;
                 return (
                 <tr key={row.id} style={{ background: mia ? "#eef2ff" : undefined }}>
                   <td style={{ textAlign: "center" }}>
@@ -483,8 +649,30 @@ export default function LicitacionesDisponibles({ embedded = false }) {
                       style={{ width: 17, height: 17, cursor: bloqueada ? "not-allowed" : "pointer", accentColor: mia ? "#4f46e5" : bloqueada ? "#94a3b8" : undefined }}
                     />
                   </td>
-                  <td onClick={abrirBorrador} title="Crear cotización desde esta postulación" style={{ fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", ...celdaLink }}>{row.id_licitacion}</td>
-                  <td onClick={abrirBorrador} title="Crear cotización desde esta postulación" style={{ whiteSpace: "normal", wordBreak: "break-word", ...celdaLink }}>{row.nombre || <span style={{ color: "var(--text-muted)", textDecoration: "none" }}>—</span>}</td>
+                  {/* Click en el ID → popup con la ficha en vivo; el botón del
+                      costado abre la ficha en mercadopublico.cl. Sigue siendo
+                      seleccionable: si hay texto seleccionado, no se abre nada.
+                      El borrador se crea desde Acciones. */}
+                  <td style={{ fontWeight: 600, whiteSpace: "nowrap" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 4, minWidth: 0 }}>
+                      <span
+                        title="Ver ficha del proceso"
+                        onClick={() => { if (!String(window.getSelection?.() || "").length) verFichaMP(row); }}
+                        style={{ cursor: "pointer", color: "var(--primary-dark)", textDecoration: "underline", textUnderlineOffset: 2, overflow: "hidden", textOverflow: "ellipsis", userSelect: "text" }}
+                      >
+                        {row.id_licitacion}
+                      </span>
+                      <button
+                        className="btn btn-sm btn-ghost"
+                        title="Abrir en Mercado Público"
+                        onClick={(e) => { e.stopPropagation(); abrirPortalMP(row); }}
+                        style={{ padding: 3, lineHeight: 0, flexShrink: 0, color: "var(--text-muted)" }}
+                      >
+                        <ExternalLink size={13} />
+                      </button>
+                    </div>
+                  </td>
+                  <td style={{ whiteSpace: "normal", wordBreak: "break-word", userSelect: "text" }}>{row.nombre || <span style={{ color: "var(--text-muted)" }}>—</span>}</td>
                   <td title={row?.datos?.organismo || ""} style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", fontSize: 12.5 }}>{row?.datos?.organismo || <span style={{ color: "var(--text-muted)" }}>—</span>}</td>
                   <td title={row?.datos?.region || ""} style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", fontSize: 12.5 }}>{row?.datos?.region || <span style={{ color: "var(--text-muted)" }}>—</span>}</td>
                   <td style={{ textAlign: "right", whiteSpace: "nowrap", fontSize: 12.5, fontWeight: 600 }}>{row?.datos?.monto || <span style={{ color: "var(--text-muted)", fontWeight: 400 }}>—</span>}</td>
@@ -503,7 +691,6 @@ export default function LicitacionesDisponibles({ embedded = false }) {
                       );
                     })()}
                   </td>
-                  <td style={{ whiteSpace: "nowrap", color: "var(--text-muted)", fontSize: 12.5 }}>{fmtFecha(row.created_at) || "—"}</td>
                   <td>
                     {row.no_aplica ? (
                       <span
@@ -521,9 +708,18 @@ export default function LicitacionesDisponibles({ embedded = false }) {
                       </span>
                     ) : (
                       <div style={{ display: "flex", flexDirection: "column", gap: 3, alignItems: "flex-start" }}>
-                        <span style={{ fontSize: 11.5, fontWeight: 700, padding: "2px 8px", borderRadius: 999, background: "#fef9c3", color: "#a16207" }}>
-                          Pendiente
-                        </span>
+                        {caducada ? (
+                          <span
+                            title="Se venció sin llegar a cargarse (fuera de la fecha de cierre)"
+                            style={{ fontSize: 11.5, fontWeight: 700, padding: "2px 8px", borderRadius: 999, background: "#fee2e2", color: "#b91c1c" }}
+                          >
+                            Caducada
+                          </span>
+                        ) : (
+                          <span style={{ fontSize: 11.5, fontWeight: 700, padding: "2px 8px", borderRadius: 999, background: "#fef9c3", color: "#a16207" }}>
+                            Pendiente
+                          </span>
+                        )}
                         {row.tomada_por && (
                           <span
                             title={`Tomada por ${row.tomada_por}`}
@@ -541,6 +737,14 @@ export default function LicitacionesDisponibles({ embedded = false }) {
                   </td>
                   <td>
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-start", gap: 4 }}>
+                      <button
+                        className="btn btn-sm btn-ghost"
+                        onClick={(e) => { e.stopPropagation(); cargarLicitacion(row); }}
+                        title="Crear borrador de cotización con los datos de esta postulación"
+                        style={{ padding: 6, lineHeight: 0, color: "var(--primary-dark)" }}
+                      >
+                        <FilePlus2 size={14} />
+                      </button>
                       {esGestor && row.cargada && (
                         <button
                           className="btn btn-sm btn-ghost"
@@ -580,6 +784,209 @@ export default function LicitacionesDisponibles({ embedded = false }) {
           </table>
         )}
       </div>
+      </>
+      )}
+
+      {/* ── Explorar Mercado Público: búsqueda en vivo vía la API ── */}
+      {vista === "explorar" && (
+      <>
+      <div className="filter-bar" style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end" }}>
+        <div className="filter-field">
+          <label className="filter-label">Fuente</label>
+          <div style={{ display: "inline-flex", borderRadius: 9, overflow: "hidden", border: "1px solid var(--border)", height: 38 }}>
+            {[["agil", "Compra Ágil"], ["licitaciones", "Licitaciones (activas)"]].map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => { setMpFuente(key); setMpRes(null); }}
+                style={{
+                  padding: "0 14px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", border: "none",
+                  background: mpFuente === key ? "var(--primary)" : "var(--surface)",
+                  color: mpFuente === key ? "#fff" : "var(--text-muted)",
+                }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="filter-field" style={{ flex: 2, minWidth: 220 }}>
+          <label className="filter-label">Palabra clave</label>
+          <div style={{ position: "relative" }}>
+            <Search size={15} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)" }} />
+            <input
+              className="input"
+              style={{ paddingLeft: 32 }}
+              placeholder={mpFuente === "agil" ? "Busca en nombre y descripción… (ej: insumos dentales)" : "Filtra las licitaciones activas por nombre o código…"}
+              value={mpQ}
+              onChange={(e) => setMpQ(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") buscarMP(1); }}
+            />
+          </div>
+        </div>
+        {mpFuente === "agil" && (
+          <>
+            <div className="filter-field">
+              <label className="filter-label">Región</label>
+              <select className="input" value={mpRegion} onChange={(e) => setMpRegion(e.target.value)} style={{ minWidth: 150 }}>
+                <option value="">Todas</option>
+                {MP_REGIONES.map(([cod, nombre]) => (
+                  <option key={cod} value={cod}>{nombre}</option>
+                ))}
+              </select>
+            </div>
+            <div className="filter-field">
+              <label className="filter-label">Estado</label>
+              <select className="input" value={mpEstado} onChange={(e) => setMpEstado(e.target.value)} style={{ minWidth: 170 }}>
+                <option value="publicada">Publicadas (abiertas)</option>
+                <option value="cerrada">Cerradas</option>
+                <option value="proveedor_seleccionado">Proveedor seleccionado</option>
+                <option value="desierta">Desiertas</option>
+                <option value="">Todos</option>
+              </select>
+            </div>
+          </>
+        )}
+        <button
+          className="btn btn-primary"
+          onClick={() => buscarMP(1)}
+          disabled={mpBuscando}
+          style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 38 }}
+        >
+          <Search size={14} /> {mpBuscando ? "Buscando…" : "Buscar"}
+        </button>
+      </div>
+
+      {/* Keywords sugeridas del rubro */}
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", marginTop: 10 }}>
+        <span style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 600 }}>Sugerencias:</span>
+        {MP_KEYWORDS.map((k) => (
+          <button
+            key={k}
+            type="button"
+            onClick={() => { setMpQ(k); buscarMP(1, k); }}
+            style={{
+              fontSize: 12, fontWeight: 600, padding: "3px 11px", borderRadius: 999, cursor: "pointer",
+              border: "1px solid var(--border)", background: mpQ === k ? "var(--primary)" : "var(--surface)",
+              color: mpQ === k ? "#fff" : "var(--text-muted)",
+            }}
+          >
+            {k}
+          </button>
+        ))}
+      </div>
+
+      <div style={{ marginTop: 8, fontSize: 12, color: "var(--text-muted)" }}>
+        Resultados en vivo de la API de Mercado Público. Para <b>ofertar</b> debes ingresar con tu clave en
+        mercadopublico.cl (la API es de solo lectura); desde aquí puedes ver la ficha, descargar el PDF y
+        <b> agregar el proceso al Listado</b> para tomarlo y crear su cotización.
+        {mpFuente === "licitaciones" && " Las licitaciones activas se listan con datos resumidos (la API v1 no entrega organismo ni montos en el listado); pincha el código para ver la ficha completa."}
+      </div>
+
+      {/* Resultados */}
+      <div className="surface" style={{ marginTop: 14, overflowX: "auto" }}>
+        {mpBuscando ? (
+          <div style={{ padding: "36px 24px", color: "var(--text-muted)" }}>Consultando Mercado Público…</div>
+        ) : !mpRes ? (
+          <div style={{ padding: "36px 24px", color: "var(--text-muted)" }}>
+            Busca por palabra clave (o presiona Buscar sin filtros para ver lo más reciente).
+          </div>
+        ) : (mpRes.items || []).length === 0 ? (
+          <div style={{ padding: "36px 24px", color: "var(--text-muted)" }}>Sin resultados para esa búsqueda.</div>
+        ) : (
+          <table className="data-table" style={{ width: "100%", minWidth: 1100 }}>
+            <thead>
+              <tr>
+                <th style={{ textAlign: "left", whiteSpace: "nowrap", width: 160 }}>Código</th>
+                <th style={{ textAlign: "left" }}>Nombre</th>
+                <th style={{ textAlign: "left", width: 200 }}>Organismo</th>
+                <th style={{ textAlign: "left", width: 120 }}>Región</th>
+                <th style={{ textAlign: "right", whiteSpace: "nowrap", width: 110 }}>Monto (CLP)</th>
+                <th style={{ textAlign: "left", whiteSpace: "nowrap", width: 130 }}>Cierre</th>
+                <th style={{ textAlign: "left", width: 130 }}>Estado</th>
+                <th style={{ textAlign: "center", width: 64 }}>Ofertas</th>
+                <th style={{ textAlign: "left", width: 100 }}>Acciones</th>
+              </tr>
+            </thead>
+            <tbody>
+              {mpRes.items.map((item) => {
+                const ec = String(item.estado_codigo || "");
+                const tono = ec === "publicada" || ec === "5"
+                  ? { bg: "#dcfce7", fg: "#15803d" }
+                  : ec === "proveedor_seleccionado" || ec === "8"
+                  ? { bg: "#dbeafe", fg: "#1d4ed8" }
+                  : ec === "cerrada" || ec === "6"
+                  ? { bg: "#fef3c7", fg: "#b45309" }
+                  : { bg: "#f1f5f9", fg: "#64748b" };
+                const cierre = item.fecha_cierre ? fmtFechaHora(new Date(item.fecha_cierre), true) : "—";
+                return (
+                  <tr key={item.codigo}>
+                    <td
+                      title="Ver ficha del proceso"
+                      onClick={() => verFichaMP({ id_licitacion: item.codigo, datos: {} })}
+                      style={{ fontWeight: 600, whiteSpace: "nowrap", cursor: "pointer", color: "var(--primary-dark)", textDecoration: "underline", textUnderlineOffset: 2 }}
+                    >
+                      {item.codigo}
+                    </td>
+                    <td style={{ whiteSpace: "normal", wordBreak: "break-word", fontSize: 12.5 }}>{item.nombre || "—"}</td>
+                    <td title={item.organismo} style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", fontSize: 12.5, maxWidth: 200 }}>{item.organismo || "—"}</td>
+                    <td style={{ whiteSpace: "nowrap", fontSize: 12.5 }}>{item.region || "—"}</td>
+                    <td style={{ textAlign: "right", whiteSpace: "nowrap", fontWeight: 600, fontSize: 12.5 }}>
+                      {item.monto_clp != null ? `$${Number(item.monto_clp).toLocaleString("es-CL")}` : "—"}
+                    </td>
+                    <td style={{ whiteSpace: "nowrap", fontSize: 12.5 }}>{cierre}</td>
+                    <td>
+                      <span style={{ fontSize: 11.5, fontWeight: 700, padding: "2px 8px", borderRadius: 999, background: tono.bg, color: tono.fg, whiteSpace: "nowrap" }}>
+                        {item.estado || "—"}
+                      </span>
+                    </td>
+                    <td style={{ textAlign: "center", fontSize: 12.5 }}>{item.ofertas ?? "—"}</td>
+                    <td>
+                      <button
+                        className="btn btn-sm btn-ghost"
+                        title="Agregar al Listado de Postulaciones (para tomarla y crear su cotización)"
+                        disabled={agregandoCodigo === item.codigo}
+                        onClick={() => agregarAPostulaciones(item)}
+                        style={{ padding: 6, lineHeight: 0, color: "var(--primary-dark)" }}
+                      >
+                        <ClipboardList size={15} />
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+
+        {mpRes && (mpRes.items || []).length > 0 && (
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "10px 14px", borderTop: "1px solid var(--border)", flexWrap: "wrap" }}>
+            <span style={{ fontSize: 12.5, color: "var(--text-muted)" }}>
+              {Number(mpRes.paginacion?.total_resultados || 0).toLocaleString("es-CL")} resultado(s) ·
+              página {mpRes.paginacion?.numero_pagina || 1} de {mpRes.paginacion?.total_paginas || 1}
+              {mpRes.actualizado && ` · listado actualizado ${fmtFechaHora(new Date(mpRes.actualizado), true)}`}
+            </span>
+            <div style={{ display: "flex", gap: 6 }}>
+              <button
+                className="btn btn-sm btn-secondary"
+                disabled={mpBuscando || (mpRes.paginacion?.numero_pagina || 1) <= 1}
+                onClick={() => buscarMP((mpRes.paginacion?.numero_pagina || 1) - 1)}
+              >
+                ← Anterior
+              </button>
+              <button
+                className="btn btn-sm btn-secondary"
+                disabled={mpBuscando || (mpRes.paginacion?.numero_pagina || 1) >= (mpRes.paginacion?.total_paginas || 1)}
+                onClick={() => buscarMP((mpRes.paginacion?.numero_pagina || 1) + 1)}
+              >
+                Siguiente →
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+      </>
+      )}
 
       <ConfirmModal
         open={!!confirmTomar}
@@ -624,6 +1031,139 @@ export default function LicitacionesDisponibles({ embedded = false }) {
           }}
           onToast={setToast}
         />
+      )}
+
+      {/* Popup: ficha del proceso consultada en vivo a Mercado Público */}
+      {mpFicha && (
+        <div
+          onClick={(e) => { if (e.target === e.currentTarget) setMpFicha(null); }}
+          style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,.55)", zIndex: 12000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+        >
+          <div style={{ width: 680, maxWidth: "100%", maxHeight: "90vh", overflowY: "auto", background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 14, padding: 22 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+              <h3 style={{ margin: 0, fontSize: 15.5, fontWeight: 700, display: "flex", alignItems: "center", gap: 8 }}>
+                <ClipboardList size={17} style={{ color: "var(--primary)" }} /> Ficha · {mpFicha.codigo}
+              </h3>
+              <button className="btn btn-ghost" onClick={() => setMpFicha(null)} style={{ padding: 6 }}><X size={16} /></button>
+            </div>
+
+            {mpFicha.loading ? (
+              <div style={{ padding: "32px 0", textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>
+                Consultando Mercado Público…
+              </div>
+            ) : mpFicha.error ? (
+              <div style={{ background: "#fef2f2", border: "1px solid #fecaca", color: "#b91c1c", borderRadius: 10, padding: "10px 13px", fontSize: 12.5, marginBottom: 12 }}>
+                {mpFicha.error}
+              </div>
+            ) : mpFicha.data ? (() => {
+              const d = mpFicha.data;
+              const TONOS = {
+                green: { bg: "#dcfce7", fg: "#15803d" },
+                blue: { bg: "#dbeafe", fg: "#1d4ed8" },
+                amber: { bg: "#fef3c7", fg: "#b45309" },
+                red: { bg: "#fee2e2", fg: "#b91c1c" },
+                gray: { bg: "#f1f5f9", fg: "#64748b" },
+              };
+              const tono = TONOS[d.tono] || TONOS.gray;
+              const conAdjudicacion = (d.productos || []).some((p) => p.adjudicacion);
+              return (
+                <>
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
+                    <span style={{ fontSize: 12, fontWeight: 700, padding: "3px 10px", borderRadius: 999, background: tono.bg, color: tono.fg }}>{d.estado}</span>
+                    {(d.chips || []).map((c) => (
+                      <span key={c} style={{ fontSize: 12, fontWeight: 700, padding: "3px 10px", borderRadius: 999, background: "#eef2ff", color: "#3730a3" }}>{c}</span>
+                    ))}
+                  </div>
+                  <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 2 }}>{d.nombre}</div>
+                  {d.descripcion && d.descripcion !== d.nombre && (
+                    <div style={{ fontSize: 12.5, color: "var(--text-muted)", marginBottom: 10 }}>{d.descripcion}</div>
+                  )}
+
+                  {(d.productos || []).length > 0 && (
+                    <div style={{ margin: "12px 0" }}>
+                      <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 6 }}>Productos o servicios ({d.productos.length})</div>
+                      <div style={{ border: "1px solid var(--border)", borderRadius: 10, overflow: "hidden" }}>
+                        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                          <thead>
+                            <tr style={{ background: "var(--bg)", color: "var(--text-muted)", textAlign: "left" }}>
+                              <th style={{ padding: "6px 10px", width: 26 }}>#</th>
+                              <th style={{ padding: "6px 10px" }}>Producto</th>
+                              <th style={{ padding: "6px 10px", textAlign: "right", width: 90 }}>Cantidad</th>
+                              {conAdjudicacion && <th style={{ padding: "6px 10px" }}>Adjudicación</th>}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {d.productos.map((p, i) => (
+                              <tr key={i} style={{ borderTop: "1px solid var(--border)" }}>
+                                <td style={{ padding: "6px 10px", color: "var(--text-muted)" }}>{i + 1}</td>
+                                <td style={{ padding: "6px 10px" }}>
+                                  <div style={{ fontWeight: 600 }}>{p.nombre}{p.codigo ? <span style={{ color: "var(--text-muted)", fontWeight: 400 }}> · Cod: {p.codigo}</span> : null}</div>
+                                  {p.descripcion && <div style={{ color: "var(--text-muted)", whiteSpace: "normal" }}>{p.descripcion}</div>}
+                                </td>
+                                <td style={{ padding: "6px 10px", textAlign: "right", whiteSpace: "nowrap", fontWeight: 600 }}>
+                                  {Number(p.cantidad || 0).toLocaleString("es-CL")} {p.unidad}
+                                </td>
+                                {conAdjudicacion && (
+                                  <td style={{ padding: "6px 10px", whiteSpace: "normal", fontSize: 11.5 }}>
+                                    {p.adjudicacion || <span style={{ color: "var(--text-muted)" }}>—</span>}
+                                  </td>
+                                )}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                  {(d.secciones || []).map((s) => (
+                    <div key={s.titulo} style={{ margin: "12px 0" }}>
+                      <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 6 }}>{s.titulo}</div>
+                      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 10, overflow: "hidden" }}>
+                        <tbody>
+                          {s.filas.map(([k, v], i) => (
+                            <tr key={k} style={{ borderTop: i === 0 ? "none" : "1px solid var(--border)" }}>
+                              <td style={{ padding: "6px 12px", color: "var(--text-muted)", whiteSpace: "nowrap", verticalAlign: "top", width: 190 }}>{k}</td>
+                              <td style={{ padding: "6px 12px", fontWeight: 600, wordBreak: "break-word" }}>{String(v)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ))}
+
+                  <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 8 }}>
+                    Fuente: {d.fuente} · consultado en vivo desde Mercado Público.
+                  </div>
+                </>
+              );
+            })() : null}
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 14, flexWrap: "wrap" }}>
+              {mpFicha.data && (
+                <button
+                  className="btn btn-primary"
+                  onClick={descargarFichaPDF}
+                  disabled={descargandoFicha}
+                  style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
+                >
+                  <FileDown size={14} /> {descargandoFicha ? "Generando…" : "Descargar PDF"}
+                </button>
+              )}
+              {mpFicha.data?.url_acta && (
+                <a className="btn btn-secondary" href={mpFicha.data.url_acta} target="_blank" rel="noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                  <ExternalLink size={14} /> Acta de adjudicación
+                </a>
+              )}
+              {mpFicha.urlFicha && (
+                <a className="btn btn-secondary" href={mpFicha.urlFicha} target="_blank" rel="noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                  <ExternalLink size={14} /> Abrir en Mercado Público
+                </a>
+              )}
+              <button className="btn btn-secondary" onClick={() => setMpFicha(null)}>Cerrar</button>
+            </div>
+          </div>
+        </div>
       )}
 
       {toast && (

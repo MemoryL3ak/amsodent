@@ -3161,6 +3161,8 @@ export default function CrearLicitacion() {
             regionCliente={region}
             comunaCliente={comuna}
             direccionCliente={direccion}
+            tipoCotizacion={esParticular || tipoCompra === "Cliente particular" ? "particular" : "publico"}
+            totalCompra={totalConIVA}
             onAplicar={(neto) => setFleteEstimado(neto)}
           />
         </div>

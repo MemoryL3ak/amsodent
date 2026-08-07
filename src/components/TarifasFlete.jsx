@@ -8,7 +8,9 @@ import { api } from "../lib/api";
    ─ Ver, filtrar, editar, agregar y eliminar filas del tarifario.
    ─ Despacho interno: sin tarifario por filas; solo configuración
      (dirección de origen con autocompletado Google y valor por km).
-     Flete = km bodega→cliente IDA Y VUELTA × valor por km.
+     Flete = km bodega→cliente (SOLO IDA) × valor por km.
+   ─ Reajuste (%): por courier, ajusta porcentualmente los valores del
+     tarifario al calcular el flete (no modifica la tabla).
    ─ Carga masiva: lee el archivo del courier y REEMPLAZA la tabla:
      · Starken: mismo formato del archivo oficial (CSV ";" o Excel):
        Región; Localidad; 14 tramos; $/kg 100-499; $/kg 499-1000; Fijo.
@@ -69,11 +71,43 @@ export default function TarifasFlete({ onToast }) {
   const campos = esStarken ? CAMPOS_STARKEN : CAMPOS_BLUE;
 
   // Config del despacho interno: dirección de origen (bodega) + valor por km.
-  // El flete interno = km ida y vuelta × valor_km (sin tabla de tramos).
+  // El flete interno = km de ida × valor_km (sin tabla de tramos).
   const [configInterno, setConfigInterno] = useState(null);
   const [guardandoConfig, setGuardandoConfig] = useState(false);
   const [sugerencias, setSugerencias] = useState([]);
   const omitirSugerenciasRef = useRef(false);
+
+  // Reajuste porcentual del courier activo (Starken / Blue).
+  const [reajuste, setReajuste] = useState("");
+  const [guardandoReajuste, setGuardandoReajuste] = useState(false);
+
+  useEffect(() => {
+    if (esInterno) return;
+    let activo = true;
+    setReajuste("");
+    api.get(`/fletes/reajuste?empresa=${encodeURIComponent(empresa)}`)
+      .then((d) => activo && setReajuste(String(d?.porcentaje ?? 0)))
+      .catch(() => activo && setReajuste("0"));
+    return () => { activo = false; };
+  }, [empresa, esInterno]);
+
+  async function guardarReajuste() {
+    const pct = Number(String(reajuste).replace(",", "."));
+    if (!Number.isFinite(pct)) {
+      onToast?.({ type: "error", message: "El reajuste debe ser un número (ej: 10 o -5)." });
+      return;
+    }
+    setGuardandoReajuste(true);
+    try {
+      const data = await api.put("/fletes/reajuste", { empresa, porcentaje: pct });
+      setReajuste(String(data?.porcentaje ?? pct));
+      onToast?.({ type: "success", message: `Reajuste de ${empresa === "Blue" ? "Blue Express" : "Starken"} guardado (${pct}%).` });
+    } catch (e) {
+      onToast?.({ type: "error", message: e?.message || "No se pudo guardar el reajuste." });
+    } finally {
+      setGuardandoReajuste(false);
+    }
+  }
 
   useEffect(() => {
     if (!esInterno) return;
@@ -228,6 +262,23 @@ export default function TarifasFlete({ onToast }) {
 
         {!esInterno && (
           <>
+            <div
+              title="Ajusta porcentualmente los valores del tarifario al calcular (ej: 10 = +10%, -5 = -5%). No modifica la tabla."
+              style={{ display: "inline-flex", alignItems: "center", gap: 6, border: "1px solid var(--border)", borderRadius: 9, padding: "4px 8px", background: "var(--surface)" }}
+            >
+              <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text-muted)", whiteSpace: "nowrap" }}>Reajuste %</span>
+              <input
+                className="input"
+                style={{ height: 30, width: 70, textAlign: "right" }}
+                inputMode="decimal"
+                value={reajuste}
+                onChange={(e) => setReajuste(e.target.value.replace(/[^\d.,-]/g, ""))}
+                placeholder="0"
+              />
+              <button className="btn btn-sm btn-secondary" onClick={guardarReajuste} disabled={guardandoReajuste} style={{ height: 30 }}>
+                {guardandoReajuste ? "…" : "Guardar"}
+              </button>
+            </div>
             <button className="btn btn-ghost" onClick={() => setEditando({})} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
               <Plus size={14} /> Agregar
             </button>
@@ -238,7 +289,7 @@ export default function TarifasFlete({ onToast }) {
         )}
       </div>
 
-      {/* Despacho interno: solo configuración. Flete = km ida y vuelta × valor/km. */}
+      {/* Despacho interno: solo configuración. Flete = km de ida × valor/km. */}
       {esInterno && (
         <div style={{ border: "1px solid var(--border)", borderRadius: 10, background: "var(--surface)", padding: "12px 14px", marginBottom: 12, display: "flex", flexWrap: "wrap", gap: 10, alignItems: "flex-end" }}>
           <div style={{ flex: 2, minWidth: 260, position: "relative" }}>
@@ -289,7 +340,7 @@ export default function TarifasFlete({ onToast }) {
             {guardandoConfig ? "Guardando…" : "Guardar configuración"}
           </button>
           <div style={{ flexBasis: "100%", fontSize: 12, color: "var(--text-muted)" }}>
-            Flete interno = km bodega → cliente <b>ida y vuelta</b> × valor por km. La distancia se calcula con la dirección de la cotización (Google Maps) y siempre se puede digitar a mano.
+            Flete interno = km bodega → cliente (<b>solo ida</b>) × valor por km. La distancia se calcula con la dirección de la cotización (Google Maps) y siempre se puede digitar a mano. Hacia comunas de la provincia de Santiago el despacho interno es <b>gratis</b>.
             {" "}{configInterno?.origen_lat != null
               ? `Origen geocodificado ✓ (${Number(configInterno.origen_lat).toFixed(5)}, ${Number(configInterno.origen_lng).toFixed(5)}).`
               : "La dirección se valida en Google Maps al guardar (o en el primer cálculo si aún no hay API key)."}

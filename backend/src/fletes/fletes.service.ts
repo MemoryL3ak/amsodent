@@ -149,6 +149,91 @@ export class FletesService {
     return (data || []).map((r: any) => r.localidad);
   }
 
+  // Comunas de la provincia de Santiago (+ San Bernardo) con despacho gratis:
+  // el despacho interno siempre es $0 hacia estas comunas, y en cotizaciones
+  // públicas cualquier despacho hacia ellas también es $0.
+  private static readonly COMUNAS_GRATIS_SANTIAGO = new Set([
+    'cerrillos', 'cerro navia', 'conchali', 'el bosque', 'estacion central',
+    'huechuraba', 'independencia', 'la cisterna', 'la florida', 'la granja',
+    'la pintana', 'la reina', 'las condes', 'lo barnechea', 'lo espejo',
+    'lo prado', 'macul', 'maipu', 'nunoa', 'pedro aguirre cerda', 'penalolen',
+    'providencia', 'pudahuel', 'quilicura', 'quinta normal', 'recoleta',
+    'renca', 'san joaquin', 'san miguel', 'san ramon', 'santiago', 'vitacura',
+    'san bernardo',
+  ]);
+
+  private static normComuna(s: any): string {
+    return String(s || '')
+      .normalize('NFD')
+      .replace(/[̀-ͯ]/g, '')
+      .replace(/[^a-zA-Z ]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .toLowerCase();
+  }
+
+  private esComunaGratis(comuna: any): boolean {
+    return FletesService.COMUNAS_GRATIS_SANTIAGO.has(FletesService.normComuna(comuna));
+  }
+
+  // Reajuste porcentual por courier: se aplica sobre los valores del tarifario
+  // al calcular (10 = +10%). Si la tabla no existe aún, se asume 0.
+  private async reajustePct(empresa: string): Promise<number> {
+    try {
+      const { data } = await this.supabase.getClient()
+        .from('fletes_reajuste')
+        .select('porcentaje')
+        .eq('empresa', empresa)
+        .maybeSingle();
+      const n = Number((data as any)?.porcentaje);
+      return Number.isFinite(n) ? n : 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  async obtenerReajuste(empresa: string) {
+    if (!['Starken', 'Blue'].includes(empresa)) {
+      throw new BadRequestException('Empresa inválida (Starken o Blue).');
+    }
+    const { data, error } = await this.supabase.getClient()
+      .from('fletes_reajuste')
+      .select('empresa, porcentaje')
+      .eq('empresa', empresa)
+      .maybeSingle();
+    if (error) {
+      throw new BadRequestException(
+        /does not exist|schema cache/i.test(error.message)
+          ? 'Falta aplicar la migración 20260806_fletes_reajuste.sql en Supabase.'
+          : error.message,
+      );
+    }
+    return data || { empresa, porcentaje: 0 };
+  }
+
+  async guardarReajuste(empresa: string, porcentaje: any) {
+    if (!['Starken', 'Blue'].includes(empresa)) {
+      throw new BadRequestException('Empresa inválida (Starken o Blue).');
+    }
+    const pct = Number(porcentaje);
+    if (!Number.isFinite(pct) || pct < -100 || pct > 500) {
+      throw new BadRequestException('El reajuste debe ser un porcentaje entre -100 y 500.');
+    }
+    const { data, error } = await this.supabase.getClient()
+      .from('fletes_reajuste')
+      .upsert([{ empresa, porcentaje: pct, updated_at: new Date().toISOString() }], { onConflict: 'empresa' })
+      .select()
+      .single();
+    if (error) {
+      throw new BadRequestException(
+        /does not exist|schema cache/i.test(error.message)
+          ? 'Falta aplicar la migración 20260806_fletes_reajuste.sql en Supabase.'
+          : error.message,
+      );
+    }
+    return data;
+  }
+
   private static readonly TRAMOS_STARKEN: Array<[number, string, string]> = [
     [0.5, 't_0_05', '0 – 0,5 kg'],
     [1.5, 't_05_15', '0,5 – 1,5 kg'],
@@ -173,17 +258,47 @@ export class FletesService {
     peso?: number;
     volumen_cm3?: number;
     km?: number;
+    comuna?: string;
+    tipo_cotizacion?: string; // 'particular' | 'publico'
+    total_compra?: number; // total bruto de la cotización (para la regla ≥ $70.000)
   }) {
     const empresa = String(body?.empresa || '').trim();
     const region = String(body?.region || '').trim();
     const peso = Number(body?.peso) || 0;
     const volumen = Number(body?.volumen_cm3) || 0;
+    const comuna = String(body?.comuna || '').trim();
+    const tipoCotizacion = String(body?.tipo_cotizacion || '').trim().toLowerCase();
+    const totalCompra = Number(body?.total_compra) || 0;
 
     if (!['Starken', 'Blue', 'Interno'].includes(empresa)) {
       throw new BadRequestException('Empresa inválida (Starken, Blue o Interno).');
     }
 
-    // ── Despacho interno: km de ida × 2 (ida y vuelta) × valor por km ──
+    // ── Reglas de despacho GRATIS (antes de tarificar) ──
+    // 1) Cotización particular con compra ≥ $70.000 (bruto): despacho $0.
+    if (tipoCotizacion === 'particular' && totalCompra >= 70000) {
+      return {
+        empresa,
+        neto: 0,
+        gratis: true,
+        detalle: `Despacho gratis: compra particular ≥ $70.000 (total $${Math.round(totalCompra).toLocaleString('es-CL')})`,
+      };
+    }
+    // 2) Despacho interno hacia comunas de la provincia de Santiago: siempre $0.
+    // 3) Cotización pública con destino en la provincia de Santiago: $0 con
+    //    cualquier courier.
+    if (comuna && this.esComunaGratis(comuna) && (empresa === 'Interno' || tipoCotizacion === 'publico')) {
+      return {
+        empresa,
+        neto: 0,
+        gratis: true,
+        detalle: empresa === 'Interno'
+          ? `Despacho interno gratis: ${comuna} pertenece a la provincia de Santiago`
+          : `Despacho gratis: cotización pública con destino en la provincia de Santiago (${comuna})`,
+      };
+    }
+
+    // ── Despacho interno: km de ida × valor por km (solo ida) ──
     if (empresa === 'Interno') {
       const km = Number(body?.km);
       if (!Number.isFinite(km) || km <= 0) {
@@ -194,15 +309,13 @@ export class FletesService {
       if (valorKm <= 0) {
         throw new BadRequestException('Falta configurar el valor por km (Tarifas de Flete → Despacho interno).');
       }
-      const kmTotal = km * 2;
-      const neto = Math.round(kmTotal * valorKm);
+      const neto = Math.round(km * valorKm);
       return {
         empresa,
         km: Math.round(km * 10) / 10,
-        km_total: Math.round(kmTotal * 10) / 10,
         valor_km: valorKm,
         neto,
-        detalle: `Despacho interno · ${km.toFixed(1)} km × 2 (ida y vuelta) = ${kmTotal.toFixed(1)} km × $${valorKm.toLocaleString('es-CL')}/km`,
+        detalle: `Despacho interno · ${km.toFixed(1)} km (solo ida) × $${valorKm.toLocaleString('es-CL')}/km`,
       };
     }
 
@@ -233,14 +346,16 @@ export class FletesService {
           `Blue Express cubre hasta 25 kg y el envío pesa ${peso.toFixed(1)} kg. Usa Starken para este despacho.`,
         );
       }
-      const neto = Math.round(Number((data as any)[tramo[1]]) || 0);
+      const base = Math.round(Number((data as any)[tramo[1]]) || 0);
+      const pct = await this.reajustePct('Blue');
+      const neto = Math.round(base * (1 + pct / 100));
       return {
         empresa,
         region,
         neto,
         tramo: tramo[2],
         peso_facturable: peso,
-        detalle: `Blue Express ${region} · ${tramo[2]}`,
+        detalle: `Blue Express ${region} · ${tramo[2]}${pct ? ` · reajuste ${pct > 0 ? '+' : ''}${pct}%` : ''}`,
       };
     }
 
@@ -283,6 +398,9 @@ export class FletesService {
       throw new BadRequestException('El peso facturable supera los 1.000 kg cubiertos por la tarifa Starken.');
     }
 
+    const pctStarken = await this.reajustePct('Starken');
+    neto = Math.round(neto * (1 + pctStarken / 100));
+
     return {
       empresa,
       region,
@@ -292,7 +410,7 @@ export class FletesService {
       peso_fisico: peso,
       peso_volumetrico: Math.round(pesoVolumetrico * 100) / 100,
       peso_facturable: Math.round(pesoFacturable * 100) / 100,
-      detalle: `Starken ${localidad} · ${tramoLabel} · peso facturable ${pesoFacturable.toFixed(2)} kg (mayor entre ${peso.toFixed(2)} kg físico y ${pesoVolumetrico.toFixed(2)} kg volumétrico)`,
+      detalle: `Starken ${localidad} · ${tramoLabel} · peso facturable ${pesoFacturable.toFixed(2)} kg (mayor entre ${peso.toFixed(2)} kg físico y ${pesoVolumetrico.toFixed(2)} kg volumétrico)${pctStarken ? ` · reajuste ${pctStarken > 0 ? '+' : ''}${pctStarken}%` : ''}`,
     };
   }
 

@@ -298,7 +298,7 @@ export default function CosteoFletes() {
       <div className="page-header" style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
         <div>
           <h1 className="page-title" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <Truck size={20} /> Conciliación de Fletes
+            <Truck size={20} /> Fletes
           </h1>
           <p className="page-subtitle">
             Cotizaciones adjudicadas: OC → guías → N° de seguimiento. Flete estimado vs. cobro real de Starken y Blue.
