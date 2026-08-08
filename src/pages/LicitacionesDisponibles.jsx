@@ -75,8 +75,10 @@ const MP_REGIONES = [
   [12, "Magallanes y Antártica"], [14, "Los Ríos"], [15, "Arica y Parinacota"], [16, "Ñuble"],
 ];
 
-// Keywords sugeridas para el rubro (la API busca en nombre/descripción).
-const MP_KEYWORDS = ["dental", "odontolog", "insumos dentales", "resina", "anestesia", "ortodoncia", "implante", "fresas"];
+// Keywords sugeridas para el rubro. La API busca por PALABRA COMPLETA en
+// nombre/descripción; el backend agrega solo la variante singular/plural de
+// cada keyword (dental → dentales), así que deben ser palabras reales.
+const MP_KEYWORDS = ["dental", "odontología", "insumos dentales", "resina", "anestesia", "ortodoncia", "implante", "fresas"];
 
 export default function LicitacionesDisponibles({ embedded = false }) {
   const navigate = useNavigate();
@@ -129,7 +131,11 @@ export default function LicitacionesDisponibles({ embedded = false }) {
   const [mpQ, setMpQ] = useState("");
   const [mpRegion, setMpRegion] = useState("");
   const [mpEstado, setMpEstado] = useState("publicada");
-  const [mpRes, setMpRes] = useState(null); // { items, paginacion, actualizado }
+  // Rango por fecha de publicación (igual que el buscador del portal, para
+  // poder comparar búsquedas y obtener los mismos resultados).
+  const [mpDesde, setMpDesde] = useState("");
+  const [mpHasta, setMpHasta] = useState("");
+  const [mpRes, setMpRes] = useState(null); // { items, paginacion, por_keyword, actualizado }
   const [mpBuscando, setMpBuscando] = useState(false);
   const [agregandoCodigo, setAgregandoCodigo] = useState(null);
 
@@ -143,6 +149,8 @@ export default function LicitacionesDisponibles({ embedded = false }) {
       if (mpFuente === "agil") {
         if (mpRegion) qp.set("region", mpRegion);
         if (mpEstado) qp.set("estado", mpEstado);
+        if (mpDesde) qp.set("desde", mpDesde);
+        if (mpHasta) qp.set("hasta", mpHasta);
       }
       const data = await api.get(`/licitaciones/mercado-publico/buscar?${qp.toString()}`);
       setMpRes(data);
@@ -151,6 +159,18 @@ export default function LicitacionesDisponibles({ embedded = false }) {
     } finally {
       setMpBuscando(false);
     }
+  }
+
+  // Keywords activas (separadas por coma en el campo de búsqueda).
+  const mpKeywords = mpQ.split(",").map((s) => s.trim()).filter(Boolean);
+  // Clic en una sugerencia: la agrega a la búsqueda (o la quita si ya está).
+  function toggleKeywordMP(k) {
+    const kws = [...mpKeywords];
+    const idx = kws.findIndex((x) => x.toLowerCase() === k.toLowerCase());
+    if (idx >= 0) kws.splice(idx, 1); else kws.push(k);
+    const nq = kws.join(", ");
+    setMpQ(nq);
+    buscarMP(1, nq);
   }
 
   // Copia el proceso encontrado al listado interno de Postulaciones (mismo
@@ -817,7 +837,7 @@ export default function LicitacionesDisponibles({ embedded = false }) {
             <input
               className="input"
               style={{ paddingLeft: 32 }}
-              placeholder={mpFuente === "agil" ? "Busca en nombre y descripción… (ej: insumos dentales)" : "Filtra las licitaciones activas por nombre o código…"}
+              placeholder={mpFuente === "agil" ? "Una o varias, separadas por coma… (ej: dental, resina, fresas)" : "Filtra por nombre o código; varias keywords separadas por coma…"}
               value={mpQ}
               onChange={(e) => setMpQ(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter") buscarMP(1); }}
@@ -845,6 +865,16 @@ export default function LicitacionesDisponibles({ embedded = false }) {
                 <option value="">Todos</option>
               </select>
             </div>
+            <div className="filter-field">
+              <label className="filter-label">Publicada desde</label>
+              <input type="date" className="input" value={mpDesde} max={mpHasta || undefined}
+                onChange={(e) => setMpDesde(e.target.value)} style={{ width: 150 }} />
+            </div>
+            <div className="filter-field">
+              <label className="filter-label">Publicada hasta</label>
+              <input type="date" className="input" value={mpHasta} min={mpDesde || undefined}
+                onChange={(e) => setMpHasta(e.target.value)} style={{ width: 150 }} />
+            </div>
           </>
         )}
         <button
@@ -857,27 +887,32 @@ export default function LicitacionesDisponibles({ embedded = false }) {
         </button>
       </div>
 
-      {/* Keywords sugeridas del rubro */}
+      {/* Keywords sugeridas del rubro: clic agrega/quita de la búsqueda (se
+          pueden combinar varias; cada keyword es una consulta a la API). */}
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", marginTop: 10 }}>
-        <span style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 600 }}>Sugerencias:</span>
-        {MP_KEYWORDS.map((k) => (
-          <button
-            key={k}
-            type="button"
-            onClick={() => { setMpQ(k); buscarMP(1, k); }}
-            style={{
-              fontSize: 12, fontWeight: 600, padding: "3px 11px", borderRadius: 999, cursor: "pointer",
-              border: "1px solid var(--border)", background: mpQ === k ? "var(--primary)" : "var(--surface)",
-              color: mpQ === k ? "#fff" : "var(--text-muted)",
-            }}
-          >
-            {k}
-          </button>
-        ))}
+        <span style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 600 }}>Sugerencias (clic para combinar):</span>
+        {MP_KEYWORDS.map((k) => {
+          const activa = mpKeywords.some((x) => x.toLowerCase() === k.toLowerCase());
+          return (
+            <button
+              key={k}
+              type="button"
+              onClick={() => toggleKeywordMP(k)}
+              style={{
+                fontSize: 12, fontWeight: 600, padding: "3px 11px", borderRadius: 999, cursor: "pointer",
+                border: "1px solid var(--border)", background: activa ? "var(--primary)" : "var(--surface)",
+                color: activa ? "#fff" : "var(--text-muted)",
+              }}
+            >
+              {activa ? `${k} ×` : k}
+            </button>
+          );
+        })}
       </div>
 
       <div style={{ marginTop: 8, fontSize: 12, color: "var(--text-muted)" }}>
-        Resultados en vivo de la API de Mercado Público. Para <b>ofertar</b> debes ingresar con tu clave en
+        Resultados en vivo de la API de Mercado Público. Cada palabra se busca también en su
+        singular/plural (dental y dentales), igual que el buscador del portal. Para <b>ofertar</b> debes ingresar con tu clave en
         mercadopublico.cl (la API es de solo lectura); desde aquí puedes ver la ficha, descargar el PDF y
         <b> agregar el proceso al Listado</b> para tomarlo y crear su cotización.
         {mpFuente === "licitaciones" && " Las licitaciones activas se listan con datos resumidos (la API v1 no entrega organismo ni montos en el listado); pincha el código para ver la ficha completa."}
@@ -965,6 +1000,19 @@ export default function LicitacionesDisponibles({ embedded = false }) {
               {Number(mpRes.paginacion?.total_resultados || 0).toLocaleString("es-CL")} resultado(s) ·
               página {mpRes.paginacion?.numero_pagina || 1} de {mpRes.paginacion?.total_paginas || 1}
               {mpRes.actualizado && ` · listado actualizado ${fmtFechaHora(new Date(mpRes.actualizado), true)}`}
+              {Array.isArray(mpRes.por_keyword) && mpRes.por_keyword.length > 0 && (
+                <>
+                  {" · "}
+                  {mpRes.por_keyword.map((k, i) => (
+                    <span key={k.q}>
+                      {i > 0 && " · "}
+                      <b>{k.q}</b>: {k.error
+                        ? <span style={{ color: "#b91c1c" }}>error</span>
+                        : k.total > k.traidos ? `${k.traidos} de ${Number(k.total).toLocaleString("es-CL")}` : k.total}
+                    </span>
+                  ))}
+                </>
+              )}
             </span>
             <div style={{ display: "flex", gap: 6 }}>
               <button
