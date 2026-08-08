@@ -1,11 +1,84 @@
 import { Injectable, BadRequestException, Logger } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
 
+const fetchGlobal: any = (globalThis as any).fetch;
+
 @Injectable()
 export class ChatService {
   private readonly logger = new Logger(ChatService.name);
 
   constructor(private supabase: SupabaseService) {}
+
+  // ── Puente Chat Grupal → grupo de WhatsApp ──────────────────────────────
+  // Reenvía los mensajes de la sala GENERAL a un grupo de WhatsApp usando
+  // Green API (green-api.com: se vincula un número escaneando un QR y expone
+  // API REST que SÍ envía a grupos — la API oficial de Meta no lo permite).
+  // Config en .env: WHATSAPP_GA_INSTANCE, WHATSAPP_GA_TOKEN, WHATSAPP_GROUP_ID
+  // (chatId del grupo, formato 1203...@g.us). Sin config, no hace nada.
+  whatsappConfigurado(): boolean {
+    return Boolean(
+      (process.env.WHATSAPP_GA_INSTANCE || '').trim() &&
+      (process.env.WHATSAPP_GA_TOKEN || '').trim() &&
+      (process.env.WHATSAPP_GROUP_ID || '').trim(),
+    );
+  }
+
+  async enviarWhatsApp(opts: {
+    autor?: string;
+    texto?: string;
+    tipo?: string;
+    adjunto_url?: string;
+    file_name?: string;
+  }) {
+    if (!this.whatsappConfigurado()) return { ok: false, motivo: 'no_configurado' };
+    const instancia = (process.env.WHATSAPP_GA_INSTANCE || '').trim();
+    const token = (process.env.WHATSAPP_GA_TOKEN || '').trim();
+    const grupo = (process.env.WHATSAPP_GROUP_ID || '').trim();
+    const base = (process.env.WHATSAPP_GA_URL || 'https://api.green-api.com').trim().replace(/\/$/, '');
+
+    const autor = String(opts.autor || '').trim().slice(0, 80);
+    const texto = String(opts.texto || '').trim().slice(0, 3000);
+    const tipo = String(opts.tipo || 'texto');
+    const adjunto = String(opts.adjunto_url || '').trim();
+
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 10000);
+    try {
+      let url: string;
+      let body: any;
+      if (tipo !== 'texto' && /^https?:\/\//i.test(adjunto)) {
+        // Adjuntos: se envían por URL pública (bucket chat-adjuntos) con caption.
+        url = `${base}/waInstance${instancia}/sendFileByUrl/${token}`;
+        body = {
+          chatId: grupo,
+          urlFile: adjunto,
+          fileName: String(opts.file_name || 'archivo').slice(0, 120) || 'archivo',
+          caption: autor ? `*${autor}*${texto ? `: ${texto}` : ''}` : texto,
+        };
+      } else {
+        if (!texto) return { ok: false, motivo: 'sin_texto' };
+        url = `${base}/waInstance${instancia}/sendMessage/${token}`;
+        body = { chatId: grupo, message: autor ? `*${autor}*: ${texto}` : texto };
+      }
+      const res = await fetchGlobal(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: ctrl.signal,
+      });
+      if (!res.ok) {
+        const t = await res.text().catch(() => '');
+        this.logger.warn(`WhatsApp bridge ${res.status}: ${String(t).slice(0, 200)}`);
+        return { ok: false, motivo: `http_${res.status}` };
+      }
+      return { ok: true };
+    } catch (e: any) {
+      this.logger.warn(`WhatsApp bridge error: ${e?.message || e}`);
+      return { ok: false, motivo: 'error_red' };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
 
   // Borra todos los mensajes de TODAS las salas (incluida la General).
   // Las salas y miembros se mantienen — solo limpia el historial.

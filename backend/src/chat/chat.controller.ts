@@ -7,6 +7,23 @@ import { ChatService } from './chat.service';
 export class ChatController {
   constructor(private chat: ChatService) {}
 
+  // Reenvía un mensaje de la sala General al grupo de WhatsApp configurado.
+  // Fire-and-forget desde el frontend: nunca bloquea el envío del chat.
+  @Post('whatsapp')
+  @UseGuards(AuthGuard)
+  whatsapp(
+    @Req() req: any,
+    @Body() body: { autor?: string; texto?: string; tipo?: string; adjunto_url?: string; file_name?: string },
+  ) {
+    return this.chat.enviarWhatsApp({
+      autor: body?.autor || String(req?.user?.email || ''),
+      texto: body?.texto,
+      tipo: body?.tipo,
+      adjunto_url: body?.adjunto_url,
+      file_name: body?.file_name,
+    });
+  }
+
   // Solo admin puede limpiar todas las salas.
   @Post('limpiar-todas-salas')
   @UseGuards(AdminGuard)

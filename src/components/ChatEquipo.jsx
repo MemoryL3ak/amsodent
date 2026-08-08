@@ -867,6 +867,21 @@ export default function ChatEquipo({ onLicitacionRegistrada }) {
     if (e) throw e;
     agregarMensaje(data);
     setRespondiendoA(null);
+    // Puente a WhatsApp: SOLO la sala General se reenvía al grupo (las salas
+    // privadas nunca salen de la plataforma). Fire-and-forget: si el puente
+    // no está configurado o falla, el chat sigue igual.
+    try {
+      const esGeneral = salas.find((s) => s.id === salaActivaId)?.es_general;
+      if (esGeneral) {
+        api.post("/chat/whatsapp", {
+          autor: yo.nombre || yo.email,
+          texto: fila.texto || "",
+          tipo: fila.tipo || "texto",
+          adjunto_url: fila.adjunto_url || data?.adjunto_url || "",
+          file_name: fila.adjunto_nombre || data?.adjunto_nombre || "",
+        }).catch(() => { /* puente apagado o caído: no molesta al chat */ });
+      }
+    } catch { /* */ }
     return data;
   }
 
