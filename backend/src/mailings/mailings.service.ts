@@ -3,6 +3,7 @@ import * as nodemailer from 'nodemailer';
 import * as crypto from 'crypto';
 import * as dns from 'dns';
 import { SupabaseService } from '../supabase/supabase.service';
+import { MonitorService } from '../monitor/monitor.service';
 
 const BATCH_SIZE = 500; // Gmail/Workspace permite hasta 500 destinatarios por mensaje (modo BCC)
 const DELAY_BETWEEN_BATCHES_MS = 1500;
@@ -42,7 +43,10 @@ export class MailingsService {
   private readonly logger = new Logger(MailingsService.name);
   private transporter: nodemailer.Transporter | null = null;
 
-  constructor(private supabase: SupabaseService) {}
+  constructor(
+    private supabase: SupabaseService,
+    private monitor: MonitorService,
+  ) {}
 
   private getTransporter(): nodemailer.Transporter {
     if (this.transporter) return this.transporter;
@@ -117,10 +121,23 @@ export class MailingsService {
       throw new BadRequestException('Falta el cuerpo del correo.');
     }
 
-    if (opts.conTracking) {
-      return this.sendIndividualConTracking(opts, unicos);
-    }
-    return this.sendByBatchesBCC(opts, unicos);
+    const resultado = opts.conTracking
+      ? await this.sendIndividualConTracking(opts, unicos)
+      : await this.sendByBatchesBCC(opts, unicos);
+
+    this.monitor.registrar({
+      nivel: resultado.fallidos > 0 ? 'warn' : 'info',
+      tipo: 'correo',
+      mensaje: `Mailing "${opts.asunto.trim()}": ${resultado.enviados} enviados, ${resultado.fallidos} fallidos`,
+      metadata: {
+        asunto: opts.asunto.trim(),
+        destinatarios: resultado.totalDestinatarios,
+        enviados: resultado.enviados,
+        fallidos: resultado.fallidos,
+        via: 'smtp-bulk',
+      },
+    });
+    return resultado;
   }
 
   // ── Envío rápido en BCC (sin tracking por persona) ──────────────────
@@ -339,9 +356,21 @@ export class MailingsService {
       if (e && typeof e.message === 'string' && !e.message.includes(host)) {
         e.message = `${e.message} [${host}:${port}]`;
       }
+      this.monitor.registrar({
+        nivel: 'error',
+        tipo: 'correo',
+        mensaje: `Falló envío SMTP a ${para}: ${e?.message || e}`,
+        metadata: { para, asunto: opts.asunto, via: 'smtp' },
+      });
       throw e;
     }
 
+    this.monitor.registrar({
+      nivel: 'info',
+      tipo: 'correo',
+      mensaje: `Correo enviado a ${para} · "${opts.asunto.trim()}"`,
+      metadata: { para, asunto: opts.asunto.trim(), via: 'smtp' },
+    });
     this.logger.log(`Correo transaccional enviado a ${para}: ${info?.messageId || 'ok'}`);
     return { enviado: true, messageId: info?.messageId };
   }

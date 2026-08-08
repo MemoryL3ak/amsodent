@@ -3,6 +3,9 @@ import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { AuthProvider, useAuth } from '../lib/auth';
 import { colors } from '../lib/theme';
+import { initMonitor } from '../lib/monitor';
+
+initMonitor();
 
 function RootNavigator() {
   const { session, loading } = useAuth();

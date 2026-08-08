@@ -48,6 +48,7 @@ import {
   Building2,
   Banknote,
   CalendarCheck,
+  Gauge,
 } from "lucide-react";
 import NotificacionesMenu from "./NotificacionesMenu";
 import RecordatoriosCorreo from "./RecordatoriosCorreo";
@@ -235,6 +236,7 @@ export default function SidebarLayout() {
     puede("usuarios") && { to: "/usuarios",          icon: UserCog,  label: "Usuarios" },
     puede("monitoreo_usuarios") && { to: "/monitoreo",         icon: Activity, label: "Monitoreo de Usuarios" },
     puede("monitoreo_asistencia") && { to: "/monitoreo-marcajes", icon: MapPin,   label: "Monitoreo de Asistencia" },
+    esAdmin && { to: "/monitoreo-sistema", icon: Gauge, label: "Monitoreo del Sistema" },
   ].filter(Boolean);
 
   // Ítem hoja del menú (o hijo anidado si `nested`).
