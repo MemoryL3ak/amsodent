@@ -49,6 +49,7 @@ import {
   Banknote,
   CalendarCheck,
   Gauge,
+  UserCircle2,
 } from "lucide-react";
 import NotificacionesMenu from "./NotificacionesMenu";
 import RecordatoriosCorreo from "./RecordatoriosCorreo";
@@ -219,6 +220,8 @@ export default function SidebarLayout() {
     puede("sorteo") && { to: "/sorteo-registros", icon: Gift, label: "Sorteo" },
     puede("eventos") && { to: "/evento-inscripciones", icon: CalendarCheck, label: "Evento" },
     puede("marcaje") && { to: "/marcaje", icon: Clock, label: "Marcar Asistencia" },
+    // Portal del trabajador: visible para todo el equipo (cada uno ve lo suyo).
+    { to: "/mi-ficha", icon: UserCircle2, label: "Mi Ficha" },
   ].filter(Boolean);
 
   const logisticaNav = [
@@ -233,6 +236,8 @@ export default function SidebarLayout() {
   ].filter(Boolean);
 
   const adminNav = [
+    // RR.HH.: solo admin (fichas, sueldos y evaluaciones son datos sensibles).
+    esAdmin && { to: "/recursos-humanos", icon: Users, label: "Recursos Humanos" },
     puede("usuarios") && { to: "/usuarios",          icon: UserCog,  label: "Usuarios" },
     puede("monitoreo_usuarios") && { to: "/monitoreo",         icon: Activity, label: "Monitoreo de Usuarios" },
     puede("monitoreo_asistencia") && { to: "/monitoreo-marcajes", icon: MapPin,   label: "Monitoreo de Asistencia" },
