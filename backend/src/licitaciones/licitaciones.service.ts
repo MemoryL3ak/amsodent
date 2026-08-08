@@ -329,61 +329,147 @@ export class LicitacionesService {
   };
   private mpCacheActivas: { data: any[]; ts: number } | null = null;
 
+  private static mapItemAgil(it: any) {
+    return {
+      codigo: it?.codigo || '',
+      nombre: it?.nombre || '',
+      estado: it?.estado?.glosa || it?.estado?.codigo || '',
+      estado_codigo: it?.estado?.codigo || '',
+      convocatoria: it?.convocatoria?.descripcion || '',
+      organismo: it?.institucion?.organismo_comprador || '',
+      region: it?.institucion?.nombre_region || '',
+      monto_clp: it?.montos?.monto_disponible_clp ?? null,
+      fecha_publicacion: it?.fechas?.fecha_publicacion || null,
+      fecha_cierre: it?.fechas?.fecha_cierre || null,
+      ofertas: it?.resumen?.total_ofertas_recibidas ?? null,
+    };
+  }
+
   async mercadoPublicoBuscar(params: {
     fuente?: string;
     q?: string;
     region?: string;
     estado?: string;
+    desde?: string;
+    hasta?: string;
     pagina?: string | number;
     tamano?: string | number;
   }) {
     const ticket = this.mpTicket();
     const fuente = params?.fuente === 'licitaciones' ? 'licitaciones' : 'agil';
-    const q = String(params?.q || '').trim().slice(0, 120);
+    const q = String(params?.q || '').trim().slice(0, 300);
+    // Varias keywords separadas por coma → una consulta por keyword.
+    const keywords = q.split(',').map((s) => s.trim()).filter(Boolean).slice(0, 8);
     const pagina = Math.max(1, Number(params?.pagina) || 1);
-    const tamano = Math.min(50, Math.max(5, Number(params?.tamano) || 15));
+    const tamano = Math.min(50, Math.max(10, Number(params?.tamano) || 15));
+    // Rango por fecha de publicación (YYYY-MM-DD), igual que el portal.
+    const RE_FECHA = /^\d{4}-\d{2}-\d{2}$/;
+    const pubDesde = RE_FECHA.test(String(params?.desde || '')) ? String(params!.desde) : '';
+    const pubHasta = RE_FECHA.test(String(params?.hasta || '')) ? String(params!.hasta) : '';
 
     if (fuente === 'agil') {
-      const qp = new URLSearchParams();
-      if (q) qp.set('q', q);
-      const region = Number(params?.region);
-      if (Number.isFinite(region) && region >= 1 && region <= 16) qp.set('region', String(region));
-      const estado = String(params?.estado || '').trim();
-      if (estado) qp.set('estado', estado);
-      qp.set('tamano_pagina', String(tamano));
-      qp.set('numero_pagina', String(pagina));
-      qp.set('ordenar_por', 'FechaPublicacion');
-      const { res, json } = await this.mpFetch(
-        `https://api2.mercadopublico.cl/v2/compra-agil?${qp.toString()}`,
-        { ticket },
-      );
-      if (!res.ok || json?.success !== 'OK' || !json?.payload) {
-        const err = json?.errors?.[0];
-        throw new BadRequestException(
-          `Mercado Público respondió ${err?.codigo || res.status}: ${err?.mensaje || 'error desconocido.'}`,
-        );
+      // La API v2 busca por palabra COMPLETA ("dental" NO encuentra
+      // "DENTALES"), a diferencia del buscador del portal que calza ambas.
+      // Para obtener los mismos resultados, cada keyword se consulta también
+      // con su variante singular/plural (las frases con espacios van tal cual).
+      const varianteDe = (kw: string): string | null => {
+        const k = kw.toLowerCase();
+        if (/\s/.test(k) || k.length < 3) return null;
+        if (k.endsWith('es') && !/[aeiouáéíóú]es$/.test(k)) return k.slice(0, -2); // dentales → dental
+        if (k.endsWith('s')) return k.slice(0, -1); // resinas → resina
+        if (/[aeiouáéíóú]$/.test(k)) return `${k}s`; // resina → resinas
+        return `${k}es`; // dental → dentales
+      };
+      const terminos: string[] = [];
+      for (const kw of keywords) {
+        if (!terminos.some((t) => t.toLowerCase() === kw.toLowerCase())) terminos.push(kw);
+        const v = varianteDe(kw);
+        if (v && !terminos.some((t) => t.toLowerCase() === v)) terminos.push(v);
       }
-      const pg = json.payload?.paginacion || {};
+
+      const buildQp = (kw: string, tam: number, pag: number) => {
+        const qp = new URLSearchParams();
+        if (kw) qp.set('q', kw);
+        const region = Number(params?.region);
+        if (Number.isFinite(region) && region >= 1 && region <= 16) qp.set('region', String(region));
+        const estado = String(params?.estado || '').trim();
+        if (estado) qp.set('estado', estado);
+        if (pubDesde) qp.set('publicado_desde', pubDesde);
+        if (pubHasta) qp.set('publicado_hasta', pubHasta);
+        qp.set('tamano_pagina', String(tam));
+        qp.set('numero_pagina', String(pag));
+        qp.set('ordenar_por', 'FechaPublicacion');
+        return qp;
+      };
+
+      // Un solo término (o ninguno): paginación real de la API.
+      if (terminos.length <= 1) {
+        const { res, json } = await this.mpFetch(
+          `https://api2.mercadopublico.cl/v2/compra-agil?${buildQp(terminos[0] || '', tamano, pagina).toString()}`,
+          { ticket },
+        );
+        if (!res.ok || json?.success !== 'OK' || !json?.payload) {
+          const err = json?.errors?.[0];
+          throw new BadRequestException(
+            `Mercado Público respondió ${err?.codigo || res.status}: ${err?.mensaje || 'error desconocido.'}`,
+          );
+        }
+        const pg = json.payload?.paginacion || {};
+        return {
+          fuente,
+          items: (json.payload?.items || []).map(LicitacionesService.mapItemAgil),
+          paginacion: {
+            numero_pagina: pg?.numero_pagina ?? pagina,
+            total_paginas: pg?.total_paginas ?? 1,
+            total_resultados: pg?.total_resultados ?? 0,
+          },
+        };
+      }
+
+      // Varios términos: una consulta por término EN PARALELO (máx 50 c/u, la
+      // página más grande de la API), combinadas sin duplicados y ordenadas
+      // por fecha de publicación. Cada término consume 1 consulta de la cuota.
+      const porKeyword = await Promise.all(
+        terminos.map(async (kw) => {
+          try {
+            const { res, json } = await this.mpFetch(
+              `https://api2.mercadopublico.cl/v2/compra-agil?${buildQp(kw, 50, 1).toString()}`,
+              { ticket },
+            );
+            if (!res.ok || json?.success !== 'OK' || !json?.payload) {
+              const err = json?.errors?.[0];
+              return { q: kw, total: 0, items: [] as any[], error: err?.mensaje || `HTTP ${res.status}` };
+            }
+            return {
+              q: kw,
+              total: Number(json.payload?.paginacion?.total_resultados || 0),
+              items: (json.payload?.items || []).map(LicitacionesService.mapItemAgil),
+            };
+          } catch (e: any) {
+            return { q: kw, total: 0, items: [] as any[], error: e?.message || 'error' };
+          }
+        }),
+      );
+      const vistos = new Set<string>();
+      const combinados: any[] = [];
+      for (const r of porKeyword) {
+        for (const it of r.items) {
+          if (!it.codigo || vistos.has(it.codigo)) continue;
+          vistos.add(it.codigo);
+          combinados.push(it);
+        }
+      }
+      combinados.sort((a, b) => String(b.fecha_publicacion || '').localeCompare(String(a.fecha_publicacion || '')));
       return {
         fuente,
-        items: (json.payload?.items || []).map((it: any) => ({
-          codigo: it?.codigo || '',
-          nombre: it?.nombre || '',
-          estado: it?.estado?.glosa || it?.estado?.codigo || '',
-          estado_codigo: it?.estado?.codigo || '',
-          convocatoria: it?.convocatoria?.descripcion || '',
-          organismo: it?.institucion?.organismo_comprador || '',
-          region: it?.institucion?.nombre_region || '',
-          monto_clp: it?.montos?.monto_disponible_clp ?? null,
-          fecha_publicacion: it?.fechas?.fecha_publicacion || null,
-          fecha_cierre: it?.fechas?.fecha_cierre || null,
-          ofertas: it?.resumen?.total_ofertas_recibidas ?? null,
+        items: combinados,
+        paginacion: { numero_pagina: 1, total_paginas: 1, total_resultados: combinados.length },
+        por_keyword: porKeyword.map(({ q: kw, total, items, error }) => ({
+          q: kw,
+          total,
+          traidos: items.length,
+          ...(error ? { error } : {}),
         })),
-        paginacion: {
-          numero_pagina: pg?.numero_pagina ?? pagina,
-          total_paginas: pg?.total_paginas ?? 1,
-          total_resultados: pg?.total_resultados ?? 0,
-        },
       };
     }
 
@@ -402,11 +488,14 @@ export class LicitacionesService {
     }
     const norm = (s: any) =>
       String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
-    const nq = norm(q);
-    const filtradas = nq
-      ? this.mpCacheActivas.data.filter(
-          (l: any) => norm(l?.Nombre).includes(nq) || norm(l?.CodigoExterno).includes(nq),
-        )
+    // Varias keywords: una licitación entra si calza con CUALQUIERA de ellas.
+    const nqs = keywords.map(norm).filter(Boolean);
+    const filtradas = nqs.length
+      ? this.mpCacheActivas.data.filter((l: any) => {
+          const nombre = norm(l?.Nombre);
+          const codigo = norm(l?.CodigoExterno);
+          return nqs.some((nq) => nombre.includes(nq) || codigo.includes(nq));
+        })
       : this.mpCacheActivas.data;
     const total = filtradas.length;
     const desde = (pagina - 1) * tamano;
