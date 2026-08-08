@@ -71,6 +71,7 @@ function SLABadge({ fechaOc }) {
   );
 }
 import { Upload, Eye, Trash2, ArrowUpDown, ArrowUp, ArrowDown, Calendar, FileCheck, ChevronDown, Truck, Download, Clock, CheckCircle2, Check, Pencil, X, AlertTriangle } from "lucide-react";
+import { SunflowerIcon } from "../components/DamarIAWidget";
 
 // Mapping empresa courier → builder de URL de tracking. Si la empresa no
 // tiene URL o no hay número, devuelve "" (no renderizamos el link).
@@ -426,6 +427,7 @@ export default function Trazabilidad() {
   const [facturaFecha, setFacturaFecha] = useState("");
   const [facturaMonto, setFacturaMonto] = useState(""); // monto NETO de la factura (solo dígitos)
   const [facturaFile, setFacturaFile] = useState(null);
+  const [leyendoIA, setLeyendoIA] = useState(false); // lectura del PDF con IA
   const [facturaGuiaIds, setFacturaGuiaIds] = useState([]); // factura puede asociarse a varias guías
   const [guiaEmpresa, setGuiaEmpresa] = useState("Starken");
   const [guiaSeguimiento, setGuiaSeguimiento] = useState("");
@@ -1147,6 +1149,55 @@ export default function Trazabilidad() {
     setGuiaSeguimiento("");
     setGuiaOcId("");
     if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
+  // Lee el PDF seleccionado con la IA del backend y precarga los campos del
+  // formulario (número, fecha, monto neto; en guías además courier y
+  // seguimiento). El usuario revisa y confirma antes de guardar.
+  async function leerDocumentoIA() {
+    if (!facturaFile || leyendoIA || subiendoFactura) return;
+    setLeyendoIA(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", facturaFile);
+      const res = await api.postForm("/ia/extraer-documento", formData);
+      const d = res?.datos || {};
+
+      // Si el documento es de otro tipo que el seleccionado, lo ajustamos.
+      const esGuiaDetectada = d.tipo_documento === "guia_despacho";
+      const esFacturaDetectada = ["factura", "factura_boleta", "boleta"].includes(d.tipo_documento);
+      if (esGuiaDetectada && docTipoUp !== "guia_despacho") setDocTipoUp("guia_despacho");
+      if (esFacturaDetectada && docTipoUp !== "factura") setDocTipoUp("factura");
+
+      if (d.numero) setFacturaNumero(String(d.numero));
+      if (d.fecha) setFacturaFecha(d.fecha);
+      if (esGuiaDetectada) {
+        const emp = String(d.empresa_transporte || "").toLowerCase();
+        if (emp.includes("starken")) setGuiaEmpresa("Starken");
+        else if (emp.includes("blue")) setGuiaEmpresa("Blue Express");
+        if (d.n_seguimiento) setGuiaSeguimiento(String(d.n_seguimiento));
+      } else {
+        const neto = d.monto_neto || (d.monto_total ? Math.round(d.monto_total / 1.19) : null);
+        if (neto) setFacturaMonto(String(neto));
+      }
+
+      const partes = [];
+      if (d.numero) partes.push(`N° ${d.numero}`);
+      if (d.fecha) partes.push(d.fecha.split("-").reverse().join("-"));
+      if (!esGuiaDetectada && (d.monto_neto || d.monto_total)) {
+        partes.push(`$${Number(d.monto_neto || Math.round(d.monto_total / 1.19)).toLocaleString("es-CL")} neto`);
+      }
+      setToast({
+        type: d.confianza === "baja" ? "info" : "success",
+        message: partes.length
+          ? `DamarIA leyó el documento: ${partes.join(" · ")}. Revisa y guarda.${d.confianza === "baja" ? " (A DamarIA le costó leerlo: verifica bien los datos.)" : ""}`
+          : "DamarIA no encontró datos claros en el documento; complétalos a mano.",
+      });
+    } catch (e) {
+      setToast({ type: "error", message: e?.message || "DamarIA no pudo leer el documento." });
+    } finally {
+      setLeyendoIA(false);
+    }
   }
 
   async function subirFactura() {
@@ -2315,9 +2366,21 @@ export default function Trazabilidad() {
                                     onChange={(e) => setFacturaFile(e.target.files?.[0] || null)}
                                     disabled={subiendoFactura}
                                   />
-                                  <button type="button" className="btn btn-secondary btn-sm" onClick={() => fileInputRef.current?.click()} disabled={subiendoFactura}>
+                                  <button type="button" className="btn btn-secondary btn-sm" onClick={() => fileInputRef.current?.click()} disabled={subiendoFactura || leyendoIA}>
                                     PDF
                                   </button>
+                                  {facturaFile && (
+                                    <button
+                                      type="button"
+                                      className="btn btn-secondary btn-sm"
+                                      onClick={leerDocumentoIA}
+                                      disabled={subiendoFactura || leyendoIA}
+                                      title="DamarIA lee el documento y precarga número, fecha y monto"
+                                      style={{ display: "inline-flex", alignItems: "center", gap: 4, color: "var(--primary-dark)", whiteSpace: "nowrap" }}
+                                    >
+                                      <SunflowerIcon size={13} /> {leyendoIA ? "DamarIA leyendo…" : "Pedir a DamarIA"}
+                                    </button>
+                                  )}
                                   <span style={{ fontSize: "11px", color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 100 }}>
                                     {facturaFile ? facturaFile.name : "Sin archivo"}
                                   </span>
