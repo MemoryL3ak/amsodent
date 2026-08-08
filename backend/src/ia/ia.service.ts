@@ -93,6 +93,7 @@ ESQUEMA
 - stock_productos_cliente: id, rut, nombre, unidad, stock_actual, stock_minimo, stock_alerta, es_critico, marca, precio_unitario, activo, actualizado_at. (stock declarado por cada cliente)
 - stock_declaraciones: id, rut, razon_social, fecha, total_items, total_verdes, total_amarillos, total_rojos, created_at. (snapshots de declaraciones de stock)
 - stock_solicitudes_cotizacion: id, rut, razon_social, contacto_email, estado (pendiente/respondida/cancelada), created_at. (solicitudes de cotización del portal)
+- mp_resultados: licitacion_id, codigo_mp, tipo (compra_agil/licitacion), estado_mp, estado_glosa, participamos, ganamos (true/false/null), ganador_rut, ganador_nombre, ganador_es_emt, monto_nuestro, monto_ganador, total_ofertas, organismo, fecha_cierre, consultado_at. (benchmark Mercado Público: nuestra oferta vs la GANADORA de cada proceso; montos brutos con IVA; ganamos=null → proceso aún sin decisión. Sirve para tasa de éxito, brechas de precio nuestra_oferta vs ganadora, ranking de competidores que nos ganan y análisis por organismo)
 
 NOTAS DE ESQUEMA
 - "Ventas" / "adjudicaciones": NO hay tabla de ventas; usa licitaciones con estado = 'Adjudicada' (montos en total_con_iva / total_sin_iva, fecha en fecha_adjudicada).
@@ -233,7 +234,7 @@ export class IaService {
   async consultarStream(
     pregunta: string,
     emit: (evento: any) => void,
-    opts: { historial?: { role: string; content: string }[]; usuario?: string } = {},
+    opts: { historial?: { role: string; content: string }[]; usuario?: string; contexto?: string } = {},
   ): Promise<void> {
     if (!this.configurada()) {
       emit({
@@ -260,6 +261,15 @@ export class IaService {
     const system: any[] = [...this.systemConCache];
     const ctx = this.contextoUsuario(opts.usuario);
     if (ctx) system.push({ type: 'text', text: ctx });
+    // Contexto del panel abierto (p. ej. Análisis Mercado Público): DamarIA lo
+    // usa como fuente principal y complementa con SQL solo si hace falta.
+    const ctxPanel = String(opts.contexto || '').trim();
+    if (ctxPanel) {
+      system.push({
+        type: 'text',
+        text: `CONTEXTO DEL PANEL QUE EL USUARIO ESTÁ MIRANDO (datos ya calculados y frescos; úsalos como fuente principal para responder — puedes complementarlos con SQL sobre mp_resultados u otras tablas solo si la pregunta pide un detalle que no está aquí):\n${ctxPanel}`,
+      });
+    }
     let ultimoSql = '';
     let ultimasFilas: any[] = [];
     const t0 = Date.now();
@@ -380,12 +390,16 @@ export class IaService {
     return `La API de IA respondió con error ${status}.`;
   }
 
-  private async llamarClaude(body: any): Promise<any> {
+  private async llamarClaude(body: any, timeoutMs = 120000): Promise<any> {
     if (typeof fetchGlobal !== 'function') {
       throw new BadRequestException(
         'El servidor no soporta fetch nativo (se requiere Node 18 o superior).',
       );
     }
+    // Timeout duro: las llamadas con razonamiento pueden tardar ~40 s; si algo
+    // se atasca en la red, cortamos en vez de dejar la petición colgada.
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
     let res: any;
     try {
       res = await fetchGlobal('https://api.anthropic.com/v1/messages', {
@@ -396,11 +410,19 @@ export class IaService {
           'content-type': 'application/json',
         },
         body: JSON.stringify(body),
+        signal: ctrl.signal,
       });
     } catch (e: any) {
+      if (ctrl.signal.aborted) {
+        throw new BadRequestException(
+          'DamarIA tardó demasiado en responder (más de 2 minutos); inténtalo de nuevo.',
+        );
+      }
       throw new BadRequestException(
         `No se pudo contactar la API de IA: ${e?.message || e}`,
       );
+    } finally {
+      clearTimeout(timer);
     }
     if (!res.ok) {
       const txt = await res.text().catch(() => '');
@@ -699,6 +721,220 @@ export class IaService {
       /* sugerencias inválidas — se omiten */
     }
     return [];
+  }
+
+  // ── Lector de documentos (Trazabilidad) ─────────────────────────────────
+  // Extrae los datos de un documento tributario chileno (factura, guía de
+  // despacho, OC, nota de crédito, comprobante) desde su PDF o imagen usando
+  // la visión de Claude. Devuelve un JSON con los campos para precargar el
+  // formulario; el usuario siempre confirma antes de guardar.
+  private get modelExtractor(): string {
+    return (process.env.EXTRACTOR_MODEL || 'claude-sonnet-5').trim();
+  }
+
+  async extraerDocumento(buffer: Buffer, mimeType: string): Promise<any> {
+    if (!this.configurada()) {
+      throw new BadRequestException(
+        'DamarIA no está configurada: falta la API key de Anthropic en el servidor.',
+      );
+    }
+    const mime = String(mimeType || '').toLowerCase();
+    const esPdf = mime === 'application/pdf';
+    const esImagen = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(mime);
+    if (!esPdf && !esImagen) {
+      throw new BadRequestException('DamarIA solo puede leer PDF o imágenes (JPG/PNG).');
+    }
+    if (buffer.length > 15 * 1024 * 1024) {
+      throw new BadRequestException('El archivo supera los 15 MB; DamarIA no alcanza a leerlo.');
+    }
+
+    const bloqueArchivo = esPdf
+      ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: buffer.toString('base64') } }
+      : { type: 'image', source: { type: 'base64', media_type: mime, data: buffer.toString('base64') } };
+
+    const instrucciones = `Extrae los datos de este documento tributario/comercial chileno. Responde SOLO un objeto JSON válido (sin markdown, sin explicación) con esta forma exacta:
+{
+  "tipo_documento": "factura" | "factura_boleta" | "boleta" | "orden_compra" | "guia_despacho" | "nota_credito" | "comprobante_transferencia" | "otro",
+  "numero": string | null,            // folio / N° del documento, solo el número
+  "fecha": "YYYY-MM-DD" | null,       // fecha de emisión
+  "monto_neto": number | null,        // en pesos, sin puntos ni decimales
+  "monto_iva": number | null,
+  "monto_total": number | null,
+  "rut_emisor": string | null,        // formato 12.345.678-9
+  "nombre_emisor": string | null,
+  "rut_receptor": string | null,
+  "nombre_receptor": string | null,
+  "empresa_transporte": string | null, // solo guías: Starken, Blue Express, u otro
+  "n_seguimiento": string | null,      // solo guías/etiquetas de courier
+  "confianza": "alta" | "media" | "baja" // baja si el documento es ilegible o dudoso
+}
+Reglas: las facturas chilenas detallan NETO, IVA (19%) y TOTAL — extráelos tal cual. Si solo aparece el total, calcula monto_neto = round(total / 1,19). Los montos van como enteros en CLP. Si un campo no aparece, usa null. No inventes datos.`;
+
+    // Nota: los modelos Claude 5 ya no aceptan `temperature`.
+    const resp = await this.llamarClaude({
+      model: this.modelExtractor,
+      max_tokens: 700,
+      messages: [
+        { role: 'user', content: [bloqueArchivo, { type: 'text', text: instrucciones }] },
+      ],
+    });
+
+    const texto = (resp?.content || [])
+      .filter((b: any) => b.type === 'text')
+      .map((b: any) => b.text)
+      .join('\n')
+      .trim();
+    const i = texto.indexOf('{');
+    const j = texto.lastIndexOf('}');
+    if (i < 0 || j <= i) {
+      throw new BadRequestException('DamarIA no pudo leer el documento (respuesta sin datos).');
+    }
+    let datos: any;
+    try {
+      datos = JSON.parse(texto.slice(i, j + 1));
+    } catch {
+      throw new BadRequestException('A DamarIA se le enredó la lectura; inténtalo de nuevo.');
+    }
+    // Saneo mínimo: montos a entero, fecha YYYY-MM-DD o null.
+    const num = (v: any) => {
+      const n = Math.round(Number(v));
+      return Number.isFinite(n) && n > 0 ? n : null;
+    };
+    const fecha = /^\d{4}-\d{2}-\d{2}$/.test(String(datos?.fecha || '')) ? datos.fecha : null;
+    return {
+      tipo_documento: String(datos?.tipo_documento || 'otro'),
+      numero: datos?.numero != null ? String(datos.numero).trim() : null,
+      fecha,
+      monto_neto: num(datos?.monto_neto),
+      monto_iva: num(datos?.monto_iva),
+      monto_total: num(datos?.monto_total),
+      rut_emisor: datos?.rut_emisor || null,
+      nombre_emisor: datos?.nombre_emisor || null,
+      rut_receptor: datos?.rut_receptor || null,
+      nombre_receptor: datos?.nombre_receptor || null,
+      empresa_transporte: datos?.empresa_transporte || null,
+      n_seguimiento: datos?.n_seguimiento != null ? String(datos.n_seguimiento).trim() : null,
+      confianza: ['alta', 'media', 'baja'].includes(datos?.confianza) ? datos.confianza : 'media',
+    };
+  }
+
+  // ── Voz natural de DamarIA (texto → audio) ──────────────────────────────
+  // Sintetiza la respuesta con ElevenLabs (voz neuronal femenina, muy natural)
+  // si hay ELEVENLABS_API_KEY en el .env. El frontend cae a la voz del
+  // navegador cuando esto no está configurado.
+  vozNaturalConfigurada(): boolean {
+    return Boolean((process.env.ELEVENLABS_API_KEY || '').trim());
+  }
+
+  async sintetizarVoz(texto: string): Promise<Buffer> {
+    const key = (process.env.ELEVENLABS_API_KEY || '').trim();
+    if (!key) {
+      throw new BadRequestException('La voz natural de DamarIA no está configurada (falta ELEVENLABS_API_KEY).');
+    }
+    const t = String(texto || '').trim().slice(0, 2500);
+    if (!t) throw new BadRequestException('Falta el texto a leer.');
+    // Voz por defecto: "Sarah" (femenina); cámbiala con ELEVENLABS_VOICE_ID
+    // por cualquier voz de la librería de ElevenLabs (ideal: una en español
+    // latino). El modelo multilingüe pronuncia español nativo.
+    const voiceId = (process.env.ELEVENLABS_VOICE_ID || 'EXAVITQu4vr4xnSDxMaL').trim();
+    // Flash v2.5: latencia mínima (~75 ms de modelo) y mitad de costo, con la
+    // misma voz clonada. Si se prefiere máxima calidad: ELEVENLABS_MODEL=
+    // eleven_multilingual_v2.
+    const modelo = (process.env.ELEVENLABS_MODEL || 'eleven_flash_v2_5').trim();
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 30000);
+    let res: any;
+    try {
+      res = await fetchGlobal(
+        `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}?output_format=mp3_44100_128`,
+        {
+          method: 'POST',
+          headers: { 'xi-api-key': key, 'content-type': 'application/json' },
+          body: JSON.stringify({
+            text: t,
+            model_id: modelo,
+            voice_settings: { stability: 0.45, similarity_boost: 0.8, style: 0.3 },
+          }),
+          signal: ctrl.signal,
+        },
+      );
+    } catch (e: any) {
+      throw new BadRequestException(
+        ctrl.signal.aborted ? 'La síntesis de voz tardó demasiado.' : `No se pudo contactar el servicio de voz: ${e?.message || e}`,
+      );
+    } finally {
+      clearTimeout(timer);
+    }
+    if (!res.ok) {
+      const txt = await res.text().catch(() => '');
+      this.logger.error(`ElevenLabs ${res.status}: ${String(txt).slice(0, 300)}`);
+      throw new BadRequestException(`El servicio de voz respondió ${res.status}.`);
+    }
+    return Buffer.from(await res.arrayBuffer());
+  }
+
+  // ── Recomendación estratégica de precios (Simulador · DamarIA) ──────────
+  // Recibe el resumen estadístico que calculó el simulador (curva de
+  // probabilidad, organismos, competidores, perdidas estrechas) y le pide al
+  // modelo que lo interprete y redacte una recomendación accionable con la
+  // voz de DamarIA. Los números los pone la estadística; el consejo, la IA.
+  async recomendacionPrecios(resumen: any): Promise<string> {
+    if (!this.configurada()) {
+      throw new BadRequestException(
+        'DamarIA no está configurada: falta la API key de Anthropic en el servidor.',
+      );
+    }
+    const datos = JSON.stringify(resumen ?? {});
+    if (datos.length > 20000) {
+      throw new BadRequestException('El resumen para DamarIA es demasiado grande.');
+    }
+
+    const system = `Eres DamarIA, la analista comercial senior de AMSODENT (empresa chilena de insumos dentales que vende a organismos públicos vía Mercado Público). Personalidad: segura, directa, un toque sobrada pero simpática (máximo 1 emoji, solo al cierre).
+
+Recibes un JSON con estadísticas REALES de nuestras postulaciones comparadas con las ofertas ganadoras de cada proceso. Campos clave:
+- tasa_exito_actual_pct, procesos_decididos, ganadas/perdidas.
+- perdidas_por_precio vs perdidas_no_precio (éramos más baratos e igual perdimos: inadmisibilidad, plazos, criterio del comprador).
+- descuento_necesario_pctl (p25/mediana/p75): cuánto descuento habría hecho falta en las perdidas por precio.
+- curva_probabilidad y punto_optimo_descuento_pct (calculado maximizando P(d) × (margen − d) con margen_bruto_asumido_pct).
+- casi_ganadas_brecha_menor_5pct, perdidas_mas_estrechas (con código, organismo y monto), organismos_top (con montos ganados/perdidos), competidores_top (con veces, monto y si es EMT), montos_clp, por_tipo.
+
+Redacta un ANÁLISIS ESTRATÉGICO DE PRECIOS de nivel consultor, en español chileno, con esta estructura EXACTA:
+
+DIAGNÓSTICO: 2-3 frases contundentes con las cifras que mandan. Identifica LA causa dominante: si perdidas_no_precio es una fracción relevante de las perdidas, ese es el problema #1 y el precio pasa a segundo plano; dilo sin anestesia. Contrasta la tasa actual con lo que la curva promete.
+
+ACCIONES (5 a 7 viñetas con "-", cada una con cifras exactas del JSON):
+- Cuánto descuento aplicar como política general y por qué ese punto (usa punto_optimo y la forma de la curva: dónde está el salto grande y dónde se aplana — señala si seguir bajando ya no paga).
+- Qué dice la mediana/p25 del descuento necesario: ¿las perdidas por precio se ganaban con un ajuste chico o son causas perdidas?
+- Organismos concretos: dónde estirar el descuento (brecha alta y monto perdido grande) y dónde NO tocar el margen (ya ganamos o la brecha es mínima). Nombra organismos y montos.
+- Competidores: quién nos pega más y cuánta plata se ha llevado; si es EMT explica la implicancia (en Compra Ágil las EMT tienen preferencia — competir con ellas por precio es cuesta arriba).
+- Las casi-ganadas: cuántas y qué ajuste puntual las ganaba; menciona 1-2 códigos de ejemplo.
+- Si perdidas_no_precio pesa: acción concreta NO tarifaria (revisar admisibilidad, documentos, plazos de entrega, ficha del proveedor) con la cifra de cuántas perdidas y cuánta plata representa.
+
+CIERRE: 1 línea con tu sello.
+
+Reglas duras: usa SOLO números del JSON, exactos (formatea montos como $12.345.678). Jamás inventes cifras, organismos ni competidores. Si procesos_decididos < 10, di honestamente que la muestra es chica y modera la contundencia. Nada de encabezados "#" ni markdown salvo las viñetas "-" y las palabras DIAGNÓSTICO/ACCIONES/CIERRE en su línea. TERMINA SIEMPRE el texto completo; nunca lo dejes a medias.`;
+
+    // max_tokens holgado: los Claude 5 razonan internamente antes de escribir
+    // (thinking adaptativo) y ese razonamiento consume parte del presupuesto;
+    // con poco margen la respuesta sale cortada. Tarda ~40 s.
+    const t0 = Date.now();
+    this.logger.log('recomendacionPrecios: analizando…');
+    const resp = await this.llamarClaude({
+      model: (process.env.DAMARIA_ANALISIS_MODEL || 'claude-sonnet-5').trim(),
+      max_tokens: 4000,
+      system,
+      messages: [{ role: 'user', content: `Estadísticas del simulador:\n${datos}` }],
+    });
+    this.logger.log(`recomendacionPrecios listo · ${Date.now() - t0}ms`);
+    const texto = (resp?.content || [])
+      .filter((b: any) => b.type === 'text')
+      .map((b: any) => b.text)
+      .join('\n')
+      .trim();
+    if (!texto) {
+      throw new BadRequestException('DamarIA no logró redactar la recomendación; inténtalo de nuevo.');
+    }
+    return texto;
   }
 
   // Bloque de contexto dinámico: nombre del usuario + fecha/hora en Chile.

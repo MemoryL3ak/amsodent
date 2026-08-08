@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import { api } from "../lib/api";
 import Toast from "../components/Toast";
+import { SunflowerIcon } from "../components/DamarIAWidget";
 
 /* ============================================================
    Análisis Mercado Público — nuestras postulaciones vs la oferta
@@ -251,6 +252,41 @@ export default function AnalisisMercadoPublico() {
 
   const sinConfig = estadoApi && !estadoApi.ticket_configurado;
 
+  // Abre el chat de DamarIA con todo el contexto del panel cargado y le pide
+  // de entrada un análisis completo (responde en texto y, con el parlante
+  // activado, también con su voz).
+  function preguntarleADamaria() {
+    const decididas = filas.filter((f) => f.clase === "ganada" || f.clase === "perdida");
+    const contexto = {
+      panel: "Análisis Mercado Público (postulaciones vs oferta ganadora, montos brutos con IVA)",
+      kpis: {
+        procesos_analizados: stats.total,
+        ganadas: stats.ganadas,
+        perdidas: stats.perdidas,
+        en_curso: stats.enCurso,
+        tasa_exito_pct: stats.tasa != null ? Math.round(stats.tasa) : null,
+        monto_ganado_clp: stats.montoGanado,
+        oportunidad_perdida_clp: stats.oportunidadPerdida,
+        brecha_promedio_al_perder_pct: stats.brechaProm != null ? Number(stats.brechaProm.toFixed(1)) : null,
+        perdidas_por_menos_de_5pct: stats.casiGanadas,
+      },
+      competidores_que_nos_ganan: competidores.map((c) => ({ nombre: c.nombre, veces: c.veces, monto_clp: c.monto, es_emt: !!c.es_emt })),
+      perdidas_mas_estrechas: perdidasEstrechas.map((f) => ({
+        codigo: f.codigo_mp, organismo: f.organismo || null, brecha_pct: Number(f.brecha.toFixed(1)),
+        nuestra_oferta_clp: Number(f.monto_nuestro) || null, oferta_ganadora_clp: Number(f.monto_ganador) || null,
+      })),
+      evolucion_mensual: tendencia.map((m) => ({ mes: m.key, ganadas: m.ganadas, perdidas: m.perdidas, otras: m.otras })),
+      perdidas_sin_explicacion_por_precio: decididas.filter((f) => f.clase === "perdida" && Number(f.monto_nuestro) > 0 && Number(f.monto_nuestro) <= Number(f.monto_ganador)).length,
+    };
+    window.dispatchEvent(new CustomEvent("damaria:abrir", {
+      detail: {
+        nombre: "Análisis Mercado Público",
+        contexto: JSON.stringify(contexto),
+        pregunta: "Dame un análisis completo de cómo nos está yendo en Mercado Público: dónde estamos ganando y perdiendo, contra quién, y qué deberíamos hacer.",
+      },
+    }));
+  }
+
   return (
     <div className="page">
       {toast && <Toast type={toast.type} message={toast.message} onClose={() => setToast(null)} />}
@@ -279,6 +315,11 @@ export default function AnalisisMercadoPublico() {
                 onChange={(e) => setSyncHasta(e.target.value)} title="Hasta (vacío = hoy)" />
             </div>
           </div>
+          <button className="btn btn-secondary" onClick={preguntarleADamaria} disabled={loading || filas.length === 0}
+            title="Abre a DamarIA con todos los datos de este panel cargados: pídele el análisis por texto o voz"
+            style={{ display: "inline-flex", alignItems: "center", gap: 7, height: 38 }}>
+            <SunflowerIcon size={15} /> Pregúntale a DamarIA
+          </button>
           <button className="btn btn-primary" onClick={sincronizar} disabled={sincronizando || sinConfig}
             style={{ display: "inline-flex", alignItems: "center", gap: 7, height: 38, minWidth: 250, justifyContent: "center" }}>
             <RefreshCw size={14} className={sincronizando ? "girando" : undefined} />
@@ -378,6 +419,9 @@ export default function AnalisisMercadoPublico() {
           )}
         </Panel>
       </div>
+
+      {/* ── Simulador de precio ── */}
+      <SimuladorPrecio filas={filas} />
 
       {/* ── Filtros ── */}
       <div className="filter-bar">
@@ -818,6 +862,307 @@ function DonaResultados({ filas, porMonto }) {
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+/* ── Simulador de precio: probabilidad de ganar según descuento ──────────
+   Modelo empírico sobre los procesos DECIDIDOS sincronizados: para cada
+   perdida se calcula el descuento que habría hecho nuestra oferta más barata
+   que la ganadora (d = 1 − ganador/nuestro). La curva P(d) = fracción de
+   procesos que habríamos ganado aplicando un descuento d parejo. El "punto
+   óptimo" maximiza el valor esperado P(d) × (1 − d): más allá de él, cada
+   punto de descuento extra cuesta más margen del que aporta en victorias. */
+function SimuladorPrecio({ filas }) {
+  const [tipo, setTipo] = useState("");
+  const [organismo, setOrganismo] = useState("");
+  const [descuento, setDescuento] = useState(5);
+  // Margen bruto de referencia: el punto óptimo maximiza la utilidad esperada
+  // P(d) × (margen − d); sin él, la curva empuja siempre al descuento máximo.
+  const [margen, setMargen] = useState(30);
+  // Recomendación generada por DamarIA (modelo generativo) sobre la curva.
+  const [recom, setRecom] = useState("");
+  const [cargandoRecom, setCargandoRecom] = useState(false);
+  const [errorRecom, setErrorRecom] = useState("");
+
+  // Si cambian los filtros o el margen, la recomendación anterior ya no aplica.
+  useEffect(() => { setRecom(""); setErrorRecom(""); }, [tipo, organismo, margen]);
+
+  const organismos = useMemo(() => {
+    const cnt = new Map();
+    for (const f of filas) {
+      if (f.clase !== "ganada" && f.clase !== "perdida") continue;
+      const o = (f.organismo || "").trim();
+      if (o) cnt.set(o, (cnt.get(o) || 0) + 1);
+    }
+    return [...cnt.entries()].sort((a, b) => b[1] - a[1]).slice(0, 40);
+  }, [filas]);
+
+  const sim = useMemo(() => {
+    const base = filas.filter((f) => {
+      if (f.clase !== "ganada" && f.clase !== "perdida") return false;
+      if (tipo && f.tipo !== tipo) return false;
+      if (organismo && (f.organismo || "").trim() !== organismo) return false;
+      const n = Number(f.monto_nuestro), w = Number(f.monto_ganador);
+      return Number.isFinite(n) && n > 0 && Number.isFinite(w) && w > 0;
+    });
+    // Perdidas donde éramos más baratos igual: el precio no las explica
+    // (inadmisibilidad u otro criterio del comprador) — nunca se "ganan"
+    // bajando el precio en este modelo.
+    const inmunes = base.filter((f) => f.clase === "perdida" && Number(f.monto_nuestro) <= Number(f.monto_ganador)).length;
+    const puntos = [];
+    for (let d = 0; d <= 25; d++) {
+      const frac = d / 100;
+      const ganariamos = base.filter((f) => {
+        if (f.clase === "ganada") return true;
+        const dNec = 1 - Number(f.monto_ganador) / Number(f.monto_nuestro);
+        return dNec > 0 && frac >= dNec - 1e-9;
+      }).length;
+      puntos.push({ d, ganariamos, prob: base.length ? ganariamos / base.length : 0 });
+    }
+    // Punto óptimo: maximiza la utilidad esperada P(d) × (margen − d), solo
+    // dentro de descuentos que dejan margen positivo.
+    let mejor = puntos[0];
+    for (const p of puntos) {
+      if (p.d >= margen) break;
+      if (p.prob * (margen - p.d) > mejor.prob * (margen - mejor.d) + 1e-9) mejor = p;
+    }
+    return { base, puntos, mejor, inmunes };
+  }, [filas, tipo, organismo, margen]);
+
+  const actual = sim.puntos[descuento] || sim.puntos[0];
+  const sinDatos = sim.base.length < 5;
+
+  // Arma un resumen compacto con los números YA calculados y se lo pasa a
+  // DamarIA para que redacte la recomendación estratégica (la aritmética la
+  // pone la estadística; la interpretación, la IA).
+  async function pedirRecomendacion() {
+    if (cargandoRecom || sinDatos) return;
+    setCargandoRecom(true);
+    setErrorRecom("");
+    try {
+      const ganadas = sim.base.filter((f) => f.clase === "ganada");
+      const perdidas = sim.base.filter((f) => f.clase === "perdida");
+      // Descuento que habría hecho falta en cada perdida "por precio".
+      const dNecesarios = perdidas
+        .map((f) => (1 - Number(f.monto_ganador) / Number(f.monto_nuestro)) * 100)
+        .filter((d) => d > 0)
+        .sort((a, b) => a - b);
+      const pctl = (p) => (dNecesarios.length ? Number(dNecesarios[Math.min(dNecesarios.length - 1, Math.floor((p / 100) * dNecesarios.length))].toFixed(1)) : null);
+
+      const porOrg = new Map();
+      for (const f of sim.base) {
+        const o = (f.organismo || "").trim() || "(sin organismo)";
+        const e = porOrg.get(o) || { organismo: o, ganadas: 0, perdidas: 0, brechas: [], monto_perdido: 0, monto_ganado: 0 };
+        if (f.clase === "ganada") {
+          e.ganadas += 1;
+          e.monto_ganado += Number(f.monto_nuestro) || 0;
+        } else {
+          e.perdidas += 1;
+          e.monto_perdido += Number(f.monto_ganador) || 0;
+          if (Number.isFinite(f.brecha) && f.brecha > 0) e.brechas.push(f.brecha);
+        }
+        porOrg.set(o, e);
+      }
+      const compet = new Map();
+      for (const f of perdidas) {
+        if (!f.ganador_nombre) continue;
+        const e = compet.get(f.ganador_nombre) || { nombre: f.ganador_nombre, veces: 0, monto: 0, es_emt: !!f.ganador_es_emt };
+        e.veces += 1;
+        e.monto += Number(f.monto_ganador) || 0;
+        compet.set(f.ganador_nombre, e);
+      }
+      const porTipo = {};
+      for (const t of ["compra_agil", "licitacion"]) {
+        const del = sim.base.filter((f) => f.tipo === t);
+        if (del.length) porTipo[t] = { decididos: del.length, ganadas: del.filter((f) => f.clase === "ganada").length };
+      }
+
+      const resumen = {
+        filtro: { tipo: tipo || "todos", organismo: organismo || "todos" },
+        margen_bruto_asumido_pct: margen,
+        procesos_decididos: sim.base.length,
+        ganadas: ganadas.length,
+        perdidas: perdidas.length,
+        tasa_exito_actual_pct: Math.round((ganadas.length / sim.base.length) * 100),
+        // Causa de las perdidas: cuántas se explican por precio y cuántas no.
+        perdidas_por_precio: dNecesarios.length,
+        perdidas_no_precio: sim.inmunes,
+        casi_ganadas_brecha_menor_5pct: dNecesarios.filter((d) => d <= 5).length,
+        // Qué descuento habría hecho falta (distribución de las perdidas por precio).
+        descuento_necesario_pctl: { p25: pctl(25), mediana: pctl(50), p75: pctl(75) },
+        montos_clp: {
+          ganado_total: ganadas.reduce((s, f) => s + (Number(f.monto_nuestro) || 0), 0),
+          perdido_total_se_lo_llevo_competencia: perdidas.reduce((s, f) => s + (Number(f.monto_ganador) || 0), 0),
+        },
+        por_tipo: porTipo,
+        curva_probabilidad: sim.puntos
+          .filter((p) => p.d % 2 === 0)
+          .map((p) => ({ descuento_pct: p.d, prob_ganar_pct: Math.round(p.prob * 100), procesos_que_ganariamos: p.ganariamos })),
+        punto_optimo_descuento_pct: sim.mejor.d,
+        perdidas_mas_estrechas: perdidas
+          .filter((f) => Number.isFinite(f.brecha) && f.brecha > 0)
+          .sort((a, b) => a.brecha - b.brecha)
+          .slice(0, 8)
+          .map((f) => ({
+            codigo: f.codigo_mp,
+            organismo: f.organismo || null,
+            brecha_pct: Number(f.brecha.toFixed(1)),
+            monto_ganador_clp: Number(f.monto_ganador) || null,
+          })),
+        organismos_top: [...porOrg.values()]
+          .sort((a, b) => b.ganadas + b.perdidas - (a.ganadas + a.perdidas))
+          .slice(0, 10)
+          .map((e) => ({
+            organismo: e.organismo,
+            ganadas: e.ganadas,
+            perdidas: e.perdidas,
+            brecha_prom_al_perder_pct: e.brechas.length
+              ? Number((e.brechas.reduce((s, b) => s + b, 0) / e.brechas.length).toFixed(1))
+              : null,
+            monto_ganado_clp: e.monto_ganado,
+            monto_perdido_clp: e.monto_perdido,
+          })),
+        competidores_top: [...compet.values()]
+          .sort((a, b) => b.veces - a.veces || b.monto - a.monto)
+          .slice(0, 8)
+          .map((c) => ({ nombre: c.nombre, veces: c.veces, monto_clp: c.monto, es_emt: c.es_emt })),
+      };
+      const res = await api.post("/ia/recomendacion-precios", { resumen });
+      setRecom(String(res?.recomendacion || ""));
+    } catch (e) {
+      setErrorRecom(e?.message || "DamarIA no pudo generar la recomendación.");
+    } finally {
+      setCargandoRecom(false);
+    }
+  }
+
+  // Curva SVG: x = descuento 0–25%, y = probabilidad 0–100%.
+  const W = 340, H = 150, PX = 34, PY = 14;
+  const x = (d) => PX + (d / 25) * (W - PX - 10);
+  const y = (p) => H - PY - p * (H - 2 * PY - 8);
+  const linea = sim.puntos.map((p) => `${x(p.d).toFixed(1)},${y(p.prob).toFixed(1)}`).join(" ");
+
+  return (
+    <div style={{ border: "1px solid var(--border)", borderRadius: 12, background: "var(--surface)", padding: "14px 16px", marginBottom: 16 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+        <div>
+          <div style={{ fontSize: 13.5, fontWeight: 700, display: "flex", alignItems: "center", gap: 7 }}>
+            <SunflowerIcon size={16} /> Simulador de precio · DamarIA
+          </div>
+          <div style={{ fontSize: 11.5, color: "var(--text-muted)" }}>
+            DamarIA estima la probabilidad de ganar según el descuento, con {sim.base.length} proceso{sim.base.length === 1 ? "" : "s"} decidido{sim.base.length === 1 ? "" : "s"} del período sincronizado
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <select className="input" style={{ height: 34, fontSize: 12.5 }} value={tipo} onChange={(e) => setTipo(e.target.value)}>
+            <option value="">Ambos tipos</option>
+            <option value="compra_agil">Compra Ágil</option>
+            <option value="licitacion">Licitación</option>
+          </select>
+          <select className="input" style={{ height: 34, fontSize: 12.5, maxWidth: 260 }} value={organismo} onChange={(e) => setOrganismo(e.target.value)}>
+            <option value="">Todos los organismos</option>
+            {organismos.map(([o, n]) => <option key={o} value={o}>{o.length > 40 ? `${o.slice(0, 40)}…` : o} ({n})</option>)}
+          </select>
+          <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600, color: "var(--text-muted)" }}
+            title="Margen bruto promedio de tus productos: define hasta dónde tiene sentido descontar">
+            Margen bruto
+            <input type="number" className="input" min={5} max={80} step={1} value={margen}
+              onChange={(e) => setMargen(Math.max(5, Math.min(80, Number(e.target.value) || 0)))}
+              style={{ height: 34, width: 64, fontSize: 12.5 }} />
+            %
+          </label>
+        </div>
+      </div>
+
+      {sinDatos ? (
+        <Vacio texto="DamarIA necesita al menos 5 procesos decididos con montos para simular. Sincroniza más período o quita filtros." />
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(260px, 1fr) minmax(300px, 1.2fr)", gap: 18, alignItems: "center" }}>
+          <div>
+            <label style={{ fontSize: 12, fontWeight: 700, display: "block", marginBottom: 4 }}>
+              Descuento sobre nuestros precios: <span style={{ color: "var(--primary-dark)" }}>−{descuento}%</span>
+            </label>
+            <input type="range" min={0} max={25} step={1} value={descuento}
+              onChange={(e) => setDescuento(Number(e.target.value))} style={{ width: "100%" }} />
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 12 }}>
+              <div style={{ background: "var(--bg)", borderRadius: 10, padding: "9px 12px" }}>
+                <div style={{ fontSize: 11, color: "var(--text-muted)", fontWeight: 600 }}>Probabilidad de ganar</div>
+                <div style={{ fontSize: 20, fontWeight: 800, color: actual.prob >= 0.5 ? "#15803d" : "#b45309" }}>
+                  {(actual.prob * 100).toFixed(0)}%
+                </div>
+                <div style={{ fontSize: 10.5, color: "var(--text-muted)" }}>{actual.ganariamos} de {sim.base.length} procesos</div>
+              </div>
+              <div style={{ background: "var(--bg)", borderRadius: 10, padding: "9px 12px" }}>
+                <div style={{ fontSize: 11, color: "var(--text-muted)", fontWeight: 600 }}>Punto óptimo</div>
+                <div style={{ fontSize: 20, fontWeight: 800, color: "var(--primary-dark)" }}>−{sim.mejor.d}%</div>
+                <div style={{ fontSize: 10.5, color: "var(--text-muted)" }}>
+                  maximiza la utilidad esperada con margen {margen}% ({(sim.mejor.prob * 100).toFixed(0)}% de éxito)
+                </div>
+              </div>
+            </div>
+            {sim.inmunes > 0 && (
+              <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 8, lineHeight: 1.45 }}>
+                <AlertTriangle size={11} style={{ verticalAlign: -1, color: "#b45309" }} /> {sim.inmunes} perdida{sim.inmunes === 1 ? "" : "s"} no se explica{sim.inmunes === 1 ? "" : "n"} por precio
+                (éramos más baratos e igual perdimos: inadmisibilidad u otro criterio) — ningún descuento las gana.
+              </div>
+            )}
+          </div>
+
+          <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto" }}>
+            {[0, 0.25, 0.5, 0.75, 1].map((p) => (
+              <g key={p}>
+                <line x1={PX} y1={y(p)} x2={W - 10} y2={y(p)} stroke="var(--border)" strokeWidth="1" strokeDasharray={p === 0 ? "" : "3 4"} />
+                <text x={PX - 5} y={y(p) + 3} textAnchor="end" style={{ fontSize: 8.5, fill: "var(--text-muted)" }}>{(p * 100).toFixed(0)}%</text>
+              </g>
+            ))}
+            {[0, 5, 10, 15, 20, 25].map((d) => (
+              <text key={d} x={x(d)} y={H - 1} textAnchor="middle" style={{ fontSize: 8.5, fill: "var(--text-muted)" }}>−{d}%</text>
+            ))}
+            <polygon points={`${x(0)},${y(0)} ${linea} ${x(25)},${y(0)}`} fill="var(--primary)" opacity="0.12" />
+            <polyline points={linea} fill="none" stroke="var(--primary)" strokeWidth="2.2" strokeLinejoin="round" />
+            {/* Punto óptimo */}
+            <line x1={x(sim.mejor.d)} y1={y(0)} x2={x(sim.mejor.d)} y2={y(sim.mejor.prob)} stroke="#15803d" strokeWidth="1" strokeDasharray="3 3" />
+            <circle cx={x(sim.mejor.d)} cy={y(sim.mejor.prob)} r="4" fill="#15803d" />
+            {/* Descuento seleccionado */}
+            <circle cx={x(actual.d)} cy={y(actual.prob)} r="5" fill="var(--surface)" stroke="var(--primary-dark)" strokeWidth="2.5" />
+          </svg>
+        </div>
+      )}
+
+      {!sinDatos && (
+        <div style={{ marginTop: 14, borderTop: "1px dashed var(--border)", paddingTop: 12 }}>
+          {!recom && (
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={pedirRecomendacion}
+              disabled={cargandoRecom}
+              style={{ display: "inline-flex", alignItems: "center", gap: 7, fontSize: 12.5 }}
+            >
+              <SunflowerIcon size={15} />
+              {cargandoRecom ? "DamarIA está analizando a fondo (tarda ±1 minuto)…" : "Pedir recomendación a DamarIA"}
+            </button>
+          )}
+          {errorRecom && (
+            <div style={{ marginTop: 8, fontSize: 12.5, color: "#b91c1c" }}>{errorRecom}</div>
+          )}
+          {recom && (
+            <div style={{ background: "var(--bg)", borderRadius: 10, padding: "12px 14px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                <div style={{ fontSize: 12.5, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 6 }}>
+                  <SunflowerIcon size={14} /> Recomendación de DamarIA
+                </div>
+                <button type="button" className="btn btn-ghost" onClick={pedirRecomendacion} disabled={cargandoRecom}
+                  style={{ fontSize: 11.5, padding: "3px 10px" }}>
+                  {cargandoRecom ? "Analizando…" : "Actualizar"}
+                </button>
+              </div>
+              <div style={{ fontSize: 13, lineHeight: 1.65, whiteSpace: "pre-wrap" }}>{recom}</div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

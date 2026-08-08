@@ -14,6 +14,9 @@ import {
   RotateCcw,
   Download,
   Sparkles,
+  Mic,
+  Volume2,
+  VolumeX,
 } from "lucide-react";
 import { api } from "../lib/api";
 import { supabase } from "../lib/supabase";
@@ -93,6 +96,7 @@ async function consultarStream(pregunta, onEvento, opts = {}) {
       pregunta,
       historial: Array.isArray(opts.historial) ? opts.historial : [],
       usuario: opts.usuario || "",
+      contexto: opts.contexto || "",
     }),
   });
   if (!res.ok) {
@@ -125,6 +129,153 @@ async function consultarStream(pregunta, onEvento, opts = {}) {
         /* ignorar líneas mal formadas */
       }
     }
+  }
+}
+
+/* ── Voz: dictado (Web Speech API) y lectura en voz alta (speechSynthesis) ──
+   Todo corre en el navegador (Chrome/Edge), sin servicios ni costos extra.
+   El dictado usa es-CL; la lectura elige la mejor voz femenina en español
+   disponible (en Edge suele existir "Francisca (es-CL)", ideal). */
+
+const SpeechRec =
+  typeof window !== "undefined"
+    ? window.SpeechRecognition || window.webkitSpeechRecognition
+    : null;
+const soportaDictado = Boolean(SpeechRec);
+const soportaVoz = typeof window !== "undefined" && "speechSynthesis" in window;
+
+// Limpia el texto para leerlo: fuera markdown, viñetas, etiquetas y emojis.
+function limpiarParaVoz(t) {
+  return String(t || "")
+    .replace(/##[^#\n]*##/g, " ")
+    .replace(/\*\*/g, "")
+    .replace(/^\s*[-*•]\s+/gm, "")
+    .replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE0F}]/gu, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// Puntúa las voces instaladas para quedarse con la más "Damarita" posible:
+// español (ideal es-CL "Francisca" de Edge), femenina y natural.
+function elegirVozDamaria() {
+  const voces = window.speechSynthesis?.getVoices?.() || [];
+  const puntaje = (v) => {
+    const n = (v.name || "").toLowerCase();
+    const l = (v.lang || "").toLowerCase().replace("_", "-");
+    if (!l.startsWith("es")) return -1;
+    let s = 10;
+    if (l === "es-cl") s += 60;
+    if (n.includes("francisca")) s += 100;
+    if (/natural|neural|online/.test(n)) s += 25;
+    if (/(sabina|helena|paloma|laura|m[oó]nica|luc[ií]a|dalia|camila|elvira|ximena|catalina|isidora)/.test(n)) s += 20;
+    if (l === "es-mx" || l === "es-419" || l === "es-us") s += 8;
+    return s;
+  };
+  return (
+    voces
+      .filter((v) => puntaje(v) >= 0)
+      .sort((a, b) => puntaje(b) - puntaje(a))[0] || null
+  );
+}
+
+// Audio en reproducción (voz natural del backend). `vozGen` invalida las
+// colas pendientes cuando el usuario detiene o llega otra respuesta.
+let audioDamaria = null;
+let vozGen = 0;
+function detenerVozDamaria() {
+  vozGen += 1;
+  try {
+    if (audioDamaria) {
+      audioDamaria.pause();
+      if (audioDamaria.src?.startsWith("blob:")) URL.revokeObjectURL(audioDamaria.src);
+      audioDamaria = null;
+    }
+  } catch { /* */ }
+  if (soportaVoz) window.speechSynthesis.cancel();
+}
+
+// ¿El backend tiene voz natural (ElevenLabs)? Se consulta una vez por sesión.
+let vozNaturalDisponible = null;
+
+// Parte el texto en un primer trozo corto (arranca a hablar al tiro) y el
+// resto (se sintetiza en paralelo y se encadena sin pausa).
+function partirParaVoz(t) {
+  if (t.length <= 220) return [t];
+  const resto = t.slice(60, 300);
+  const m = resto.match(/[.!?…:]\s/);
+  const corte = m ? 60 + m.index + 1 : 220;
+  return [t.slice(0, corte).trim(), t.slice(corte).trim()].filter(Boolean);
+}
+
+async function pedirAudioDamaria(texto, token) {
+  const res = await fetch(`${API_URL}/ia/voz`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ texto }),
+  });
+  if (!res.ok) {
+    let msg = `HTTP ${res.status}`;
+    try { msg = (await res.json())?.message || msg; } catch { /* */ }
+    const err = new Error(msg);
+    err.noConfigurada = /no está configurada/i.test(msg);
+    throw err;
+  }
+  return URL.createObjectURL(await res.blob());
+}
+
+function reproducirDamaria(url, gen) {
+  return new Promise((fin) => {
+    if (gen !== vozGen) { URL.revokeObjectURL(url); fin(); return; }
+    const a = new Audio(url);
+    audioDamaria = a;
+    a.onended = () => { URL.revokeObjectURL(url); fin(); };
+    a.onerror = () => { URL.revokeObjectURL(url); fin(); };
+    a.play().catch(() => { URL.revokeObjectURL(url); fin(); });
+  });
+}
+
+async function hablarDamaria(texto) {
+  const t = limpiarParaVoz(texto);
+  if (!t) return;
+  detenerVozDamaria();
+  const gen = vozGen;
+
+  // 1) Voz natural (neuronal) del backend: el primer trozo es corto para que
+  //    empiece a hablar de inmediato; el resto se sintetiza mientras habla.
+  if (vozNaturalDisponible !== false) {
+    try {
+      const { data } = await supabase.auth.getSession();
+      const token = data?.session?.access_token || "";
+      const pedidos = partirParaVoz(t).map((x) => pedirAudioDamaria(x, token));
+      for (const pedido of pedidos) {
+        const url = await pedido;
+        vozNaturalDisponible = true;
+        if (gen !== vozGen) { URL.revokeObjectURL(url); return; }
+        await reproducirDamaria(url, gen);
+      }
+      return;
+    } catch (e) {
+      if (e?.noConfigurada) vozNaturalDisponible = false;
+      if (gen !== vozGen) return;
+      /* otros errores: caemos a la voz del navegador esta vez */
+    }
+  }
+
+  // 2) Respaldo: la mejor voz del navegador.
+  if (!soportaVoz) return;
+  try {
+    const u = new SpeechSynthesisUtterance(t);
+    const voz = elegirVozDamaria();
+    if (voz) u.voice = voz;
+    u.lang = voz?.lang || "es-CL";
+    u.rate = 1.04;
+    u.pitch = 1.05;
+    window.speechSynthesis.speak(u);
+  } catch {
+    /* sin voz disponible */
   }
 }
 
@@ -196,7 +347,8 @@ function inlineMd(texto) {
 // Ícono de girasol — marca visual de DamarIA. 8 pétalos elípticos alrededor
 // de un centro café (semillas). Acepta tamaño y colores para usarse tanto
 // sobre fondos claros como sobre el gradiente amarillo del header/FAB.
-function SunflowerIcon({
+// Exportado: todo botón "DamarIA" de la plataforma debe usar este dibujo.
+export function SunflowerIcon({
   size = 20,
   petalColor = AMARILLO,
   centerColor = CAFE_CENTRO,
@@ -543,6 +695,101 @@ export default function DamarIAWidget() {
   const [pregunta, setPregunta] = useState("");
   const [cargando, setCargando] = useState(false);
   const listaRef = useRef(null);
+  // Voz: lectura en voz alta (persistida) + dictado por micrófono.
+  const [vozActiva, setVozActiva] = useState(() => {
+    try { return localStorage.getItem("damaria_voz") === "1"; } catch { return false; }
+  });
+  const vozRef = useRef(vozActiva);
+  const [escuchando, setEscuchando] = useState(false);
+  const [avisoVoz, setAvisoVoz] = useState("");
+  const recRef = useRef(null);
+  // Contexto de panel (p. ej. Análisis Mercado Público): queda pegado a la
+  // conversación hasta que se inicie una nueva.
+  const contextoRef = useRef("");
+  const [contextoNombre, setContextoNombre] = useState("");
+
+  function toggleVoz() {
+    setVozActiva((v) => {
+      const nuevo = !v;
+      vozRef.current = nuevo;
+      try { localStorage.setItem("damaria_voz", nuevo ? "1" : "0"); } catch { /* */ }
+      if (!nuevo) detenerVozDamaria();
+      return nuevo;
+    });
+  }
+
+  // Dictado: al terminar de hablar, la pregunta se envía sola.
+  function toggleDictado() {
+    if (escuchando) {
+      recRef.current?.stop();
+      return;
+    }
+    if (!soportaDictado) {
+      setAvisoVoz("Tu navegador no soporta dictado; usa Chrome o Edge.");
+      setTimeout(() => setAvisoVoz(""), 4000);
+      return;
+    }
+    detenerVozDamaria();
+    const rec = new SpeechRec();
+    rec.lang = "es-CL";
+    rec.interimResults = true;
+    rec.continuous = false;
+    let finalTxt = "";
+    rec.onresult = (e) => {
+      let interino = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const t = e.results[i][0]?.transcript || "";
+        if (e.results[i].isFinal) finalTxt += t;
+        else interino += t;
+      }
+      setPregunta((finalTxt + interino).trim());
+    };
+    rec.onend = () => {
+      setEscuchando(false);
+      recRef.current = null;
+      const p = finalTxt.trim();
+      if (p) enviar(p); // manos libres: dictar = preguntar
+    };
+    rec.onerror = (e) => {
+      setEscuchando(false);
+      recRef.current = null;
+      if (e?.error === "not-allowed") {
+        setAvisoVoz("Permite el acceso al micrófono para dictarle a DamarIA.");
+        setTimeout(() => setAvisoVoz(""), 4000);
+      }
+    };
+    recRef.current = rec;
+    setEscuchando(true);
+    try { rec.start(); } catch { setEscuchando(false); }
+  }
+
+  // Apertura desde otros módulos: window.dispatchEvent(new CustomEvent(
+  // "damaria:abrir", { detail: { nombre, contexto, pregunta } })). El panel
+  // se abre con ese contexto cargado y, si viene pregunta, la envía al tiro.
+  useEffect(() => {
+    const handler = (e) => {
+      const d = e?.detail || {};
+      contextoRef.current = String(d.contexto || "");
+      setContextoNombre(String(d.nombre || (d.contexto ? "Contexto cargado" : "")));
+      setAbierto(true);
+      if (d.pregunta) setTimeout(() => enviar(String(d.pregunta)), 150);
+    };
+    window.addEventListener("damaria:abrir", handler);
+    return () => window.removeEventListener("damaria:abrir", handler);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mensajes, cargando]);
+
+  // Precarga las voces (algunos navegadores las entregan async) y corta el
+  // audio/micrófono al cerrar el panel.
+  useEffect(() => {
+    if (soportaVoz) window.speechSynthesis.getVoices();
+  }, []);
+  useEffect(() => {
+    if (!abierto) {
+      detenerVozDamaria();
+      recRef.current?.stop?.();
+    }
+  }, [abierto]);
 
   useEffect(() => {
     if (!abierto || estado) return;
@@ -605,6 +852,10 @@ export default function DamarIAWidget() {
       await consultarStream(
         p,
         (evt) => {
+        // Voz de DamarIA: lee el resumen final en voz alta si está activada.
+        if (evt.tipo === "done" && vozRef.current && typeof evt.resumen === "string") {
+          hablarDamaria(evt.resumen);
+        }
         setMensajes((m) =>
           m.map((msg) => {
             if (msg.id !== iaId) return msg;
@@ -649,7 +900,7 @@ export default function DamarIAWidget() {
           }),
         );
         },
-        { historial: historialReciente, usuario: nombreUsuario },
+        { historial: historialReciente, usuario: nombreUsuario, contexto: contextoRef.current },
       );
     } catch (e) {
       setMensajes((m) =>
@@ -711,10 +962,18 @@ export default function DamarIAWidget() {
               </div>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+              <button
+                type="button"
+                onClick={toggleVoz}
+                title={vozActiva ? "Silenciar la voz de DamarIA" : "Activar la voz de DamarIA (lee las respuestas)"}
+                style={{ ...btnCerrar, background: vozActiva ? "rgba(255,255,255,.34)" : btnCerrar.background }}
+              >
+                {vozActiva ? <Volume2 size={16} /> : <VolumeX size={16} />}
+              </button>
               {mensajes.length > 0 && (
                 <button
                   type="button"
-                  onClick={() => setMensajes([])}
+                  onClick={() => { setMensajes([]); contextoRef.current = ""; setContextoNombre(""); }}
                   title="Nueva conversación"
                   style={btnCerrar}
                 >
@@ -737,6 +996,12 @@ export default function DamarIAWidget() {
             <DamarIANoConfig />
           ) : (
             <>
+              {contextoNombre && (
+                <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 14px", background: "#FFFBEB", borderBottom: `1px solid ${LINE}`, fontSize: 11.5, color: "#92400e", fontWeight: 600, flexShrink: 0 }}>
+                  <Sparkles size={12} style={{ color: AMARILLO_OSC, flexShrink: 0 }} />
+                  Con el contexto de: {contextoNombre}
+                </div>
+              )}
               <div ref={listaRef} className="dm-scroll" style={zonaChat}>
                 {!estado ? (
                   <div style={{ display: "flex", justifyContent: "center", padding: 40 }}>
@@ -763,6 +1028,11 @@ export default function DamarIAWidget() {
                 )}
               </div>
 
+              {avisoVoz && (
+                <div style={{ padding: "6px 14px", fontSize: 11.5, color: "#b45309", background: "#FFFBEB", borderTop: `1px solid ${LINE}` }}>
+                  {avisoVoz}
+                </div>
+              )}
               <form
                 onSubmit={(e) => {
                   e.preventDefault();
@@ -770,11 +1040,27 @@ export default function DamarIAWidget() {
                 }}
                 style={barraInput}
               >
+                <button
+                  type="button"
+                  onClick={toggleDictado}
+                  disabled={cargando || !estado}
+                  title={escuchando ? "Detener el dictado" : "Dictar por voz (al terminar, se envía sola)"}
+                  className={escuchando ? "dm-mic-on" : undefined}
+                  style={{
+                    ...btnEnviar,
+                    background: escuchando ? "linear-gradient(135deg, #ef4444, #b91c1c)" : "#f1f5f9",
+                    color: escuchando ? "#fff" : soportaDictado ? AMARILLO_OSC : FAINT,
+                    opacity: cargando || !estado ? 0.55 : 1,
+                    cursor: "pointer",
+                  }}
+                >
+                  <Mic size={17} />
+                </button>
                 <input
                   className="dm-input"
                   value={pregunta}
                   onChange={(e) => setPregunta(e.target.value)}
-                  placeholder="Pregúntale algo a DamarIA…"
+                  placeholder={escuchando ? "Te escucho, habla nomás…" : "Pregunta o dicta con el micrófono…"}
                   disabled={cargando || !estado}
                   style={input}
                 />
@@ -1465,6 +1751,11 @@ const ESTILOS = `
     60%  { opacity: 1; transform: scale(1.08) rotate(8deg); }
     100% { opacity: 1; transform: scale(1) rotate(0deg); }
   }
+  @keyframes dm-mic-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(239,68,68,.45); }
+    60%      { box-shadow: 0 0 0 9px rgba(239,68,68,0); }
+  }
+  .dm-mic-on { animation: dm-mic-pulse 1.3s ease infinite; }
   .dm-fab { animation: dm-fab-in .2s ease; transition: transform .14s ease, box-shadow .14s ease; }
   .dm-fab:hover { transform: translateY(-3px) scale(1.04); box-shadow: 0 14px 32px -8px rgba(245,158,11,.7); }
   .dm-panel { animation: dm-panel-in .2s ease; }
