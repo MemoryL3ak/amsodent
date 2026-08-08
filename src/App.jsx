@@ -69,6 +69,9 @@ import RequireModulo from "./components/RequireModulo";
 // COMUNICACIONES
 import Comunicaciones from "./pages/Comunicaciones";
 
+// RECURSOS HUMANOS
+import RecursosHumanos from "./pages/RecursosHumanos";
+import MiFicha from "./pages/MiFicha";
 
 // MARCAJE
 import Marcaje from "./pages/Marcaje";
@@ -309,6 +312,19 @@ export default function App() {
 
           {/* MI CORREO — habilitado para todos los roles */}
           <Route path="buzon" element={<Buzon />} />
+
+          {/* RECURSOS HUMANOS — solo admin (sueldos y datos personales) */}
+          <Route
+            path="recursos-humanos"
+            element={
+              <RequireRole allow={["admin"]}>
+                <RecursosHumanos />
+              </RequireRole>
+            }
+          />
+
+          {/* MI FICHA — portal del trabajador, cada uno ve solo lo suyo */}
+          <Route path="mi-ficha" element={<MiFicha />} />
 
           {/* MARCAJE DE ASISTENCIA — solo admin */}
           <Route

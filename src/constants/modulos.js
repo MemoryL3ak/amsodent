@@ -31,6 +31,9 @@ export const MODULOS = [
   { key: "costeo_fletes", label: "Fletes", grupo: "Logística" },
   { key: "monitoreo_stock", label: "Monitoreo Stock Clientes", grupo: "Portal del Cliente" },
   { key: "portal_accesos", label: "Acceso Portal Clientes", grupo: "Portal del Cliente" },
+  // "Recursos Humanos" NO es asignable por perfil: es solo admin (sueldos,
+  // fichas y evaluaciones son datos sensibles). El portal del trabajador
+  // ("Mi Ficha", /mi-ficha) sí está disponible para todo el equipo.
   { key: "usuarios", label: "Usuarios", grupo: "Administración" },
   { key: "monitoreo_usuarios", label: "Monitoreo de Usuarios", grupo: "Administración" },
   { key: "monitoreo_asistencia", label: "Monitoreo de Asistencia", grupo: "Administración" },
