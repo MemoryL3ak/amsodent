@@ -31,6 +31,7 @@ import MisClientes from "./pages/MisClientes";
 
 // MONITOREO
 import MonitoreoUsuarios from "./pages/MonitoreoUsuarios";
+import MonitoreoSistema from "./pages/MonitoreoSistema";
 
 // USUARIOS
 import ConfiguracionUsuarios from "./pages/ConfiguracionUsuarios";
@@ -67,6 +68,7 @@ import RequireModulo from "./components/RequireModulo";
 
 // COMUNICACIONES
 import Comunicaciones from "./pages/Comunicaciones";
+
 
 // MARCAJE
 import Marcaje from "./pages/Marcaje";
@@ -229,6 +231,15 @@ export default function App() {
             element={
               <RequireRole allow={["admin"]}>
                 <AnalisisMercadoPublico />
+              </RequireRole>
+            }
+          />
+          {/* MONITOREO DEL SISTEMA (logs técnicos) — solo admin */}
+          <Route
+            path="monitoreo-sistema"
+            element={
+              <RequireRole allow={["admin"]}>
+                <MonitoreoSistema />
               </RequireRole>
             }
           />

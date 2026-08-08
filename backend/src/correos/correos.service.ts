@@ -4,6 +4,7 @@ import { SupabaseService } from '../supabase/supabase.service';
 import { MailingsService } from '../mailings/mailings.service';
 import { GmailApiService, GmailCreds } from './gmail-api.service';
 import { FirmasService } from './firmas.service';
+import { MonitorService } from '../monitor/monitor.service';
 import {
   plantillaAgradecimientoOC,
   plantillaGuiaDespacho,
@@ -85,6 +86,7 @@ export class CorreosService {
     private mailings: MailingsService,
     private gmailApi: GmailApiService,
     private firmas: FirmasService,
+    private monitor: MonitorService,
   ) {}
 
   private async getLicitacion(licitacionId: number) {
@@ -436,12 +438,31 @@ export class CorreosService {
 
     const cuenta = uid ? await this.cuentaDeUsuario(uid) : null;
     if (cuenta) {
-      const res = await this.gmailApi.enviarComo(this.credsDe(cuenta), {
-        remitente: cuenta.email,
-        para,
-        cc: cc.length > 0 ? cc : undefined,
-        asunto,
-        html: cuerpoHtml,
+      let res;
+      try {
+        res = await this.gmailApi.enviarComo(this.credsDe(cuenta), {
+          remitente: cuenta.email,
+          para,
+          cc: cc.length > 0 ? cc : undefined,
+          asunto,
+          html: cuerpoHtml,
+        });
+      } catch (e: any) {
+        this.monitor.registrar({
+          nivel: 'error',
+          tipo: 'correo',
+          usuario_id: uid,
+          mensaje: `Falló envío Gmail (${cuenta.email}) a ${para}: ${e?.message || e}`,
+          metadata: { para, asunto, via: 'gmail', de: cuenta.email },
+        });
+        throw e;
+      }
+      this.monitor.registrar({
+        nivel: 'info',
+        tipo: 'correo',
+        usuario_id: uid,
+        mensaje: `Correo enviado a ${para} · "${asunto}"`,
+        metadata: { para, asunto, via: 'gmail', de: cuenta.email },
       });
       return { ...res, modo: 'gmail' as const, de: cuenta.email };
     }

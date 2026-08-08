@@ -12,16 +12,35 @@ import * as net from 'net';
 import compression from 'compression';
 import { json, urlencoded } from 'express';
 import { AppModule } from './app.module';
+import { MonitorService } from './monitor/monitor.service';
+import { MonitorInterceptor } from './monitor/monitor.interceptor';
+import { MonitorExceptionsFilter } from './monitor/monitor-exceptions.filter';
 
 // Blindaje del proceso: un rechazo/excepción no capturado NO debe tumbar el
 // backend. Sin esto, los reintentos asíncronos de googleapis (gaxios) al fallar
 // un refresh token de Gmail (`invalid_grant`) generan un unhandledRejection que
 // mata el proceso → Railway reinicia → 502 en TODOS los endpoints (crash-loop).
-process.on('unhandledRejection', (reason) => {
+// Tras el bootstrap apunta al MonitorService: los errores de proceso (fuera
+// de requests: crons, promesas sueltas) también quedan en monitor_logs.
+let monitorGlobal: MonitorService | null = null;
+
+process.on('unhandledRejection', (reason: any) => {
   console.error('[unhandledRejection]', reason);
+  monitorGlobal?.registrar({
+    nivel: 'error',
+    tipo: 'sistema',
+    mensaje: `unhandledRejection: ${reason?.message || reason}`,
+    stack: reason?.stack,
+  });
 });
 process.on('uncaughtException', (err) => {
   console.error('[uncaughtException]', err);
+  monitorGlobal?.registrar({
+    nivel: 'error',
+    tipo: 'sistema',
+    mensaje: `uncaughtException: ${err?.message || err}`,
+    stack: err?.stack,
+  });
 });
 
 // Railway (y la mayoría de cloud providers chicos) sólo tienen IPv4 saliente.
@@ -66,6 +85,13 @@ async function bootstrap() {
   app.use(urlencoded({ extended: true, limit: '8mb' }));
 
   app.setGlobalPrefix('api');
+
+  // Monitoreo del sistema: toda request y toda excepción quedan registradas
+  // en monitor_logs (panel /monitoreo-sistema del frontend).
+  const monitor = app.get(MonitorService);
+  monitorGlobal = monitor;
+  app.useGlobalInterceptors(new MonitorInterceptor(monitor));
+  app.useGlobalFilters(new MonitorExceptionsFilter(monitor));
 
   const port = Number(process.env.PORT) || 3001;
   await app.listen(port, '0.0.0.0');
