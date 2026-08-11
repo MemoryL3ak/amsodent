@@ -708,7 +708,7 @@ export default function Ventas({ embedded = false }) {
       ) : (
         <>
           {/* KPI CARDS — Despacho (el "Forzado a Cierre" se trasladó a Seguimiento de Pagos) */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: "16px", marginBottom: "20px" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 260px), 1fr))", gap: "16px", marginBottom: "20px" }}>
             <KpiCard
               title="Monto Adjudicado (OC)"
               value={fmtCLP(resumenGeneral.adjudicadoOcNeto)}
@@ -784,7 +784,9 @@ export default function Ventas({ embedded = false }) {
                     const pctTotal = (r.total / maxBarTotal) * 100;
                     const pctAdj   = (r.adjudicadas / maxBarTotal) * 100;
                     return (
-                      <div key={r.email} style={{ display: "grid", gridTemplateColumns: "180px 1fr 110px", gap: "16px", alignItems: "center" }}>
+                      // minmax(0, …) deja que el nombre se encoja: con 180px
+                      // fijos la fila no cabía en pantallas chicas.
+                      <div key={r.email} style={{ display: "grid", gridTemplateColumns: "minmax(0, 180px) minmax(0, 1fr) minmax(0, 110px)", gap: "16px", alignItems: "center" }}>
                         {/* Nombre */}
                         <div style={{ fontSize: "13px", fontWeight: 600, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                           {r.nombre}

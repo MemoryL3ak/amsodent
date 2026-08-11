@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Upload, Pencil, Trash2, Plus, X, FileSpreadsheet } from "lucide-react";
 import { api } from "../lib/api";
+import useAuth from "../hooks/useAuth";
 
 /* ============================================================
    Administración de tarifas de flete (Starken / Blue Express /
@@ -58,6 +59,8 @@ function hacerCanonRegion() {
 }
 
 export default function TarifasFlete({ onToast }) {
+  const { rol } = useAuth();
+  const esAdmin = ["admin", "administrador"].includes(String(rol || "").trim().toLowerCase());
   const [empresa, setEmpresa] = useState("Starken");
   const [filas, setFilas] = useState([]);
   const [cargando, setCargando] = useState(true);
@@ -82,14 +85,16 @@ export default function TarifasFlete({ onToast }) {
   const [guardandoReajuste, setGuardandoReajuste] = useState(false);
 
   useEffect(() => {
-    if (esInterno) return;
+    // El endpoint del reajuste es admin-only: para el resto ni se consulta
+    // (devolvería 403 y ensuciaría el log de errores del monitoreo).
+    if (esInterno || !esAdmin) return;
     let activo = true;
     setReajuste("");
     api.get(`/fletes/reajuste?empresa=${encodeURIComponent(empresa)}`)
       .then((d) => activo && setReajuste(String(d?.porcentaje ?? 0)))
       .catch(() => activo && setReajuste("0"));
     return () => { activo = false; };
-  }, [empresa, esInterno]);
+  }, [empresa, esInterno, esAdmin]);
 
   async function guardarReajuste() {
     const pct = Number(String(reajuste).replace(",", "."));
@@ -262,6 +267,11 @@ export default function TarifasFlete({ onToast }) {
 
         {!esInterno && (
           <>
+            {/* El reajuste altera el precio de TODOS los fletes que se cotizan,
+                así que es exclusivo de admin. El backend ya lo exige
+                (AdminGuard en PUT /fletes/reajuste); esto evita además mostrar
+                un control que no se va a poder usar. */}
+            {esAdmin && (
             <div
               title="Ajusta porcentualmente los valores del tarifario al calcular (ej: 10 = +10%, -5 = -5%). No modifica la tabla."
               style={{ display: "inline-flex", alignItems: "center", gap: 6, border: "1px solid var(--border)", borderRadius: 9, padding: "4px 8px", background: "var(--surface)" }}
@@ -279,6 +289,7 @@ export default function TarifasFlete({ onToast }) {
                 {guardandoReajuste ? "…" : "Guardar"}
               </button>
             </div>
+            )}
             <button className="btn btn-ghost" onClick={() => setEditando({})} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
               <Plus size={14} /> Agregar
             </button>

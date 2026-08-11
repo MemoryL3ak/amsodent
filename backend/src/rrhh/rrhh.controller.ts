@@ -73,7 +73,43 @@ export class RrhhController {
   @Post('mi/solicitudes')
   async crearMiSolicitud(@Req() req: any, @Body() body: any) {
     const emp = await this.miFicha(req);
-    return this.rrhh.crearSolicitud({ ...body, empleado_id: emp.id });
+    return this.rrhh.crearSolicitud({ ...body, empleado_id: emp.id }, this.emailDe(req));
+  }
+
+  // Días/horas y saldo proyectado mientras el trabajador llena el formulario.
+  @UseGuards(AuthGuard)
+  @Post('mi/solicitudes/calcular')
+  async calcularMiSolicitud(@Req() req: any, @Body() body: any) {
+    const emp = await this.miFicha(req);
+    return this.rrhh.previsualizarSolicitud({ ...body, empleado_id: emp.id });
+  }
+
+  @UseGuards(AuthGuard)
+  @Get('mi/saldos')
+  async misSaldos(@Req() req: any) {
+    const emp = await this.miFicha(req);
+    return this.rrhh.saldosDe(Number(emp.id));
+  }
+
+  // El trabajador anula una solicitud propia que todavía nadie ha resuelto.
+  @UseGuards(AuthGuard)
+  @Put('mi/solicitudes/:id/anular')
+  async anularMiSolicitud(@Req() req: any, @Param('id', ParseIntPipe) id: number) {
+    const emp = await this.miFicha(req);
+    const propias = await this.rrhh.listarSolicitudes({ empleado_id: Number(emp.id) });
+    const suya = propias.find((s: any) => Number(s.id) === id);
+    if (!suya) throw new ForbiddenException('Esa solicitud no te pertenece.');
+    if (suya.estado !== 'pendiente') {
+      throw new BadRequestException('Solo puedes anular solicitudes que siguen pendientes.');
+    }
+    return this.rrhh.resolverSolicitud(id, { estado: 'anulada' }, this.emailDe(req));
+  }
+
+  // Feriados legales: el formulario los marca en el calendario.
+  @UseGuards(AuthGuard)
+  @Get('feriados')
+  feriados(@Query('anio') anio?: string) {
+    return this.rrhh.listarFeriados(anio);
   }
 
   @UseGuards(AuthGuard)
@@ -267,8 +303,55 @@ export class RrhhController {
 
   @UseGuards(AdminGuard)
   @Post('solicitudes')
-  crearSolicitud(@Body() body: any) {
-    return this.rrhh.crearSolicitud(body);
+  crearSolicitud(@Req() req: any, @Body() body: any) {
+    return this.rrhh.crearSolicitud(body, this.emailDe(req));
+  }
+
+  // Cálculo en vivo de días hábiles / horas para el formulario.
+  @UseGuards(AdminGuard)
+  @Post('solicitudes/calcular')
+  calcularSolicitud(@Body() body: any) {
+    return this.rrhh.previsualizarSolicitud(body);
+  }
+
+  @UseGuards(AdminGuard)
+  @Get('empleados/:id/saldos')
+  saldos(@Param('id', ParseIntPipe) id: number) {
+    return this.rrhh.saldosDe(id);
+  }
+
+  @UseGuards(AdminGuard)
+  @Post('feriados')
+  guardarFeriado(@Body() body: any) {
+    return this.rrhh.guardarFeriado(body);
+  }
+
+  @UseGuards(AdminGuard)
+  @Delete('feriados/:fecha')
+  eliminarFeriado(@Param('fecha') fecha: string) {
+    return this.rrhh.eliminarFeriado(fecha);
+  }
+
+  // ==========================================================================
+  // PARÁMETROS PREVISIONALES POR PERÍODO (admin)
+  // ==========================================================================
+  @UseGuards(AdminGuard)
+  @Get('parametros')
+  listarParametros() {
+    return this.rrhh.listarParametros();
+  }
+
+  // Los vigentes para un período (con lo que efectivamente se calculará).
+  @UseGuards(AdminGuard)
+  @Get('parametros/vigentes')
+  parametrosVigentes(@Query('periodo') periodo?: string) {
+    return this.rrhh.parametrosDe(periodo);
+  }
+
+  @UseGuards(AdminGuard)
+  @Post('parametros')
+  guardarParametros(@Req() req: any, @Body() body: any) {
+    return this.rrhh.guardarParametros(body, this.emailDe(req));
   }
 
   @UseGuards(AdminGuard)

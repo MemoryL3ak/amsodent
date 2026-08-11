@@ -407,7 +407,7 @@ export default function CotizacionesPorVendedor() {
       ) : (
         <>
           {/* KPI CARDS */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "16px", marginBottom: "20px" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 220px), 1fr))", gap: "16px", marginBottom: "20px" }}>
             {/* Meta del equipo = suma de "Meta (cantidad)" por vendedor (sección Metas) */}
             <KpiCard title="Meta del Equipo" color="#6366f1" icon={Target}>
               <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>

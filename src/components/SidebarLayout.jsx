@@ -177,6 +177,9 @@ export default function SidebarLayout() {
   const comercialNav = [
     puede("cotizaciones") && { to: "/listar",      icon: ClipboardList, label: "Cotizaciones" },
     puede("crear_cotizacion") && { to: "/crear",       icon: FilePlus,      label: "Nueva Cotización" },
+    // Antes vivía como pestaña del Chat Grupal; conserva el mismo permiso para
+    // que la vean exactamente quienes ya la veían ahí.
+    puede("chat") && { to: "/licitaciones-disponibles", icon: Inbox, label: "Mercado Público" },
     esAdmin && { to: "/ordenes-compra", icon: FileText, label: "Órdenes de Compra" },
     esAdmin && { to: "/proveedores", icon: Building2, label: "Proveedores" },
     puede("clientes") && { to: "/clientes",    icon: Users,         label: "Clientes" },

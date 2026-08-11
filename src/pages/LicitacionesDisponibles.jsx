@@ -3,13 +3,15 @@
 // (columnas ID + Nombre). Los ejecutivos ven el listado y "cargan" cada
 // licitación, lo que abre una Nueva Cotización prellenada y marca la fila.
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import { api } from "../lib/api";
+import { replicarEnWhatsApp } from "../lib/chatWhatsapp";
 import { supabase } from "../lib/supabase";
 import useAuth from "../hooks/useAuth";
 import DateFilter from "../components/DateFilter";
 import ConfirmModal from "../components/ConfirmModal";
-import { Upload, Search, FileSpreadsheet, Trash2, X, ClipboardList, Check, RotateCcw, Ban, FilePlus2, ExternalLink, FileDown } from "lucide-react";
+import { Upload, Search, FileSpreadsheet, Trash2, X, ClipboardList, Check, RotateCcw, Ban, FilePlus2, ExternalLink, FileDown, ArrowUp, ArrowDown, ArrowUpDown } from "lucide-react";
 
 function fmtFecha(v) {
   if (!v) return "";
@@ -57,6 +59,14 @@ function parseCierre(raw) {
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
+// Día local en formato AAAA-MM-DD, para comparar contra los valores que
+// entrega el selector de fechas. No sirve `toISOString()`: pasa a UTC y en
+// Chile adelanta el día para cualquier cierre desde las 21:00.
+function diaLocal(d) {
+  if (!(d instanceof Date) || Number.isNaN(d.getTime())) return null;
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
 // Una postulación está "vigente" si su cierre aún no pasa (o si no tiene fecha
 // de cierre registrada, para no ocultarla por falta de dato). Si el cierre
 // trae hora, la vigencia respeta la hora exacta; sin hora, dura hasta las
@@ -65,6 +75,20 @@ function estaVigente(row) {
   const cierre = parseCierre(row?.datos?.cierre);
   if (!cierre) return true;
   return cierre.getTime() >= Date.now();
+}
+
+// Nombre legible de quien tomó una postulación. El correo completo no cabe en
+// la columna de estado y se cortaba a la mitad, que era justo lo que había que
+// leer: quién la tiene.
+function nombreDe(email) {
+  const usuario = String(email || "").split("@")[0];
+  if (!usuario) return "";
+  return usuario
+    .replace(/[._-]+/g, " ")
+    .split(" ")
+    .filter(Boolean)
+    .map((p) => p.charAt(0).toUpperCase() + p.slice(1))
+    .join(" ");
 }
 
 // Regiones de la API de Mercado Público (código 1-16).
@@ -78,7 +102,11 @@ const MP_REGIONES = [
 // Keywords sugeridas para el rubro. La API busca por PALABRA COMPLETA en
 // nombre/descripción; el backend agrega solo la variante singular/plural de
 // cada keyword (dental → dentales), así que deben ser palabras reales.
-const MP_KEYWORDS = ["dental", "odontología", "insumos dentales", "resina", "anestesia", "ortodoncia", "implante", "fresas"];
+// Fallback del catálogo de palabras clave, usado solo si la tabla mp_keywords
+// no está disponible (migración sin aplicar). El catálogo real vive en la base
+// y se administra desde esta misma pantalla.
+const MP_KEYWORDS_FALLBACK = ["dental", "odontología", "insumos dentales", "resina", "anestesia", "ortodoncia", "implante", "fresas"]
+  .map((texto, i) => ({ id: `fb-${i}`, texto }));
 
 export default function LicitacionesDisponibles({ embedded = false }) {
   const navigate = useNavigate();
@@ -96,8 +124,18 @@ export default function LicitacionesDisponibles({ embedded = false }) {
   const [filtro, setFiltro] = useState("pendientes"); // pendientes | mias | cargadas | caducadas | no_aplica | todas
   const [filtroTipo, setFiltroTipo] = useState(""); // tipo de licitación (datos.tipo del xlsx)
   const [dispon, setDispon] = useState("vigentes"); // vigentes | vencidas | todas (por fecha de cierre)
+  // Orden por fecha de cierre. null = orden natural (mis tomadas primero, ver
+  // el efecto de abajo); "asc" = las que cierran antes arriba, que es lo útil
+  // para priorizar qué postular; "desc" = al revés.
+  const [ordenCierre, setOrdenCierre] = useState(null);
   const [fechaDesde, setFechaDesde] = useState(""); // filtro por fecha de carga del archivo
   const [fechaHasta, setFechaHasta] = useState("");
+  // Filtro por la fecha de CIERRE del portal (datos.cierre), distinta de la de
+  // carga: sirve para ver "qué cierra esta semana" y priorizar.
+  const [cierreDesde, setCierreDesde] = useState("");
+  const [cierreHasta, setCierreHasta] = useState("");
+  const [verificando, setVerificando] = useState(false);
+  const [progresoVerif, setProgresoVerif] = useState(null); // { revisadas, restantes }
   const [uploadOpen, setUploadOpen] = useState(false);
   const [toast, setToast] = useState(null);
   const [loadSeq, setLoadSeq] = useState(0); // se incrementa en cada carga (no en cada toma)
@@ -127,7 +165,9 @@ export default function LicitacionesDisponibles({ embedded = false }) {
 
   // ── Sección "Explorar Mercado Público": búsqueda en vivo vía la API ──
   const [vista, setVista] = useState("listado"); // listado | explorar
-  const [mpFuente, setMpFuente] = useState("agil"); // agil | licitaciones
+  // todas = Compra Ágil + Licitaciones en una sola tabla (por defecto: es la
+  // vista completa del mercado y cada fila indica su tipo).
+  const [mpFuente, setMpFuente] = useState("todas"); // todas | agil | licitaciones
   const [mpQ, setMpQ] = useState("");
   const [mpRegion, setMpRegion] = useState("");
   const [mpEstado, setMpEstado] = useState("publicada");
@@ -136,6 +176,13 @@ export default function LicitacionesDisponibles({ embedded = false }) {
   const [mpDesde, setMpDesde] = useState("");
   const [mpHasta, setMpHasta] = useState("");
   const [mpRes, setMpRes] = useState(null); // { items, paginacion, por_keyword, actualizado }
+  // Catálogo de palabras clave y búsquedas guardadas (tablas mp_keywords /
+  // mp_busquedas). Arrancan vacíos y se pueblan al montar.
+  const [mpCatalogo, setMpCatalogo] = useState([]);
+  const [mpBusquedas, setMpBusquedas] = useState([]);
+  const [mpKeywordsOpen, setMpKeywordsOpen] = useState(false);
+  const [mpPrompt, setMpPrompt] = useState(null);            // modal de texto (reemplaza window.prompt)
+  const [confirmGenerico, setConfirmGenerico] = useState(null); // confirmación (reemplaza window.confirm)
   const [mpBuscando, setMpBuscando] = useState(false);
   const [agregandoCodigo, setAgregandoCodigo] = useState(null);
 
@@ -146,11 +193,15 @@ export default function LicitacionesDisponibles({ embedded = false }) {
       const qp = new URLSearchParams({ fuente: mpFuente, pagina: String(pagina), tamano: "15" });
       const q = (qOverride ?? mpQ).trim();
       if (q) qp.set("q", q);
-      if (mpFuente === "agil") {
+      if (mpFuente === "agil" || mpFuente === "todas") {
         if (mpRegion) qp.set("region", mpRegion);
         if (mpEstado) qp.set("estado", mpEstado);
         if (mpDesde) qp.set("desde", mpDesde);
         if (mpHasta) qp.set("hasta", mpHasta);
+      } else if (mpDesde) {
+        // En Licitaciones el backend interpreta `desde` como el día exacto de
+        // publicación: la API v1 no soporta rangos.
+        qp.set("desde", mpDesde);
       }
       const data = await api.get(`/licitaciones/mercado-publico/buscar?${qp.toString()}`);
       setMpRes(data);
@@ -173,6 +224,96 @@ export default function LicitacionesDisponibles({ embedded = false }) {
     buscarMP(1, nq);
   }
 
+  /* ── Catálogo de palabras clave y búsquedas guardadas ────────────────── */
+  async function cargarCatalogoMp() {
+    try {
+      const d = await api.get("/licitaciones/mercado-publico/keywords");
+      setMpCatalogo(Array.isArray(d?.keywords) && d.keywords.length ? d.keywords : MP_KEYWORDS_FALLBACK);
+      setMpBusquedas(Array.isArray(d?.busquedas) ? d.busquedas : []);
+    } catch {
+      // Migración sin aplicar o error de red: se sigue trabajando con las fijas.
+      setMpCatalogo(MP_KEYWORDS_FALLBACK);
+      setMpBusquedas([]);
+    }
+  }
+
+  useEffect(() => { cargarCatalogoMp(); }, []);
+
+  // Alta de palabra y guardado de búsqueda usan un modal propio en vez de
+  // window.prompt: el diálogo nativo del navegador rompe el estilo y no se
+  // puede validar mientras se escribe.
+  function agregarKeywordMp() {
+    setMpPrompt({
+      titulo: "Nueva palabra clave",
+      ayuda: "Se agrega al catálogo y queda disponible para todo el equipo.",
+      placeholder: "Ej: Fresa diamante troncocónica",
+      confirmar: "Agregar",
+      onConfirmar: async (texto) => {
+        await api.post("/licitaciones/mercado-publico/keywords", { texto });
+        await cargarCatalogoMp();
+        setToast({ type: "success", message: `"${texto}" agregada al catálogo.` });
+      },
+    });
+  }
+
+  async function eliminarKeywordMp(k) {
+    setConfirmGenerico({
+      title: "Quitar palabra clave",
+      message: `¿Quitar "${k.texto}" del catálogo? Deja de estar disponible para todo el equipo.`,
+      onConfirm: async () => {
+        try {
+          await api.delete(`/licitaciones/mercado-publico/keywords/${k.id}`);
+          await cargarCatalogoMp();
+        } catch (e) {
+          setToast({ type: "error", message: e?.message || "No se pudo quitar la palabra." });
+        }
+      },
+    });
+  }
+
+  // Selección masiva desde el administrador. No dispara la búsqueda: con
+  // decenas de términos sería una consulta enorme (y truncada a 8) por cada
+  // clic. El usuario elige y después aprieta Buscar.
+  function seleccionarKeywordsMp(textos, seleccionar) {
+    const kws = [...mpKeywords];
+    for (const t of textos) {
+      const idx = kws.findIndex((x) => x.toLowerCase() === t.toLowerCase());
+      if (seleccionar && idx < 0) kws.push(t);
+      if (!seleccionar && idx >= 0) kws.splice(idx, 1);
+    }
+    setMpQ(kws.join(", "));
+  }
+
+  function guardarBusquedaMp() {
+    const kws = [...mpKeywords];
+    setMpPrompt({
+      titulo: "Guardar búsqueda rápida",
+      ayuda: `${kws.length} palabra${kws.length === 1 ? "" : "s"}: ${kws.slice(0, 6).join(", ")}${kws.length > 6 ? `… y ${kws.length - 6} más` : ""}`,
+      placeholder: "Ej: Fresas y discos",
+      confirmar: "Guardar",
+      onConfirmar: async (nombre) => {
+        await api.post("/licitaciones/mercado-publico/busquedas", { nombre, keywords: kws });
+        await cargarCatalogoMp();
+        setToast({ type: "success", message: `Búsqueda "${nombre}" guardada.` });
+      },
+    });
+  }
+
+  async function eliminarBusquedaMp(b) {
+    setConfirmGenerico({
+      title: "Eliminar búsqueda guardada",
+      message: `¿Eliminar la búsqueda "${b.nombre}"? Las palabras clave se mantienen en el catálogo.`,
+      onConfirm: async () => {
+        try {
+          await api.delete(`/licitaciones/mercado-publico/busquedas/${b.id}`);
+          await cargarCatalogoMp();
+        } catch (e) {
+          setToast({ type: "error", message: e?.message || "No se pudo eliminar la búsqueda." });
+        }
+      },
+    });
+  }
+
   // Copia el proceso encontrado al listado interno de Postulaciones (mismo
   // flujo de siempre: tomar → crear borrador). La API no permite ofertar:
   // eso se hace con sesión en mercadopublico.cl.
@@ -189,7 +330,9 @@ export default function LicitacionesDisponibles({ embedded = false }) {
             monto: item.monto_clp != null ? `$${Number(item.monto_clp).toLocaleString("es-CL")}` : "",
             cierre: item.fecha_cierre || "",
             publicacion: item.fecha_publicacion || "",
-            tipo: mpFuente === "agil" ? "Compra Ágil" : "Licitación",
+            // El tipo sale del código del propio proceso, no de la fuente
+            // elegida: en la vista combinada conviven ambos.
+            tipo: item.tipo_familia === "compra_agil" ? "Compra Ágil" : "Licitación",
           },
         }],
       });
@@ -233,6 +376,41 @@ export default function LicitacionesDisponibles({ embedded = false }) {
       setMpFicha((prev) => (prev?.codigo === codigo
         ? { ...prev, loading: false, error: e?.message || "No se pudo consultar Mercado Público." }
         : prev));
+    }
+  }
+
+  // Confirma contra Mercado Público, en tandas, cuáles de nuestras
+  // postulaciones ya figuran con oferta enviada. Va por tandas porque la API
+  // tarda ~25 s por proceso y hay que poder ver el avance.
+  async function verificarPostulaciones() {
+    if (verificando) return;
+    setVerificando(true);
+    setProgresoVerif({ revisadas: 0, restantes: null });
+    let revisadas = 0;
+    let confirmadas = 0;
+    let sinDato = 0;
+    let errores = 0;
+    try {
+      for (let i = 0; i < 40; i++) {
+        const r = await api.post("/licitaciones/disponibles/verificar-postulacion", { lote: 24 });
+        revisadas += r.revisadas || 0;
+        confirmadas += r.con_postulacion || 0;
+        sinDato += r.sin_dato || 0;
+        errores += r.errores?.length || 0;
+        setProgresoVerif({ revisadas, restantes: r.restantes ?? 0 });
+        if (!r.restantes || !r.revisadas) break;
+      }
+      await cargar();
+      const partes = [`${revisadas} revisada${revisadas === 1 ? "" : "s"}`];
+      if (confirmadas) partes.push(`${confirmadas} con postulación confirmada`);
+      if (sinDato) partes.push(`${sinDato} sin dato (Mercado Público aún no publica los oferentes)`);
+      if (errores) partes.push(`${errores} con error`);
+      setToast({ type: confirmadas ? "success" : "info", message: partes.join(" · ") + "." });
+    } catch (e) {
+      setToast({ type: "error", message: e?.message || "No se pudo verificar contra Mercado Público." });
+    } finally {
+      setVerificando(false);
+      setProgresoVerif(null);
     }
   }
 
@@ -289,13 +467,21 @@ export default function LicitacionesDisponibles({ embedded = false }) {
       } else if (filtro === "no_aplica") {
         return false;
       }
-      if (filtro === "pendientes" && l.cargada) return false;
+      // "Pendientes" es lo que queda POR HACER: una cerrada por vencimiento ya
+      // no lo es, aunque nunca se haya cargado.
+      if (filtro === "pendientes" && (l.cargada || l.cerrada)) return false;
       if (filtro === "cargadas" && !l.cargada) return false;
       if (filtro === "mias" && (l.tomada_por || "").toLowerCase() !== currentEmail) return false;
+      // «Ya postuladas»: hay cotización nuestra con ese código, o Mercado
+      // Público confirmó nuestra oferta entre los cotizantes.
+      const yaPostulada = !!l.cotizacion_propia || l?.datos?.postulamos === true;
+      if (filtro === "postuladas" && !yaPostulada) return false;
+      // «Sin postular»: lo que de verdad queda por hacer y aún está en plazo.
+      if (filtro === "sin_postular" && (yaPostulada || l.cargada || l.cerrada || !estaVigente(l))) return false;
       // "Caducadas": no alcanzaron a cargarse antes de la fecha de cierre.
       // Ignora el filtro de Disponibilidad (una caducada es siempre vencida).
       if (filtro === "caducadas") {
-        if (l.cargada || estaVigente(l)) return false;
+        if (l.cargada || (!l.cerrada && estaVigente(l))) return false;
       } else if (dispon !== "todas") {
         // Disponibilidad según la fecha de Cierre del portal (datos.cierre).
         const vig = estaVigente(l);
@@ -303,6 +489,18 @@ export default function LicitacionesDisponibles({ embedded = false }) {
         if (dispon === "vencidas" && vig) return false;
       }
       if (filtroTipo && String(l?.datos?.tipo || "").trim() !== filtroTipo) return false;
+      // Rango por FECHA DE CIERRE del portal. Se compara por día local con el
+      // Date ya interpretado, no con el texto crudo: `datos.cierre` llega en
+      // formatos distintos según el origen ("2026-08-08 17:50" del buscador y
+      // "11-08-26 10:00" del xlsx), así que comparar cadenas daría cualquier
+      // cosa. Las que no traen fecha quedan fuera al filtrar por rango: no se
+      // puede afirmar que caigan dentro.
+      if (cierreDesde || cierreHasta) {
+        const fCierre = diaLocal(parseCierre(l?.datos?.cierre));
+        if (!fCierre) return false;
+        if (cierreDesde && fCierre < cierreDesde) return false;
+        if (cierreHasta && fCierre > cierreHasta) return false;
+      }
       const fCarga = String(l.created_at || "").slice(0, 10);
       if (fechaDesde && fCarga && fCarga < fechaDesde) return false;
       if (fechaHasta && fCarga && fCarga > fechaHasta) return false;
@@ -312,15 +510,32 @@ export default function LicitacionesDisponibles({ embedded = false }) {
         String(l.nombre || "").toLowerCase().includes(q)
       );
     });
-    // NO se reordena aquí: el orden "tomadas primero" se aplica solo al cargar
-    // (ver efecto abajo), para que marcar/desmarcar no mueva las filas de golpe.
-    return arr;
-  }, [lista, busqueda, filtro, filtroTipo, dispon, fechaDesde, fechaHasta, currentEmail]);
+    // Sin orden explícito NO se reordena aquí: el orden "tomadas primero" se
+    // aplica solo al cargar (ver efecto abajo), para que marcar/desmarcar no
+    // mueva las filas de golpe.
+    if (!ordenCierre) return arr;
+    // Orden por cierre pedido por el usuario. Las que no traen fecha van
+    // siempre al final, en cualquier sentido: no tener dato no es "cerrar
+    // primero" ni "cerrar último", es simplemente desconocido.
+    const signo = ordenCierre === "asc" ? 1 : -1;
+    return [...arr].sort((a, b) => {
+      const ta = parseCierre(a?.datos?.cierre)?.getTime();
+      const tb = parseCierre(b?.datos?.cierre)?.getTime();
+      if (ta == null && tb == null) return 0;
+      if (ta == null) return 1;
+      if (tb == null) return -1;
+      return (ta - tb) * signo;
+    });
+  }, [lista, busqueda, filtro, filtroTipo, dispon, fechaDesde, fechaHasta, cierreDesde, cierreHasta, currentEmail, ordenCierre]);
 
   const stats = useMemo(() => ({
     total: lista.length,
-    pendientes: lista.filter((l) => !l.cargada && !l.no_aplica).length,
+    // Las cerradas por vencimiento salen de «Pendientes»: el contador decía
+    // que quedaba trabajo por hacer sobre postulaciones a las que ya no se
+    // podía postular.
+    pendientes: lista.filter((l) => !l.cargada && !l.no_aplica && !l.cerrada && estaVigente(l)).length,
     cargadas: lista.filter((l) => l.cargada).length,
+    cerradas: lista.filter((l) => !l.cargada && !l.no_aplica && (l.cerrada || !estaVigente(l))).length,
   }), [lista]);
 
   // Postulaciones que el usuario actual tiene tomadas y aún pendientes (cupo /3).
@@ -438,11 +653,12 @@ export default function LicitacionesDisponibles({ embedded = false }) {
         .limit(1);
       const salaId = salas?.[0]?.id;
       if (!salaId) return;
+      const autorNombre = perfil?.nombre || user?.email || "—";
       // Se publica como TARJETA de licitación (mismo formato probado que ya usa
       // el chat), más visible que un texto plano.
       const { error } = await supabase.from("chat_mensajes").insert({
         autor_email: currentEmail,
-        autor_nombre: perfil?.nombre || user?.email || "—",
+        autor_nombre: autorNombre,
         tipo: "licitacion",
         sala_id: salaId,
         texto: row.nombre || null,
@@ -450,6 +666,18 @@ export default function LicitacionesDisponibles({ embedded = false }) {
         licitacion_estado: "Tomada",
       });
       if (error) throw error;
+      // El aviso se inserta directo en la tabla, así que hay que reenviarlo al
+      // grupo de WhatsApp explícitamente. Como tarjeta no viaja: se manda el
+      // texto equivalente, con el ID para poder buscar la postulación.
+      if (salas?.[0]?.es_general) {
+        const ficha = [row.nombre, row.id_licitacion && `ID ${row.id_licitacion}`]
+          .filter(Boolean)
+          .join(" · ");
+        replicarEnWhatsApp({
+          autor: autorNombre,
+          texto: `📌 Tomó una postulación${ficha ? `: ${ficha}` : ""}`,
+        });
+      }
       setToast({ type: "success", message: "Aviso publicado en el Chat del equipo (sala General) 📌" });
     } catch (e) {
       console.error("No se pudo publicar en el chat:", e);
@@ -518,6 +746,23 @@ export default function LicitacionesDisponibles({ embedded = false }) {
           </button>
           {esGestor && (
             <>
+              {/* Confirmación oficial contra Mercado Público. Es aparte del
+                  cruce con nuestras cotizaciones —que ya viene calculado— porque
+                  gasta cuota de la API y solo da respuesta en los procesos ya
+                  resueltos: antes de que el comprador elija proveedor, la lista
+                  de oferentes viene vacía. */}
+              <button
+                className="btn btn-secondary"
+                onClick={verificarPostulaciones}
+                disabled={verificando}
+                title="Pregunta a Mercado Público si nuestro RUT figura entre los oferentes. Solo responde en procesos ya adjudicados: antes de eso no publica quién ofertó."
+                style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
+              >
+                <Check size={15} />
+                {verificando
+                  ? `Revisando… ${progresoVerif?.revisadas || 0}${progresoVerif?.restantes ? ` · faltan ${progresoVerif.restantes}` : ""}`
+                  : "Confirmar postulaciones"}
+              </button>
               <button className="btn btn-primary" onClick={() => setUploadOpen(true)} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
                 <Upload size={15} /> Subir listado (xlsx)
               </button>
@@ -562,12 +807,17 @@ export default function LicitacionesDisponibles({ embedded = false }) {
         <div className="stat-card">
           <div className="stat-label">Pendientes</div>
           <div className="stat-value" style={{ color: "var(--warning)" }}>{stats.pendientes}</div>
-          <div className="stat-sub">por tomar</div>
+          <div className="stat-sub">dentro de plazo</div>
         </div>
         <div className="stat-card">
           <div className="stat-label">Cargadas</div>
           <div className="stat-value" style={{ color: "var(--success)" }}>{stats.cargadas}</div>
           <div className="stat-sub">ya tomadas</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-label">Cerradas</div>
+          <div className="stat-value" style={{ color: "var(--text-muted)" }}>{stats.cerradas}</div>
+          <div className="stat-sub">venció el plazo</div>
         </div>
         <div className="stat-card">
           <div className="stat-label">Creadas hoy</div>
@@ -591,6 +841,8 @@ export default function LicitacionesDisponibles({ embedded = false }) {
             <option value="pendientes">Pendientes</option>
             <option value="mias">Mis tomadas</option>
             <option value="cargadas">Cargadas</option>
+            <option value="postuladas">Ya postuladas</option>
+            <option value="sin_postular">Sin postular</option>
             <option value="caducadas">Caducadas</option>
             <option value="no_aplica">No aplica</option>
             <option value="todas">Todas</option>
@@ -613,6 +865,27 @@ export default function LicitacionesDisponibles({ embedded = false }) {
             <option value="todas">Todas</option>
           </select>
         </div>
+        {/* Dos rangos de fecha distintos y fáciles de confundir: «Cargado» es
+            cuándo entró la postulación a NUESTRO listado; «Cierre» es el plazo
+            del portal para postular. De ahí los títulos explícitos. */}
+        <div className="filter-field">
+          <label className="filter-label">Cierra desde</label>
+          <DateFilter
+            value={cierreDesde}
+            onChange={setCierreDesde}
+            placeholder="Desde…"
+            maxDate={cierreHasta ? new Date(`${cierreHasta}T00:00:00`) : undefined}
+          />
+        </div>
+        <div className="filter-field">
+          <label className="filter-label">Cierra hasta</label>
+          <DateFilter
+            value={cierreHasta}
+            onChange={setCierreHasta}
+            placeholder="Hasta…"
+            minDate={cierreDesde ? new Date(`${cierreDesde}T00:00:00`) : undefined}
+          />
+        </div>
         <div className="filter-field">
           <label className="filter-label">Cargado desde</label>
           <DateFilter value={fechaDesde} onChange={setFechaDesde} placeholder="Desde…" maxDate={fechaHasta ? new Date(`${fechaHasta}T00:00:00`) : undefined} />
@@ -632,26 +905,52 @@ export default function LicitacionesDisponibles({ embedded = false }) {
             {lista.length === 0 ? "No hay postulaciones en el listado. Sube un xlsx para comenzar." : "Sin resultados para el filtro."}
           </div>
         ) : (
-          <table className="data-table" style={{ width: "100%", minWidth: 1180, tableLayout: "fixed" }}>
+          // El ancho mínimo es la suma de las columnas fijas MÁS un mínimo
+          // razonable para «Nombre». Con 1180 las fijas sumaban 1162 y a
+          // «Nombre» le quedaban 18px: el título de la licitación —lo primero
+          // que se lee— era la columna más apretada de la tabla.
+          <table className="data-table table-clip" style={{ width: "100%", minWidth: 1320, tableLayout: "fixed" }}>
             <thead>
               <tr>
-                <th style={{ textAlign: "center", width: 64 }}>Tomar</th>
-                <th style={{ textAlign: "left", whiteSpace: "nowrap", width: 150 }}>ID Licitación</th>
-                <th style={{ textAlign: "left" }}>Nombre</th>
-                <th style={{ textAlign: "left", width: 190 }}>Organismo</th>
-                <th style={{ textAlign: "left", width: 150 }}>Región</th>
-                <th style={{ textAlign: "right", whiteSpace: "nowrap", width: 120 }}>Monto</th>
-                <th style={{ textAlign: "left", width: 100 }}>Tipo</th>
-                <th style={{ textAlign: "left", whiteSpace: "nowrap", width: 150 }}>Cierre</th>
-                <th style={{ textAlign: "left", width: 120 }}>Estado</th>
-                <th style={{ textAlign: "left", width: 118 }}>Acciones</th>
+                <th style={{ textAlign: "center", width: 56 }}>Tomar</th>
+                <th style={{ textAlign: "left", whiteSpace: "nowrap", width: 140 }}>ID Licitación</th>
+                <th style={{ textAlign: "left", minWidth: 240 }}>Nombre</th>
+                <th style={{ textAlign: "left", width: 170 }}>Organismo</th>
+                <th style={{ textAlign: "left", width: 130 }}>Región</th>
+                <th style={{ textAlign: "right", whiteSpace: "nowrap", width: 110 }}>Monto</th>
+                <th style={{ textAlign: "left", width: 90 }}>Tipo</th>
+                <th style={{ textAlign: "left", whiteSpace: "nowrap", width: 140 }}>
+                  <button
+                    type="button"
+                    onClick={() => setOrdenCierre((o) => (o === "asc" ? "desc" : o === "desc" ? null : "asc"))}
+                    title={
+                      ordenCierre === "asc" ? "Cierran antes primero · clic para invertir"
+                      : ordenCierre === "desc" ? "Cierran después primero · clic para quitar el orden"
+                      : "Ordenar por fecha de cierre"
+                    }
+                    style={{
+                      display: "inline-flex", alignItems: "center", gap: 4, background: "none", border: "none",
+                      padding: 0, font: "inherit", color: ordenCierre ? "var(--primary-dark)" : "inherit", cursor: "pointer",
+                    }}
+                  >
+                    Cierre
+                    {ordenCierre === "asc" ? <ArrowUp size={12} />
+                      : ordenCierre === "desc" ? <ArrowDown size={12} />
+                      : <ArrowUpDown size={12} style={{ opacity: 0.35 }} />}
+                  </button>
+                </th>
+                <th style={{ textAlign: "left", width: 132 }}>Estado</th>
+                <th style={{ textAlign: "left", width: 112 }}>Acciones</th>
               </tr>
             </thead>
             <tbody>
               {filtradas.map((row) => {
                 const mia = (row.tomada_por || "").toLowerCase() === currentEmail;
                 const deOtro = !!row.tomada_por && !mia;
-                const vencida = !estaVigente(row);
+                // `cerrada` la persiste el backend al pasar el plazo; el
+                // cálculo al vuelo se mantiene como respaldo, para que la fila
+                // se vea correcta aunque la migración no esté aplicada todavía.
+                const vencida = row.cerrada || !estaVigente(row);
                 // Se bloquea marcar si la tomó otro o si está vencida (salvo que
                 // sea propia, para poder liberarla).
                 const bloqueada = deOtro || (vencida && !mia) || row.no_aplica;
@@ -712,6 +1011,36 @@ export default function LicitacionesDisponibles({ embedded = false }) {
                     })()}
                   </td>
                   <td>
+                    {/* «Ya postulamos» — se muestra ANTES que cualquier otro
+                        estado porque es lo que evita el trabajo repetido: si ya
+                        existe una cotización nuestra con ese código, da lo mismo
+                        que la fila figure como pendiente. */}
+                    {(row.cotizacion_propia || row?.datos?.postulamos === true) && (
+                      <div style={{ marginBottom: 4 }}>
+                        <span
+                          title={
+                            row?.datos?.postulamos === true
+                              ? `Confirmado en Mercado Público: nuestra oferta figura entre ${row.datos.postulamos_ofertas || "las"} recibidas` +
+                                (row.datos.postulamos_monto ? ` · $${Number(row.datos.postulamos_monto).toLocaleString("es-CL")}` : "")
+                              : `Ya existe una cotización nuestra con este código${row.cotizacion_propia?.vendedor_nombre ? " · " + row.cotizacion_propia.vendedor_nombre : ""}${row.cotizacion_propia?.estado ? " · " + row.cotizacion_propia.estado : ""}`
+                          }
+                          style={{
+                            display: "inline-flex", alignItems: "center", gap: 4, maxWidth: "100%", minWidth: 0,
+                            fontSize: 11.5, fontWeight: 700, padding: "2px 8px", borderRadius: 999,
+                            background: row?.datos?.postulamos === true ? "#dbeafe" : "#ede9fe",
+                            color: row?.datos?.postulamos === true ? "#1d4ed8" : "#6d28d9",
+                          }}
+                        >
+                          {/* Solo la etiqueta: la columna mide 132px y el
+                              nombre del vendedor se cortaba a la mitad. El
+                              detalle completo va en el tooltip. */}
+                          <Check size={12} style={{ flexShrink: 0 }} />
+                          <span className="truncar">
+                            {row?.datos?.postulamos === true ? "Postulada" : "Ya cotizada"}
+                          </span>
+                        </span>
+                      </div>
+                    )}
                     {row.no_aplica ? (
                       <span
                         title={`No aplica${row.no_aplica_por ? " · " + row.no_aplica_por : ""}`}
@@ -721,10 +1050,11 @@ export default function LicitacionesDisponibles({ embedded = false }) {
                       </span>
                     ) : row.cargada ? (
                       <span
-                        title={`${row.cargada_por || ""}${row.cargada_at ? " · " + fmtFecha(row.cargada_at) : ""}`}
-                        style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11.5, fontWeight: 700, padding: "2px 8px", borderRadius: 999, background: "#dcfce7", color: "#15803d" }}
+                        title={`Cargada por ${row.cargada_por || "—"}${row.cargada_at ? " · " + fmtFecha(row.cargada_at) : ""}`}
+                        style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11.5, fontWeight: 700, padding: "2px 8px", borderRadius: 999, maxWidth: "100%", minWidth: 0, background: "#dcfce7", color: "#15803d" }}
                       >
-                        <Check size={12} /> Cargada{row.cargada_por ? ` · ${row.cargada_por}` : ""}
+                        <Check size={12} style={{ flexShrink: 0 }} />
+                        <span className="truncar">Cargada{row.cargada_por ? ` · ${nombreDe(row.cargada_por)}` : ""}</span>
                       </span>
                     ) : (
                       <div style={{ display: "flex", flexDirection: "column", gap: 3, alignItems: "flex-start" }}>
@@ -745,11 +1075,17 @@ export default function LicitacionesDisponibles({ embedded = false }) {
                             title={`Tomada por ${row.tomada_por}`}
                             style={{
                               display: "inline-flex", alignItems: "center", gap: 3, fontSize: 10.5, fontWeight: 700, padding: "1px 7px", borderRadius: 999,
-                              whiteSpace: "nowrap", maxWidth: 118, overflow: "hidden", textOverflow: "ellipsis",
+                              maxWidth: "100%", minWidth: 0,
                               background: mia ? "#dcfce7" : "#e0e7ff", color: mia ? "#15803d" : "#3730a3",
                             }}
                           >
-                            <Check size={11} /> {mia ? "Tomada por ti" : `Tomada · ${row.tomada_por}`}
+                            <Check size={11} style={{ flexShrink: 0 }} />
+                            {/* El texto va en su propio elemento: los puntos
+                                suspensivos no funcionan sobre el hijo suelto de
+                                un contenedor flex, y antes se cortaba en seco. */}
+                            <span className="truncar">
+                              {mia ? "Tomada por ti" : nombreDe(row.tomada_por)}
+                            </span>
                           </span>
                         )}
                       </div>
@@ -811,19 +1147,23 @@ export default function LicitacionesDisponibles({ embedded = false }) {
       {vista === "explorar" && (
       <>
       <div className="filter-bar" style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end" }}>
-        <div className="filter-field">
+        {/* `.filter-field` es flex:1 con min-width 140: sin fijar el ancho al
+            contenido, los tres botones se apretujan y las etiquetas se parten
+            en dos líneas. */}
+        <div className="filter-field" style={{ flex: "0 0 auto", minWidth: 0 }}>
           <label className="filter-label">Fuente</label>
-          <div style={{ display: "inline-flex", borderRadius: 9, overflow: "hidden", border: "1px solid var(--border)", height: 38 }}>
-            {[["agil", "Compra Ágil"], ["licitaciones", "Licitaciones (activas)"]].map(([key, label]) => (
+          <div className="segmentado">
+            {[
+              ["todas", "Todas", "Compra Ágil y licitaciones en una sola tabla"],
+              ["agil", "Compra Ágil", "Solo órdenes de Compra Ágil (procesos COT)"],
+              ["licitaciones", "Licitaciones", "Solo licitaciones públicas activas (LE, LP, LQ…)"],
+            ].map(([key, label, ayuda]) => (
               <button
                 key={key}
                 type="button"
+                title={ayuda}
+                className={mpFuente === key ? "activo" : undefined}
                 onClick={() => { setMpFuente(key); setMpRes(null); }}
-                style={{
-                  padding: "0 14px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", border: "none",
-                  background: mpFuente === key ? "var(--primary)" : "var(--surface)",
-                  color: mpFuente === key ? "#fff" : "var(--text-muted)",
-                }}
               >
                 {label}
               </button>
@@ -844,7 +1184,7 @@ export default function LicitacionesDisponibles({ embedded = false }) {
             />
           </div>
         </div>
-        {mpFuente === "agil" && (
+        {(mpFuente === "agil" || mpFuente === "todas") && (
           <>
             <div className="filter-field">
               <label className="filter-label">Región</label>
@@ -877,6 +1217,17 @@ export default function LicitacionesDisponibles({ embedded = false }) {
             </div>
           </>
         )}
+        {/* La API de Licitaciones (v1) solo acepta un día exacto de
+            publicación: no hace rangos, no filtra por región y no admite otros
+            estados. De ahí que aquí haya un único campo de fecha. */}
+        {mpFuente === "licitaciones" && (
+          <div className="filter-field">
+            <label className="filter-label">Publicada el</label>
+            <input type="date" className="input" value={mpDesde}
+              title="Un día exacto. Vacío = todas las licitaciones activas."
+              onChange={(e) => setMpDesde(e.target.value)} style={{ width: 150 }} />
+          </div>
+        )}
         <button
           className="btn btn-primary"
           onClick={() => buscarMP(1)}
@@ -887,39 +1238,141 @@ export default function LicitacionesDisponibles({ embedded = false }) {
         </button>
       </div>
 
-      {/* Keywords sugeridas del rubro: clic agrega/quita de la búsqueda (se
-          pueden combinar varias; cada keyword es una consulta a la API). */}
+      {/* Búsquedas guardadas: combinaciones de palabras con nombre. Existen
+          porque la API solo admite 8 términos por consulta y el catálogo tiene
+          decenas: sin agruparlas habría que re-elegirlas a mano cada vez. */}
+      {mpBusquedas.length > 0 && (
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", marginTop: 10 }}>
+          <span style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 600 }}>Búsquedas guardadas:</span>
+          {mpBusquedas.map((b) => (
+            <span key={b.id} className={`chip-doble chip-guardada${esGestor ? "" : " chip-solo"}`}>
+              <button
+                type="button"
+                className="chip-texto"
+                onClick={() => setMpQ((b.keywords || []).join(", "))}
+                title={`Aplicar: ${(b.keywords || []).join(", ")}`}
+              >
+                {b.nombre}
+              </button>
+              {esGestor && (
+                <button
+                  type="button"
+                  className="chip-quitar"
+                  onClick={() => eliminarBusquedaMp(b)}
+                  aria-label={`Eliminar la búsqueda guardada "${b.nombre}"`}
+                  title="Eliminar esta búsqueda guardada"
+                >
+                  ×
+                </button>
+              )}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* Palabras SELECCIONADAS + acceso al administrador. El catálogo completo
+          no se lista acá: con decenas de términos tapaba la pantalla. */}
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", marginTop: 10 }}>
-        <span style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 600 }}>Sugerencias (clic para combinar):</span>
-        {MP_KEYWORDS.map((k) => {
-          const activa = mpKeywords.some((x) => x.toLowerCase() === k.toLowerCase());
-          return (
-            <button
-              key={k}
-              type="button"
-              onClick={() => toggleKeywordMP(k)}
-              style={{
-                fontSize: 12, fontWeight: 600, padding: "3px 11px", borderRadius: 999, cursor: "pointer",
-                border: "1px solid var(--border)", background: activa ? "var(--primary)" : "var(--surface)",
-                color: activa ? "#fff" : "var(--text-muted)",
-              }}
-            >
-              {activa ? `${k} ×` : k}
-            </button>
-          );
-        })}
+        <button type="button" onClick={() => setMpKeywordsOpen(true)} className="btn btn-sm btn-secondary"
+          title="Ver, agregar y quitar palabras clave"
+          style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 700 }}>
+          <ClipboardList size={13} /> Palabras clave ({mpCatalogo.length})
+        </button>
+        {mpKeywords.length === 0 ? (
+          <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
+            Ninguna seleccionada — ábrelas para elegir, o usa una búsqueda guardada.
+          </span>
+        ) : (
+          <>
+            <span style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 600 }}>Buscando por:</span>
+            {mpKeywords.map((k) => (
+              <button key={k} type="button" onClick={() => toggleKeywordMP(k)} title="Quitar de la búsqueda"
+                style={{
+                  fontSize: 12, fontWeight: 600, padding: "3px 11px", borderRadius: 999, cursor: "pointer",
+                  border: "1px solid var(--border)", background: "var(--primary)", color: "#fff",
+                }}>
+                {k} ×
+              </button>
+            ))}
+            {esGestor && (
+              <button type="button" onClick={guardarBusquedaMp} className="btn btn-sm btn-ghost"
+                title="Guardar estas palabras como una búsqueda rápida"
+                style={{ fontSize: 12, fontWeight: 700 }}>
+                Guardar como búsqueda
+              </button>
+            )}
+          </>
+        )}
       </div>
 
-      <div style={{ marginTop: 8, fontSize: 12, color: "var(--text-muted)" }}>
-        Resultados en vivo de la API de Mercado Público. Cada palabra se busca también en su
-        singular/plural (dental y dentales), igual que el buscador del portal. Para <b>ofertar</b> debes ingresar con tu clave en
-        mercadopublico.cl (la API es de solo lectura); desde aquí puedes ver la ficha, descargar el PDF y
-        <b> agregar el proceso al Listado</b> para tomarlo y crear su cotización.
-        {mpFuente === "licitaciones" && " Las licitaciones activas se listan con datos resumidos (la API v1 no entrega organismo ni montos en el listado); pincha el código para ver la ficha completa."}
+      {mpKeywords.length > 20 && (
+        <div style={{ marginTop: 8, fontSize: 12, color: "#b45309", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "7px 11px" }}>
+          {mpKeywords.length > 80
+            ? <>Seleccionaste {mpKeywords.length} palabras y el máximo por búsqueda es 80: las {mpKeywords.length - 80} últimas no se van a consultar.</>
+            : <>Buscando por {mpKeywords.length} palabras: son unas {mpKeywords.length * 2} consultas a Mercado Público (cada palabra se busca en singular y plural), así que puede tardar cerca de un minuto y consume cuota diaria del ticket.</>}
+        </div>
+      )}
+
+      {mpPrompt && (
+        <PromptModal
+          {...mpPrompt}
+          onCancelar={() => setMpPrompt(null)}
+          onError={(m) => setToast({ type: "error", message: m })}
+          onListo={() => setMpPrompt(null)}
+        />
+      )}
+
+      <ConfirmModal
+        open={!!confirmGenerico}
+        title={confirmGenerico?.title || ""}
+        message={confirmGenerico?.message || ""}
+        confirmText="Sí, quitar"
+        onCancel={() => setConfirmGenerico(null)}
+        onConfirm={() => { const f = confirmGenerico?.onConfirm; setConfirmGenerico(null); f?.(); }}
+      />
+
+      {mpKeywordsOpen && (
+        <AdminKeywordsModal
+          catalogo={mpCatalogo}
+          seleccionadas={mpKeywords}
+          esGestor={esGestor}
+          onToggle={toggleKeywordMP}
+          onAgregar={agregarKeywordMp}
+          onEliminar={eliminarKeywordMp}
+          onSeleccionarVarias={seleccionarKeywordsMp}
+          onClose={() => setMpKeywordsOpen(false)}
+        />
+      )}
+
+      {mpRes?.conteo_fuente && (
+        <div style={{ marginTop: 8, fontSize: 12, color: "var(--text-muted)" }}>
+          <b>{mpRes.conteo_fuente.compra_agil}</b> de Compra Ágil · <b>{mpRes.conteo_fuente.licitaciones}</b> licitaciones activas.
+          {mpRes.error_licitaciones && (
+            <span style={{ color: "#b45309" }}> · No se pudo consultar licitaciones: {mpRes.error_licitaciones}</span>
+          )}
+        </div>
+      )}
+
+      {/* Una sola línea. El detalle de las limitaciones de cada API vive en los
+          tooltips: es información que se consulta una vez y después estorba. */}
+      <div style={{ marginTop: 6, fontSize: 11.5, color: "var(--text-muted)" }}>
+        Datos en vivo de Mercado Público · para ofertar entra a mercadopublico.cl ·{" "}
+        <span
+          style={{ cursor: "help", textDecoration: "underline dotted" }}
+          title={
+            "Compra Ágil: busca en el nombre y la descripción, por palabra completa (cada término se consulta también en singular y plural).\n\n" +
+            "Licitaciones: la API antigua solo entrega código, nombre, estado y cierre — por eso organismo y monto van vacíos y no hay filtro de región, estado ni rango de fechas. A cambio busca por coincidencia parcial.\n\n" +
+            "Pincha el código para ver la ficha completa."
+          }
+        >
+          cómo funciona la búsqueda
+        </span>
       </div>
 
-      {/* Resultados */}
-      <div className="surface" style={{ marginTop: 14, overflowX: "auto" }}>
+      {/* Resultados. Alto acotado con scroll propio: la vista combinada
+          devuelve todo en una sola página (89 filas con "dental", cientos con
+          términos amplios como "insumo") y sin esto la página crece sin fin. */}
+      <div className="surface" style={{ marginTop: 14, overflow: "auto", maxHeight: "62vh" }}>
         {mpBuscando ? (
           <div style={{ padding: "36px 24px", color: "var(--text-muted)" }}>Consultando Mercado Público…</div>
         ) : !mpRes ? (
@@ -930,9 +1383,11 @@ export default function LicitacionesDisponibles({ embedded = false }) {
           <div style={{ padding: "36px 24px", color: "var(--text-muted)" }}>Sin resultados para esa búsqueda.</div>
         ) : (
           <table className="data-table" style={{ width: "100%", minWidth: 1100 }}>
-            <thead>
+            {/* Encabezado fijo al hacer scroll dentro de la tabla. */}
+            <thead style={{ position: "sticky", top: 0, zIndex: 2, background: "var(--surface)", boxShadow: "0 1px 0 var(--border)" }}>
               <tr>
                 <th style={{ textAlign: "left", whiteSpace: "nowrap", width: 160 }}>Código</th>
+                <th style={{ textAlign: "left", width: 70 }} title="Tipo de proceso según el código: Ágil = Compra Ágil; LE/LP/LQ… = licitación pública por tramo de monto">Tipo</th>
                 <th style={{ textAlign: "left" }}>Nombre</th>
                 <th style={{ textAlign: "left", width: 200 }}>Organismo</th>
                 <th style={{ textAlign: "left", width: 120 }}>Región</th>
@@ -962,6 +1417,22 @@ export default function LicitacionesDisponibles({ embedded = false }) {
                       style={{ fontWeight: 600, whiteSpace: "nowrap", cursor: "pointer", color: "var(--primary-dark)", textDecoration: "underline", textUnderlineOffset: 2 }}
                     >
                       {item.codigo}
+                    </td>
+                    {/* Tipo de proceso deducido del sufijo del código (COT,
+                        LE, LP…). Distingue de un vistazo una Compra Ágil de una
+                        licitación pública, y de qué tramo de monto es. */}
+                    <td style={{ whiteSpace: "nowrap" }}>
+                      <span
+                        title={item.tipo_sigla ? `${item.tipo_sigla} · ${item.tipo_label}` : "Tipo no reconocido"}
+                        style={{
+                          fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 999,
+                          background: item.tipo_familia === "compra_agil" ? "#ecfeff" : "#f5f3ff",
+                          color: item.tipo_familia === "compra_agil" ? "#0e7490" : "#6d28d9",
+                          border: `1px solid ${item.tipo_familia === "compra_agil" ? "#a5f3fc" : "#ddd6fe"}`,
+                        }}
+                      >
+                        {item.tipo_familia === "compra_agil" ? "Ágil" : (item.tipo_sigla || "—")}
+                      </span>
                     </td>
                     <td style={{ whiteSpace: "normal", wordBreak: "break-word", fontSize: 12.5 }}>{item.nombre || "—"}</td>
                     <td title={item.organismo} style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", fontSize: 12.5, maxWidth: 200 }}>{item.organismo || "—"}</td>
@@ -1006,8 +1477,11 @@ export default function LicitacionesDisponibles({ embedded = false }) {
                   {mpRes.por_keyword.map((k, i) => (
                     <span key={k.q}>
                       {i > 0 && " · "}
+                      {/* El motivo del fallo va en el tooltip: decir solo
+                          "error" obligaba a adivinar si era cuota, timeout o
+                          un problema de la propia palabra. */}
                       <b>{k.q}</b>: {k.error
-                        ? <span style={{ color: "#b91c1c" }}>error</span>
+                        ? <span style={{ color: "#b91c1c", cursor: "help", textDecoration: "underline dotted" }} title={k.error}>error</span>
                         : k.total > k.traidos ? `${k.traidos} de ${Number(k.total).toLocaleString("es-CL")}` : k.total}
                     </span>
                   ))}
@@ -1130,7 +1604,7 @@ export default function LicitacionesDisponibles({ embedded = false }) {
                   {(d.productos || []).length > 0 && (
                     <div style={{ margin: "12px 0" }}>
                       <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 6 }}>Productos o servicios ({d.productos.length})</div>
-                      <div style={{ border: "1px solid var(--border)", borderRadius: 10, overflow: "hidden" }}>
+                      <div style={{ border: "1px solid var(--border)", borderRadius: 10, overflowX: "auto" }}>
                         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                           <thead>
                             <tr style={{ background: "var(--bg)", color: "var(--text-muted)", textAlign: "left" }}>
@@ -1368,5 +1842,213 @@ function ModalSubirListado({ onClose, onDone, onToast }) {
         </div>
       </div>
     </div>
+  );
+}
+
+/* ============================================================
+   Administrador de palabras clave de Explorar Mercado Público
+   ─ Vive en un modal y no en la barra porque el catálogo tiene
+     decenas de términos: en línea tapaba la pantalla.
+   ─ El buscador de arriba filtra la lista, no la base.
+   ─ Agregar/quitar del catálogo es solo para gestores; elegir
+     cuáles se buscan lo puede hacer cualquiera.
+============================================================ */
+function AdminKeywordsModal({ catalogo, seleccionadas, esGestor, onToggle, onAgregar, onEliminar, onSeleccionarVarias, onClose }) {
+  const [filtro, setFiltro] = useState("");
+
+  const q = filtro.trim().toLowerCase();
+  const visibles = q
+    ? catalogo.filter((k) => k.texto.toLowerCase().includes(q))
+    : catalogo;
+  const estaActiva = (texto) => seleccionadas.some((x) => x.toLowerCase() === texto.toLowerCase());
+
+  return createPortal(
+    <div
+      style={{
+        position: "fixed", inset: 0, background: "rgba(15,23,42,0.45)", zIndex: 9999,
+        display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "5vh 16px", overflowY: "auto",
+      }}
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div style={{ background: "#fff", borderRadius: 12, width: "min(860px, 100%)", padding: 20, boxShadow: "0 20px 60px rgba(0,0,0,.25)" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+          <h3 style={{ margin: 0, display: "inline-flex", alignItems: "center", gap: 8 }}>
+            <ClipboardList size={18} /> Palabras clave ({catalogo.length})
+          </h3>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={onClose}><X size={16} /></button>
+        </div>
+        {/* El texto decía "la API admite hasta 8 por consulta", que era de
+            cuando las palabras estaban fijas en el código. La API acepta UN
+            término por llamada y el backend hace una llamada por palabra: el
+            tope de 80 es nuestro, para no vaciar la cuota diaria del ticket. */}
+        <p style={{ fontSize: 12.5, color: "#64748b", marginTop: 0 }}>
+          Clic en una palabra para incluirla o sacarla de la búsqueda. Cada palabra es una consulta aparte
+          a Mercado Público, así que mientras más elijas, más se demora y más cuota diaria consume;
+          el máximo por búsqueda es <strong>80</strong>.
+        </p>
+
+        <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 10, flexWrap: "wrap" }}>
+          <div style={{ position: "relative", flex: 1, minWidth: 220 }}>
+            <Search size={14} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)" }} />
+            <input
+              className="input"
+              style={{ paddingLeft: 30, width: "100%" }}
+              placeholder="Filtrar palabras…"
+              value={filtro}
+              onChange={(e) => setFiltro(e.target.value)}
+              autoFocus
+            />
+          </div>
+          {esGestor && (
+            <button type="button" className="btn btn-secondary btn-sm" onClick={onAgregar} style={{ fontWeight: 700, whiteSpace: "nowrap" }}>
+              + Agregar palabra
+            </button>
+          )}
+        </div>
+
+        <div style={{
+          display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
+          fontSize: 12, fontWeight: 700, marginBottom: 6,
+          color: seleccionadas.length > 80 ? "#b45309" : "var(--text-muted)",
+        }}>
+          <span>
+            {seleccionadas.length} seleccionada{seleccionadas.length === 1 ? "" : "s"}
+            {seleccionadas.length > 80 ? ` · solo se consultarán las primeras 80` : ""}
+          </span>
+          {/* Con filtro activo, seleccionar/deseleccionar aplica solo a lo que
+              está a la vista: así se puede filtrar "fresa" y tomar todas de una. */}
+          <span style={{ display: "inline-flex", gap: 4 }}>
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              onClick={() => onSeleccionarVarias(visibles.map((k) => k.texto), true)}
+              disabled={visibles.length === 0 || visibles.every((k) => estaActiva(k.texto))}
+              style={{ fontSize: 12 }}
+            >
+              {q ? `Seleccionar las ${visibles.length} visibles` : "Seleccionar todas"}
+            </button>
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              onClick={() => onSeleccionarVarias(visibles.map((k) => k.texto), false)}
+              disabled={!visibles.some((k) => estaActiva(k.texto))}
+              style={{ fontSize: 12 }}
+            >
+              {q ? "Deseleccionar visibles" : "Deseleccionar todas"}
+            </button>
+          </span>
+        </div>
+
+        <div style={{
+          maxHeight: "52vh", overflowY: "auto", border: "1px solid #e2e8f0", borderRadius: 8, padding: 10,
+          display: "flex", flexWrap: "wrap", gap: 6, alignContent: "flex-start",
+        }}>
+          {visibles.length === 0 && (
+            <span style={{ fontSize: 13, color: "#64748b" }}>
+              {catalogo.length === 0
+                ? "El catálogo está vacío. Falta aplicar la migración 20260810_mp_keywords_busquedas.sql."
+                : `Ninguna palabra coincide con "${filtro}".`}
+            </span>
+          )}
+          {visibles.map((k) => {
+            const activa = estaActiva(k.texto);
+            return (
+              <span
+                key={k.id}
+                className={`chip-doble${activa ? " activa" : ""}${esGestor ? "" : " chip-solo"}`}
+              >
+                <button
+                  type="button"
+                  className="chip-texto"
+                  onClick={() => onToggle(k.texto)}
+                  aria-pressed={activa}
+                  title={activa ? `Sacar "${k.texto}" de la búsqueda` : `Incluir "${k.texto}" en la búsqueda`}
+                >
+                  {activa ? `${k.texto} ✓` : k.texto}
+                </button>
+                {esGestor && (
+                  <button
+                    type="button"
+                    className="chip-quitar"
+                    onClick={() => onEliminar(k)}
+                    aria-label={`Quitar "${k.texto}" del catálogo`}
+                    title={`Quitar "${k.texto}" del catálogo`}
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                )}
+              </span>
+            );
+          })}
+        </div>
+
+        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 14 }}>
+          <button type="button" className="btn btn-primary btn-sm" onClick={onClose}>
+            Listo
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+/* ============================================================
+   Modal de texto — reemplaza window.prompt
+   El diálogo nativo del navegador rompe el estilo de la app y no
+   permite validar mientras se escribe ni mostrar contexto.
+============================================================ */
+function PromptModal({ titulo, ayuda, placeholder, confirmar = "Guardar", onConfirmar, onCancelar, onListo, onError }) {
+  const [valor, setValor] = useState("");
+  const [guardando, setGuardando] = useState(false);
+
+  async function aceptar() {
+    const v = valor.trim();
+    if (!v || guardando) return;
+    setGuardando(true);
+    try {
+      await onConfirmar(v);
+      onListo?.();
+    } catch (e) {
+      onError?.(e?.message || "No se pudo guardar.");
+      setGuardando(false);
+    }
+  }
+
+  return createPortal(
+    <div
+      style={{
+        position: "fixed", inset: 0, background: "rgba(15,23,42,0.45)", zIndex: 10000,
+        display: "flex", alignItems: "center", justifyContent: "center", padding: 16,
+      }}
+      onClick={(e) => { if (e.target === e.currentTarget && !guardando) onCancelar(); }}
+    >
+      <div style={{ background: "#fff", borderRadius: 12, width: "min(460px, 100%)", padding: 20, boxShadow: "0 20px 60px rgba(0,0,0,.25)" }}>
+        <h3 style={{ margin: "0 0 4px" }}>{titulo}</h3>
+        {ayuda && <p style={{ fontSize: 12.5, color: "#64748b", margin: "0 0 12px" }}>{ayuda}</p>}
+        <input
+          className="input"
+          style={{ width: "100%" }}
+          placeholder={placeholder}
+          value={valor}
+          onChange={(e) => setValor(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") aceptar();
+            if (e.key === "Escape" && !guardando) onCancelar();
+          }}
+          autoFocus
+          disabled={guardando}
+        />
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 14 }}>
+          <button type="button" className="btn btn-secondary btn-sm" onClick={onCancelar} disabled={guardando}>
+            Cancelar
+          </button>
+          <button type="button" className="btn btn-primary btn-sm" onClick={aceptar} disabled={!valor.trim() || guardando}>
+            {guardando ? "Guardando…" : confirmar}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }

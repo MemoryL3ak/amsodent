@@ -1,17 +1,21 @@
 import { Controller, Get, Post, Body, UseGuards } from '@nestjs/common';
 import { MercadopublicoService } from './mercadopublico.service';
+import { MercadopublicoCron } from './mercadopublico.cron';
 import { AdminGuard } from '../auth/admin.guard';
 
 // Benchmark de postulaciones vs Mercado Público: SOLO administradores.
 @Controller('mercado-publico')
 @UseGuards(AdminGuard)
 export class MercadopublicoController {
-  constructor(private mpService: MercadopublicoService) {}
+  constructor(
+    private mpService: MercadopublicoService,
+    private cron: MercadopublicoCron,
+  ) {}
 
   // Configuración disponible (ticket / RUT empresa) para la UI.
   @Get('estado')
   estado() {
-    return this.mpService.estado();
+    return { ...this.mpService.estado(), automatica: this.cron.estado() };
   }
 
   // Resultados guardados (mp_resultados + datos de la cotización interna).

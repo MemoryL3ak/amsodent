@@ -47,8 +47,12 @@ function safeJsonParse(text) {
 }
 
 export const api = {
-  get: (path) => request(path),
-  post: (path, body) => request(path, { method: 'POST', body: JSON.stringify(body) }),
+  get: (path, options) => request(path, options),
+  // `options` permite pasar un AbortSignal: hay procesos largos (la
+  // sincronización con Mercado Público dura decenas de minutos) que el usuario
+  // tiene que poder cortar sin esperar a que responda la request en vuelo.
+  post: (path, body, options = {}) =>
+    request(path, { ...options, method: 'POST', body: JSON.stringify(body) }),
   put: (path, body) => request(path, { method: 'PUT', body: JSON.stringify(body) }),
   delete: (path) => request(path, { method: 'DELETE' }),
   postForm: (path, formData) => sendForm('POST', path, formData),

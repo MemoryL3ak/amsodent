@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Trophy, TrendingDown, RefreshCw, Search, ChevronDown, ChevronRight,
   Target, Percent, AlertTriangle, KeyRound, Crown, Building2, Scale,
-  ArrowUp, ArrowDown, ArrowUpDown, Download,
+  ArrowUp, ArrowDown, ArrowUpDown, Download, X, Square,
 } from "lucide-react";
 import { api } from "../lib/api";
 import Toast from "../components/Toast";
+import DateFilter from "../components/DateFilter";
 import { SunflowerIcon } from "../components/DamarIAWidget";
 
 /* ============================================================
@@ -22,6 +23,19 @@ import { SunflowerIcon } from "../components/DamarIAWidget";
 const fmt$ = (v) => (v == null || Number.isNaN(Number(v)) ? "—" : `$${Math.round(Number(v)).toLocaleString("es-CL")}`);
 const fmtPct = (v) => (v == null || !Number.isFinite(v) ? "—" : `${v > 0 ? "+" : ""}${v.toFixed(1)}%`);
 const fmtFecha = (iso) => (iso ? new Date(iso).toLocaleDateString("es-CL", { day: "2-digit", month: "2-digit", year: "numeric" }) : "—");
+
+/* Tiempo restante en palabras. Se redondea a propósito: es una estimación que
+   se recalcula sola con el ritmo real de la corrida, no un cronómetro. */
+function restanteAprox(ms) {
+  if (ms == null || !Number.isFinite(ms) || ms < 0) return null;
+  const seg = Math.round(ms / 1000);
+  if (seg < 60) return "menos de 1 min";
+  const min = Math.round(seg / 60);
+  if (min < 60) return `${min} min`;
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  return m ? `${h} h ${m} min` : `${h} h`;
+}
 
 // Clasificación de cada proceso para el panel.
 function clasificar(r) {
@@ -54,16 +68,21 @@ export default function AnalisisMercadoPublico() {
   const [resultados, setResultados] = useState([]);
   const [loading, setLoading] = useState(true);
   const [sincronizando, setSincronizando] = useState(false);
-  const [progresoSync, setProgresoSync] = useState(null); // { hechas, restantes }
+  const [progresoSync, setProgresoSync] = useState(null); // { hechas, restantes, etaMs, transcurrido }
   const [toast, setToast] = useState(null);
   const [busqueda, setBusqueda] = useState("");
   const [filtroClase, setFiltroClase] = useState("");
   const [filtroTipo, setFiltroTipo] = useState("");
+  // Filtro de la TABLA por fecha de adjudicación. Es distinto del rango de
+  // arriba, que solo define qué cotizaciones se consultan contra la API.
+  const [adjDesde, setAdjDesde] = useState("");
+  const [adjHasta, setAdjHasta] = useState("");
   const [expandida, setExpandida] = useState(null);
   const [donaPorMonto, setDonaPorMonto] = useState(false);
-  // Orden de la tabla: por defecto los cierres más recientes primero.
-  const [orden, setOrden] = useState({ campo: "cierre", dir: "desc" });
-  // Rango de cotizaciones internas a sincronizar (vacío = últimos 8 meses).
+  // Orden de la tabla: por defecto las adjudicaciones más recientes primero.
+  const [orden, setOrden] = useState({ campo: "adjudicacion", dir: "desc" });
+  // Rango de cotizaciones internas a sincronizar
+  // (vacío = desde el día 1 del mes anterior).
   const [syncDesde, setSyncDesde] = useState("");
   const [syncHasta, setSyncHasta] = useState("");
 
@@ -89,36 +108,100 @@ export default function AnalisisMercadoPublico() {
 
   // Sincronización INCREMENTAL: tandas de 8 procesos en loop, refrescando la
   // tabla tras cada tanda — los resultados aparecen en vivo, sin recargar.
-  async function sincronizar() {
+  // `forzar` re-consulta también los procesos ya resueltos. Se usa para
+  // rellenar datos que se agregaron después (la fecha de adjudicación, por
+  // ejemplo): sin esto esos procesos nunca se vuelven a preguntar y el campo
+  // queda vacío para siempre. Gasta cuota de la API, así que es a pedido.
+  // Detener la sincronización. Va en refs y no en estado porque el bucle de
+  // abajo lo lee entre tandas: con `useState` leería el valor congelado del
+  // render en que arrancó y nunca se enteraría del clic.
+  const detenerRef = useRef(false);
+  const abortRef = useRef(null);
+  // El ref manda el bucle, pero además hace falta ESTADO para que el botón
+  // reaccione al clic: un ref no re-renderiza y el botón se quedaría igual.
+  const [deteniendo, setDeteniendo] = useState(false);
+
+  function detenerSync() {
+    detenerRef.current = true;
+    setDeteniendo(true);
+    // Aborta también la tanda en vuelo: sin esto habría que esperar hasta
+    // 30 s a que Mercado Público conteste antes de que el botón hiciera algo.
+    abortRef.current?.abort();
+  }
+
+  async function sincronizar(forzar = false) {
     setSincronizando(true);
-    setProgresoSync({ hechas: 0, restantes: null });
+    setProgresoSync({ hechas: 0, restantes: null, etaMs: null, transcurrido: 0 });
+    detenerRef.current = false;
+    setDeteniendo(false);
+    const inicio = Date.now();
     let hechas = 0;
     let finalizadas = 0;
     let erroresTotal = 0;
     let cuotaAgotada = false;
+    let detenida = false;
     try {
-      for (let i = 0; i < 60; i++) {
+      // El lote calza con el pool del backend: una tanda es UNA oleada de
+      // consultas paralelas (~30 s), en vez de encadenar varias dentro de la
+      // misma request y arriesgar el corte del proxy.
+      const LOTE = 12;
+      // 150 × 12 = 1.800 procesos: más que el total de cotizaciones con código
+      // de Mercado Público, así que una sola pasada alcanza a terminar. El tope
+      // anterior (60 × 8 = 480) obligaba a volver a pulsar el botón.
+      const MAX_TANDAS = 150;
+      for (let i = 0; i < MAX_TANDAS; i++) {
+        if (detenerRef.current) { detenida = true; break; }
+        abortRef.current = new AbortController();
         const r = await api.post("/mercado-publico/sincronizar", {
           desde: syncDesde || undefined,
           hasta: syncHasta || undefined,
-          lote: 8,
-        });
+          lote: LOTE,
+          forzar,
+        }, { signal: abortRef.current.signal });
         hechas += r.consultadas || 0;
         finalizadas += r.finalizadas || 0;
         erroresTotal += r.errores?.length || 0;
         cuotaAgotada = !!r.cuota_agotada;
-        setProgresoSync({ hechas, restantes: r.restantes ?? 0 });
-        await cargarResultados(); // la tabla se actualiza en vivo
+        const restantes = r.restantes ?? 0;
+        // El tiempo restante se estima con el ritmo REAL de esta corrida, no
+        // con una constante: la API de Mercado Público cambia mucho de un día
+        // a otro (medido: entre 11 y 29 s por ficha) y una cifra fija mentiría.
+        // Cada intento saca un proceso de la cola —si falla queda anotado y se
+        // salta—, así que el ritmo de consultas ES el ritmo de avance.
+        const transcurrido = Date.now() - inicio;
+        const etaMs = hechas > 0 ? (transcurrido / hechas) * restantes : null;
+        setProgresoSync({ hechas, restantes, etaMs, transcurrido });
+        // Recargar la tabla entera en cada tanda son cientos de descargas de
+        // hasta 5.000 filas con su join: se refresca cada 5 tandas, y al final.
+        if (i % 5 === 4) await cargarResultados();
         if (cuotaAgotada || !r.restantes || !r.consultadas) break;
       }
+      await cargarResultados();
       const partes = [`${hechas} proceso${hechas === 1 ? "" : "s"} consultado${hechas === 1 ? "" : "s"}`];
       if (finalizadas) partes.push(`${finalizadas} con resultado final`);
       if (cuotaAgotada) partes.push("cuota diaria de la API agotada, el resto queda para mañana");
       if (erroresTotal) partes.push(`${erroresTotal} con error`);
-      setToast({ type: erroresTotal || cuotaAgotada ? "info" : "success", message: `Sincronización completa: ${partes.join(" · ")}.` });
+      setToast({
+        type: detenida ? "info" : erroresTotal || cuotaAgotada ? "info" : "success",
+        message: detenida
+          ? `Sincronización detenida: ${partes.join(" · ")}. Lo consultado quedó guardado.`
+          : `Sincronización completa: ${partes.join(" · ")}.`,
+      });
     } catch (e) {
-      setToast({ type: "error", message: e?.message || "No se pudo sincronizar." });
+      // Abortar la request en vuelo NO es un error: es el usuario deteniendo.
+      if (detenerRef.current || e?.name === "AbortError") {
+        await cargarResultados();
+        setToast({
+          type: "info",
+          message: `Sincronización detenida: ${hechas} proceso${hechas === 1 ? "" : "s"} consultado${hechas === 1 ? "" : "s"}. Lo consultado quedó guardado.`,
+        });
+      } else {
+        setToast({ type: "error", message: e?.message || "No se pudo sincronizar." });
+      }
     } finally {
+      abortRef.current = null;
+      detenerRef.current = false;
+      setDeteniendo(false);
       setSincronizando(false);
       setProgresoSync(null);
     }
@@ -199,17 +282,26 @@ export default function AnalisisMercadoPublico() {
     return filas.filter((f) => {
       if (filtroClase && f.clase !== filtroClase) return false;
       if (filtroTipo && f.tipo !== filtroTipo) return false;
+      // Filtro por fecha de adjudicación (la que muestra la tabla). Los
+      // procesos sin adjudicar no tienen esa fecha, así que al acotar el rango
+      // quedan fuera: es lo correcto, no se puede afirmar que caigan dentro.
+      if (adjDesde || adjHasta) {
+        if (!f.fecha_adjudicacion) return false;
+        const dia = String(f.fecha_adjudicacion).slice(0, 10);
+        if (adjDesde && dia < adjDesde) return false;
+        if (adjHasta && dia > adjHasta) return false;
+      }
       if (!q) return true;
       return [f.codigo_mp, f.organismo, f.ganador_nombre, f.interna?.nombre, f.interna?.nombre_entidad]
         .map((s) => String(s || "").toLowerCase())
         .some((s) => s.includes(q));
     });
-  }, [filas, busqueda, filtroClase, filtroTipo]);
+  }, [filas, busqueda, filtroClase, filtroTipo, adjDesde, adjHasta]);
 
   const ordenadas = useMemo(() => {
     const val = (f) => {
       switch (orden.campo) {
-        case "cierre": { const t = f.fecha_cierre ? new Date(f.fecha_cierre).getTime() : NaN; return Number.isFinite(t) ? t : null; }
+        case "adjudicacion": { const t = f.fecha_adjudicacion ? new Date(f.fecha_adjudicacion).getTime() : NaN; return Number.isFinite(t) ? t : null; }
         case "nuestra": return f.monto_nuestro != null ? Number(f.monto_nuestro) : null;
         case "ganadora": return f.monto_ganador != null ? Number(f.monto_ganador) : null;
         case "brecha": return Number.isFinite(f.brecha) ? f.brecha : null;
@@ -233,10 +325,14 @@ export default function AnalisisMercadoPublico() {
   function exportarCsv() {
     const enc = (s) => `"${String(s ?? "").replace(/"/g, '""')}"`;
     const filasCsv = [
-      ["Código", "Tipo", "Cotización interna", "Organismo", "Cierre", "Nuestra oferta", "Oferta ganadora", "Brecha %", "Ganador", "RUT ganador", "Resultado"],
+      // El CSV conserva ambas fechas: la tabla muestra la adjudicación, pero
+      // para analizar fuera conviene tener también el cierre.
+      ["Código", "Tipo", "Cotización interna", "Organismo", "Cierre", "Adjudicación", "Nuestra oferta", "Oferta ganadora", "Brecha %", "Ganador", "RUT ganador", "Resultado"],
       ...ordenadas.map((f) => [
         f.codigo_mp, f.tipo === "compra_agil" ? "Compra Ágil" : "Licitación", f.interna?.nombre || "", f.organismo || "",
-        f.fecha_cierre ? fmtFecha(f.fecha_cierre) : "", f.monto_nuestro ?? "", f.monto_ganador ?? "",
+        f.fecha_cierre ? fmtFecha(f.fecha_cierre) : "",
+        f.fecha_adjudicacion ? fmtFecha(f.fecha_adjudicacion) : "",
+        f.monto_nuestro ?? "", f.monto_ganador ?? "",
         Number.isFinite(f.brecha) ? f.brecha.toFixed(1) : "", f.ganador_nombre || "", f.ganador_rut || "", CLASES[f.clase].label,
       ]),
     ];
@@ -304,15 +400,29 @@ export default function AnalisisMercadoPublico() {
         </div>
         <div className="page-actions" style={{ gap: 8, alignItems: "flex-end", flexWrap: "wrap" }}>
           <div>
-            <div style={{ fontSize: 10.5, fontWeight: 700, color: "var(--text-muted)", letterSpacing: ".03em", marginBottom: 3 }}>
-              PERÍODO A CONSULTAR (POSTULACIONES CREADAS)
+            {/* Este rango NO filtra la tabla: solo acota qué cotizaciones se
+                consultan contra la API al sincronizar. Se confundía con un
+                filtro, de ahí el rótulo explícito. */}
+            <div style={{ fontSize: 10.5, fontWeight: 700, color: "var(--text-muted)", letterSpacing: ".03em", marginBottom: 3 }}
+              title="No filtra la tabla. Define qué cotizaciones tuyas se consultan contra Mercado Público al sincronizar. Para filtrar lo que ves, usa 'Adjudicada entre', más abajo.">
+              QUÉ SINCRONIZAR · POR FECHA DE TU COTIZACIÓN (NO FILTRA LA TABLA)
             </div>
-            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-              <input type="date" className="input" style={{ height: 38, width: 150 }} value={syncDesde}
-                onChange={(e) => setSyncDesde(e.target.value)} title="Desde (vacío = últimos 8 meses)" />
+            {/* Los dos campos se reparten el ancho disponible en vez de exigir
+                150px cada uno. */}
+            <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+              <div style={{ flex: "1 1 130px", minWidth: 0 }} title="Desde (vacío = día 1 del mes anterior)">
+                <DateFilter value={syncDesde} onChange={setSyncDesde} placeholder="Desde" disabled={sincronizando} />
+              </div>
               <span style={{ color: "var(--text-muted)", fontSize: 12 }}>→</span>
-              <input type="date" className="input" style={{ height: 38, width: 150 }} value={syncHasta}
-                onChange={(e) => setSyncHasta(e.target.value)} title="Hasta (vacío = hoy)" />
+              <div style={{ flex: "1 1 130px", minWidth: 0 }} title="Hasta (vacío = hoy)">
+                <DateFilter
+                  value={syncHasta}
+                  onChange={setSyncHasta}
+                  placeholder="Hasta"
+                  disabled={sincronizando}
+                  minDate={syncDesde ? new Date(`${syncDesde}T00:00:00`) : null}
+                />
+              </div>
             </div>
           </div>
           <button className="btn btn-secondary" onClick={preguntarleADamaria} disabled={loading || filas.length === 0}
@@ -320,17 +430,73 @@ export default function AnalisisMercadoPublico() {
             style={{ display: "inline-flex", alignItems: "center", gap: 7, height: 38 }}>
             <SunflowerIcon size={15} /> Pregúntale a DamarIA
           </button>
-          <button className="btn btn-primary" onClick={sincronizar} disabled={sincronizando || sinConfig}
+          <button className="btn btn-primary" onClick={() => sincronizar(false)} disabled={sincronizando || sinConfig}
             style={{ display: "inline-flex", alignItems: "center", gap: 7, height: 38, minWidth: 250, justifyContent: "center" }}>
             <RefreshCw size={14} className={sincronizando ? "girando" : undefined} />
             {sincronizando
               ? progresoSync?.restantes != null
-                ? `${progresoSync.hechas} consultados · ${progresoSync.restantes} restantes`
+                ? `${progresoSync.hechas} de ${progresoSync.hechas + progresoSync.restantes}${
+                    restanteAprox(progresoSync.etaMs) ? ` · ~${restanteAprox(progresoSync.etaMs)}` : ""
+                  }`
                 : "Sincronizando…"
               : "Sincronizar con Mercado Público"}
           </button>
+          <button className="btn btn-ghost" onClick={() => sincronizar(true)} disabled={sincronizando || sinConfig}
+            title="Vuelve a consultar TODOS los procesos, incluidos los ya resueltos. Úsalo para rellenar datos nuevos (como la fecha de adjudicación) en procesos antiguos. Consume más cuota de la API."
+            style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 38 }}>
+            <RefreshCw size={13} /> Forzar
+          </button>
         </div>
       </div>
+
+      {/* Avance de la sincronización. Es informativo: la sincronización tarda
+          decenas de minutos porque la API responde una ficha cada ~25 s, así
+          que hay que poder ver cuánto falta sin quedarse adivinando. */}
+      {sincronizando && progresoSync && (
+        <div style={{ border: "1px solid var(--border)", background: "var(--surface)", borderRadius: 12, padding: "12px 16px", marginBottom: 16 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12, flexWrap: "wrap", fontSize: 13, marginBottom: 8 }}>
+            <span>
+              <b>{progresoSync.hechas}</b>
+              {progresoSync.restantes != null && ` de ${progresoSync.hechas + progresoSync.restantes}`} procesos consultados
+              {progresoSync.transcurrido > 0 && (
+                <span style={{ color: "var(--text-muted)" }}> · {restanteAprox(progresoSync.transcurrido)} transcurridos</span>
+              )}
+            </span>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 10 }}>
+              <span style={{ fontWeight: 700, color: restanteAprox(progresoSync.etaMs) ? "var(--primary-dark)" : "var(--text-muted)" }}>
+                {restanteAprox(progresoSync.etaMs)
+                  ? `Queda ${restanteAprox(progresoSync.etaMs)} aprox.`
+                  : "Calculando cuánto falta…"}
+              </span>
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                onClick={detenerSync}
+                disabled={deteniendo}
+                title="Corta la sincronización. Lo ya consultado queda guardado y al retomar sigue desde ahí."
+                style={{ display: "inline-flex", alignItems: "center", gap: 5, color: deteniendo ? "var(--text-muted)" : "#b91c1c" }}
+              >
+                <Square size={11} fill="currentColor" /> {deteniendo ? "Deteniendo…" : "Detener"}
+              </button>
+            </span>
+          </div>
+          <div style={{ height: 6, borderRadius: 999, background: "var(--neutral-bg)", overflow: "hidden" }}>
+            <div style={{
+              height: "100%",
+              width: `${progresoSync.restantes != null && progresoSync.hechas + progresoSync.restantes > 0
+                ? Math.min(100, (progresoSync.hechas / (progresoSync.hechas + progresoSync.restantes)) * 100)
+                : 0}%`,
+              background: "var(--primary)",
+              borderRadius: 999,
+              transition: "width .5s ease",
+            }} />
+          </div>
+          <div style={{ fontSize: 11.5, color: "var(--text-muted)", marginTop: 7, lineHeight: 1.5 }}>
+            Cada ficha se guarda apenas llega, así que puedes cerrar esta pestaña cuando quieras: al volver, la
+            sincronización retoma donde quedó y no repite lo ya consultado.
+          </div>
+        </div>
+      )}
 
       {sinConfig && (
         <div style={{ border: "1px solid #fcd34d", background: "#fffbeb", borderRadius: 12, padding: "14px 18px", marginBottom: 16, display: "flex", gap: 12, alignItems: "flex-start" }}>
@@ -448,7 +614,35 @@ export default function AnalisisMercadoPublico() {
             <option value="licitacion">Licitación</option>
           </select>
         </div>
+        <div className="filter-field">
+          <label className="filter-label">Adjudicada entre</label>
+          <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+            <div style={{ width: 148, minWidth: 0 }} title="Solo procesos adjudicados desde esta fecha">
+              <DateFilter value={adjDesde} onChange={setAdjDesde} placeholder="Desde" />
+            </div>
+            <span style={{ color: "var(--text-muted)", fontSize: 12 }}>→</span>
+            <div style={{ width: 148, minWidth: 0 }} title="Solo procesos adjudicados hasta esta fecha">
+              <DateFilter
+                value={adjHasta}
+                onChange={setAdjHasta}
+                placeholder="Hasta"
+                minDate={adjDesde ? new Date(`${adjDesde}T00:00:00`) : null}
+              />
+            </div>
+            {(adjDesde || adjHasta) && (
+              <button className="btn btn-ghost btn-sm" onClick={() => { setAdjDesde(""); setAdjHasta(""); }} title="Quitar el filtro de fechas">
+                <X size={14} />
+              </button>
+            )}
+          </div>
+        </div>
       </div>
+
+      {(adjDesde || adjHasta) && (
+        <div style={{ fontSize: 12, color: "#b45309", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "7px 11px", marginTop: 8 }}>
+          Filtrando por fecha de adjudicación: los procesos aún sin adjudicar (en curso, desiertos o cancelados) quedan fuera.
+        </div>
+      )}
 
       {/* ── Tabla ── */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, marginBottom: 6, gap: 10 }}>
@@ -467,7 +661,7 @@ export default function AnalisisMercadoPublico() {
               <th style={{ width: 26 }} />
               <th>Proceso</th>
               <th>Organismo</th>
-              <ThOrden campo="cierre" orden={orden} onOrden={toggleOrden}>Cierre</ThOrden>
+              <ThOrden campo="adjudicacion" orden={orden} onOrden={toggleOrden}>Adjudicación</ThOrden>
               <ThOrden campo="nuestra" orden={orden} onOrden={toggleOrden} right>Nuestra oferta</ThOrden>
               <ThOrden campo="ganadora" orden={orden} onOrden={toggleOrden} right>Oferta ganadora</ThOrden>
               <ThOrden campo="brecha" orden={orden} onOrden={toggleOrden} right>Brecha</ThOrden>
@@ -552,7 +746,15 @@ function FilaProceso({ f, cl, abierta, onToggle }) {
         <td style={{ padding: "7px 12px", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", fontSize: 12.5 }} title={f.organismo || ""}>
           {f.organismo || f.interna?.nombre_entidad || "—"}
         </td>
-        <td style={{ padding: "7px 12px", fontSize: 12.5, color: "var(--text-muted)" }}>{fmtFecha(f.fecha_cierre)}</td>
+        {/* Fecha de adjudicación. Cuando el proceso aún no se resuelve no hay
+            dato, así que se deja el cierre a mano en el tooltip para no perder
+            la referencia temporal. */}
+        <td
+          style={{ padding: "7px 12px", fontSize: 12.5, color: "var(--text-muted)" }}
+          title={f.fecha_cierre ? `Cierre del proceso: ${fmtFecha(f.fecha_cierre)}` : ""}
+        >
+          {f.fecha_adjudicacion ? fmtFecha(f.fecha_adjudicacion) : "—"}
+        </td>
         <td style={{ padding: "7px 12px", textAlign: "right", fontWeight: 600 }}>{fmt$(f.monto_nuestro)}</td>
         <td style={{ padding: "7px 12px", textAlign: "right", fontWeight: 600 }}>{fmt$(f.monto_ganador)}</td>
         <td style={{ padding: "7px 12px", textAlign: "right", fontWeight: 700, color: f.brecha == null ? "var(--text-muted)" : f.brecha > 0 ? "#b91c1c" : "#15803d" }}>
@@ -620,7 +822,7 @@ function DetalleProceso({ f }) {
       {cotizaciones.length > 0 && (
         <div>
           <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 6 }}>Cotizaciones del proceso ({cotizaciones.length})</div>
-          <div style={{ border: "1px solid var(--border)", borderRadius: 8, overflow: "hidden" }}>
+          <div style={{ border: "1px solid var(--border)", borderRadius: 8, overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, background: "var(--surface)" }}>
               <thead>
                 <tr style={{ background: "var(--bg)", color: "var(--text-muted)", textAlign: "left" }}>
@@ -668,7 +870,7 @@ function DetalleProceso({ f }) {
           <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 6 }}>
             {f.tipo === "compra_agil" ? "Producto a producto: nosotros vs ganador" : "Adjudicación por ítem"}
           </div>
-          <div style={{ border: "1px solid var(--border)", borderRadius: 8, overflow: "hidden" }}>
+          <div style={{ border: "1px solid var(--border)", borderRadius: 8, overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, background: "var(--surface)" }}>
               <thead>
                 <tr style={{ background: "var(--bg)", color: "var(--text-muted)", textAlign: "left" }}>
@@ -1078,7 +1280,9 @@ function SimuladorPrecio({ filas }) {
       {sinDatos ? (
         <Vacio texto="DamarIA necesita al menos 5 procesos decididos con montos para simular. Sincroniza más período o quita filtros." />
       ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "minmax(260px, 1fr) minmax(300px, 1.2fr)", gap: 18, alignItems: "center" }}>
+        // Las dos columnas sumaban 560px mínimos; .layout-par las pone una
+        // debajo de la otra en cuanto dejan de caber.
+        <div className="layout-par" style={{ gap: 18, alignItems: "center" }}>
           <div>
             <label style={{ fontSize: 12, fontWeight: 700, display: "block", marginBottom: 4 }}>
               Descuento sobre nuestros precios: <span style={{ color: "var(--primary-dark)" }}>−{descuento}%</span>

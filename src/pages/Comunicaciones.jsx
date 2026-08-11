@@ -1171,7 +1171,7 @@ function DetalleEnvio({ envioId, onVolver }) {
 
       <div className="surface-body" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
         {/* KPIs */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 190px), 1fr))", gap: 12 }}>
           <KpiCard label="Total destinatarios" value={stats.total} color="var(--text)" />
           <KpiCard label="Enviados" value={stats.enviados} color="#15803d" />
           <KpiCard label="Fallidos" value={stats.fallidos} color="#b91c1c" />

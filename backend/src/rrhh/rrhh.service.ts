@@ -13,23 +13,39 @@ import { SupabaseService } from '../supabase/supabase.service';
 
 const BUCKET = 'rrhh';
 
-// Parámetros previsionales y tributarios. Cambian cada año/mes: se pueden
-// sobreescribir por .env sin tocar código (RRHH_UF, RRHH_UTM, RRHH_IMM).
-function parametros() {
-  return {
-    uf: Number(process.env.RRHH_UF) || 39500,
-    utm: Number(process.env.RRHH_UTM) || 69000,
-    // Ingreso mínimo mensual (base del tope de gratificación legal).
-    imm: Number(process.env.RRHH_IMM) || 529000,
-    tope_imponible_uf: Number(process.env.RRHH_TOPE_IMPONIBLE_UF) || 87.8,
-    tope_cesantia_uf: Number(process.env.RRHH_TOPE_CESANTIA_UF) || 131.8,
-    // Tasa AFP por defecto si la ficha no la trae (10% + comisión promedio).
-    tasa_afp_default: Number(process.env.RRHH_TASA_AFP) || 11.44,
-    tasa_salud: 7,
-    // Seguro de cesantía a cargo del trabajador (contrato indefinido).
-    tasa_cesantia_indefinido: 0.6,
-  };
-}
+// Parámetros previsionales y tributarios de un período. La fuente de verdad es
+// la tabla `rrhh_parametros` (un registro por mes): así una liquidación de
+// marzo se puede reimprimir en diciembre con la UF de marzo. Estos valores solo
+// se usan cuando la tabla todavía no tiene el período, y se pueden ajustar por
+// .env para el arranque.
+const PARAMETROS_DEFECTO = {
+  uf: Number(process.env.RRHH_UF) || 39500,
+  utm: Number(process.env.RRHH_UTM) || 69000,
+  // Ingreso mínimo mensual (base del tope de gratificación legal).
+  imm: Number(process.env.RRHH_IMM) || 529000,
+  tope_imponible_uf: Number(process.env.RRHH_TOPE_IMPONIBLE_UF) || 87.8,
+  tope_cesantia_uf: Number(process.env.RRHH_TOPE_CESANTIA_UF) || 131.8,
+  tasa_salud: 7,
+  // Seguro de cesantía: 0,6% del trabajador con contrato indefinido; el
+  // empleador aporta 2,4% (indefinido) o 3% (plazo fijo, todo de su cargo).
+  tasa_cesantia_trabajador: 0.6,
+  tasa_cesantia_empleador: 2.4,
+  // Aportes patronales que no aparecen en la liquidación pero sí en el costo.
+  tasa_sis: 1.53,
+  tasa_mutual: 0.95,
+  // Asignación familiar: monto por carga según la renta imponible del mes.
+  af_tramo_a_hasta: 620251,
+  af_tramo_a_monto: 22007,
+  af_tramo_b_hasta: 905941,
+  af_tramo_b_monto: 13505,
+  af_tramo_c_hasta: 1412957,
+  af_tramo_c_monto: 4267,
+  apv_tope_uf_mensual: 50,
+  // Tasa AFP por defecto si la ficha no la trae (10% + comisión promedio).
+  tasa_afp_default: Number(process.env.RRHH_TASA_AFP) || 11.44,
+};
+
+type Parametros = typeof PARAMETROS_DEFECTO & { periodo?: string; origen?: string };
 
 // Tabla del impuesto único de segunda categoría (tramos en UTM).
 const TRAMOS_IMPUESTO: { desde: number; hasta: number; factor: number; rebaja: number }[] = [
@@ -68,6 +84,12 @@ export class RrhhService {
     if (/relation .*rrhh_.* does not exist/i.test(msg) || /schema cache/i.test(msg)) {
       throw new BadRequestException(
         'Falta aplicar la migración del módulo de RR.HH. (supabase/migrations/20260808_rrhh.sql).',
+      );
+    }
+    // Columnas agregadas después: liquidación completa, permisos por horas.
+    if (/column .*(does not exist|no existe)/i.test(msg)) {
+      throw new BadRequestException(
+        `Falta aplicar la migración 20260810_rrhh_liquidacion_permisos.sql en Supabase. (${msg})`,
       );
     }
     throw new BadRequestException(msg);
@@ -148,6 +170,14 @@ export class RrhhService {
     set('contacto_emergencia', texto(body?.contacto_emergencia, 120));
     set('telefono_emergencia', texto(body?.telefono_emergencia, 40));
     set('dias_vacaciones_iniciales', num(body?.dias_vacaciones_iniciales));
+    set('dias_administrativos_anuales', num(body?.dias_administrativos_anuales));
+    set('cargas_familiares', Math.max(0, Math.floor(num(body?.cargas_familiares))));
+    set('apv_monto', redondear(body?.apv_monto));
+    set('apv_regimen', body?.apv_regimen === 'A' ? 'A' : body?.apv_regimen === 'B' ? 'B' : null);
+    set('apv_institucion', texto(body?.apv_institucion, 80));
+    set('cuota_sindical', redondear(body?.cuota_sindical));
+    set('nacionalidad', texto(body?.nacionalidad, 60));
+    set('estado_civil', texto(body?.estado_civil, 40));
     set('estado', texto(body?.estado, 20) || 'activo');
     set('notas', texto(body?.notas, 2000));
     return p;
@@ -201,6 +231,7 @@ export class RrhhService {
       documentos,
       jornadas,
       vacaciones: this.calcularVacaciones(empleado, solicitudes),
+      saldos: await this.saldosDe(Number(id)).catch(() => null),
       antiguedad: this.antiguedad(empleado?.fecha_ingreso),
     };
   }
@@ -294,135 +325,331 @@ export class RrhhService {
   // LIQUIDACIONES DE SUELDO
   // ==========================================================================
 
+  // Parámetros del período. Busca el registro exacto en `rrhh_parametros`; si
+  // no existe usa el más reciente anterior (la UF de un mes sin cargar es la
+  // del último mes cargado, no la de hoy) y, en última instancia, los valores
+  // por defecto del backend.
+  async parametrosDe(periodo?: string): Promise<Parametros> {
+    const p = /^\d{4}-\d{2}$/.test(String(periodo || '')) ? String(periodo) : null;
+    try {
+      let q = this.db.from('rrhh_parametros').select('*').order('periodo', { ascending: false }).limit(1);
+      if (p) q = q.lte('periodo', p);
+      const { data } = await q;
+      const fila = (data || [])[0];
+      if (fila) {
+        const { notas: _n, actualizado_por: _a, updated_at: _u, ...valores } = fila as any;
+        return {
+          ...PARAMETROS_DEFECTO,
+          ...Object.fromEntries(
+            Object.entries(valores).filter(([k, v]) => k !== 'periodo' && v != null && Number.isFinite(Number(v))),
+          ),
+          periodo: fila.periodo,
+          origen: fila.periodo === p ? 'periodo' : 'anterior',
+        } as Parametros;
+      }
+    } catch {
+      /* tabla aún no creada: se sigue con los valores por defecto */
+    }
+    return { ...PARAMETROS_DEFECTO, periodo: p || undefined, origen: 'defecto' };
+  }
+
+  async listarParametros() {
+    const { data, error } = await this.db
+      .from('rrhh_parametros')
+      .select('*')
+      .order('periodo', { ascending: false });
+    if (error) this.error(error);
+    return data || [];
+  }
+
+  async guardarParametros(body: any, email?: string) {
+    const periodo = String(body?.periodo || '').trim();
+    if (!/^\d{4}-\d{2}$/.test(periodo)) throw new BadRequestException('Período inválido (formato AAAA-MM).');
+    const payload: Record<string, any> = { periodo, actualizado_por: texto(email, 120), updated_at: new Date().toISOString() };
+    for (const clave of Object.keys(PARAMETROS_DEFECTO)) {
+      if (clave === 'tasa_afp_default') continue; // vive en la ficha de cada trabajador
+      if (body?.[clave] !== undefined && body[clave] !== '') payload[clave] = num(body[clave]);
+    }
+    if (body?.notas !== undefined) payload.notas = texto(body.notas, 1000);
+    const { data, error } = await this.db
+      .from('rrhh_parametros')
+      .upsert(payload, { onConflict: 'periodo' })
+      .select()
+      .single();
+    if (error) this.error(error);
+    return data;
+  }
+
+  // Asignación familiar: monto por carga según la renta imponible del mes.
+  // Tramo D (rentas altas) no da derecho a asignación.
+  private asignacionFamiliarDe(rentaImponible: number, cargas: number, par: Parametros) {
+    const n = Math.max(0, Math.floor(num(cargas)));
+    if (!n) return { tramo: null as string | null, monto_carga: 0, monto: 0 };
+    let tramo = 'D';
+    let montoCarga = 0;
+    if (rentaImponible <= par.af_tramo_a_hasta) {
+      tramo = 'A';
+      montoCarga = par.af_tramo_a_monto;
+    } else if (rentaImponible <= par.af_tramo_b_hasta) {
+      tramo = 'B';
+      montoCarga = par.af_tramo_b_monto;
+    } else if (rentaImponible <= par.af_tramo_c_hasta) {
+      tramo = 'C';
+      montoCarga = par.af_tramo_c_monto;
+    }
+    return { tramo, monto_carga: redondear(montoCarga), monto: redondear(montoCarga * n) };
+  }
+
+  // Valor de una hora extra: sueldo mensual ÷ 30 × 7 ÷ jornada semanal × 1,5.
+  // Para la jornada de 45 horas equivale al factor 0,0077778 de uso habitual.
+  private valorHoraExtra(sueldoBaseMensual: number, horasSemanales: number, recargo = 1.5) {
+    const horas = num(horasSemanales, 45) || 45;
+    return redondear((num(sueldoBaseMensual) / 30) * (7 / horas) * recargo);
+  }
+
   // Calcula una liquidación completa a partir de los haberes. Devuelve todos
   // los subtotales para que queden guardados y auditables.
-  calcularLiquidacion(entrada: {
-    sueldo_base?: number;
-    dias_trabajados?: number;
-    gratificacion_legal?: boolean;
-    gratificacion?: number;
-    horas_extra?: number;
-    bonos?: number;
-    comisiones?: number;
-    otros_imponibles?: number;
-    colacion?: number;
-    movilizacion?: number;
-    asignacion_familiar?: number;
-    otros_no_imponibles?: number;
-    tasa_afp?: number;
-    salud?: string;
-    plan_salud_uf?: number;
-    tipo_contrato?: string;
-    anticipos?: number;
-    prestamos?: number;
-    otros_descuentos?: number;
-  }) {
-    const par = parametros();
-    const dias = Math.min(30, Math.max(0, num(entrada.dias_trabajados, 30)));
-    // Proporción por días efectivamente trabajados (base 30).
+  calcularLiquidacion(
+    entrada: {
+      sueldo_base?: number;
+      horas_semanales?: number;
+      dias_trabajados?: number;
+      dias_ausencia?: number;
+      dias_licencia?: number;
+      gratificacion_legal?: boolean;
+      gratificacion?: number;
+      horas_extra_cantidad?: number;
+      horas_extra?: number;
+      semana_corrida?: number;
+      aguinaldo?: number;
+      bonos?: number;
+      comisiones?: number;
+      otros_imponibles?: number;
+      colacion?: number;
+      movilizacion?: number;
+      cargas_familiares?: number;
+      asignacion_familiar?: number;
+      otros_no_imponibles?: number;
+      tasa_afp?: number;
+      salud?: string;
+      plan_salud_uf?: number;
+      tipo_contrato?: string;
+      apv?: number;
+      apv_regimen?: string;
+      anticipos?: number;
+      prestamos?: number;
+      cuota_sindical?: number;
+      descuento_atrasos?: number;
+      otros_descuentos?: number;
+    },
+    par: Parametros,
+  ) {
+    // ── Días del período (base 30) ────────────────────────────────────────
+    const diasAusencia = Math.max(0, num(entrada.dias_ausencia));
+    const diasLicencia = Math.max(0, num(entrada.dias_licencia));
+    // Si no se indican días trabajados se deducen: los de licencia los paga la
+    // isapre/Fonasa y los de ausencia sin goce simplemente no se pagan.
+    const dias =
+      entrada.dias_trabajados != null
+        ? Math.min(30, Math.max(0, num(entrada.dias_trabajados, 30)))
+        : Math.min(30, Math.max(0, 30 - diasAusencia - diasLicencia));
     const proporcion = dias / 30;
 
-    const sueldoBase = redondear(num(entrada.sueldo_base) * proporcion);
-    const horasExtra = redondear(entrada.horas_extra);
+    const sueldoBaseMensual = num(entrada.sueldo_base);
+    const sueldoBase = redondear(sueldoBaseMensual * proporcion);
+
+    // ── Horas extra ───────────────────────────────────────────────────────
+    // Si viene la cantidad de horas se calcula el monto; si viene el monto
+    // directo (caso de un pacto distinto) se respeta tal cual.
+    const horasExtraCantidad = Math.max(0, num(entrada.horas_extra_cantidad));
+    const valorHora = this.valorHoraExtra(sueldoBaseMensual, num(entrada.horas_semanales, 45));
+    const horasExtra = horasExtraCantidad
+      ? redondear(valorHora * horasExtraCantidad)
+      : redondear(entrada.horas_extra);
+
+    const semanaCorrida = redondear(entrada.semana_corrida);
+    const aguinaldo = redondear(entrada.aguinaldo);
     const bonos = redondear(entrada.bonos);
     const comisiones = redondear(entrada.comisiones);
     const otrosImp = redondear(entrada.otros_imponibles);
 
-    // Gratificación legal (art. 50): 25% de las remuneraciones imponibles con
-    // tope de 4,75 ingresos mínimos al año (÷ 12 al mes).
-    const baseGratificacion = sueldoBase + horasExtra + bonos + comisiones + otrosImp;
+    // ── Gratificación legal (art. 50) ─────────────────────────────────────
+    // 25% de las remuneraciones imponibles con tope de 4,75 ingresos mínimos
+    // al año (÷ 12 al mes), proporcional a los días trabajados.
+    const baseGratificacion = sueldoBase + horasExtra + semanaCorrida + bonos + comisiones + otrosImp;
     let gratificacion = redondear(entrada.gratificacion);
     if (!gratificacion && entrada.gratificacion_legal !== false) {
       const topeMensual = (4.75 * par.imm) / 12;
       gratificacion = redondear(Math.min(baseGratificacion * 0.25, topeMensual * proporcion));
     }
 
-    const totalImponible = sueldoBase + gratificacion + horasExtra + bonos + comisiones + otrosImp;
+    const totalImponible =
+      sueldoBase + gratificacion + horasExtra + semanaCorrida + aguinaldo + bonos + comisiones + otrosImp;
 
-    // Tope imponible para AFP y salud.
+    // ── Cotizaciones previsionales ────────────────────────────────────────
     const topeImponible = par.tope_imponible_uf * par.uf;
     const imponibleTopado = Math.min(totalImponible, topeImponible);
 
     const tasaAfp = num(entrada.tasa_afp, par.tasa_afp_default);
     const afpMonto = redondear(imponibleTopado * (tasaAfp / 100));
 
-    // Salud: 7% legal; si hay plan Isapre en UF, se cobra el mayor de ambos.
-    const salud7 = imponibleTopado * (par.tasa_salud / 100);
+    // Salud: 7% legal; si hay plan Isapre en UF se cotiza el mayor de ambos y
+    // la diferencia sobre el 7% es el "adicional" que se muestra aparte.
+    const salud7 = redondear(imponibleTopado * (par.tasa_salud / 100));
     const planUf = num(entrada.plan_salud_uf);
     const esIsapre = String(entrada.salud || '').toLowerCase().includes('isapre') || planUf > 0;
-    const saludMonto = redondear(esIsapre && planUf > 0 ? Math.max(salud7, planUf * par.uf) : salud7);
+    const planPesos = redondear(planUf * par.uf);
+    const saludMonto = esIsapre && planUf > 0 ? Math.max(salud7, planPesos) : salud7;
+    const saludAdicional = Math.max(0, saludMonto - salud7);
 
-    // Seguro de cesantía: 0,6% del trabajador solo en contrato indefinido.
+    // Seguro de cesantía: 0,6% del trabajador solo con contrato indefinido.
     const topeCesantia = par.tope_cesantia_uf * par.uf;
+    const cesantiaTopado = Math.min(totalImponible, topeCesantia);
     const esIndefinido = String(entrada.tipo_contrato || 'indefinido').toLowerCase().includes('indefinido');
     const seguroCesantia = esIndefinido
-      ? redondear(Math.min(totalImponible, topeCesantia) * (par.tasa_cesantia_indefinido / 100))
+      ? redondear(cesantiaTopado * (par.tasa_cesantia_trabajador / 100))
       : 0;
 
-    // Impuesto único de segunda categoría sobre la base tributable.
-    const baseTributable = totalImponible - afpMonto - saludMonto - seguroCesantia;
+    // ── APV ───────────────────────────────────────────────────────────────
+    // Régimen B rebaja la base tributable (con tope de 50 UF mensuales);
+    // régimen A no rebaja impuesto, el beneficio es la bonificación fiscal.
+    const apvSolicitado = redondear(entrada.apv);
+    const apvRegimen = String(entrada.apv_regimen || 'B').toUpperCase() === 'A' ? 'A' : 'B';
+    const apvTope = redondear(par.apv_tope_uf_mensual * par.uf);
+    const apv = Math.min(apvSolicitado, Math.max(0, apvTope));
+    const apvRebaja = apvRegimen === 'B' ? apv : 0;
+
+    // ── Impuesto único de segunda categoría ───────────────────────────────
+    const baseTributable = Math.max(0, totalImponible - afpMonto - saludMonto - seguroCesantia - apvRebaja);
     const baseUtm = baseTributable / par.utm;
     const tramo = TRAMOS_IMPUESTO.find((t) => baseUtm > t.desde && baseUtm <= t.hasta) || TRAMOS_IMPUESTO[0];
     const impuestoUnico = Math.max(0, redondear(baseTributable * tramo.factor - tramo.rebaja * par.utm));
 
-    // Haberes no imponibles (proporcionales a los días trabajados).
+    // ── Haberes no imponibles ─────────────────────────────────────────────
+    // Colación y movilización se pagan por día efectivamente trabajado.
     const colacion = redondear(num(entrada.colacion) * proporcion);
     const movilizacion = redondear(num(entrada.movilizacion) * proporcion);
-    const asignacionFamiliar = redondear(entrada.asignacion_familiar);
+    // La asignación familiar se calcula por tramo de renta salvo que se fuerce
+    // un monto (caso de retroactivos o de asignación maternal).
+    const af = this.asignacionFamiliarDe(totalImponible, entrada.cargas_familiares || 0, par);
+    const asignacionFamiliar =
+      entrada.asignacion_familiar != null && entrada.asignacion_familiar !== ('' as any)
+        ? redondear(entrada.asignacion_familiar)
+        : af.monto;
     const otrosNoImp = redondear(entrada.otros_no_imponibles);
 
-    const totalHaberes = totalImponible + colacion + movilizacion + asignacionFamiliar + otrosNoImp;
+    const totalNoImponible = colacion + movilizacion + asignacionFamiliar + otrosNoImp;
+    const totalHaberes = totalImponible + totalNoImponible;
 
+    // ── Otros descuentos ──────────────────────────────────────────────────
     const anticipos = redondear(entrada.anticipos);
     const prestamos = redondear(entrada.prestamos);
+    const cuotaSindical = redondear(entrada.cuota_sindical);
+    const descuentoAtrasos = redondear(entrada.descuento_atrasos);
     const otrosDesc = redondear(entrada.otros_descuentos);
-    const totalDescuentos = afpMonto + saludMonto + seguroCesantia + impuestoUnico + anticipos + prestamos + otrosDesc;
+
+    const descuentosLegales = afpMonto + saludMonto + seguroCesantia + impuestoUnico;
+    const otrosDescuentosTotal = apv + anticipos + prestamos + cuotaSindical + descuentoAtrasos + otrosDesc;
+    const totalDescuentos = descuentosLegales + otrosDescuentosTotal;
+
+    // ── Costo para la empresa (no se muestra al trabajador) ───────────────
+    const sis = redondear(imponibleTopado * (par.tasa_sis / 100));
+    const afcEmpleador = redondear(
+      cesantiaTopado * ((esIndefinido ? par.tasa_cesantia_empleador : 3) / 100),
+    );
+    const mutual = redondear(totalImponible * (par.tasa_mutual / 100));
+    const costoEmpresa = totalHaberes + sis + afcEmpleador + mutual;
 
     return {
       dias_trabajados: dias,
+      dias_ausencia: diasAusencia,
+      dias_licencia: diasLicencia,
+      // Haberes imponibles
       sueldo_base: sueldoBase,
       gratificacion,
+      horas_extra_cantidad: horasExtraCantidad,
+      horas_extra_valor: valorHora,
       horas_extra: horasExtra,
+      semana_corrida: semanaCorrida,
+      aguinaldo,
       bonos,
       comisiones,
       otros_imponibles: otrosImp,
       total_imponible: totalImponible,
+      // Haberes no imponibles
       colacion,
       movilizacion,
+      cargas_familiares: Math.max(0, Math.floor(num(entrada.cargas_familiares))),
+      tramo_asignacion: af.tramo,
       asignacion_familiar: asignacionFamiliar,
       otros_no_imponibles: otrosNoImp,
+      total_no_imponible: totalNoImponible,
       total_haberes: totalHaberes,
+      // Descuentos legales
       afp_monto: afpMonto,
+      afp_tasa: tasaAfp,
       salud_monto: saludMonto,
+      salud_legal: salud7,
+      salud_adicional: saludAdicional,
       seguro_cesantia: seguroCesantia,
+      base_tributable: baseTributable,
       impuesto_unico: impuestoUnico,
+      total_descuentos_legales: descuentosLegales,
+      // Otros descuentos
+      apv,
+      apv_regimen: apvRegimen,
       anticipos,
       prestamos,
+      cuota_sindical: cuotaSindical,
+      descuento_atrasos: descuentoAtrasos,
       otros_descuentos: otrosDesc,
+      total_otros_descuentos: otrosDescuentosTotal,
       total_descuentos: totalDescuentos,
       liquido: totalHaberes - totalDescuentos,
+      // Aportes del empleador
+      aporte_sis: sis,
+      aporte_cesantia_empleador: afcEmpleador,
+      aporte_mutual: mutual,
+      costo_empresa: costoEmpresa,
+      topes: {
+        imponible: redondear(topeImponible),
+        cesantia: redondear(topeCesantia),
+        apv: apvTope,
+        gratificacion_mensual: redondear((4.75 * par.imm) / 12),
+      },
       parametros: par,
+    };
+  }
+
+  // Arma la entrada del cálculo mezclando la ficha del trabajador con lo que
+  // se está editando en el formulario. Lo del formulario siempre manda.
+  private entradaDesdeFicha(emp: any, body: any) {
+    return {
+      sueldo_base: emp?.sueldo_base,
+      horas_semanales: emp?.horas_semanales,
+      colacion: emp?.colacion,
+      movilizacion: emp?.movilizacion,
+      tasa_afp: emp?.tasa_afp,
+      salud: emp?.salud,
+      plan_salud_uf: emp?.plan_salud_uf,
+      tipo_contrato: emp?.tipo_contrato,
+      gratificacion_legal: emp?.gratificacion_legal,
+      cargas_familiares: emp?.cargas_familiares,
+      apv: emp?.apv_monto,
+      apv_regimen: emp?.apv_regimen,
+      cuota_sindical: emp?.cuota_sindical,
+      // Lo editado en pantalla pisa la ficha, pero solo si trae valor: un campo
+      // vacío significa "usa lo de la ficha", no "cero".
+      ...Object.fromEntries(Object.entries(body || {}).filter(([, v]) => v !== '' && v != null)),
     };
   }
 
   // Previsualiza el cálculo sin guardar (lo usa el formulario en vivo).
   async previsualizarLiquidacion(body: any) {
-    let base: any = body || {};
-    if (body?.empleado_id) {
-      const emp = await this.obtenerEmpleado(num(body.empleado_id));
-      base = {
-        sueldo_base: emp.sueldo_base,
-        colacion: emp.colacion,
-        movilizacion: emp.movilizacion,
-        tasa_afp: emp.tasa_afp,
-        salud: emp.salud,
-        plan_salud_uf: emp.plan_salud_uf,
-        tipo_contrato: emp.tipo_contrato,
-        gratificacion_legal: emp.gratificacion_legal,
-        ...body,
-      };
-    }
-    return this.calcularLiquidacion(base);
+    const par = await this.parametrosDe(body?.periodo);
+    if (!body?.empleado_id) return this.calcularLiquidacion(body || {}, par);
+    const emp = await this.obtenerEmpleado(num(body.empleado_id));
+    return this.calcularLiquidacion(this.entradaDesdeFicha(emp, body), par);
   }
 
   async listarLiquidaciones(filtros?: { empleado_id?: number; periodo?: string; estado?: string }) {
@@ -446,35 +673,29 @@ export class RrhhService {
     if (!/^\d{4}-\d{2}$/.test(periodo)) throw new BadRequestException('Período inválido (formato AAAA-MM).');
 
     const emp = await this.obtenerEmpleado(empleadoId);
-    const calc = this.calcularLiquidacion({
-      sueldo_base: body?.sueldo_base != null ? num(body.sueldo_base) : num(emp.sueldo_base),
-      dias_trabajados: body?.dias_trabajados,
-      gratificacion_legal: emp.gratificacion_legal,
-      gratificacion: body?.gratificacion,
-      horas_extra: body?.horas_extra,
-      bonos: body?.bonos,
-      comisiones: body?.comisiones,
-      otros_imponibles: body?.otros_imponibles,
-      colacion: body?.colacion != null ? num(body.colacion) : num(emp.colacion),
-      movilizacion: body?.movilizacion != null ? num(body.movilizacion) : num(emp.movilizacion),
-      asignacion_familiar: body?.asignacion_familiar,
-      otros_no_imponibles: body?.otros_no_imponibles,
-      tasa_afp: emp.tasa_afp,
-      salud: emp.salud,
-      plan_salud_uf: emp.plan_salud_uf,
-      tipo_contrato: emp.tipo_contrato,
-      anticipos: body?.anticipos,
-      prestamos: body?.prestamos,
-      otros_descuentos: body?.otros_descuentos,
-    });
-    const { parametros: _p, ...montos } = calc;
+    const par = await this.parametrosDe(periodo);
+    const calc = this.calcularLiquidacion(this.entradaDesdeFicha(emp, { ...body, periodo }), par);
+
+    // Solo se guardan las columnas que existen en la tabla; el resto del
+    // cálculo (topes, tasas, aportes patronales) va al snapshot `detalle`,
+    // que es lo que después imprime el PDF sin recalcular nada.
+    const columnas = [
+      'dias_trabajados', 'dias_ausencia', 'dias_licencia',
+      'sueldo_base', 'gratificacion', 'horas_extra_cantidad', 'horas_extra_valor', 'horas_extra',
+      'semana_corrida', 'aguinaldo', 'bonos', 'comisiones', 'otros_imponibles', 'total_imponible',
+      'colacion', 'movilizacion', 'cargas_familiares', 'tramo_asignacion', 'asignacion_familiar',
+      'otros_no_imponibles', 'total_haberes',
+      'afp_monto', 'salud_monto', 'seguro_cesantia', 'base_tributable', 'impuesto_unico',
+      'apv', 'apv_regimen', 'anticipos', 'prestamos', 'cuota_sindical', 'descuento_atrasos',
+      'otros_descuentos', 'total_descuentos', 'liquido', 'costo_empresa',
+    ];
+    const montos = Object.fromEntries(columnas.map((c) => [c, (calc as any)[c]]));
 
     const payload: Record<string, any> = {
       empleado_id: empleadoId,
       periodo,
-      dias_ausencia: num(body?.dias_ausencia),
-      horas_extra_cantidad: num(body?.horas_extra_cantidad),
       ...montos,
+      detalle: calc,
       estado: texto(body?.estado, 20) || 'borrador',
       observaciones: texto(body?.observaciones, 2000),
       creado_por: texto(creadoPor, 120),
@@ -543,19 +764,152 @@ export class RrhhService {
   // SOLICITUDES (vacaciones, permisos, licencias)
   // ==========================================================================
 
-  // Días hábiles entre dos fechas (excluye sábado y domingo).
-  private diasHabiles(desde: string, hasta: string): number {
+  // Tipos de solicitud y cómo se miden. `dias_legales` es el máximo que fija
+  // la ley para los permisos con fecha determinada (art. 66 del Código del
+  // Trabajo y ley 21.155): son referencia para el formulario, no un tope duro.
+  static readonly TIPOS_SOLICITUD: Record<
+    string,
+    { label: string; medida: 'dias' | 'horas'; con_goce: boolean; habiles: boolean; dias_legales?: number }
+  > = {
+    vacaciones: { label: 'Feriado legal (vacaciones)', medida: 'dias', con_goce: true, habiles: true },
+    permiso_dias: { label: 'Permiso por días', medida: 'dias', con_goce: true, habiles: true },
+    permiso_horas: { label: 'Permiso por horas', medida: 'horas', con_goce: true, habiles: true },
+    dia_administrativo: { label: 'Día administrativo', medida: 'dias', con_goce: true, habiles: true },
+    licencia_medica: { label: 'Licencia médica', medida: 'dias', con_goce: true, habiles: false },
+    sin_goce: { label: 'Permiso sin goce de sueldo', medida: 'dias', con_goce: false, habiles: true },
+    fallecimiento: { label: 'Permiso por fallecimiento', medida: 'dias', con_goce: true, habiles: false, dias_legales: 4 },
+    matrimonio: { label: 'Matrimonio o acuerdo de unión civil', medida: 'dias', con_goce: true, habiles: false, dias_legales: 5 },
+    nacimiento: { label: 'Nacimiento de un hijo', medida: 'dias', con_goce: true, habiles: false, dias_legales: 5 },
+    // Compatibilidad con las solicitudes creadas antes de esta versión.
+    permiso: { label: 'Permiso', medida: 'dias', con_goce: true, habiles: true },
+    administrativo: { label: 'Administrativo', medida: 'dias', con_goce: true, habiles: true },
+  };
+
+  // Feriados legales cargados en la tabla, cacheados: se consultan en cada
+  // cálculo de días hábiles y cambian una vez al año.
+  private feriadosCache: { set: Set<string>; at: number } | null = null;
+
+  private async feriadosSet(): Promise<Set<string>> {
+    if (this.feriadosCache && Date.now() - this.feriadosCache.at < 3600000) {
+      return this.feriadosCache.set;
+    }
+    let set = new Set<string>();
+    try {
+      const { data } = await this.db.from('rrhh_feriados').select('fecha');
+      set = new Set((data || []).map((f: any) => String(f.fecha).slice(0, 10)));
+    } catch {
+      /* tabla aún no creada: solo se excluyen sábados y domingos */
+    }
+    this.feriadosCache = { set, at: Date.now() };
+    return set;
+  }
+
+  async listarFeriados(anio?: string) {
+    let q = this.db.from('rrhh_feriados').select('*').order('fecha', { ascending: true });
+    if (/^\d{4}$/.test(String(anio || ''))) {
+      q = q.gte('fecha', `${anio}-01-01`).lte('fecha', `${anio}-12-31`);
+    }
+    const { data, error } = await q;
+    if (error) this.error(error);
+    return data || [];
+  }
+
+  async guardarFeriado(body: any) {
+    const fecha = String(body?.fecha || '').slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) throw new BadRequestException('Fecha inválida.');
+    const { data, error } = await this.db
+      .from('rrhh_feriados')
+      .upsert(
+        {
+          fecha,
+          nombre: texto(body?.nombre, 120) || 'Feriado',
+          irrenunciable: Boolean(body?.irrenunciable),
+          tipo: texto(body?.tipo, 20) || 'civil',
+        },
+        { onConflict: 'fecha' },
+      )
+      .select()
+      .single();
+    if (error) this.error(error);
+    this.feriadosCache = null;
+    return data;
+  }
+
+  async eliminarFeriado(fecha: string) {
+    const { error } = await this.db.from('rrhh_feriados').delete().eq('fecha', String(fecha).slice(0, 10));
+    if (error) this.error(error);
+    this.feriadosCache = null;
+    return { ok: true };
+  }
+
+  // Días entre dos fechas. `habiles` excluye sábados, domingos y feriados
+  // legales — es como se cuentan las vacaciones. Sin `habiles` cuenta días
+  // corridos, que es como se cuentan las licencias médicas y los permisos del
+  // art. 66 (fallecimiento, matrimonio, nacimiento).
+  private async contarDias(desde: string, hasta: string, habiles: boolean): Promise<number> {
     const d0 = new Date(`${String(desde).slice(0, 10)}T00:00:00`);
     const d1 = new Date(`${String(hasta).slice(0, 10)}T00:00:00`);
     if (Number.isNaN(d0.getTime()) || Number.isNaN(d1.getTime()) || d1 < d0) return 0;
+    if (!habiles) return Math.round((d1.getTime() - d0.getTime()) / 86400000) + 1;
+
+    const feriados = await this.feriadosSet();
     let dias = 0;
     const cursor = new Date(d0);
     while (cursor <= d1) {
       const dow = cursor.getDay();
-      if (dow !== 0 && dow !== 6) dias += 1;
+      const iso = cursor.toISOString().slice(0, 10);
+      if (dow !== 0 && dow !== 6 && !feriados.has(iso)) dias += 1;
       cursor.setDate(cursor.getDate() + 1);
     }
     return dias;
+  }
+
+  // Horas entre dos horas del mismo día (permisos por horas).
+  private horasEntre(horaDesde?: string | null, horaHasta?: string | null): number {
+    const min = (h?: string | null) => {
+      const m = /^(\d{1,2}):(\d{2})/.exec(String(h || ''));
+      return m ? Number(m[1]) * 60 + Number(m[2]) : null;
+    };
+    const a = min(horaDesde);
+    const b = min(horaHasta);
+    if (a == null || b == null || b <= a) return 0;
+    return Number(((b - a) / 60).toFixed(2));
+  }
+
+  // Calcula días/horas de una solicitud sin guardarla y, si es feriado legal,
+  // avisa cómo queda el saldo de vacaciones. Lo usa el formulario en vivo.
+  async previsualizarSolicitud(body: any) {
+    const tipo = String(body?.tipo || 'vacaciones');
+    const cfg = RrhhService.TIPOS_SOLICITUD[tipo] || RrhhService.TIPOS_SOLICITUD.permiso_dias;
+    const desde = String(body?.fecha_desde || '').slice(0, 10);
+    const hasta = String(body?.fecha_hasta || desde).slice(0, 10);
+    const medida = body?.medida || cfg.medida;
+
+    if (medida === 'horas') {
+      const horas = this.horasEntre(body?.hora_desde, body?.hora_hasta);
+      return { medida, tipo, horas, dias: 0, dias_corridos: 0, cfg };
+    }
+
+    // Medio día: cuenta como 0,5 aunque el rango sea de un día completo.
+    const parcial = String(body?.jornada_parcial || '');
+    const habiles = body?.dias_habiles != null ? Boolean(body.dias_habiles) : cfg.habiles;
+    let dias = await this.contarDias(desde, hasta, habiles);
+    if (parcial === 'manana' || parcial === 'tarde') dias = dias ? 0.5 : 0;
+    const diasCorridos = await this.contarDias(desde, hasta, false);
+
+    const salida: Record<string, any> = { medida: 'dias', tipo, dias, dias_corridos: diasCorridos, horas: 0, cfg };
+
+    if (tipo === 'vacaciones' && body?.empleado_id) {
+      try {
+        const emp = await this.obtenerEmpleado(num(body.empleado_id));
+        const solicitudes = await this.listarSolicitudes({ empleado_id: Number(emp.id) });
+        const vac = this.calcularVacaciones(emp, solicitudes);
+        salida.vacaciones = { ...vac, saldo_despues: Number((vac.saldo - dias).toFixed(2)) };
+      } catch {
+        /* sin ficha no se puede proyectar el saldo, pero el cálculo sigue */
+      }
+    }
+    return salida;
   }
 
   async listarSolicitudes(filtros?: { empleado_id?: number; estado?: string; tipo?: string }) {
@@ -568,26 +922,66 @@ export class RrhhService {
     return data || [];
   }
 
-  async crearSolicitud(body: any) {
+  async crearSolicitud(body: any, solicitadoPor?: string) {
     const empleadoId = num(body?.empleado_id);
-    const desde = String(body?.fecha_desde || '').slice(0, 10);
-    const hasta = String(body?.fecha_hasta || '').slice(0, 10);
+    const tipo = texto(body?.tipo, 30) || 'vacaciones';
+    const cfg = RrhhService.TIPOS_SOLICITUD[tipo];
+    if (!cfg) throw new BadRequestException('Tipo de solicitud inválido.');
     if (!empleadoId) throw new BadRequestException('Falta el trabajador.');
+
+    const desde = String(body?.fecha_desde || '').slice(0, 10);
+    const medida = body?.medida === 'horas' || cfg.medida === 'horas' ? 'horas' : 'dias';
+    // En un permiso por horas el rango es un solo día.
+    const hasta = medida === 'horas' ? desde : String(body?.fecha_hasta || desde).slice(0, 10);
     if (!desde || !hasta) throw new BadRequestException('Faltan las fechas de la solicitud.');
     if (hasta < desde) throw new BadRequestException('La fecha de término no puede ser anterior al inicio.');
 
-    const payload = {
+    const payload: Record<string, any> = {
       empleado_id: empleadoId,
-      tipo: texto(body?.tipo, 30) || 'vacaciones',
+      tipo,
+      medida,
       fecha_desde: desde,
       fecha_hasta: hasta,
-      dias: body?.dias != null ? num(body.dias) : this.diasHabiles(desde, hasta),
       motivo: texto(body?.motivo, 1000),
       estado: 'pendiente',
+      goce_sueldo: body?.goce_sueldo != null ? Boolean(body.goce_sueldo) : cfg.con_goce,
+      solicitado_por: texto(solicitadoPor, 120),
       bucket: texto(body?.bucket, 60),
       storage_path: texto(body?.storage_path, 400),
       file_name: texto(body?.file_name, 200),
     };
+
+    if (medida === 'horas') {
+      const horas = this.horasEntre(body?.hora_desde, body?.hora_hasta);
+      if (!horas) throw new BadRequestException('Indica una hora de inicio y de término válidas.');
+      payload.hora_desde = String(body.hora_desde).slice(0, 5);
+      payload.hora_hasta = String(body.hora_hasta).slice(0, 5);
+      payload.horas = horas;
+      payload.dias = 0;
+      payload.dias_corridos = 1;
+    } else {
+      const parcial = ['manana', 'tarde'].includes(String(body?.jornada_parcial))
+        ? String(body.jornada_parcial)
+        : null;
+      let dias = await this.contarDias(desde, hasta, cfg.habiles);
+      if (parcial) dias = dias ? 0.5 : 0;
+      if (!dias) throw new BadRequestException('El rango elegido no tiene días hábiles.');
+      payload.jornada_parcial = parcial;
+      payload.dias = body?.dias != null && body.dias !== '' ? num(body.dias) : dias;
+      payload.dias_corridos = await this.contarDias(desde, hasta, false);
+    }
+
+    // Aviso —no bloqueo— si las vacaciones exceden el saldo: RR.HH. decide al
+    // aprobar. Se registra en el motivo para que quede en el historial.
+    if (tipo === 'vacaciones') {
+      const emp = await this.obtenerEmpleado(empleadoId);
+      const previas = await this.listarSolicitudes({ empleado_id: empleadoId });
+      const vac = this.calcularVacaciones(emp, previas);
+      if (num(payload.dias) > vac.saldo) {
+        payload.motivo = `${payload.motivo || ''}\n[Excede el saldo: pide ${payload.dias} de ${vac.saldo} días disponibles]`.trim();
+      }
+    }
+
     const { data, error } = await this.db.from('rrhh_solicitudes').insert(payload).select().single();
     if (error) this.error(error);
     return data;
@@ -613,6 +1007,40 @@ export class RrhhService {
     if (error) this.error(error);
     if (!data) throw new NotFoundException('Solicitud no encontrada.');
     return data;
+  }
+
+  // Saldo de días administrativos y horas de permiso usadas en el año, para
+  // mostrarlo junto al saldo de vacaciones.
+  async saldosDe(empleadoId: number) {
+    const emp = await this.obtenerEmpleado(empleadoId);
+    const solicitudes = await this.listarSolicitudes({ empleado_id: empleadoId });
+    const anio = String(new Date().getFullYear());
+    const delAnio = solicitudes.filter(
+      (s: any) => s.estado === 'aprobada' && String(s.fecha_desde || '').startsWith(anio),
+    );
+    const suma = (tipos: string[], campo: 'dias' | 'horas') =>
+      Number(
+        delAnio
+          .filter((s: any) => tipos.includes(String(s.tipo)))
+          .reduce((acc: number, s: any) => acc + num(s[campo]), 0)
+          .toFixed(2),
+      );
+    const adminUsados = suma(['dia_administrativo', 'administrativo'], 'dias');
+    return {
+      vacaciones: this.calcularVacaciones(emp, solicitudes),
+      administrativos: {
+        anuales: num(emp.dias_administrativos_anuales),
+        usados: adminUsados,
+        saldo: Number((num(emp.dias_administrativos_anuales) - adminUsados).toFixed(2)),
+      },
+      permisos: {
+        dias: suma(['permiso_dias', 'permiso'], 'dias'),
+        horas: suma(['permiso_horas'], 'horas'),
+        sin_goce: suma(['sin_goce'], 'dias'),
+      },
+      licencias_dias: suma(['licencia_medica'], 'dias'),
+      anio: Number(anio),
+    };
   }
 
   async eliminarSolicitud(id: number) {

@@ -5,8 +5,7 @@ import useAuth from "../hooks/useAuth";
 import Toast from "../components/Toast";
 import ConfirmModal from "../components/ConfirmModal";
 import ChatEquipo from "../components/ChatEquipo";
-import LicitacionesDisponibles from "./LicitacionesDisponibles";
-import { Plus, Pencil, Trash2, X, Search, MessageSquare, ClipboardList, Inbox } from "lucide-react";
+import { Plus, Pencil, Trash2, X, Search, MessageSquare, ClipboardList } from "lucide-react";
 
 const ESTADOS = ["Pendiente", "Ingresada"];
 
@@ -205,23 +204,17 @@ export default function BitacoraCotizaciones() {
           icon={ClipboardList}
           label="Registro"
         />
-        <TabBitacora
-          activo={tab === "postulaciones"}
-          onClick={() => setTab("postulaciones")}
-          icon={Inbox}
-          label="Postulaciones disponibles"
-        />
+        {/* «Postulaciones disponibles» se movió al sidebar: Comercial →
+            Mercado Público. Esto es prospección, no conversación. */}
       </div>
 
       {tab === "chat" && <ChatEquipo onLicitacionRegistrada={cargar} />}
-
-      {tab === "postulaciones" && <LicitacionesDisponibles embedded />}
 
       {tab === "registro" && (
         <>
       {/* Stats — 3 tarjetas: grilla de 3 columnas para que queden centradas y
           alineadas con la barra de filtros (el .stats-row por defecto es de 4). */}
-      <div className="stats-row" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
+      <div className="stats-row stats-3">
         <div className="stat-card">
           <div className="stat-label">Total</div>
           <div className="stat-value">{stats.total}</div>

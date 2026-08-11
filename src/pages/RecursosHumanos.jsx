@@ -3,10 +3,15 @@ import {
   Users, FileText, Wallet, CalendarClock, ClipboardCheck, PlaneTakeoff, LayoutDashboard,
   Plus, Search, Pencil, Trash2, X, Upload, Eye, Download, CheckCircle2, AlertTriangle,
   Cake, TrendingUp, Clock, PenLine, RefreshCw, ChevronRight, ChevronDown,
+  FileDown, Settings2, CalendarDays,
 } from "lucide-react";
 import { api } from "../lib/api";
 import Toast from "../components/Toast";
 import FirmaDigital from "../components/FirmaDigital";
+import SolicitudPermisoForm, {
+  TIPOS_SOLICITUD, etiquetaTipo, duracionSolicitud,
+} from "../components/SolicitudPermisoForm";
+import { descargarLiquidacionPDF, descargarLibroLiquidacionesPDF } from "../lib/liquidacionPDF";
 
 /* ============================================================================
    Recursos Humanos — panel de administración
@@ -35,10 +40,47 @@ const TABS = [
   { key: "solicitudes", label: "Solicitudes", icon: PlaneTakeoff },
 ];
 
-const TIPOS_CONTRATO = ["indefinido", "plazo_fijo", "part_time", "honorarios", "reemplazo"];
+// El valor guardado sigue siendo la clave en minúscula (el backend distingue
+// el contrato indefinido por ella); lo que cambia es cómo se muestra.
+const TIPOS_CONTRATO = [
+  ["indefinido", "Indefinido"],
+  ["plazo_fijo", "Plazo Fijo"],
+  ["part_time", "Part Time"],
+  ["honorarios", "Honorarios"],
+  ["reemplazo", "Reemplazo"],
+];
+const etiquetaContrato = (v) =>
+  TIPOS_CONTRATO.find(([k]) => k === v)?.[1] || String(v || "").replace(/_/g, " ");
 const AFPS = ["Capital", "Cuprum", "Habitat", "Modelo", "PlanVital", "ProVida", "Uno"];
+
+// Instituciones donde se puede depositar la remuneración.
+const BANCOS = [
+  "BancoEstado", "Banco de Chile", "Banco Santander", "Banco BCI", "Scotiabank",
+  "Itaú", "Banco Security", "Banco Bice", "Banco Internacional", "Banco Consorcio",
+  "Banco Falabella", "Banco Ripley", "Coopeuch", "Tenpo", "Mercado Pago",
+];
+const TIPOS_CUENTA = ["Cuenta Corriente", "Cuenta Vista"];
+
+// Isapres abiertas y cerradas vigentes. El campo `salud` guarda una sola
+// cadena ("Fonasa" o "Isapre <nombre>") porque así la lee el cálculo de la
+// liquidación; estos dos helpers la parten para los dos desplegables.
+const ISAPRES = [
+  "Banmédica", "Colmena", "Consalud", "Cruz Blanca", "Esencial", "Nueva Masvida", "Vida Tres",
+  "Chuquicamata", "Cruz del Norte", "Fundación", "Fusat", "San Lorenzo",
+];
+const sistemaSalud = (salud) => {
+  const s = String(salud || "").trim();
+  if (!s) return "";
+  return /isapre/i.test(s) ? "Isapre" : "Fonasa";
+};
+const nombreIsapre = (salud) => String(salud || "").replace(/^\s*isapre\s*/i, "").trim();
+
+// Una ficha antigua puede tener un banco escrito a mano que no esté en la
+// lista ("BCI", "Banco Estado"). Se agrega como opción para no borrarlo en
+// silencio al abrir el formulario.
+const opcionesCon = (lista, actual) =>
+  actual && !lista.includes(actual) ? [actual, ...lista] : lista;
 const TASAS_AFP = { Capital: 11.44, Cuprum: 11.44, Habitat: 11.27, Modelo: 10.58, PlanVital: 11.16, ProVida: 11.45, Uno: 10.69 };
-const TIPOS_SOLICITUD = ["vacaciones", "permiso", "licencia_medica", "administrativo", "sin_goce"];
 const DIAS_SEMANA = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
 
 const COMPETENCIAS_BASE = [
@@ -311,7 +353,7 @@ function TabTablero({ tablero }) {
             <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
               {dotacion.por_tipo_contrato.map((t) => (
                 <div key={t.nombre} style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, padding: "5px 0", borderBottom: "1px solid var(--border)" }}>
-                  <span style={{ textTransform: "capitalize" }}>{String(t.nombre).replace(/_/g, " ")}</span>
+                  <span>{etiquetaContrato(t.nombre)}</span>
                   <b>{t.total}</b>
                 </div>
               ))}
@@ -506,7 +548,7 @@ function TabTrabajadores({ empleados, setToast, recargar }) {
                 <td>{e.area || "—"}</td>
                 <td>{fmtFecha(e.fecha_ingreso)}</td>
                 <td style={{ textAlign: "right", fontWeight: 600 }}>{fmtCLP(e.sueldo_base)}</td>
-                <td style={{ textTransform: "capitalize" }}>{String(e.tipo_contrato || "—").replace(/_/g, " ")}</td>
+                <td>{e.tipo_contrato ? etiquetaContrato(e.tipo_contrato) : "—"}</td>
                 <td><Pill estado={e.estado} /></td>
                 <td>
                   <div style={{ display: "flex", gap: 4 }}>
@@ -559,7 +601,7 @@ function TabTrabajadores({ empleados, setToast, recargar }) {
                 <Campo label="Fecha de egreso"><input className="input" type="date" value={(editando.fecha_egreso || "").slice(0, 10)} onChange={(e) => set("fecha_egreso", e.target.value)} /></Campo>
                 <Campo label="Tipo de contrato">
                   <select className="input" value={editando.tipo_contrato || ""} onChange={(e) => set("tipo_contrato", e.target.value)}>
-                    {TIPOS_CONTRATO.map((t) => <option key={t} value={t}>{t.replace(/_/g, " ")}</option>)}
+                    {TIPOS_CONTRATO.map(([valor, label]) => <option key={valor} value={valor}>{label}</option>)}
                   </select>
                 </Campo>
                 <Campo label="Jornada">
@@ -589,8 +631,34 @@ function TabTrabajadores({ empleados, setToast, recargar }) {
                   </select>
                 </Campo>
                 <Campo label="Tasa AFP %"><input className="input" type="number" step="0.01" value={editando.tasa_afp ?? ""} onChange={(e) => set("tasa_afp", e.target.value)} /></Campo>
-                <Campo label="Salud"><input className="input" value={editando.salud || ""} onChange={(e) => set("salud", e.target.value)} placeholder="Fonasa / Isapre Colmena" /></Campo>
-                <Campo label="Plan isapre (UF)"><input className="input" type="number" step="0.01" value={editando.plan_salud_uf ?? ""} onChange={(e) => set("plan_salud_uf", e.target.value)} /></Campo>
+                <Campo label="Previsión de salud">
+                  <select className="input" value={sistemaSalud(editando.salud)}
+                    onChange={(e) => {
+                      // Al volver a Fonasa se limpia el plan en UF: si queda,
+                      // el cálculo seguiría cobrando el plan de la isapre.
+                      if (e.target.value === "Fonasa") { set("salud", "Fonasa"); set("plan_salud_uf", ""); }
+                      else if (e.target.value === "Isapre") set("salud", "Isapre ");
+                      else { set("salud", ""); set("plan_salud_uf", ""); }
+                    }}>
+                    <option value="">Sin definir</option>
+                    <option value="Fonasa">Fonasa</option>
+                    <option value="Isapre">Isapre</option>
+                  </select>
+                </Campo>
+                {sistemaSalud(editando.salud) === "Isapre" && (
+                  <Campo label="Isapre">
+                    <select className="input" value={nombreIsapre(editando.salud)}
+                      onChange={(e) => set("salud", e.target.value ? `Isapre ${e.target.value}` : "Isapre ")}>
+                      <option value="">Seleccionar…</option>
+                      {opcionesCon(ISAPRES, nombreIsapre(editando.salud)).map((i) => <option key={i} value={i}>{i}</option>)}
+                    </select>
+                  </Campo>
+                )}
+                {sistemaSalud(editando.salud) === "Isapre" && (
+                  <Campo label="Plan pactado (UF)">
+                    <input className="input" type="number" step="0.01" value={editando.plan_salud_uf ?? ""} onChange={(e) => set("plan_salud_uf", e.target.value)} />
+                  </Campo>
+                )}
                 <Campo label="Vacaciones arrastradas (días)"><input className="input" type="number" step="0.5" value={editando.dias_vacaciones_iniciales ?? 0} onChange={(e) => set("dias_vacaciones_iniciales", e.target.value)} /></Campo>
                 <Campo label="Gratificación legal">
                   <label style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12.5, height: 38 }}>
@@ -604,8 +672,18 @@ function TabTrabajadores({ empleados, setToast, recargar }) {
             <section>
               <div style={{ fontSize: 12.5, fontWeight: 800, marginBottom: 8, color: "var(--primary-dark)" }}>Pago y emergencia</div>
               <div style={gridForm}>
-                <Campo label="Banco"><input className="input" value={editando.banco || ""} onChange={(e) => set("banco", e.target.value)} /></Campo>
-                <Campo label="Tipo de cuenta"><input className="input" value={editando.tipo_cuenta || ""} onChange={(e) => set("tipo_cuenta", e.target.value)} placeholder="Corriente / Vista" /></Campo>
+                <Campo label="Banco">
+                  <select className="input" value={editando.banco || ""} onChange={(e) => set("banco", e.target.value)}>
+                    <option value="">Sin definir</option>
+                    {opcionesCon(BANCOS, editando.banco).map((b) => <option key={b} value={b}>{b}</option>)}
+                  </select>
+                </Campo>
+                <Campo label="Tipo de cuenta">
+                  <select className="input" value={editando.tipo_cuenta || ""} onChange={(e) => set("tipo_cuenta", e.target.value)}>
+                    <option value="">Sin definir</option>
+                    {opcionesCon(TIPOS_CUENTA, editando.tipo_cuenta).map((t) => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                </Campo>
                 <Campo label="N° de cuenta"><input className="input" value={editando.numero_cuenta || ""} onChange={(e) => set("numero_cuenta", e.target.value)} /></Campo>
                 <Campo label="Contacto de emergencia"><input className="input" value={editando.contacto_emergencia || ""} onChange={(e) => set("contacto_emergencia", e.target.value)} /></Campo>
                 <Campo label="Teléfono de emergencia"><input className="input" value={editando.telefono_emergencia || ""} onChange={(e) => set("telefono_emergencia", e.target.value)} /></Campo>
@@ -729,7 +807,7 @@ function FichaDetalle({ ficha, onClose, setToast, onRecargar }) {
             <Kpi icon={<PlaneTakeoff size={16} />} tono="#15803d" fondo="#dcfce7" label="Vacaciones disponibles"
               valor={`${vacaciones.saldo} días`} sub={`${vacaciones.tomados} tomados de ${(vacaciones.devengados + vacaciones.iniciales).toFixed(2)}`} />
             <Kpi icon={<Wallet size={16} />} tono="#6d28d9" fondo="#ede9fe" label="Sueldo base"
-              valor={fmtCLP(empleado.sueldo_base)} sub={empleado.tipo_contrato?.replace(/_/g, " ") || "—"} />
+              valor={fmtCLP(empleado.sueldo_base)} sub={empleado.tipo_contrato ? etiquetaContrato(empleado.tipo_contrato) : "—"} />
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10, fontSize: 12.5 }}>
             {[
@@ -1061,6 +1139,9 @@ function TabLiquidaciones({ empleados, empleadosPorId, setToast }) {
   const [editando, setEditando] = useState(null);
   const [calculo, setCalculo] = useState(null);
   const [guardando, setGuardando] = useState(false);
+  const [parametros, setParametros] = useState(null);
+  const [verParametros, setVerParametros] = useState(false);
+  const [descargando, setDescargando] = useState(false);
 
   const cargar = useCallback(async () => {
     setCargando(true);
@@ -1072,6 +1153,39 @@ function TabLiquidaciones({ empleados, empleadosPorId, setToast }) {
       setToast({ type: "error", message: e?.message || "No se pudieron cargar las liquidaciones." });
     } finally { setCargando(false); }
   }, [periodo, setToast]);
+
+  // Parámetros con que se calculará este período (UF, UTM, topes, tramos de
+  // asignación familiar). Se muestran arriba para que nadie emita un período
+  // con la UF del mes anterior sin darse cuenta.
+  useEffect(() => {
+    let vivo = true;
+    api.get(`/rrhh/parametros/vigentes?periodo=${periodo}`)
+      .then((p) => { if (vivo) setParametros(p); })
+      .catch(() => { if (vivo) setParametros(null); });
+    return () => { vivo = false; };
+  }, [periodo]);
+
+  // El PDF se arma en el navegador con el snapshot que guardó el backend.
+  async function descargarPdf(l) {
+    try {
+      await descargarLiquidacionPDF({
+        liquidacion: l,
+        empleado: empleadosPorId.get(Number(l.empleado_id)) || l,
+        mostrarCostoEmpresa: true,
+      });
+    } catch (e) {
+      setToast({ type: "error", message: e?.message || "No se pudo generar el PDF." });
+    }
+  }
+
+  async function descargarTodos() {
+    setDescargando(true);
+    try {
+      await descargarLibroLiquidacionesPDF({ liquidaciones, empleadosPorId, periodo });
+    } catch (e) {
+      setToast({ type: "error", message: e?.message || "No se pudo generar el PDF." });
+    } finally { setDescargando(false); }
+  }
 
   useEffect(() => { cargar(); }, [cargar]);
 
@@ -1147,10 +1261,18 @@ function TabLiquidaciones({ empleados, empleadosPorId, setToast }) {
           <label className="filter-label">Período</label>
           <input type="month" className="input" value={periodo} onChange={(e) => setPeriodo(e.target.value)} style={{ width: 170 }} />
         </div>
-        <div className="filter-field" style={{ flex: 1, justifyContent: "flex-end", flexDirection: "row", gap: 8, alignItems: "flex-end" }}>
+        <div className="filter-field" style={{ flex: 1, justifyContent: "flex-end", flexDirection: "row", gap: 8, alignItems: "flex-end", flexWrap: "wrap" }}>
+          <button className="btn btn-secondary" onClick={() => setVerParametros(true)}
+            style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 38 }}>
+            <Settings2 size={14} /> Parámetros
+          </button>
           <button className="btn btn-secondary" onClick={exportarCsv} disabled={!liquidaciones.length}
             style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 38 }}>
             <Download size={14} /> Libro CSV
+          </button>
+          <button className="btn btn-secondary" onClick={descargarTodos} disabled={!liquidaciones.length || descargando}
+            style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 38 }}>
+            <FileDown size={14} /> {descargando ? "Generando…" : "PDF del período"}
           </button>
           <button className="btn btn-secondary" onClick={() => setEditando({ periodo, empleado_id: "" })}
             style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 38 }}>
@@ -1163,6 +1285,23 @@ function TabLiquidaciones({ empleados, empleadosPorId, setToast }) {
           </button>
         </div>
       </div>
+
+      {parametros && parametros.origen !== "periodo" && (
+        <div style={{
+          display: "flex", alignItems: "center", gap: 8, marginTop: 12,
+          background: "#fffbeb", border: "1px solid #fde68a", color: "#92400e",
+          borderRadius: 10, padding: "9px 12px", fontSize: 12,
+        }}>
+          <AlertTriangle size={15} style={{ flexShrink: 0 }} />
+          <span style={{ flex: 1 }}>
+            {parametros.origen === "anterior"
+              ? `${periodo} se calculará con los parámetros de ${parametros.periodo} (UF ${Number(parametros.uf).toLocaleString("es-CL")}).`
+              : `No hay parámetros cargados: se usarán los valores por defecto (UF ${Number(parametros.uf).toLocaleString("es-CL")}).`}
+          </span>
+          <button className="btn btn-ghost" style={{ fontSize: 12, fontWeight: 700, color: "#92400e" }}
+            onClick={() => setVerParametros(true)}>Actualizar</button>
+        </div>
+      )}
 
       {t && (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12, margin: "14px 0" }}>
@@ -1179,7 +1318,7 @@ function TabLiquidaciones({ empleados, empleadosPorId, setToast }) {
             <th>Trabajador</th><th style={{ textAlign: "right" }}>Imponible</th><th style={{ textAlign: "right" }}>Haberes</th>
             <th style={{ textAlign: "right" }}>AFP</th><th style={{ textAlign: "right" }}>Salud</th>
             <th style={{ textAlign: "right" }}>Impuesto</th><th style={{ textAlign: "right" }}>Descuentos</th>
-            <th style={{ textAlign: "right" }}>Líquido</th><th>Estado</th><th style={{ width: 130 }}>Acciones</th>
+            <th style={{ textAlign: "right" }}>Líquido</th><th>Estado</th><th style={{ width: 165 }}>Acciones</th>
           </tr></thead>
           <tbody>
             {cargando ? (
@@ -1201,6 +1340,8 @@ function TabLiquidaciones({ empleados, empleadosPorId, setToast }) {
                 <td><Pill estado={l.estado} /></td>
                 <td>
                   <div style={{ display: "flex", gap: 4 }}>
+                    <button className="btn btn-ghost" title="Descargar liquidación en PDF" onClick={() => descargarPdf(l)}
+                      style={{ padding: 6, lineHeight: 0, color: "var(--primary-dark)" }}><FileDown size={14} /></button>
                     <button className="btn btn-ghost" title="Editar" onClick={() => setEditando({ ...l })} style={{ padding: 6, lineHeight: 0 }}><Pencil size={14} /></button>
                     {l.estado === "borrador" && (
                       <button className="btn btn-ghost" title="Emitir" onClick={() => cambiarEstado(l, "emitida")} style={{ padding: 6, lineHeight: 0, color: "#1d4ed8" }}><CheckCircle2 size={14} /></button>
@@ -1226,7 +1367,9 @@ function TabLiquidaciones({ empleados, empleadosPorId, setToast }) {
             <button className="btn btn-secondary" onClick={() => setEditando(null)} disabled={guardando}>Cancelar</button>
             <button className="btn btn-primary" onClick={guardar} disabled={guardando || !editando.empleado_id}>{guardando ? "Guardando…" : "Guardar"}</button>
           </>}>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 300px", gap: 18 }}>
+          {/* El resumen del cálculo baja debajo del formulario cuando la
+              pantalla ya no admite las dos columnas. */}
+          <div className="layout-con-lateral" style={{ gap: 18 }}>
             <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
               <div style={gridForm}>
                 <Campo label="Trabajador *">
@@ -1236,28 +1379,71 @@ function TabLiquidaciones({ empleados, empleadosPorId, setToast }) {
                   </select>
                 </Campo>
                 <Campo label="Período"><input className="input" type="month" value={editando.periodo || periodo} onChange={(e) => set("periodo", e.target.value)} /></Campo>
-                <Campo label="Días trabajados"><input className="input" type="number" max={30} value={editando.dias_trabajados ?? 30} onChange={(e) => set("dias_trabajados", e.target.value)} /></Campo>
               </div>
               <div>
-                <div style={{ fontSize: 12.5, fontWeight: 800, marginBottom: 8, color: "var(--primary-dark)" }}>Haberes</div>
+                <div style={{ fontSize: 12.5, fontWeight: 800, marginBottom: 8, color: "var(--primary-dark)" }}>Días del período</div>
                 <div style={gridForm}>
-                  {[["sueldo_base", "Sueldo base"], ["horas_extra", "Horas extra ($)"], ["bonos", "Bonos"],
-                    ["comisiones", "Comisiones"], ["otros_imponibles", "Otros imponibles"],
-                    ["colacion", "Colación"], ["movilizacion", "Movilización"], ["asignacion_familiar", "Asig. familiar"]].map(([campo, label]) => (
+                  {[["dias_trabajados", "Días trabajados"], ["dias_licencia", "Días de licencia"], ["dias_ausencia", "Días sin goce"]].map(([campo, label]) => (
                     <Campo key={campo} label={label}>
                       <input className="input" inputMode="numeric" value={editando[campo] ?? ""}
-                        onChange={(e) => set(campo, e.target.value.replace(/[^\d]/g, ""))} placeholder="según ficha" />
+                        onChange={(e) => set(campo, e.target.value.replace(/[^\d]/g, ""))}
+                        placeholder={campo === "dias_trabajados" ? "30 menos ausencias" : "0"} />
                     </Campo>
                   ))}
                 </div>
+                <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 6 }}>
+                  Deja «Días trabajados» vacío para que se deduzcan solos: 30 − licencias − días sin goce.
+                </div>
+              </div>
+              <div>
+                <div style={{ fontSize: 12.5, fontWeight: 800, marginBottom: 8, color: "var(--primary-dark)" }}>Haberes imponibles</div>
+                <div style={gridForm}>
+                  {[["sueldo_base", "Sueldo base", "según ficha"],
+                    ["horas_extra_cantidad", "Horas extra (cantidad)", "n° de horas"],
+                    ["bonos", "Bonos", ""], ["comisiones", "Comisiones", ""],
+                    ["semana_corrida", "Semana corrida", ""], ["aguinaldo", "Aguinaldo", ""],
+                    ["otros_imponibles", "Otros imponibles", ""]].map(([campo, label, ph]) => (
+                    <Campo key={campo} label={label}>
+                      <input className="input" inputMode="numeric" value={editando[campo] ?? ""}
+                        onChange={(e) => set(campo, e.target.value.replace(/[^\d]/g, ""))} placeholder={ph} />
+                    </Campo>
+                  ))}
+                </div>
+                {calculo?.horas_extra_valor > 0 && (
+                  <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 6 }}>
+                    Hora extra con recargo del 50%: {fmtCLP(calculo.horas_extra_valor)} — calculada sobre el sueldo
+                    base y la jornada semanal de la ficha.
+                  </div>
+                )}
+              </div>
+              <div>
+                <div style={{ fontSize: 12.5, fontWeight: 800, marginBottom: 8, color: "var(--primary-dark)" }}>Haberes no imponibles</div>
+                <div style={gridForm}>
+                  {[["colacion", "Colación", "según ficha"], ["movilizacion", "Movilización", "según ficha"],
+                    ["cargas_familiares", "Cargas familiares", "según ficha"],
+                    ["asignacion_familiar", "Asig. familiar ($)", "automática por tramo"],
+                    ["otros_no_imponibles", "Otros no imponibles", ""]].map(([campo, label, ph]) => (
+                    <Campo key={campo} label={label}>
+                      <input className="input" inputMode="numeric" value={editando[campo] ?? ""}
+                        onChange={(e) => set(campo, e.target.value.replace(/[^\d]/g, ""))} placeholder={ph} />
+                    </Campo>
+                  ))}
+                </div>
+                {calculo?.tramo_asignacion && (
+                  <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 6 }}>
+                    Tramo {calculo.tramo_asignacion} de asignación familiar según la renta imponible del mes.
+                  </div>
+                )}
               </div>
               <div>
                 <div style={{ fontSize: 12.5, fontWeight: 800, marginBottom: 8, color: "var(--primary-dark)" }}>Otros descuentos</div>
                 <div style={gridForm}>
-                  {[["anticipos", "Anticipos"], ["prestamos", "Préstamos"], ["otros_descuentos", "Otros"]].map(([campo, label]) => (
+                  {[["apv", "APV"], ["anticipos", "Anticipos"], ["prestamos", "Préstamos"],
+                    ["cuota_sindical", "Cuota sindical"], ["descuento_atrasos", "Atrasos"],
+                    ["otros_descuentos", "Otros"]].map(([campo, label]) => (
                     <Campo key={campo} label={label}>
                       <input className="input" inputMode="numeric" value={editando[campo] ?? ""}
-                        onChange={(e) => set(campo, e.target.value.replace(/[^\d]/g, ""))} />
+                        onChange={(e) => set(campo, e.target.value.replace(/[^\d]/g, ""))} placeholder="según ficha" />
                     </Campo>
                   ))}
                 </div>
@@ -1274,15 +1460,19 @@ function TabLiquidaciones({ empleados, empleadosPorId, setToast }) {
                 <div style={{ display: "flex", flexDirection: "column", gap: 5, fontSize: 12.5 }}>
                   {[
                     ["Sueldo base", calculo.sueldo_base], ["Gratificación", calculo.gratificacion],
-                    ["Horas extra", calculo.horas_extra], ["Bonos", calculo.bonos],
+                    ["Horas extra", calculo.horas_extra], ["Semana corrida", calculo.semana_corrida],
+                    ["Aguinaldo", calculo.aguinaldo], ["Bonos", calculo.bonos], ["Comisiones", calculo.comisiones],
                     ["Total imponible", calculo.total_imponible, true],
                     ["Colación", calculo.colacion], ["Movilización", calculo.movilizacion],
+                    ["Asignación familiar", calculo.asignacion_familiar],
                     ["Total haberes", calculo.total_haberes, true],
-                    ["AFP", -calculo.afp_monto], ["Salud", -calculo.salud_monto],
+                    [`AFP ${Number(calculo.afp_tasa || 0).toFixed(2)}%`, -calculo.afp_monto],
+                    ["Salud", -calculo.salud_monto],
                     ["Seguro cesantía", -calculo.seguro_cesantia], ["Impuesto único", -calculo.impuesto_unico],
-                    ["Otros descuentos", -(calculo.anticipos + calculo.prestamos + calculo.otros_descuentos)],
+                    ["APV", -calculo.apv],
+                    ["Otros descuentos", -(calculo.anticipos + calculo.prestamos + calculo.cuota_sindical + calculo.descuento_atrasos + calculo.otros_descuentos)],
                     ["Total descuentos", -calculo.total_descuentos, true],
-                  ].map(([label, valor, fuerte], i) => (
+                  ].filter(([, valor, fuerte]) => fuerte || Math.abs(Number(valor) || 0) > 0).map(([label, valor, fuerte], i) => (
                     <div key={i} style={{
                       display: "flex", justifyContent: "space-between",
                       fontWeight: fuerte ? 800 : 400,
@@ -1296,9 +1486,12 @@ function TabLiquidaciones({ empleados, empleadosPorId, setToast }) {
                   <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 900, fontSize: 15, marginTop: 8, paddingTop: 8, borderTop: "2px solid var(--primary)", color: "var(--primary-dark)" }}>
                     <span>Líquido</span><span>{fmtCLP(calculo.liquido)}</span>
                   </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11.5, marginTop: 6, color: "var(--text-muted)" }}>
+                    <span>Costo empresa</span><span>{fmtCLP(calculo.costo_empresa)}</span>
+                  </div>
                   <div style={{ fontSize: 10.5, color: "var(--text-muted)", marginTop: 8, lineHeight: 1.5 }}>
                     UF {Number(calculo.parametros?.uf).toLocaleString("es-CL")} · UTM {Number(calculo.parametros?.utm).toLocaleString("es-CL")} ·
-                    tope imponible {calculo.parametros?.tope_imponible_uf} UF. Ajustables en el .env del backend.
+                    tope imponible {calculo.parametros?.tope_imponible_uf} UF · base tributable {fmtCLP(calculo.base_tributable)}.
                   </div>
                 </div>
               )}
@@ -1306,7 +1499,89 @@ function TabLiquidaciones({ empleados, empleadosPorId, setToast }) {
           </div>
         </Modal>
       )}
+
+      {verParametros && (
+        <ParametrosModal
+          periodo={periodo}
+          vigentes={parametros}
+          setToast={setToast}
+          onClose={() => setVerParametros(false)}
+          onGuardado={(p) => { setParametros(p); cargar(); }}
+        />
+      )}
     </>
+  );
+}
+
+/* ── Parámetros previsionales del período ───────────────────────────────────
+   UF, UTM, ingreso mínimo, topes y tramos de asignación familiar. Se guardan
+   por período para que una liquidación antigua se pueda reimprimir con los
+   valores que tenía cuando se emitió. */
+const CAMPOS_PARAMETROS = [
+  ["uf", "UF", "valor de la UF del último día del mes"],
+  ["utm", "UTM", "base de los tramos del impuesto único"],
+  ["imm", "Ingreso mínimo", "base del tope de gratificación"],
+  ["tope_imponible_uf", "Tope imponible (UF)", "AFP y salud"],
+  ["tope_cesantia_uf", "Tope cesantía (UF)", "seguro de cesantía"],
+  ["tasa_salud", "Salud (%)", "cotización legal"],
+  ["tasa_cesantia_trabajador", "AFC trabajador (%)", "solo contrato indefinido"],
+  ["tasa_cesantia_empleador", "AFC empleador (%)", "3% a plazo fijo"],
+  ["tasa_sis", "SIS (%)", "cargo del empleador"],
+  ["tasa_mutual", "Mutual (%)", "depende de la tasa de la empresa"],
+  ["af_tramo_a_hasta", "Asig. familiar · tramo A hasta", ""],
+  ["af_tramo_a_monto", "Tramo A · monto por carga", ""],
+  ["af_tramo_b_hasta", "Tramo B hasta", ""],
+  ["af_tramo_b_monto", "Tramo B · monto por carga", ""],
+  ["af_tramo_c_hasta", "Tramo C hasta", ""],
+  ["af_tramo_c_monto", "Tramo C · monto por carga", ""],
+  ["apv_tope_uf_mensual", "Tope APV (UF/mes)", "beneficio tributario régimen B"],
+];
+
+function ParametrosModal({ periodo, vigentes, setToast, onClose, onGuardado }) {
+  const [valores, setValores] = useState(() => ({ ...(vigentes || {}), periodo }));
+  const [guardando, setGuardando] = useState(false);
+
+  async function guardar() {
+    setGuardando(true);
+    try {
+      const p = await api.post("/rrhh/parametros", { ...valores, periodo });
+      setToast({ type: "success", message: `Parámetros de ${periodo} guardados.` });
+      onGuardado?.(p);
+      onClose();
+    } catch (e) {
+      setToast({ type: "error", message: e?.message || "No se pudieron guardar." });
+    } finally { setGuardando(false); }
+  }
+
+  return (
+    <Modal titulo={`Parámetros previsionales · ${periodo}`} ancho={760} onClose={onClose}
+      footer={<>
+        <button className="btn btn-secondary" onClick={onClose} disabled={guardando}>Cancelar</button>
+        <button className="btn btn-primary" onClick={guardar} disabled={guardando}>
+          {guardando ? "Guardando…" : `Guardar para ${periodo}`}
+        </button>
+      </>}>
+      <div style={{
+        fontSize: 11.5, lineHeight: 1.55, color: "var(--text-muted)",
+        background: "var(--bg)", borderRadius: 10, padding: "10px 12px", marginBottom: 14,
+      }}>
+        {vigentes?.origen === "periodo"
+          ? `Este período ya tiene sus propios valores cargados.`
+          : vigentes?.origen === "anterior"
+            ? `Todavía no cargas los valores de ${periodo}: se están usando los de ${vigentes.periodo}. Guárdalos aquí para dejarlos fijos.`
+            : `No hay parámetros cargados: se están usando los valores por defecto del sistema.`}
+        {" "}Cada liquidación guarda una copia de estos números al emitirse, así que cambiarlos no altera lo ya emitido.
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 12 }}>
+        {CAMPOS_PARAMETROS.map(([campo, label, ayuda]) => (
+          <Campo key={campo} label={label}>
+            <input className="input" inputMode="decimal" value={valores[campo] ?? ""}
+              onChange={(e) => setValores((p) => ({ ...p, [campo]: e.target.value.replace(/[^\d.]/g, "") }))} />
+            {ayuda && <div style={{ fontSize: 10.5, color: "var(--text-muted)", marginTop: 3 }}>{ayuda}</div>}
+          </Campo>
+        ))}
+      </div>
+    </Modal>
   );
 }
 
@@ -1627,9 +1902,12 @@ function TabEvaluaciones({ empleados, empleadosPorId, setToast }) {
 function TabSolicitudes({ empleados, empleadosPorId, setToast }) {
   const [solicitudes, setSolicitudes] = useState([]);
   const [cargando, setCargando] = useState(true);
-  const [filtroEstado, setFiltroEstado] = useState("");
+  const [filtroEstado, setFiltroEstado] = useState("pendiente");
+  const [filtroTipo, setFiltroTipo] = useState("");
   const [nueva, setNueva] = useState(null);
   const [guardando, setGuardando] = useState(false);
+  const [resolviendo, setResolviendo] = useState(null); // { solicitud, estado }
+  const [verFeriados, setVerFeriados] = useState(false);
 
   const cargar = useCallback(async () => {
     setCargando(true);
@@ -1641,24 +1919,29 @@ function TabSolicitudes({ empleados, empleadosPorId, setToast }) {
   useEffect(() => { cargar(); }, [cargar]);
 
   const filtradas = useMemo(
-    () => solicitudes.filter((s) => !filtroEstado || s.estado === filtroEstado),
-    [solicitudes, filtroEstado],
+    () => solicitudes.filter(
+      (s) => (!filtroEstado || s.estado === filtroEstado) && (!filtroTipo || s.tipo === filtroTipo),
+    ),
+    [solicitudes, filtroEstado, filtroTipo],
   );
 
-  async function resolver(s, estado) {
+  const pendientes = solicitudes.filter((s) => s.estado === "pendiente").length;
+
+  async function resolver(s, estado, comentario) {
     try {
-      await api.put(`/rrhh/solicitudes/${s.id}/resolver`, { estado });
+      await api.put(`/rrhh/solicitudes/${s.id}/resolver`, { estado, comentario });
       setToast({ type: "success", message: `Solicitud ${estado}.` });
+      setResolviendo(null);
       await cargar();
     } catch (e) {
       setToast({ type: "error", message: e?.message || "No se pudo resolver." });
     }
   }
 
-  async function crear() {
+  async function crear(payload) {
     setGuardando(true);
     try {
-      await api.post("/rrhh/solicitudes", nueva);
+      await api.post("/rrhh/solicitudes", payload);
       setToast({ type: "success", message: "Solicitud registrada." });
       setNueva(null);
       await cargar();
@@ -1672,13 +1955,25 @@ function TabSolicitudes({ empleados, empleadosPorId, setToast }) {
       <div className="filter-bar">
         <div className="filter-field">
           <label className="filter-label">Estado</label>
-          <select className="input" value={filtroEstado} onChange={(e) => setFiltroEstado(e.target.value)} style={{ minWidth: 160 }}>
+          <select className="input" value={filtroEstado} onChange={(e) => setFiltroEstado(e.target.value)} style={{ minWidth: 150 }}>
             <option value="">Todas</option>
-            <option value="pendiente">Pendientes</option><option value="aprobada">Aprobadas</option>
+            <option value="pendiente">Pendientes{pendientes ? ` (${pendientes})` : ""}</option>
+            <option value="aprobada">Aprobadas</option>
             <option value="rechazada">Rechazadas</option><option value="anulada">Anuladas</option>
           </select>
         </div>
-        <div className="filter-field" style={{ flex: 1, justifyContent: "flex-end" }}>
+        <div className="filter-field">
+          <label className="filter-label">Tipo</label>
+          <select className="input" value={filtroTipo} onChange={(e) => setFiltroTipo(e.target.value)} style={{ minWidth: 190 }}>
+            <option value="">Todos</option>
+            {TIPOS_SOLICITUD.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
+          </select>
+        </div>
+        <div className="filter-field" style={{ flex: 1, justifyContent: "flex-end", flexDirection: "row", gap: 8, alignItems: "flex-end" }}>
+          <button className="btn btn-secondary" onClick={() => setVerFeriados(true)}
+            style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 38 }}>
+            <CalendarDays size={14} /> Feriados
+          </button>
           <button className="btn btn-primary" onClick={() => setNueva({ tipo: "vacaciones" })}
             style={{ display: "inline-flex", alignItems: "center", gap: 7, height: 38 }}>
             <Plus size={15} /> Registrar solicitud
@@ -1690,7 +1985,7 @@ function TabSolicitudes({ empleados, empleadosPorId, setToast }) {
         <table className="rrhh-tabla">
           <thead><tr>
             <th>Trabajador</th><th>Tipo</th><th>Desde</th><th>Hasta</th>
-            <th style={{ textAlign: "center" }}>Días</th><th>Motivo</th><th>Estado</th><th style={{ width: 110 }}>Acciones</th>
+            <th style={{ textAlign: "center" }}>Duración</th><th>Motivo</th><th>Estado</th><th style={{ width: 110 }}>Acciones</th>
           </tr></thead>
           <tbody>
             {cargando ? (
@@ -1700,18 +1995,30 @@ function TabSolicitudes({ empleados, empleadosPorId, setToast }) {
             ) : filtradas.map((s) => (
               <tr key={s.id}>
                 <td style={{ fontWeight: 600 }}>{nombreCompleto(empleadosPorId.get(Number(s.empleado_id)))}</td>
-                <td style={{ textTransform: "capitalize" }}>{String(s.tipo || "").replace(/_/g, " ")}</td>
+                <td>
+                  {etiquetaTipo(s.tipo)}
+                  {s.goce_sueldo === false && (
+                    <div style={{ fontSize: 10.5, color: "#b45309", fontWeight: 700 }}>sin goce de sueldo</div>
+                  )}
+                </td>
                 <td>{fmtFecha(s.fecha_desde)}</td>
-                <td>{fmtFecha(s.fecha_hasta)}</td>
-                <td style={{ textAlign: "center", fontWeight: 700 }}>{s.dias ?? "—"}</td>
+                <td>{s.medida === "horas" ? "—" : fmtFecha(s.fecha_hasta)}</td>
+                <td style={{ textAlign: "center", fontWeight: 700 }}>{duracionSolicitud(s)}</td>
                 <td style={{ maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={s.motivo || ""}>{s.motivo || "—"}</td>
-                <td><Pill estado={s.estado} /></td>
+                <td>
+                  <Pill estado={s.estado} />
+                  {s.resuelto_por && (
+                    <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 2 }} title={s.comentario_resolucion || ""}>
+                      {s.resuelto_por}
+                    </div>
+                  )}
+                </td>
                 <td>
                   <div style={{ display: "flex", gap: 4 }}>
                     {s.estado === "pendiente" && (
                       <>
-                        <button className="btn btn-ghost" title="Aprobar" onClick={() => resolver(s, "aprobada")} style={{ padding: 6, lineHeight: 0, color: "#15803d" }}><CheckCircle2 size={14} /></button>
-                        <button className="btn btn-ghost" title="Rechazar" onClick={() => resolver(s, "rechazada")} style={{ padding: 6, lineHeight: 0, color: "#b91c1c" }}><X size={14} /></button>
+                        <button className="btn btn-ghost" title="Aprobar" onClick={() => setResolviendo({ solicitud: s, estado: "aprobada" })} style={{ padding: 6, lineHeight: 0, color: "#15803d" }}><CheckCircle2 size={14} /></button>
+                        <button className="btn btn-ghost" title="Rechazar" onClick={() => setResolviendo({ solicitud: s, estado: "rechazada" })} style={{ padding: 6, lineHeight: 0, color: "#b91c1c" }}><X size={14} /></button>
                       </>
                     )}
                     <button className="btn btn-ghost" title="Eliminar" style={{ padding: 6, lineHeight: 0, color: "#b91c1c" }}
@@ -1727,34 +2034,137 @@ function TabSolicitudes({ empleados, empleadosPorId, setToast }) {
       </div>
 
       {nueva && (
-        <Modal titulo="Registrar solicitud" ancho={560} onClose={() => setNueva(null)}
-          footer={<>
-            <button className="btn btn-secondary" onClick={() => setNueva(null)} disabled={guardando}>Cancelar</button>
-            <button className="btn btn-primary" onClick={crear} disabled={guardando}>{guardando ? "Guardando…" : "Registrar"}</button>
-          </>}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            <div style={gridForm}>
-              <Campo label="Trabajador *">
-                <select className="input" value={nueva.empleado_id || ""} onChange={(e) => setNueva((p) => ({ ...p, empleado_id: e.target.value }))}>
-                  <option value="">Seleccionar…</option>
-                  {empleados.map((e) => <option key={e.id} value={e.id}>{nombreCompleto(e)}</option>)}
-                </select>
-              </Campo>
-              <Campo label="Tipo">
-                <select className="input" value={nueva.tipo} onChange={(e) => setNueva((p) => ({ ...p, tipo: e.target.value }))}>
-                  {TIPOS_SOLICITUD.map((t) => <option key={t} value={t}>{t.replace(/_/g, " ")}</option>)}
-                </select>
-              </Campo>
-              <Campo label="Desde"><input className="input" type="date" value={nueva.fecha_desde || ""} onChange={(e) => setNueva((p) => ({ ...p, fecha_desde: e.target.value }))} /></Campo>
-              <Campo label="Hasta"><input className="input" type="date" value={nueva.fecha_hasta || ""} onChange={(e) => setNueva((p) => ({ ...p, fecha_hasta: e.target.value }))} /></Campo>
-            </div>
-            <Campo label="Motivo"><textarea className="input" rows={3} value={nueva.motivo || ""} onChange={(e) => setNueva((p) => ({ ...p, motivo: e.target.value }))} /></Campo>
-            <div style={{ fontSize: 11.5, color: "var(--text-muted)" }}>
-              Los días hábiles se calculan automáticamente (se excluyen sábados y domingos).
-            </div>
-          </div>
-        </Modal>
+        <SolicitudPermisoForm
+          titulo="Registrar solicitud"
+          empleados={empleados}
+          nombreDe={nombreCompleto}
+          guardando={guardando}
+          onCancelar={() => setNueva(null)}
+          onEnviar={crear}
+          calcularEn="/rrhh/solicitudes/calcular"
+        />
       )}
+
+      {resolviendo && (
+        <ResolverSolicitudModal
+          {...resolviendo}
+          empleado={empleadosPorId.get(Number(resolviendo.solicitud.empleado_id))}
+          onCancelar={() => setResolviendo(null)}
+          onConfirmar={(comentario) => resolver(resolviendo.solicitud, resolviendo.estado, comentario)}
+        />
+      )}
+
+      {verFeriados && <FeriadosModal setToast={setToast} onClose={() => setVerFeriados(false)} />}
     </>
+  );
+}
+
+/* Aprobar o rechazar pidiendo un comentario: la resolución queda en el
+   historial del trabajador y se muestra en su portal. */
+function ResolverSolicitudModal({ solicitud, estado, empleado, onCancelar, onConfirmar }) {
+  const [comentario, setComentario] = useState("");
+  const aprobar = estado === "aprobada";
+  return (
+    <Modal titulo={aprobar ? "Aprobar solicitud" : "Rechazar solicitud"} ancho={480} onClose={onCancelar}
+      footer={<>
+        <button className="btn btn-secondary" onClick={onCancelar}>Cancelar</button>
+        <button className="btn btn-primary" onClick={() => onConfirmar(comentario)}
+          style={aprobar ? undefined : { background: "#b91c1c", borderColor: "#b91c1c" }}>
+          {aprobar ? "Aprobar" : "Rechazar"}
+        </button>
+      </>}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <div style={{ fontSize: 13, lineHeight: 1.7 }}>
+          <strong>{nombreCompleto(empleado)}</strong> — {etiquetaTipo(solicitud.tipo)}<br />
+          {solicitud.medida === "horas"
+            ? `${fmtFecha(solicitud.fecha_desde)} de ${String(solicitud.hora_desde).slice(0, 5)} a ${String(solicitud.hora_hasta).slice(0, 5)} (${solicitud.horas} h)`
+            : `${fmtFecha(solicitud.fecha_desde)} al ${fmtFecha(solicitud.fecha_hasta)} · ${duracionSolicitud(solicitud)}`}
+          {solicitud.motivo && (
+            <div style={{ marginTop: 8, color: "var(--text-muted)", whiteSpace: "pre-wrap" }}>{solicitud.motivo}</div>
+          )}
+        </div>
+        <Campo label="Comentario para el trabajador">
+          <textarea className="input" rows={3} value={comentario} onChange={(e) => setComentario(e.target.value)} />
+        </Campo>
+      </div>
+    </Modal>
+  );
+}
+
+/* Calendario de feriados legales: lo consume el cálculo de días hábiles. */
+function FeriadosModal({ setToast, onClose }) {
+  const [anio, setAnio] = useState(new Date().getFullYear());
+  const [feriados, setFeriados] = useState([]);
+  const [cargando, setCargando] = useState(true);
+  const [nuevo, setNuevo] = useState({ fecha: "", nombre: "" });
+
+  const cargar = useCallback(async () => {
+    setCargando(true);
+    try { setFeriados(await api.get(`/rrhh/feriados?anio=${anio}`)); }
+    catch (e) { setToast({ type: "error", message: e?.message || "No se pudieron cargar los feriados." }); }
+    finally { setCargando(false); }
+  }, [anio, setToast]);
+
+  useEffect(() => { cargar(); }, [cargar]);
+
+  async function agregar() {
+    if (!nuevo.fecha || !nuevo.nombre) return;
+    try {
+      await api.post("/rrhh/feriados", nuevo);
+      setNuevo({ fecha: "", nombre: "" });
+      await cargar();
+    } catch (e) { setToast({ type: "error", message: e?.message }); }
+  }
+
+  return (
+    <Modal titulo="Feriados legales" ancho={560} onClose={onClose}
+      footer={<button className="btn btn-secondary" onClick={onClose}>Cerrar</button>}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <div style={{ fontSize: 11.5, color: "var(--text-muted)", lineHeight: 1.55 }}>
+          Los días de vacaciones y de permiso con días hábiles no cuentan estas fechas. Los feriados trasladables
+          cambian de día cada año, así que hay que cargar los del año nuevo.
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
+          <Campo label="Año" ancho={110}>
+            <input className="input" type="number" value={anio} onChange={(e) => setAnio(Number(e.target.value))} />
+          </Campo>
+          <Campo label="Fecha" ancho={160}>
+            <input className="input" type="date" value={nuevo.fecha} onChange={(e) => setNuevo((p) => ({ ...p, fecha: e.target.value }))} />
+          </Campo>
+          <Campo label="Nombre">
+            <input className="input" value={nuevo.nombre} onChange={(e) => setNuevo((p) => ({ ...p, nombre: e.target.value }))} placeholder="Ej: Día de las Glorias Navales" />
+          </Campo>
+          <button className="btn btn-secondary" onClick={agregar} disabled={!nuevo.fecha || !nuevo.nombre} style={{ height: 38 }}>
+            <Plus size={15} />
+          </button>
+        </div>
+        <div className="rrhh-tabla-wrap" style={{ maxHeight: 320, overflow: "auto" }}>
+          <table className="rrhh-tabla">
+            <thead><tr><th>Fecha</th><th>Feriado</th><th style={{ width: 50 }} /></tr></thead>
+            <tbody>
+              {cargando ? (
+                <tr><td colSpan={3} style={{ padding: 20, textAlign: "center", color: "var(--text-muted)" }}>Cargando…</td></tr>
+              ) : feriados.length === 0 ? (
+                <tr><td colSpan={3} style={{ padding: 20, textAlign: "center", color: "var(--text-muted)" }}>Sin feriados cargados en {anio}.</td></tr>
+              ) : feriados.map((fe) => (
+                <tr key={fe.fecha}>
+                  <td>{fmtFecha(fe.fecha)}</td>
+                  <td>
+                    {fe.nombre}
+                    {fe.irrenunciable && <span style={{ fontSize: 10.5, color: "#b45309", fontWeight: 700 }}> · irrenunciable</span>}
+                  </td>
+                  <td>
+                    <button className="btn btn-ghost" style={{ padding: 6, lineHeight: 0, color: "#b91c1c" }}
+                      onClick={async () => { try { await api.delete(`/rrhh/feriados/${fe.fecha}`); await cargar(); } catch (e) { setToast({ type: "error", message: e?.message }); } }}>
+                      <Trash2 size={14} />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </Modal>
   );
 }

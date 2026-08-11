@@ -762,6 +762,11 @@ body {
 .stats-row .stat-card:nth-child(3)::after { background: var(--warning); }
 .stats-row .stat-card:nth-child(4)::after { background: var(--danger); }
 
+/* Variante de 3 tarjetas. Como clase y no como estilo en línea: escrita en
+   línea ganaba a las media queries y las tarjetas seguían en tres columnas
+   hasta quedar ilegibles en un móvil. */
+.stats-row.stats-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+
 /* Variante de 5 tarjetas (ej. Trazabilidad): 5 en una fila en desktop, sin
    dejar una suelta abajo. Responsivo a 3 y 2 columnas. */
 .stats-row.stats-5 { grid-template-columns: repeat(5, minmax(0, 1fr)); }
@@ -1189,16 +1194,47 @@ select.input {
 .table-link:hover { color: var(--primary); text-decoration: underline; }
 
 /* ── Table ───────────────────────────────────────────────────── */
+/* overflow-x:auto en vez de hidden. Con `hidden` una tabla más ancha que su
+   contenedor quedaba RECORTADA y sin forma de llegar a las últimas columnas;
+   con `auto` se desplaza. El radio de la tarjeta se sigue respetando. */
 .table-wrap {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
 .table-scroll {
   overflow-x: auto;
   overflow-y: auto;
+}
+
+/* Aviso de que queda contenido a los lados: una sombra en el borde que solo
+   aparece cuando hay algo más allá. Truco de gradientes con
+   background-attachment: los blancos viajan con el contenido (local) y tapan
+   la sombra al llegar al extremo; las sombras quedan fijas (scroll). */
+.table-wrap,
+.table-scroll {
+  background-image:
+    linear-gradient(to right, var(--surface) 40%, rgba(255, 255, 255, 0)),
+    linear-gradient(to left,  var(--surface) 40%, rgba(255, 255, 255, 0)),
+    linear-gradient(to right, rgba(15, 23, 42, .13), rgba(15, 23, 42, 0)),
+    linear-gradient(to left,  rgba(15, 23, 42, .13), rgba(15, 23, 42, 0));
+  background-position: left center, right center, left center, right center;
+  background-repeat: no-repeat;
+  background-size: 34px 100%, 34px 100%, 13px 100%, 13px 100%;
+  background-attachment: local, local, scroll, scroll;
+}
+/* Solo el contenedor externo pinta fondo; si .table-scroll vive dentro de
+   .table-wrap, el interno hereda transparencia para no doblar la sombra. */
+.table-wrap > .table-scroll { background-image: none; }
+
+/* En pantallas táctiles el desplazamiento lateral se siente nativo. */
+@media (hover: none) {
+  .table-wrap,
+  .table-scroll,
+  .rrhh-tabla-wrap { -webkit-overflow-scrolling: touch; }
 }
 
 .data-table {
@@ -1288,6 +1324,28 @@ select.input {
 .data-table.table-fit td { font-size: 12.5px; }
 .data-table.table-fit th { padding-left: 9px; padding-right: 9px; }
 
+/* Variante "recortar": para tablas con `table-layout: fixed` y celdas que no
+   parten línea. Sin esto el texto largo de una celda se DERRAMA encima de la
+   columna vecina (el organismo pisando la región, por ejemplo) en vez de
+   cortarse. Con esto se corta con puntos suspensivos; el valor completo debe
+   quedar en el `title` de la celda. */
+.data-table.table-clip td,
+.data-table.table-clip th { overflow: hidden; text-overflow: ellipsis; }
+/* Las celdas que apilan contenido (badges, botones) no deben recortar en alto;
+   solo el texto plano. */
+.data-table.table-clip td > .celda-apilada { overflow: visible; }
+
+/* Texto que debe truncarse con puntos suspensivos dentro de un contenedor
+   flex. `text-overflow` NO actúa sobre los hijos anónimos de un flex: hay que
+   envolver el texto en su propio elemento con min-width:0. */
+.truncar {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ── Badges ──────────────────────────────────────────────────── */
 .badge {
   display: inline-flex;
@@ -1319,6 +1377,91 @@ select.input {
 .badge-neutral::before  { background: #94a3b8; }
 .badge-primary  { background: #e0f2fe; color: #0369a1; }
 .badge-primary::before  { background: #0284c7; }
+
+/* ── Pastilla partida (elegir · quitar) ──────────────────────────
+   Una pastilla con dos mitades: la izquierda alterna la selección y la
+   derecha borra. Las dos DEBEN medir exactamente lo mismo, así que el
+   grupo estira a sus hijos (`stretch`) en lugar de centrarlos: con
+   `center` cada mitad se quedaba con su alto de contenido —el icono mide
+   menos que el texto— y la de la derecha aparecía encajada, más baja que
+   su vecina y con el borde descuadrado. */
+.chip-doble {
+  display: inline-flex;
+  align-items: stretch;
+  max-width: 100%;
+}
+.chip-doble > button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-soft);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+  cursor: pointer;
+  transition: background .12s ease, color .12s ease, border-color .12s ease;
+}
+.chip-doble .chip-texto {
+  padding: 4px 11px;
+  border-radius: 999px 0 0 999px;
+  border-right: none;
+  min-width: 0;
+  text-align: left;
+}
+.chip-doble .chip-quitar {
+  padding: 4px 8px;
+  border-radius: 0 999px 999px 0;
+  flex: 0 0 auto;
+}
+/* Sin permiso para borrar el catálogo la pastilla es una sola pieza. */
+.chip-doble.chip-solo .chip-texto {
+  border-radius: 999px;
+  border-right: 1px solid var(--border);
+}
+.chip-doble.activa > button {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+/* Sobre el fondo lleno, la línea divisoria tiene que ser clara, no gris. */
+.chip-doble.activa .chip-quitar { border-left-color: rgba(255, 255, 255, .45); }
+
+.chip-doble .chip-texto:hover { background: var(--neutral-bg); color: var(--text); }
+.chip-doble.activa .chip-texto:hover { background: var(--primary-dark); color: #fff; }
+.chip-doble .chip-quitar:hover {
+  background: var(--danger-bg);
+  border-color: #fca5a5;
+  color: #b91c1c;
+}
+.chip-doble.activa .chip-quitar:hover {
+  background: #b91c1c;
+  border-color: #b91c1c;
+  color: #fff;
+}
+.chip-doble > button:focus-visible {
+  outline: 2px solid var(--primary-dark);
+  outline-offset: 1px;
+  z-index: 1;
+}
+
+/* Variante «búsqueda guardada»: mismo esqueleto, paleta índigo para
+   distinguirla de una palabra suelta. */
+.chip-doble.chip-guardada > button {
+  background: #eef2ff;
+  border-color: #dde3ff;
+  color: #3730a3;
+  font-weight: 700;
+}
+.chip-doble.chip-guardada .chip-quitar { color: #6366f1; font-size: 14px; }
+.chip-doble.chip-guardada .chip-texto:hover { background: #e0e7ff; color: #312e81; }
+.chip-doble.chip-guardada .chip-quitar:hover {
+  background: var(--danger-bg);
+  border-color: #fca5a5;
+  color: #b91c1c;
+}
 
 /* ── Login page ──────────────────────────────────────────────── */
 .login-shell {
@@ -1382,6 +1525,10 @@ select.input {
   padding: 56px 48px;
   background: linear-gradient(150deg, #f0f4f6 0%, #f7f9fa 50%, #eaf0f2 100%);
   position: relative;
+  /* Los anillos decorativos se posicionan a propósito fuera del panel
+     (right: -120px). Sin recortar aquí, empujaban el ancho del documento y la
+     pantalla de acceso —la primera que ve cualquiera— se desplazaba de lado. */
+  overflow: hidden;
 }
 
 .login-form-panel::before {
@@ -1662,6 +1809,113 @@ select.input {
   border-bottom: 1px solid var(--border);
 }
 
+/* ── Control segmentado (grupo de botones tipo pestaña) ──────────
+   El contenedor recorta para respetar el radio, así que si los botones no
+   caben se cortan sin aviso. En pantallas chicas pasa a ocupar el ancho
+   completo y los botones se reparten el espacio en partes iguales. */
+.segmentado {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  overflow: hidden;
+  height: 38px;
+  max-width: 100%;
+}
+.segmentado > button {
+  padding: 0 16px;
+  font-size: 12.5px;
+  font-weight: 700;
+  border: none;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+  background: var(--surface);
+  color: var(--text-muted);
+  transition: background .15s, color .15s;
+}
+.segmentado > button.activo {
+  background: var(--primary);
+  color: #fff;
+}
+@media (max-width: 900px) {
+  .segmentado { display: flex; width: 100%; }
+  .segmentado > button {
+    flex: 1 1 0;
+    min-width: 0;
+    padding: 0 8px;
+    /* Reparten el ancho en partes iguales; si aun así una etiqueta no cabe,
+       se acorta con puntos suspensivos en vez de salirse del botón. */
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}
+
+/* Un campo de filtro que contiene un control segmentado se mide por su
+   contenido. Sin esto, `.filter-field { flex: 1; min-width: 140px }` lo
+   comprime a 140px y los botones quedan cortados aunque sobre espacio. */
+.filter-field:has(> .segmentado) { flex: 0 0 auto; min-width: 0; }
+
+/* ── Layouts de dos y tres columnas ──────────────────────────────
+   Estas rejillas estaban escritas como estilos en línea con anchos en píxeles
+   ("300px 1fr 300px"), que ninguna media query puede alcanzar: por debajo de
+   la suma de sus columnas el contenido se salía de la pantalla. Como clases
+   se pueden apilar cuando ya no caben. */
+
+/* Panel principal + panel lateral (detalle de cliente, tracking, formularios
+   con resumen al costado). */
+.layout-con-lateral {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 320px);
+  gap: 16px;
+  align-items: start;
+}
+.layout-con-lateral.lateral-izq {
+  grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
+}
+@media (max-width: 1024px) {
+  .layout-con-lateral,
+  .layout-con-lateral.lateral-izq { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Tres columnas: laterales fijos y centro elástico. Pasa a dos y luego a una. */
+.layout-tres {
+  display: grid;
+  grid-template-columns: minmax(240px, 300px) minmax(0, 1fr) minmax(240px, 300px);
+  gap: 14px;
+  align-items: start;
+}
+@media (max-width: 1280px) {
+  .layout-tres { grid-template-columns: minmax(240px, 300px) minmax(0, 1fr); }
+}
+@media (max-width: 900px) {
+  .layout-tres { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Fila de ítems editables (campañas): etiqueta ancha + descripción elástica +
+   campos numéricos + botón de quitar. Al no caber, cada campo toma su línea. */
+.fila-items {
+  display: grid;
+  grid-template-columns: minmax(160px, 220px) minmax(0, 1fr) 140px 140px 80px;
+  gap: 8px;
+  align-items: center;
+}
+@media (max-width: 900px) {
+  .fila-items { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+}
+@media (max-width: 560px) {
+  /* Cada campo en su propia línea: repartir el ancho entre dos columnas deja
+     la descripción en una tira de cinco líneas de alto. */
+  .fila-items { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Dos paneles de peso parecido (comparativas, gráfico + tabla). */
+.layout-par {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
+  gap: 14px;
+  align-items: start;
+}
+
 /* ── Utilities ───────────────────────────────────────────────── */
 .no-spinner::-webkit-outer-spin-button,
 .no-spinner::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
@@ -1761,6 +2015,29 @@ select.input {
   .stats-row { grid-template-columns: 1fr 1fr; }
 }
 
+/* ── Densidad adaptativa ─────────────────────────────────────────
+   La escalera va reduciendo aire y tipografía antes de tener que apilar nada:
+   en un portátil de 1280 se gana media columna de tabla sin cambiar el diseño.
+   Los cortes coinciden con los anchos reales de uso: 1440 portátil grande,
+   1280 portátil, 1100 tablet apaisada (aquí el sidebar pasa a cajón), 900
+   tablet vertical, 700 móvil grande, 560 y 420 móvil. */
+
+@media (max-width: 1440px) {
+  .page { padding: 24px 24px 34px; }
+  .data-table th { padding: 11px 13px; }
+  .data-table td { padding: 11px 13px; }
+}
+
+@media (max-width: 1280px) {
+  .page { padding: 22px 20px 30px; }
+  .page-header { margin-bottom: 22px; }
+  .filter-bar { padding: 13px 15px; gap: 10px; margin-bottom: 16px; }
+  .surface-body { padding: 17px; }
+  .data-table th { padding: 9px 11px; font-size: 10.5px; letter-spacing: .5px; }
+  .data-table td { padding: 10px 11px; font-size: 13px; }
+  .stat-value { font-size: 30px; }
+}
+
 /* Tablet / móvil intermedio: el header de página y de tarjetas se apilan
    para que el título y las acciones no colisionen. */
 @media (max-width: 900px) {
@@ -1774,28 +2051,96 @@ select.input {
     flex-wrap: wrap;
     gap: 10px;
   }
-  /* Seguridad: cualquier tabla ancha puede desplazarse horizontalmente
-     aunque no esté envuelta explícitamente en .table-scroll. */
-  .table-wrap { overflow-x: auto; }
+  .data-table th { padding: 8px 10px; }
+  .data-table td { padding: 9px 10px; font-size: 12.5px; }
 }
 
-@media (max-width: 640px) {
-  .page { padding: 16px; }
+/* Móvil grande: los filtros dejan de competir por el ancho y se ordenan en
+   dos columnas antes de apilarse del todo. */
+@media (max-width: 700px) {
+  .page { padding: 18px 14px 26px; }
+  .filter-bar { padding: 12px; }
+  .filter-bar:not(.filter-bar-grid) {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: end;
+  }
+  .filter-bar > * { min-width: 0; }
+  .filter-field { min-width: 0; }
+  /* Un campo marcado como ancho ocupa la fila completa (búsquedas, textos). */
+  .filter-field.filter-field-ancho { grid-column: 1 / -1; }
+  /* Los bloques de la barra que llevan botones de acción ocupan la fila
+     entera: metidos en media columna los botones no caben. */
+  .filter-bar > *:has(> .btn),
+  .filter-bar > *:has(> .segmentado) { grid-column: 1 / -1; }
+  .filter-bar > *:has(> .btn) { flex-wrap: wrap; }
+  /* Algunos campos traen un ancho mínimo propio escrito en línea; dentro de
+     una columna estrecha tienen que poder encogerse igual. */
+  .filter-bar .input,
+  .filter-bar select,
+  .filter-bar input { max-width: 100%; min-width: 0; }
+}
+
+@media (max-width: 560px) {
+  .page { padding: 16px 12px 24px; }
   .page-title { font-size: 20px; }
   .page-subtitle { font-size: 12px; }
-  .filter-bar { flex-direction: column; align-items: stretch; }
+  .filter-bar:not(.filter-bar-grid) { grid-template-columns: minmax(0, 1fr); }
+  .filter-bar.filter-bar-grid { grid-template-columns: minmax(0, 1fr); }
   .filter-field { width: 100%; min-width: 0; }
-  .stats-row { grid-template-columns: 1fr; }
-  .stat-value { font-size: 30px; }
+  .stats-row,
+  .stats-row.stats-5,
+  .stats-row.stats-6,
+  .stats-row.stats-7,
+  .stats-row.stats-8 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .stat-value { font-size: 24px; }
+  .stat-value.stat-value-money { font-size: 20px; }
 
   /* En móvil las acciones de página se reparten el ancho y crecen el toque. */
   .page-actions { width: 100%; }
   .page-actions .btn { flex: 1 1 auto; justify-content: center; }
 
   /* Tarjetas más compactas en pantallas chicas. */
-  .surface-body { padding: 16px; }
-  .stat-card { padding: 16px 16px 14px; }
+  .surface-body { padding: 14px; }
+  .surface-header { padding: 11px 14px; }
+  .stat-card { padding: 14px 14px 12px; }
 }
+
+@media (max-width: 420px) {
+  .page { padding: 14px 10px 22px; }
+  .stats-row,
+  .stats-row.stats-5,
+  .stats-row.stats-6,
+  .stats-row.stats-7,
+  .stats-row.stats-8 { grid-template-columns: minmax(0, 1fr); }
+  .page-actions { flex-direction: column; }
+  .page-actions .btn { width: 100%; }
+}
+
+/* ── Alcanzables con el dedo ─────────────────────────────────────
+   En pantallas sin puntero fino los objetivos crecen a 38px de alto, que es
+   el mínimo cómodo para tocar. Se aplica por capacidad del dispositivo, no por
+   ancho: un móvil apaisado sigue siendo táctil. */
+@media (hover: none) and (pointer: coarse) {
+  .btn { min-height: 38px; }
+  .btn-sm { min-height: 34px; }
+  .input,
+  select.input { min-height: 40px; font-size: 16px; } /* 16px evita el zoom automático de iOS al enfocar */
+  .data-table td .btn-ghost { padding: 8px; }
+}
+
+/* ── Última red de seguridad ─────────────────────────────────────
+   Nada debe poder empujar el ancho del documento: si una tabla o una imagen
+   se pasa, se resuelve dentro de su contenedor, no moviendo la página entera. */
+/* `clip` recorta igual que `hidden` pero NO convierte al documento en un
+   contenedor de desplazamiento; con `hidden` el menú lateral, que es sticky,
+   dejaría de quedarse fijo al bajar por la página. Se declara `hidden` primero
+   como alternativa para navegadores sin soporte de `clip`. */
+html, body { max-width: 100%; overflow-x: hidden; overflow-x: clip; }
+/* Los SVG quedan fuera a propósito: son iconos con medida propia y un
+   max-width los aplastaría dentro de filas flex estrechas. */
+img, video, canvas, iframe { max-width: 100%; }
+img, video, canvas { height: auto; }
 
 /* Vista compacta: para páginas con tablas grandes (Seguimiento de Pagos,
    Trazabilidad) que deben caber en una pantalla sin scroll horizontal. */

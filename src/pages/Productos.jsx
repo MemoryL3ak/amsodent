@@ -15,6 +15,8 @@ import {
   RotateCcw,
   Trash2,
   AlertCircle,
+  History,
+  Undo2,
 } from "lucide-react";
 import Toast from "../components/Toast";
 import { descargarFichaTecnica } from "../utils/generarFichaTecnica";
@@ -275,6 +277,7 @@ export default function Productos() {
   const [productoAEliminar, setProductoAEliminar] = useState(null);
   // Punto 37: modal de carga masiva
   const [cargaMasivaOpen, setCargaMasivaOpen] = useState(false);
+  const [historialOpen, setHistorialOpen] = useState(false);
 
   const [generandoFichaId, setGenerandoFichaId] = useState(null);
   const [toast, setToast] = useState(null);
@@ -638,6 +641,17 @@ export default function Productos() {
               <Upload size={14} /> Carga Masiva
             </button>
           )}
+          {(rolNorm === "admin" || rolNorm === "jefe_ventas") && (
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => setHistorialOpen(true)}
+              title="Ver las cargas masivas anteriores y deshacerlas"
+              style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
+            >
+              <History size={14} /> Historial de cargas
+            </button>
+          )}
           <Link to="/productos/nuevo" className="btn btn-primary">
             + Crear Producto
           </Link>
@@ -917,6 +931,15 @@ export default function Productos() {
           onToast={setToast}
         />
       )}
+
+      {historialOpen && (
+        <HistorialCargasModal
+          esAdmin={rolNorm === "admin"}
+          onClose={() => setHistorialOpen(false)}
+          onRevertido={() => cargar()}
+          onToast={setToast}
+        />
+      )}
     </div>
   );
 }
@@ -1034,7 +1057,9 @@ function CargaMasivaProductosModal({ onClose, onSuccess, onToast }) {
     }
     setEnviando(true);
     try {
-      const res = await api.post("/productos/bulk-upsert", { rows: filas });
+      // El nombre del archivo va al historial: es lo que permite reconocer
+      // después cuál fue la carga que hay que deshacer.
+      const res = await api.post("/productos/bulk-upsert", { rows: filas, archivo: archivo?.name || "" });
       setResumen(res);
       if (res.errores?.length > 0) {
         onToast?.({ type: "info", message: `Importado con ${res.errores.length} errores. Revisa el detalle.` });
@@ -1195,6 +1220,200 @@ function CargaMasivaProductosModal({ onClose, onSuccess, onToast }) {
         </div>
       </div>
     </div>
+  );
+}
+
+/* ============================================================
+   Modal: Historial de cargas masivas + rollback
+   ─ Lista las importaciones anteriores con su resultado.
+   ─ "Volver a este punto" deshace la carga elegida Y todas las
+     posteriores, de la más nueva a la más antigua (si dos cargas
+     tocaron el mismo producto, ese orden deja el valor original).
+   ─ Revertir es exclusivo de admin: borra y sobrescribe catálogo.
+============================================================ */
+function fmtFechaHoraCarga(v) {
+  if (!v) return "—";
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleString("es-CL", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+function HistorialCargasModal({ esAdmin, onClose, onRevertido, onToast }) {
+  const [cargas, setCargas] = useState([]);
+  const [cargando, setCargando] = useState(true);
+  const [error, setError] = useState("");
+  const [confirmando, setConfirmando] = useState(null); // carga a revertir
+  const [revirtiendo, setRevirtiendo] = useState(false);
+
+  async function cargarHistorial() {
+    setCargando(true);
+    setError("");
+    try {
+      setCargas(await api.get("/productos/cargas/historial"));
+    } catch (e) {
+      setError(e?.message || "No se pudo cargar el historial.");
+    } finally {
+      setCargando(false);
+    }
+  }
+
+  useEffect(() => { cargarHistorial(); }, []);
+
+  // Cuántas cargas se van a deshacer si se vuelve a este punto: la elegida más
+  // todas las aplicadas posteriores. Se muestra en la confirmación para que no
+  // sea una sorpresa.
+  const afectadasPor = (carga) => cargas.filter((c) => c.id >= carga.id && c.estado === "aplicada").length;
+
+  async function revertir() {
+    if (!confirmando) return;
+    setRevirtiendo(true);
+    try {
+      const r = await api.post(`/productos/cargas/${confirmando.id}/revertir`, {});
+      const partes = [
+        `${r.revertidas} carga${r.revertidas === 1 ? "" : "s"} deshecha${r.revertidas === 1 ? "" : "s"}`,
+        r.productos_restaurados ? `${r.productos_restaurados} producto${r.productos_restaurados === 1 ? "" : "s"} restaurado${r.productos_restaurados === 1 ? "" : "s"}` : "",
+        r.productos_borrados ? `${r.productos_borrados} producto${r.productos_borrados === 1 ? "" : "s"} borrado${r.productos_borrados === 1 ? "" : "s"}` : "",
+      ].filter(Boolean);
+      onToast?.({
+        type: r.errores?.length ? "info" : "success",
+        message: `${partes.join(" · ")}${r.errores?.length ? ` — con ${r.errores.length} error(es), revisa el detalle.` : ""}`,
+      });
+      if (r.errores?.length) console.warn("Errores al revertir:", r.errores);
+      setConfirmando(null);
+      await cargarHistorial();
+      onRevertido?.();
+    } catch (e) {
+      onToast?.({ type: "error", message: e?.message || "No se pudo revertir la carga." });
+    } finally {
+      setRevirtiendo(false);
+    }
+  }
+
+  return createPortal(
+    <div
+      style={{
+        position: "fixed", inset: 0, background: "rgba(15,23,42,0.45)", zIndex: 9999,
+        display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "5vh 16px", overflowY: "auto",
+      }}
+      onClick={(e) => { if (e.target === e.currentTarget && !revirtiendo) onClose(); }}
+    >
+      <div style={{ background: "#fff", borderRadius: 12, width: "min(920px, 100%)", padding: 20, boxShadow: "0 20px 60px rgba(0,0,0,.25)" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+          <h3 style={{ margin: 0, display: "inline-flex", alignItems: "center", gap: 8 }}>
+            <History size={18} /> Historial de cargas masivas
+          </h3>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={onClose} disabled={revirtiendo}>
+            <X size={16} />
+          </button>
+        </div>
+        <p style={{ fontSize: 12.5, color: "#64748b", marginTop: 0 }}>
+          Volver a un punto deshace esa carga <strong>y todas las posteriores</strong>: los productos que la carga creó se borran y
+          los que modificó recuperan sus valores anteriores.
+        </p>
+
+        {cargando && <p style={{ fontSize: 13 }}>Cargando…</p>}
+        {error && (
+          <div style={{ background: "#fef2f2", border: "1px solid #fecaca", color: "#b91c1c", borderRadius: 8, padding: 12, fontSize: 13 }}>
+            {error}
+          </div>
+        )}
+
+        {!cargando && !error && cargas.length === 0 && (
+          <p style={{ fontSize: 13, color: "#64748b" }}>
+            Todavía no hay cargas registradas. El historial empieza a llenarse con la próxima importación.
+          </p>
+        )}
+
+        {!cargando && !error && cargas.length > 0 && (
+          <div style={{ maxHeight: "60vh", overflow: "auto", border: "1px solid #e2e8f0", borderRadius: 8 }}>
+            <table className="table" style={{ width: "100%", fontSize: 13 }}>
+              <thead style={{ position: "sticky", top: 0, background: "#f8fafc", zIndex: 1 }}>
+                <tr>
+                  <th style={{ textAlign: "left" }}>Fecha</th>
+                  <th style={{ textAlign: "left" }}>Archivo</th>
+                  <th style={{ textAlign: "left" }}>Por</th>
+                  <th style={{ textAlign: "right" }}>Creados</th>
+                  <th style={{ textAlign: "right" }}>Actualizados</th>
+                  <th style={{ textAlign: "left" }}>Estado</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {cargas.map((c) => (
+                  <tr key={c.id}>
+                    <td style={{ whiteSpace: "nowrap" }}>{fmtFechaHoraCarga(c.created_at)}</td>
+                    <td style={{ maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={c.archivo || ""}>
+                      {c.archivo || "—"}
+                    </td>
+                    <td style={{ maxWidth: 150, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={c.realizada_por || ""}>
+                      {c.realizada_por || "—"}
+                    </td>
+                    <td style={{ textAlign: "right" }}>{c.creados}</td>
+                    <td style={{ textAlign: "right" }}>{c.actualizados}</td>
+                    <td>
+                      {c.estado === "revertida" ? (
+                        <span
+                          title={`Revertida${c.revertida_por ? ` por ${c.revertida_por}` : ""}${c.revertida_at ? ` · ${fmtFechaHoraCarga(c.revertida_at)}` : ""}`}
+                          style={{ fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 999, background: "#e5e7eb", color: "#4b5563" }}
+                        >
+                          Revertida
+                        </span>
+                      ) : (
+                        <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 999, background: "#dcfce7", color: "#15803d" }}>
+                          Aplicada
+                        </span>
+                      )}
+                    </td>
+                    <td style={{ textAlign: "right" }}>
+                      {c.estado === "aplicada" && esAdmin && (
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-ghost"
+                          onClick={() => setConfirmando(c)}
+                          title="Devolver el catálogo al estado anterior a esta carga"
+                          style={{ display: "inline-flex", alignItems: "center", gap: 5, color: "#b45309", whiteSpace: "nowrap" }}
+                        >
+                          <Undo2 size={14} /> Volver a este punto
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {!esAdmin && cargas.length > 0 && (
+          <p style={{ fontSize: 12, color: "#64748b", marginBottom: 0 }}>
+            Solo un administrador puede deshacer una carga.
+          </p>
+        )}
+
+        {confirmando && (
+          <div style={{ marginTop: 14, background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: 14 }}>
+            <div style={{ fontWeight: 700, color: "#92400e", marginBottom: 6, display: "flex", alignItems: "center", gap: 6 }}>
+              <AlertCircle size={16} /> Confirmar vuelta atrás
+            </div>
+            <p style={{ fontSize: 13, margin: "0 0 10px" }}>
+              Se deshará la carga del <strong>{fmtFechaHoraCarga(confirmando.created_at)}</strong>
+              {afectadasPor(confirmando) > 1 ? <> y las <strong>{afectadasPor(confirmando) - 1}</strong> cargas posteriores</> : null}.
+              Los <strong>{confirmando.creados}</strong> productos creados se borran y los <strong>{confirmando.actualizados}</strong> modificados
+              recuperan sus valores previos. Esta acción no se puede deshacer.
+            </p>
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button type="button" className="btn btn-secondary btn-sm" onClick={() => setConfirmando(null)} disabled={revirtiendo}>
+                Cancelar
+              </button>
+              <button type="button" className="btn btn-danger btn-sm" onClick={revertir} disabled={revirtiendo}>
+                {revirtiendo ? "Revirtiendo…" : "Sí, volver a este punto"}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>,
+    document.body,
   );
 }
 

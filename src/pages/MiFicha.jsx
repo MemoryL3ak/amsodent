@@ -6,6 +6,8 @@ import {
 import { api } from "../lib/api";
 import Toast from "../components/Toast";
 import FirmaDigital from "../components/FirmaDigital";
+import SolicitudPermisoForm, { etiquetaTipo, duracionSolicitud } from "../components/SolicitudPermisoForm";
+import { descargarLiquidacionPDF } from "../lib/liquidacionPDF";
 
 /* ============================================================================
    Mi Ficha — portal del trabajador
@@ -137,14 +139,10 @@ export default function MiFicha() {
     }
   }
 
-  async function enviarSolicitud() {
-    if (!nuevaSolicitud?.fecha_desde || !nuevaSolicitud?.fecha_hasta) {
-      setToast({ type: "error", message: "Indica las fechas de tu solicitud." });
-      return;
-    }
+  async function enviarSolicitud(payload) {
     setEnviandoSolicitud(true);
     try {
-      await api.post("/rrhh/mi/solicitudes", nuevaSolicitud);
+      await api.post("/rrhh/mi/solicitudes", payload);
       setToast({ type: "success", message: "Solicitud enviada. Recursos Humanos la revisará." });
       setNuevaSolicitud(null);
       await cargar();
@@ -152,6 +150,27 @@ export default function MiFicha() {
       setToast({ type: "error", message: e?.message || "No se pudo enviar la solicitud." });
     } finally {
       setEnviandoSolicitud(false);
+    }
+  }
+
+  // Mientras nadie la resuelva, la solicitud se puede echar atrás.
+  async function anularSolicitud(s) {
+    try {
+      await api.put(`/rrhh/mi/solicitudes/${s.id}/anular`, {});
+      setToast({ type: "success", message: "Solicitud anulada." });
+      await cargar();
+    } catch (e) {
+      setToast({ type: "error", message: e?.message || "No se pudo anular." });
+    }
+  }
+
+  // La liquidación se arma en el navegador con el snapshot que guardó RR.HH.
+  // El trabajador no ve el costo empresa: es información interna.
+  async function descargarPdf(l) {
+    try {
+      await descargarLiquidacionPDF({ liquidacion: l, empleado: ficha?.empleado });
+    } catch (e) {
+      setToast({ type: "error", message: e?.message || "No se pudo generar el PDF." });
     }
   }
 
@@ -191,7 +210,7 @@ export default function MiFicha() {
     );
   }
 
-  const { empleado, vacaciones, antiguedad, liquidaciones, contratos, evaluaciones, solicitudes, documentos } = ficha;
+  const { empleado, vacaciones, saldos, antiguedad, liquidaciones, contratos, evaluaciones, solicitudes, documentos } = ficha;
 
   return (
     <div className="page">
@@ -342,6 +361,10 @@ export default function MiFicha() {
                     <button className="btn btn-secondary" style={{ fontSize: 12, padding: "5px 11px" }} onClick={() => setDetalleLiq(l)}>
                       Ver detalle
                     </button>
+                    <button className="btn btn-secondary" style={{ fontSize: 12, padding: "5px 11px", display: "inline-flex", alignItems: "center", gap: 5 }}
+                      onClick={() => descargarPdf(l)} title="Descargar en PDF">
+                      <FileDown size={12} /> PDF
+                    </button>
                     {l.estado === "emitida" && (
                       <button className="btn btn-primary" style={{ fontSize: 12, padding: "5px 11px", display: "inline-flex", alignItems: "center", gap: 5 }}
                         onClick={() => setFirmando({ tipo: "liquidacion", doc: l, titulo: `Liquidación ${nombrePeriodo(l.periodo)}` })}>
@@ -441,13 +464,42 @@ export default function MiFicha() {
 
       {seccion === "solicitudes" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          {/* Saldos disponibles: lo primero que se quiere saber antes de pedir. */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
+            <Tarjeta>
+              <div style={{ fontSize: 11.5, color: "var(--text-muted)", fontWeight: 600 }}>Vacaciones disponibles</div>
+              <div style={{ fontSize: 22, fontWeight: 800, color: "var(--primary-dark)" }}>{vacaciones.saldo} días</div>
+              <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
+                {vacaciones.devengados + vacaciones.iniciales} acumulados · {vacaciones.tomados} tomados
+              </div>
+            </Tarjeta>
+            {saldos?.administrativos?.anuales > 0 && (
+              <Tarjeta>
+                <div style={{ fontSize: 11.5, color: "var(--text-muted)", fontWeight: 600 }}>Días administrativos</div>
+                <div style={{ fontSize: 22, fontWeight: 800 }}>{saldos.administrativos.saldo}</div>
+                <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
+                  de {saldos.administrativos.anuales} al año · {saldos.administrativos.usados} usados
+                </div>
+              </Tarjeta>
+            )}
+            {saldos?.permisos && (
+              <Tarjeta>
+                <div style={{ fontSize: 11.5, color: "var(--text-muted)", fontWeight: 600 }}>Permisos usados en {saldos.anio}</div>
+                <div style={{ fontSize: 22, fontWeight: 800 }}>{saldos.permisos.dias} días</div>
+                <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
+                  y {saldos.permisos.horas} horas de permiso por horas
+                </div>
+              </Tarjeta>
+            )}
+          </div>
+
           <Tarjeta style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-            <div style={{ fontSize: 12.5 }}>
-              Tienes <b>{vacaciones.saldo} días</b> de vacaciones disponibles.
-              Las solicitudes las revisa Recursos Humanos.
+            <div style={{ fontSize: 12.5, color: "var(--text-muted)" }}>
+              Puedes pedir vacaciones, permisos por días completos o medio día, y permisos por horas dentro de tu
+              jornada. Recursos Humanos revisa cada solicitud.
             </div>
-            <button className="btn btn-primary" onClick={() => setNuevaSolicitud({ tipo: "vacaciones" })}
-              style={{ display: "inline-flex", alignItems: "center", gap: 7 }}>
+            <button className="btn btn-primary" onClick={() => setNuevaSolicitud(true)}
+              style={{ display: "inline-flex", alignItems: "center", gap: 7, whiteSpace: "nowrap" }}>
               <Plus size={15} /> Nueva solicitud
             </button>
           </Tarjeta>
@@ -459,15 +511,24 @@ export default function MiFicha() {
                   <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "9px 0", borderBottom: "1px solid var(--border)", flexWrap: "wrap" }}>
                     <CalendarDays size={15} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
                     <div style={{ flex: 1, minWidth: 170 }}>
-                      <div style={{ fontWeight: 700, textTransform: "capitalize" }}>{String(s.tipo || "").replace(/_/g, " ")}</div>
+                      <div style={{ fontWeight: 700 }}>{etiquetaTipo(s.tipo)}</div>
                       <div style={{ fontSize: 11.5, color: "var(--text-muted)" }}>
-                        {fmtFecha(s.fecha_desde)} → {fmtFecha(s.fecha_hasta)} · {s.dias} día{s.dias === 1 ? "" : "s"}
+                        {s.medida === "horas"
+                          ? `${fmtFecha(s.fecha_desde)} · ${String(s.hora_desde || "").slice(0, 5)} a ${String(s.hora_hasta || "").slice(0, 5)} · ${duracionSolicitud(s)}`
+                          : `${fmtFecha(s.fecha_desde)} → ${fmtFecha(s.fecha_hasta)} · ${duracionSolicitud(s)}`}
+                        {s.jornada_parcial ? ` · solo la ${s.jornada_parcial === "manana" ? "mañana" : "tarde"}` : ""}
                       </div>
                     </div>
                     {s.comentario_resolucion && (
                       <div style={{ fontSize: 11.5, color: "var(--text-muted)", maxWidth: 240 }}>{s.comentario_resolucion}</div>
                     )}
                     <Pill estado={s.estado} />
+                    {s.estado === "pendiente" && (
+                      <button className="btn btn-ghost" style={{ fontSize: 12, padding: "4px 9px", color: "#b91c1c" }}
+                        onClick={() => anularSolicitud(s)}>
+                        Anular
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>
@@ -549,47 +610,14 @@ export default function MiFicha() {
 
       {/* Nueva solicitud */}
       {nuevaSolicitud && (
-        <Modal titulo="Solicitar vacaciones o permiso" ancho={520} onClose={() => setNuevaSolicitud(null)}
-          footer={<>
-            <button className="btn btn-secondary" onClick={() => setNuevaSolicitud(null)} disabled={enviandoSolicitud}>Cancelar</button>
-            <button className="btn btn-primary" onClick={enviarSolicitud} disabled={enviandoSolicitud}>
-              {enviandoSolicitud ? "Enviando…" : "Enviar solicitud"}
-            </button>
-          </>}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12 }}>
-              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                <label style={{ fontSize: 11.5, fontWeight: 700, color: "var(--text-muted)" }}>Tipo</label>
-                <select className="input" value={nuevaSolicitud.tipo} onChange={(e) => setNuevaSolicitud((p) => ({ ...p, tipo: e.target.value }))}>
-                  <option value="vacaciones">Vacaciones</option>
-                  <option value="permiso">Permiso</option>
-                  <option value="licencia_medica">Licencia médica</option>
-                  <option value="administrativo">Día administrativo</option>
-                  <option value="sin_goce">Permiso sin goce de sueldo</option>
-                </select>
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                <label style={{ fontSize: 11.5, fontWeight: 700, color: "var(--text-muted)" }}>Desde</label>
-                <input className="input" type="date" value={nuevaSolicitud.fecha_desde || ""}
-                  onChange={(e) => setNuevaSolicitud((p) => ({ ...p, fecha_desde: e.target.value }))} />
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                <label style={{ fontSize: 11.5, fontWeight: 700, color: "var(--text-muted)" }}>Hasta</label>
-                <input className="input" type="date" value={nuevaSolicitud.fecha_hasta || ""}
-                  onChange={(e) => setNuevaSolicitud((p) => ({ ...p, fecha_hasta: e.target.value }))} />
-              </div>
-            </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-              <label style={{ fontSize: 11.5, fontWeight: 700, color: "var(--text-muted)" }}>Motivo (opcional)</label>
-              <textarea className="input" rows={3} value={nuevaSolicitud.motivo || ""}
-                onChange={(e) => setNuevaSolicitud((p) => ({ ...p, motivo: e.target.value }))} />
-            </div>
-            <div style={{ fontSize: 11.5, color: "var(--text-muted)", display: "flex", gap: 6, alignItems: "flex-start" }}>
-              <CheckCircle2 size={13} style={{ marginTop: 1, flexShrink: 0, color: "#15803d" }} />
-              Los días hábiles se calculan solos (sin sábados ni domingos). Tu saldo actual es de {vacaciones.saldo} días.
-            </div>
-          </div>
-        </Modal>
+        <SolicitudPermisoForm
+          titulo="Solicitar vacaciones o permiso"
+          calcularEn="/rrhh/mi/solicitudes/calcular"
+          saldos={saldos || { vacaciones }}
+          guardando={enviandoSolicitud}
+          onCancelar={() => setNuevaSolicitud(null)}
+          onEnviar={enviarSolicitud}
+        />
       )}
     </div>
   );

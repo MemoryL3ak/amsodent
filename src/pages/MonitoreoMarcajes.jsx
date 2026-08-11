@@ -325,6 +325,9 @@ export default function MonitoreoMarcajes() {
             No hay oficinas configuradas. Crea una para validar el radio de los marcajes.
           </div>
         ) : (
+          // Seis columnas con coordenadas y acciones: en pantallas chicas se
+          // recorre lateralmente en vez de quedar cortada.
+          <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
             <thead>
               <tr style={{ background: "#f8fafc", color: "#475569", fontSize: 11, textTransform: "uppercase", letterSpacing: ".05em" }}>
@@ -379,6 +382,7 @@ export default function MonitoreoMarcajes() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </div>
 

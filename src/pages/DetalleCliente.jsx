@@ -537,8 +537,10 @@ export default function DetalleCliente() {
         </div>
       </div>
 
-      {/* GRID 3 COLUMNAS */}
-      <div style={{ display: "grid", gridTemplateColumns: "300px minmax(0,1fr) 300px", gap: 18, alignItems: "start" }}>
+      {/* GRID 3 COLUMNAS — .layout-tres pasa a dos columnas bajo 1280 y a una
+          sola bajo 900; antes las laterales de 300px sumaban 600 fijos y por
+          debajo de eso la columna derecha quedaba fuera de la pantalla. */}
+      <div className="layout-tres" style={{ gap: 18 }}>
 
         {/* ─── IZQUIERDA ─── */}
         <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
