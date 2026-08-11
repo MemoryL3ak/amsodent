@@ -271,9 +271,9 @@ export default function EditarCampana() {
           {items.map((it, idx) => (
             <div
               key={idx}
+              // Ver CrearCampana: la fila se apila sola en pantallas chicas.
+              className="fila-items"
               style={{
-                display: "grid",
-                gridTemplateColumns: "220px 1fr 140px 140px 80px",
                 gap: "12px",
                 alignItems: "end",
                 padding: "14px 16px",

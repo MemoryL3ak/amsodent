@@ -54,6 +54,13 @@ export class LicitacionesController {
     return this.licitacionesService.bulkDisponibles(body?.rows || [], email);
   }
 
+  // Revisa contra Mercado Público si nuestro RUT ya figura entre los oferentes.
+  // Se llama por tandas desde la pantalla, que muestra el avance.
+  @Post('disponibles/verificar-postulacion')
+  verificarPostulaciones(@Body() body: any) {
+    return this.licitacionesService.verificarPostulaciones(body || {});
+  }
+
   @Put('disponibles/:dispId/cargar')
   marcarDisponibleCargada(@Param('dispId', ParseIntPipe) dispId: number, @Req() req: any) {
     const email = (req?.user?.email || '').toLowerCase();
@@ -100,6 +107,35 @@ export class LicitacionesController {
   @Get('mercado-publico/buscar')
   mercadoPublicoBuscar(@Query() query: any) {
     return this.licitacionesService.mercadoPublicoBuscar(query || {});
+  }
+
+  /* Catálogo de palabras clave y búsquedas guardadas del explorador. Van antes
+     de 'mercado-publico/:codigo' por la misma razón que 'buscar'. */
+  @Get('mercado-publico/keywords')
+  listarKeywordsMp() {
+    return this.licitacionesService.listarKeywordsMp();
+  }
+
+  @Post('mercado-publico/keywords')
+  crearKeywordMp(@Body() body: any, @Req() req: any) {
+    return this.licitacionesService.crearKeywordMp(body?.texto, (req?.user?.email || '').toLowerCase());
+  }
+
+  @Delete('mercado-publico/keywords/:id')
+  eliminarKeywordMp(@Param('id', ParseIntPipe) id: number) {
+    return this.licitacionesService.eliminarKeywordMp(id);
+  }
+
+  @Post('mercado-publico/busquedas')
+  guardarBusquedaMp(@Body() body: any, @Req() req: any) {
+    return this.licitacionesService.guardarBusquedaMp(
+      body?.nombre, body?.keywords, (req?.user?.email || '').toLowerCase(),
+    );
+  }
+
+  @Delete('mercado-publico/busquedas/:id')
+  eliminarBusquedaMp(@Param('id', ParseIntPipe) id: number) {
+    return this.licitacionesService.eliminarBusquedaMp(id);
   }
 
   // Ficha en vivo desde Mercado Público (proxy: el ticket vive solo en el

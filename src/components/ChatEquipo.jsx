@@ -33,6 +33,7 @@ import {
 } from "lucide-react";
 import { supabase } from "../lib/supabase";
 import { api } from "../lib/api";
+import { replicarEnWhatsApp } from "../lib/chatWhatsapp";
 import useAuth from "../hooks/useAuth";
 
 /* ── Paleta profesional ──────────────────────────────────────────────── */
@@ -868,20 +869,16 @@ export default function ChatEquipo({ onLicitacionRegistrada }) {
     agregarMensaje(data);
     setRespondiendoA(null);
     // Puente a WhatsApp: SOLO la sala General se reenvía al grupo (las salas
-    // privadas nunca salen de la plataforma). Fire-and-forget: si el puente
-    // no está configurado o falla, el chat sigue igual.
-    try {
-      const esGeneral = salas.find((s) => s.id === salaActivaId)?.es_general;
-      if (esGeneral) {
-        api.post("/chat/whatsapp", {
-          autor: yo.nombre || yo.email,
-          texto: fila.texto || "",
-          tipo: fila.tipo || "texto",
-          adjunto_url: fila.adjunto_url || data?.adjunto_url || "",
-          file_name: fila.adjunto_nombre || data?.adjunto_nombre || "",
-        }).catch(() => { /* puente apagado o caído: no molesta al chat */ });
-      }
-    } catch { /* */ }
+    // privadas nunca salen de la plataforma).
+    if (salas.find((s) => s.id === salaActivaId)?.es_general) {
+      replicarEnWhatsApp({
+        autor: yo.nombre || yo.email,
+        texto: fila.texto || "",
+        tipo: fila.tipo || "texto",
+        adjunto_url: fila.adjunto_url || data?.adjunto_url || "",
+        file_name: fila.adjunto_nombre || data?.adjunto_nombre || "",
+      });
+    }
     return data;
   }
 

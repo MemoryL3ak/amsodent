@@ -229,9 +229,11 @@ export default function CrearCampana() {
           {items.map((it, idx) => (
             <div
               key={idx}
+              // .fila-items reordena los campos cuando dejan de caber. Como
+              // rejilla en píxeles fijos se salía de la pantalla por debajo de
+              // los 700px y no había media query capaz de alcanzarla.
+              className="fila-items"
               style={{
-                display: "grid",
-                gridTemplateColumns: "220px 1fr 140px 140px 80px",
                 gap: "12px",
                 alignItems: "end",
                 padding: "14px 16px",

@@ -31,11 +31,51 @@ const ESTADOS_FINALES = new Set([
   'no_encontrada',
 ]);
 
+// Estados en los que SÍ hubo adjudicación (se eligió proveedor). Es un
+// subconjunto de ESTADOS_FINALES: desierta, cancelada, revocada y suspendida
+// también son finales, pero en ellas nadie ganó y no hay fecha que mostrar.
+const ESTADOS_ADJUDICADOS = new Set(['proveedor_seleccionado', 'oc_emitida', 'adjudicada']);
+
 // Máximo de procesos consultados por sincronización (la API tiene cuota diaria).
-const MAX_CONSULTAS_POR_SYNC = 25;
+const MAX_CONSULTAS_POR_SYNC = 60;
+
+/* Cuántas fichas se piden a la vez. Medido el 2026-08-11 contra la API real,
+   sobre procesos pendientes de verdad:
+     ·  4 en paralelo →  1 de  4 responde  ·  ~2 fichas/min
+     · 12 en paralelo →  7 de 12 responden · ~14 fichas/min
+     · 24 en paralelo →  0 de 24 responden · la API se cae entera
+   O sea que el techo está entre 12 y 24, y por debajo de 12 se desaprovecha.
+   Los 504 NO los provoca nuestra concurrencia (a 4 fallaba el 75% y a 12 el
+   42%): son intermitentes del lado de ellos. Se deja ajustable por si el
+   comportamiento de la API cambia, que ya pasó una vez. */
+const CONCURRENCIA_SYNC = Math.max(1, Math.min(24, Number(process.env.MP_CONCURRENCIA) || 12));
+
+/* Procesos cuya consulta falló hace poco, para no reintentarlos dentro de la
+   misma corrida. Vive en memoria a propósito: es una espera, no un dato. Se
+   pierde al reiniciar el backend, que es exactamente lo que se quiere. */
+const fallosRecientes = new Map<number, number>();
 
 // Solo analizamos cotizaciones internas de los últimos N días.
-const DIAS_VENTANA = 240;
+/* Sin rango explícito se sincroniza DESDE EL DÍA 1 DEL MES ANTERIOR: el 11 de
+   agosto, desde el 1 de julio. Da entre uno y dos meses de margen según el día
+   en que se corra, que es la ventana en la que un proceso de Compra Ágil se
+   publica, cierra y se adjudica.
+
+   Se calcula en hora de Chile a propósito. El servidor de producción corre en
+   UTC, así que la madrugada del día 1 el mes allá y acá no coinciden y la
+   ventana saltaría un mes entero sin que se note. */
+const ZONA_CHILE = 'America/Santiago';
+
+function primerDiaMesAnterior(): string {
+  const partes = new Intl.DateTimeFormat('en-CA', {
+    timeZone: ZONA_CHILE, year: 'numeric', month: '2-digit',
+  }).formatToParts(new Date());
+  const anio = Number(partes.find((p) => p.type === 'year')?.value);
+  const mes = Number(partes.find((p) => p.type === 'month')?.value);
+  const y = mes === 1 ? anio - 1 : anio;
+  const m = mes === 1 ? 12 : mes - 1;
+  return `${y}-${String(m).padStart(2, '0')}-01T00:00:00`;
+}
 
 const RE_CODIGO_MP = /^\d{1,10}-\d{1,10}-[A-Z]{1,3}\d{2}$/i;
 
@@ -53,8 +93,13 @@ function num(v: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-// fetch con timeout: una request colgada no puede estancar la sincronización.
-async function fetchConTimeout(url: string, init: any = {}, ms = 15000): Promise<Response> {
+/* fetch con timeout: una request colgada no puede estancar la sincronización.
+   Estaba en 15 s, POR DEBAJO de lo que tarda la API: medido el 2026-08-11, una
+   ficha de Compra Ágil responde entre 11 y 27 s. Con 15 s se abortaba casi
+   todas y la sincronización giraba en falso. El techo real es de ellos: su
+   gateway corta a los ~29,5 s con 504, así que 35 s alcanza para VER ese 504
+   en vez de abortar antes sin saber qué pasó. */
+async function fetchConTimeout(url: string, init: any = {}, ms = 35000): Promise<Response> {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), ms);
   try {
@@ -96,7 +141,9 @@ export class MercadopublicoService {
       .from('mp_resultados')
       .select('*')
       .order('consultado_at', { ascending: false })
-      .range(0, 5000);
+      // 5.000 se quedaba corto: hay 3.337 cotizaciones con código de Mercado
+      // Público y el margen se agotaba en meses, truncando el panel sin avisar.
+      .range(0, 49999);
     if (error) {
       throw new BadRequestException(
         /does not exist|schema cache/i.test(error.message)
@@ -107,20 +154,29 @@ export class MercadopublicoService {
     const lista = res || [];
     if (lista.length === 0) return [];
 
+    /* Los datos internos se piden POR TANDAS. Un `.in('id', ids)` con los
+       miles de ids de golpe arma una URL de decenas de KB que PostgREST
+       rechaza; con pocos procesos no se notaba, pero el catálogo real son
+       3.337 y al ponerse al día la sincronización iba a reventar justo aquí. */
     const ids = lista.map((r: any) => r.licitacion_id);
-    const { data: lics } = await client
-      .from('licitaciones')
-      .select('id, id_licitacion, nombre, nombre_entidad, estado, total_con_iva, total_sin_iva, vendedor_nombre, creado_por, fecha, created_at')
-      .in('id', ids);
-    const porId = new Map((lics || []).map((l: any) => [l.id, l]));
+    const porId = new Map<any, any>();
+    const TANDA_IDS = 500;
+    for (let i = 0; i < ids.length; i += TANDA_IDS) {
+      const { data: lics, error: errLics } = await client
+        .from('licitaciones')
+        .select('id, id_licitacion, nombre, nombre_entidad, estado, total_con_iva, total_sin_iva, vendedor_nombre, creado_por, fecha, created_at')
+        .in('id', ids.slice(i, i + TANDA_IDS));
+      if (errLics) throw new BadRequestException(errLics.message);
+      for (const l of lics || []) porId.set(l.id, l);
+    }
 
     return lista.map((r: any) => ({ ...r, interna: porId.get(r.licitacion_id) || null }));
   }
 
   /* ── Sincronización: consulta la API para los procesos pendientes ──
      Rango configurable (desde/hasta, fecha de creación de la cotización
-     interna, formato YYYY-MM-DD); sin rango usa los últimos DIAS_VENTANA días. */
-  async sincronizar(body?: { desde?: string; hasta?: string; lote?: number }) {
+     interna, formato YYYY-MM-DD); sin rango parte del día 1 del mes anterior. */
+  async sincronizar(body?: { desde?: string; hasta?: string; lote?: number; forzar?: boolean | string }) {
     if (!this.ticket) {
       throw new BadRequestException(
         'Falta configurar MP_API_TICKET en el backend. El ticket se solicita gratis en chilecompra.cl/api con Clave Única.',
@@ -131,20 +187,39 @@ export class MercadopublicoService {
     const reFecha = /^\d{4}-\d{2}-\d{2}$/;
     const desdeParam = reFecha.test(String(body?.desde || '')) ? `${body!.desde}T00:00:00` : null;
     const hastaParam = reFecha.test(String(body?.hasta || '')) ? `${body!.hasta}T23:59:59.999` : null;
-    const desde = desdeParam || new Date(Date.now() - DIAS_VENTANA * 24 * 3600 * 1000).toISOString();
+    const desde = desdeParam || primerDiaMesAnterior();
 
-    // Cotizaciones internas candidatas: código con formato Mercado Público.
-    let query = client
-      .from('licitaciones')
-      .select('id, id_licitacion, nombre, total_con_iva, total_sin_iva, created_at')
-      .gte('created_at', desde)
-      .order('created_at', { ascending: false })
-      .range(0, 2000);
-    if (hastaParam) query = query.lte('created_at', hastaParam);
-    const { data: lics, error: errLics } = await query;
-    if (errLics) throw new BadRequestException(errLics.message);
+    /* Cotizaciones internas candidatas: las que llevan código con formato de
+       Mercado Público.
 
-    const candidatas = (lics || []).filter((l: any) => RE_CODIGO_MP.test(String(l.id_licitacion || '').trim()));
+       Se pagina. Antes era un `range(0, 2000)` de una sola pasada, y con 3.999
+       cotizaciones en la tabla eso dejaba fuera a las 1.999 más antiguas SIN
+       AVISAR: de las 3.337 con código de Mercado Público, la sincronización
+       solo llegaba a ver 1.576. Las otras 1.761 no eran candidatas, así que no
+       se consultaban nunca y jamás iban a aparecer en el panel. El recorte no
+       lo hacía la ventana de fechas —todas caen dentro de los 240 días— sino
+       el tope de filas, que en la práctica movía el corte real a la fecha de
+       la cotización número 2.001. */
+    const candidatas: any[] = [];
+    for (let pagina = 0; ; pagina++) {
+      const PAGINA = 1000;
+      let query = client
+        .from('licitaciones')
+        .select('id, id_licitacion, nombre, total_con_iva, total_sin_iva, created_at')
+        .gte('created_at', desde)
+        .order('created_at', { ascending: false })
+        .range(pagina * PAGINA, (pagina + 1) * PAGINA - 1);
+      if (hastaParam) query = query.lte('created_at', hastaParam);
+      const { data: lics, error: errLics } = await query;
+      if (errLics) throw new BadRequestException(errLics.message);
+      const filas = lics || [];
+      for (const l of filas) {
+        if (RE_CODIGO_MP.test(String(l.id_licitacion || '').trim())) candidatas.push(l);
+      }
+      if (filas.length < PAGINA) break;
+      // Tope de seguridad: 50.000 cotizaciones es varias veces el tamaño real.
+      if (pagina >= 49) break;
+    }
 
     // Estado ya conocido: los procesos con estado final no se re-consultan, y
     // los no finales consultados hace poco tampoco (evita quemar cuota
@@ -152,7 +227,7 @@ export class MercadopublicoService {
     const { data: previos, error: errPrev } = await client
       .from('mp_resultados')
       .select('licitacion_id, estado_mp, consultado_at')
-      .range(0, 10000);
+      .range(0, 49999);
     if (errPrev) {
       throw new BadRequestException(
         /does not exist|schema cache/i.test(errPrev.message)
@@ -162,14 +237,42 @@ export class MercadopublicoService {
     }
     const previoPorId = new Map((previos || []).map((p: any) => [p.licitacion_id, p]));
     const FRESCURA_MS = 6 * 3600 * 1000; // 6 horas
+    // Más corta en «forzar»: ahí el objetivo ES refrescar lo ya consultado.
+    // Tiene que superar la duración de una pasada completa (~1 h) para que la
+    // corrida no se muerda la cola.
+    const FRESCURA_FORZAR_MS = 3 * 3600 * 1000; // 3 horas
+
+    // `forzar`: re-consulta también los procesos en estado final. Normalmente
+    // no tiene sentido (ya no cambian) y solo quema cuota, pero es la ÚNICA
+    // forma de rellenar campos nuevos en filas viejas: sin esto, un dato que se
+    // agrega después queda para siempre vacío en los procesos ya cerrados.
+    const forzar = body?.forzar === true || body?.forzar === 'true';
+
+    // Purga de la memoria de fallos: lo que ya cumplió la espera vuelve a la cola.
+    for (const [id, ts] of fallosRecientes) {
+      if (Date.now() - ts > FRESCURA_MS) fallosRecientes.delete(id);
+    }
+
+    /* `forzar` levanta el filtro de estados finales, pero NO el de frescura.
+       Si lo levantara, `pendientesTotales` devolvería SIEMPRE el catálogo
+       entero: un proceso recién consultado seguiría contando como pendiente,
+       `restantes` no bajaría nunca y no habría forma de saber cuándo terminó
+       la pasada. Con la ventana puesta, lo consultado sale de la cola y la
+       corrida converge sola — que es lo que necesita el proceso automático
+       para no quedarse dando vueltas. La ventana de forzar es más corta que
+       la normal porque su objetivo es justamente refrescar lo ya cerrado. */
+    const ventana = forzar ? FRESCURA_FORZAR_MS : FRESCURA_MS;
 
     const pendientesTotales = candidatas
       .filter((l: any) => {
+        // Falló hace poco: se salta para que la cola avance en vez de
+        // reintentar lo mismo una y otra vez.
+        const fallo = fallosRecientes.get(l.id);
+        if (fallo && Date.now() - fallo < ventana) return false;
         const prev: any = previoPorId.get(l.id);
         if (!prev) return true; // nunca consultado
-        if (ESTADOS_FINALES.has(String(prev.estado_mp || ''))) return false;
-        const hace = Date.now() - new Date(prev.consultado_at || 0).getTime();
-        return hace > FRESCURA_MS;
+        if (!forzar && ESTADOS_FINALES.has(String(prev.estado_mp || ''))) return false;
+        return Date.now() - new Date(prev.consultado_at || 0).getTime() > ventana;
       })
       // Nunca consultados primero; luego los consultados hace más tiempo.
       .sort((a: any, b: any) => {
@@ -190,12 +293,9 @@ export class MercadopublicoService {
     let cuotaAgotada = false;
     const errores: string[] = [];
 
-    // Pool de 4 consultas en paralelo: baja el sync de ~2 min a ~20-30 s sin
-    // gatillar límites de tasa (la cuota del ticket es por cantidad diaria).
-    const CONCURRENCIA = 4;
-    for (let i = 0; i < pendientes.length && !cuotaAgotada; i += CONCURRENCIA) {
-      const lote = pendientes.slice(i, i + CONCURRENCIA);
-      await Promise.all(lote.map(async (lic: any) => {
+    for (let i = 0; i < pendientes.length && !cuotaAgotada; i += CONCURRENCIA_SYNC) {
+      const tanda = pendientes.slice(i, i + CONCURRENCIA_SYNC);
+      await Promise.all(tanda.map(async (lic: any) => {
         const codigo = String(lic.id_licitacion).trim();
         const esCompraAgil = /-COT\d{2}$/i.test(codigo);
         try {
@@ -214,7 +314,19 @@ export class MercadopublicoService {
           const msg = String(e?.message || e);
           errores.push(`${codigo}: ${msg.slice(0, 140)}`);
           // Cuota diaria agotada: no tiene sentido seguir consultando hoy.
-          if (/429|límite de solicitudes/i.test(msg)) cuotaAgotada = true;
+          if (/429|límite de solicitudes/i.test(msg)) {
+            cuotaAgotada = true;
+            return;
+          }
+          // Se anota el intento fallido. Sin esto la sincronización no
+          // avanzaba: un proceso que falla no escribe fila, sigue contando como
+          // «nunca consultado» y el orden los pone PRIMERO, así que las mismas
+          // fichas rotas volvían a encabezar todas las tandas y las demás no se
+          // alcanzaban nunca. Se anota en memoria y no en `mp_resultados`
+          // porque un fallo no es un resultado: escribirlo pisaría la ficha
+          // buena de un proceso ya sincronizado que hoy dio 504, y ensuciaría
+          // el panel con filas que no son procesos reales.
+          fallosRecientes.set(lic.id, Date.now());
         }
       }));
     }
@@ -329,6 +441,12 @@ export class MercadopublicoService {
       presupuesto_clp: num(p?.presupuesto?.monto_disponible_clp) ?? num(p?.presupuesto?.presupuesto_estimado),
       organismo: p?.institucion?.organismo_comprador || null,
       fecha_cierre: p?.fechas?.fecha_cierre || null,
+      // Compra Ágil no publica fecha de adjudicación. Si el proceso ya está
+      // resuelto, el último cambio de estado ES la selección del proveedor, así
+      // que sirve como aproximación; si sigue abierto, no hay dato que dar.
+      fecha_adjudicacion: ESTADOS_ADJUDICADOS.has(String(estadoMp))
+        ? (p?.fechas?.fecha_ultimo_cambio || null)
+        : null,
       detalle: {
         cotizaciones,
         comparacion_items: comparacionItems,
@@ -411,6 +529,14 @@ export class MercadopublicoService {
       presupuesto_clp: num(det.MontoEstimado),
       organismo: det?.Comprador?.NombreOrganismo || null,
       fecha_cierre: det?.Fechas?.FechaCierre || null,
+      // Dato oficial. Se prefiere la fecha real de adjudicación; si el proceso
+      // todavía no la trae, la estimada sirve de referencia (queda claro en el
+      // panel porque el estado aún no es "adjudicada").
+      fecha_adjudicacion:
+        det?.Fechas?.FechaAdjudicacion ||
+        det?.Adjudicacion?.Fecha ||
+        det?.Fechas?.FechaEstimadaAdjudicacion ||
+        null,
       detalle: {
         adjudicados_por_proveedor: adjudicados,
         comparacion_items: comparacionItems,
@@ -440,6 +566,7 @@ export class MercadopublicoService {
       presupuesto_clp: null,
       organismo: null,
       fecha_cierre: null,
+      fecha_adjudicacion: null,
       detalle: null,
       consultado_at: new Date().toISOString(),
     };

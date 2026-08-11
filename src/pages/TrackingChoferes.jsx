@@ -254,7 +254,9 @@ export default function TrackingChoferes() {
           <AlertTriangle size={18} /> {error}
         </div></div>
       ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "320px 1fr", gap: 16, alignItems: "stretch" }}>
+        // El listado de choferes pasa a ocupar el ancho completo sobre el mapa
+        // cuando la pantalla ya no admite las dos columnas.
+        <div className="layout-con-lateral lateral-izq" style={{ gap: 16, alignItems: "stretch" }}>
           {/* Panel lateral */}
           <div className="surface" style={{ maxHeight: "calc(100vh - 300px)", overflowY: "auto" }}>
             <div className="surface-body" style={{ padding: 10 }}>

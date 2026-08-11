@@ -1,4 +1,4 @@
-import { Body, Controller, Post, Req, UseGuards, BadRequestException } from '@nestjs/common';
+import { Body, Controller, Param, Post, Req, UseGuards, BadRequestException, UnauthorizedException } from '@nestjs/common';
 import { AdminGuard } from '../auth/admin.guard';
 import { AuthGuard } from '../auth/auth.guard';
 import { ChatService } from './chat.service';
@@ -22,6 +22,28 @@ export class ChatController {
       adjunto_url: body?.adjunto_url,
       file_name: body?.file_name,
     });
+  }
+
+  /* Webhook de Green API: mensajes que llegan al grupo de WhatsApp.
+     NO lleva AuthGuard porque quien llama es Green API, que no tiene sesión de
+     Supabase; se protege con un secreto compartido en la propia URL, que es lo
+     que su panel permite configurar. Sin `WHATSAPP_WEBHOOK_SECRET` el endpoint
+     queda cerrado: es preferible a dejar abierta una vía para escribir en el
+     chat de la empresa.
+
+     Responde 200 siempre que el mensaje se haya procesado o descartado a
+     propósito; si devolviera error, Green API reintentaría en bucle. */
+  @Post('whatsapp/entrante/:secreto')
+  async whatsappEntrante(@Param('secreto') secreto: string, @Body() body: any) {
+    const esperado = (process.env.WHATSAPP_WEBHOOK_SECRET || '').trim();
+    if (!esperado) throw new UnauthorizedException('El webhook de WhatsApp no está habilitado en el servidor.');
+    if (String(secreto || '') !== esperado) throw new UnauthorizedException('Secreto inválido.');
+    try {
+      return await this.chat.recibirWhatsApp(body);
+    } catch (e: any) {
+      // Un fallo nuestro no debe provocar reintentos infinitos de Green API.
+      return { ok: false, motivo: String(e?.message || e).slice(0, 200) };
+    }
   }
 
   // Solo admin puede limpiar todas las salas.

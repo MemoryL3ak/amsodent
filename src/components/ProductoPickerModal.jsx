@@ -420,7 +420,7 @@ export default function ProductoPickerModal({
         )}
 
         {/* Tabla */}
-        <div style={{ overflowY: "auto", flex: 1, padding: "8px 0" }}>
+        <div style={{ overflowX: "auto", overflowY: "auto", flex: 1, padding: "8px 0" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
             <thead>
               <tr

@@ -3,6 +3,7 @@ import React, { useEffect, useMemo, useState, useCallback, useRef } from "react"
 import { useLocation } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 import { api } from "../lib/api";
+import { reportarError } from "../lib/monitor";
 import Toast from "../components/Toast";
 import Select, { components } from "react-select";
 import { generarPDFcotizacion } from "../utils/generarPDFcotizacion";
@@ -1102,6 +1103,13 @@ export default function CrearLicitacion() {
       items,
       observaciones,
       madre_id: madreId,
+      // Vínculos con el origen de la cotización. Van SÍ o SÍ en el borrador:
+      // este autoguardado reescribe la clave completa, así que lo que no esté
+      // acá se pierde al primer cambio y ya no se recupera si la página se
+      // recarga o se vuelve a entrar. Sin `disponible_id` la postulación nunca
+      // se marca como cargada al guardar y queda eternamente "Tomada".
+      disponible_id: disponibleId,
+      solicitud_stock_id: solicitudStockId,
     };
 
     const t = setTimeout(() => {
@@ -1137,6 +1145,8 @@ export default function CrearLicitacion() {
     items,
     observaciones,
     madreId,
+    disponibleId,
+    solicitudStockId,
   ]);
 
   /* CARGA DE PRODUCTOS */
@@ -2073,7 +2083,11 @@ export default function CrearLicitacion() {
         try {
           await api.put(`/licitaciones/disponibles/${disponibleId}/cargar`, {});
         } catch (errDisp) {
+          // No interrumpe el guardado (la cotización ya existe), pero tampoco
+          // se pierde: si vuelve a fallar, queda registrado en el Monitoreo en
+          // vez de morir en la consola del navegador como pasaba antes.
           console.warn("No se pudo marcar la licitación del listado como cargada:", errDisp?.message);
+          reportarError(errDisp, { contexto: "marcar_disponible_cargada", disponible_id: disponibleId, licitacion_id: idLicitacion });
         }
         setDisponibleId(null);
       }

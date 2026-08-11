@@ -1282,7 +1282,7 @@ function ModalCargarCobros({ onClose, onDone, onToast }) {
                 Columnas usadas → seguimiento: <strong>{colInfo.seg}</strong> · monto: <strong>{colInfo.monto}</strong>
               </div>
             )}
-            <div style={{ marginTop: 8, maxHeight: 120, overflowY: "auto", border: "1px solid var(--border)", borderRadius: 8 }}>
+            <div style={{ marginTop: 8, maxHeight: 120, overflow: "auto", border: "1px solid var(--border)", borderRadius: 8 }}>
               <table style={{ width: "100%", fontSize: 11.5, borderCollapse: "collapse" }}>
                 <thead><tr style={{ color: "var(--text-muted)", textAlign: "left" }}>
                   <th style={{ padding: "4px 8px" }}>N° Seguimiento</th><th style={{ padding: "4px 8px", textAlign: "right" }}>Monto neto</th>

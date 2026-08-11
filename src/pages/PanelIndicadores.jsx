@@ -871,11 +871,12 @@ export default function PanelIndicadores() {
                   Distribución territorial de cotizaciones y ventas del {periodoLabel.toLowerCase()}.
                 </p>
               </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
                 <input
                   type="text"
                   className="input"
-                  style={{ width: 200 }}
+                  // Se encoge en vez de forzar 200px fijos junto al contador.
+                  style={{ width: 200, maxWidth: "100%", minWidth: 0, flex: "1 1 140px" }}
                   value={filtroRegionPanel}
                   onChange={(e) => setFiltroRegionPanel(e.target.value)}
                   placeholder="Filtrar región…"

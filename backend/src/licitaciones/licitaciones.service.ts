@@ -34,13 +34,101 @@ export class LicitacionesService {
      LICITACIONES DISPONIBLES (listado para tomar/cargar)
   =========================================================== */
   async listarDisponibles() {
-    const { data, error } = await this.supabase.getClient()
+    // Antes de listar se cierran las que ya vencieron. Va acá, y no solo en un
+    // proceso programado, para que el listado nunca muestre como pendiente algo
+    // a lo que ya no se puede postular, aunque el servidor haya estado caído a
+    // la hora del cierre.
+    await this.cerrarVencidas().catch(() => null);
+    const client = this.supabase.getClient();
+    const { data, error } = await client
       .from('licitaciones_disponibles')
       .select('*')
       .order('cargada', { ascending: true })
       .order('created_at', { ascending: false });
     if (error) throw new BadRequestException(error.message);
-    return data || [];
+    const filas = data || [];
+    if (!filas.length) return filas;
+
+    /* ¿Ya postulamos? — respuesta inmediata cruzando con NUESTRAS cotizaciones.
+       Es la que sirve mientras el proceso está abierto: Mercado Público no
+       publica los oferentes hasta que el comprador selecciona proveedor
+       (verificado el 2026-08-11: los procesos en «Publicada» y en «Cerrada»
+       devuelven la lista de cotizantes vacía), así que preguntarle a la API
+       antes de eso no responde nada. Que exista una cotización nuestra con ese
+       código sí es un hecho, y se sabe al instante y sin gastar cuota.
+       La confirmación oficial contra la API llega después, con el botón de
+       revisar, y queda guardada en `datos.postulamos`. */
+    const codigos = filas
+      .map((f: any) => String(f.id_licitacion || '').trim())
+      .filter(Boolean);
+    const propias = new Map<string, any>();
+    const TANDA = 200;
+    for (let i = 0; i < codigos.length; i += TANDA) {
+      const { data: lics } = await client
+        .from('licitaciones')
+        .select('id, id_licitacion, nombre, estado, vendedor_nombre, creado_por, created_at, total_con_iva')
+        .in('id_licitacion', codigos.slice(i, i + TANDA));
+      for (const l of lics || []) {
+        const k = String(l.id_licitacion || '').trim().toLowerCase();
+        // Si hubiera más de una, manda la más reciente.
+        const prev = propias.get(k);
+        if (!prev || String(l.created_at) > String(prev.created_at)) propias.set(k, l);
+      }
+    }
+
+    return filas.map((f: any) => ({
+      ...f,
+      cotizacion_propia: propias.get(String(f.id_licitacion || '').trim().toLowerCase()) || null,
+    }));
+  }
+
+  // Se recuerda cuándo se hizo la última pasada: el listado se pide muchas
+  // veces por minuto y no tiene sentido recorrerlo entero en cada una.
+  private ultimoCierreVencidas = 0;
+
+  /**
+   * Cierra las postulaciones cuyo plazo ya pasó y libera su reserva.
+   *
+   * Liberar la reserva importa tanto como cerrarla: cada persona puede tener
+   * como máximo 3 postulaciones tomadas a la vez, y una que vencía se quedaba
+   * ocupando el cupo indefinidamente porque nadie la iba a cargar ya.
+   */
+  async cerrarVencidas(forzar = false) {
+    const CADA_MS = 2 * 60 * 1000;
+    if (!forzar && Date.now() - this.ultimoCierreVencidas < CADA_MS) return { revisadas: 0, cerradas: 0 };
+    this.ultimoCierreVencidas = Date.now();
+
+    const client = this.supabase.getClient();
+    const { data, error } = await client
+      .from('licitaciones_disponibles')
+      .select('id, datos, tomada_por, cerrada')
+      .eq('cerrada', false)
+      .eq('cargada', false);
+    if (error) {
+      // La columna puede no existir todavía: la migración se aplica a mano.
+      if (/cerrada|column|schema cache/i.test(error.message)) return { revisadas: 0, cerradas: 0, sin_migracion: true };
+      throw new BadRequestException(error.message);
+    }
+
+    const vencidas = (data || []).filter((r: any) =>
+      LicitacionesService.postulacionVencida(r?.datos?.cierre),
+    );
+    if (!vencidas.length) return { revisadas: (data || []).length, cerradas: 0 };
+
+    const ahora = new Date().toISOString();
+    // En tandas: un `.in()` con cientos de ids arma una URL desmedida.
+    let cerradas = 0;
+    const TANDA = 200;
+    for (let i = 0; i < vencidas.length; i += TANDA) {
+      const ids = vencidas.slice(i, i + TANDA).map((r: any) => r.id);
+      const { error: errUp } = await client
+        .from('licitaciones_disponibles')
+        .update({ cerrada: true, cerrada_at: ahora, tomada_por: null, tomada_at: null })
+        .in('id', ids);
+      if (errUp) throw new BadRequestException(errUp.message);
+      cerradas += ids.length;
+    }
+    return { revisadas: (data || []).length, cerradas };
   }
 
   // Carga masiva desde xlsx. Inserta solo las que no existan (dedup por
@@ -289,10 +377,29 @@ export class LicitacionesService {
     return ticket;
   }
 
-  private async mpFetch(url: string, headers: Record<string, string> = {}): Promise<any> {
+  /**
+   * Mercado Público es LENTO: medido el 2026-08-11 contra la API v2, una
+   * consulta cualquiera tarda entre 12 y 29 segundos. El timeout estaba en
+   * 20 s, o sea POR DEBAJO del tiempo normal de respuesta: casi toda consulta
+   * con resultados se abortaba sola. De ahí venían los «error» que aparecían
+   * junto a cada palabra clave, con el mensaje opaco «The operation was
+   * aborted due to timeout».
+   *
+   * El techo real no es nuestro: su propio gateway corta a los ~29,5 s y
+   * devuelve 504. Se espera hasta 35 s para alcanzar a VER ese 504 —con 20 s
+   * abortábamos antes y nunca sabíamos si había sido ellos o la red— sin
+   * quedarnos colgados si la conexión se muere sin respuesta.
+   */
+  private static readonly MP_TIMEOUT_MS = 35000;
+
+  private async mpFetch(
+    url: string,
+    headers: Record<string, string> = {},
+    timeoutMs = LicitacionesService.MP_TIMEOUT_MS,
+  ): Promise<any> {
     let res: globalThis.Response;
     try {
-      res = await fetch(url, { headers, signal: AbortSignal.timeout(20000) });
+      res = await fetch(url, { headers, signal: AbortSignal.timeout(timeoutMs) });
     } catch (e: any) {
       throw new BadRequestException(
         `No se pudo consultar Mercado Público: ${String(e?.message || e).slice(0, 120)}`,
@@ -318,6 +425,154 @@ export class LicitacionesService {
       : this.fichaLicitacion(cod, ticket);
   }
 
+  /* ===========================================================
+     ¿YA POSTULAMOS A ESTE PROCESO?
+     -----------------------------------------------------------
+     Mercado Público publica los oferentes de una Compra Ágil en
+     `proveedores_cotizando`, con su RUT. Buscando ahí el RUT de
+     la empresa se sabe con certeza si la postulación ya se envió,
+     sin depender de que alguien la haya marcado en el sistema.
+
+     Solo sirve para Compra Ágil: la API v1 de licitaciones
+     publica únicamente a los ADJUDICADOS, así que mientras el
+     proceso no se resuelva no hay forma de saber quién ofertó.
+     Eso se informa como «no se puede saber», que es distinto de
+     «no postulamos».
+
+     El resultado se guarda en la columna `datos` (jsonb) de la
+     postulación, para no repetir la consulta ni gastar cuota de
+     más: una vez que se postuló, eso ya no cambia.
+  =========================================================== */
+  private rutEmpresaMp(): string {
+    const rut = String(process.env.MP_RUT_EMPRESA || '').replace(/[^0-9kK]/g, '').toUpperCase();
+    if (!rut) {
+      throw new BadRequestException(
+        'Falta configurar MP_RUT_EMPRESA en el servidor: sin el RUT de la empresa no se puede saber si la oferta es nuestra.',
+      );
+    }
+    return rut;
+  }
+
+  /** Consulta un proceso y devuelve qué se sabe de nuestra participación. */
+  private async consultarPostulacion(codigo: string, ticket: string, rutEmpresa: string) {
+    if (!/-COT\w*$/i.test(codigo)) {
+      return {
+        postulamos: null as boolean | null,
+        nota: 'La API de licitaciones solo publica a los adjudicados: hasta que se resuelva no se puede saber quién ofertó.',
+      };
+    }
+    const { res, json } = await this.mpFetch(
+      `https://api2.mercadopublico.cl/v2/compra-agil/${encodeURIComponent(codigo)}`,
+      { ticket },
+    );
+    if (res.status === 404) {
+      return { postulamos: null as boolean | null, nota: 'El proceso no existe en Mercado Público.' };
+    }
+    if (!res.ok || json?.success !== 'OK') {
+      const err = json?.errors?.[0]?.mensaje;
+      if (!err && res.status >= 502 && res.status <= 504) {
+        throw new Error('Mercado Público tardó demasiado y cortó la consulta');
+      }
+      throw new Error(err || `HTTP ${res.status}`);
+    }
+    const p = json.payload || {};
+    const cotizantes: any[] = Array.isArray(p.proveedores_cotizando) ? p.proveedores_cotizando : [];
+    const norm = (r: unknown) => String(r || '').replace(/[^0-9kK]/g, '').toUpperCase();
+    const nuestra = cotizantes.find((c) => norm(c?.rut_proveedor) === rutEmpresa) || null;
+    // Sin cotizantes publicados todavía no se puede afirmar que no postulamos:
+    // los procesos abiertos suelen no mostrar las ofertas hasta el cierre.
+    if (!cotizantes.length) {
+      return {
+        postulamos: null as boolean | null,
+        estado_mp: p?.estado?.glosa || null,
+        nota: 'Mercado Público aún no publica las ofertas de este proceso.',
+      };
+    }
+    return {
+      postulamos: !!nuestra,
+      monto: nuestra ? Number(nuestra.monto_total) || null : null,
+      ofertas: cotizantes.length,
+      estado_mp: p?.estado?.glosa || null,
+      seleccionados: cotizantes.some((c) => c?.seleccion?.proveedor_seleccionado === true),
+    };
+  }
+
+  /**
+   * Revisa un lote de postulaciones del listado y anota en cada una si la
+   * oferta ya fue enviada. `ids` limita a filas concretas; sin `ids` toma las
+   * que aún no se han revisado y siguen abiertas.
+   */
+  async verificarPostulaciones(body?: { ids?: number[]; lote?: number; revisarTodas?: boolean }) {
+    const ticket = this.mpTicket();
+    const rutEmpresa = this.rutEmpresaMp();
+    const client = this.supabase.getClient();
+
+    const ids = Array.isArray(body?.ids) ? body!.ids!.map(Number).filter(Number.isFinite) : null;
+    let query = client
+      .from('licitaciones_disponibles')
+      .select('id, id_licitacion, datos')
+      .order('created_at', { ascending: false })
+      .limit(1000);
+    if (ids?.length) query = query.in('id', ids);
+    const { data, error } = await query;
+    if (error) throw new BadRequestException(error.message);
+
+    const candidatas = (data || []).filter((r: any) => {
+      if (ids?.length) return true; // explícitas: se revisan aunque ya tengan dato
+      // Ya se confirmó que postulamos: no cambia, no se vuelve a preguntar.
+      if (r?.datos?.postulamos === true) return false;
+      if (body?.revisarTodas) return true;
+      // Sin marca previa, o marcada como «no se pudo saber».
+      return r?.datos?.postulamos == null;
+    });
+
+    const lote = Math.max(1, Math.min(200, Number(body?.lote) || 24));
+    const aRevisar = candidatas.slice(0, lote);
+
+    const CONCURRENCIA = 12; // el mismo techo medido para esta API
+    let revisadas = 0;
+    let conPostulacion = 0;
+    let sinDato = 0;
+    const errores: string[] = [];
+
+    for (let i = 0; i < aRevisar.length; i += CONCURRENCIA) {
+      await Promise.all(aRevisar.slice(i, i + CONCURRENCIA).map(async (row: any) => {
+        const codigo = String(row.id_licitacion || '').trim();
+        revisadas += 1;
+        let resultado: any;
+        try {
+          resultado = await this.consultarPostulacion(codigo, ticket, rutEmpresa);
+        } catch (e: any) {
+          errores.push(`${codigo}: ${String(e?.message || e).slice(0, 120)}`);
+          return;
+        }
+        if (resultado.postulamos === true) conPostulacion += 1;
+        else if (resultado.postulamos == null) sinDato += 1;
+        const datos = {
+          ...(row.datos || {}),
+          postulamos: resultado.postulamos,
+          postulamos_at: new Date().toISOString(),
+          postulamos_monto: resultado.monto ?? null,
+          postulamos_ofertas: resultado.ofertas ?? null,
+          postulamos_nota: resultado.nota ?? null,
+        };
+        const { error: errUp } = await client
+          .from('licitaciones_disponibles')
+          .update({ datos })
+          .eq('id', row.id);
+        if (errUp) errores.push(`${codigo}: ${errUp.message.slice(0, 120)}`);
+      }));
+    }
+
+    return {
+      revisadas,
+      con_postulacion: conPostulacion,
+      sin_dato: sinDato,
+      restantes: Math.max(0, candidatas.length - revisadas),
+      errores,
+    };
+  }
+
   // ── Buscador (sección "Explorar Mercado Público") ───────────────────────
   // - fuente 'agil': búsqueda server-side de la API v2 (keyword q, región,
   //   estado, paginación real).
@@ -327,11 +582,16 @@ export class LicitacionesService {
   private static readonly ESTADOS_V1: Record<number, string> = {
     5: 'Publicada', 6: 'Cerrada', 7: 'Desierta', 8: 'Adjudicada', 18: 'Revocada', 19: 'Suspendida',
   };
-  private mpCacheActivas: { data: any[]; ts: number } | null = null;
+  // key: 'activas' o el día consultado (DDMMYYYY), para no mezclar listados.
+  private mpCacheActivas: { data: any[]; ts: number; key: string } | null = null;
 
   private static mapItemAgil(it: any) {
+    const tipo = LicitacionesService.tipoProceso(it?.codigo || '');
     return {
       codigo: it?.codigo || '',
+      tipo_sigla: tipo.sigla,
+      tipo_label: tipo.label,
+      tipo_familia: tipo.familia,
       nombre: it?.nombre || '',
       estado: it?.estado?.glosa || it?.estado?.codigo || '',
       estado_codigo: it?.estado?.codigo || '',
@@ -356,16 +616,69 @@ export class LicitacionesService {
     tamano?: string | number;
   }) {
     const ticket = this.mpTicket();
-    const fuente = params?.fuente === 'licitaciones' ? 'licitaciones' : 'agil';
-    const q = String(params?.q || '').trim().slice(0, 300);
-    // Varias keywords separadas por coma → una consulta por keyword.
-    const keywords = q.split(',').map((s) => s.trim()).filter(Boolean).slice(0, 8);
+    const fuente = params?.fuente === 'licitaciones' ? 'licitaciones'
+      : params?.fuente === 'todas' ? 'todas'
+      : 'agil';
+
+    // Varias keywords separadas por coma → una consulta por keyword. El tope NO
+    // es de la API (que acepta un término por llamada): es nuestro, para acotar
+    // cuántas llamadas gasta una sola búsqueda de la cuota diaria del ticket.
+    // Cada keyword se expande a singular/plural, así que el gasto real es ~2×.
+    // Lo que sobra se informa en la respuesta: antes se descartaba en silencio y
+    // el usuario creía haber buscado términos que nunca se enviaron.
+    //
+    // Se recorta por CANTIDAD de palabras, nunca por largo del texto. Antes
+    // había un slice(0, 300) sobre la cadena completa, aplicado ANTES de
+    // separarla por comas: con el catálogo de 80 términos —1.566 caracteres—
+    // solo pasaban 16, la última partida a la mitad («Cepillo pró», que además
+    // se consultaba así), y las otras 65 se perdían sin aviso. El tope de 80
+    // nunca alcanzaba a aplicarse y `ignoradas` siempre iba vacío, así que la
+    // búsqueda decía haber mirado todo el catálogo cuando había visto la quinta
+    // parte.
+    const MAX_KEYWORDS = 80;
+    const MAX_LARGO_TERMINO = 80;
+    const solicitadas = String(params?.q || '')
+      .split(',')
+      .map((s) => s.trim().slice(0, MAX_LARGO_TERMINO))
+      .filter(Boolean);
+    const keywords = solicitadas.slice(0, MAX_KEYWORDS);
+    const ignoradas = solicitadas.slice(MAX_KEYWORDS);
     const pagina = Math.max(1, Number(params?.pagina) || 1);
     const tamano = Math.min(50, Math.max(10, Number(params?.tamano) || 15));
     // Rango por fecha de publicación (YYYY-MM-DD), igual que el portal.
     const RE_FECHA = /^\d{4}-\d{2}-\d{2}$/;
     const pubDesde = RE_FECHA.test(String(params?.desde || '')) ? String(params!.desde) : '';
     const pubHasta = RE_FECHA.test(String(params?.hasta || '')) ? String(params!.hasta) : '';
+
+    // Fuente combinada: una sola búsqueda sobre las DOS APIs. Compra Ágil gasta
+    // una consulta por palabra; Licitaciones es una sola llamada cacheada que se
+    // filtra en memoria, así que sumarla casi no encarece la búsqueda.
+    //
+    // Los filtros de región, estado y rango de fechas solo afectan a Compra
+    // Ágil: la API de licitaciones no los soporta (ver buscarLicitacionesV1).
+    if (fuente === 'todas') {
+      const [agil, lics] = await Promise.all([
+        this.mercadoPublicoBuscar({ ...params, fuente: 'agil' }),
+        // Si la v1 falla (suele ser por peticiones seguidas), no se pierde la
+        // búsqueda completa: se devuelve lo de Compra Ágil y se avisa aparte.
+        this.buscarLicitacionesV1(keywords, pubDesde, ticket)
+          .catch((e) => ({ items: [] as any[], actualizado: null, error: String(e?.message || e) } as any)),
+      ]);
+      const items = [...(agil?.items || []), ...(lics?.items || [])];
+      return {
+        fuente: 'todas',
+        items,
+        paginacion: { numero_pagina: 1, total_paginas: 1, total_resultados: items.length },
+        por_keyword: agil?.por_keyword,
+        ...(agil?.ignoradas ? { ignoradas: agil.ignoradas, max_keywords: MAX_KEYWORDS } : {}),
+        conteo_fuente: {
+          compra_agil: (agil?.items || []).length,
+          licitaciones: (lics?.items || []).length,
+        },
+        ...(lics?.error ? { error_licitaciones: lics.error } : {}),
+        actualizado: lics?.actualizado || undefined,
+      };
+    }
 
     if (fuente === 'agil') {
       // La API v2 busca por palabra COMPLETA ("dental" NO encuentra
@@ -426,30 +739,72 @@ export class LicitacionesService {
         };
       }
 
-      // Varios términos: una consulta por término EN PARALELO (máx 50 c/u, la
-      // página más grande de la API), combinadas sin duplicados y ordenadas
-      // por fecha de publicación. Cada término consume 1 consulta de la cuota.
-      const porKeyword = await Promise.all(
-        terminos.map(async (kw) => {
-          try {
-            const { res, json } = await this.mpFetch(
-              `https://api2.mercadopublico.cl/v2/compra-agil?${buildQp(kw, 50, 1).toString()}`,
-              { ticket },
-            );
-            if (!res.ok || json?.success !== 'OK' || !json?.payload) {
-              const err = json?.errors?.[0];
-              return { q: kw, total: 0, items: [] as any[], error: err?.mensaje || `HTTP ${res.status}` };
-            }
-            return {
-              q: kw,
-              total: Number(json.payload?.paginacion?.total_resultados || 0),
-              items: (json.payload?.items || []).map(LicitacionesService.mapItemAgil),
-            };
-          } catch (e: any) {
-            return { q: kw, total: 0, items: [] as any[], error: e?.message || 'error' };
+      // Varios términos: una consulta por término EN PARALELO, combinadas sin
+      // duplicados y ordenadas por fecha de publicación. Cada término consume
+      // 1 consulta de la cuota diaria.
+      //
+      // Medido el 2026-08-11 (ver MP_TIMEOUT_MS): el gateway de Mercado Público
+      // CORTA SOLO a los ~29,5 s devolviendo 504, y su latencia depende del
+      // tamaño de página. Con 6 consultas en paralelo, pidiendo 30 resultados
+      // fallaron las 6 de 6; pidiendo 10, respondieron 4 de 6 en 23-26 s. Y no
+      // se puede bajar más: `tamano_pagina` < 10 lo rechaza con HTTP 400.
+      // Por eso se pide el mínimo. Los resultados vienen ordenados por fecha de
+      // publicación descendente, así que esos 10 son los más nuevos, que es lo
+      // que sirve para explorar.
+      const TAM_MULTI = 10;
+      const pedirTermino = async (kw: string, tam: number) => {
+        const { res, json } = await this.mpFetch(
+          `https://api2.mercadopublico.cl/v2/compra-agil?${buildQp(kw, tam, 1).toString()}`,
+          { ticket },
+        );
+        if (!res.ok || json?.success !== 'OK' || !json?.payload) {
+          const err = json?.errors?.[0];
+          // 502/503/504 son el gateway de ellos rindiéndose, no un problema de
+          // la palabra buscada: conviene decirlo con todas sus letras para no
+          // mandar a nadie a revisar una keyword que está bien.
+          if (!err?.mensaje && res.status >= 502 && res.status <= 504) {
+            throw new Error('Mercado Público tardó demasiado y cortó la consulta');
           }
-        }),
-      );
+          throw new Error(err?.mensaje || `HTTP ${res.status}`);
+        }
+        return {
+          total: Number(json.payload?.paginacion?.total_resultados || 0),
+          items: (json.payload?.items || []).map(LicitacionesService.mapItemAgil),
+        };
+      };
+
+      const consultarTermino = async (kw: string) => {
+        try {
+          return { q: kw, ...(await pedirTermino(kw, TAM_MULTI)) };
+        } catch (e1: any) {
+          const msg1 = String(e1?.message || e1);
+          // Sin cuota no sirve reintentar: solo gastaría otra llamada.
+          if (/cuota/i.test(msg1)) {
+            return { q: kw, total: 0, items: [] as any[], error: msg1.slice(0, 140) };
+          }
+          // Un reintento, con los mismos parámetros: ya se está pidiendo la
+          // página mínima que acepta la API, así que no hay nada más chico a
+          // lo que bajar. El corte de ellos es intermitente —el mismo término
+          // que falla vuelve a responder al rato— y una segunda pasada recupera
+          // la mayoría.
+          try {
+            return { q: kw, ...(await pedirTermino(kw, TAM_MULTI)) };
+          } catch (e2: any) {
+            return { q: kw, total: 0, items: [] as any[], error: String(e2?.message || e2).slice(0, 140) };
+          }
+        }
+      };
+
+      // En tandas y no todas a la vez: con decenas de términos, un Promise.all
+      // plano abría más de cien conexiones simultáneas contra Mercado Público y
+      // la API empezaba a rechazarlas. Tampoco conviene subirlo: a 12 en
+      // paralelo la latencia se pega a los 29,4 s, justo contra el corte del
+      // gateway, y empiezan a caer consultas que a 6 sí responden.
+      const CONCURRENCIA = 6;
+      const porKeyword: Awaited<ReturnType<typeof consultarTermino>>[] = [];
+      for (let i = 0; i < terminos.length; i += CONCURRENCIA) {
+        porKeyword.push(...await Promise.all(terminos.slice(i, i + CONCURRENCIA).map(consultarTermino)));
+      }
       const vistos = new Set<string>();
       const combinados: any[] = [];
       for (const r of porKeyword) {
@@ -470,56 +825,116 @@ export class LicitacionesService {
           traidos: items.length,
           ...(error ? { error } : {}),
         })),
+        ...(ignoradas.length ? { ignoradas, max_keywords: MAX_KEYWORDS } : {}),
       };
     }
 
-    // Licitaciones LE/LP/LQ activas (v1) con caché de 10 minutos.
-    const CACHE_MS = 10 * 60 * 1000;
-    if (!this.mpCacheActivas || Date.now() - this.mpCacheActivas.ts > CACHE_MS) {
-      const { res, json } = await this.mpFetch(
-        `https://api.mercadopublico.cl/servicios/v1/publico/licitaciones.json?estado=activas&ticket=${encodeURIComponent(ticket)}`,
-      );
-      if (!res.ok || !Array.isArray(json?.Listado)) {
-        throw new BadRequestException(
-          `Mercado Público respondió ${res.status}: ${String(json?.Mensaje || 'no se pudo obtener el listado de licitaciones activas.').slice(0, 160)}`,
-        );
-      }
-      this.mpCacheActivas = { data: json.Listado, ts: Date.now() };
-    }
-    const norm = (s: any) =>
-      String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
-    // Varias keywords: una licitación entra si calza con CUALQUIERA de ellas.
-    const nqs = keywords.map(norm).filter(Boolean);
-    const filtradas = nqs.length
-      ? this.mpCacheActivas.data.filter((l: any) => {
-          const nombre = norm(l?.Nombre);
-          const codigo = norm(l?.CodigoExterno);
-          return nqs.some((nq) => nombre.includes(nq) || codigo.includes(nq));
-        })
-      : this.mpCacheActivas.data;
+    const { items: filtradas, actualizado } = await this.buscarLicitacionesV1(keywords, pubDesde, ticket);
     const total = filtradas.length;
     const desde = (pagina - 1) * tamano;
     return {
       fuente,
-      items: filtradas.slice(desde, desde + tamano).map((l: any) => ({
-        codigo: l?.CodigoExterno || '',
-        nombre: l?.Nombre || '',
-        estado: LicitacionesService.ESTADOS_V1[Number(l?.CodigoEstado)] || `Estado ${l?.CodigoEstado ?? '?'}`,
-        estado_codigo: String(l?.CodigoEstado ?? ''),
-        convocatoria: '',
-        organismo: '',
-        region: '',
-        monto_clp: null,
-        fecha_publicacion: null,
-        fecha_cierre: l?.FechaCierre || null,
-        ofertas: null,
-      })),
+      items: filtradas.slice(desde, desde + tamano),
       paginacion: {
         numero_pagina: pagina,
         total_paginas: Math.max(1, Math.ceil(total / tamano)),
         total_resultados: total,
       },
-      actualizado: new Date(this.mpCacheActivas.ts).toISOString(),
+      actualizado,
+    };
+  }
+
+  /**
+   * Licitaciones LE/LP/LQ… (API v1) con caché de 10 minutos.
+   *
+   * Esta API es mucho más pobre que la v2 de Compra Ágil: el listado solo
+   * devuelve CodigoExterno, Nombre, CodigoEstado y FechaCierre — no trae
+   * organismo, región, monto ni fecha de publicación. Y de los filtros solo
+   * acepta dos (verificado contra la API):
+   *   · estado=activas   → las abiertas (`region` se ignora, y otros estados
+   *                        responden "parámetros no válidos")
+   *   · fecha=DDMMYYYY   → publicadas ESE día exacto, sin rangos
+   *
+   * El filtro por palabra lo hacemos nosotros en memoria, así que no cuesta
+   * consultas: da igual buscar con 3 palabras o con 80.
+   */
+  private async buscarLicitacionesV1(keywords: string[], pubDesde: string, ticket: string) {
+    const CACHE_MS = 10 * 60 * 1000;
+    const diaExacto = pubDesde ? pubDesde.split('-').reverse().join('') : '';
+    const cacheKey = diaExacto || 'activas';
+    if (!this.mpCacheActivas || this.mpCacheActivas.key !== cacheKey || Date.now() - this.mpCacheActivas.ts > CACHE_MS) {
+      const filtro = diaExacto ? `fecha=${encodeURIComponent(diaExacto)}` : 'estado=activas';
+      const { res, json } = await this.mpFetch(
+        `https://api.mercadopublico.cl/servicios/v1/publico/licitaciones.json?${filtro}&ticket=${encodeURIComponent(ticket)}`,
+      );
+      if (!res.ok || !Array.isArray(json?.Listado)) {
+        throw new BadRequestException(
+          `Mercado Público respondió ${res.status}: ${String(json?.Mensaje || 'no se pudo obtener el listado de licitaciones.').slice(0, 160)}`,
+        );
+      }
+      this.mpCacheActivas = { data: json.Listado, ts: Date.now(), key: cacheKey };
+    }
+    const norm = (s: any) =>
+      String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+    // Una licitación entra si calza con CUALQUIERA de las palabras. Para las
+    // frases se exige que estén TODAS sus palabras (en cualquier orden): el
+    // título "COMPRA DE INSUMOS DENTALES" calza con "insumos dentales" aunque
+    // no aparezca esa secuencia literal.
+    const nqs = keywords.map(norm).filter(Boolean).map((nq) => nq.split(/\s+/).filter(Boolean));
+    const items = (nqs.length
+      ? this.mpCacheActivas.data.filter((l: any) => {
+          const texto = `${norm(l?.Nombre)} ${norm(l?.CodigoExterno)}`;
+          return nqs.some((palabras) => palabras.every((w) => texto.includes(w)));
+        })
+      : this.mpCacheActivas.data
+    ).map((l: any) => ({
+      codigo: l?.CodigoExterno || '',
+      ...(({ sigla, label, familia }) => ({ tipo_sigla: sigla, tipo_label: label, tipo_familia: familia }))(
+        LicitacionesService.tipoProceso(l?.CodigoExterno || ''),
+      ),
+      nombre: l?.Nombre || '',
+      estado: LicitacionesService.ESTADOS_V1[Number(l?.CodigoEstado)] || `Estado ${l?.CodigoEstado ?? '?'}`,
+      estado_codigo: String(l?.CodigoEstado ?? ''),
+      convocatoria: '',
+      organismo: '',
+      region: '',
+      monto_clp: null,
+      fecha_publicacion: null,
+      fecha_cierre: l?.FechaCierre || null,
+      ofertas: null,
+    }));
+    return { items, actualizado: new Date(this.mpCacheActivas.ts).toISOString() };
+  }
+
+  /**
+   * Tipo de proceso deducido del sufijo del código externo de Mercado Público
+   * (formato `<organismo>-<correlativo>-<sufijo><año>`, ej. 4329-4-LE26).
+   *
+   * Solo se mapean los sufijos que aparecen efectivamente en los listados; si
+   * llega uno desconocido se devuelve el sufijo tal cual en vez de inventar una
+   * glosa, para que se note y se pueda agregar.
+   */
+  static tipoProceso(codigo: string): { sigla: string; label: string; familia: 'compra_agil' | 'licitacion' } {
+    const m = String(codigo || '').trim().toUpperCase().match(/-([A-Z]+\d?)\d{2}$/);
+    const sigla = m ? m[1] : '';
+    const TABLA: Record<string, string> = {
+      COT: 'Compra Ágil',
+      L1: 'Pública < 100 UTM',
+      LE: 'Pública 100-1.000 UTM',
+      LP: 'Pública 1.000-2.000 UTM',
+      LQ: 'Pública 2.000-5.000 UTM',
+      LR: 'Pública > 5.000 UTM',
+      LS: 'Pública servicios especializados',
+      E2: 'Privada < 100 UTM',
+      CO: 'Privada 100-1.000 UTM',
+      B2: 'Privada 1.000-2.000 UTM',
+      H2: 'Privada 2.000-5.000 UTM',
+      I2: 'Privada > 5.000 UTM',
+    };
+    return {
+      sigla,
+      label: TABLA[sigla] || sigla || 'Sin clasificar',
+      familia: sigla === 'COT' ? 'compra_agil' : 'licitacion',
     };
   }
 
@@ -1579,5 +1994,75 @@ export class LicitacionesService {
       .remove([path]);
     if (error) throw new BadRequestException(error.message);
     return { removed: true };
+  }
+
+  /* ── Palabras clave y búsquedas guardadas de Explorar Mercado Público ────
+     El catálogo vivía como constante en el frontend: agregar un término exigía
+     desplegar. Ahora se administra desde la pantalla.
+  */
+  private faltaMigracionMp(error: any) {
+    const msg = String(error?.message || '');
+    return /mp_keywords|mp_busquedas|does not exist|schema cache/i.test(msg)
+      ? 'Falta aplicar la migración 20260810_mp_keywords_busquedas.sql en Supabase.'
+      : msg;
+  }
+
+  async listarKeywordsMp() {
+    const client = this.supabase.getClient();
+    const [kw, bus] = await Promise.all([
+      client.from('mp_keywords').select('*').eq('activa', true).order('texto', { ascending: true }),
+      client.from('mp_busquedas').select('*').order('nombre', { ascending: true }),
+    ]);
+    if (kw.error) throw new BadRequestException(this.faltaMigracionMp(kw.error));
+    if (bus.error) throw new BadRequestException(this.faltaMigracionMp(bus.error));
+    return { keywords: kw.data || [], busquedas: bus.data || [] };
+  }
+
+  async crearKeywordMp(texto: string, email: string) {
+    const limpio = String(texto || '').trim().slice(0, 120);
+    if (!limpio) throw new BadRequestException('La palabra clave no puede ir vacía.');
+    const { data, error } = await this.supabase.getClient()
+      .from('mp_keywords')
+      .insert([{ texto: limpio, creada_por: email || null }])
+      .select()
+      .single();
+    if (error) {
+      // El índice único es sobre lower(texto): avisar en vez de fallar feo.
+      if (/duplicate|unique/i.test(error.message)) {
+        throw new BadRequestException(`"${limpio}" ya está en el catálogo.`);
+      }
+      throw new BadRequestException(this.faltaMigracionMp(error));
+    }
+    return data;
+  }
+
+  async eliminarKeywordMp(id: number) {
+    const { error } = await this.supabase.getClient().from('mp_keywords').delete().eq('id', id);
+    if (error) throw new BadRequestException(this.faltaMigracionMp(error));
+    return { eliminada: true };
+  }
+
+  async guardarBusquedaMp(nombre: string, keywords: string[], email: string) {
+    const limpio = String(nombre || '').trim().slice(0, 80);
+    if (!limpio) throw new BadRequestException('Ponle un nombre a la búsqueda.');
+    const kws = (Array.isArray(keywords) ? keywords : [])
+      .map((k) => String(k || '').trim())
+      .filter(Boolean)
+      .slice(0, 8); // mismo tope que la API
+    if (!kws.length) throw new BadRequestException('Elige al menos una palabra clave.');
+    // Upsert por nombre: volver a guardar con el mismo nombre la actualiza.
+    const { data, error } = await this.supabase.getClient()
+      .from('mp_busquedas')
+      .upsert([{ nombre: limpio, keywords: kws, creada_por: email || null }], { onConflict: 'nombre' })
+      .select()
+      .single();
+    if (error) throw new BadRequestException(this.faltaMigracionMp(error));
+    return data;
+  }
+
+  async eliminarBusquedaMp(id: number) {
+    const { error } = await this.supabase.getClient().from('mp_busquedas').delete().eq('id', id);
+    if (error) throw new BadRequestException(this.faltaMigracionMp(error));
+    return { eliminada: true };
   }
 }

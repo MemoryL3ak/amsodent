@@ -1,11 +1,12 @@
 import {
   Controller, Get, Post, Put, Delete,
-  Body, Param, ParseIntPipe, UseGuards,
+  Body, Param, ParseIntPipe, UseGuards, Req,
   UseInterceptors, UploadedFile, Query,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ProductosService } from './productos.service';
 import { AuthGuard } from '../auth/auth.guard';
+import { AdminGuard } from '../auth/admin.guard';
 
 @Controller('productos')
 @UseGuards(AuthGuard)
@@ -38,8 +39,29 @@ export class ProductosController {
   }
 
   @Post('bulk-upsert')
-  bulkUpsert(@Body() body: { rows: Record<string, any>[] }) {
-    return this.productosService.bulkUpsert(body?.rows || []);
+  bulkUpsert(@Body() body: { rows: Record<string, any>[]; archivo?: string }, @Req() req: any) {
+    return this.productosService.bulkUpsert(body?.rows || [], {
+      archivo: body?.archivo,
+      email: (req?.user?.email || '').toLowerCase(),
+    });
+  }
+
+  /* ── Historial de cargas masivas ──────────────────────────────────────── */
+  @Get('cargas/historial')
+  listarCargas() {
+    return this.productosService.listarCargas();
+  }
+
+  @Get('cargas/:id')
+  detalleCarga(@Param('id', ParseIntPipe) id: number) {
+    return this.productosService.detalleCarga(id);
+  }
+
+  // Revertir borra y sobrescribe productos del catálogo: solo admin.
+  @Post('cargas/:id/revertir')
+  @UseGuards(AdminGuard)
+  revertirCarga(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
+    return this.productosService.revertirHasta(id, (req?.user?.email || '').toLowerCase());
   }
 
   @Post('upload-image')

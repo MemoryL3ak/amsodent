@@ -1019,7 +1019,9 @@ function FeatureItem({ icono: Icono, titulo, texto, delay = 0 }) {
       <span style={styles.featureIcono}>
         <Icono size={18} />
       </span>
-      <div>
+      {/* minWidth 0: sin esto el bloque de texto no baja de su ancho mínimo
+          natural y empuja la lista fuera de la pantalla. */}
+      <div style={{ minWidth: 0 }}>
         <div style={styles.featureTitulo}>{titulo}</div>
         <div style={styles.featureTexto}>{texto}</div>
       </div>
@@ -5448,7 +5450,10 @@ function Estilos() {
       }
 
       /* ── Orbes decorativos flotantes ───────────────────────────── */
-      [data-portal-grid] { position: relative; }
+      /* Los orbes se colocan a propósito fuera de la rejilla (right: -100px);
+         sin recortar aquí ensanchaban la página y el portal se desplazaba
+         de lado en cualquier pantalla. */
+      [data-portal-grid] { position: relative; overflow: hidden; }
       .login-orb {
         position: absolute;
         border-radius: 50%;
@@ -5502,8 +5507,10 @@ function Estilos() {
         transform: translateX(-12px);
         animation: featureSlideIn .55s cubic-bezier(.4, 0, .2, 1) forwards;
         transition: transform .25s ease;
+        /* El margen negativo hacía que el área de hover sobresaliera 4px de la
+           lista y dejaba a la página desbordada de forma permanente. Con solo
+           el relleno el resaltado se ve igual y nada se sale. */
         padding: 4px;
-        margin: -4px;
         border-radius: 10px;
       }
       .feature-item:hover {
