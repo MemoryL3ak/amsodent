@@ -154,8 +154,15 @@ export class ChatService {
 
   async recibirWhatsApp(payload: any) {
     const tipoWebhook = String(payload?.typeWebhook || '');
-    // Green API manda muchos tipos (estados de envío, salientes, etc.).
-    if (tipoWebhook !== 'incomingMessageReceived') return { ok: true, motivo: 'ignorado', tipo: tipoWebhook };
+    /* Entran DOS tipos:
+       · incomingMessageReceived — lo que escriben los demás en el grupo.
+       · outgoingMessageReceived — lo escrito DESDE EL TELÉFONO del número
+         vinculado. Sin esto, los mensajes del dueño del número puente jamás
+         llegaban al chat (2026-08-13). No produce eco: lo que la plataforma
+         manda por API es otro tipo (outgoingAPIMessageWebhook), que se sigue
+         descartando y además va apagado en la instancia. */
+    const TIPOS_OK = ['incomingMessageReceived', 'outgoingMessageReceived'];
+    if (!TIPOS_OK.includes(tipoWebhook)) return { ok: true, motivo: 'ignorado', tipo: tipoWebhook };
 
     const grupo = (process.env.WHATSAPP_GROUP_ID || '').trim();
     const chatId = String(payload?.senderData?.chatId || '').trim();
