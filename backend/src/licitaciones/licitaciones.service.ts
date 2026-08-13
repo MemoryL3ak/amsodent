@@ -815,11 +815,15 @@ export class LicitacionesService {
         const v = k.split(/\s+/).map((w) => varPalabra(w) ?? w).join(' ');
         return v === k ? null : v;
       };
-      const terminos: string[] = [];
+      // Cada término recuerda de QUÉ palabra del catálogo salió: los match se
+      // reportan con la palabra original ("Insumos dentales"), nunca con la
+      // variante interna ("insumo dental") que nadie escribió.
+      const terminos: { t: string; base: string }[] = [];
+      const yaEsta = (s: string) => terminos.some((x) => x.t.toLowerCase() === s.toLowerCase());
       for (const kw of keywords) {
-        if (!terminos.some((t) => t.toLowerCase() === kw.toLowerCase())) terminos.push(kw);
+        if (!yaEsta(kw)) terminos.push({ t: kw, base: kw });
         const v = varianteDe(kw);
-        if (v && !terminos.some((t) => t.toLowerCase() === v)) terminos.push(v);
+        if (v && !yaEsta(v)) terminos.push({ t: v, base: kw });
       }
 
       const buildQp = (kw: string, tam: number, pag: number) => {
@@ -840,7 +844,7 @@ export class LicitacionesService {
       // Un solo término (o ninguno): paginación real de la API.
       if (terminos.length <= 1) {
         const { res, json } = await this.mpFetch(
-          `https://api2.mercadopublico.cl/v2/compra-agil?${buildQp(terminos[0] || '', tamano, pagina).toString()}`,
+          `https://api2.mercadopublico.cl/v2/compra-agil?${buildQp(terminos[0]?.t || '', tamano, pagina).toString()}`,
           { ticket },
         );
         if (!res.ok || json?.success !== 'OK' || !json?.payload) {
@@ -916,14 +920,14 @@ export class LicitacionesService {
         };
       };
 
-      const consultarTermino = async (kw: string) => {
+      const consultarTermino = async ({ t, base }: { t: string; base: string }) => {
         try {
-          return { q: kw, ...(await pedirTermino(kw, TAM_MULTI)) };
+          return { q: t, base, ...(await pedirTermino(t, TAM_MULTI)) };
         } catch (e1: any) {
           const msg1 = String(e1?.message || e1);
           // Sin cuota no sirve reintentar: solo gastaría otra llamada.
           if (/cuota/i.test(msg1)) {
-            return { q: kw, total: 0, items: [] as any[], error: msg1.slice(0, 140) };
+            return { q: t, base, total: 0, items: [] as any[], error: msg1.slice(0, 140) };
           }
           // Un reintento, con los mismos parámetros: ya se está pidiendo la
           // página mínima que acepta la API, así que no hay nada más chico a
@@ -931,9 +935,9 @@ export class LicitacionesService {
           // que falla vuelve a responder al rato— y una segunda pasada recupera
           // la mayoría.
           try {
-            return { q: kw, ...(await pedirTermino(kw, TAM_MULTI)) };
+            return { q: t, base, ...(await pedirTermino(t, TAM_MULTI)) };
           } catch (e2: any) {
-            return { q: kw, total: 0, items: [] as any[], error: String(e2?.message || e2).slice(0, 140) };
+            return { q: t, base, total: 0, items: [] as any[], error: String(e2?.message || e2).slice(0, 140) };
           }
         }
       };
@@ -948,19 +952,20 @@ export class LicitacionesService {
       for (let i = 0; i < terminos.length; i += CONCURRENCIA) {
         porKeyword.push(...await Promise.all(terminos.slice(i, i + CONCURRENCIA).map(consultarTermino)));
       }
-      /* Cada resultado dice QUÉ término lo trajo (`match_keywords`). Además de
-         mostrarse en la pantalla, es la trazabilidad que faltaba cuando un
+      /* Cada resultado dice QUÉ palabra del catálogo lo trajo
+         (`match_keywords`, siempre la base — no la variante interna). Además
+         de mostrarse en la pantalla, es la trazabilidad que faltaba cuando un
          proceso raro aparecía en la búsqueda y nadie podía decir por cuál
-         palabra entró. Un proceso traído por varios términos los acumula. */
+         palabra entró. Un proceso traído por varias palabras las acumula. */
       const porCodigo = new Map<string, any>();
       for (const r of porKeyword) {
         for (const it of r.items) {
           if (!it.codigo) continue;
           const prev = porCodigo.get(it.codigo);
           if (prev) {
-            if (!prev.match_keywords.includes(r.q)) prev.match_keywords.push(r.q);
+            if (!prev.match_keywords.includes(r.base)) prev.match_keywords.push(r.base);
           } else {
-            porCodigo.set(it.codigo, { ...it, match_keywords: [r.q] });
+            porCodigo.set(it.codigo, { ...it, match_keywords: [r.base] });
           }
         }
       }

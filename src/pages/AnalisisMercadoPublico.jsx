@@ -412,11 +412,15 @@ export default function AnalisisMercadoPublico() {
     [enRango],
   );
 
-  // Evolución mensual (por fecha de cierre del proceso), últimos 8 meses con datos.
+  /* Evolución mensual por fecha de ADJUDICACIÓN — el MISMO criterio que los
+     KPIs, la dona y la tabla. Antes agrupaba por mes de cierre y era el único
+     gráfico del panel midiendo otra cosa: sus barras no cuadraban con las
+     cifras de arriba. Lo aún no adjudicado no tiene mes donde caer y queda
+     fuera, igual que en el resto de los indicadores. */
   const tendencia = useMemo(() => {
     const mapa = new Map();
     for (const f of enRango) {
-      const iso = f.fecha_cierre || f.consultado_at;
+      const iso = f.fecha_adjudicacion;
       const d = iso ? new Date(iso) : null;
       if (!d || Number.isNaN(d.getTime())) continue;
       const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
@@ -738,9 +742,9 @@ export default function AnalisisMercadoPublico() {
           )}
         </Panel>
 
-        <Panel titulo="Evolución mensual" sub="Resultados por mes de cierre del proceso">
+        <Panel titulo="Evolución mensual" sub="Resultados por mes de adjudicación">
           {tendencia.length === 0 ? (
-            <Vacio texto="Sin procesos con fecha de cierre aún." />
+            <Vacio texto="Sin procesos adjudicados aún." />
           ) : (
             <TendenciaMensual meses={tendencia} />
           )}

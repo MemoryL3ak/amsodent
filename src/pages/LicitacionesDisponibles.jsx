@@ -448,19 +448,24 @@ export default function LicitacionesDisponibles({ embedded = false }) {
      backend dice si este usuario puede lanzar búsquedas a mano. */
   useEffect(() => {
     if (vista !== "explorar" || mpBuscando) return;
-    // No pisar una búsqueda manual que el usuario esté mirando: solo se
-    // refresca si lo que hay en pantalla es la automática (o nada).
-    if (mpRes && !mpAuto) return;
     let activo = true;
     (async () => {
       try {
         const d = await api.get("/licitaciones/mercado-publico/exploracion");
         if (!activo) return;
         setMpPuedeBuscar(!!d?.puede_buscar);
-        if (Array.isArray(d?.items)) {
-          setMpRes(d);
-          setMpAuto({ actualizado_at: d.actualizado_at, motivo: d.motivo });
+        if (!Array.isArray(d?.items)) return;
+        // Gana lo más NUEVO. Una búsqueda manual en pantalla se respeta solo
+        // mientras no exista una exploración automática POSTERIOR: si el cron
+        // de las 14:00/23:00 corrió después de esa búsqueda, mostrar la
+        // búsqueda vieja sería informar datos menos frescos que los guardados.
+        if (mpRes && !mpAuto) {
+          const tsManual = leerVistaExploracion()?.ts || 0;
+          const tsServidor = Date.parse(d?.actualizado_at || "") || 0;
+          if (tsManual >= tsServidor) return;
         }
+        setMpRes(d);
+        setMpAuto({ actualizado_at: d.actualizado_at, motivo: d.motivo });
       } catch {
         // Migración sin aplicar o error de red: la pestaña queda vacía y quien
         // tenga permiso puede buscar a mano igual.
@@ -1664,7 +1669,7 @@ export default function LicitacionesDisponibles({ embedded = false }) {
         <div style={{ marginTop: 8, fontSize: 12, color: "#b45309", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "7px 11px" }}>
           {mpKeywords.length > 80
             ? <>Seleccionaste {mpKeywords.length} palabras y el máximo por búsqueda es 80: las {mpKeywords.length - 80} últimas no se van a consultar.</>
-            : <>Buscando por {mpKeywords.length} palabras: son unas {mpKeywords.length * 2} consultas a Mercado Público (cada palabra se busca en singular y plural), así que puede tardar cerca de un minuto y consume cuota diaria del ticket.</>}
+            : <>Buscando por {mpKeywords.length} palabras: cada una se consulta en singular y plural, más las páginas que hagan falta para traer TODOS sus resultados — unas {mpKeywords.length * 2} consultas como mínimo. Puede tardar varios minutos (el medidor muestra el avance) y consume cuota diaria del ticket.</>}
         </div>
       )}
 
@@ -1715,7 +1720,7 @@ export default function LicitacionesDisponibles({ embedded = false }) {
         <span
           style={{ cursor: "help", textDecoration: "underline dotted" }}
           title={
-            "Compra Ágil: busca en el nombre y la descripción, por palabra completa (cada término se consulta también en singular y plural).\n\n" +
+            "Compra Ágil: busca en el nombre y la descripción, por palabra completa; las frases exigen TODAS sus palabras. Cada término se consulta también en singular y plural, recorriendo todas sus páginas de resultados.\n\n" +
             "Licitaciones: la API antigua solo entrega código, nombre, estado y cierre — por eso organismo y monto van vacíos y no hay filtro de región, estado ni rango de fechas. A cambio busca por coincidencia parcial.\n\n" +
             "Pincha el código para ver la ficha completa."
           }
