@@ -1,6 +1,7 @@
 import { Injectable, BadRequestException, NotFoundException, Logger } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
 import { MailingsService } from '../mailings/mailings.service';
+import { ChatService } from '../chat/chat.service';
 
 @Injectable()
 export class LicitacionesService {
@@ -11,6 +12,7 @@ export class LicitacionesService {
   constructor(
     private supabase: SupabaseService,
     private mailings: MailingsService,
+    private chat: ChatService,
   ) {}
 
   async findAll(filters?: { estado?: string; creado_por?: string; id_licitacion?: string; exclude_id?: string }) {
@@ -329,7 +331,60 @@ export class LicitacionesService {
       .select()
       .single();
     if (error) throw new BadRequestException(error.message);
+
+    // Aviso al equipo, sin bloquear la toma: si el chat falla, la postulación
+    // igual quedó tomada y el error solo se registra en el log.
+    void this.avisarTomaEnChat(data, correo).catch((e) =>
+      this.logger.warn(`Aviso de toma no enviado: ${String(e?.message || e)}`),
+    );
     return data;
+  }
+
+  /* Publica en la sala General (y al grupo de WhatsApp, si el puente está
+     configurado) que alguien tomó una postulación. El equipo se enteraba
+     recién al mirar el listado; con 3 cupos por persona y cierres el mismo
+     día, saber al tiro quién está en qué evita tomas repetidas de facto. */
+  private async avisarTomaEnChat(row: any, correo: string) {
+    const client = this.supabase.getClient();
+
+    // Nombre del que toma: del perfil; si no hay, la parte local del correo.
+    let nombre = '';
+    try {
+      const { data: perfil } = await client
+        .from('profiles')
+        .select('nombre')
+        .ilike('email', correo)
+        .maybeSingle();
+      nombre = String(perfil?.nombre || '').trim();
+    } catch { /* sin perfil no se cae el aviso */ }
+    if (!nombre) nombre = correo.split('@')[0];
+
+    const codigo = String(row?.id_licitacion || '').trim();
+    const titulo = String(row?.nombre || '').trim();
+    const cierre = String(row?.datos?.cierre || '').trim();
+    const partes = [`📌 ${nombre} tomó la postulación ${codigo}`];
+    if (titulo) partes.push(`«${titulo.slice(0, 120)}»`);
+    if (cierre) partes.push(`(cierra ${cierre})`);
+    const texto = partes.join(' ');
+
+    const { data: sala } = await client
+      .from('chat_salas')
+      .select('id')
+      .eq('es_general', true)
+      .maybeSingle();
+    if (sala?.id) {
+      await client.from('chat_mensajes').insert([{
+        sala_id: sala.id,
+        autor_email: 'avisos@amsodent',
+        autor_nombre: 'Avisos',
+        tipo: 'texto',
+        texto,
+      }]);
+    }
+
+    // El espejo en WhatsApp sigue el mismo camino que un mensaje escrito en la
+    // General. Si el puente no está configurado, enviarWhatsApp lo dice y ya.
+    await this.chat.enviarWhatsApp({ autor: 'Avisos', texto });
   }
 
   async eliminarDisponible(id: number) {
@@ -585,6 +640,64 @@ export class LicitacionesService {
   // key: 'activas' o el día consultado (DDMMYYYY), para no mezclar listados.
   private mpCacheActivas: { data: any[]; ts: number; key: string } | null = null;
 
+  /* ── Match de keywords contra Compra Ágil ─────────────────────────────
+     Tres mañas de la búsqueda de la API v2, todas medidas contra la API real:
+
+     · Une las palabras de una frase con O, no con Y (2026-08-12: "Lidocaína 2"
+       devuelve 1.469 procesos porque el "2" calza solo, y una remodelación de
+       Carabineros terminó dentro de una búsqueda dental)... SALVO que cada
+       palabra lleve "+" adelante: "+insumos +dentales" exige AMBAS y devuelve
+       21 contra los 1.302 del O implícito (2026-08-13). Las comillas no
+       sirven: responden HTTP 500.
+     · NO normaliza tildes del lado de la consulta (sí del texto): "lidocaína"
+       devuelve 0 y "lidocaina" devuelve 3. Toda palabra acentuada del catálogo
+       devolvía cero hasta que se les quitó la tilde al enviarlas.
+     · El "+" no es un Y perfecto (2 de 21 llegaron sin ambas palabras), así
+       que lo que VUELVE igual se verifica: todas las palabras significativas
+       deben aparecer en nombre+descripción — el mismo criterio que ya usaba
+       la fuente de licitaciones (v1). */
+  private static readonly STOP_MP = new Set([
+    'de', 'del', 'la', 'las', 'el', 'los', 'lo', 'y', 'o', 'u', 'a', 'e',
+    'en', 'con', 'para', 'por', 'al', 'un', 'una', 'unos', 'unas',
+  ]);
+
+  private static normTexto(s: any): string {
+    return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+  }
+
+  /** Palabras que discriminan, reducidas a su raíz singular. */
+  private static palabrasSignificativas(kw: string): string[] {
+    return LicitacionesService.normTexto(kw)
+      .split(/\s+/)
+      .filter((w) => w.length >= 3 && !LicitacionesService.STOP_MP.has(w))
+      .map((w) =>
+        w.endsWith('es') && w.length > 4 && !/[aeiou]es$/.test(w) ? w.slice(0, -2)
+        : w.endsWith('s') && w.length > 3 ? w.slice(0, -1)
+        : w,
+      );
+  }
+
+  /** ¿El texto contiene TODAS las palabras significativas del término? */
+  private static calzaTermino(kw: string, texto: string): boolean {
+    const sig = LicitacionesService.palabrasSignificativas(kw);
+    if (!sig.length) return true; // término sin palabras útiles: no se filtra
+    const t = LicitacionesService.normTexto(texto);
+    return sig.every((w) => t.includes(w));
+  }
+
+  /** El término como se envía a la API: solo sus palabras con contenido, SIN
+   *  tildes (con tilde la API devuelve 0), y si son varias, cada una con "+"
+   *  adelante para que la API exija TODAS en vez de unirlas con O. */
+  private static terminoParaApi(kw: string): string {
+    const utiles = LicitacionesService.normTexto(kw)
+      .split(/\s+/)
+      .filter((w) => w.length >= 3 && !LicitacionesService.STOP_MP.has(w));
+    // Sin palabras útiles se envía tal cual (sin tildes): mejor ruido visible
+    // que un término que desaparece en silencio.
+    if (!utiles.length) return LicitacionesService.normTexto(kw).trim() || String(kw || '').trim();
+    return utiles.length === 1 ? utiles[0] : utiles.map((w) => `+${w}`).join(' ');
+  }
+
   private static mapItemAgil(it: any) {
     const tipo = LicitacionesService.tipoProceso(it?.codigo || '');
     return {
@@ -684,14 +797,23 @@ export class LicitacionesService {
       // La API v2 busca por palabra COMPLETA ("dental" NO encuentra
       // "DENTALES"), a diferencia del buscador del portal que calza ambas.
       // Para obtener los mismos resultados, cada keyword se consulta también
-      // con su variante singular/plural (las frases con espacios van tal cual).
+      // con su variante singular/plural. Las frases cambian de número TODAS
+      // sus palabras ("insumos dentales" → "insumo dental"); las formas
+      // mixtas ("INSUMO DENTALES") no se cubren, pero suelen caer igual por
+      // las keywords de una sola palabra del catálogo.
+      const varPalabra = (w: string): string | null => {
+        if (w.length < 3) return null;
+        if (w.endsWith('es') && !/[aeiouáéíóú]es$/.test(w)) return w.slice(0, -2); // dentales → dental
+        if (w.endsWith('s')) return w.slice(0, -1); // resinas → resina
+        if (/[aeiouáéíóú]$/.test(w)) return `${w}s`; // resina → resinas
+        return `${w}es`; // dental → dentales
+      };
       const varianteDe = (kw: string): string | null => {
         const k = kw.toLowerCase();
-        if (/\s/.test(k) || k.length < 3) return null;
-        if (k.endsWith('es') && !/[aeiouáéíóú]es$/.test(k)) return k.slice(0, -2); // dentales → dental
-        if (k.endsWith('s')) return k.slice(0, -1); // resinas → resina
-        if (/[aeiouáéíóú]$/.test(k)) return `${k}s`; // resina → resinas
-        return `${k}es`; // dental → dentales
+        if (k.length < 3) return null;
+        if (!/\s/.test(k)) return varPalabra(k);
+        const v = k.split(/\s+/).map((w) => varPalabra(w) ?? w).join(' ');
+        return v === k ? null : v;
       };
       const terminos: string[] = [];
       for (const kw of keywords) {
@@ -748,28 +870,49 @@ export class LicitacionesService {
       // tamaño de página. Con 6 consultas en paralelo, pidiendo 30 resultados
       // fallaron las 6 de 6; pidiendo 10, respondieron 4 de 6 en 23-26 s. Y no
       // se puede bajar más: `tamano_pagina` < 10 lo rechaza con HTTP 400.
-      // Por eso se pide el mínimo. Los resultados vienen ordenados por fecha de
-      // publicación descendente, así que esos 10 son los más nuevos, que es lo
-      // que sirve para explorar.
+      // Por eso se pide el mínimo... pero se RECORREN las páginas que hagan
+      // falta: quedarse con la primera dejaba fuera 55 de los 65 procesos de
+      // "dental" (2026-08-13). Con el "+" del Y-lógico los totales por término
+      // son chicos y honestos, así que casi todos caben en 1-2 páginas; el
+      // tope de 10 páginas (100 procesos) es un freno para términos que aun
+      // así exploten — si se alcanza, `traidos` < `total` lo delata en el
+      // detalle por palabra.
       const TAM_MULTI = 10;
+      const MAX_PAGINAS_TERMINO = 10;
       const pedirTermino = async (kw: string, tam: number) => {
-        const { res, json } = await this.mpFetch(
-          `https://api2.mercadopublico.cl/v2/compra-agil?${buildQp(kw, tam, 1).toString()}`,
-          { ticket },
-        );
-        if (!res.ok || json?.success !== 'OK' || !json?.payload) {
-          const err = json?.errors?.[0];
-          // 502/503/504 son el gateway de ellos rindiéndose, no un problema de
-          // la palabra buscada: conviene decirlo con todas sus letras para no
-          // mandar a nadie a revisar una keyword que está bien.
-          if (!err?.mensaje && res.status >= 502 && res.status <= 504) {
-            throw new Error('Mercado Público tardó demasiado y cortó la consulta');
+        const q = LicitacionesService.terminoParaApi(kw);
+        const crudos: any[] = [];
+        let total = 0;
+        let paginas = 1;
+        for (let pag = 1; pag <= paginas; pag++) {
+          const { res, json } = await this.mpFetch(
+            `https://api2.mercadopublico.cl/v2/compra-agil?${buildQp(q, tam, pag).toString()}`,
+            { ticket },
+          );
+          if (!res.ok || json?.success !== 'OK' || !json?.payload) {
+            // Una página posterior caída no bota el término: se devuelve lo ya
+            // traído y `traidos` < `total` deja constancia de que faltó.
+            if (pag > 1) break;
+            const err = json?.errors?.[0];
+            // 502/503/504 son el gateway de ellos rindiéndose, no un problema de
+            // la palabra buscada: conviene decirlo con todas sus letras para no
+            // mandar a nadie a revisar una keyword que está bien.
+            if (!err?.mensaje && res.status >= 502 && res.status <= 504) {
+              throw new Error('Mercado Público tardó demasiado y cortó la consulta');
+            }
+            throw new Error(err?.mensaje || `HTTP ${res.status}`);
           }
-          throw new Error(err?.mensaje || `HTTP ${res.status}`);
+          total = Number(json.payload?.paginacion?.total_resultados || 0);
+          paginas = Math.min(MAX_PAGINAS_TERMINO, Number(json.payload?.paginacion?.total_paginas || 1));
+          crudos.push(...(json.payload?.items || []).map(LicitacionesService.mapItemAgil));
         }
+        // Lo que vuelve se verifica contra el nombre y la descripción: deben
+        // estar TODAS las palabras significativas, como en la fuente v1.
         return {
-          total: Number(json.payload?.paginacion?.total_resultados || 0),
-          items: (json.payload?.items || []).map(LicitacionesService.mapItemAgil),
+          total,
+          items: crudos.filter((it: any) =>
+            LicitacionesService.calzaTermino(kw, `${it.nombre} ${it.convocatoria}`),
+          ),
         };
       };
 
@@ -805,15 +948,23 @@ export class LicitacionesService {
       for (let i = 0; i < terminos.length; i += CONCURRENCIA) {
         porKeyword.push(...await Promise.all(terminos.slice(i, i + CONCURRENCIA).map(consultarTermino)));
       }
-      const vistos = new Set<string>();
-      const combinados: any[] = [];
+      /* Cada resultado dice QUÉ término lo trajo (`match_keywords`). Además de
+         mostrarse en la pantalla, es la trazabilidad que faltaba cuando un
+         proceso raro aparecía en la búsqueda y nadie podía decir por cuál
+         palabra entró. Un proceso traído por varios términos los acumula. */
+      const porCodigo = new Map<string, any>();
       for (const r of porKeyword) {
         for (const it of r.items) {
-          if (!it.codigo || vistos.has(it.codigo)) continue;
-          vistos.add(it.codigo);
-          combinados.push(it);
+          if (!it.codigo) continue;
+          const prev = porCodigo.get(it.codigo);
+          if (prev) {
+            if (!prev.match_keywords.includes(r.q)) prev.match_keywords.push(r.q);
+          } else {
+            porCodigo.set(it.codigo, { ...it, match_keywords: [r.q] });
+          }
         }
       }
+      const combinados = [...porCodigo.values()];
       combinados.sort((a, b) => String(b.fecha_publicacion || '').localeCompare(String(a.fecha_publicacion || '')));
       return {
         fuente,
@@ -830,14 +981,21 @@ export class LicitacionesService {
     }
 
     const { items: filtradas, actualizado } = await this.buscarLicitacionesV1(keywords, pubDesde, ticket);
+    // Acá la "página" es solo un recorte en memoria (la llamada v1 ya trajo el
+    // listado completo), así que se acepta un tamaño grande: la exploración
+    // pide 1000 para llevarse TODO en una consulta. Con el tope de 50 —que es
+    // de Compra Ágil, donde la página sí viaja a la API— la búsqueda manual se
+    // quedaba con la primera página (15) mientras la automática guardaba las
+    // 67, y los contadores quedaban contradictorios.
+    const tamLic = Math.min(1000, Math.max(10, Number(params?.tamano) || 15));
     const total = filtradas.length;
-    const desde = (pagina - 1) * tamano;
+    const desde = (pagina - 1) * tamLic;
     return {
       fuente,
-      items: filtradas.slice(desde, desde + tamano),
+      items: filtradas.slice(desde, desde + tamLic),
       paginacion: {
         numero_pagina: pagina,
-        total_paginas: Math.max(1, Math.ceil(total / tamano)),
+        total_paginas: Math.max(1, Math.ceil(total / tamLic)),
         total_resultados: total,
       },
       actualizado,
@@ -879,15 +1037,20 @@ export class LicitacionesService {
     // Una licitación entra si calza con CUALQUIERA de las palabras. Para las
     // frases se exige que estén TODAS sus palabras (en cualquier orden): el
     // título "COMPRA DE INSUMOS DENTALES" calza con "insumos dentales" aunque
-    // no aparezca esa secuencia literal.
-    const nqs = keywords.map(norm).filter(Boolean).map((nq) => nq.split(/\s+/).filter(Boolean));
-    const items = (nqs.length
-      ? this.mpCacheActivas.data.filter((l: any) => {
-          const texto = `${norm(l?.Nombre)} ${norm(l?.CodigoExterno)}`;
-          return nqs.some((palabras) => palabras.every((w) => texto.includes(w)));
-        })
-      : this.mpCacheActivas.data
-    ).map((l: any) => ({
+    // no aparezca esa secuencia literal. Se recuerda ADEMÁS con cuáles calzó
+    // (`match_keywords`), para que la pantalla pueda decirlo.
+    const defs = keywords
+      .map((kw) => ({ kw, palabras: norm(kw).split(/\s+/).filter(Boolean) }))
+      .filter((d) => d.palabras.length);
+    const conMatch = this.mpCacheActivas.data
+      .map((l: any) => {
+        const texto = `${norm(l?.Nombre)} ${norm(l?.CodigoExterno)}`;
+        const matched = defs.filter((d) => d.palabras.every((w) => texto.includes(w))).map((d) => d.kw);
+        return { l, matched };
+      })
+      .filter((x: any) => !defs.length || x.matched.length);
+    const items = conMatch.map(({ l, matched }: any) => ({
+      match_keywords: matched,
       codigo: l?.CodigoExterno || '',
       ...(({ sigla, label, familia }) => ({ tipo_sigla: sigla, tipo_label: label, tipo_familia: familia }))(
         LicitacionesService.tipoProceso(l?.CodigoExterno || ''),
@@ -2016,6 +2179,74 @@ export class LicitacionesService {
     if (kw.error) throw new BadRequestException(this.faltaMigracionMp(kw.error));
     if (bus.error) throw new BadRequestException(this.faltaMigracionMp(bus.error));
     return { keywords: kw.data || [], busquedas: bus.data || [] };
+  }
+
+  /* ── Exploración automática ─────────────────────────────────────────────
+     La búsqueda completa consulta ~90 términos (~4 min de API y otra tanta
+     cuota), así que ejecutarla a demanda quedó restringido y el resultado se
+     genera solo dos veces al día y se guarda en `mp_exploracion` (una fila).
+     Abrir la pestaña «Explorar» lee esa fila: instantáneo y sin gastar cuota. */
+
+  /** Quiénes pueden lanzar la búsqueda manual (consume cuota de la API). */
+  static exploradoresMp(): string[] {
+    return String(process.env.MP_EXPLORAR_EMAILS || 'beroiza.ariel@gmail.com')
+      .toLowerCase()
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }
+
+  /** Última exploración guardada (o null si nunca ha corrido). */
+  async exploracionGuardada() {
+    const { data, error } = await this.supabase.getClient()
+      .from('mp_exploracion')
+      .select('resultado, actualizado_at, motivo')
+      .eq('id', 1)
+      .maybeSingle();
+    if (error) {
+      if (/does not exist|schema cache/i.test(error.message)) {
+        throw new BadRequestException('Falta aplicar la migración 20260812_mp_exploracion.sql en Supabase.');
+      }
+      throw new BadRequestException(error.message);
+    }
+    if (!data) return null;
+    return { ...(data.resultado as any), actualizado_at: data.actualizado_at, motivo: data.motivo };
+  }
+
+  /** Corre la búsqueda con TODO el catálogo activo y guarda el resultado. */
+  async explorarYGuardar(motivo: string) {
+    const client = this.supabase.getClient();
+    const { data: kws, error } = await client
+      .from('mp_keywords')
+      .select('texto')
+      .eq('activa', true)
+      .order('texto', { ascending: true });
+    if (error) throw new BadRequestException(this.faltaMigracionMp(error));
+    const palabras = (kws || []).map((k: any) => String(k.texto || '').trim()).filter(Boolean);
+    if (!palabras.length) return { guardado: false, motivo: 'catálogo de palabras clave vacío' };
+
+    // Mismos parámetros con que explora la pantalla: ambas fuentes y solo
+    // procesos publicados (los demás no se pueden postular).
+    const resultado = await this.mercadoPublicoBuscar({
+      q: palabras.join(','),
+      fuente: 'todas',
+      estado: 'publicada',
+    });
+
+    const { error: errUp } = await client
+      .from('mp_exploracion')
+      .upsert([{ id: 1, resultado, actualizado_at: new Date().toISOString(), motivo }]);
+    if (errUp) {
+      if (/does not exist|schema cache/i.test(errUp.message)) {
+        throw new BadRequestException('Falta aplicar la migración 20260812_mp_exploracion.sql en Supabase.');
+      }
+      throw new BadRequestException(errUp.message);
+    }
+    return {
+      guardado: true,
+      items: (resultado?.items || []).length,
+      palabras: palabras.length,
+    };
   }
 
   async crearKeywordMp(texto: string, email: string) {

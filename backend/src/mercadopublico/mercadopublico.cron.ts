@@ -116,26 +116,41 @@ export class MercadopublicoCron implements OnModuleInit, OnModuleDestroy {
     this.corriendo = true;
     const t0 = Date.now();
     let consultadas = 0;
+    let guardadas = 0;
     let finalizadas = 0;
     let errores = 0;
     let cuotaAgotada = false;
+    // Tandas seguidas sin guardar ni una ficha: la API no está respondiendo.
+    let secas = 0;
+    let apiCaida = false;
+    let restantes = 0;
     try {
       this.log.log(`Inicio de sincronización ${motivo} (modo ${FORZAR ? 'forzar' : 'normal'}).`);
       for (let i = 0; i < MAX_TANDAS; i++) {
         const r: any = await this.mp.sincronizar({ lote: LOTE, forzar: FORZAR });
         consultadas += r?.consultadas || 0;
+        guardadas += r?.actualizadas || 0;
         finalizadas += r?.finalizadas || 0;
         errores += r?.errores?.length || 0;
         cuotaAgotada = !!r?.cuota_agotada;
+        restantes = r?.restantes || 0;
+        secas = r?.actualizadas ? 0 : secas + 1;
         // Sin cuota no sirve seguir; sin pendientes ni consultas, terminó.
         if (cuotaAgotada || !r?.restantes || !r?.consultadas) break;
+        /* 10 tandas = 120 intentos sin una sola ficha. De noche la API suele
+           responder bien, así que si llega hasta acá está caída de verdad y no
+           tiene sentido seguir toda la madrugada quemando cuota. Es más
+           tolerante que la pantalla (5) porque acá nadie está esperando. */
+        if (secas >= 10) { apiCaida = true; break; }
       }
       const min = Math.round((Date.now() - t0) / 60000);
       this.log.log(
-        `Fin de sincronización ${motivo}: ${consultadas} consultadas · ${finalizadas} con resultado final · ` +
-        `${errores} con error · ${min} min${cuotaAgotada ? ' · CUOTA DIARIA AGOTADA' : ''}.`,
+        `Fin de sincronización ${motivo}: ${guardadas} guardadas de ${consultadas} consultadas · ` +
+        `${finalizadas} con resultado final · ${errores} con error · ${min} min` +
+        `${cuotaAgotada ? ' · CUOTA DIARIA AGOTADA' : ''}` +
+        `${apiCaida ? ` · CORTADA: la API no responde, quedan ${restantes}` : ''}.`,
       );
-      return { consultadas, finalizadas, errores, cuota_agotada: cuotaAgotada, minutos: min };
+      return { consultadas, guardadas, finalizadas, errores, cuota_agotada: cuotaAgotada, api_caida: apiCaida, restantes, minutos: min };
     } catch (e: any) {
       this.log.error(`Sincronización ${motivo} interrumpida: ${String(e?.message || e)}`);
       return { consultadas, finalizadas, errores, error: String(e?.message || e) };

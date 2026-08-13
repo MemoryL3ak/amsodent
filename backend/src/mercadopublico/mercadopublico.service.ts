@@ -79,6 +79,25 @@ function primerDiaMesAnterior(): string {
 
 const RE_CODIGO_MP = /^\d{1,10}-\d{1,10}-[A-Z]{1,3}\d{2}$/i;
 
+/* Código de Mercado Público a partir de lo que se escribió en la cotización, o
+   null si eso no es un código.
+
+   El campo se llena a mano y llega con dos vicios: espacios sueltos —incluso
+   alrededor de los guiones, "799512-1088-COT26 - 2"— y un sufijo de versión
+   cuando se cotiza dos veces el mismo proceso ("2381-638-COT26-2"). Comparando
+   el texto tal cual, esas quedaban fuera del panel: 314 en total.
+
+   Quitar el sufijo es seguro: un código válido termina en letras + 2 dígitos
+   (COT26, LE26…), así que `-<dígitos>` al final nunca es parte del código. */
+function codigoMpDe(raw: unknown): string | null {
+  const limpio = String(raw || '')
+    .trim()
+    .replace(/\s*-\s*/g, '-')   // "1002772-2282-COT26 - 2" → "1002772-2282-COT26-2"
+    .replace(/-\d+$/, '')       // quita el sufijo de versión
+    .toUpperCase();
+  return RE_CODIGO_MP.test(limpio) ? limpio : null;
+}
+
 function normRut(raw: unknown): string {
   return String(raw || '').replace(/[^0-9kK]/g, '').toUpperCase();
 }
@@ -134,16 +153,24 @@ export class MercadopublicoService {
     };
   }
 
-  /* ── Resultados para el panel (mp_resultados + datos internos) ── */
-  async resultados() {
+  /* ── Resultados para el panel (mp_resultados + datos internos) ──
+     Con `desde` (ISO) devuelve solo las fichas consultadas después de ese
+     instante. Es el modo incremental que usa la sincronización para refrescar
+     entre tandas sin volver a bajar el panel completo. */
+  async resultados(desde?: string) {
     const client = this.supabase.getClient();
-    const { data: res, error } = await client
+    // Se descarta un `desde` inválido en vez de fallar: peor que un refresco
+    // caro es un refresco que devuelve un error a mitad de sincronización.
+    const corte = desde && !Number.isNaN(Date.parse(desde)) ? new Date(desde).toISOString() : null;
+    let query = client
       .from('mp_resultados')
       .select('*')
       .order('consultado_at', { ascending: false })
       // 5.000 se quedaba corto: hay 3.337 cotizaciones con código de Mercado
       // Público y el margen se agotaba en meses, truncando el panel sin avisar.
       .range(0, 49999);
+    if (corte) query = query.gt('consultado_at', corte);
+    const { data: res, error } = await query;
     if (error) {
       throw new BadRequestException(
         /does not exist|schema cache/i.test(error.message)
@@ -200,7 +227,7 @@ export class MercadopublicoService {
        lo hacía la ventana de fechas —todas caen dentro de los 240 días— sino
        el tope de filas, que en la práctica movía el corte real a la fecha de
        la cotización número 2.001. */
-    const candidatas: any[] = [];
+    const conCodigo: any[] = [];
     for (let pagina = 0; ; pagina++) {
       const PAGINA = 1000;
       let query = client
@@ -214,7 +241,8 @@ export class MercadopublicoService {
       if (errLics) throw new BadRequestException(errLics.message);
       const filas = lics || [];
       for (const l of filas) {
-        if (RE_CODIGO_MP.test(String(l.id_licitacion || '').trim())) candidatas.push(l);
+        const cod = codigoMpDe(l.id_licitacion);
+        if (cod) conCodigo.push({ ...l, codigo_mp_norm: cod });
       }
       if (filas.length < PAGINA) break;
       // Tope de seguridad: 50.000 cotizaciones es varias veces el tamaño real.
@@ -236,6 +264,38 @@ export class MercadopublicoService {
       );
     }
     const previoPorId = new Map((previos || []).map((p: any) => [p.licitacion_id, p]));
+
+    /* UNA cotización por proceso de Mercado Público.
+
+       Al aceptar los códigos con sufijo entran varias cotizaciones del mismo
+       proceso —la original y sus versiones—, y en Mercado Público hay una sola
+       ficha. Sin este paso se crearía una fila por versión: medido sobre el
+       histórico, 303 fichas duplicadas que inflarían ganadas, perdidas y montos.
+       (Y ya había 36 duplicados de antes, de procesos escritos con el mismo
+       código exacto en dos cotizaciones distintas.)
+
+       Criterio de desempate, en orden:
+         1. La que YA tiene ficha guardada. Es lo primero por continuidad: si se
+            eligiera otra, la ficha vieja quedaría huérfana en `mp_resultados`
+            —que devuelve todo lo guardado— y el proceso aparecería DOS veces en
+            el panel. Medido: 26 casos.
+         2. La que trae el código exacto, que es la cotización original.
+         3. La más reciente, que es la versión vigente. */
+    const porCodigo = new Map<string, any>();
+    const exacta = (l: any) => RE_CODIGO_MP.test(String(l.id_licitacion || '').trim());
+    const tieneFicha = (l: any) => previoPorId.has(l.id);
+    for (const l of conCodigo) {
+      const prev = porCodigo.get(l.codigo_mp_norm);
+      if (!prev) { porCodigo.set(l.codigo_mp_norm, l); continue; }
+      if (tieneFicha(l) !== tieneFicha(prev)) {
+        if (tieneFicha(l)) porCodigo.set(l.codigo_mp_norm, l);
+      } else if (exacta(l) !== exacta(prev)) {
+        if (exacta(l)) porCodigo.set(l.codigo_mp_norm, l);
+      } else if (new Date(l.created_at || 0) > new Date(prev.created_at || 0)) {
+        porCodigo.set(l.codigo_mp_norm, l);
+      }
+    }
+    const candidatas = [...porCodigo.values()];
     const FRESCURA_MS = 6 * 3600 * 1000; // 6 horas
     // Más corta en «forzar»: ahí el objetivo ES refrescar lo ya consultado.
     // Tiene que superar la duración de una pasada completa (~1 h) para que la
@@ -263,19 +323,40 @@ export class MercadopublicoService {
        la normal porque su objetivo es justamente refrescar lo ya cerrado. */
     const ventana = forzar ? FRESCURA_FORZAR_MS : FRESCURA_MS;
 
+    /* Un fallo NO saca el proceso de la cola: lo manda al final.
+
+       El problema que había que resolver es de ORDEN, no de reintento. Un
+       proceso que falla no escribe fila, así que sigue contando como «nunca
+       consultado», y como esos van primero, las mismas fichas rotas volvían a
+       encabezar cada tanda y las demás no se alcanzaban nunca.
+
+       La primera solución fue excluirlas 6 horas, y con la API en un mal día
+       —medido: 3 de 12 responden en horario hábil— eso vaciaba la cola entera:
+       `pendientes` quedaba en 0, la pasada se daba por terminada y avisaba
+       «completa» con miles sin consultar. Ahora solo se saltan durante 2
+       minutos, lo justo para no repetirlas dentro de la misma oleada, y luego
+       vuelven detrás de todo lo que no se ha intentado. Así una pasada larga
+       recorre primero lo nuevo y después reintenta lo fallido, tantas veces
+       como haga falta, en vez de rendirse. */
+    const REINTENTO_MS = 2 * 60 * 1000; // 2 minutos
+
     const pendientesTotales = candidatas
       .filter((l: any) => {
-        // Falló hace poco: se salta para que la cola avance en vez de
-        // reintentar lo mismo una y otra vez.
         const fallo = fallosRecientes.get(l.id);
-        if (fallo && Date.now() - fallo < ventana) return false;
+        if (fallo && Date.now() - fallo < REINTENTO_MS) return false;
         const prev: any = previoPorId.get(l.id);
         if (!prev) return true; // nunca consultado
         if (!forzar && ESTADOS_FINALES.has(String(prev.estado_mp || ''))) return false;
         return Date.now() - new Date(prev.consultado_at || 0).getTime() > ventana;
       })
-      // Nunca consultados primero; luego los consultados hace más tiempo.
       .sort((a: any, b: any) => {
+        // 1º lo que no ha fallado en esta corrida; entre fallidos, el que
+        // falló hace más rato (más probable que la API ya se haya recuperado).
+        const fa = fallosRecientes.get(a.id) || 0;
+        const fb = fallosRecientes.get(b.id) || 0;
+        if (!!fa !== !!fb) return fa ? 1 : -1;
+        if (fa && fb) return fa - fb;
+        // 2º nunca consultados; luego los consultados hace más tiempo.
         const pa: any = previoPorId.get(a.id);
         const pb: any = previoPorId.get(b.id);
         if (!pa && pb) return -1;
@@ -296,7 +377,9 @@ export class MercadopublicoService {
     for (let i = 0; i < pendientes.length && !cuotaAgotada; i += CONCURRENCIA_SYNC) {
       const tanda = pendientes.slice(i, i + CONCURRENCIA_SYNC);
       await Promise.all(tanda.map(async (lic: any) => {
-        const codigo = String(lic.id_licitacion).trim();
+        // El código YA normalizado: es el que entiende la API. Usar el texto
+        // crudo de la cotización devolvía 404 en las que traían sufijo.
+        const codigo = lic.codigo_mp_norm || String(lic.id_licitacion).trim();
         const esCompraAgil = /-COT\d{2}$/i.test(codigo);
         try {
           consultadas += 1;

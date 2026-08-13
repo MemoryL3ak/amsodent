@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Trophy, TrendingDown, RefreshCw, Search, ChevronDown, ChevronRight,
   Target, Percent, AlertTriangle, KeyRound, Crown, Building2, Scale,
-  ArrowUp, ArrowDown, ArrowUpDown, Download, X, Square,
+  ArrowUp, ArrowDown, ArrowUpDown, Download, X, Square, CalendarRange,
 } from "lucide-react";
 import { api } from "../lib/api";
 import Toast from "../components/Toast";
@@ -23,6 +23,14 @@ import { SunflowerIcon } from "../components/DamarIAWidget";
 const fmt$ = (v) => (v == null || Number.isNaN(Number(v)) ? "—" : `$${Math.round(Number(v)).toLocaleString("es-CL")}`);
 const fmtPct = (v) => (v == null || !Number.isFinite(v) ? "—" : `${v > 0 ? "+" : ""}${v.toFixed(1)}%`);
 const fmtFecha = (iso) => (iso ? new Date(iso).toLocaleDateString("es-CL", { day: "2-digit", month: "2-digit", year: "numeric" }) : "—");
+
+/* Un "AAAA-MM-DD" suelto se muestra dando vuelta las partes, sin pasar por
+   `new Date`: eso lo interpretaría como medianoche UTC y en Chile (UTC-4/-3)
+   restaría un día, así que "2026-08-01" se leería "31-07-2026". */
+const diaLegible = (ymd) => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(ymd || ""));
+  return m ? `${m[3]}-${m[2]}-${m[1]}` : String(ymd || "");
+};
 
 /* Tiempo restante en palabras. Se redondea a propósito: es una estimación que
    se recalcula sola con el ritmo real de la corrida, no un cronómetro. */
@@ -75,8 +83,21 @@ export default function AnalisisMercadoPublico() {
   const [filtroTipo, setFiltroTipo] = useState("");
   // Filtro de la TABLA por fecha de adjudicación. Es distinto del rango de
   // arriba, que solo define qué cotizaciones se consultan contra la API.
-  const [adjDesde, setAdjDesde] = useState("");
-  const [adjHasta, setAdjHasta] = useState("");
+  /* El período se mide SIEMPRE por fecha de adjudicación.
+
+     Hubo antes dos rangos sueltos —uno por fecha de nuestra cotización, otro
+     por adjudicación— y cada uno daba un número distinto para el mismo mes sin
+     que se viera por qué: 6 ganadas por creación, 13 por adjudicación, 5
+     cruzando ambos. Se unificaron en un solo rango con un selector de criterio
+     (cierre / adjudicación / nuestra cotización), y el selector se quitó el
+     2026-08-12 por decisión del equipo: en la práctica siempre se mira por
+     adjudicación, que es cuando el resultado es un hecho, y tener la opción
+     abierta solo reabría la duda de qué estaba midiendo cada cifra.
+
+     Consecuencia asumida: lo que aún no se adjudica no tiene esta fecha, así
+     que al poner un rango desaparece —son ~380 procesos, casi todo lo que está
+     en curso—. Se avisa en pantalla para que no parezca pérdida de datos. */
+  const fechaPeriodo = (f) => f.fecha_adjudicacion;
   const [expandida, setExpandida] = useState(null);
   const [donaPorMonto, setDonaPorMonto] = useState(false);
   // Orden de la tabla: por defecto las adjudicaciones más recientes primero.
@@ -86,9 +107,53 @@ export default function AnalisisMercadoPublico() {
   const [syncDesde, setSyncDesde] = useState("");
   const [syncHasta, setSyncHasta] = useState("");
 
+  /* Instante de la ficha más reciente que ya tenemos en pantalla. Es el corte
+     del refresco incremental, y se toma de los DATOS y no del reloj del
+     navegador a propósito: `consultado_at` lo escribe el servidor, así que un
+     desfase de reloj de un par de minutos haría perder fichas (corte
+     adelantado) o traerlas repetidas (corte atrasado). */
+  const corteRef = useRef(null);
+
+  function maxConsultado(filas) {
+    let max = 0;
+    for (const r of filas) {
+      const t = Date.parse(r?.consultado_at || "");
+      if (t && t > max) max = t;
+    }
+    return max ? new Date(max).toISOString() : null;
+  }
+
   async function cargarResultados() {
     const res = await api.get("/mercado-publico/resultados");
-    setResultados(Array.isArray(res) ? res : []);
+    const filas = Array.isArray(res) ? res : [];
+    setResultados(filas);
+    corteRef.current = maxConsultado(filas);
+  }
+
+  /* Refresco INCREMENTAL entre tandas: pide solo las fichas consultadas después
+     del corte y las mezcla con lo que ya está en pantalla.
+
+     Por qué existe: la carga completa del panel pesa 6 MB hoy y unos 24 MB
+     proyectados con el catálogo entero (3.337 procesos), así que pedirla entre
+     tandas era carísimo y solo se hacía cada 5 tandas — o sea, una vez cada
+     ~4 minutos. Ese era el motivo de que la barra avanzara pero los
+     indicadores y la tabla se quedaran congelados. El delta de una tanda son
+     12 fichas, unos 90 KB: ya se puede refrescar en cada una. */
+  async function refrescarNuevos() {
+    if (!corteRef.current) { await cargarResultados(); return; }
+    const res = await api.get(`/mercado-publico/resultados?desde=${encodeURIComponent(corteRef.current)}`);
+    const nuevas = Array.isArray(res) ? res : [];
+    if (!nuevas.length) return;
+    corteRef.current = maxConsultado(nuevas) || corteRef.current;
+    setResultados((prev) => {
+      // Por `licitacion_id`: una ficha re-consultada PISA a la anterior (es lo
+      // que hace «Forzar»), y una nunca vista se suma.
+      const porId = new Map(prev.map((r) => [r.licitacion_id, r]));
+      for (const r of nuevas) porId.set(r.licitacion_id, r);
+      return [...porId.values()].sort(
+        (a, b) => Date.parse(b?.consultado_at || 0) - Date.parse(a?.consultado_at || 0),
+      );
+    });
   }
 
   async function cargar() {
@@ -131,24 +196,34 @@ export default function AnalisisMercadoPublico() {
 
   async function sincronizar(forzar = false) {
     setSincronizando(true);
-    setProgresoSync({ hechas: 0, restantes: null, etaMs: null, transcurrido: 0 });
+    setProgresoSync({ hechas: 0, guardadas: 0, restantes: null, etaMs: null, transcurrido: 0 });
     detenerRef.current = false;
     setDeteniendo(false);
     const inicio = Date.now();
     let hechas = 0;
+    let guardadas = 0;
     let finalizadas = 0;
     let erroresTotal = 0;
     let cuotaAgotada = false;
     let detenida = false;
+    // Tandas seguidas sin guardar NADA. Es la señal de que la API se cayó:
+    // los intentos siguen, la barra avanza, pero no llega ni una ficha.
+    let secas = 0;
+    let apiCaida = false;
+    let ultimasRestantes = 0;
     try {
       // El lote calza con el pool del backend: una tanda es UNA oleada de
       // consultas paralelas (~30 s), en vez de encadenar varias dentro de la
       // misma request y arriesgar el corte del proxy.
       const LOTE = 12;
-      // 150 × 12 = 1.800 procesos: más que el total de cotizaciones con código
-      // de Mercado Público, así que una sola pasada alcanza a terminar. El tope
-      // anterior (60 × 8 = 480) obligaba a volver a pulsar el botón.
-      const MAX_TANDAS = 150;
+      /* 300 × 12 = 3.600 procesos, por encima de las 3.348 cotizaciones con
+         código de Mercado Público que hay hoy: una sola pasada alcanza a
+         recorrer TODO el histórico sin volver a pulsar el botón. Estaba en 150
+         (1.800), calculado cuando el panel solo cubría el mes en curso; para
+         una puesta al día desde febrero —2.402 pendientes— se habría cortado a
+         mitad de camino. Es solo un tope de seguridad: el bucle termina solo
+         cuando no quedan pendientes. */
+      const MAX_TANDAS = 300;
       for (let i = 0; i < MAX_TANDAS; i++) {
         if (detenerRef.current) { detenida = true; break; }
         abortRef.current = new AbortController();
@@ -159,41 +234,66 @@ export default function AnalisisMercadoPublico() {
           forzar,
         }, { signal: abortRef.current.signal });
         hechas += r.consultadas || 0;
+        // `consultadas` cuenta INTENTOS —el backend lo suma antes de llamar a
+        // la API—, mientras que `actualizadas` cuenta fichas realmente
+        // guardadas. Se muestran las dos: cuando Mercado Público está lento y
+        // devuelve 504, la barra avanza igual y sin este dato parecería que se
+        // guardó algo que nunca llegó.
+        guardadas += r.actualizadas || 0;
         finalizadas += r.finalizadas || 0;
         erroresTotal += r.errores?.length || 0;
         cuotaAgotada = !!r.cuota_agotada;
         const restantes = r.restantes ?? 0;
-        // El tiempo restante se estima con el ritmo REAL de esta corrida, no
-        // con una constante: la API de Mercado Público cambia mucho de un día
-        // a otro (medido: entre 11 y 29 s por ficha) y una cifra fija mentiría.
-        // Cada intento saca un proceso de la cola —si falla queda anotado y se
-        // salta—, así que el ritmo de consultas ES el ritmo de avance.
+        // Un fallo ya no saca el proceso de la cola, solo lo manda al final, así
+        // que el avance REAL es lo guardado y con eso se estima lo que falta.
+        // Estimar con los intentos daría un tiempo optimista y falso en cuanto
+        // la API empieza a devolver 504.
+        secas = r.actualizadas ? 0 : secas + 1;
+        ultimasRestantes = restantes;
         const transcurrido = Date.now() - inicio;
-        const etaMs = hechas > 0 ? (transcurrido / hechas) * restantes : null;
-        setProgresoSync({ hechas, restantes, etaMs, transcurrido });
-        // Recargar la tabla entera en cada tanda son cientos de descargas de
-        // hasta 5.000 filas con su join: se refresca cada 5 tandas, y al final.
-        if (i % 5 === 4) await cargarResultados();
+        /* Hace falta una muestra mínima para estimar. Con 1 ficha guardada en
+           3 minutos la regla de tres daba «quedan 11 h 26 min», una cifra tan
+           precisa como inventada: basta que la siguiente tanda traiga 8 fichas
+           para que pase a 40 minutos. Hasta las 10 guardadas se muestra
+           «calculando» en vez de un número que asusta y no significa nada. */
+        const MUESTRA_MINIMA = 10;
+        const etaMs = guardadas >= MUESTRA_MINIMA ? (transcurrido / guardadas) * restantes : null;
+        setProgresoSync({ hechas, guardadas, restantes, etaMs, transcurrido });
+        // Refresco en CADA tanda: al ser incremental cuesta ~90 KB, así que los
+        // indicadores y la tabla se mueven cada ~45 s en vez de cada 4 minutos.
+        await refrescarNuevos();
         if (cuotaAgotada || !r.restantes || !r.consultadas) break;
+        /* 5 tandas seguidas = 60 intentos sin una sola ficha guardada. Antes se
+           reintentaba en vano hasta agotar el tope; ahora se corta y se dice
+           que fue la API, en vez de anunciar «completa» dejando miles fuera. */
+        if (secas >= 5) { apiCaida = true; break; }
       }
-      await cargarResultados();
-      const partes = [`${hechas} proceso${hechas === 1 ? "" : "s"} consultado${hechas === 1 ? "" : "s"}`];
+      await refrescarNuevos();
+      const partes = [`${guardadas} ficha${guardadas === 1 ? "" : "s"} actualizada${guardadas === 1 ? "" : "s"}`];
+      // Solo se menciona el total intentado cuando NO coincide con lo guardado:
+      // si coincide, repetir el mismo número dos veces confunde.
+      if (hechas !== guardadas) partes.push(`de ${hechas} consultadas`);
       if (finalizadas) partes.push(`${finalizadas} con resultado final`);
       if (cuotaAgotada) partes.push("cuota diaria de la API agotada, el resto queda para mañana");
       if (erroresTotal) partes.push(`${erroresTotal} con error`);
+      /* Tres finales distintos, y hay que decir cuál fue: antes cualquiera de
+         ellos anunciaba «completa», así que rendirse porque la API no responde
+         se leía igual que terminar el trabajo. */
       setToast({
-        type: detenida ? "info" : erroresTotal || cuotaAgotada ? "info" : "success",
+        type: detenida || apiCaida ? "info" : erroresTotal || cuotaAgotada ? "info" : "success",
         message: detenida
           ? `Sincronización detenida: ${partes.join(" · ")}. Lo consultado quedó guardado.`
+          : apiCaida
+          ? `Mercado Público no está respondiendo: ${partes.join(" · ")}. Quedan ${ultimasRestantes} por consultar; vuelve a intentarlo más tarde o espera la corrida automática de las 23:00.`
           : `Sincronización completa: ${partes.join(" · ")}.`,
       });
     } catch (e) {
       // Abortar la request en vuelo NO es un error: es el usuario deteniendo.
       if (detenerRef.current || e?.name === "AbortError") {
-        await cargarResultados();
+        await refrescarNuevos();
         setToast({
           type: "info",
-          message: `Sincronización detenida: ${hechas} proceso${hechas === 1 ? "" : "s"} consultado${hechas === 1 ? "" : "s"}. Lo consultado quedó guardado.`,
+          message: `Sincronización detenida: ${guardadas} ficha${guardadas === 1 ? "" : "s"} actualizada${guardadas === 1 ? "" : "s"}. Lo consultado quedó guardado.`,
         });
       } else {
         setToast({ type: "error", message: e?.message || "No se pudo sincronizar." });
@@ -208,14 +308,66 @@ export default function AnalisisMercadoPublico() {
   }
 
   /* ── Métricas ── */
-  const filas = useMemo(
-    () => resultados.map((r) => ({ ...r, clase: clasificar(r), brecha: brechaPct(r) })),
-    [resultados],
+  /* Una fila por PROCESO de Mercado Público, no por cotización.
+
+     Cuando el mismo proceso se cotiza dos veces —la original y una versión
+     corregida— quedan dos cotizaciones distintas apuntando al mismo código, y
+     cada una guardó su ficha. Medido: 26 procesos duplicados, contándose doble
+     en todas las cifras del panel. Se queda la ficha consultada más
+     recientemente, que es la que trae el estado más fresco. */
+  const filas = useMemo(() => {
+    const porCodigo = new Map();
+    for (const r of resultados) {
+      // Sin código no hay con qué agrupar: se deja tal cual, con su propia clave.
+      const clave = r.codigo_mp || `sin-codigo:${r.licitacion_id}`;
+      const prev = porCodigo.get(clave);
+      if (!prev || Date.parse(r.consultado_at || 0) > Date.parse(prev.consultado_at || 0)) {
+        porCodigo.set(clave, r);
+      }
+    }
+    return [...porCodigo.values()].map((r) => ({ ...r, clase: clasificar(r), brecha: brechaPct(r) }));
+  }, [resultados]);
+
+  /* Base de TODA la pantalla: tarjetas, gráficos, simulador y tabla salen de
+     aquí. Antes solo la tabla filtraba y los indicadores se calculaban sobre el
+     total, así que convivían dos períodos sin avisar: la tarjeta decía 32
+     ganadas (histórico) y la tabla 13 (agosto).
+
+     Se aplican los DOS rangos de la pantalla:
+
+     · El de arriba, por fecha de nuestra cotización. Es el que se usa para
+       elegir qué sincronizar, y es el período en que uno piensa cuando dice
+       "quiero ver agosto". Sirve además porque TODAS las fichas tienen esa
+       fecha, así que acotar no esconde nada.
+     · «Adjudicada entre», por fecha de adjudicación del proceso. Más fino,
+       para mirar cuándo se resolvieron.
+
+     No entran ni el filtro de clase ni la búsqueda: la dona se desglosa POR
+     clase —filtrar por clase la dejaría de un solo color— y la búsqueda es
+     para encontrar un proceso puntual, no para redefinir el período. */
+  const enRango = useMemo(() => {
+    if (!syncDesde && !syncHasta) return filas;
+    return filas.filter((f) => {
+      // Sin fecha de adjudicación no se puede afirmar que caiga en el rango.
+      const dia = String(fechaPeriodo(f) || "").slice(0, 10);
+      if (!dia) return false;
+      if (syncDesde && dia < syncDesde) return false;
+      if (syncHasta && dia > syncHasta) return false;
+      return true;
+    });
+  }, [filas, syncDesde, syncHasta]);
+
+  /* Cuántas se caen por no tener fecha de adjudicación: son los que siguen
+     abiertos, y se van de golpe en cuanto se pone un rango. Sin avisarlo
+     parece que se hubieran perdido datos. */
+  const sinFechaFuera = useMemo(
+    () => (syncDesde || syncHasta ? filas.filter((f) => !fechaPeriodo(f)).length : 0),
+    [filas, syncDesde, syncHasta],
   );
 
   const stats = useMemo(() => {
-    const ganadas = filas.filter((f) => f.clase === "ganada");
-    const perdidas = filas.filter((f) => f.clase === "perdida");
+    const ganadas = enRango.filter((f) => f.clase === "ganada");
+    const perdidas = enRango.filter((f) => f.clase === "perdida");
     const decididas = ganadas.length + perdidas.length;
     const montoGanado = ganadas.reduce((s, f) => s + (Number(f.monto_nuestro) || 0), 0);
     const oportunidadPerdida = perdidas.reduce((s, f) => s + (Number(f.monto_ganador) || 0), 0);
@@ -224,22 +376,22 @@ export default function AnalisisMercadoPublico() {
     // Perdidas "por poco": brecha menor al 5%.
     const casiGanadas = brechas.filter((b) => b <= 5).length;
     return {
-      total: filas.length,
+      total: enRango.length,
       ganadas: ganadas.length,
       perdidas: perdidas.length,
-      enCurso: filas.filter((f) => f.clase === "en_curso").length,
+      enCurso: enRango.filter((f) => f.clase === "en_curso").length,
       tasa: decididas ? (ganadas.length / decididas) * 100 : null,
       montoGanado,
       oportunidadPerdida,
       brechaProm,
       casiGanadas,
     };
-  }, [filas]);
+  }, [enRango]);
 
   // Ranking de competidores que nos han ganado.
   const competidores = useMemo(() => {
     const mapa = new Map();
-    for (const f of filas) {
+    for (const f of enRango) {
       if (f.clase !== "perdida" || !f.ganador_nombre) continue;
       const key = f.ganador_rut || f.ganador_nombre;
       const prev = mapa.get(key) || { nombre: f.ganador_nombre, rut: f.ganador_rut, veces: 0, monto: 0, es_emt: f.ganador_es_emt };
@@ -248,22 +400,22 @@ export default function AnalisisMercadoPublico() {
       mapa.set(key, prev);
     }
     return [...mapa.values()].sort((a, b) => b.veces - a.veces || b.monto - a.monto).slice(0, 8);
-  }, [filas]);
+  }, [enRango]);
 
   // Perdidas más estrechas (donde estuvimos más cerca de ganar).
   const perdidasEstrechas = useMemo(
     () =>
-      filas
+      enRango
         .filter((f) => f.clase === "perdida" && Number.isFinite(f.brecha) && f.brecha > 0)
         .sort((a, b) => a.brecha - b.brecha)
         .slice(0, 8),
-    [filas],
+    [enRango],
   );
 
   // Evolución mensual (por fecha de cierre del proceso), últimos 8 meses con datos.
   const tendencia = useMemo(() => {
     const mapa = new Map();
-    for (const f of filas) {
+    for (const f of enRango) {
       const iso = f.fecha_cierre || f.consultado_at;
       const d = iso ? new Date(iso) : null;
       if (!d || Number.isNaN(d.getTime())) continue;
@@ -275,28 +427,22 @@ export default function AnalisisMercadoPublico() {
       mapa.set(key, b);
     }
     return [...mapa.values()].sort((a, b) => a.key.localeCompare(b.key)).slice(-8);
-  }, [filas]);
+  }, [enRango]);
 
+  /* La tabla parte de la MISMA base que los indicadores y solo agrega encima
+     los filtros propios de la tabla. Antes repetía aquí la lógica de fechas, y
+     ese duplicado es lo que permitía que ambas partes divergieran. */
   const filtradas = useMemo(() => {
     const q = busqueda.trim().toLowerCase();
-    return filas.filter((f) => {
+    return enRango.filter((f) => {
       if (filtroClase && f.clase !== filtroClase) return false;
       if (filtroTipo && f.tipo !== filtroTipo) return false;
-      // Filtro por fecha de adjudicación (la que muestra la tabla). Los
-      // procesos sin adjudicar no tienen esa fecha, así que al acotar el rango
-      // quedan fuera: es lo correcto, no se puede afirmar que caigan dentro.
-      if (adjDesde || adjHasta) {
-        if (!f.fecha_adjudicacion) return false;
-        const dia = String(f.fecha_adjudicacion).slice(0, 10);
-        if (adjDesde && dia < adjDesde) return false;
-        if (adjHasta && dia > adjHasta) return false;
-      }
       if (!q) return true;
       return [f.codigo_mp, f.organismo, f.ganador_nombre, f.interna?.nombre, f.interna?.nombre_entidad]
         .map((s) => String(s || "").toLowerCase())
         .some((s) => s.includes(q));
     });
-  }, [filas, busqueda, filtroClase, filtroTipo, adjDesde, adjHasta]);
+  }, [enRango, busqueda, filtroClase, filtroTipo]);
 
   const ordenadas = useMemo(() => {
     const val = (f) => {
@@ -352,9 +498,14 @@ export default function AnalisisMercadoPublico() {
   // de entrada un análisis completo (responde en texto y, con el parlante
   // activado, también con su voz).
   function preguntarleADamaria() {
-    const decididas = filas.filter((f) => f.clase === "ganada" || f.clase === "perdida");
+    const decididas = enRango.filter((f) => f.clase === "ganada" || f.clase === "perdida");
     const contexto = {
       panel: "Análisis Mercado Público (postulaciones vs oferta ganadora, montos brutos con IVA)",
+      // Sin decirle el período, DamarIA habla del histórico completo aunque las
+      // cifras que recibe estén acotadas a un rango.
+      periodo: syncDesde || syncHasta
+        ? { medido_por: 'fecha de adjudicación', desde: syncDesde || null, hasta: syncHasta || null }
+        : "todo el histórico disponible",
       kpis: {
         procesos_analizados: stats.total,
         ganadas: stats.ganadas,
@@ -400,21 +551,19 @@ export default function AnalisisMercadoPublico() {
         </div>
         <div className="page-actions" style={{ gap: 8, alignItems: "flex-end", flexWrap: "wrap" }}>
           <div>
-            {/* Este rango NO filtra la tabla: solo acota qué cotizaciones se
-                consultan contra la API al sincronizar. Se confundía con un
-                filtro, de ahí el rótulo explícito. */}
+            {/* Único rango de fechas de la pantalla. Acota el panel completo
+                —indicadores, gráficos y tabla— con la fecha que se elija al
+                lado, y además define qué se consulta al sincronizar. */}
             <div style={{ fontSize: 10.5, fontWeight: 700, color: "var(--text-muted)", letterSpacing: ".03em", marginBottom: 3 }}
-              title="No filtra la tabla. Define qué cotizaciones tuyas se consultan contra Mercado Público al sincronizar. Para filtrar lo que ves, usa 'Adjudicada entre', más abajo.">
-              QUÉ SINCRONIZAR · POR FECHA DE TU COTIZACIÓN (NO FILTRA LA TABLA)
+              title="Por fecha de adjudicación. Acota todo el panel: indicadores, gráficos y tabla. Los procesos aún sin adjudicar quedan fuera, porque no hay fecha con la cual ubicarlos. Vacío = se muestra todo. Al sincronizar, este rango se lee como fecha de tu cotización, que es lo que entiende la API.">
+              PERÍODO · POR FECHA DE ADJUDICACIÓN
             </div>
-            {/* Los dos campos se reparten el ancho disponible en vez de exigir
-                150px cada uno. */}
             <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-              <div style={{ flex: "1 1 130px", minWidth: 0 }} title="Desde (vacío = día 1 del mes anterior)">
+              <div style={{ flex: "1 1 120px", minWidth: 0 }} title="Desde (vacío = se muestra todo)">
                 <DateFilter value={syncDesde} onChange={setSyncDesde} placeholder="Desde" disabled={sincronizando} />
               </div>
               <span style={{ color: "var(--text-muted)", fontSize: 12 }}>→</span>
-              <div style={{ flex: "1 1 130px", minWidth: 0 }} title="Hasta (vacío = hoy)">
+              <div style={{ flex: "1 1 120px", minWidth: 0 }} title="Hasta (vacío = hoy)">
                 <DateFilter
                   value={syncHasta}
                   onChange={setSyncHasta}
@@ -425,7 +574,7 @@ export default function AnalisisMercadoPublico() {
               </div>
             </div>
           </div>
-          <button className="btn btn-secondary" onClick={preguntarleADamaria} disabled={loading || filas.length === 0}
+          <button className="btn btn-secondary" onClick={preguntarleADamaria} disabled={loading || enRango.length === 0}
             title="Abre a DamarIA con todos los datos de este panel cargados: pídele el análisis por texto o voz"
             style={{ display: "inline-flex", alignItems: "center", gap: 7, height: 38 }}>
             <SunflowerIcon size={15} /> Pregúntale a DamarIA
@@ -458,6 +607,13 @@ export default function AnalisisMercadoPublico() {
             <span>
               <b>{progresoSync.hechas}</b>
               {progresoSync.restantes != null && ` de ${progresoSync.hechas + progresoSync.restantes}`} procesos consultados
+              {/* Lo consultado y lo guardado no siempre coinciden: cuando la API
+                  se demora más de 30 s devuelve 504 y esa ficha no trae datos.
+                  Sin este contador la barra avanzaba igual y no había forma de
+                  saber que el panel no se estaba moviendo por eso. */}
+              {progresoSync.guardadas < progresoSync.hechas && (
+                <span style={{ color: "var(--text-muted)" }}> · {progresoSync.guardadas} guardadas</span>
+              )}
               {progresoSync.transcurrido > 0 && (
                 <span style={{ color: "var(--text-muted)" }}> · {restanteAprox(progresoSync.transcurrido)} transcurridos</span>
               )}
@@ -511,6 +667,30 @@ export default function AnalisisMercadoPublico() {
         </div>
       )}
 
+      {/* Con un rango puesto, TODA la pantalla habla de ese período. Se dice
+          explícitamente porque el salto de cifras es grande y, en el caso de
+          «Adjudicada entre», porque lo que aún no se adjudica no tiene fecha
+          con la cual decidir si cae dentro del rango y desaparece de golpe. */}
+      {(syncDesde || syncHasta) && (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", border: "1px solid var(--border)", background: "var(--neutral-bg)", borderRadius: 10, padding: "9px 14px", marginBottom: 12, fontSize: 12.5, color: "var(--text-soft)" }}>
+          <CalendarRange size={14} style={{ flexShrink: 0 }} />
+          <span>
+            Indicadores, gráficos y tabla acotados por <b>fecha de adjudicación</b>
+            {syncDesde && <> desde <b>{diaLegible(syncDesde)}</b></>}
+            {syncHasta && <> hasta <b>{diaLegible(syncHasta)}</b></>}.
+            {sinFechaFuera > 0 && (
+              <span style={{ color: "var(--text-muted)" }}>
+                {" "}Quedan fuera {sinFechaFuera} aún sin adjudicar.
+              </span>
+            )}
+          </span>
+          <button type="button" className="btn btn-ghost btn-sm" style={{ marginLeft: "auto" }}
+            onClick={() => { setSyncDesde(""); setSyncHasta(""); }}>
+            Ver todo
+          </button>
+        </div>
+      )}
+
       {/* ── KPIs (clic = filtrar la tabla) ── */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12, marginBottom: 16 }}>
         <Kpi icon={<Target size={17} />} tono="#1e9295" fondo="#e6f6f6" label="Procesos analizados" valor={stats.total}
@@ -536,7 +716,7 @@ export default function AnalisisMercadoPublico() {
             {donaPorMonto ? "Por Monto" : "Por Cantidad"}
           </button>
         }>
-          <DonaResultados filas={filas} porMonto={donaPorMonto} />
+          <DonaResultados filas={enRango} porMonto={donaPorMonto} />
         </Panel>
 
         <Panel titulo="Perdidas más estrechas" sub="Qué tan cerca estuvimos (brecha vs ganador)">
@@ -587,7 +767,7 @@ export default function AnalisisMercadoPublico() {
       </div>
 
       {/* ── Simulador de precio ── */}
-      <SimuladorPrecio filas={filas} />
+      <SimuladorPrecio filas={enRango} />
 
       {/* ── Filtros ── */}
       <div className="filter-bar">
@@ -614,40 +794,16 @@ export default function AnalisisMercadoPublico() {
             <option value="licitacion">Licitación</option>
           </select>
         </div>
-        <div className="filter-field">
-          <label className="filter-label">Adjudicada entre</label>
-          <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-            <div style={{ width: 148, minWidth: 0 }} title="Solo procesos adjudicados desde esta fecha">
-              <DateFilter value={adjDesde} onChange={setAdjDesde} placeholder="Desde" />
-            </div>
-            <span style={{ color: "var(--text-muted)", fontSize: 12 }}>→</span>
-            <div style={{ width: 148, minWidth: 0 }} title="Solo procesos adjudicados hasta esta fecha">
-              <DateFilter
-                value={adjHasta}
-                onChange={setAdjHasta}
-                placeholder="Hasta"
-                minDate={adjDesde ? new Date(`${adjDesde}T00:00:00`) : null}
-              />
-            </div>
-            {(adjDesde || adjHasta) && (
-              <button className="btn btn-ghost btn-sm" onClick={() => { setAdjDesde(""); setAdjHasta(""); }} title="Quitar el filtro de fechas">
-                <X size={14} />
-              </button>
-            )}
-          </div>
-        </div>
+        {/* El rango de fechas ya no vive aquí: era un segundo filtro por
+            adjudicación que competía con el de arriba y daba cifras distintas
+            para el mismo mes. Ahora hay un solo período, arriba, y esa lectura
+            por adjudicación es una de sus opciones. */}
       </div>
-
-      {(adjDesde || adjHasta) && (
-        <div style={{ fontSize: 12, color: "#b45309", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "7px 11px", marginTop: 8 }}>
-          Filtrando por fecha de adjudicación: los procesos aún sin adjudicar (en curso, desiertos o cancelados) quedan fuera.
-        </div>
-      )}
 
       {/* ── Tabla ── */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, marginBottom: 6, gap: 10 }}>
         <div style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 600 }}>
-          {loading ? "" : `${filtradas.length} proceso${filtradas.length === 1 ? "" : "s"}${filtradas.length !== filas.length ? ` (de ${filas.length})` : ""}`}
+          {loading ? "" : `${filtradas.length} proceso${filtradas.length === 1 ? "" : "s"}${filtradas.length !== enRango.length ? ` (de ${enRango.length})` : ""}`}
         </div>
         <button className="btn btn-ghost" onClick={exportarCsv} disabled={!filtradas.length}
           style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, padding: "5px 12px" }}>

@@ -39,6 +39,38 @@ function fmtFechaHora(v, conHora) {
   return `${fecha} ${hora}`;
 }
 
+/* Respaldo de la vista del explorador entre navegaciones. El resultado de una
+   búsqueda manual vivía solo en el estado de la pantalla: con salir a otra
+   sección y volver, 4 minutos de búsqueda desaparecían. sessionStorage
+   sobrevive a la navegación y a un F5, y muere solo con la pestaña del
+   navegador — justo el ciclo de vida que uno espera de una búsqueda. */
+const MP_VISTA_CACHE = "exploracionMpVista";
+const MP_VISTA_CACHE_MS = 6 * 3600 * 1000; // más vieja que esto ya no informa
+
+function leerVistaExploracion() {
+  try {
+    const j = JSON.parse(sessionStorage.getItem(MP_VISTA_CACHE) || "null");
+    if (!j || Date.now() - (j.ts || 0) > MP_VISTA_CACHE_MS) return null;
+    return j;
+  } catch {
+    return null;
+  }
+}
+
+/* Tiempo restante en palabras. Redondeado a propósito: es una estimación que
+   se recalcula con el ritmo real de las tandas ya respondidas, no un
+   cronómetro. (Mismo formato que usa la sincronización del Análisis.) */
+function restanteAprox(ms) {
+  if (ms == null || !Number.isFinite(ms) || ms < 0) return null;
+  const seg = Math.round(ms / 1000);
+  if (seg < 60) return "menos de 1 min";
+  const min = Math.round(seg / 60);
+  if (min < 60) return `${min} min`;
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  return m ? `${h} h ${m} min` : `${h} h`;
+}
+
 // Interpreta la fecha de "Cierre" que viene del xlsx (datos.cierre). Acepta
 // "DD-MM-YYYY[ HH:mm]", "DD-MM-YY HH:mm" (año de 2 dígitos, formato actual
 // del portal), "DD/MM/YYYY", ISO "YYYY-MM-DD..." y timestamps.
@@ -175,7 +207,9 @@ export default function LicitacionesDisponibles({ embedded = false }) {
   // poder comparar búsquedas y obtener los mismos resultados).
   const [mpDesde, setMpDesde] = useState("");
   const [mpHasta, setMpHasta] = useState("");
-  const [mpRes, setMpRes] = useState(null); // { items, paginacion, por_keyword, actualizado }
+  // { items, paginacion, por_keyword, actualizado } — arranca con lo que haya
+  // respaldado en la sesión, así volver a esta pantalla no borra la búsqueda.
+  const [mpRes, setMpRes] = useState(() => leerVistaExploracion()?.res || null);
   // Catálogo de palabras clave y búsquedas guardadas (tablas mp_keywords /
   // mp_busquedas). Arrancan vacíos y se pueblan al montar.
   const [mpCatalogo, setMpCatalogo] = useState([]);
@@ -184,31 +218,195 @@ export default function LicitacionesDisponibles({ embedded = false }) {
   const [mpPrompt, setMpPrompt] = useState(null);            // modal de texto (reemplaza window.prompt)
   const [confirmGenerico, setConfirmGenerico] = useState(null); // confirmación (reemplaza window.confirm)
   const [mpBuscando, setMpBuscando] = useState(false);
+  // Avance de la búsqueda por tandas: { hechas, total } en palabras clave.
+  const [mpProgreso, setMpProgreso] = useState(null);
+  /* La búsqueda manual gasta ~90 consultas de la cuota diaria de la API, así
+     que quedó restringida (lo dice el backend, según MP_EXPLORAR_EMAILS). Para
+     el resto del equipo la exploración se genera sola a las 14:00 y 23:00 y
+     acá solo se lee el resultado guardado. */
+  // null = aún no se sabe (la respuesta viene en camino): el botón se muestra
+  // y el backend igual rechaza a quien no corresponde. Solo `false` lo oculta.
+  const [mpPuedeBuscar, setMpPuedeBuscar] = useState(null);
+  // { actualizado_at, motivo } si lo mostrado viene de la corrida automática.
+  const [mpAuto, setMpAuto] = useState(() => leerVistaExploracion()?.auto || null);
+
+  // Cada cambio de la vista se respalda. Si la cuota de sessionStorage se
+  // llena, se pierde el respaldo pero no la vista: por eso el try vacío.
+  useEffect(() => {
+    if (!mpRes) return;
+    try {
+      sessionStorage.setItem(MP_VISTA_CACHE, JSON.stringify({ res: mpRes, auto: mpAuto, ts: Date.now() }));
+    } catch { /* sin respaldo, la pantalla sigue funcionando */ }
+  }, [mpRes, mpAuto]);
+  // Identidad de la búsqueda en curso: si el usuario lanza otra (o cambia de
+  // vista), las tandas de la anterior que sigan llegando se descartan en vez
+  // de mezclarse con los resultados nuevos.
+  const mpBusquedaRef = useRef(0);
   const [agregandoCodigo, setAgregandoCodigo] = useState(null);
 
+  function qpBase(fuente, pagina) {
+    const qp = new URLSearchParams({ fuente, pagina: String(pagina), tamano: "15" });
+    if (fuente === "agil" || fuente === "todas") {
+      if (mpRegion) qp.set("region", mpRegion);
+      if (mpEstado) qp.set("estado", mpEstado);
+      if (mpDesde) qp.set("desde", mpDesde);
+      if (mpHasta) qp.set("hasta", mpHasta);
+    } else if (mpDesde) {
+      // En Licitaciones el backend interpreta `desde` como el día exacto de
+      // publicación: la API v1 no soporta rangos.
+      qp.set("desde", mpDesde);
+    }
+    return qp;
+  }
+
+  /* La búsqueda va POR TANDAS de palabras clave, no en una sola petición.
+
+     Medido con el catálogo real (80 palabras → 90 términos con las variantes
+     singular/plural): la API tarda ~15 s por consulta y no tolera más de 6 en
+     paralelo, así que la búsqueda completa son ~4 minutos. En una sola request
+     eso era un spinner de 4 minutos sin nada que mirar —parecía colgado— y si
+     algo se cortaba a mitad se perdía todo.
+
+     En tandas de 5 palabras (≈6 términos = una oleada del backend), la primera
+     pintura llega a los ~15 s y de ahí la tabla crece tanda a tanda, con una
+     barra que dice por dónde va. Lo que ya llegó no se pierde aunque el resto
+     falle. El costo total contra la API es el mismo. */
   async function buscarMP(pagina = 1, qOverride = null) {
     if (mpBuscando) return;
+    // El backend igual lo rechaza (403): este corte temprano solo evita el
+    // viaje para mostrar el mismo mensaje.
+    if (mpPuedeBuscar === false) {
+      setToast({ type: "info", message: "La búsqueda manual está restringida. El listado se actualiza solo a las 14:00 y 23:00." });
+      return;
+    }
+    const idBusqueda = ++mpBusquedaRef.current;
+    const vigente = () => mpBusquedaRef.current === idBusqueda;
     setMpBuscando(true);
+    setMpProgreso(null);
+    // Lo que se muestre desde ahora ya no es la exploración automática.
+    setMpAuto(null);
     try {
-      const qp = new URLSearchParams({ fuente: mpFuente, pagina: String(pagina), tamano: "15" });
       const q = (qOverride ?? mpQ).trim();
-      if (q) qp.set("q", q);
-      if (mpFuente === "agil" || mpFuente === "todas") {
-        if (mpRegion) qp.set("region", mpRegion);
-        if (mpEstado) qp.set("estado", mpEstado);
-        if (mpDesde) qp.set("desde", mpDesde);
-        if (mpHasta) qp.set("hasta", mpHasta);
-      } else if (mpDesde) {
-        // En Licitaciones el backend interpreta `desde` como el día exacto de
-        // publicación: la API v1 no soporta rangos.
-        qp.set("desde", mpDesde);
+      const kws = q.split(",").map((s) => s.trim()).filter(Boolean);
+
+      // Cero o una palabra: una sola consulta con paginación real de la API.
+      if (kws.length <= 1) {
+        const qp = qpBase(mpFuente, pagina);
+        if (q) qp.set("q", q);
+        const data = await api.get(`/licitaciones/mercado-publico/buscar?${qp.toString()}`);
+        if (vigente()) setMpRes(data);
+        return;
       }
-      const data = await api.get(`/licitaciones/mercado-publico/buscar?${qp.toString()}`);
-      setMpRes(data);
+
+      const TANDA = 5;
+      const grupos = [];
+      for (let i = 0; i < kws.length; i += TANDA) grupos.push(kws.slice(i, i + TANDA));
+      const inicio = Date.now();
+      setMpProgreso({ hechas: 0, total: kws.length, etaMs: null });
+
+      // Acumuladores de la mezcla entre tandas.
+      const vistos = new Set();
+      let items = [];
+      let porKeyword = [];
+      let extras = {};
+
+      /* El contador «X de Compra Ágil · Y licitaciones» se cuenta de las FILAS
+         acumuladas, no de lo que informe cada tanda: solo la fuente combinada
+         trae conteo, y sumar tandas parciales dejó una vez «30 de Compra Ágil»
+         sobre una tabla con 314 filas. Contar lo que se muestra no miente. */
+      const publicar = () => {
+        setMpRes({
+          fuente: mpFuente,
+          items: [...items],
+          paginacion: { numero_pagina: 1, total_paginas: 1, total_resultados: items.length },
+          por_keyword: porKeyword,
+          conteo_fuente: {
+            compra_agil: items.filter((x) => x.tipo_familia === "compra_agil").length,
+            licitaciones: items.filter((x) => x.tipo_familia !== "compra_agil").length,
+          },
+          ...extras,
+        });
+      };
+      const mezclar = (nuevos) => {
+        for (const it of nuevos || []) {
+          const clave = it.codigo || `${it.nombre}|${it.fecha_publicacion}`;
+          if (vistos.has(clave)) {
+            // Ya estaba (lo trajo otra tanda): se le suman las palabras que
+            // también calzaron, para que el detalle del match quede completo.
+            const previo = items.find((x) => (x.codigo || `${x.nombre}|${x.fecha_publicacion}`) === clave);
+            if (previo && Array.isArray(it.match_keywords)) {
+              previo.match_keywords = [...new Set([...(previo.match_keywords || []), ...it.match_keywords])];
+            }
+            continue;
+          }
+          vistos.add(clave);
+          items.push(it);
+        }
+        items.sort((a, b) => String(b.fecha_publicacion || "").localeCompare(String(a.fecha_publicacion || "")));
+      };
+
+      /* Las Licitaciones (API v1) van en UNA consulta aparte con TODAS las
+         palabras: es una sola llamada cacheada que se filtra en memoria, así
+         que cuesta lo mismo con 5 palabras que con 80. Cuando iban dentro de
+         la primera tanda, solo las 5 primeras palabras veían licitaciones —
+         las demás perdían esa fuente entera sin aviso. */
+      if (mpFuente === "todas" || mpFuente === "licitaciones") {
+        try {
+          const qp = qpBase("licitaciones", 1);
+          qp.set("q", kws.join(", "));
+          // TODO el listado, no la primera página: con el tamano=15 de qpBase
+          // esta consulta traía 15 licitaciones mientras la exploración
+          // automática guardaba 67 — mismos criterios, contadores distintos.
+          qp.set("tamano", "1000");
+          const data = await api.get(`/licitaciones/mercado-publico/buscar?${qp.toString()}`);
+          if (!vigente()) return;
+          mezclar(data?.items);
+          if (data?.actualizado) extras.actualizado = data.actualizado;
+          publicar();
+        } catch (e) {
+          extras.error_licitaciones = String(e?.message || e).slice(0, 140);
+        }
+      }
+
+      // Compra Ágil: una consulta por palabra contra la API v2 — esto es lo
+      // caro, y por eso va por tandas con avance visible.
+      if (mpFuente === "todas" || mpFuente === "agil") {
+        for (let g = 0; g < grupos.length; g++) {
+          if (!vigente()) return; // llegó otra búsqueda: esta ya no manda
+          const qp = qpBase("agil", 1);
+          qp.set("q", grupos[g].join(", "));
+          let data;
+          try {
+            data = await api.get(`/licitaciones/mercado-publico/buscar?${qp.toString()}`);
+          } catch (e) {
+            // Una tanda caída no bota la búsqueda: sus palabras quedan anotadas
+            // como fallidas en el detalle y se sigue con la siguiente. El avance
+            // igual se registra — para el medidor, una tanda fallida también es
+            // tiempo transcurrido y trabajo hecho.
+            porKeyword = [...porKeyword, ...grupos[g].map((kw) => ({ q: kw, total: 0, traidos: 0, error: String(e?.message || e).slice(0, 140) }))];
+            const hechas = Math.min(kws.length, (g + 1) * TANDA);
+            const etaMs = hechas > 0 ? ((Date.now() - inicio) / hechas) * (kws.length - hechas) : null;
+            setMpProgreso({ hechas, total: kws.length, etaMs });
+            continue;
+          }
+          if (!vigente()) return;
+          mezclar(data?.items);
+          porKeyword = [...porKeyword, ...(data?.por_keyword || [])];
+          const hechas = Math.min(kws.length, (g + 1) * TANDA);
+          // Lo que falta, al ritmo REAL de esta búsqueda: la latencia de la API
+          // cambia mucho según la hora (medido: 13 a 30 s por tanda), así que se
+          // estima con lo ya transcurrido y no con una constante que mentiría.
+          const etaMs = hechas > 0 ? ((Date.now() - inicio) / hechas) * (kws.length - hechas) : null;
+          setMpProgreso({ hechas, total: kws.length, etaMs });
+          publicar();
+        }
+      } else {
+        publicar();
+      }
     } catch (e) {
-      setToast({ type: "error", message: e?.message || "No se pudo buscar en Mercado Público." });
+      if (vigente()) setToast({ type: "error", message: e?.message || "No se pudo buscar en Mercado Público." });
     } finally {
-      setMpBuscando(false);
+      if (vigente()) { setMpBuscando(false); setMpProgreso(null); }
     }
   }
 
@@ -238,6 +436,34 @@ export default function LicitacionesDisponibles({ embedded = false }) {
   }
 
   useEffect(() => { cargarCatalogoMp(); }, []);
+
+  /* Cada vez que se entra a «Explorar»: la última exploración automática. Se
+     relee al cambiar de pestaña —y no solo al montar— para que una sesión que
+     lleva horas abierta reciba la corrida de las 14:00/23:00 sin recargar la
+     página; leerla no consulta la API, es una fila guardada. De paso el
+     backend dice si este usuario puede lanzar búsquedas a mano. */
+  useEffect(() => {
+    if (vista !== "explorar" || mpBuscando) return;
+    // No pisar una búsqueda manual que el usuario esté mirando: solo se
+    // refresca si lo que hay en pantalla es la automática (o nada).
+    if (mpRes && !mpAuto) return;
+    let activo = true;
+    (async () => {
+      try {
+        const d = await api.get("/licitaciones/mercado-publico/exploracion");
+        if (!activo) return;
+        setMpPuedeBuscar(!!d?.puede_buscar);
+        if (Array.isArray(d?.items)) {
+          setMpRes(d);
+          setMpAuto({ actualizado_at: d.actualizado_at, motivo: d.motivo });
+        }
+      } catch {
+        // Migración sin aplicar o error de red: la pestaña queda vacía y quien
+        // tenga permiso puede buscar a mano igual.
+      }
+    })();
+    return () => { activo = false; };
+  }, [vista]);
 
   // Alta de palabra y guardado de búsqueda usan un modal propio en vez de
   // window.prompt: el diálogo nativo del navegador rompe el estilo y no se
@@ -349,6 +575,51 @@ export default function LicitacionesDisponibles({ embedded = false }) {
     }
   }
 
+  /* Tomar directo desde la exploración: la agrega al Listado (si no estaba) y
+     la deja tomada por quien pulsó, en un solo gesto. Pasa por los MISMOS
+     endpoints que el flujo manual, así que respeta todo: el cupo de 3, el
+     dueño si otro la tomó antes, el aviso al chat grupal. */
+  async function tomarDesdeExploracion(item) {
+    if (agregandoCodigo) return;
+    setAgregandoCodigo(item.codigo);
+    try {
+      // 1) Asegurarla en el Listado. Idempotente: si ya estaba, insertados=0.
+      await api.post("/licitaciones/disponibles/bulk", {
+        rows: [{
+          id_licitacion: item.codigo,
+          nombre: item.nombre,
+          datos: {
+            organismo: item.organismo || "",
+            region: item.region || "",
+            monto: item.monto_clp != null ? `$${Number(item.monto_clp).toLocaleString("es-CL")}` : "",
+            cierre: item.fecha_cierre || "",
+            publicacion: item.fecha_publicacion || "",
+            tipo: item.tipo_familia === "compra_agil" ? "Compra Ágil" : "Licitación",
+          },
+        }],
+      });
+      // 2) Ubicar su fila (el bulk no devuelve ids).
+      const lista = await api.get("/licitaciones/disponibles");
+      const row = (Array.isArray(lista) ? lista : []).find(
+        (l) => String(l.id_licitacion || "").trim().toLowerCase() === String(item.codigo).trim().toLowerCase(),
+      );
+      if (!row) throw new Error("No se encontró la postulación recién agregada al Listado.");
+      const dueno = (row.tomada_por || "").toLowerCase();
+      if (dueno && dueno !== currentEmail) {
+        setToast({ type: "error", message: `${item.codigo} ya está tomada por ${row.tomada_por}.` });
+        return;
+      }
+      // 3) Tomarla (valida cupo y vigencia en el backend, y avisa al chat).
+      if (!dueno) await api.put(`/licitaciones/disponibles/${row.id}/tomar`, { tomar: true });
+      setToast({ type: "success", message: `${item.codigo} tomada y en el Listado. Queda avisado en el chat.` });
+      cargar();
+    } catch (e) {
+      setToast({ type: "error", message: e?.message || "No se pudo tomar la postulación." });
+    } finally {
+      setAgregandoCodigo(null);
+    }
+  }
+
   // Descarga la ficha del popup como PDF vectorial con identidad Amsodent.
   async function descargarFichaPDF() {
     if (!mpFicha?.data || descargandoFicha) return;
@@ -364,11 +635,16 @@ export default function LicitacionesDisponibles({ embedded = false }) {
     }
   }
 
-  async function verFichaMP(row) {
+  /* `itemExplorar`: cuando la ficha se abre desde un resultado de la
+     exploración viaja el item completo, y con él el pie de la ficha ofrece
+     «Crear cotización (borrador)». Desde el Listado NO se ofrece a propósito:
+     ahí la cotización se crea con «Cargar», que reserva el cupo y deja la
+     postulación marcada; un atajo aquí saltaría ese control. */
+  async function verFichaMP(row, itemExplorar = null) {
     const codigo = String(row.id_licitacion || "").trim();
     if (!codigo) return;
     const urlFicha = String(row?.datos?.url_ficha || "").trim();
-    setMpFicha({ codigo, urlFicha, loading: true, data: null, error: "" });
+    setMpFicha({ codigo, urlFicha, loading: true, data: null, error: "", itemExplorar });
     try {
       const data = await api.get(`/licitaciones/mercado-publico/${encodeURIComponent(codigo)}`);
       setMpFicha((prev) => (prev?.codigo === codigo ? { ...prev, loading: false, data } : prev));
@@ -568,6 +844,27 @@ export default function LicitacionesDisponibles({ embedded = false }) {
         nombre: row.nombre || "",
         disponibleId: row.id,
         datos: row.datos || {}, // organismo, región, monto, cierre, etc. del xlsx
+      } },
+    });
+  }
+
+  /* Réplica de un resultado de la EXPLORACIÓN a una cotización nueva (queda en
+     borrador hasta que se guarde, igual que «Cargar» en el Listado). Mismo
+     mecanismo de prellenado; la diferencia es que aquí no hay `disponibleId`
+     —el proceso no pasó por el Listado— así que no reserva cupo ni marca nada. */
+  function cotizarDesdeExploracion(item) {
+    navigate("/crear", {
+      state: { prefillLicitacion: {
+        idLicitacionInput: item.codigo || "",
+        nombre: item.nombre || "",
+        datos: {
+          descripcion: item.convocatoria || "",
+          organismo: item.organismo || "",
+          region: item.region || "",
+          monto: item.monto_clp != null ? String(item.monto_clp) : "",
+          cierre: item.fecha_cierre || "",
+          publicacion: item.fecha_publicacion || "",
+        },
       } },
     });
   }
@@ -797,8 +1094,10 @@ export default function LicitacionesDisponibles({ embedded = false }) {
 
       {vista === "listado" && (
       <>
-      {/* Stats */}
-      <div className="stats-row">
+      {/* Stats. `stats-5` porque son cinco: sin ella la grilla base son cuatro
+          columnas y «Creadas hoy» caía sola a una segunda fila. La clase ya
+          trae los cortes responsivos (5 → 3 → 2 → 1). */}
+      <div className="stats-row stats-5">
         <div className="stat-card">
           <div className="stat-label">Total</div>
           <div className="stat-value">{stats.total}</div>
@@ -1228,15 +1527,67 @@ export default function LicitacionesDisponibles({ embedded = false }) {
               onChange={(e) => setMpDesde(e.target.value)} style={{ width: 150 }} />
           </div>
         )}
-        <button
-          className="btn btn-primary"
-          onClick={() => buscarMP(1)}
-          disabled={mpBuscando}
-          style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 38 }}
-        >
-          <Search size={14} /> {mpBuscando ? "Buscando…" : "Buscar"}
-        </button>
+        {mpPuedeBuscar !== false && (
+          <button
+            className="btn btn-primary"
+            onClick={() => buscarMP(1)}
+            disabled={mpBuscando}
+            style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 38 }}
+          >
+            <Search size={14} />
+            {mpBuscando
+              ? mpProgreso
+                ? `${mpProgreso.hechas} de ${mpProgreso.total} palabras…`
+                : "Buscando…"
+              : "Buscar"}
+          </button>
+        )}
       </div>
+
+      {/* De dónde vienen los resultados que se están mirando. Para quien no
+          puede buscar a mano es LA información clave: sabe qué tan fresca es
+          la foto y cuándo llega la próxima. */}
+      {(mpAuto || mpPuedeBuscar === false) && !mpBuscando && (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginTop: 10, fontSize: 12, color: "var(--text-soft)" }}>
+          {mpAuto?.actualizado_at && (
+            <span>
+              Exploración automática del{" "}
+              <b>{new Date(mpAuto.actualizado_at).toLocaleString("es-CL", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</b>
+              {mpAuto.motivo ? ` (${mpAuto.motivo})` : ""}.
+            </span>
+          )}
+          <span style={{ color: "var(--text-muted)" }}>
+            Se actualiza sola a las 14:00 y 23:00
+            {mpPuedeBuscar === false ? "; la búsqueda manual está restringida porque consume la cuota diaria de la API." : "."}
+          </span>
+        </div>
+      )}
+
+      {/* Avance de la búsqueda por tandas: los resultados van apareciendo en la
+          tabla a medida que llegan (~15 s por tanda de 5 palabras), así que se
+          puede empezar a revisar sin esperar el final. */}
+      {mpBuscando && mpProgreso && (
+        <div style={{ marginTop: 10 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", fontSize: 12, color: "var(--text-soft)", marginBottom: 4 }}>
+            <span>
+              Consultando Mercado Público: <b>{mpProgreso.hechas}</b> de {mpProgreso.total} palabras clave
+              <span style={{ color: "var(--text-muted)" }}> · los resultados aparecen abajo a medida que llegan</span>
+            </span>
+            <span style={{ fontWeight: 700, color: restanteAprox(mpProgreso.etaMs) ? "var(--primary-dark)" : "var(--text-muted)" }}>
+              {restanteAprox(mpProgreso.etaMs) ? `Queda ${restanteAprox(mpProgreso.etaMs)} aprox.` : "Calculando cuánto falta…"}
+            </span>
+          </div>
+          <div style={{ height: 5, borderRadius: 999, background: "var(--neutral-bg)", overflow: "hidden" }}>
+            <div style={{
+              height: "100%",
+              width: `${Math.min(100, (mpProgreso.hechas / Math.max(1, mpProgreso.total)) * 100)}%`,
+              background: "var(--primary)",
+              borderRadius: 999,
+              transition: "width .4s ease",
+            }} />
+          </div>
+        </div>
+      )}
 
       {/* Búsquedas guardadas: combinaciones de palabras con nombre. Existen
           porque la API solo admite 8 términos por consulta y el catálogo tiene
@@ -1373,14 +1724,19 @@ export default function LicitacionesDisponibles({ embedded = false }) {
           devuelve todo en una sola página (89 filas con "dental", cientos con
           términos amplios como "insumo") y sin esto la página crece sin fin. */}
       <div className="surface" style={{ marginTop: 14, overflow: "auto", maxHeight: "62vh" }}>
-        {mpBuscando ? (
+        {/* El cartel de espera solo mientras NO haya nada que mostrar: la
+            búsqueda va por tandas y la tabla se llena en vivo; taparla hasta el
+            final era quedarse mirando un letrero con los resultados ya abajo. */}
+        {mpBuscando && !(mpRes?.items || []).length ? (
           <div style={{ padding: "36px 24px", color: "var(--text-muted)" }}>Consultando Mercado Público…</div>
         ) : !mpRes ? (
           <div style={{ padding: "36px 24px", color: "var(--text-muted)" }}>
             Busca por palabra clave (o presiona Buscar sin filtros para ver lo más reciente).
           </div>
         ) : (mpRes.items || []).length === 0 ? (
-          <div style={{ padding: "36px 24px", color: "var(--text-muted)" }}>Sin resultados para esa búsqueda.</div>
+          <div style={{ padding: "36px 24px", color: "var(--text-muted)" }}>
+            {mpBuscando ? "Consultando Mercado Público…" : "Sin resultados para esa búsqueda."}
+          </div>
         ) : (
           <table className="data-table" style={{ width: "100%", minWidth: 1100 }}>
             {/* Encabezado fijo al hacer scroll dentro de la tabla. */}
@@ -1409,13 +1765,16 @@ export default function LicitacionesDisponibles({ embedded = false }) {
                   ? { bg: "#fef3c7", fg: "#b45309" }
                   : { bg: "#f1f5f9", fg: "#64748b" };
                 const cierre = item.fecha_cierre ? fmtFechaHora(new Date(item.fecha_cierre), true) : "—";
+                // Toda la fila abre la ficha, igual que en el Listado. El guard
+                // de getSelection deja seleccionar texto sin disparar el modal.
                 return (
-                  <tr key={item.codigo}>
-                    <td
-                      title="Ver ficha del proceso"
-                      onClick={() => verFichaMP({ id_licitacion: item.codigo, datos: {} })}
-                      style={{ fontWeight: 600, whiteSpace: "nowrap", cursor: "pointer", color: "var(--primary-dark)", textDecoration: "underline", textUnderlineOffset: 2 }}
-                    >
+                  <tr
+                    key={item.codigo}
+                    title="Ver ficha del proceso"
+                    onClick={() => { if (!String(window.getSelection?.() || "").length) verFichaMP({ id_licitacion: item.codigo, datos: {} }, item); }}
+                    style={{ cursor: "pointer" }}
+                  >
+                    <td style={{ fontWeight: 600, whiteSpace: "nowrap", color: "var(--primary-dark)", textDecoration: "underline", textUnderlineOffset: 2 }}>
                       {item.codigo}
                     </td>
                     {/* Tipo de proceso deducido del sufijo del código (COT,
@@ -1434,7 +1793,20 @@ export default function LicitacionesDisponibles({ embedded = false }) {
                         {item.tipo_familia === "compra_agil" ? "Ágil" : (item.tipo_sigla || "—")}
                       </span>
                     </td>
-                    <td style={{ whiteSpace: "normal", wordBreak: "break-word", fontSize: 12.5 }}>{item.nombre || "—"}</td>
+                    <td style={{ whiteSpace: "normal", wordBreak: "break-word", fontSize: 12.5 }}>
+                      {item.nombre || "—"}
+                      {/* Por qué está en la lista: la(s) palabra(s) clave que
+                          calzaron. Trazabilidad pedida cuando aparecían
+                          procesos ajenos y no se sabía por cuál palabra. */}
+                      {Array.isArray(item.match_keywords) && item.match_keywords.length > 0 && (
+                        <div style={{ marginTop: 3, fontSize: 11, color: "var(--text-muted)" }}
+                          title={`Palabras clave que calzaron: ${item.match_keywords.join(", ")}`}>
+                          <Search size={10} style={{ verticalAlign: "-1px", marginRight: 3 }} />
+                          {item.match_keywords.slice(0, 3).join(" · ")}
+                          {item.match_keywords.length > 3 ? ` · +${item.match_keywords.length - 3}` : ""}
+                        </div>
+                      )}
+                    </td>
                     <td title={item.organismo} style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", fontSize: 12.5, maxWidth: 200 }}>{item.organismo || "—"}</td>
                     <td style={{ whiteSpace: "nowrap", fontSize: 12.5 }}>{item.region || "—"}</td>
                     <td style={{ textAlign: "right", whiteSpace: "nowrap", fontWeight: 600, fontSize: 12.5 }}>
@@ -1447,15 +1819,34 @@ export default function LicitacionesDisponibles({ embedded = false }) {
                       </span>
                     </td>
                     <td style={{ textAlign: "center", fontSize: 12.5 }}>{item.ofertas ?? "—"}</td>
-                    <td>
+                    {/* stopPropagation: los botones no deben abrir la ficha
+                        de la fila al hacer clic. */}
+                    <td onClick={(e) => e.stopPropagation()}>
                       <button
                         className="btn btn-sm btn-ghost"
-                        title="Agregar al Listado de Postulaciones (para tomarla y crear su cotización)"
+                        title="Agregar al Listado de Postulaciones (sin tomarla)"
                         disabled={agregandoCodigo === item.codigo}
                         onClick={() => agregarAPostulaciones(item)}
                         style={{ padding: 6, lineHeight: 0, color: "var(--primary-dark)" }}
                       >
                         <ClipboardList size={15} />
+                      </button>
+                      <button
+                        className="btn btn-sm btn-ghost"
+                        title="Tomarla: la agrega al Listado, ocupa uno de tus 3 cupos y avisa al chat grupal"
+                        disabled={agregandoCodigo === item.codigo}
+                        onClick={() => tomarDesdeExploracion(item)}
+                        style={{ padding: 6, lineHeight: 0, color: "var(--success)" }}
+                      >
+                        <Check size={15} />
+                      </button>
+                      <button
+                        className="btn btn-sm btn-ghost"
+                        title="Crear una cotización en borrador con los datos de este proceso (sin pasar por el Listado)"
+                        onClick={() => cotizarDesdeExploracion(item)}
+                        style={{ padding: 6, lineHeight: 0, color: "#6d28d9" }}
+                      >
+                        <FilePlus2 size={15} />
                       </button>
                     </td>
                   </tr>
@@ -1661,10 +2052,44 @@ export default function LicitacionesDisponibles({ embedded = false }) {
               );
             })() : null}
 
+            {/* Por qué apareció en la búsqueda: las palabras clave que calzaron. */}
+            {Array.isArray(mpFicha.itemExplorar?.match_keywords) && mpFicha.itemExplorar.match_keywords.length > 0 && (
+              <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginTop: 12, fontSize: 12, color: "var(--text-soft)" }}>
+                <span style={{ fontWeight: 700 }}>Calzó con:</span>
+                {mpFicha.itemExplorar.match_keywords.map((k) => (
+                  <span key={k} style={{ fontSize: 11.5, fontWeight: 600, padding: "2px 9px", borderRadius: 999, background: "var(--neutral-bg)", border: "1px solid var(--border)" }}>
+                    {k}
+                  </span>
+                ))}
+              </div>
+            )}
+
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 14, flexWrap: "wrap" }}>
+              {/* Solo cuando la ficha viene de la exploración: desde el Listado
+                  la cotización se crea con «Cargar», que reserva el cupo. */}
+              {mpFicha.itemExplorar && (
+                <>
+                  <button
+                    className="btn btn-primary"
+                    onClick={() => { const it = mpFicha.itemExplorar; setMpFicha(null); tomarDesdeExploracion(it); }}
+                    disabled={agregandoCodigo === mpFicha.itemExplorar.codigo}
+                    style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
+                    title="La agrega al Listado, ocupa uno de tus 3 cupos y avisa al chat grupal"
+                  >
+                    <Check size={14} /> Tomar
+                  </button>
+                  <button
+                    className="btn btn-secondary"
+                    onClick={() => { const it = mpFicha.itemExplorar; setMpFicha(null); cotizarDesdeExploracion(it); }}
+                    style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
+                  >
+                    <FilePlus2 size={14} /> Crear cotización (borrador)
+                  </button>
+                </>
+              )}
               {mpFicha.data && (
                 <button
-                  className="btn btn-primary"
+                  className={mpFicha.itemExplorar ? "btn btn-secondary" : "btn btn-primary"}
                   onClick={descargarFichaPDF}
                   disabled={descargandoFicha}
                   style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
