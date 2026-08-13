@@ -1028,17 +1028,26 @@ export default function ChatEquipo({ onLicitacionRegistrada }) {
 
   function eliminarMensaje(m) {
     setMenuMensajeId(null);
+    const esMioMsg = (m.autor_email || "").toLowerCase() === yo.email;
     setConfirmacion({
       titulo: "Eliminar mensaje",
-      mensaje: "Esta acción no se puede deshacer. El mensaje se borrará para todos.",
+      mensaje: esMioMsg
+        ? "Esta acción no se puede deshacer. El mensaje se borrará para todos."
+        : `Vas a borrar un mensaje de ${m.autor_nombre || m.autor_email || "otro usuario"} para todos. Esta acción no se puede deshacer.`,
       etiquetaConfirmar: "Eliminar",
       peligro: true,
       onConfirmar: async () => {
-        const { error: e } = await supabase
-          .from("chat_mensajes")
-          .delete()
-          .eq("id", m.id);
-        if (e) throw e;
+        if (esMioMsg) {
+          const { error: e } = await supabase
+            .from("chat_mensajes")
+            .delete()
+            .eq("id", m.id);
+          if (e) throw e;
+        } else {
+          // Mensaje ajeno: el RLS solo deja borrar lo propio, así que va por
+          // el backend, que valida el rol admin y borra con la service role.
+          await api.post("/chat/eliminar-mensaje", { id: m.id });
+        }
         setMensajes((prev) => prev.filter((x) => x.id !== m.id));
       },
     });
@@ -1873,6 +1882,7 @@ export default function ChatEquipo({ onLicitacionRegistrada }) {
                     <BurbujaMensaje
                       m={m}
                       esMio={esMio}
+                      puedeEliminar={esMio || esAdmin}
                       mostrarAutor={!mismoAutorQuePrev && !esMio}
                       apilado={mismoAutorQuePrev}
                       onVerImagen={setVisorImagen}
@@ -2442,12 +2452,14 @@ function BurbujaMensaje({
   onCrearLicitacion,
   onEditar,
   onEliminar,
+  puedeEliminar,
 }) {
   if (m.tipo === "licitacion") {
     return (
       <TarjetaLicitacion
         m={m}
         esMio={esMio}
+        puedeEliminar={puedeEliminar}
         onAbrirMenu={onAbrirMenu}
         menuAbierto={menuAbierto}
         onCerrarMenu={onCerrarMenu}
@@ -2536,6 +2548,7 @@ function BurbujaMensaje({
         {menuAbierto && (
           <MenuAccionesMensaje
             esMio={esMio}
+            puedeEliminar={puedeEliminar}
             tipo={m.tipo}
             onResponder={onResponder}
             onCrearLicitacion={onCrearLicitacion}
@@ -2638,7 +2651,7 @@ function BurbujaMensaje({
   );
 }
 
-function MenuAccionesMensaje({ esMio, tipo, onResponder, onCrearLicitacion, onEditar, onEliminar, onCerrar }) {
+function MenuAccionesMensaje({ esMio, puedeEliminar, tipo, onResponder, onCrearLicitacion, onEditar, onEliminar, onCerrar }) {
   return (
     <>
       <div
@@ -2691,7 +2704,9 @@ function MenuAccionesMensaje({ esMio, tipo, onResponder, onCrearLicitacion, onEd
             <span style={{ fontSize: 13, fontWeight: 600, color: INK }}>Editar mensaje</span>
           </button>
         )}
-        {esMio && onEliminar && (
+        {/* Borrar: lo propio siempre; lo ajeno solo si el rol lo permite
+            (admin). El backend valida el rol de nuevo — esto es solo UI. */}
+        {(puedeEliminar ?? esMio) && onEliminar && (
           <>
             <div style={{ height: 1, background: BORDER_SOFT, margin: "4px 6px" }} />
             <button
@@ -2831,7 +2846,7 @@ function ContenidoMensaje({ m, esMio, onVerImagen }) {
 }
 
 /* Tarjeta de licitación: ahora compacta. */
-function TarjetaLicitacion({ m, esMio, onAbrirMenu, menuAbierto, onCerrarMenu, onResponder, onEliminar }) {
+function TarjetaLicitacion({ m, esMio, puedeEliminar, onAbrirMenu, menuAbierto, onCerrarMenu, onResponder, onEliminar }) {
   const estado = m.licitacion_estado || "Pendiente";
   const ingresada = estado === "Ingresada";
   return (
@@ -2866,6 +2881,7 @@ function TarjetaLicitacion({ m, esMio, onAbrirMenu, menuAbierto, onCerrarMenu, o
         {menuAbierto && (
           <MenuAccionesMensaje
             esMio={esMio}
+            puedeEliminar={puedeEliminar}
             tipo="licitacion"
             onResponder={onResponder}
             onCrearLicitacion={onCerrarMenu /* ya es una licitación */}

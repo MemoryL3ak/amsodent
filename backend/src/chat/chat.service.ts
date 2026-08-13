@@ -215,6 +215,17 @@ export class ChatService {
     return { ok: true };
   }
 
+  // Borrado por admin de un mensaje ajeno (el AdminGuard ya validó el rol;
+  // la service role salta el RLS que solo permite borrar lo propio).
+  async eliminarMensaje(id: string) {
+    const { error } = await this.supabase.getClient()
+      .from('chat_mensajes')
+      .delete()
+      .eq('id', id);
+    if (error) throw new BadRequestException(error.message);
+    return { ok: true };
+  }
+
   // Borra todos los mensajes de TODAS las salas (incluida la General).
   // Las salas y miembros se mantienen — solo limpia el historial.
   async limpiarTodasSalas() {

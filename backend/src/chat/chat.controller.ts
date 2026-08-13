@@ -53,6 +53,17 @@ export class ChatController {
     return this.chat.limpiarTodasSalas();
   }
 
+  // Un admin puede eliminar CUALQUIER mensaje. Los propios se borran directo
+  // desde el frontend vía RLS (que solo permite borrar lo de uno); esta ruta
+  // cubre los ajenos con la service role.
+  @Post('eliminar-mensaje')
+  @UseGuards(AdminGuard)
+  eliminarMensaje(@Body() body: { id?: string }) {
+    const id = String(body?.id || '').trim();
+    if (!id) throw new BadRequestException('Falta el id del mensaje.');
+    return this.chat.eliminarMensaje(id);
+  }
+
   // Llamado tras agregar miembros a una sala — crea notificaciones para
   // los recién invitados. Cualquier usuario autenticado puede invocar este
   // endpoint (la invitación misma ya pasó por RLS de chat_sala_miembros).
