@@ -41,15 +41,19 @@ function fmtFechaHora(v, conHora) {
 
 /* Respaldo de la vista del explorador entre navegaciones. El resultado de una
    búsqueda manual vivía solo en el estado de la pantalla: con salir a otra
-   sección y volver, 4 minutos de búsqueda desaparecían. sessionStorage
-   sobrevive a la navegación y a un F5, y muere solo con la pestaña del
-   navegador — justo el ciclo de vida que uno espera de una búsqueda. */
+   sección y volver, 4 minutos de búsqueda desaparecían. Va en localStorage
+   (no sessionStorage): sobrevive a cerrar la pestaña o abrir otra ventana,
+   que con sessionStorage hacía "desaparecer" la búsqueda recién corrida y
+   reaparecer la exploración automática de la noche anterior en su lugar. La
+   vigencia de 6 h evita mostrar una búsqueda vieja como si fuera de hoy. */
 const MP_VISTA_CACHE = "exploracionMpVista";
 const MP_VISTA_CACHE_MS = 6 * 3600 * 1000; // más vieja que esto ya no informa
 
 function leerVistaExploracion() {
   try {
-    const j = JSON.parse(sessionStorage.getItem(MP_VISTA_CACHE) || "null");
+    // El OR con sessionStorage migra el respaldo de pestañas abiertas antes
+    // del cambio de almacenamiento; se puede quitar en unos días.
+    const j = JSON.parse(localStorage.getItem(MP_VISTA_CACHE) || sessionStorage.getItem(MP_VISTA_CACHE) || "null");
     if (!j || Date.now() - (j.ts || 0) > MP_VISTA_CACHE_MS) return null;
     return j;
   } catch {
@@ -230,12 +234,12 @@ export default function LicitacionesDisponibles({ embedded = false }) {
   // { actualizado_at, motivo } si lo mostrado viene de la corrida automática.
   const [mpAuto, setMpAuto] = useState(() => leerVistaExploracion()?.auto || null);
 
-  // Cada cambio de la vista se respalda. Si la cuota de sessionStorage se
+  // Cada cambio de la vista se respalda. Si la cuota de localStorage se
   // llena, se pierde el respaldo pero no la vista: por eso el try vacío.
   useEffect(() => {
     if (!mpRes) return;
     try {
-      sessionStorage.setItem(MP_VISTA_CACHE, JSON.stringify({ res: mpRes, auto: mpAuto, ts: Date.now() }));
+      localStorage.setItem(MP_VISTA_CACHE, JSON.stringify({ res: mpRes, auto: mpAuto, ts: Date.now() }));
     } catch { /* sin respaldo, la pantalla sigue funcionando */ }
   }, [mpRes, mpAuto]);
   // Identidad de la búsqueda en curso: si el usuario lanza otra (o cambia de
