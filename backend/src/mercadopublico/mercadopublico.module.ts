@@ -6,5 +6,9 @@ import { MercadopublicoCron } from './mercadopublico.cron';
 @Module({
   controllers: [MercadopublicoController],
   providers: [MercadopublicoService, MercadopublicoCron],
+  // El cron se exporta para que la exploración automática (LicitacionesModule)
+  // pueda cederle el paso a las 23:00: ambos usan la misma API y correr los
+  // dos a la vez la satura (12 + 6 conexiones, con colapso medido en 24).
+  exports: [MercadopublicoCron],
 })
 export class MercadopublicoModule {}

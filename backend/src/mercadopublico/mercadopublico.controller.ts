@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Body, Query, UseGuards } from '@nestjs/common';
 import { MercadopublicoService } from './mercadopublico.service';
 import { MercadopublicoCron } from './mercadopublico.cron';
 import { AdminGuard } from '../auth/admin.guard';
@@ -19,9 +19,15 @@ export class MercadopublicoController {
   }
 
   // Resultados guardados (mp_resultados + datos de la cotización interna).
+  //
+  // `desde` (ISO) devuelve SOLO las fichas consultadas después de ese instante.
+  // Lo usa la sincronización para refrescar el panel entre tandas: la carga
+  // completa pesa 6 MB hoy (24 MB proyectados con el catálogo entero), así que
+  // pedirla cada 45 s era inviable y por eso la pantalla se quedaba quieta
+  // varios minutos. El delta de una tanda son ~12 fichas, unos 90 KB.
   @Get('resultados')
-  resultados() {
-    return this.mpService.resultados();
+  resultados(@Query('desde') desde?: string) {
+    return this.mpService.resultados(desde);
   }
 
   // Consulta la API oficial para los procesos aún sin resultado final.

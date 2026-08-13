@@ -1,7 +1,7 @@
 import {
   Controller, Get, Post, Put, Delete,
   Body, Param, Query, ParseIntPipe, UseGuards, Req,
-  UseInterceptors, UploadedFile,
+  UseInterceptors, UploadedFile, ForbiddenException,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { LicitacionesService } from './licitaciones.service';
@@ -104,9 +104,32 @@ export class LicitacionesController {
 
   // Buscador de procesos en Mercado Público (sección Explorar). Debe ir ANTES
   // de 'mercado-publico/:codigo' para que "buscar" no se tome como código.
+  //
+  // Restringido: la búsqueda completa son ~90 consultas contra la API (~4 min
+  // y cuota compartida con la sincronización del Análisis). Para el resto del
+  // equipo el resultado se genera solo (14:00 y 23:00) y se lee de
+  // 'mercado-publico/exploracion'.
   @Get('mercado-publico/buscar')
-  mercadoPublicoBuscar(@Query() query: any) {
+  mercadoPublicoBuscar(@Query() query: any, @Req() req: any) {
+    const email = (req?.user?.email || '').toLowerCase();
+    if (!LicitacionesService.exploradoresMp().includes(email)) {
+      throw new ForbiddenException(
+        'La búsqueda manual está restringida: consume la cuota diaria de la API. El listado se actualiza solo a las 14:00 y 23:00.',
+      );
+    }
     return this.licitacionesService.mercadoPublicoBuscar(query || {});
+  }
+
+  // Última exploración automática guardada. Para todo el equipo: leerla no
+  // consulta la API. Devuelve además si quien pregunta puede buscar a mano.
+  @Get('mercado-publico/exploracion')
+  async exploracionMp(@Req() req: any) {
+    const email = (req?.user?.email || '').toLowerCase();
+    const guardada = await this.licitacionesService.exploracionGuardada();
+    return {
+      ...(guardada || { items: null }),
+      puede_buscar: LicitacionesService.exploradoresMp().includes(email),
+    };
   }
 
   /* Catálogo de palabras clave y búsquedas guardadas del explorador. Van antes

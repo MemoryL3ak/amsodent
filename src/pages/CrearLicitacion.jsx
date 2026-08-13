@@ -984,10 +984,25 @@ export default function CrearLicitacion() {
       const d = prefill.datos || {};
       const soloDigitos = (s) => String(s || "").replace(/[^\d]/g, "");
       const montoNum = soloDigitos(d.monto);
-      // Cierre "DD-MM-YYYY" → "YYYY-MM-DDT00:00" para el campo fecha/hora.
+      /* Cierre → "YYYY-MM-DDTHH:mm" para el campo fecha/hora. El dato llega en
+         formatos distintos según el origen: "DD-MM-YYYY[ HH:mm]" (xlsx del
+         portal), "DD-MM-YY HH:mm" (año de 2 dígitos, formato actual del
+         portal) e ISO "YYYY-MM-DD[THH:mm…]" (buscador y exploración de
+         Mercado Público). Antes solo se entendía el primero: los otros dos se
+         descartaban en silencio y el campo quedaba vacío. La hora también se
+         conserva — en Compra Ágil el cierre a las 15:00 es real, no medianoche. */
       let fechaCierre = "";
-      const mc = String(d.cierre || "").match(/^(\d{2})-(\d{2})-(\d{4})/);
-      if (mc) fechaCierre = `${mc[3]}-${mc[2]}-${mc[1]}T00:00`;
+      const sCierre = String(d.cierre || "").trim();
+      let mc = sCierre.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{1,2}):(\d{2}))?/); // ISO
+      if (mc) {
+        fechaCierre = `${mc[1]}-${mc[2]}-${mc[3]}T${String(mc[4] ?? "0").padStart(2, "0")}:${mc[5] ?? "00"}`;
+      } else {
+        mc = sCierre.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4}|\d{2})(?:[ T](\d{1,2}):(\d{2}))?/); // DD-MM-YY(YY)
+        if (mc) {
+          const anio = mc[3].length === 2 ? `20${mc[3]}` : mc[3];
+          fechaCierre = `${anio}-${mc[2].padStart(2, "0")}-${mc[1].padStart(2, "0")}T${String(mc[4] ?? "0").padStart(2, "0")}:${mc[5] ?? "00"}`;
+        }
+      }
       // Región: quita el prefijo "Región de/del/de la ".
       const region = String(d.region || "").replace(/^regi[oó]n\s+(de\s+la\s+|del\s+|de\s+)?/i, "").trim();
       const obs = [d.descripcion, d.url_ficha ? `Ficha: ${d.url_ficha}` : ""].filter(Boolean).join("\n\n");
