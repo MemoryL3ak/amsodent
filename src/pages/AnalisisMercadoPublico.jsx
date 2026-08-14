@@ -3,6 +3,7 @@ import {
   Trophy, TrendingDown, RefreshCw, Search, ChevronDown, ChevronRight,
   Target, Percent, AlertTriangle, KeyRound, Crown, Building2, Scale,
   ArrowUp, ArrowDown, ArrowUpDown, Download, X, Square, CalendarRange,
+  ArrowLeftRight,
 } from "lucide-react";
 import { api } from "../lib/api";
 import Toast from "../components/Toast";
@@ -106,6 +107,18 @@ function esConvenioSuministro(f) {
   const nombre = String(f?.interna?.nombre || "").toLowerCase();
   if (/suministro|convenio/.test(nombre)) return true;
   return /-lr\d{2}$/i.test(String(f?.codigo_mp || "").trim());
+}
+
+/* Código MP normalizado de una cotización interna. El patrón es el mismo que
+   usa el backend para detectar candidatas (mercadopublico.service.ts):
+   "4967-661-COT26", "1057390-34-LE26"… Las re-cotizaciones del mismo proceso
+   se guardan con sufijo ("580075-78-COT26-2") y la OC suele quedar en esa
+   copia: sin quitar el sufijo, el cruce con Indicadores las daba por "fuera
+   de Mercado Público" y a la ficha real la dejaba "sin OC". */
+function codigoMpDe(id) {
+  const c = String(id || "").trim().toUpperCase();
+  const m = /^(\d{1,10}-\d{1,10}-[A-Z]{1,3}\d{2})(?:-\d+)?$/.exec(c);
+  return m ? m[1] : null;
 }
 
 export default function AnalisisMercadoPublico() {
@@ -822,6 +835,9 @@ export default function AnalisisMercadoPublico() {
       {/* ── Simulador de precio ── */}
       <SimuladorPrecio filas={enRango} />
 
+      {/* ── Diferencias con el Panel Indicadores ── */}
+      <DiferenciasIndicadores filas={filas} syncDesde={syncDesde} syncHasta={syncHasta} />
+
       {/* ── Filtros ── */}
       <div className="filter-bar">
         <div className="filter-field" style={{ flex: 1, minWidth: 220 }}>
@@ -1130,6 +1146,384 @@ function DetalleProceso({ f }) {
 }
 
 /* ── Componentes de visualización ── */
+/* ── Diferencias con el Panel Indicadores ─────────────────────────────────
+   Los dos paneles miden "adjudicado" con reglas distintas y NUNCA van a dar
+   igual; la pregunta recurrente es cuánto difieren y por qué. Este bloque
+   cruza ambos mundos proceso por proceso y clasifica cada diferencia:
+
+   · Universo: se compara contra Indicadores en su vista «Pública» (solo
+     entidad pública; las ventas a particulares quedan fuera del cruce, son
+     otro negocio). Aun así Indicadores incluye ventas públicas sin código
+     de Mercado Público; este panel solo procesos MP con ficha sincronizada.
+   · Fecha: Indicadores fecha de la 1ª OC/boleta registrada; aquí la fecha
+     del acta de adjudicación → el mismo cierre puede caer en meses distintos.
+   · Monto: los documentos se guardan en NETO, así que el KPI de Indicadores
+     es neto; aquí es bruto (acta ×1,19). Para comparar, la OC se lleva a
+     bruto y así cada peso de diferencia es una causa real, no el IVA.
+   · Convenios de suministro: aquí van fuera del KPI (acta = demanda estimada
+     del período completo); en Indicadores suman sus OC reales.
+
+   Los datos de Indicadores (~4.000 cotizaciones + documentos) se piden solo
+   al apretar «Comparar»: bajarlos siempre encarecería el panel para todos
+   los que no miran esta sección. */
+const CATS_DIF = {
+  fecha: {
+    label: "Desfase de fecha", color: "#b45309", bg: "#fef3c7",
+    explica: "El mismo proceso cae en períodos distintos: Indicadores usa la fecha de la 1ª OC registrada y este panel la fecha del acta de adjudicación.",
+  },
+  monto: {
+    label: "Monto distinto", color: "#6d28d9", bg: "#ede9fe",
+    explica: "Está en ambos paneles y en el mismo período, pero el monto no calza (lo que suman las OC vs lo adjudicado en el acta).",
+  },
+  sin_oc: {
+    label: "Ganada sin OC aún", color: "#0e7490", bg: "#cffafe",
+    explica: "El acta ya nos da como ganadores, pero la OC no está registrada en el sistema: para Indicadores todavía no existe.",
+  },
+  sin_resultado: {
+    label: "Con OC, sin resultado MP", color: "#b91c1c", bg: "#fee2e2",
+    explica: "Indicadores la cuenta por su OC, pero la ficha de Mercado Público aún no la da por ganada (falta sincronizar o la OC llegó por otra vía).",
+  },
+  sin_ficha: {
+    label: "Sin ficha MP", color: "#475569", bg: "#e2e8f0",
+    explica: "Cotización con código de Mercado Público que aún no tiene ficha sincronizada en este panel.",
+  },
+  fuera_mp: {
+    label: "Fuera de Mercado Público", color: "#334155", bg: "#f1f5f9",
+    explica: "Cotizaciones a entidades públicas sin código de Mercado Público (venta directa u otro canal): cuentan en Indicadores y nunca van a aparecer en este panel.",
+  },
+  convenio: {
+    label: "Convenio de suministro", color: "#9d174d", bg: "#fce7f3",
+    explica: "Por diseño va fuera del KPI de este panel; Indicadores suma las OC reales que van llegando durante la vigencia.",
+  },
+  ok: {
+    label: "Coinciden", color: "#15803d", bg: "#dcfce7",
+    explica: "En ambos paneles, mismo período y mismo monto (OC bruta = acta ×1,19). No son diferencia; se listan para cerrar la cuenta.",
+  },
+};
+const ORDEN_CATS_DIF = ["fecha", "sin_oc", "monto", "sin_resultado", "sin_ficha", "fuera_mp", "convenio", "ok"];
+
+function DiferenciasIndicadores({ filas, syncDesde, syncHasta }) {
+  const [datos, setDatos] = useState(null); // { lics, adj, sums } — el mundo Indicadores
+  const [cargando, setCargando] = useState(false);
+  const [error, setError] = useState("");
+  const [catAbierta, setCatAbierta] = useState(null);
+
+  async function comparar() {
+    setCargando(true);
+    setError("");
+    try {
+      const lics = (await api.get(
+        "/licitaciones/with-fields?fields=id,id_licitacion,nombre,nombre_entidad,estado,tipo_cliente",
+      )) || [];
+      const ids = lics.map((l) => Number(l.id)).filter(Boolean);
+      const adj = {};  // licId → fecha de adjudicación según Indicadores (1ª OC/boleta/efectivo)
+      const sums = {}; // licId → { oc, factbol } en NETO (los documentos se guardan netos)
+      if (ids.length) {
+        const docs = await api.post("/licitaciones/documentos/filter", {
+          filter: { licitacion_ids: ids, tipo: ["orden_compra", "factura", "factura_boleta", "efectivo"] },
+          fields: "licitacion_id,tipo,monto,fecha_oc,created_at",
+        });
+        const dia = (v) => {
+          const s = String(v || "").slice(0, 10);
+          return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null;
+        };
+        for (const d of docs || []) {
+          const lid = Number(d.licitacion_id);
+          if (!lid) continue;
+          const acc = (sums[lid] = sums[lid] || { oc: 0, factbol: 0 });
+          const monto = Number(d.monto || 0);
+          if (d.tipo === "orden_compra") acc.oc += monto;
+          else acc.factbol += monto;
+          // Misma regla del Panel Indicadores: adjudicada = fecha de la 1ª OC
+          // (público) o de la 1ª boleta/efectivo (particular).
+          if (d.tipo === "orden_compra" || d.tipo === "factura_boleta" || d.tipo === "efectivo") {
+            const f = dia(d.fecha_oc) || dia(d.created_at);
+            if (f && (!adj[lid] || f < adj[lid])) adj[lid] = f;
+          }
+        }
+      }
+      setDatos({ lics, adj, sums });
+    } catch (e) {
+      setError(e?.message || "No se pudieron cargar los datos del Panel Indicadores.");
+    } finally {
+      setCargando(false);
+    }
+  }
+
+  const analisis = useMemo(() => {
+    if (!datos) return null;
+    const { lics, adj, sums } = datos;
+    const enRangoDia = (d) => !!d && (!syncDesde || d >= syncDesde) && (!syncHasta || d <= syncHasta);
+    const diaMp = (f) => String(f?.fecha_adjudicacion || "").slice(0, 10) || null;
+
+    const mpPorLicId = new Map();
+    const mpPorCodigo = new Map();
+    for (const f of filas) {
+      if (f.licitacion_id != null) mpPorLicId.set(Number(f.licitacion_id), f);
+      const c = String(f.codigo_mp || "").trim().toUpperCase();
+      if (c && !mpPorCodigo.has(c)) mpPorCodigo.set(c, f);
+    }
+
+    const esPart = (l) => String(l?.tipo_cliente || "").toLowerCase().includes("particular");
+    // En público el adjudicado son las OC (la vista «Pública» de Indicadores
+    // no mira boletas para el monto).
+    const netoInd = (l) => (sums[l.id] || {}).oc || 0;
+    const brutoInd = (l) => Math.round(netoInd(l) * 1.19);
+
+    // Lado Indicadores: cierres del período SOLO de entidad pública — el
+    // cruce replica la vista «Pública» de ese panel; los particulares son
+    // otro negocio y solo ensuciaban la comparación (pedido 14-08).
+    const indPeriodo = lics.filter((l) => !esPart(l) && enRangoDia(adj[l.id]));
+    // Lado Análisis MP: ganadas del período (misma regla de este panel).
+    const ganadasMp = filas.filter((f) => f.clase === "ganada" && enRangoDia(diaMp(f)));
+
+    /* Cada proceso de cualquiera de los dos lados termina en EXACTAMENTE una
+       categoría, con su "efecto" = lo que aporta al KPI de este panel menos lo
+       que aporta al de Indicadores (en bruto). Así la suma de efectos cierra
+       al peso contra la diferencia entre ambos KPIs: si un caso no cuadrara,
+       la conciliación misma lo delata. */
+    const items = [];
+    const usadas = new Set(); // fichas MP ya emparejadas con un cierre del período
+
+    for (const l of indPeriodo) {
+      const mp =
+        mpPorLicId.get(Number(l.id)) ||
+        mpPorCodigo.get(codigoMpDe(l.id_licitacion) || "") ||
+        null;
+      const bruto = brutoInd(l);
+      const base = {
+        codigo: String(l.id_licitacion || "").trim() || `#${l.id}`,
+        nombre: l.nombre || "",
+        entidad: l.nombre_entidad || "",
+        fechaInd: adj[l.id] || null,
+        fechaMp: mp ? diaMp(mp) : null,
+        montoInd: bruto,
+        montoMp: null,
+        efecto: -bruto,
+      };
+      if (!mp) {
+        if (!codigoMpDe(l.id_licitacion)) {
+          items.push({ ...base, cat: "fuera_mp", motivo: "La cotización no tiene código de Mercado Público (venta directa u otro canal)." });
+        } else {
+          items.push({ ...base, cat: "sin_ficha", motivo: "Tiene código de Mercado Público pero ninguna sincronización la ha consultado aún. Corre una sincronización que cubra la fecha de la cotización." });
+        }
+        continue;
+      }
+      const yaUsada = usadas.has(mp);
+      usadas.add(mp);
+      if (mp.clase !== "ganada") {
+        items.push({ ...base, cat: "sin_resultado", motivo: `Hay OC registrada, pero la ficha de Mercado Público dice «${(CLASES[mp.clase] || {}).label || mp.clase}». Si el proceso ya se adjudicó, un «Forzar» actualiza la ficha.` });
+        continue;
+      }
+      const convenio = esConvenioSuministro(mp);
+      const mMp = montoGanadoDe(mp);
+      if (yaUsada) {
+        // Dos cotizaciones internas con OC para el MISMO proceso: el acta ya
+        // se contó con la primera; esta solo resta por el lado Indicadores.
+        items.push({ ...base, montoMp: mMp, cat: "monto", motivo: "Hay más de una cotización interna con OC para este mismo proceso; lo adjudicado según el acta ya se contó con la otra." });
+        continue;
+      }
+      if (!enRangoDia(diaMp(mp))) {
+        items.push({
+          ...base,
+          montoMp: mMp,
+          cat: convenio ? "convenio" : "fecha",
+          motivo: `Indicadores la cuenta en este período por su OC del ${diaLegible(adj[l.id])}; este panel la ubica ${diaMp(mp) ? `el ${diaLegible(diaMp(mp))} (fecha del acta)` : "sin fecha de adjudicación todavía"}.${convenio ? " Además es convenio de suministro, fuera del KPI de este panel." : ""}`,
+        });
+        continue;
+      }
+      // Ganada en ambos paneles dentro del período.
+      const efecto = (convenio ? 0 : mMp) - bruto;
+      if (convenio) {
+        items.push({ ...base, montoMp: mMp, efecto, cat: "convenio", motivo: `El KPI de este panel no suma su acta (${fmt$(mMp)} es demanda estimada del período completo del convenio); Indicadores suma las OC reales que han llegado (${fmt$(bruto)} bruto).` });
+      } else if (Math.abs(mMp - bruto) > Math.max(1200, 0.01 * Math.max(mMp, bruto))) {
+        const sinActa = !(Number(mp?.detalle?.monto_nuestro_adjudicado) > 0) && mp.tipo !== "compra_agil";
+        items.push({
+          ...base, montoMp: mMp, efecto, cat: "monto",
+          motivo: sinActa
+            ? "La ficha se sincronizó antes de que se guardara el detalle del acta y usa nuestra oferta completa. Un «Forzar» trae el monto adjudicado real."
+            : mMp > bruto
+              ? "El acta adjudica más de lo que suman las OC registradas: falta subir una OC, o llegó rebajada."
+              : "Las OC registradas suman más que lo adjudicado en el acta: reajustes, despacho u OC complementarias.",
+        });
+      } else {
+        items.push({ ...base, montoMp: mMp, efecto, cat: "ok", motivo: "" });
+      }
+    }
+
+    // Ganadas de este panel que Indicadores no cuenta en el período.
+    for (const f of ganadasMp) {
+      if (usadas.has(f)) continue;
+      const lid = Number(f.licitacion_id);
+      const convenio = esConvenioSuministro(f);
+      const mMp = montoGanadoDe(f);
+      const fechaOc = adj[lid] || null;
+      const base = {
+        codigo: f.codigo_mp || `#${lid}`,
+        nombre: f.interna?.nombre || "",
+        entidad: f.interna?.nombre_entidad || f.organismo || "",
+        fechaInd: fechaOc,
+        fechaMp: diaMp(f),
+        montoInd: null,
+        montoMp: mMp,
+        efecto: convenio ? 0 : mMp,
+      };
+      if (convenio) {
+        items.push({ ...base, cat: "convenio", motivo: `Fuera del KPI de este panel (acta ${fmt$(mMp)} = demanda estimada del convenio); en Indicadores ${fechaOc ? `sus OC cuentan desde el ${diaLegible(fechaOc)}` : "va a aparecer a medida que lleguen sus OC"}.` });
+      } else if (fechaOc) {
+        items.push({ ...base, cat: "fecha", motivo: `Este panel la cuenta por la fecha del acta (${diaLegible(diaMp(f))}); Indicadores por su OC del ${diaLegible(fechaOc)}, que cae en otro período.` });
+      } else {
+        items.push({ ...base, cat: "sin_oc", motivo: "Ganada según el acta, pero sin OC registrada en el sistema: en Indicadores va a aparecer recién cuando llegue la OC." });
+      }
+    }
+
+    const totalIndNeto = indPeriodo.reduce((s, l) => s + netoInd(l), 0);
+    const totalIndBruto = indPeriodo.reduce((s, l) => s + brutoInd(l), 0);
+    const totalMp = ganadasMp.reduce((s, f) => s + (esConvenioSuministro(f) ? 0 : montoGanadoDe(f)), 0);
+    const porCat = new Map();
+    for (const it of items) {
+      const acc = porCat.get(it.cat) || { items: [], efecto: 0 };
+      acc.items.push(it);
+      acc.efecto += it.efecto;
+      porCat.set(it.cat, acc);
+    }
+    for (const acc of porCat.values()) acc.items.sort((a, b) => Math.abs(b.efecto) - Math.abs(a.efecto));
+    return { nInd: indPeriodo.length, nMp: ganadasMp.length, totalIndNeto, totalIndBruto, totalMp, porCat };
+  }, [datos, filas, syncDesde, syncHasta]);
+
+  const periodoTxt = syncDesde || syncHasta
+    ? `${syncDesde ? `desde ${diaLegible(syncDesde)}` : ""}${syncDesde && syncHasta ? " " : ""}${syncHasta ? `hasta ${diaLegible(syncHasta)}` : ""}`
+    : "todo el histórico";
+  const dif = analisis ? analisis.totalMp - analisis.totalIndBruto : 0;
+
+  return (
+    <div style={{ border: "1px solid var(--border)", borderRadius: 12, background: "var(--surface)", padding: "14px 16px", marginBottom: 16 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+        <div>
+          <div style={{ fontSize: 13.5, fontWeight: 700, display: "flex", alignItems: "center", gap: 7 }}>
+            <ArrowLeftRight size={15} style={{ color: "var(--primary)" }} /> Diferencias con el Panel Indicadores
+          </div>
+          <div style={{ fontSize: 11.5, color: "var(--text-muted)" }}>
+            Por qué las adjudicadas de ambos paneles no calzan · {periodoTxt}
+          </div>
+        </div>
+        <button className="btn btn-secondary" onClick={comparar} disabled={cargando}
+          style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 34, fontSize: 12.5 }}>
+          <RefreshCw size={13} className={cargando ? "girando" : undefined} />
+          {cargando ? "Comparando…" : datos ? "Actualizar" : "Comparar"}
+        </button>
+      </div>
+
+      {error && (
+        <div style={{ display: "flex", gap: 8, alignItems: "flex-start", border: "1px solid #fecaca", background: "#fef2f2", borderRadius: 10, padding: "10px 13px", fontSize: 12.5, color: "#b91c1c", marginBottom: 10 }}>
+          <AlertTriangle size={15} style={{ flexShrink: 0, marginTop: 1 }} /> {error}
+        </div>
+      )}
+
+      {!analisis ? (
+        <div style={{ fontSize: 12.5, color: "var(--text-soft)", lineHeight: 1.65 }}>
+          Los dos paneles miden «adjudicado» con reglas distintas, así que sus cifras <b>nunca van a coincidir por diseño</b>:
+          Indicadores cuenta cada cotización cuando se registra su <b>1ª OC</b> y suma los documentos en <b>neto</b>; este panel
+          cuenta por la <b>fecha del acta de adjudicación</b> de Mercado Público, en <b>bruto</b>, y deja los convenios de
+          suministro fuera del KPI. <b>Comparar</b> cruza ambos mundos proceso por proceso —contra la vista <b>Pública</b> de
+          Indicadores; los clientes particulares quedan fuera— y explica cada diferencia del período: cuáles son y por qué existen.
+        </div>
+      ) : (
+        <>
+          {/* Resumen: los dos KPIs frente a frente y la diferencia conciliada. */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 10, marginBottom: 12 }}>
+            <div style={{ background: "var(--bg)", borderRadius: 10, padding: "10px 13px" }}>
+              <div style={{ fontSize: 11, color: "var(--text-muted)", fontWeight: 600 }}>Panel Indicadores · Pública · {periodoTxt}</div>
+              <div style={{ fontSize: 18, fontWeight: 800 }}>{analisis.nInd} adjudicadas · {fmt$(analisis.totalIndBruto)}</div>
+              <div style={{ fontSize: 10.5, color: "var(--text-muted)" }}>
+                OC llevadas a bruto — ese panel las muestra en neto: {fmt$(analisis.totalIndNeto)}
+              </div>
+            </div>
+            <div style={{ background: "var(--bg)", borderRadius: 10, padding: "10px 13px" }}>
+              <div style={{ fontSize: 11, color: "var(--text-muted)", fontWeight: 600 }}>Análisis Mercado Público</div>
+              <div style={{ fontSize: 18, fontWeight: 800 }}>{analisis.nMp} ganadas · {fmt$(analisis.totalMp)}</div>
+              <div style={{ fontSize: 10.5, color: "var(--text-muted)" }}>KPI «adjudicado» de este panel (bruto, sin convenios)</div>
+            </div>
+            <div style={{ background: "var(--bg)", borderRadius: 10, padding: "10px 13px" }}>
+              <div style={{ fontSize: 11, color: "var(--text-muted)", fontWeight: 600 }}>Diferencia</div>
+              <div style={{ fontSize: 18, fontWeight: 800, color: dif === 0 ? "#15803d" : "var(--primary-dark)" }}>
+                {dif > 0 ? "+" : ""}{fmt$(dif)}
+              </div>
+              <div style={{ fontSize: 10.5, color: "var(--text-muted)" }}>explicada al peso por las categorías de abajo</div>
+            </div>
+          </div>
+
+          {/* Categorías: cada una explica un porqué; clic para ver los procesos. */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {ORDEN_CATS_DIF.filter((k) => analisis.porCat.has(k)).map((k) => {
+              const c = CATS_DIF[k];
+              const { items: its, efecto } = analisis.porCat.get(k);
+              const abierta = catAbierta === k;
+              return (
+                <div key={k} style={{ border: "1px solid var(--border)", borderRadius: 10, overflow: "hidden" }}>
+                  <div onClick={() => setCatAbierta(abierta ? null : k)}
+                    style={{ display: "flex", alignItems: "center", gap: 9, padding: "9px 12px", cursor: "pointer", background: abierta ? "var(--bg)" : "transparent", flexWrap: "wrap" }}>
+                    {abierta ? <ChevronDown size={14} style={{ flexShrink: 0 }} /> : <ChevronRight size={14} style={{ flexShrink: 0 }} />}
+                    <span style={{ fontSize: 11, fontWeight: 700, color: c.color, background: c.bg, borderRadius: 999, padding: "2px 10px", whiteSpace: "nowrap" }}>
+                      {c.label}
+                    </span>
+                    <span style={{ fontSize: 12, fontWeight: 700 }}>{its.length} proceso{its.length === 1 ? "" : "s"}</span>
+                    <span style={{ fontSize: 12, fontWeight: 700, marginLeft: "auto", color: efecto === 0 ? "var(--text-muted)" : efecto > 0 ? "#15803d" : "#b91c1c", whiteSpace: "nowrap" }}
+                      title="Cuánto explica esta categoría de la diferencia total (positivo = suma a este panel; negativo = suma a Indicadores)">
+                      {efecto > 0 ? "+" : efecto < 0 ? "−" : ""}{efecto === 0 ? "sin efecto en $" : fmt$(Math.abs(efecto))}
+                    </span>
+                    <span style={{ flexBasis: "100%", fontSize: 11, color: "var(--text-muted)", paddingLeft: 23 }}>{c.explica}</span>
+                  </div>
+                  {abierta && (
+                    <div style={{ overflowX: "auto", borderTop: "1px solid var(--border)" }}>
+                      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, whiteSpace: "nowrap" }}>
+                        <thead>
+                          <tr style={{ color: "var(--text-muted)", textAlign: "left" }}>
+                            <th style={{ padding: "7px 12px", fontWeight: 600 }}>Proceso</th>
+                            <th style={{ padding: "7px 12px", fontWeight: 600 }}>Entidad</th>
+                            <th style={{ padding: "7px 12px", fontWeight: 600 }} title="Fecha de la 1ª OC (criterio Indicadores)">OC</th>
+                            <th style={{ padding: "7px 12px", fontWeight: 600 }} title="Fecha del acta de adjudicación (criterio de este panel)">Acta</th>
+                            <th style={{ padding: "7px 12px", fontWeight: 600, textAlign: "right" }} title="Lo que suma en el Panel Indicadores, llevado a bruto">$ Indicadores</th>
+                            <th style={{ padding: "7px 12px", fontWeight: 600, textAlign: "right" }} title="Lo que suma en el KPI de este panel">$ Análisis MP</th>
+                            <th style={{ padding: "7px 12px", fontWeight: 600, minWidth: 260, whiteSpace: "normal" }}>Por qué</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {its.map((it, i) => (
+                            <tr key={`${it.codigo}-${i}`} style={{ borderTop: "1px solid var(--border)" }}>
+                              <td style={{ padding: "7px 12px" }}>
+                                <div style={{ fontWeight: 600 }}>{it.codigo}</div>
+                                {it.nombre && <div style={{ fontSize: 11, color: "var(--text-muted)", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis" }}>{it.nombre}</div>}
+                              </td>
+                              <td style={{ padding: "7px 12px", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis" }}>{it.entidad || "—"}</td>
+                              <td style={{ padding: "7px 12px" }}>{it.fechaInd ? diaLegible(it.fechaInd) : "—"}</td>
+                              <td style={{ padding: "7px 12px" }}>{it.fechaMp ? diaLegible(it.fechaMp) : "—"}</td>
+                              <td style={{ padding: "7px 12px", textAlign: "right" }}>{it.montoInd != null ? fmt$(it.montoInd) : "—"}</td>
+                              <td style={{ padding: "7px 12px", textAlign: "right" }}>{it.montoMp != null ? fmt$(it.montoMp) : "—"}</td>
+                              <td style={{ padding: "7px 12px", whiteSpace: "normal", minWidth: 260, maxWidth: 420, fontSize: 11.5, color: "var(--text-soft)", lineHeight: 1.45 }}>{it.motivo || "Mismo monto en ambos."}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 9, lineHeight: 1.5 }}>
+            Cruce contra la vista <b>Pública</b> de Indicadores (los clientes particulares quedan fuera). Montos comparados
+            en <b>bruto</b>: las OC se guardan en neto y aquí se llevan a ×1,19 para que el IVA no aparezca como diferencia.
+            La foto de Indicadores es la de este momento («Actualizar» la refresca); el período usa el mismo rango de fecha
+            del panel.
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function Kpi({ icon, tono, fondo, label, valor, sub, onClick, activo }) {
   return (
     <div onClick={onClick}
