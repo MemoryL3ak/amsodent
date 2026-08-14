@@ -497,10 +497,12 @@ export function LiquidacionPage({
             APORTES DE CARGO DEL EMPLEADOR — NO FORMAN PARTE DEL LÍQUIDO
           </Text>
           <View style={[s.caja, s.fichaGrid]}>
-            <Celda label="S.I.S." valor={clp(d.aporte_sis)} />
-            <Celda label="A.F.C. empleador" valor={clp(d.aporte_cesantia_empleador)} />
-            <Celda label="Mutual de seguridad" valor={clp(d.aporte_mutual)} />
-            <Celda label="Costo total empresa" valor={clp(d.costo_empresa)} />
+            <Celda label="S.I.S." valor={clp(d.aporte_sis)} ancho="20%" />
+            <Celda label="A.F.C. empleador" valor={clp(d.aporte_cesantia_empleador)} ancho="20%" />
+            <Celda label="Mutual de seguridad" valor={clp(d.aporte_mutual)} ancho="20%" />
+            {/* Liquidaciones emitidas antes de la reforma no traen el aporte. */}
+            <Celda label="Seguro social" valor={d.aporte_seguro_social != null ? clp(d.aporte_seguro_social) : "—"} ancho="20%" />
+            <Celda label="Costo total empresa" valor={clp(d.costo_empresa)} ancho="20%" />
           </View>
         </>
       )}

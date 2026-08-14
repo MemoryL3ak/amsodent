@@ -683,6 +683,9 @@ export default function MonitoreoMarcajes() {
                     value={oficinaEdit.radio_metros}
                     onChange={(e) => setOficinaEdit((o) => ({ ...o, radio_metros: e.target.value }))}
                   />
+                  <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 4 }}>
+                    Al validar se suman 30 m de margen de error GPS (normativa DT).
+                  </div>
                 </div>
                 <div>
                   <label style={lblM}>Estado</label>

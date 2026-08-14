@@ -3,8 +3,9 @@ import {
   Users, FileText, Wallet, CalendarClock, ClipboardCheck, PlaneTakeoff, LayoutDashboard,
   Plus, Search, Pencil, Trash2, X, Upload, Eye, Download, CheckCircle2, AlertTriangle,
   Cake, TrendingUp, Clock, PenLine, RefreshCw, ChevronRight, ChevronDown,
-  FileDown, Settings2, CalendarDays,
+  FileDown, Settings2, CalendarDays, ShieldCheck,
 } from "lucide-react";
+import PrevencionSST from "../components/PrevencionSST";
 import { api } from "../lib/api";
 import Toast from "../components/Toast";
 import FirmaDigital from "../components/FirmaDigital";
@@ -38,6 +39,7 @@ const TABS = [
   { key: "asistencia", label: "Asistencia", icon: CalendarClock },
   { key: "evaluaciones", label: "Evaluaciones", icon: ClipboardCheck },
   { key: "solicitudes", label: "Solicitudes", icon: PlaneTakeoff },
+  { key: "prevencion", label: "Prevención", icon: ShieldCheck },
 ];
 
 // El valor guardado sigue siendo la clave en minúscula (el backend distingue
@@ -285,6 +287,7 @@ export default function RecursosHumanos() {
           {tab === "asistencia" && <TabAsistencia {...props} />}
           {tab === "evaluaciones" && <TabEvaluaciones {...props} />}
           {tab === "solicitudes" && <TabSolicitudes {...props} />}
+          {tab === "prevencion" && <PrevencionSST notificar={setToast} />}
         </>
       )}
 
@@ -1528,6 +1531,7 @@ const CAMPOS_PARAMETROS = [
   ["tasa_cesantia_empleador", "AFC empleador (%)", "3% a plazo fijo"],
   ["tasa_sis", "SIS (%)", "cargo del empleador"],
   ["tasa_mutual", "Mutual (%)", "depende de la tasa de la empresa"],
+  ["tasa_seguro_social", "Seguro social (%)", "reforma previsional, cargo del empleador"],
   ["af_tramo_a_hasta", "Asig. familiar · tramo A hasta", ""],
   ["af_tramo_a_monto", "Tramo A · monto por carga", ""],
   ["af_tramo_b_hasta", "Tramo B hasta", ""],

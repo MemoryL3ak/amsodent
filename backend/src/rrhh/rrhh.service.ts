@@ -31,8 +31,11 @@ const PARAMETROS_DEFECTO = {
   tasa_cesantia_trabajador: 0.6,
   tasa_cesantia_empleador: 2.4,
   // Aportes patronales que no aparecen en la liquidación pero sí en el costo.
-  tasa_sis: 1.53,
-  tasa_mutual: 0.95,
+  tasa_sis: 2,
+  tasa_mutual: 0.93,
+  // Aporte del empleador de la reforma previsional (ley 21.735): capitalización
+  // individual más el seguro social de expectativa de vida.
+  tasa_seguro_social: 1,
   // Asignación familiar: monto por carga según la renta imponible del mes.
   af_tramo_a_hasta: 620251,
   af_tramo_a_monto: 22007,
@@ -41,8 +44,8 @@ const PARAMETROS_DEFECTO = {
   af_tramo_c_hasta: 1412957,
   af_tramo_c_monto: 4267,
   apv_tope_uf_mensual: 50,
-  // Tasa AFP por defecto si la ficha no la trae (10% + comisión promedio).
-  tasa_afp_default: Number(process.env.RRHH_TASA_AFP) || 11.44,
+  // Tasa AFP por defecto si la ficha no la trae (10% + comisión).
+  tasa_afp_default: Number(process.env.RRHH_TASA_AFP) || 11.16,
 };
 
 type Parametros = typeof PARAMETROS_DEFECTO & { periodo?: string; origen?: string };
@@ -558,7 +561,8 @@ export class RrhhService {
       cesantiaTopado * ((esIndefinido ? par.tasa_cesantia_empleador : 3) / 100),
     );
     const mutual = redondear(totalImponible * (par.tasa_mutual / 100));
-    const costoEmpresa = totalHaberes + sis + afcEmpleador + mutual;
+    const seguroSocial = redondear(imponibleTopado * (par.tasa_seguro_social / 100));
+    const costoEmpresa = totalHaberes + sis + afcEmpleador + mutual + seguroSocial;
 
     return {
       dias_trabajados: dias,
@@ -610,6 +614,7 @@ export class RrhhService {
       aporte_sis: sis,
       aporte_cesantia_empleador: afcEmpleador,
       aporte_mutual: mutual,
+      aporte_seguro_social: seguroSocial,
       costo_empresa: costoEmpresa,
       topes: {
         imponible: redondear(topeImponible),
@@ -1543,6 +1548,412 @@ export class RrhhService {
         total_descuentos: suma('total_descuentos'),
         liquido: suma('liquido'),
       },
+    };
+  }
+
+  // ==========================================================================
+  // PREVENCIÓN DE RIESGOS — Decreto Supremo 44/2023
+  // ==========================================================================
+  // Registro electrónico de la gestión preventiva (art. 72 del D.S. 44):
+  // documentos del sistema de gestión, actividades con asistentes e
+  // incidentes/accidentes. `resumenSst()` arma el checklist de cumplimiento
+  // según el número de trabajadores activos (la exigibilidad de Comité
+  // Paritario, Delegado SST y Depto. de Prevención depende de la dotación).
+
+  async listarSstDocumentos() {
+    const { data, error } = await this.db
+      .from('rrhh_sst_documentos')
+      .select('*')
+      .order('vigente', { ascending: false })
+      .order('created_at', { ascending: false });
+    if (error) this.error(error);
+    return data || [];
+  }
+
+  async guardarSstDocumento(body: any, autor?: string) {
+    const payload: Record<string, any> = {
+      tipo: texto(body?.tipo, 40) || 'otro',
+      titulo: texto(body?.titulo, 200),
+      version: texto(body?.version, 40),
+      fecha_aprobacion: body?.fecha_aprobacion || null,
+      proxima_revision: body?.proxima_revision || null,
+      aprobado_por: texto(body?.aprobado_por, 120),
+      descripcion: texto(body?.descripcion, 2000),
+      bucket: texto(body?.bucket, 60),
+      storage_path: texto(body?.storage_path, 400),
+      file_name: texto(body?.file_name, 200),
+      mime_type: texto(body?.mime_type, 120),
+      size_bytes: body?.size_bytes != null ? num(body.size_bytes) : null,
+      vigente: body?.vigente !== false,
+      updated_at: new Date().toISOString(),
+    };
+    if (body?.id) {
+      const { data, error } = await this.db
+        .from('rrhh_sst_documentos')
+        .update(payload)
+        .eq('id', num(body.id))
+        .select()
+        .single();
+      if (error) this.error(error);
+      return data;
+    }
+    // Un solo documento vigente por tipo: la versión nueva archiva la anterior
+    // (se conserva como respaldo histórico, art. 72).
+    if (payload.vigente) {
+      await this.db
+        .from('rrhh_sst_documentos')
+        .update({ vigente: false, updated_at: payload.updated_at })
+        .eq('tipo', payload.tipo)
+        .eq('vigente', true);
+    }
+    payload.subido_por = texto(autor, 120);
+    const { data, error } = await this.db.from('rrhh_sst_documentos').insert(payload).select().single();
+    if (error) this.error(error);
+    return data;
+  }
+
+  async eliminarSstDocumento(id: number) {
+    const { data } = await this.db
+      .from('rrhh_sst_documentos')
+      .select('bucket,storage_path')
+      .eq('id', id)
+      .maybeSingle();
+    const { error } = await this.db.from('rrhh_sst_documentos').delete().eq('id', id);
+    if (error) this.error(error);
+    if (data?.bucket && data?.storage_path) {
+      await this.eliminarArchivo(data.bucket, data.storage_path).catch(() => undefined);
+    }
+    return { ok: true };
+  }
+
+  async listarSstActividades() {
+    const { data, error } = await this.db
+      .from('rrhh_sst_actividades')
+      .select('*, asistentes:rrhh_sst_asistentes(id, empleado_id, resultado, observacion)')
+      .order('fecha', { ascending: false })
+      .order('id', { ascending: false });
+    if (error) this.error(error);
+    return data || [];
+  }
+
+  async guardarSstActividad(body: any, autor?: string) {
+    const payload: Record<string, any> = {
+      tipo: texto(body?.tipo, 40) || 'capacitacion',
+      titulo: texto(body?.titulo, 200) || 'Actividad preventiva',
+      descripcion: texto(body?.descripcion, 4000),
+      fecha: body?.fecha || new Date().toISOString().slice(0, 10),
+      duracion_horas: body?.duracion_horas != null && body.duracion_horas !== '' ? num(body.duracion_horas) : null,
+      relator: texto(body?.relator, 160),
+      lugar: texto(body?.lugar, 200),
+      bucket: texto(body?.bucket, 60),
+      storage_path: texto(body?.storage_path, 400),
+      file_name: texto(body?.file_name, 200),
+      updated_at: new Date().toISOString(),
+    };
+
+    let actividad: any;
+    if (body?.id) {
+      const { data, error } = await this.db
+        .from('rrhh_sst_actividades')
+        .update(payload)
+        .eq('id', num(body.id))
+        .select()
+        .single();
+      if (error) this.error(error);
+      actividad = data;
+    } else {
+      payload.creado_por = texto(autor, 120);
+      const { data, error } = await this.db.from('rrhh_sst_actividades').insert(payload).select().single();
+      if (error) this.error(error);
+      actividad = data;
+    }
+
+    // Reemplaza la lista de asistentes (con su resultado de evaluación, art. 16).
+    if (Array.isArray(body?.asistentes)) {
+      const { error: delErr } = await this.db
+        .from('rrhh_sst_asistentes')
+        .delete()
+        .eq('actividad_id', actividad.id);
+      if (delErr) this.error(delErr);
+      const filas = body.asistentes
+        .map((a: any) => ({
+          actividad_id: actividad.id,
+          empleado_id: num(a?.empleado_id),
+          resultado: texto(a?.resultado, 20),
+          observacion: texto(a?.observacion, 400),
+        }))
+        .filter((a: any) => a.empleado_id);
+      if (filas.length) {
+        const { error: insErr } = await this.db.from('rrhh_sst_asistentes').insert(filas);
+        if (insErr) this.error(insErr);
+      }
+    }
+    return actividad;
+  }
+
+  async eliminarSstActividad(id: number) {
+    const { data } = await this.db
+      .from('rrhh_sst_actividades')
+      .select('bucket,storage_path')
+      .eq('id', id)
+      .maybeSingle();
+    const { error } = await this.db.from('rrhh_sst_actividades').delete().eq('id', id);
+    if (error) this.error(error);
+    if (data?.bucket && data?.storage_path) {
+      await this.eliminarArchivo(data.bucket, data.storage_path).catch(() => undefined);
+    }
+    return { ok: true };
+  }
+
+  async listarSstIncidentes() {
+    const { data, error } = await this.db
+      .from('rrhh_sst_incidentes')
+      .select('*')
+      .order('fecha_hora', { ascending: false });
+    if (error) this.error(error);
+    return data || [];
+  }
+
+  async guardarSstIncidente(body: any, autor?: string) {
+    const payload: Record<string, any> = {
+      tipo: texto(body?.tipo, 40) || 'incidente_peligroso',
+      fecha_hora: body?.fecha_hora || new Date().toISOString(),
+      lugar: texto(body?.lugar, 200),
+      empleado_id: body?.empleado_id ? num(body.empleado_id) : null,
+      afectado_nombre: texto(body?.afectado_nombre, 160),
+      afectado_sexo: texto(body?.afectado_sexo, 20),
+      descripcion: texto(body?.descripcion, 2000),
+      relato: texto(body?.relato, 8000),
+      causas: texto(body?.causas, 4000),
+      medidas: texto(body?.medidas, 4000),
+      dias_perdidos: num(body?.dias_perdidos, 0),
+      denunciado_oa: Boolean(body?.denunciado_oa),
+      fecha_denuncia: body?.fecha_denuncia || null,
+      estado: texto(body?.estado, 20) || 'abierto',
+      bucket: texto(body?.bucket, 60),
+      storage_path: texto(body?.storage_path, 400),
+      file_name: texto(body?.file_name, 200),
+      updated_at: new Date().toISOString(),
+    };
+    if (body?.id) {
+      const { data, error } = await this.db
+        .from('rrhh_sst_incidentes')
+        .update(payload)
+        .eq('id', num(body.id))
+        .select()
+        .single();
+      if (error) this.error(error);
+      return data;
+    }
+    payload.creado_por = texto(autor, 120);
+    const { data, error } = await this.db.from('rrhh_sst_incidentes').insert(payload).select().single();
+    if (error) this.error(error);
+    return data;
+  }
+
+  async eliminarSstIncidente(id: number) {
+    const { error } = await this.db.from('rrhh_sst_incidentes').delete().eq('id', id);
+    if (error) this.error(error);
+    return { ok: true };
+  }
+
+  // Checklist de cumplimiento + KPIs. Cada check trae la referencia al D.S. 44
+  // para que el panel sirva de evidencia y guía en la certificación.
+  async resumenSst() {
+    const [empleados, docs, actividades, incidentes] = await Promise.all([
+      this.listarEmpleados(),
+      this.listarSstDocumentos(),
+      this.listarSstActividades(),
+      this.listarSstIncidentes(),
+    ]);
+
+    const activos = (empleados || []).filter((e: any) => e.estado === 'activo');
+    const n = activos.length;
+    const hoy = new Date().toISOString().slice(0, 10);
+    const hace1Anio = new Date(Date.now() - 365 * 24 * 3600 * 1000).toISOString().slice(0, 10);
+    const hace2Anios = new Date(Date.now() - 2 * 365 * 24 * 3600 * 1000).toISOString().slice(0, 10);
+
+    const vigente = (tipo: string) => (docs || []).find((d: any) => d.tipo === tipo && d.vigente);
+    const checks: any[] = [];
+    const push = (clave: string, titulo: string, referencia: string, estado: string, detalle: string) =>
+      checks.push({ clave, titulo, referencia, estado, detalle });
+
+    // ── Documentos del sistema ──────────────────────────────────────────────
+    const matriz = vigente('matriz_riesgos');
+    if (!matriz) {
+      push('matriz', 'Matriz de identificación de peligros y evaluación de riesgos', 'art. 7', 'falta',
+        'No hay una matriz IPER vigente. Es exigible a toda entidad empleadora y debe estar disponible en los lugares de trabajo.');
+    } else if (matriz.proxima_revision && matriz.proxima_revision < hoy) {
+      push('matriz', 'Matriz de identificación de peligros y evaluación de riesgos', 'art. 7', 'alerta',
+        `La revisión programada venció el ${matriz.proxima_revision}. La matriz se revisa al menos una vez al año o cuando cambien las condiciones, ocurra un accidente o se diagnostique una enfermedad profesional.`);
+    } else {
+      push('matriz', 'Matriz de identificación de peligros y evaluación de riesgos', 'art. 7', 'ok',
+        `Vigente${matriz.fecha_aprobacion ? ` (aprobada el ${matriz.fecha_aprobacion})` : ''}${matriz.proxima_revision ? `, próxima revisión ${matriz.proxima_revision}` : ''}.`);
+    }
+
+    const programa = vigente('programa_preventivo');
+    if (!programa) {
+      push('programa', 'Programa de trabajo preventivo', 'art. 8', 'falta',
+        'No hay programa preventivo vigente. Se elabora a partir de la matriz dentro de 30 días desde su confección o actualización, por escrito y aprobado por el representante legal.');
+    } else if (matriz?.fecha_aprobacion && programa.fecha_aprobacion && programa.fecha_aprobacion < matriz.fecha_aprobacion) {
+      push('programa', 'Programa de trabajo preventivo', 'art. 8', 'alerta',
+        `El programa (${programa.fecha_aprobacion}) es anterior a la última matriz (${matriz.fecha_aprobacion}): debe actualizarse dentro de 30 días desde la actualización de la matriz.`);
+    } else {
+      push('programa', 'Programa de trabajo preventivo', 'art. 8', 'ok',
+        `Vigente${programa.fecha_aprobacion ? ` (aprobado el ${programa.fecha_aprobacion})` : ''}. Recuerda la evaluación anual de su cumplimiento (art. 14).`);
+    }
+
+    const politica = vigente('politica_sst');
+    push('politica', 'Política de seguridad y salud en el trabajo', 'arts. 22 y 64', politica ? 'ok' : 'falta',
+      politica
+        ? 'Vigente: compromiso con la protección de la vida y salud, el cumplimiento normativo y la mejora continua.'
+        : 'No hay política SST registrada. Es el primer elemento del sistema de gestión, también en el régimen simplificado (≤25 personas).');
+
+    const reglamento = vigente('reglamento_interno');
+    if (!reglamento) {
+      push('reglamento', 'Reglamento Interno de Higiene y Seguridad', 'arts. 56–61', 'falta',
+        'Obligatorio para toda entidad empleadora, sin mínimo de trabajadores. Debe entregarse gratuitamente un ejemplar a cada persona y subirse a los sitios de la DT y la Seremi de Salud.');
+    } else if (reglamento.proxima_revision && reglamento.proxima_revision < hoy) {
+      push('reglamento', 'Reglamento Interno de Higiene y Seguridad', 'arts. 56–61', 'alerta',
+        `La revisión venció el ${reglamento.proxima_revision}: el reglamento se revisa al menos una vez al año (art. 57).`);
+    } else {
+      push('reglamento', 'Reglamento Interno de Higiene y Seguridad', 'arts. 56–61', 'ok',
+        `Vigente${reglamento.fecha_aprobacion ? ` (${reglamento.fecha_aprobacion})` : ''}. Entrega un ejemplar a cada trabajador (puede registrarse como documento firmado en su ficha).`);
+    }
+
+    const plan = vigente('plan_emergencia');
+    const simulacros = (actividades || []).filter((a: any) => a.tipo === 'simulacro');
+    const simulacroReciente = simulacros.find((a: any) => a.fecha >= hace1Anio);
+    if (!plan) {
+      push('emergencia', 'Plan de emergencias, catástrofes o desastres', 'art. 19', 'falta',
+        'No hay plan de emergencia vigente. Debe existir, informarse a las personas trabajadoras y ensayarse al menos una vez al año.');
+    } else if (!simulacroReciente) {
+      push('emergencia', 'Plan de emergencias, catástrofes o desastres', 'art. 19', 'alerta',
+        `Plan vigente, pero sin simulacro registrado en los últimos 12 meses${simulacros[0] ? ` (último: ${simulacros[0].fecha})` : ''}. El plan debe ensayarse al menos una vez al año.`);
+    } else {
+      push('emergencia', 'Plan de emergencias, catástrofes o desastres', 'art. 19', 'ok',
+        `Plan vigente y simulacro realizado el ${simulacroReciente.fecha}.`);
+    }
+
+    const mapa = vigente('mapa_riesgos');
+    if (!mapa) {
+      push('mapa', 'Mapa de riesgos', 'art. 62', 'falta',
+        'No hay mapa de riesgos registrado. Debe estar visible en cada lugar de trabajo y actualizarse cada vez que cambie la matriz.');
+    } else if (matriz?.fecha_aprobacion && mapa.fecha_aprobacion && mapa.fecha_aprobacion < matriz.fecha_aprobacion) {
+      push('mapa', 'Mapa de riesgos', 'art. 62', 'alerta',
+        `El mapa (${mapa.fecha_aprobacion}) es anterior a la última matriz (${matriz.fecha_aprobacion}): hay que actualizarlo cuando la matriz cambia.`);
+    } else {
+      push('mapa', 'Mapa de riesgos', 'art. 62', 'ok', 'Vigente y alineado con la matriz.');
+    }
+
+    // ── Capacitación y ODI por trabajador ───────────────────────────────────
+    const asistenciasPor = new Map<number, { capacitacion: string | null; odi: boolean; epp: string | null }>();
+    for (const e of activos) asistenciasPor.set(Number(e.id), { capacitacion: null, odi: false, epp: null });
+    for (const a of actividades || []) {
+      for (const asis of a.asistentes || []) {
+        const reg = asistenciasPor.get(Number(asis.empleado_id));
+        if (!reg) continue;
+        if (a.tipo === 'capacitacion' && (!reg.capacitacion || a.fecha > reg.capacitacion)) reg.capacitacion = a.fecha;
+        if (a.tipo === 'odi') reg.odi = true;
+        if (a.tipo === 'entrega_epp' && (!reg.epp || a.fecha > reg.epp)) reg.epp = a.fecha;
+      }
+    }
+    const nombreDe = (e: any) => `${e.nombre} ${e.apellidos || ''}`.trim();
+    const sinCapacitacion = activos.filter((e: any) => {
+      const r = asistenciasPor.get(Number(e.id));
+      return !r?.capacitacion || r.capacitacion < hace2Anios;
+    });
+    push(
+      'capacitacion',
+      'Capacitación en prevención de riesgos (curso ≥8 h, cada ≤2 años)',
+      'art. 16',
+      n === 0 ? 'info' : sinCapacitacion.length === 0 ? 'ok' : sinCapacitacion.length === n ? 'falta' : 'alerta',
+      n === 0
+        ? 'Sin trabajadores activos registrados.'
+        : sinCapacitacion.length === 0
+        ? `Los ${n} trabajadores activos tienen capacitación vigente.`
+        : `${sinCapacitacion.length} de ${n} trabajadores sin capacitación vigente: ${sinCapacitacion.slice(0, 8).map(nombreDe).join(', ')}${sinCapacitacion.length > 8 ? '…' : ''}.`,
+    );
+
+    const sinOdi = activos.filter((e: any) => !asistenciasPor.get(Number(e.id))?.odi);
+    push(
+      'odi',
+      'Información de los riesgos laborales (ODI) previo al inicio de labores',
+      'art. 15',
+      n === 0 ? 'info' : sinOdi.length === 0 ? 'ok' : sinOdi.length === n ? 'falta' : 'alerta',
+      n === 0
+        ? 'Sin trabajadores activos registrados.'
+        : sinOdi.length === 0
+        ? `Los ${n} trabajadores activos tienen su ODI registrada.`
+        : `${sinOdi.length} de ${n} trabajadores sin ODI registrada: ${sinOdi.slice(0, 8).map(nombreDe).join(', ')}${sinOdi.length > 8 ? '…' : ''}.`,
+    );
+
+    const conEpp = activos.filter((e: any) => asistenciasPor.get(Number(e.id))?.epp).length;
+    push('epp', 'Entrega y capacitación en elementos de protección personal', 'art. 13', 'info',
+      n === 0
+        ? 'Sin trabajadores activos registrados.'
+        : `${conEpp} de ${n} trabajadores con entrega de EPP registrada (aplica a los cargos que lo requieren; capacitación mínima de 1 h con refuerzo anual).`);
+
+    // ── Estructura preventiva según dotación ────────────────────────────────
+    if (n > 100) {
+      push('estructura', 'Departamento de Prevención de Riesgos', 'art. 50', 'alerta',
+        `Con ${n} trabajadores corresponde contar con un Departamento de Prevención dirigido por un experto. Registra aquí su constitución y registros semanales.`);
+    }
+    if (n > 25) {
+      const comite = vigente('acta_comite');
+      push('comite', 'Comité Paritario de Higiene y Seguridad', 'arts. 23–49', comite ? 'ok' : 'falta',
+        comite
+          ? 'Acta de constitución registrada. Recuerda las reuniones ordinarias mensuales y el registro del acta en el sitio de la DT (art. 36).'
+          : `Con ${n} trabajadores (>25) debe funcionar un Comité Paritario. Falta registrar su acta de constitución.`);
+    } else if (n >= 10) {
+      const delegado = vigente('acta_delegado');
+      push('delegado', 'Delegado de Seguridad y Salud en el Trabajo', 'art. 66', delegado ? 'ok' : 'falta',
+        delegado
+          ? 'Acta de elección registrada (mandato de hasta 2 años).'
+          : `Con ${n} trabajadores (entre 10 y 25, sin Comité Paritario) debe elegirse un Delegado SST en asamblea, levantando acta de la elección.`);
+    } else {
+      push('estructura', 'Estructura preventiva', 'arts. 64–66', 'info',
+        `Con ${n} trabajadores activos no se exige Comité Paritario ni Delegado SST. Aplica el régimen simplificado del art. 64, con la asistencia técnica del organismo administrador (mutual).`);
+    }
+
+    // ── Incidentes y accidentes ─────────────────────────────────────────────
+    const abiertos = (incidentes || []).filter((i: any) => i.estado === 'abierto');
+    push('investigacion', 'Investigación de incidentes y accidentes', 'art. 71', abiertos.length ? 'alerta' : 'ok',
+      abiertos.length
+        ? `${abiertos.length} evento(s) sin investigación cerrada. Todo accidente, incidente peligroso o enfermedad profesional debe investigarse (causas y medidas correctivas).`
+        : 'Sin eventos pendientes de investigación.');
+
+    const denunciables = (incidentes || []).filter(
+      (i: any) => i.tipo !== 'incidente_peligroso' && !i.denunciado_oa,
+    );
+    if (denunciables.length) {
+      push('diat', 'Denuncia al organismo administrador (DIAT/DIEP)', 'art. 4 Nº8', 'alerta',
+        `${denunciables.length} accidente(s) o enfermedad(es) sin DIAT/DIEP registrada. Los accidentes del trabajo y enfermedades profesionales se denuncian al organismo administrador de la ley 16.744.`);
+    }
+
+    // ── KPIs ────────────────────────────────────────────────────────────────
+    const anio = hoy.slice(0, 4);
+    const delAnio = (incidentes || []).filter((i: any) => String(i.fecha_hora || '').slice(0, 4) === anio);
+    const accidentesAnio = delAnio.filter((i: any) => i.tipo === 'accidente_trabajo').length;
+    const diasPerdidosAnio = delAnio.reduce((s: number, i: any) => s + num(i.dias_perdidos), 0);
+    // Tasa anual de accidentabilidad (art. 75): accidentados por cada 100
+    // personas trabajadoras en el año calendario.
+    const tasa = n > 0 ? Math.round((accidentesAnio / n) * 1000) / 10 : null;
+
+    return {
+      trabajadores_activos: n,
+      kpis: {
+        accidentes_anio: accidentesAnio,
+        incidentes_anio: delAnio.length,
+        dias_perdidos_anio: diasPerdidosAnio,
+        tasa_accidentabilidad: tasa,
+        capacitaciones_anio: (actividades || []).filter(
+          (a: any) => a.tipo === 'capacitacion' && String(a.fecha || '').slice(0, 4) === anio,
+        ).length,
+        checks_ok: checks.filter((c) => c.estado === 'ok').length,
+        checks_total: checks.filter((c) => c.estado !== 'info').length,
+      },
+      checks,
     };
   }
 

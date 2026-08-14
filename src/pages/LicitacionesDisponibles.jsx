@@ -242,6 +242,23 @@ export default function LicitacionesDisponibles({ embedded = false }) {
       localStorage.setItem(MP_VISTA_CACHE, JSON.stringify({ res: mpRes, auto: mpAuto, ts: Date.now() }));
     } catch { /* sin respaldo, la pantalla sigue funcionando */ }
   }, [mpRes, mpAuto]);
+  // Orden por fecha de cierre de la tabla del explorador (null = como llegan:
+  // publicación más reciente primero). Igual que en el Listado, lo que no trae
+  // fecha va al final en ambos sentidos: no tener dato no es cerrar antes.
+  const [mpOrdenCierre, setMpOrdenCierre] = useState(null);
+  const mpItemsOrdenados = useMemo(() => {
+    const items = mpRes?.items || [];
+    if (!mpOrdenCierre) return items;
+    const signo = mpOrdenCierre === "asc" ? 1 : -1;
+    return [...items].sort((a, b) => {
+      const ta = Date.parse(a?.fecha_cierre || "");
+      const tb = Date.parse(b?.fecha_cierre || "");
+      if (Number.isNaN(ta) && Number.isNaN(tb)) return 0;
+      if (Number.isNaN(ta)) return 1;
+      if (Number.isNaN(tb)) return -1;
+      return (ta - tb) * signo;
+    });
+  }, [mpRes, mpOrdenCierre]);
   // Identidad de la búsqueda en curso: si el usuario lanza otra (o cambia de
   // vista), las tandas de la anterior que sigan llegando se descartan en vez
   // de mezclarse con los resultados nuevos.
@@ -584,16 +601,20 @@ export default function LicitacionesDisponibles({ embedded = false }) {
     }
   }
 
-  /* Tomar directo desde la exploración: la agrega al Listado (si no estaba) y
-     la deja tomada por quien pulsó, en un solo gesto. Pasa por los MISMOS
+  /* Tomar directo desde la exploración: queda registrada AQUÍ, en el
+     Explorador (origen 'exploracion'), sin pasar al Listado. Usa los MISMOS
      endpoints que el flujo manual, así que respeta todo: el cupo de 3, el
-     dueño si otro la tomó antes, el aviso al chat grupal. */
+     dueño si otro la tomó antes, el aviso al chat grupal, el cierre por
+     vencimiento. Si el código ya existía en el Listado, se toma esa fila (no
+     se duplica) y sigue viéndose en el Listado como siempre. */
   async function tomarDesdeExploracion(item) {
     if (agregandoCodigo) return;
     setAgregandoCodigo(item.codigo);
     try {
-      // 1) Asegurarla en el Listado. Idempotente: si ya estaba, insertados=0.
+      // 1) Asegurar la fila. Idempotente: si el código ya existía (en el
+      //    Listado o como toma del Explorador), insertados=0 y se usa esa.
       await api.post("/licitaciones/disponibles/bulk", {
+        origen: "exploracion",
         rows: [{
           id_licitacion: item.codigo,
           nombre: item.nombre,
@@ -608,11 +629,11 @@ export default function LicitacionesDisponibles({ embedded = false }) {
         }],
       });
       // 2) Ubicar su fila (el bulk no devuelve ids).
-      const lista = await api.get("/licitaciones/disponibles");
-      const row = (Array.isArray(lista) ? lista : []).find(
+      const filas = await api.get("/licitaciones/disponibles");
+      const row = (Array.isArray(filas) ? filas : []).find(
         (l) => String(l.id_licitacion || "").trim().toLowerCase() === String(item.codigo).trim().toLowerCase(),
       );
-      if (!row) throw new Error("No se encontró la postulación recién agregada al Listado.");
+      if (!row) throw new Error("No se encontró la postulación recién registrada.");
       const dueno = (row.tomada_por || "").toLowerCase();
       if (dueno && dueno !== currentEmail) {
         setToast({ type: "error", message: `${item.codigo} ya está tomada por ${row.tomada_por}.` });
@@ -620,7 +641,7 @@ export default function LicitacionesDisponibles({ embedded = false }) {
       }
       // 3) Tomarla (valida cupo y vigencia en el backend, y avisa al chat).
       if (!dueno) await api.put(`/licitaciones/disponibles/${row.id}/tomar`, { tomar: true });
-      setToast({ type: "success", message: `${item.codigo} tomada y en el Listado. Queda avisado en el chat.` });
+      setToast({ type: "success", message: `${item.codigo} tomada aquí en el Explorador. Queda avisado en el chat.` });
       cargar();
     } catch (e) {
       setToast({ type: "error", message: e?.message || "No se pudo tomar la postulación." });
@@ -736,15 +757,30 @@ export default function LicitacionesDisponibles({ embedded = false }) {
   }, [currentEmail, loadSeq]);
 
   // Tipos de licitación presentes en el listado (columna Tipo del xlsx).
+  /* El Listado y el Explorador comparten la tabla del backend pero son vistas
+     independientes: una toma hecha en el Explorador (origen 'exploracion') se
+     gestiona ALLÁ y no aparece en el Listado; «Agregar al Listado» o subir el
+     xlsx con ese código la promueve. El cupo de 3 sí es uno solo (misTomadas
+     cuenta sobre `lista` completa, igual que el backend). */
+  const listaListado = useMemo(() => lista.filter((l) => l.origen !== "exploracion"), [lista]);
+  const tomasExploracion = useMemo(() => lista.filter((l) => l.origen === "exploracion"), [lista]);
+  // Estado de cada resultado de la búsqueda: si ya existe una fila (de
+  // cualquier origen) se muestra quién la tiene tomada, sin duplicarla.
+  const dispPorCodigo = useMemo(() => {
+    const m = new Map();
+    for (const l of lista) m.set(String(l.id_licitacion || "").trim().toLowerCase(), l);
+    return m;
+  }, [lista]);
+
   const tiposDisponibles = useMemo(
-    () => [...new Set(lista.map((l) => String(l?.datos?.tipo || "").trim()).filter(Boolean))]
+    () => [...new Set(listaListado.map((l) => String(l?.datos?.tipo || "").trim()).filter(Boolean))]
       .sort((a, b) => a.localeCompare(b, "es")),
-    [lista],
+    [listaListado],
   );
 
   const filtradas = useMemo(() => {
     const q = busqueda.trim().toLowerCase();
-    const arr = lista.filter((l) => {
+    const arr = listaListado.filter((l) => {
       // "No aplica": descartadas por el equipo. Solo se ven en su propio filtro
       // o en "Todas"; el resto de las vistas las oculta.
       if (l.no_aplica) {
@@ -811,17 +847,17 @@ export default function LicitacionesDisponibles({ embedded = false }) {
       if (tb == null) return -1;
       return (ta - tb) * signo;
     });
-  }, [lista, busqueda, filtro, filtroTipo, dispon, fechaDesde, fechaHasta, cierreDesde, cierreHasta, currentEmail, ordenCierre]);
+  }, [listaListado, busqueda, filtro, filtroTipo, dispon, fechaDesde, fechaHasta, cierreDesde, cierreHasta, currentEmail, ordenCierre]);
 
   const stats = useMemo(() => ({
-    total: lista.length,
+    total: listaListado.length,
     // Las cerradas por vencimiento salen de «Pendientes»: el contador decía
     // que quedaba trabajo por hacer sobre postulaciones a las que ya no se
     // podía postular.
-    pendientes: lista.filter((l) => !l.cargada && !l.no_aplica && !l.cerrada && estaVigente(l)).length,
-    cargadas: lista.filter((l) => l.cargada).length,
-    cerradas: lista.filter((l) => !l.cargada && !l.no_aplica && (l.cerrada || !estaVigente(l))).length,
-  }), [lista]);
+    pendientes: listaListado.filter((l) => !l.cargada && !l.no_aplica && !l.cerrada && estaVigente(l)).length,
+    cargadas: listaListado.filter((l) => l.cargada).length,
+    cerradas: listaListado.filter((l) => !l.cargada && !l.no_aplica && (l.cerrada || !estaVigente(l))).length,
+  }), [listaListado]);
 
   // Postulaciones que el usuario actual tiene tomadas y aún pendientes (cupo /3).
   const misTomadas = useMemo(
@@ -1729,6 +1765,78 @@ export default function LicitacionesDisponibles({ embedded = false }) {
         </span>
       </div>
 
+      {/* Tomas hechas en el Explorador: viven acá (no pasan al Listado) y
+          sobreviven a cada búsqueda nueva, que es lo que las hacía perderse.
+          Mismas reglas del Listado: cupo de 3, aviso al chat, se liberan al
+          vencer y salen de aquí al crear su cotización con «Cargar». */}
+      {tomasExploracion.filter((l) => !l.cargada && !l.cerrada).length > 0 && (
+        <div className="surface" style={{ marginTop: 14, padding: "10px 14px" }}>
+          <div style={{ fontSize: 12.5, fontWeight: 800, marginBottom: 6, display: "flex", alignItems: "center", gap: 6 }}>
+            <Check size={14} style={{ color: "var(--success)" }} />
+            Tomadas en el Explorador
+            <span style={{ fontWeight: 400, color: "var(--text-muted)" }}>· no pasan al Listado; usa «Cargar» para crear su cotización</span>
+          </div>
+          {tomasExploracion.filter((l) => !l.cargada && !l.cerrada).map((l) => {
+            const mia = (l.tomada_por || "").toLowerCase() === currentEmail;
+            // Sin dueño: quedó liberada (o movida a mano). Se puede retomar
+            // desde aquí mismo, con la misma confirmación del Listado.
+            const sinTomar = !l.tomada_por;
+            return (
+              <div key={l.id} style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", padding: "6px 0", borderTop: "1px solid var(--border)", fontSize: 12.5 }}>
+                <button
+                  type="button"
+                  onClick={() => verFichaMP(l)}
+                  title="Ver ficha del proceso"
+                  style={{ background: "none", border: "none", padding: 0, font: "inherit", fontWeight: 700, color: "var(--primary-dark)", textDecoration: "underline", textUnderlineOffset: 2, cursor: "pointer", whiteSpace: "nowrap" }}
+                >
+                  {l.id_licitacion}
+                </button>
+                <span style={{ flex: 1, minWidth: 180, wordBreak: "break-word" }}>{l.nombre || "—"}</span>
+                {l?.datos?.cierre && <span style={{ whiteSpace: "nowrap", color: "var(--text-muted)" }}>cierra {l.datos.cierre}</span>}
+                <span
+                  title={sinTomar ? "Nadie la tiene tomada" : mia ? "La tomaste tú" : `Tomada por ${l.tomada_por}`}
+                  style={{ fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 999, whiteSpace: "nowrap",
+                    background: sinTomar ? "#f1f5f9" : mia ? "#dcfce7" : "#fef3c7",
+                    color: sinTomar ? "#64748b" : mia ? "#15803d" : "#b45309" }}
+                >
+                  {sinTomar ? "Sin tomar" : mia ? "Tuya" : (l.tomada_por || "").split("@")[0]}
+                </span>
+                {sinTomar && (
+                  <button
+                    className="btn btn-sm btn-ghost"
+                    title="Tomarla: ocupa uno de tus 3 cupos y avisa al chat grupal"
+                    onClick={() => pedirTomar(l)}
+                    style={{ padding: 6, lineHeight: 0, color: "var(--success)" }}
+                  >
+                    <Check size={15} />
+                  </button>
+                )}
+                {mia && (
+                  <span style={{ display: "inline-flex", gap: 4 }}>
+                    <button
+                      className="btn btn-sm btn-ghost"
+                      title="Cargar: crear la cotización en borrador (al guardarla se libera el cupo)"
+                      onClick={() => cargarLicitacion(l)}
+                      style={{ padding: 6, lineHeight: 0, color: "#6d28d9" }}
+                    >
+                      <FilePlus2 size={15} />
+                    </button>
+                    <button
+                      className="btn btn-sm btn-ghost"
+                      title="Liberar la toma (queda disponible para el resto)"
+                      onClick={() => toggleTomar(l)}
+                      style={{ padding: 6, lineHeight: 0, color: "#b91c1c" }}
+                    >
+                      <X size={15} />
+                    </button>
+                  </span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       {/* Resultados. Alto acotado con scroll propio: la vista combinada
           devuelve todo en una sola página (89 filas con "dental", cientos con
           términos amplios como "insumo") y sin esto la página crece sin fin. */}
@@ -1757,14 +1865,33 @@ export default function LicitacionesDisponibles({ embedded = false }) {
                 <th style={{ textAlign: "left", width: 200 }}>Organismo</th>
                 <th style={{ textAlign: "left", width: 120 }}>Región</th>
                 <th style={{ textAlign: "right", whiteSpace: "nowrap", width: 110 }}>Monto (CLP)</th>
-                <th style={{ textAlign: "left", whiteSpace: "nowrap", width: 130 }}>Cierre</th>
+                <th style={{ textAlign: "left", whiteSpace: "nowrap", width: 130 }}>
+                  <button
+                    type="button"
+                    onClick={() => setMpOrdenCierre((o) => (o === "asc" ? "desc" : o === "desc" ? null : "asc"))}
+                    title={
+                      mpOrdenCierre === "asc" ? "Cierran antes primero · clic para invertir"
+                      : mpOrdenCierre === "desc" ? "Cierran después primero · clic para quitar el orden"
+                      : "Ordenar por fecha de cierre"
+                    }
+                    style={{
+                      display: "inline-flex", alignItems: "center", gap: 4, background: "none", border: "none",
+                      padding: 0, font: "inherit", color: mpOrdenCierre ? "var(--primary-dark)" : "inherit", cursor: "pointer",
+                    }}
+                  >
+                    Cierre
+                    {mpOrdenCierre === "asc" ? <ArrowUp size={12} />
+                      : mpOrdenCierre === "desc" ? <ArrowDown size={12} />
+                      : <ArrowUpDown size={12} style={{ opacity: 0.35 }} />}
+                  </button>
+                </th>
                 <th style={{ textAlign: "left", width: 130 }}>Estado</th>
                 <th style={{ textAlign: "center", width: 64 }}>Ofertas</th>
                 <th style={{ textAlign: "left", width: 100 }}>Acciones</th>
               </tr>
             </thead>
             <tbody>
-              {mpRes.items.map((item) => {
+              {mpItemsOrdenados.map((item) => {
                 const ec = String(item.estado_codigo || "");
                 const tono = ec === "publicada" || ec === "5"
                   ? { bg: "#dcfce7", fg: "#15803d" }
@@ -1774,6 +1901,13 @@ export default function LicitacionesDisponibles({ embedded = false }) {
                   ? { bg: "#fef3c7", fg: "#b45309" }
                   : { bg: "#f1f5f9", fg: "#64748b" };
                 const cierre = item.fecha_cierre ? fmtFechaHora(new Date(item.fecha_cierre), true) : "—";
+                // Estado de toma del proceso, venga del Explorador o del
+                // Listado: se mira la fila existente por código para mostrar
+                // quién la tiene y adaptar los botones (sin duplicar filas).
+                const disp = dispPorCodigo.get(String(item.codigo || "").trim().toLowerCase());
+                const tomadaPor = (disp?.tomada_por || "").toLowerCase();
+                const esMia = !!tomadaPor && tomadaPor === currentEmail;
+                const cotizada = !!disp?.cargada;
                 // Toda la fila abre la ficha, igual que en el Listado. El guard
                 // de getSelection deja seleccionar texto sin disparar el modal.
                 return (
@@ -1785,6 +1919,15 @@ export default function LicitacionesDisponibles({ embedded = false }) {
                   >
                     <td style={{ fontWeight: 600, whiteSpace: "nowrap", color: "var(--primary-dark)", textDecoration: "underline", textUnderlineOffset: 2 }}>
                       {item.codigo}
+                      {(cotizada || tomadaPor) && (
+                        <div
+                          title={cotizada ? "Ya tiene cotización creada" : esMia ? "La tomaste tú" : `Tomada por ${disp.tomada_por}`}
+                          style={{ fontSize: 10.5, fontWeight: 700, textDecoration: "none",
+                            color: cotizada ? "#1d4ed8" : esMia ? "#15803d" : "#b45309" }}
+                        >
+                          {cotizada ? "Cotizada" : esMia ? "Tomada por ti" : `Tomada · ${(disp.tomada_por || "").split("@")[0]}`}
+                        </div>
+                      )}
                     </td>
                     {/* Tipo de proceso deducido del sufijo del código (COT,
                         LE, LP…). Distingue de un vistazo una Compra Ágil de una
@@ -1833,26 +1976,43 @@ export default function LicitacionesDisponibles({ embedded = false }) {
                     <td onClick={(e) => e.stopPropagation()}>
                       <button
                         className="btn btn-sm btn-ghost"
-                        title="Agregar al Listado de Postulaciones (sin tomarla)"
-                        disabled={agregandoCodigo === item.codigo}
+                        title={disp && disp.origen !== "exploracion"
+                          ? "Ya está en el Listado de Postulaciones"
+                          : "Agregar al Listado de Postulaciones (sin tomarla)"}
+                        disabled={agregandoCodigo === item.codigo || (disp && disp.origen !== "exploracion")}
                         onClick={() => agregarAPostulaciones(item)}
                         style={{ padding: 6, lineHeight: 0, color: "var(--primary-dark)" }}
                       >
                         <ClipboardList size={15} />
                       </button>
+                      {esMia ? (
+                        <button
+                          className="btn btn-sm btn-ghost"
+                          title="Liberar la toma (queda disponible para el resto)"
+                          onClick={() => toggleTomar(disp)}
+                          style={{ padding: 6, lineHeight: 0, color: "#b91c1c" }}
+                        >
+                          <X size={15} />
+                        </button>
+                      ) : (
+                        <button
+                          className="btn btn-sm btn-ghost"
+                          title={tomadaPor
+                            ? `Tomada por ${disp.tomada_por}`
+                            : "Tomarla: queda registrada aquí en el Explorador, ocupa uno de tus 3 cupos y avisa al chat grupal"}
+                          disabled={agregandoCodigo === item.codigo || !!tomadaPor}
+                          onClick={() => tomarDesdeExploracion(item)}
+                          style={{ padding: 6, lineHeight: 0, color: "var(--success)" }}
+                        >
+                          <Check size={15} />
+                        </button>
+                      )}
                       <button
                         className="btn btn-sm btn-ghost"
-                        title="Tomarla: la agrega al Listado, ocupa uno de tus 3 cupos y avisa al chat grupal"
-                        disabled={agregandoCodigo === item.codigo}
-                        onClick={() => tomarDesdeExploracion(item)}
-                        style={{ padding: 6, lineHeight: 0, color: "var(--success)" }}
-                      >
-                        <Check size={15} />
-                      </button>
-                      <button
-                        className="btn btn-sm btn-ghost"
-                        title="Crear una cotización en borrador con los datos de este proceso (sin pasar por el Listado)"
-                        onClick={() => cotizarDesdeExploracion(item)}
+                        title={esMia
+                          ? "Cargar: crear la cotización en borrador (al guardarla se libera el cupo)"
+                          : "Crear una cotización en borrador con los datos de este proceso (sin tomarla)"}
+                        onClick={() => (esMia ? cargarLicitacion(disp) : cotizarDesdeExploracion(item))}
                         style={{ padding: 6, lineHeight: 0, color: "#6d28d9" }}
                       >
                         <FilePlus2 size={15} />
@@ -2076,26 +2236,53 @@ export default function LicitacionesDisponibles({ embedded = false }) {
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 14, flexWrap: "wrap" }}>
               {/* Solo cuando la ficha viene de la exploración: desde el Listado
                   la cotización se crea con «Cargar», que reserva el cupo. */}
-              {mpFicha.itemExplorar && (
+              {mpFicha.itemExplorar && (() => {
+                const dispFicha = dispPorCodigo.get(String(mpFicha.itemExplorar.codigo || "").trim().toLowerCase());
+                const duenoFicha = (dispFicha?.tomada_por || "").toLowerCase();
+                return (
                 <>
+                  {duenoFicha === currentEmail ? (
+                    <button
+                      className="btn btn-secondary"
+                      onClick={() => { setMpFicha(null); toggleTomar(dispFicha); }}
+                      style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
+                      title="Liberar la toma (queda disponible para el resto)"
+                    >
+                      <X size={14} /> Liberar
+                    </button>
+                  ) : (
                   <button
                     className="btn btn-primary"
                     onClick={() => { const it = mpFicha.itemExplorar; setMpFicha(null); tomarDesdeExploracion(it); }}
-                    disabled={agregandoCodigo === mpFicha.itemExplorar.codigo}
+                    disabled={agregandoCodigo === mpFicha.itemExplorar.codigo || !!duenoFicha}
                     style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
-                    title="La agrega al Listado, ocupa uno de tus 3 cupos y avisa al chat grupal"
+                    title={duenoFicha
+                      ? `Tomada por ${dispFicha.tomada_por}`
+                      : "Queda registrada aquí en el Explorador (no pasa al Listado), ocupa uno de tus 3 cupos y avisa al chat grupal"}
                   >
                     <Check size={14} /> Tomar
                   </button>
+                  )}
                   <button
                     className="btn btn-secondary"
-                    onClick={() => { const it = mpFicha.itemExplorar; setMpFicha(null); cotizarDesdeExploracion(it); }}
+                    onClick={() => {
+                      const it = mpFicha.itemExplorar;
+                      setMpFicha(null);
+                      // Con la toma propia se usa «Cargar»: marca la fila al
+                      // guardar la cotización y libera el cupo.
+                      if (duenoFicha === currentEmail) cargarLicitacion(dispFicha);
+                      else cotizarDesdeExploracion(it);
+                    }}
                     style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
+                    title={duenoFicha === currentEmail
+                      ? "Cargar: crear la cotización en borrador (al guardarla se libera el cupo)"
+                      : "Crear una cotización en borrador con los datos de este proceso (sin tomarla)"}
                   >
-                    <FilePlus2 size={14} /> Crear cotización (borrador)
+                    <FilePlus2 size={14} /> {duenoFicha === currentEmail ? "Cargar (crear cotización)" : "Crear cotización (borrador)"}
                   </button>
                 </>
-              )}
+                );
+              })()}
               {mpFicha.data && (
                 <button
                   className={mpFicha.itemExplorar ? "btn btn-secondary" : "btn btn-primary"}

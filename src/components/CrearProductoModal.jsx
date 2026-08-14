@@ -396,10 +396,21 @@ export default function CrearProductoModal({ onClose, onCreado }) {
     if (puedeVerCosto && !(numFromCL(costo) > 0)) missing.push("Costo");
     if (!(numFromCL(precios.lista1) > 0)) missing.push("Precio Lista 1");
     if (!(numFromCL(precios.lista2) > 0)) missing.push("Precio Lista 2");
+    // Los transitorios (sin SKU) nacen para cotizar YA, y el costeo de fletes
+    // necesita peso y dimensiones reales — sin ellos el flete se estima a
+    // ciegas. La foto también es obligatoria (pedido 2026-08-13).
+    if (estadoFinal !== "Activo") {
+      if (!(Number(peso) > 0)) missing.push("Peso");
+      if (!(Number(alto) > 0)) missing.push("Alto");
+      if (!(Number(largo) > 0)) missing.push("Largo");
+      if (!(Number(ancho) > 0)) missing.push("Ancho");
+      if (!imagenFile) missing.push("Foto del producto");
+    }
 
     if (missing.length) {
-      const enGeneral = ["Nombre del producto", "Categoría", "Formato", "Link de referencia"].some((m) => missing.includes(m));
+      const enGeneral = ["Nombre del producto", "Categoría", "Formato", "Link de referencia", "Foto del producto"].some((m) => missing.includes(m));
       const enDetalle = ["Presentación", "Descripción", "Composición", "Uso/Indicaciones", "Beneficios"].some((m) => missing.includes(m));
+      const enDimensiones = ["Peso", "Alto", "Largo", "Ancho"].some((m) => missing.includes(m));
       const enPrecios = ["Costo", "Precio Lista 1", "Precio Lista 2"].some((m) => missing.includes(m));
       setError({
         titulo: `Falta${missing.length > 1 ? "n" : ""} ${missing.length} campo${missing.length > 1 ? "s" : ""}`,
@@ -407,6 +418,7 @@ export default function CrearProductoModal({ onClose, onCreado }) {
       });
       if (enGeneral) setSeccion("general");
       else if (enDetalle) setSeccion("detalle");
+      else if (enDimensiones) setSeccion("dimensiones");
       else if (enPrecios) setSeccion("precios");
       return;
     }

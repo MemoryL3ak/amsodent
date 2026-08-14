@@ -879,6 +879,21 @@ export default function EditarLicitacion() {
     const r = (rol ?? "").toString().trim().toLowerCase();
     return r === "admin" || r === "administrador" || r === "jefe_ventas_especial";
   }, [rol]);
+  // Flete Estimado a mano solo jefe de ventas o administración (2026-08-13):
+  // para el resto queda de solo lectura aunque la cotización sea editable.
+  const puedeEditarFlete = useMemo(() => {
+    const r = (rol ?? "").toString().trim().toLowerCase();
+    return ["admin", "administrador", "jefe_ventas", "jefe_ventas_especial"].includes(r);
+  }, [rol]);
+  // Margen: cada ejecutivo ve solo el de SUS cotizaciones (2026-08-13).
+  // Jefes de ventas, contabilidad y administración lo ven en todas.
+  const puedeVerMargen = useMemo(() => {
+    const r = (rol ?? "").toString().trim().toLowerCase();
+    if (["admin", "administrador", "jefe_ventas", "jefe_ventas_especial", "contabilidad"].includes(r)) return true;
+    const dueno = (vendedorCorreo || "").trim().toLowerCase();
+    const yo = (miCorreo || "").trim().toLowerCase();
+    return !!yo && dueno === yo;
+  }, [rol, vendedorCorreo, miCorreo]);
 
   /* ===============================
      DATOS ENTIDAD
@@ -3048,6 +3063,10 @@ export default function EditarLicitacion() {
           total: Number(it?.total ?? 0),
           categoria: String(it?.categoria ?? ""),
           observacion: String(it?.observacion ?? ""),
+          // El costo con el que se calculó el margen EN ESTA cotización
+          // (editado a mano o el de catálogo al guardar): es lo que leen los
+          // KPIs de margen de los paneles, para que digan lo mismo que acá.
+          costo: getCostoParaItem(it),
         };
 
         if (it.id_item) {
@@ -4069,7 +4088,8 @@ export default function EditarLicitacion() {
                 className={inputClassH10}
                 value={fleteEstimado}
                 onChange={(e) => setFleteEstimado(e.target.value)}
-                disabled={!esEditable}
+                disabled={!esEditable || !puedeEditarFlete}
+                title={puedeEditarFlete ? undefined : "Solo lectura: editarlo es de jefe de ventas o administración."}
               />
             </div>
 
@@ -4117,14 +4137,16 @@ export default function EditarLicitacion() {
         <div className="mb-6">
           <p className="form-section-title">Financiero</p>
           <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-6 gap-6">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Margen General
-              </label>
-              <div className="form-display form-display-value">
-                {margenGeneral.toFixed(2)}%
+            {puedeVerMargen && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Margen General
+                </label>
+                <div className="form-display form-display-value">
+                  {margenGeneral.toFixed(2)}%
+                </div>
               </div>
-            </div>
+            )}
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">

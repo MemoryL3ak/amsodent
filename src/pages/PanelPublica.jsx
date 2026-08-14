@@ -7,7 +7,7 @@ import { api } from "../lib/api";
 import useAuth from "../hooks/useAuth";
 import MonthCalendarPicker from "../components/MonthCalendarPicker";
 import {
-  FileText, ClipboardCheck, Target, Trophy, Banknote, PieChart, GitBranch,
+  FileText, ClipboardCheck, Target, Trophy, Banknote, PieChart, GitBranch, Download,
 } from "lucide-react";
 import {
   fmtCLP, fmtNum, fmtPct, inicioMesISO, mesDe, toDateISO, addMesKey,
@@ -32,6 +32,8 @@ export default function PanelPublica() {
   const [filtroMotivo, setFiltroMotivo] = useState(""); // detalle perdidas/descartadas
   const [skusConEquiv, setSkusConEquiv] = useState(new Set()); // SKUs con equivalencias válidas
   const [itemsPorLicMes, setItemsPorLicMes] = useState({}); // { licId: [sku, …] } — madres del mes
+  const [nombresVendedores, setNombresVendedores] = useState({}); // email → nombre
+  const [filtroVendedorEq, setFiltroVendedorEq] = useState(""); // aprovechamiento por vendedor
 
   const mesActual = mesDe(periodo);
   const mesPrev = addMesKey(mesActual, -1);
@@ -45,7 +47,7 @@ export default function PanelPublica() {
       setLoading(true);
       try {
         const data = await api.get(
-          "/licitaciones/with-fields?fields=id,id_licitacion,nombre,nombre_entidad,rut_entidad,fecha,fecha_adjudicada,estado,total_con_iva,total_sin_iva,tipo_compra,tipo_cliente,region,motivo_perdida,motivo_perdida_otro,motivo_descarte,comentario_descarte,madre_id"
+          "/licitaciones/with-fields?fields=id,id_licitacion,nombre,nombre_entidad,rut_entidad,fecha,fecha_adjudicada,estado,total_con_iva,total_sin_iva,tipo_compra,tipo_cliente,region,motivo_perdida,motivo_perdida_otro,motivo_descarte,comentario_descarte,madre_id,creado_por"
         );
         const rows = (data || []).filter(esPublica);
         const ids = rows.map((l) => Number(l.id)).filter(Boolean);
@@ -248,7 +250,8 @@ export default function PanelPublica() {
 
   // Oportunidades de equivalencias del mes: cotizaciones MADRE cuyos ítems
   // tienen algún SKU con equivalencia registrada, vs las que efectivamente
-  // generaron una cotización alternativa (hija).
+  // generaron una cotización alternativa (hija). Se puede abrir POR VENDEDOR:
+  // el selector filtra KPIs, gráfico y tabla, y `porVendedor` resume a todos.
   const equivalencias = useMemo(() => {
     const hijasPorMadre = new Map();
     lics.forEach((l) => {
@@ -257,32 +260,101 @@ export default function PanelPublica() {
       if (!hijasPorMadre.has(mid)) hijasPorMadre.set(mid, []);
       hijasPorMadre.get(mid).push(l);
     });
-    const filas = [];
-    let conPosibilidad = 0, aprovechadas = 0;
+    const filasTodas = [];
     lics.forEach((l) => {
       if (mesDe(l.fecha) !== mesActual || l.madre_id) return;
       const skus = itemsPorLicMes[Number(l.id)] || [];
       const tiene = skus.some((sku) => skusConEquiv.has(sku));
       if (!tiene) return;
-      conPosibilidad++;
       const hijas = hijasPorMadre.get(Number(l.id)) || [];
-      if (hijas.length) aprovechadas++;
-      filas.push({
+      const email = (l.creado_por || "").trim().toLowerCase();
+      filasTodas.push({
         id: l.id,
         codigo: l.id_licitacion || l.nombre || `Lic. ${l.id}`,
         entidad: l.nombre_entidad || l.rut_entidad || "—",
+        vendedor: nombresVendedores[email] || email || "Sin vendedor",
         hijas: hijas.length,
         skusEquiv: skus.filter((sku) => skusConEquiv.has(sku)).length,
       });
     });
+    const porVendedor = Object.values(
+      filasTodas.reduce((m, f) => {
+        const e = (m[f.vendedor] = m[f.vendedor] || { vendedor: f.vendedor, conPosibilidad: 0, aprovechadas: 0 });
+        e.conPosibilidad++;
+        if (f.hijas > 0) e.aprovechadas++;
+        return m;
+      }, {}),
+    )
+      .map((e) => ({
+        ...e,
+        sinAprovechar: e.conPosibilidad - e.aprovechadas,
+        tasa: e.conPosibilidad > 0 ? (e.aprovechadas / e.conPosibilidad) * 100 : 0,
+      }))
+      .sort((a, b) => b.conPosibilidad - a.conPosibilidad);
+    const filas = filtroVendedorEq
+      ? filasTodas.filter((f) => f.vendedor === filtroVendedorEq)
+      : filasTodas;
+    const conPosibilidad = filas.length;
+    const aprovechadas = filas.filter((f) => f.hijas > 0).length;
     return {
       conPosibilidad,
       aprovechadas,
       sinAprovechar: conPosibilidad - aprovechadas,
       tasa: conPosibilidad > 0 ? (aprovechadas / conPosibilidad) * 100 : 0,
+      porVendedor,
       filas: filas.sort((a, b) => Number(b.hijas > 0) - Number(a.hijas > 0) || String(a.codigo).localeCompare(String(b.codigo))),
     };
-  }, [lics, itemsPorLicMes, skusConEquiv, mesActual]);
+  }, [lics, itemsPorLicMes, skusConEquiv, mesActual, nombresVendedores, filtroVendedorEq]);
+
+  // Nombres de los vendedores (para abrir el aprovechamiento por vendedor).
+  useEffect(() => {
+    if (cargando || !puedeVer) return;
+    const emails = Array.from(new Set(
+      lics.map((l) => (l.creado_por || "").trim().toLowerCase()).filter(Boolean)
+    ));
+    if (!emails.length) { setNombresVendedores({}); return; }
+    let activo = true;
+    api.post("/usuarios/profiles/by-emails", { emails })
+      .then((perfiles) => {
+        if (!activo) return;
+        const m = {};
+        (perfiles || []).forEach((p) => {
+          m[(p.email || "").trim().toLowerCase()] = (p.nombre || "").trim();
+        });
+        setNombresVendedores(m);
+      })
+      .catch(() => {});
+    return () => { activo = false; };
+  }, [cargando, puedeVer, lics]);
+
+  // Exporta el aprovechamiento a Excel: detalle (según el filtro en pantalla)
+  // + resumen por vendedor, para análisis posterior (2026-08-13).
+  async function exportarEquivalencias() {
+    try {
+      const XLSX = await import("xlsx");
+      const wb = XLSX.utils.book_new();
+      const detalle = equivalencias.filas.map((f) => ({
+        "Licitación": f.codigo,
+        "Entidad": f.entidad,
+        "Vendedor": f.vendedor,
+        "Ítems con equivalencia": f.skusEquiv,
+        "Alternativa creada": f.hijas > 0 ? `Sí (${f.hijas})` : "No",
+      }));
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(detalle), "Detalle");
+      const resumen = equivalencias.porVendedor.map((v) => ({
+        "Vendedor": v.vendedor,
+        "Con posibilidad": v.conPosibilidad,
+        "Aprovechadas": v.aprovechadas,
+        "Sin aprovechar": v.sinAprovechar,
+        "Tasa %": Number(v.tasa.toFixed(1)),
+      }));
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(resumen), "Por vendedor");
+      const sufijo = filtroVendedorEq ? `_${filtroVendedorEq.replace(/\s+/g, "_")}` : "";
+      XLSX.writeFile(wb, `aprovechamiento_equivalencias_${mesActual}${sufijo}.xlsx`);
+    } catch (e) {
+      console.error("Error exportando equivalencias:", e);
+    }
+  }
 
   if (!cargando && !puedeVer) {
     return (
@@ -462,13 +534,38 @@ export default function PanelPublica() {
 
           {/* Equivalencias: oportunidades vs cotizaciones alternativas creadas */}
           <div className="surface" style={{ padding: 18, marginTop: 16 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 14, gap: 8, flexWrap: "wrap" }}>
-              <h3 className="surface-title" style={{ margin: 0, display: "flex", alignItems: "center", gap: 8 }}>
-                <GitBranch size={16} /> Equivalencias — oportunidades del mes
-              </h3>
-              <span style={{ fontSize: 11, color: "var(--text-muted)" }}>
-                Cotizaciones con ítems que tienen productos equivalentes registrados
-              </span>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, gap: 8, flexWrap: "wrap" }}>
+              <div>
+                <h3 className="surface-title" style={{ margin: 0, display: "flex", alignItems: "center", gap: 8 }}>
+                  <GitBranch size={16} /> Equivalencias — oportunidades del mes
+                </h3>
+                <span style={{ fontSize: 11, color: "var(--text-muted)" }}>
+                  Cotizaciones con ítems que tienen productos equivalentes registrados
+                </span>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                {/* Abrir por vendedor: el selector acota KPIs, gráfico y tabla. */}
+                <select
+                  className="input"
+                  style={{ height: 32, fontSize: 12.5, maxWidth: 220 }}
+                  value={filtroVendedorEq}
+                  onChange={(e) => setFiltroVendedorEq(e.target.value)}
+                  title="Ver el aprovechamiento de un vendedor en particular"
+                >
+                  <option value="">Todos los vendedores</option>
+                  {equivalencias.porVendedor.map((v) => (
+                    <option key={v.vendedor} value={v.vendedor}>{v.vendedor}</option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={exportarEquivalencias}
+                  title="Descargar en Excel: detalle según el filtro + resumen por vendedor"
+                >
+                  <Download size={13} /> Exportar
+                </button>
+              </div>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 14, marginBottom: 16 }}>
               <KpiCard icon={FileText} color="#0e7490" label="Con posibilidad" sub="Cotizaciones madre con equivalencias" value={fmtNum(equivalencias.conPosibilidad)} />
@@ -490,26 +587,29 @@ export default function PanelPublica() {
               <div style={{ overflowY: "auto", maxHeight: 260 }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, tableLayout: "fixed" }}>
                   <colgroup>
-                    <col style={{ width: "26%" }} />
-                    <col style={{ width: "36%" }} />
-                    <col style={{ width: "18%" }} />
+                    <col style={{ width: "22%" }} />
+                    <col style={{ width: "28%" }} />
                     <col style={{ width: "20%" }} />
+                    <col style={{ width: "14%" }} />
+                    <col style={{ width: "16%" }} />
                   </colgroup>
                   <thead>
                     <tr style={{ color: "var(--text-muted)", textAlign: "left" }}>
                       <th style={{ padding: "6px 8px", position: "sticky", top: 0, background: "var(--surface)", borderBottom: "1px solid var(--border)" }}>Licitación</th>
                       <th style={{ padding: "6px 8px", position: "sticky", top: 0, background: "var(--surface)", borderBottom: "1px solid var(--border)" }}>Entidad</th>
+                      <th style={{ padding: "6px 8px", position: "sticky", top: 0, background: "var(--surface)", borderBottom: "1px solid var(--border)" }}>Vendedor</th>
                       <th style={{ padding: "6px 8px", position: "sticky", top: 0, background: "var(--surface)", borderBottom: "1px solid var(--border)" }}>Ítems c/equiv.</th>
                       <th style={{ padding: "6px 8px", position: "sticky", top: 0, background: "var(--surface)", borderBottom: "1px solid var(--border)" }}>Alternativa</th>
                     </tr>
                   </thead>
                   <tbody>
                     {equivalencias.filas.length === 0 ? (
-                      <tr><td colSpan={4} style={{ padding: "14px 8px", color: "var(--text-muted)" }}>Sin oportunidades de equivalencias en el mes.</td></tr>
+                      <tr><td colSpan={5} style={{ padding: "14px 8px", color: "var(--text-muted)" }}>Sin oportunidades de equivalencias en el mes.</td></tr>
                     ) : equivalencias.filas.map((f) => (
                       <tr key={f.id} style={{ borderBottom: "1px solid var(--border)" }}>
                         <td style={{ padding: "6px 8px", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={f.codigo}>{f.codigo}</td>
                         <td style={{ padding: "6px 8px", color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={f.entidad}>{f.entidad}</td>
+                        <td style={{ padding: "6px 8px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={f.vendedor}>{f.vendedor}</td>
                         <td style={{ padding: "6px 8px" }}>{fmtNum(f.skusEquiv)}</td>
                         <td style={{ padding: "6px 8px" }}>
                           <span style={{

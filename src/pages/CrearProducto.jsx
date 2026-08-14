@@ -364,6 +364,16 @@ export default function CrearProducto() {
     if (puedeVerCosto && !(numFromCL(costo) > 0)) missing.push("Costo");
     if (!(numFromCL(precios.lista1) > 0)) missing.push("Precio de Venta (Lista 1)");
     if (!(numFromCL(precios.lista2) > 0)) missing.push("Precio de Venta (Lista 2)");
+    // Los transitorios (sin SKU) nacen para cotizar YA, y el costeo de fletes
+    // necesita peso y dimensiones reales — sin ellos el flete se estima a
+    // ciegas. La foto también es obligatoria (pedido 2026-08-13).
+    if (estadoFinal !== "Activo") {
+      if (!(Number(peso) > 0)) missing.push("Peso (kg)");
+      if (!(Number(alto) > 0)) missing.push("Alto");
+      if (!(Number(largo) > 0)) missing.push("Largo");
+      if (!(Number(ancho) > 0)) missing.push("Ancho");
+      if (!imagenFile) missing.push("Foto del producto");
+    }
 
     if (missing.length) {
       setToast({

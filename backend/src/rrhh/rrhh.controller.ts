@@ -477,6 +477,69 @@ export class RrhhController {
   }
 
   // ==========================================================================
+  // PREVENCIÓN DE RIESGOS — D.S. 44/2023 (admin)
+  // ==========================================================================
+  @UseGuards(AdminGuard)
+  @Get('sst/resumen')
+  sstResumen() {
+    return this.rrhh.resumenSst();
+  }
+
+  @UseGuards(AdminGuard)
+  @Get('sst/documentos')
+  sstDocumentos() {
+    return this.rrhh.listarSstDocumentos();
+  }
+
+  @UseGuards(AdminGuard)
+  @Post('sst/documentos')
+  sstGuardarDocumento(@Req() req: any, @Body() body: any) {
+    return this.rrhh.guardarSstDocumento(body, this.emailDe(req));
+  }
+
+  @UseGuards(AdminGuard)
+  @Delete('sst/documentos/:id')
+  sstEliminarDocumento(@Param('id', ParseIntPipe) id: number) {
+    return this.rrhh.eliminarSstDocumento(id);
+  }
+
+  @UseGuards(AdminGuard)
+  @Get('sst/actividades')
+  sstActividades() {
+    return this.rrhh.listarSstActividades();
+  }
+
+  @UseGuards(AdminGuard)
+  @Post('sst/actividades')
+  sstGuardarActividad(@Req() req: any, @Body() body: any) {
+    return this.rrhh.guardarSstActividad(body, this.emailDe(req));
+  }
+
+  @UseGuards(AdminGuard)
+  @Delete('sst/actividades/:id')
+  sstEliminarActividad(@Param('id', ParseIntPipe) id: number) {
+    return this.rrhh.eliminarSstActividad(id);
+  }
+
+  @UseGuards(AdminGuard)
+  @Get('sst/incidentes')
+  sstIncidentes() {
+    return this.rrhh.listarSstIncidentes();
+  }
+
+  @UseGuards(AdminGuard)
+  @Post('sst/incidentes')
+  sstGuardarIncidente(@Req() req: any, @Body() body: any) {
+    return this.rrhh.guardarSstIncidente(body, this.emailDe(req));
+  }
+
+  @UseGuards(AdminGuard)
+  @Delete('sst/incidentes/:id')
+  sstEliminarIncidente(@Param('id', ParseIntPipe) id: number) {
+    return this.rrhh.eliminarSstIncidente(id);
+  }
+
+  // ==========================================================================
   // ARCHIVOS (admin)
   // ==========================================================================
   @UseGuards(AdminGuard)

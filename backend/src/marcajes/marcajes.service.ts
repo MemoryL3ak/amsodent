@@ -22,6 +22,12 @@ export interface OficinaRow {
   activa: boolean;
 }
 
+// Margen de error de GPS que acepta la Dirección del Trabajo para la
+// geolocalización de marcajes (Res. Ex. N° 38 y Dictamen Ord. N° 2927/58):
+// una marca queda "fuera de radio" solo si excede el radio de la oficina
+// más estos 30 metros de tolerancia.
+const MARGEN_ERROR_GPS_M = 30;
+
 // Fórmula haversine para distancia entre dos puntos geográficos en metros.
 function distanciaMetros(
   lat1: number,
@@ -310,7 +316,8 @@ export class MarcajesService {
       if (mejor) {
         oficinaId = mejor.oficina.id;
         distanciaM = Math.round(mejor.dist);
-        fueraDeRadio = mejor.dist > mejor.oficina.radio_metros;
+        fueraDeRadio =
+          mejor.dist > Number(mejor.oficina.radio_metros) + MARGEN_ERROR_GPS_M;
       }
     } else if (activas.length > 0) {
       // No envió coords → lo marcamos como fuera de radio (el admin debe saberlo).
