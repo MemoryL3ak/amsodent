@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
 import useAuth from "../hooks/useAuth";
 import Toast from "../components/Toast";
@@ -10,8 +10,7 @@ import {
   Loader2,
   CheckCircle2,
   AlertTriangle,
-  Wifi,
-  WifiOff,
+  ShieldCheck,
 } from "lucide-react";
 
 // Paleta acorde a la plataforma
@@ -50,19 +49,19 @@ export default function Marcaje() {
   const { user, perfil, cargando: cargandoAuth } = useAuth();
 
   const [reloj, setReloj] = useState(new Date());
-  const [ubicacion, setUbicacion] = useState(null); // { lat, lng, accuracy }
-  const [estadoGeo, setEstadoGeo] = useState("pendiente"); // pendiente | obteniendo | ok | error
-  const [errorGeo, setErrorGeo] = useState("");
-  const [direccion, setDireccion] = useState(""); // resuelta via Nominatim
-  const [cargandoDireccion, setCargandoDireccion] = useState(false);
+  // Permiso de ubicación: granted | prompt | denied | desconocido | nosoporte.
+  // Solo se consulta el ESTADO del permiso — el GPS no se enciende hasta el
+  // instante del marcaje: la DT (Res. Ex. N° 38, Dictamen Ord. N° 2927/58)
+  // prohíbe el seguimiento continuo durante la jornada.
+  const [permisoGeo, setPermisoGeo] = useState("desconocido");
 
   const [tipoSiguiente, setTipoSiguiente] = useState("entrada"); // entrada | salida
   const [marcando, setMarcando] = useState(false);
+  const [faseMarcaje, setFaseMarcaje] = useState(null); // null | ubicando | registrando
   const [exito, setExito] = useState(null); // marcaje recién creado
   const [toast, setToast] = useState(null);
 
   const [historial, setHistorial] = useState([]);
-  const watcherRef = useRef(null);
 
   // Reloj en vivo
   useEffect(() => {
@@ -70,83 +69,25 @@ export default function Marcaje() {
     return () => clearInterval(t);
   }, []);
 
-  // Reverse geocoding via Nominatim — se ejecuta cuando cambia la ubicación.
-  // Debounce 600ms para no spammear el servicio mientras el GPS se estabiliza.
-  useEffect(() => {
-    if (!ubicacion?.lat || !ubicacion?.lng) return undefined;
-    const t = setTimeout(async () => {
-      setCargandoDireccion(true);
-      try {
-        const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${ubicacion.lat}&lon=${ubicacion.lng}&zoom=18&addressdetails=1`;
-        const res = await fetch(url, {
-          headers: { "Accept-Language": "es-CL,es" },
-        });
-        if (!res.ok) throw new Error("Nominatim error");
-        const data = await res.json();
-        const a = data?.address || {};
-        const calle = a.road || a.pedestrian || a.footway || "";
-        const numero = a.house_number || "";
-        const comuna =
-          a.city_district || a.suburb || a.town || a.village || a.city || "";
-        const region = a.state || "";
-        const corto = [
-          [calle, numero].filter(Boolean).join(" "),
-          comuna,
-          region,
-        ]
-          .filter(Boolean)
-          .join(", ");
-        setDireccion(corto || data?.display_name || "");
-      } catch (_e) {
-        setDireccion("");
-      } finally {
-        setCargandoDireccion(false);
-      }
-    }, 600);
-    return () => clearTimeout(t);
-  }, [ubicacion?.lat, ubicacion?.lng]);
-
-  // Pedir geolocalización al montar
+  // Consultar el estado del permiso de ubicación (no activa el GPS).
   useEffect(() => {
     if (!("geolocation" in navigator)) {
-      setEstadoGeo("error");
-      setErrorGeo("Este navegador no soporta geolocalización.");
-      return;
+      setPermisoGeo("nosoporte");
+      return undefined;
     }
-    setEstadoGeo("obteniendo");
-    const handleOk = (pos) => {
-      setUbicacion({
-        lat: pos.coords.latitude,
-        lng: pos.coords.longitude,
-        accuracy: pos.coords.accuracy,
-      });
-      setEstadoGeo("ok");
-      setErrorGeo("");
-    };
-    const handleErr = (err) => {
-      setEstadoGeo("error");
-      setErrorGeo(
-        err?.code === 1
-          ? "Permiso de ubicación denegado. Habilítalo en el navegador."
-          : "No se pudo obtener tu ubicación.",
-      );
-    };
-    navigator.geolocation.getCurrentPosition(handleOk, handleErr, {
-      enableHighAccuracy: true,
-      timeout: 15000,
-      maximumAge: 30000,
-    });
-    // Watch para mantener la ubicación fresca durante la sesión.
-    watcherRef.current = navigator.geolocation.watchPosition(handleOk, handleErr, {
-      enableHighAccuracy: true,
-      timeout: 30000,
-      maximumAge: 60000,
-    });
-    return () => {
-      if (watcherRef.current != null) {
-        navigator.geolocation.clearWatch(watcherRef.current);
-      }
-    };
+    let status = null;
+    const onChange = () => setPermisoGeo(status?.state || "desconocido");
+    if (navigator.permissions?.query) {
+      navigator.permissions
+        .query({ name: "geolocation" })
+        .then((st) => {
+          status = st;
+          setPermisoGeo(st.state); // granted | prompt | denied
+          st.addEventListener?.("change", onChange);
+        })
+        .catch(() => setPermisoGeo("desconocido"));
+    }
+    return () => status?.removeEventListener?.("change", onChange);
   }, []);
 
   // Cargar último marcaje del día para decidir si toca entrada o salida.
@@ -179,19 +120,42 @@ export default function Marcaje() {
     cargarHistorial();
   }, [cargandoAuth, user?.id]);
 
+  // Captura puntual de coordenadas en el instante del marcaje. maximumAge: 0
+  // exige una lectura fresca del GPS — nunca se reutiliza una posición previa.
+  function obtenerUbicacionPuntual() {
+    return new Promise((resolve, reject) => {
+      if (!("geolocation" in navigator)) {
+        reject(new Error("Este navegador no soporta geolocalización."));
+        return;
+      }
+      navigator.geolocation.getCurrentPosition(
+        (pos) =>
+          resolve({
+            lat: pos.coords.latitude,
+            lng: pos.coords.longitude,
+            accuracy: pos.coords.accuracy,
+          }),
+        (err) =>
+          reject(
+            new Error(
+              err?.code === 1
+                ? "Permiso de ubicación denegado. Habilítalo en el navegador para poder marcar."
+                : "No se pudo obtener tu ubicación. Inténtalo de nuevo.",
+            ),
+          ),
+        { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 },
+      );
+    });
+  }
+
   async function marcar() {
     if (marcando) return;
-    if (estadoGeo !== "ok" || !ubicacion) {
-      setToast({
-        type: "error",
-        message:
-          "Necesitamos tu ubicación para registrar el marcaje. Permite el acceso al GPS.",
-      });
-      return;
-    }
     setMarcando(true);
+    setFaseMarcaje("ubicando");
     setToast(null);
     try {
+      const ubicacion = await obtenerUbicacionPuntual();
+      setFaseMarcaje("registrando");
       const data = await api.post("/marcajes", {
         tipo: tipoSiguiente,
         latitud: ubicacion.lat,
@@ -208,8 +172,8 @@ export default function Marcaje() {
       });
       setTipoSiguiente(tipoSiguiente === "entrada" ? "salida" : "entrada");
       cargarHistorial();
-      // Quitar overlay de éxito a los 3.5s
-      setTimeout(() => setExito(null), 3500);
+      // El comprobante se cierra solo (o con un clic en el fondo).
+      setTimeout(() => setExito(null), 7000);
     } catch (e) {
       console.error(e);
       setToast({
@@ -218,10 +182,12 @@ export default function Marcaje() {
       });
     } finally {
       setMarcando(false);
+      setFaseMarcaje(null);
     }
   }
 
   const nombre = perfil?.nombre || user?.email || "";
+  const geoBloqueada = permisoGeo === "denied" || permisoGeo === "nosoporte";
   const esEntrada = tipoSiguiente === "entrada";
   const colorAccion = esEntrada ? VERDE : TEAL;
   const colorAccionOsc = esEntrada ? "#15803d" : TEAL_OSC;
@@ -264,10 +230,11 @@ export default function Marcaje() {
         />
       )}
 
-      {/* Overlay de éxito */}
+      {/* Overlay de éxito — comprobante del marcaje: además de la hora, deja a
+          la vista la ubicación consignada, como exige la normativa de la DT. */}
       {exito && (
-        <div className="mk-overlay">
-          <div className="mk-success-card">
+        <div className="mk-overlay" onClick={() => setExito(null)}>
+          <div className="mk-success-card" onClick={(e) => e.stopPropagation()}>
             <div className="mk-check">
               <CheckCircle2 size={56} strokeWidth={2.5} />
             </div>
@@ -275,8 +242,41 @@ export default function Marcaje() {
               {exito.tipo === "entrada" ? "Entrada registrada" : "Salida registrada"}
             </div>
             <div style={{ fontSize: 14, color: "#64748b", marginTop: 4 }}>
+              {fmtFechaLarga(exito.marcado_at || new Date())} ·{" "}
               {fmtHora(exito.marcado_at || new Date())}
             </div>
+            {(exito.direccion || exito.latitud != null) && (
+              <div
+                style={{
+                  marginTop: 12,
+                  padding: "10px 14px",
+                  borderRadius: 12,
+                  background: "#f8fafc",
+                  border: "1px solid #e2e8f0",
+                  maxWidth: 340,
+                  textAlign: "left",
+                  display: "flex",
+                  gap: 8,
+                  alignItems: "flex-start",
+                }}
+              >
+                <MapPin size={15} style={{ color: TEAL, flexShrink: 0, marginTop: 2 }} />
+                <div style={{ minWidth: 0 }}>
+                  {exito.direccion && (
+                    <div style={{ fontSize: 13, fontWeight: 600, color: "#0f172a", lineHeight: 1.35, wordBreak: "break-word" }}>
+                      {exito.direccion}
+                    </div>
+                  )}
+                  {exito.latitud != null && exito.longitud != null && (
+                    <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 3, fontFamily: "ui-monospace, SFMono-Regular, monospace" }}>
+                      {Number(exito.latitud).toFixed(5)}, {Number(exito.longitud).toFixed(5)}
+                      {exito.accuracy_m != null && <> · ±{Math.round(exito.accuracy_m)}m</>}
+                      {exito.distancia_m != null && <> · a {exito.distancia_m}m de la oficina</>}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
             {exito.fuera_de_radio && (
               <div
                 style={{
@@ -384,13 +384,14 @@ export default function Marcaje() {
           </div>
         </div>
 
-        {/* Estado de geolocalización */}
+        {/* Privacidad de ubicación: la coordenada se captura SOLO al marcar.
+            Aquí no se muestra (ni se pide) la posición por adelantado. */}
         <div
           style={{
             background: "#fff",
             borderRadius: 18,
             padding: "16px 20px",
-            border: `1.5px solid ${estadoGeo === "ok" ? "#bbf7d0" : estadoGeo === "error" ? "#fecaca" : "#e2e8f0"}`,
+            border: `1.5px solid ${geoBloqueada ? "#fecaca" : "#bae6e8"}`,
             display: "flex",
             alignItems: "center",
             gap: 14,
@@ -404,82 +405,26 @@ export default function Marcaje() {
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
-              background:
-                estadoGeo === "ok"
-                  ? "#dcfce7"
-                  : estadoGeo === "error"
-                  ? "#fee2e2"
-                  : "#f1f5f9",
-              color:
-                estadoGeo === "ok"
-                  ? "#15803d"
-                  : estadoGeo === "error"
-                  ? ROJO
-                  : "#64748b",
+              background: geoBloqueada ? "#fee2e2" : "#e8f7f7",
+              color: geoBloqueada ? ROJO : TEAL_DEEP,
               flexShrink: 0,
             }}
           >
-            {estadoGeo === "ok" ? (
-              <Wifi size={20} />
-            ) : estadoGeo === "error" ? (
-              <WifiOff size={20} />
-            ) : (
-              <Loader2 size={20} className="mk-spin" />
-            )}
+            {geoBloqueada ? <AlertTriangle size={20} /> : <ShieldCheck size={20} />}
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 13, fontWeight: 700, color: "#0f172a" }}>
-              {estadoGeo === "ok"
-                ? "Ubicación detectada"
-                : estadoGeo === "error"
-                ? "Sin ubicación"
-                : "Obteniendo ubicación…"}
+              {geoBloqueada
+                ? permisoGeo === "nosoporte"
+                  ? "Este navegador no soporta geolocalización"
+                  : "Permiso de ubicación denegado"
+                : "Tu ubicación se captura solo al marcar"}
             </div>
-            {estadoGeo === "ok" && ubicacion ? (
-              <>
-                {(direccion || cargandoDireccion) && (
-                  <div
-                    style={{
-                      fontSize: 13,
-                      color: "#0f172a",
-                      fontWeight: 600,
-                      marginTop: 3,
-                      display: "flex",
-                      alignItems: "flex-start",
-                      gap: 5,
-                      lineHeight: 1.35,
-                    }}
-                  >
-                    <MapPin
-                      size={13}
-                      style={{ color: TEAL, flexShrink: 0, marginTop: 1 }}
-                    />
-                    <span style={{ wordBreak: "break-word" }}>
-                      {cargandoDireccion && !direccion
-                        ? "Buscando dirección…"
-                        : direccion}
-                    </span>
-                  </div>
-                )}
-                <div
-                  style={{
-                    fontSize: 11,
-                    color: "#94a3b8",
-                    marginTop: 4,
-                    fontFamily: "ui-monospace, SFMono-Regular, monospace",
-                  }}
-                >
-                  {ubicacion.lat.toFixed(5)}, {ubicacion.lng.toFixed(5)}
-                  {ubicacion.accuracy != null && (
-                    <> · ±{Math.round(ubicacion.accuracy)}m</>
-                  )}
-                </div>
-              </>
-            ) : (
-              <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>
-                {estadoGeo === "error" ? errorGeo : "Esperando respuesta del GPS…"}
-              </div>
-            )}
+            <div style={{ fontSize: 12, color: "#64748b", marginTop: 2, lineHeight: 1.45 }}>
+              {geoBloqueada
+                ? "Para registrar tu marcaje necesitamos la ubicación en el momento del clic. Habilita el permiso de ubicación en tu navegador."
+                : "Según la normativa de la Dirección del Trabajo, el GPS se consulta únicamente en el instante en que marcas entrada o salida. No hay seguimiento durante tu jornada."}
+            </div>
           </div>
         </div>
 
@@ -513,7 +458,7 @@ export default function Marcaje() {
           <button
             type="button"
             onClick={marcar}
-            disabled={marcando || estadoGeo !== "ok"}
+            disabled={marcando || geoBloqueada}
             className="mk-big-btn"
             style={{
               width: 230,
@@ -522,8 +467,8 @@ export default function Marcaje() {
               border: "none",
               background: `radial-gradient(circle at 30% 25%, ${colorAccion} 0%, ${colorAccionOsc} 70%)`,
               color: "#fff",
-              cursor: marcando || estadoGeo !== "ok" ? "not-allowed" : "pointer",
-              opacity: marcando || estadoGeo !== "ok" ? 0.65 : 1,
+              cursor: marcando || geoBloqueada ? "not-allowed" : "pointer",
+              opacity: marcando || geoBloqueada ? 0.65 : 1,
               display: "flex",
               flexDirection: "column",
               alignItems: "center",
@@ -536,7 +481,7 @@ export default function Marcaje() {
             }}
           >
             {/* anillo pulsante */}
-            {!marcando && estadoGeo === "ok" && (
+            {!marcando && !geoBloqueada && (
               <span
                 className="mk-pulse-ring"
                 style={{
@@ -554,7 +499,11 @@ export default function Marcaje() {
               <IconoBoton size={64} strokeWidth={2.2} />
             )}
             <div style={{ fontSize: 17, fontWeight: 800, letterSpacing: ".02em", textAlign: "center", padding: "0 16px" }}>
-              {marcando ? "Registrando…" : TextoBoton}
+              {marcando
+                ? faseMarcaje === "ubicando"
+                  ? "Obteniendo ubicación…"
+                  : "Registrando…"
+                : TextoBoton}
             </div>
           </button>
 
@@ -568,7 +517,7 @@ export default function Marcaje() {
             }}
           >
             {esEntrada
-              ? "Toca el botón para registrar tu hora de entrada. Tu ubicación se guarda para validar el marcaje."
+              ? "Toca el botón para registrar tu hora de entrada. En ese instante se captura tu ubicación para validar el marcaje."
               : "Toca el botón para registrar tu hora de salida. Buen trabajo hoy."}
           </div>
         </div>

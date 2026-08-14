@@ -219,7 +219,7 @@ export default function PanelIndicadores() {
       try {
         const items = await api.post("/licitaciones/items/filter", {
           licitacion_ids: idsMes,
-          fields: "licitacion_id,producto,categoria,total,cantidad,sku",
+          fields: "licitacion_id,producto,categoria,total,cantidad,sku,costo",
         });
         const mapCat = {};      // cat -> total
         const mapCatProd = {};  // cat -> { producto -> monto }
@@ -234,7 +234,11 @@ export default function PanelIndicadores() {
           mapCatProd[cat][prod] = (mapCatProd[cat][prod] || 0) + total;
           ventaNeta += total;
           const sku = String(it.sku || "").trim().toUpperCase();
-          const costoUnit = costoBySku[sku] || 0;
+          // Costo guardado CON la cotización (incluye el costo editado a mano
+          // en el detalle, que antes este panel no veía y el margen no
+          // cuadraba con la cotización). Filas anteriores a la columna
+          // `costo` vienen null → costo vigente del catálogo, como siempre.
+          const costoUnit = Number(it.costo) > 0 ? Number(it.costo) : (costoBySku[sku] || 0);
           const costoItem = costoUnit * (Number(it.cantidad) || 0);
           costoTotal += costoItem;
           const lid = Number(it.licitacion_id);
@@ -568,6 +572,49 @@ export default function PanelIndicadores() {
     };
     return { filas, porVendedor: agrupar("vendedor"), porTipo: agrupar("tipo") };
   }, [margenPorLic, lics, nombresVendedores]);
+
+  // Exporta el desglose del margen a Excel — una hoja por vista (cotización /
+  // vendedor / tipo), para análisis posterior fuera del sistema (2026-08-13).
+  async function exportarMargen() {
+    const periodoTxt = rangoActivo ? `${rangoDesde || "inicio"}_a_${rangoHasta || "hoy"}` : mesActual;
+    try {
+      const XLSX = await import("xlsx");
+      const wb = XLSX.utils.book_new();
+      const filas = margenDesglose.filas.map((f) => ({
+        "Cotización": f.codigo,
+        "Cliente": f.cliente,
+        "Vendedor": f.vendedor,
+        "Tipo": f.tipo,
+        "Venta neta": Math.round(f.venta),
+        "Costo": Math.round(f.costo),
+        "Margen $": Math.round(f.monto),
+        "Margen %": Number(f.pct.toFixed(2)),
+      }));
+      const tVenta = margenDesglose.filas.reduce((s, f) => s + f.venta, 0);
+      const tCosto = margenDesglose.filas.reduce((s, f) => s + f.costo, 0);
+      filas.push({
+        "Cotización": "TOTAL", "Cliente": "", "Vendedor": "", "Tipo": "",
+        "Venta neta": Math.round(tVenta),
+        "Costo": Math.round(tCosto),
+        "Margen $": Math.round(tVenta - tCosto),
+        "Margen %": tVenta > 0 ? Number((((tVenta - tCosto) / tVenta) * 100).toFixed(2)) : 0,
+      });
+      const agrupada = (arr, etiqueta) => arr.map((e) => ({
+        [etiqueta]: e.label,
+        "Cotizaciones": e.cotizaciones,
+        "Venta neta": Math.round(e.venta),
+        "Costo": Math.round(e.costo),
+        "Margen $": Math.round(e.monto),
+        "Margen %": Number(e.pct.toFixed(2)),
+      }));
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(filas), "Por cotizacion");
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(agrupada(margenDesglose.porVendedor, "Vendedor")), "Por vendedor");
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(agrupada(margenDesglose.porTipo, "Tipo")), "Por tipo");
+      XLSX.writeFile(wb, `margenes_${periodoTxt}.xlsx`);
+    } catch (e) {
+      console.error("Error exportando márgenes:", e);
+    }
+  }
 
   // Postulaciones del listado: tomadas / no aplica / vencidas (sin cargar).
   const disponiblesStats = useMemo(() => {
@@ -935,6 +982,7 @@ export default function PanelIndicadores() {
           desglose={margenDesglose}
           margen={margenMes}
           mostrarMonto={!esJefatura}
+          onExportar={exportarMargen}
           onCerrar={() => setMargenOpen(false)}
         />
       )}
@@ -943,7 +991,7 @@ export default function PanelIndicadores() {
 }
 
 /* ── Modal: desglose del margen (por cotización / vendedor / tipo) ──────── */
-function ModalMargenDesglose({ desglose, margen, mostrarMonto, onCerrar }) {
+function ModalMargenDesglose({ desglose, margen, mostrarMonto, onExportar, onCerrar }) {
   const [vista, setVista] = useState("cotizaciones"); // cotizaciones | vendedor | tipo
   const TABS = [
     { key: "cotizaciones", label: "Por cotización" },
@@ -989,11 +1037,18 @@ function ModalMargenDesglose({ desglose, margen, mostrarMonto, onCerrar }) {
       <div style={{ width: 860, maxWidth: "100%", maxHeight: "86vh", display: "flex", flexDirection: "column", background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", boxShadow: "var(--shadow-lg)", padding: 22 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
           <h3 style={{ margin: 0, fontSize: 17, fontWeight: 700 }}>Desglose del margen</h3>
-          <button className="btn btn-ghost" onClick={onCerrar} style={{ padding: 6 }}><X size={18} /></button>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            {onExportar && (
+              <button className="btn btn-secondary btn-sm" onClick={onExportar} title="Descargar el desglose completo en Excel: una hoja por cotización, por vendedor y por tipo">
+                <Download size={14} /> Exportar
+              </button>
+            )}
+            <button className="btn btn-ghost" onClick={onCerrar} style={{ padding: 6 }}><X size={18} /></button>
+          </div>
         </div>
         <p style={{ fontSize: 12.5, color: "var(--text-muted)", marginTop: 2, marginBottom: 12 }}>
           Margen del periodo: <strong style={{ color: colorPct(margen.pct) }}>{fmtPct(margen.pct)}</strong>
-          {mostrarMonto ? <> · <strong>{fmtCLP(margen.monto)}</strong></> : null}. Calculado sobre los ítems de las cotizaciones adjudicadas del periodo (costo del catálogo por SKU).
+          {mostrarMonto ? <> · <strong>{fmtCLP(margen.monto)}</strong></> : null}. Calculado sobre los ítems de las cotizaciones adjudicadas del periodo (costo guardado con cada cotización; si no existe, el del catálogo por SKU).
         </p>
         <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
           {TABS.map((t) => (

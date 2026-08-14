@@ -1159,6 +1159,11 @@ function ModalActividad({ inicial, clienteOptions, cotizacionOptions, perfiles, 
   }
 
   const clienteSel = clienteOptions.find((c) => String(c.value) === String(clienteId)) || null;
+  // Para jer.consorcio la bitácora funciona como Google Calendar (2026-08-13):
+  // puede crear actividades sueltas (personales/internas) sin asociar cliente.
+  // Para el resto el cliente sigue siendo obligatorio, porque sus actividades
+  // alimentan la productividad comercial por cliente.
+  const clienteOpcional = String(miEmail || "").toLowerCase() === "jer.consorcio@gmail.com";
 
   // Filtro de tipo de cliente para acotar el selector de cliente del modal.
   const tiposClienteModal = useMemo(() => {
@@ -1206,15 +1211,15 @@ function ModalActividad({ inicial, clienteOptions, cotizacionOptions, perfiles, 
   async function submit(e) {
     e.preventDefault();
     if (!titulo.trim()) return;
-    if (!clienteSel) return;
+    if (!clienteSel && !clienteOpcional) return;
     setGuardando(true);
     const form = {
       id: inicial.id,
       titulo: titulo.trim(),
       tipo,
       motivo: motivo || null,
-      cliente_id: clienteSel.value,
-      cliente_nombre: clienteSel.nombre,
+      cliente_id: clienteSel?.value ?? null,
+      cliente_nombre: clienteSel?.nombre ?? null,
       licitacion_id: licitacionId || null,
       participantes: tipo === "reunion" ? participantes : [],
       crear_meet: tipo === "reunion" && !inicial.meet_url ? crearMeet : false,
@@ -1261,7 +1266,11 @@ function ModalActividad({ inicial, clienteOptions, cotizacionOptions, perfiles, 
           {/* Cliente primero: seleccionar existente o crear uno nuevo. */}
           <div className="field">
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <label className="field-label">Cliente <span style={{ color: "var(--danger)" }}>*</span></label>
+              <label className="field-label">
+                Cliente {clienteOpcional
+                  ? <span style={{ color: "var(--text-muted)", fontWeight: 400 }}>(opcional)</span>
+                  : <span style={{ color: "var(--danger)" }}>*</span>}
+              </label>
               <button
                 type="button"
                 onClick={() => { setNuevoCli((v) => !v); setNcError(""); }}
@@ -1505,7 +1514,7 @@ function ModalActividad({ inicial, clienteOptions, cotizacionOptions, perfiles, 
             ) : (
               <>
                 <button type="button" onClick={onCancel} className="btn btn-secondary">Cancelar</button>
-                <button type="submit" disabled={guardando || !titulo.trim() || !clienteSel} className="btn btn-primary">
+                <button type="submit" disabled={guardando || !titulo.trim() || (!clienteSel && !clienteOpcional)} className="btn btn-primary">
                   {guardando ? "Guardando…" : "Guardar"}
                 </button>
               </>

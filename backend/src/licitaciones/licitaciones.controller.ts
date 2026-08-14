@@ -49,9 +49,12 @@ export class LicitacionesController {
   }
 
   @Post('disponibles/bulk')
-  bulkDisponibles(@Body() body: { rows: any[] }, @Req() req: any) {
+  bulkDisponibles(@Body() body: { rows: any[]; origen?: string }, @Req() req: any) {
     const email = (req?.user?.email || '').toLowerCase();
-    return this.licitacionesService.bulkDisponibles(body?.rows || [], email);
+    // 'exploracion' = toma directa en el Explorador MP (no aparece en el
+    // Listado); cualquier otro valor cae al Listado de siempre.
+    const origen = body?.origen === 'exploracion' ? 'exploracion' : 'listado';
+    return this.licitacionesService.bulkDisponibles(body?.rows || [], email, origen);
   }
 
   // Revisa contra Mercado Público si nuestro RUT ya figura entre los oferentes.

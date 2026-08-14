@@ -741,6 +741,14 @@ export default function CrearLicitacion() {
     return r === "admin" || r === "administrador";
   }, [rol]);
 
+  // Flete Estimado a mano solo jefe de ventas o administración (2026-08-13):
+  // para el resto queda de solo lectura y el valor lo pone la calculadora de
+  // flete, que aplica tarifas reales de courier en vez de un número a ojo.
+  const puedeEditarFlete = useMemo(() => {
+    const r = (rol ?? "").toString().trim().toLowerCase();
+    return ["admin", "administrador", "jefe_ventas", "jefe_ventas_especial"].includes(r);
+  }, [rol]);
+
   const [mostrarEntidad, setMostrarEntidad] = useState(true);
 
   const [idLicitacionInput, setIdLicitacionInput] = useState("");
@@ -1005,7 +1013,6 @@ export default function CrearLicitacion() {
       }
       // Región: quita el prefijo "Región de/del/de la ".
       const region = String(d.region || "").replace(/^regi[oó]n\s+(de\s+la\s+|del\s+|de\s+)?/i, "").trim();
-      const obs = [d.descripcion, d.url_ficha ? `Ficha: ${d.url_ficha}` : ""].filter(Boolean).join("\n\n");
       localStorage.setItem(STORAGE_KEY, JSON.stringify({
         idLicitacionInput: prefill.idLicitacionInput || "",
         nombre: prefill.nombre || "",
@@ -1018,7 +1025,9 @@ export default function CrearLicitacion() {
         region,
         monto: montoNum ? Number(montoNum) : "",
         fechaHoraCierre: fechaCierre,
-        observaciones: obs,
+        // Observaciones parte VACÍO a propósito: antes se prellenaba con la
+        // descripción del proceso + link de la ficha, y ese texto terminaba
+        // impreso en la cotización si nadie lo borraba (pedido 2026-08-13).
       }));
     } catch (e) {
       console.error("Error preparando prellenado de licitación", e);
@@ -2066,6 +2075,10 @@ export default function CrearLicitacion() {
           total: Number(it.total || 0),
           categoria: it.categoria || "",
           observacion: it.observacion || "",
+          // El costo con el que se calculó el margen EN ESTA cotización
+          // (editado a mano o el de catálogo al guardar): es lo que leen los
+          // KPIs de margen de los paneles, para que digan lo mismo que acá.
+          costo: getCostoParaItem(it),
         };
       });
 
@@ -3153,6 +3166,9 @@ export default function CrearLicitacion() {
                 className="w-full h-10 rounded-md border border-gray-300 px-3"
                 value={fleteEstimado}
                 onChange={(e) => setFleteEstimado(e.target.value)}
+                readOnly={!puedeEditarFlete}
+                title={puedeEditarFlete ? undefined : "Solo lectura: lo fija la calculadora de flete (editarlo a mano es de jefe de ventas o administración)."}
+                style={puedeEditarFlete ? undefined : { background: "#f8fafc", color: "#64748b", cursor: "not-allowed" }}
               />
             </div>
 

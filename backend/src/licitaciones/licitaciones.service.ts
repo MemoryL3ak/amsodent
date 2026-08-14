@@ -160,7 +160,7 @@ export class LicitacionesService {
     return cierre.getTime() < Date.now();
   }
 
-  async bulkDisponibles(rows: any[], subidaPor: string) {
+  async bulkDisponibles(rows: any[], subidaPor: string, origen: 'listado' | 'exploracion' = 'listado') {
     const vistos = new Set<string>();
     const limpias: any[] = [];
     for (const r of rows || []) {
@@ -195,40 +195,82 @@ export class LicitacionesService {
     }
     if (!limpias.length) return { insertados: 0, duplicados: 0, total: 0 };
 
-    const { data: existentes, error: errSel } = await this.supabase.getClient()
-      .from('licitaciones_disponibles')
-      .select('id_licitacion');
-    if (errSel) throw new BadRequestException(errSel.message);
-    const setExist = new Set((existentes || []).map((e: any) => String(e.id_licitacion || '').trim().toLowerCase()));
+    // Se trae también el origen: una fila que existe como toma del Explorador
+    // ('exploracion') no se ve en el Listado, así que agregarla al Listado no
+    // debe quedar en "duplicado silencioso": se PROMUEVE cambiándole el origen
+    // (conserva quién la tomó, su estado y su historial).
+    let existentes: any[] = [];
+    {
+      const r1 = await this.supabase.getClient()
+        .from('licitaciones_disponibles')
+        .select('id, id_licitacion, origen');
+      if (r1.error) {
+        const msg = [r1.error.message, (r1.error as any).code].filter(Boolean).join(' ').toLowerCase();
+        if (!msg.includes('origen') && !msg.includes('42703')) throw new BadRequestException(r1.error.message);
+        // Columna `origen` sin migrar: se sigue como antes (todo es Listado).
+        const r2 = await this.supabase.getClient().from('licitaciones_disponibles').select('id, id_licitacion');
+        if (r2.error) throw new BadRequestException(r2.error.message);
+        existentes = r2.data || [];
+      } else {
+        existentes = r1.data || [];
+      }
+    }
+    const porCodigo = new Map(
+      existentes.map((e: any) => [String(e.id_licitacion || '').trim().toLowerCase(), e]),
+    );
 
-    const nuevas = limpias.filter((l) => !setExist.has(l.id_licitacion.toLowerCase()));
-    const duplicados = limpias.length - nuevas.length;
+    const nuevas = limpias.filter((l) => !porCodigo.has(l.id_licitacion.toLowerCase()));
+    // Promoción exploración → listado (nunca al revés: subir el xlsx no debe
+    // esconderle al Listado una fila que ya estaba ahí).
+    const promover = origen === 'listado'
+      ? limpias.filter((l) => porCodigo.get(l.id_licitacion.toLowerCase())?.origen === 'exploracion')
+      : [];
+    const duplicados = limpias.length - nuevas.length - promover.length;
+
+    if (promover.length) {
+      const { error: errProm } = await this.supabase.getClient()
+        .from('licitaciones_disponibles')
+        .update({ origen: 'listado' })
+        .in('id', promover.map((l) => porCodigo.get(l.id_licitacion.toLowerCase())!.id));
+      if (errProm) throw new BadRequestException(errProm.message);
+    }
+
     if (nuevas.length) {
-      const filas = nuevas.map((n) => ({ ...n, subida_por: subidaPor }));
+      const filas = nuevas.map((n) => ({ ...n, subida_por: subidaPor, origen }));
       let { error } = await this.supabase.getClient()
         .from('licitaciones_disponibles')
         .insert(filas);
-      // Tolerar que la columna `datos` aún no esté migrada: reintenta sin ella.
+      // Tolerar columnas aún no migradas (`datos`, `origen`): reintenta sin ellas.
       if (error) {
         const msg = [error.message, (error as any).details, (error as any).hint, (error as any).code]
           .filter(Boolean).join(' ').toLowerCase();
-        if (msg.includes('datos') || msg.includes('42703')) {
+        if (msg.includes('origen')) {
+          const sinOrigen = filas.map(({ origen: _o, ...rest }) => rest);
+          ({ error } = await this.supabase.getClient().from('licitaciones_disponibles').insert(sinOrigen));
+        } else if (msg.includes('datos') || msg.includes('42703')) {
           const sinDatos = filas.map(({ datos, ...rest }) => rest);
           ({ error } = await this.supabase.getClient().from('licitaciones_disponibles').insert(sinDatos));
         }
       }
       if (error) throw new BadRequestException(error.message);
     }
-    return { insertados: nuevas.length, duplicados, total: limpias.length };
+    return { insertados: nuevas.length + promover.length, duplicados, total: limpias.length };
   }
 
   // Borra TODO el listado de postulaciones disponibles (solo admin, desde el
-  // frontend). Útil para reemplazar el listado del día completo.
+  // frontend). Útil para reemplazar el listado del día completo. Las tomas del
+  // Explorador NO se tocan: viven en otra vista y reemplazar el listado del
+  // día no es motivo para soltarle la toma a alguien.
   async eliminarTodasDisponibles() {
-    const { error } = await this.supabase.getClient()
+    let { error } = await this.supabase.getClient()
       .from('licitaciones_disponibles')
       .delete()
-      .gt('id', 0);
+      .gt('id', 0)
+      .neq('origen', 'exploracion');
+    if (error && /origen|42703/i.test([error.message, (error as any).code].join(' '))) {
+      // Columna sin migrar: no existen tomas de exploración, borrar todo.
+      ({ error } = await this.supabase.getClient().from('licitaciones_disponibles').delete().gt('id', 0));
+    }
     if (error) throw new BadRequestException(error.message);
     return { deleted: true };
   }
@@ -1812,33 +1854,51 @@ export class LicitacionesService {
     return merged;
   }
 
-  async upsertItems(items: any[]) {
-    const { data, error } = await this.supabase.getClient()
-      .from('items_licitacion')
-      .upsert(items)
-      .select();
+  /* Al escribir ítems se toleran columnas aún sin migrar (ej. `costo`,
+     20260813): se quita la columna del payload y se reintenta, para que
+     guardar una cotización no dependa de que la migración ya esté aplicada.
+     El dato omitido se pierde solo hasta que se aplique la migración. */
+  private async escribirItemsTolerante<T>(
+    ejecutar: (items: any[]) => Promise<{ data: T; error: any }>,
+    items: any[],
+  ): Promise<T> {
+    let payloads = items.map((it) => ({ ...it }));
+    let { data, error } = await ejecutar(payloads);
+    let intentos = 0;
+    while (error && intentos < 5) {
+      const col = this.columnaFaltante(error);
+      if (!col || !payloads.some((p) => col in p)) break;
+      payloads = payloads.map((p) => {
+        const { [col]: _omitida, ...resto } = p;
+        return resto;
+      });
+      ({ data, error } = await ejecutar(payloads));
+      intentos++;
+    }
     if (error) throw new BadRequestException(error.message);
     return data;
+  }
+
+  async upsertItems(items: any[]) {
+    return this.escribirItemsTolerante(
+      async (pl) => this.supabase.getClient().from('items_licitacion').upsert(pl).select(),
+      items,
+    );
   }
 
   async insertItems(items: any[]) {
-    const { data, error } = await this.supabase.getClient()
-      .from('items_licitacion')
-      .insert(items)
-      .select();
-    if (error) throw new BadRequestException(error.message);
-    return data;
+    return this.escribirItemsTolerante(
+      async (pl) => this.supabase.getClient().from('items_licitacion').insert(pl).select(),
+      items,
+    );
   }
 
   async updateItem(itemId: number, body: Record<string, any>) {
-    const { data, error } = await this.supabase.getClient()
-      .from('items_licitacion')
-      .update(body)
-      .eq('id', itemId)
-      .select()
-      .single();
-    if (error) throw new BadRequestException(error.message);
-    return data;
+    return this.escribirItemsTolerante(
+      async (pl) =>
+        this.supabase.getClient().from('items_licitacion').update(pl[0]).eq('id', itemId).select().single(),
+      [body],
+    );
   }
 
   async deleteItem(itemId: number) {
