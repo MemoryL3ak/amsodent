@@ -1861,7 +1861,11 @@ export default function LicitacionesDisponibles({ embedded = false }) {
               <tr>
                 <th style={{ textAlign: "left", whiteSpace: "nowrap", width: 160 }}>Código</th>
                 <th style={{ textAlign: "left", width: 70 }} title="Tipo de proceso según el código: Ágil = Compra Ágil; LE/LP/LQ… = licitación pública por tramo de monto">Tipo</th>
-                <th style={{ textAlign: "left" }}>Nombre</th>
+                {/* minWidth: las demás columnas son nowrap de ancho fijo; sin
+                    un piso, en pantallas chicas el Nombre (único que quiebra
+                    línea) quedaba de una letra por renglón. Con el piso la
+                    tabla crece y el contenedor hace scroll horizontal. */}
+                <th style={{ textAlign: "left", minWidth: 260 }}>Nombre</th>
                 <th style={{ textAlign: "left", width: 200 }}>Organismo</th>
                 <th style={{ textAlign: "left", width: 120 }}>Región</th>
                 <th style={{ textAlign: "right", whiteSpace: "nowrap", width: 110 }}>Monto (CLP)</th>
