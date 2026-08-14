@@ -879,12 +879,6 @@ export default function EditarLicitacion() {
     const r = (rol ?? "").toString().trim().toLowerCase();
     return r === "admin" || r === "administrador" || r === "jefe_ventas_especial";
   }, [rol]);
-  // Flete Estimado a mano solo jefe de ventas o administración (2026-08-13):
-  // para el resto queda de solo lectura aunque la cotización sea editable.
-  const puedeEditarFlete = useMemo(() => {
-    const r = (rol ?? "").toString().trim().toLowerCase();
-    return ["admin", "administrador", "jefe_ventas", "jefe_ventas_especial"].includes(r);
-  }, [rol]);
   // Margen: cada ejecutivo ve solo el de SUS cotizaciones (2026-08-13).
   // Jefes de ventas, contabilidad y administración lo ven en todas.
   const puedeVerMargen = useMemo(() => {
@@ -4088,8 +4082,7 @@ export default function EditarLicitacion() {
                 className={inputClassH10}
                 value={fleteEstimado}
                 onChange={(e) => setFleteEstimado(e.target.value)}
-                disabled={!esEditable || !puedeEditarFlete}
-                title={puedeEditarFlete ? undefined : "Solo lectura: editarlo es de jefe de ventas o administración."}
+                disabled={!esEditable}
               />
             </div>
 

@@ -71,6 +71,43 @@ function brechaPct(r) {
   return ((mio - gan) / gan) * 100;
 }
 
+/* Monto que EFECTIVAMENTE ganamos en un proceso. `monto_nuestro` es nuestra
+   OFERTA completa, no lo adjudicado: en licitaciones por línea se puede ganar
+   solo una parte (medido: 4329-4-LE26, oferta $2.463.908, acta $2.157.662) y
+   en Compra Ágil el monto seleccionado puede diferir de la cotización interna
+   (418-1062-COT26: oferta $2.223.713, seleccionado $2.486.686 = OC exacta).
+   El dato fino viene del sync:
+   · licitación: detalle.monto_nuestro_adjudicado (los ítems adjudicados a
+     NUESTRO rut en el acta). El acta viene en NETO —verificado contra las OC:
+     acta × 1,19 = OC bruta al peso en 1057390-34, 1979-112 y 1660-89— así que
+     se lleva a bruto para sumar con el resto del panel;
+   · compra ágil: monto_ganador (se adjudica completa y la seleccionada es la
+     nuestra; ya viene en bruto y calza al peso con la orden de compra).
+   Fichas viejas sin esos datos caen a monto_nuestro, que era el valor usado. */
+function montoGanadoDe(f) {
+  const adj = Number(f?.detalle?.monto_nuestro_adjudicado);
+  if (Number.isFinite(adj) && adj > 0) return Math.round(adj * 1.19);
+  if (f.tipo === "compra_agil") {
+    const g = Number(f.monto_ganador);
+    if (Number.isFinite(g) && g > 0) return g;
+  }
+  return Number(f.monto_nuestro) || 0;
+}
+
+/* Convenios de suministro: el acta adjudica la demanda ESTIMADA de todo el
+   período —4635-4-LR26 son 24 meses del Hospital de Carabineros, $74,5M— y la
+   venta real llega en OC durante la vigencia ($6,1M al 13-08). Sumarlos como
+   ganado del mes reventaba el acumulado: julio decía $104,5M cuando lo firme
+   eran $30,0M. Van aparte en el KPI, no mezclados. Se detectan por el nombre
+   del proceso o por la sigla LR (gran cuantía, el formato típico de estos
+   contratos marco). */
+function esConvenioSuministro(f) {
+  if (f.tipo === "compra_agil") return false;
+  const nombre = String(f?.interna?.nombre || "").toLowerCase();
+  if (/suministro|convenio/.test(nombre)) return true;
+  return /-lr\d{2}$/i.test(String(f?.codigo_mp || "").trim());
+}
+
 export default function AnalisisMercadoPublico() {
   const [estadoApi, setEstadoApi] = useState(null);
   const [resultados, setResultados] = useState([]);
@@ -369,7 +406,11 @@ export default function AnalisisMercadoPublico() {
     const ganadas = enRango.filter((f) => f.clase === "ganada");
     const perdidas = enRango.filter((f) => f.clase === "perdida");
     const decididas = ganadas.length + perdidas.length;
-    const montoGanado = ganadas.reduce((s, f) => s + (Number(f.monto_nuestro) || 0), 0);
+    // Los convenios de suministro se informan aparte: su acta es demanda
+    // estimada del período completo, no venta del mes.
+    const convenios = ganadas.filter(esConvenioSuministro);
+    const montoGanado = ganadas.reduce((s, f) => s + (esConvenioSuministro(f) ? 0 : montoGanadoDe(f)), 0);
+    const montoConvenios = convenios.reduce((s, f) => s + montoGanadoDe(f), 0);
     const oportunidadPerdida = perdidas.reduce((s, f) => s + (Number(f.monto_ganador) || 0), 0);
     const brechas = perdidas.map((f) => f.brecha).filter((b) => Number.isFinite(b) && b > 0);
     const brechaProm = brechas.length ? brechas.reduce((s, b) => s + b, 0) / brechas.length : null;
@@ -382,6 +423,8 @@ export default function AnalisisMercadoPublico() {
       enCurso: enRango.filter((f) => f.clase === "en_curso").length,
       tasa: decididas ? (ganadas.length / decididas) * 100 : null,
       montoGanado,
+      montoConvenios,
+      convenios: convenios.length,
       oportunidadPerdida,
       brechaProm,
       casiGanadas,
@@ -479,10 +522,10 @@ export default function AnalisisMercadoPublico() {
       // para analizar fuera conviene tener también el cierre.
       ["Código", "Tipo", "Cotización interna", "Organismo", "Cierre", "Adjudicación", "Nuestra oferta", "Oferta ganadora", "Brecha %", "Ganador", "RUT ganador", "Resultado"],
       ...ordenadas.map((f) => [
-        f.codigo_mp, f.tipo === "compra_agil" ? "Compra Ágil" : "Licitación", f.interna?.nombre || "", f.organismo || "",
+        f.codigo_mp, f.tipo === "compra_agil" ? "Compra Ágil" : esConvenioSuministro(f) ? "Convenio de suministro" : "Licitación", f.interna?.nombre || "", f.organismo || "",
         f.fecha_cierre ? fmtFecha(f.fecha_cierre) : "",
         f.fecha_adjudicacion ? fmtFecha(f.fecha_adjudicacion) : "",
-        f.monto_nuestro ?? "", f.monto_ganador ?? "",
+        f.monto_nuestro ?? "", (f.clase === "ganada" ? montoGanadoDe(f) : f.monto_ganador) ?? "",
         Number.isFinite(f.brecha) ? f.brecha.toFixed(1) : "", f.ganador_nombre || "", f.ganador_rut || "", CLASES[f.clase].label,
       ]),
     ];
@@ -517,6 +560,8 @@ export default function AnalisisMercadoPublico() {
         en_curso: stats.enCurso,
         tasa_exito_pct: stats.tasa != null ? Math.round(stats.tasa) : null,
         monto_ganado_clp: stats.montoGanado,
+        convenios_suministro: stats.convenios,
+        convenios_suministro_clp_estimado_periodo_completo: stats.montoConvenios,
         oportunidad_perdida_clp: stats.oportunidadPerdida,
         brecha_promedio_al_perder_pct: stats.brechaProm != null ? Number(stats.brechaProm.toFixed(1)) : null,
         perdidas_por_menos_de_5pct: stats.casiGanadas,
@@ -700,8 +745,12 @@ export default function AnalisisMercadoPublico() {
         <Kpi icon={<Target size={17} />} tono="#1e9295" fondo="#e6f6f6" label="Procesos analizados" valor={stats.total}
           sub={`${stats.enCurso} en curso`}
           onClick={() => { setFiltroClase(""); setBusqueda(""); }} />
+        {/* Solo el adjudicado firme. Los convenios de suministro no se
+            muestran (pedido 14-08): su acta es demanda estimada del período,
+            no venta; siguen excluidos de la suma y marcados en la tabla. */}
         <Kpi icon={<Trophy size={17} />} tono="#15803d" fondo="#dcfce7" label="Ganadas" valor={stats.ganadas}
-          sub={fmt$(stats.montoGanado) + " adjudicado"} activo={filtroClase === "ganada"}
+          sub={fmt$(stats.montoGanado) + " adjudicado"}
+          activo={filtroClase === "ganada"}
           onClick={() => setFiltroClase((v) => (v === "ganada" ? "" : "ganada"))} />
         <Kpi icon={<TrendingDown size={17} />} tono="#b91c1c" fondo="#fee2e2" label="Perdidas" valor={stats.perdidas}
           sub={fmt$(stats.oportunidadPerdida) + " se llevó la competencia"} activo={filtroClase === "perdida"}
@@ -900,7 +949,7 @@ function FilaProceso({ f, cl, abierta, onToggle }) {
         <td style={{ padding: "7px 12px" }}>
           <div style={{ fontWeight: 700 }}>{f.codigo_mp}</div>
           <div style={{ fontSize: 11.5, color: "var(--text-muted)", maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis" }}>
-            {f.interna?.nombre || ""} · {f.tipo === "compra_agil" ? "Compra Ágil" : "Licitación"}
+            {f.interna?.nombre || ""} · {f.tipo === "compra_agil" ? "Compra Ágil" : esConvenioSuministro(f) ? "Convenio de suministro" : "Licitación"}
           </div>
         </td>
         <td style={{ padding: "7px 12px", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", fontSize: 12.5 }} title={f.organismo || ""}>
@@ -916,7 +965,15 @@ function FilaProceso({ f, cl, abierta, onToggle }) {
           {f.fecha_adjudicacion ? fmtFecha(f.fecha_adjudicacion) : "—"}
         </td>
         <td style={{ padding: "7px 12px", textAlign: "right", fontWeight: 600 }}>{fmt$(f.monto_nuestro)}</td>
-        <td style={{ padding: "7px 12px", textAlign: "right", fontWeight: 600 }}>{fmt$(f.monto_ganador)}</td>
+        {/* En una ganada, "lo ganador" es LO NUESTRO adjudicado: mostrar la
+            suma de todos los proveedores del acta confundía (y es lo que
+            inflaba el acumulado). */}
+        <td
+          style={{ padding: "7px 12px", textAlign: "right", fontWeight: 600 }}
+          title={f.clase === "ganada" ? "Monto adjudicado a nosotros según el acta" : ""}
+        >
+          {fmt$(f.clase === "ganada" ? montoGanadoDe(f) : f.monto_ganador)}
+        </td>
         <td style={{ padding: "7px 12px", textAlign: "right", fontWeight: 700, color: f.brecha == null ? "var(--text-muted)" : f.brecha > 0 ? "#b91c1c" : "#15803d" }}>
           {f.clase === "ganada" ? "—" : fmtPct(f.brecha)}
         </td>
@@ -1177,7 +1234,11 @@ function DonaResultados({ filas, porMonto }) {
   ].map((p) => {
     const del = filas.filter((f) => f.clase === p.clase);
     const valor = porMonto
-      ? del.reduce((s, f) => s + (Number(f.clase === "perdida" ? f.monto_ganador : f.monto_nuestro) || 0), 0)
+      ? del.reduce((s, f) => s + (f.clase === "ganada"
+          // Convenios fuera también aquí: su demanda estimada de 24 meses
+          // aplastaría al resto de la dona.
+          ? (esConvenioSuministro(f) ? 0 : montoGanadoDe(f))
+          : Number(f.clase === "perdida" ? f.monto_ganador : f.monto_nuestro) || 0), 0)
       : del.length;
     return { ...p, label: CLASES[p.clase].label, valor };
   }).filter((p) => p.valor > 0);
@@ -1318,7 +1379,7 @@ function SimuladorPrecio({ filas }) {
         const e = porOrg.get(o) || { organismo: o, ganadas: 0, perdidas: 0, brechas: [], monto_perdido: 0, monto_ganado: 0 };
         if (f.clase === "ganada") {
           e.ganadas += 1;
-          e.monto_ganado += Number(f.monto_nuestro) || 0;
+          if (!esConvenioSuministro(f)) e.monto_ganado += montoGanadoDe(f);
         } else {
           e.perdidas += 1;
           e.monto_perdido += Number(f.monto_ganador) || 0;
@@ -1354,7 +1415,8 @@ function SimuladorPrecio({ filas }) {
         // Qué descuento habría hecho falta (distribución de las perdidas por precio).
         descuento_necesario_pctl: { p25: pctl(25), mediana: pctl(50), p75: pctl(75) },
         montos_clp: {
-          ganado_total: ganadas.reduce((s, f) => s + (Number(f.monto_nuestro) || 0), 0),
+          ganado_total: ganadas.reduce((s, f) => s + (esConvenioSuministro(f) ? 0 : montoGanadoDe(f)), 0),
+          convenios_suministro_estimado_periodo_completo: ganadas.reduce((s, f) => s + (esConvenioSuministro(f) ? montoGanadoDe(f) : 0), 0),
           perdido_total_se_lo_llevo_competencia: perdidas.reduce((s, f) => s + (Number(f.monto_ganador) || 0), 0),
         },
         por_tipo: porTipo,

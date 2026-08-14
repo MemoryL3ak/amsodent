@@ -741,14 +741,6 @@ export default function CrearLicitacion() {
     return r === "admin" || r === "administrador";
   }, [rol]);
 
-  // Flete Estimado a mano solo jefe de ventas o administración (2026-08-13):
-  // para el resto queda de solo lectura y el valor lo pone la calculadora de
-  // flete, que aplica tarifas reales de courier en vez de un número a ojo.
-  const puedeEditarFlete = useMemo(() => {
-    const r = (rol ?? "").toString().trim().toLowerCase();
-    return ["admin", "administrador", "jefe_ventas", "jefe_ventas_especial"].includes(r);
-  }, [rol]);
-
   const [mostrarEntidad, setMostrarEntidad] = useState(true);
 
   const [idLicitacionInput, setIdLicitacionInput] = useState("");
@@ -3166,9 +3158,6 @@ export default function CrearLicitacion() {
                 className="w-full h-10 rounded-md border border-gray-300 px-3"
                 value={fleteEstimado}
                 onChange={(e) => setFleteEstimado(e.target.value)}
-                readOnly={!puedeEditarFlete}
-                title={puedeEditarFlete ? undefined : "Solo lectura: lo fija la calculadora de flete (editarlo a mano es de jefe de ventas o administración)."}
-                style={puedeEditarFlete ? undefined : { background: "#f8fafc", color: "#64748b", cursor: "not-allowed" }}
               />
             </div>
 
