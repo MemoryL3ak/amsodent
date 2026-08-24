@@ -256,8 +256,9 @@ export default function CrearProducto() {
     [rolNorm]
   );
   const esTransitorio = (sku ?? "").toString().trim() === "";
-  const mostrarMargen =
-    !esVentasOJefe || esTransitorio || esPendienteAprobacion;
+  // Margen por lista visible para TODOS los roles (pedido 14-08): antes
+  // ventas/jefes/contabilidad solo lo veían en transitorios o pendientes.
+  const mostrarMargen = true;
   const puedeVerCosto =
     esAdmin || (esVentasOJefe && (esTransitorio || esPendienteAprobacion));
 
