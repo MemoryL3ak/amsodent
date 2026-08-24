@@ -64,6 +64,11 @@ export class ProductosService {
       'lista2',
       'lista3',
       'precio_actualizado_at',
+      // Datos de flete: la grilla filtra por productos con/sin peso y medidas.
+      'peso',
+      'largo',
+      'ancho',
+      'alto',
       ...ProductosService.CAMPOS_FICHA,
     ].join(', ');
 
@@ -89,6 +94,10 @@ export class ProductosService {
       lista2: p.lista2,
       lista3: p.lista3,
       precio_actualizado_at: p.precio_actualizado_at,
+      peso: p.peso,
+      largo: p.largo,
+      ancho: p.ancho,
+      alto: p.alto,
       ficha_completa: ProductosService.CAMPOS_FICHA.every(
         (k) => String(p?.[k] ?? '').trim().length > 0,
       ),

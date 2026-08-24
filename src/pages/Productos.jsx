@@ -256,6 +256,12 @@ export default function Productos() {
   const [filtroCategoria, setFiltroCategoria] = useStickyState("productos.filtroCategoria", "");
   const [filtroMarcas, setFiltroMarcas] = useStickyState("productos.filtroMarcas", []);
   const [filtroEstado, setFiltroEstado] = useStickyState("productos.filtroEstado", "");
+  // Filtros de completitud (pedido 24-08): con/sin SKU asignado, con/sin peso
+  // y con/sin medidas (largo+ancho+alto). Sirven para encontrar lo que falta
+  // completar para el cálculo de flete. Valores: "" (todos) | "con" | "sin".
+  const [filtroSkuAsignado, setFiltroSkuAsignado] = useStickyState("productos.filtroSkuAsignado", "");
+  const [filtroPeso, setFiltroPeso] = useStickyState("productos.filtroPeso", "");
+  const [filtroMedidas, setFiltroMedidas] = useStickyState("productos.filtroMedidas", "");
   const [ordenTabla, setOrdenTabla] = useStickyState("productos.ordenTabla", { key: null, dir: "asc" });
   // Qué lista de precios muestra la columna "Precio Unitario" (lista1 | lista2 | lista3).
   // Lista 3 NO está en la DB: es un valor calculado = lista2 * FACTOR_LISTA_3.
@@ -424,7 +430,20 @@ export default function Productos() {
       const estadoRow = (p.estado || (p.sku ? "Activo" : "Transitorio")).toString().trim();
       const matchEstado = filtroEstado ? estadoRow === filtroEstado : true;
 
-      return matchSKU && matchProducto && matchCategoria && matchMarca && matchEstado;
+      // Completitud: SKU asignado, peso y medidas (las medidas cuentan como
+      // "con" solo si están LAS TRES; si falta una, el flete no se puede
+      // calcular y para efectos del filtro sigue incompleta).
+      const tieneSku = !!p.sku;
+      const tienePeso = Number(p.peso) > 0;
+      const tieneMedidas = Number(p.largo) > 0 && Number(p.ancho) > 0 && Number(p.alto) > 0;
+      const matchTri = (filtro, tiene) =>
+        !filtro || (filtro === "con" ? tiene : !tiene);
+      const matchCompletitud =
+        matchTri(filtroSkuAsignado, tieneSku) &&
+        matchTri(filtroPeso, tienePeso) &&
+        matchTri(filtroMedidas, tieneMedidas);
+
+      return matchSKU && matchProducto && matchCategoria && matchMarca && matchEstado && matchCompletitud;
     })
     .sort((a, b) => {
       if (!ordenTabla.key) return 0;
@@ -734,6 +753,51 @@ export default function Productos() {
             <option value="Pendiente Aprobación">Pendiente Aprobación</option>
           </select>
         </div>
+
+        <div className="filter-field" title="Productos con o sin SKU asignado">
+          <label className="filter-label">SKU asignado</label>
+          <select
+            className="input"
+            value={filtroSkuAsignado}
+            onChange={(e) => setFiltroSkuAsignado(e.target.value)}
+          >
+            <option value="">Todos</option>
+            <option value="con">Con SKU</option>
+            <option value="sin">Sin SKU</option>
+          </select>
+        </div>
+
+        <div className="filter-field" title="Peso (kg) informado: se usa para el cálculo de flete">
+          <label className="filter-label">Peso</label>
+          <select
+            className="input"
+            value={filtroPeso}
+            onChange={(e) => setFiltroPeso(e.target.value)}
+          >
+            <option value="">Todos</option>
+            <option value="con">Con peso</option>
+            <option value="sin">Sin peso</option>
+          </select>
+        </div>
+
+        <div className="filter-field" title="Medidas completas (largo, ancho y alto): si falta una, cuenta como sin medidas">
+          <label className="filter-label">Medidas</label>
+          <select
+            className="input"
+            value={filtroMedidas}
+            onChange={(e) => setFiltroMedidas(e.target.value)}
+          >
+            <option value="">Todas</option>
+            <option value="con">Con medidas</option>
+            <option value="sin">Sin medidas</option>
+          </select>
+        </div>
+      </div>
+
+      {/* Contador de resultados: cuántos matchean el filtro y sobre qué total. */}
+      <div style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 600, margin: "10px 2px 6px" }}>
+        {productosFiltrados.length.toLocaleString("es-CL")} producto{productosFiltrados.length === 1 ? "" : "s"}
+        {productosFiltrados.length !== productos.length && ` (de ${productos.length.toLocaleString("es-CL")})`}
       </div>
 
       {/* TABLA */}

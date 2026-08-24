@@ -292,8 +292,9 @@ export default function EditarProducto() {
     producto.estado ||
     ((producto.sku ?? "").toString().trim() ? "Activo" : "Transitorio");
   const esPendienteAprobacion = estadoMostrado === "Pendiente Aprobación";
-  const mostrarMargen =
-    !esVentasOJefe || esProductoTransitorio || esPendienteAprobacion;
+  // Margen por lista visible para TODOS los roles (pedido 14-08): antes
+  // ventas/jefes/contabilidad solo lo veían en transitorios o pendientes.
+  const mostrarMargen = true;
 
   // 2) ✅ admin y jefe_ventas pueden editar SKU
   const puedeEditarSKU = esAdmin || rolNorm === "jefe_ventas";
