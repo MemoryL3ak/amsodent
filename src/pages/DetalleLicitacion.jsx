@@ -1041,6 +1041,12 @@ export default function EditarLicitacion() {
      ✅ REGLA DE EDICIÓN + ESTILOS GRIS (disabled)
 ============================================================ */
   const esEditable = estado === "En espera" || estado === "Pendiente Aprobación";
+  // La cotización ERA editable según lo guardado en la base: cubre el caso de
+  // editar ítems y adjudicar en el MISMO guardado (el select ya dice
+  // "Adjudicada", esEditable pasa a false, pero los cambios pendientes de los
+  // ítems sí deben persistirse o los KPIs de margen quedan con datos viejos).
+  const eraEditable =
+    estadoActualDB === "En espera" || estadoActualDB === "Pendiente Aprobación";
   const estadoBloqueadoPendiente =
     !esAdmin && estadoActualDB === "Pendiente Aprobación";
   const puedeEditarEstado = !estadoBloqueadoPendiente;
@@ -1990,6 +1996,11 @@ export default function EditarLicitacion() {
         mostrarObs: Boolean(it.mostrarObs),
         precioManual: Boolean(it.precioManual),
         precioUnitarioStr: it.precioUnitarioStr || "",
+        // El costo editado cuenta como cambio: sin esto, corregir solo el
+        // costo no marcaba dirty y el guardado (y los KPIs de margen) se
+        // quedaban con el valor viejo.
+        costo: it.costo == null || it.costo === "" ? null : Number(it.costo),
+        costoManual: Boolean(it.costoManual),
       })),
     });
   }
@@ -2423,9 +2434,11 @@ export default function EditarLicitacion() {
   }
 
   // Costo editable por el admin — solo afecta a esta cotización (el margen),
-  // nunca modifica el costo del producto en el catálogo.
+  // nunca modifica el costo del producto en el catálogo. El admin puede
+  // corregirlo en CUALQUIER estado (también Adjudicada): es el dato que leen
+  // los KPIs de margen y debe poder sanearse sin reabrir la cotización.
   function actualizarCostoItem(index, valorStr) {
-    if (!esEditable) return;
+    if (!esEditable && !esAdmin) return;
     const copia = [...items];
     const item = { ...copia[index] };
     item.costoStr = formatearCLDesdeString(valorStr);
@@ -3013,9 +3026,34 @@ export default function EditarLicitacion() {
         });
       }
 
-      // ✅ Seguridad extra: si no es editable, no tocar items
-      if (!esEditable) {
-        setToast({ type: "success", message: "Estado actualizado correctamente." });
+      // ✅ Seguridad extra: si la cotización no es editable ni lo era antes de
+      // este guardado (p. ej. ya estaba Adjudicada), no se toca la estructura
+      // de los ítems — pero el COSTO editado por el admin SÍ se persiste:
+      // es lo que leen los KPIs de margen (Panel Indicadores / Comisiones) y
+      // debe reflejar la última edición sin importar el estado.
+      if (!esEditable && !eraEditable) {
+        let costosGuardados = 0;
+        if (esAdmin) {
+          for (const it of itemsParaGuardar) {
+            if (!it.id_item) continue;
+            try {
+              await api.put(`/licitaciones/items/${it.id_item}`, {
+                costo: getCostoParaItem(it),
+              });
+              costosGuardados++;
+            } catch (eCosto) {
+              console.error(eCosto);
+              setToast({ type: "error", message: "Error al guardar el costo de un ítem" });
+              return false;
+            }
+          }
+        }
+        setToast({
+          type: "success",
+          message: costosGuardados > 0
+            ? "Estado y costos actualizados: los KPIs de margen ya reflejan el cambio."
+            : "Estado actualizado correctamente.",
+        });
         localStorage.removeItem(STORAGE_KEY);
         baselineRef.current = buildSnapshot();
         setIsDirty(false);
@@ -3093,10 +3131,23 @@ export default function EditarLicitacion() {
         }
       }
 
-      setToast({
-        type: "success",
-        message: `La licitación "${nombre}" fue actualizada correctamente.`,
-      });
+      // Aviso al adjudicar con ítems sin costo: el margen de esos ítems se
+      // mostrará como 100% en los paneles (no hay costo guardado ni SKU con
+      // costo en el catálogo del que tomarlo).
+      const itemsSinCosto = itemsParaGuardar.filter(
+        (it) => !(Number(getCostoParaItem(it)) > 0)
+      ).length;
+      if (estadoFinal === "Adjudicada" && itemsSinCosto > 0) {
+        setToast({
+          type: "info",
+          message: `Guardado, pero ${itemsSinCosto} ítem(es) quedaron con costo $0: su margen se mostrará como 100% en los paneles. Ingresa el costo del ítem o usa un SKU con costo en el catálogo.`,
+        });
+      } else {
+        setToast({
+          type: "success",
+          message: `La licitación "${nombre}" fue actualizada correctamente.`,
+        });
+      }
 
       localStorage.removeItem(STORAGE_KEY);
       baselineRef.current = buildSnapshot();
@@ -3932,8 +3983,7 @@ export default function EditarLicitacion() {
                             }
                             onChange={(e) => actualizarCostoItem(index, e.target.value)}
                             onBlur={() => finalizarEdicionCosto(index)}
-                            disabled={!esEditable}
-                            title="Costo solo para esta cotización — no modifica el producto"
+                            title="Costo solo para esta cotización — no modifica el producto. Editable en cualquier estado: al guardar actualiza los KPIs de margen."
                           />
                         </div>
                       )}

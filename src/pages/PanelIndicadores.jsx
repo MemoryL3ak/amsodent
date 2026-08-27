@@ -555,6 +555,9 @@ export default function PanelIndicadores() {
         costo: r.costo,
         monto,
         pct: r.venta > 0 ? (monto / r.venta) * 100 : 0,
+        // Sin costo en ningún ítem (ni guardado ni en catálogo por SKU): el
+        // "100%" no es margen real, es un dato faltante que hay que sanear.
+        sinCosto: r.venta > 0 && !(r.costo > 0),
       };
     }).sort((a, b) => b.venta - a.venta);
     const agrupar = (key) => {
@@ -589,6 +592,7 @@ export default function PanelIndicadores() {
         "Costo": Math.round(f.costo),
         "Margen $": Math.round(f.monto),
         "Margen %": Number(f.pct.toFixed(2)),
+        "Sin costo": f.sinCosto ? "Sí" : "",
       }));
       const tVenta = margenDesglose.filas.reduce((s, f) => s + f.venta, 0);
       const tCosto = margenDesglose.filas.reduce((s, f) => s + f.costo, 0);
@@ -1048,7 +1052,7 @@ function ModalMargenDesglose({ desglose, margen, mostrarMonto, onExportar, onCer
         </div>
         <p style={{ fontSize: 12.5, color: "var(--text-muted)", marginTop: 2, marginBottom: 12 }}>
           Margen del periodo: <strong style={{ color: colorPct(margen.pct) }}>{fmtPct(margen.pct)}</strong>
-          {mostrarMonto ? <> · <strong>{fmtCLP(margen.monto)}</strong></> : null}. Calculado sobre los ítems de las cotizaciones adjudicadas del periodo (costo guardado con cada cotización; si no existe, el del catálogo por SKU).
+          {mostrarMonto ? <> · <strong>{fmtCLP(margen.monto)}</strong></> : null}. Calculado sobre los ítems de las cotizaciones adjudicadas del periodo (costo guardado con cada cotización; si no existe, el del catálogo por SKU). Las filas con ⚠ no tienen costo en ningún ítem: su "100%" no es margen real.
         </p>
         <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
           {TABS.map((t) => (
@@ -1088,7 +1092,12 @@ function ModalMargenDesglose({ desglose, margen, mostrarMonto, onExportar, onCer
                     <td style={{ textAlign: "right", fontWeight: 600 }}>{fmtCLP(f.venta)}</td>
                     {mostrarMonto && <td style={{ textAlign: "right" }}>{fmtCLP(f.costo)}</td>}
                     {mostrarMonto && <td style={{ textAlign: "right", fontWeight: 600 }}>{fmtCLP(f.monto)}</td>}
-                    <td style={{ textAlign: "right", fontWeight: 700, color: colorPct(f.pct) }}>{fmtPct(f.pct)}</td>
+                    <td
+                      style={{ textAlign: "right", fontWeight: 700, whiteSpace: "nowrap", color: f.sinCosto ? "var(--text-muted)" : colorPct(f.pct) }}
+                      title={f.sinCosto ? "Ningún ítem de esta cotización tiene costo (ni guardado ni en el catálogo por SKU): el 100% no es margen real. Ingresa el costo de los ítems en el detalle de la cotización." : undefined}
+                    >
+                      {f.sinCosto ? "⚠ " : ""}{fmtPct(f.pct)}
+                    </td>
                   </tr>
                 ))}
               </tbody>
