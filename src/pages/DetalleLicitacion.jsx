@@ -176,8 +176,12 @@ function getPrecioPorListado(prod, listado) {
 function normalizarVolumenCm3(valor) {
   const n = Number(valor || 0);
   if (!Number.isFinite(n) || n <= 0) return 0;
-  // Compatibilidad con datos antiguos guardados en m3.
-  if (n < 1) return n * 1_000_000;
+  /* metro_cubico se guarda SIEMPRE en cm³. Existió aquí una heurística
+     «n < 1 → dato antiguo en m³ → ×1.000.000» que quedó obsoleta y dañina:
+     verificado contra la base el 2026-08-27, no queda NINGÚN producto en m³
+     y sí hay 110 productos chicos (fresas, agujas…) con volumen real menor a
+     1 cm³, a los que ese ×1.000.000 les inventaba ~1 m³ por unidad y disparaba
+     el peso volumétrico del flete (20.000 agujas → 19.060 m³). */
   return n;
 }
 
