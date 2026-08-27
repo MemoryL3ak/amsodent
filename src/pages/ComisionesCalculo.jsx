@@ -188,7 +188,7 @@ export default function ComisionesCalculo({ perfiles }) {
       try {
         const items = await api.post("/licitaciones/items/filter", {
           licitacion_ids: ids,
-          fields: "licitacion_id,total,cantidad,sku",
+          fields: "licitacion_id,total,cantidad,sku,costo",
         });
         if (activo) setItemsMargen(Array.isArray(items) ? items : []);
       } catch (e) {
@@ -246,7 +246,12 @@ export default function ComisionesCalculo({ perfiles }) {
       const row = ensure(email);
       const total = Number(it.total || 0);
       const sku = String(it.sku || "").trim().toUpperCase();
-      const costo = (costoBySku[sku] || 0) * (Number(it.cantidad) || 0);
+      // Mismo criterio que el Panel Indicadores: primero el costo guardado con
+      // la cotización (incluye el editado a mano), y si no existe, el del
+      // catálogo por SKU. Antes solo miraba el catálogo y el margen de
+      // comisiones no reflejaba los costos editados en la cotización.
+      const costoUnit = Number(it.costo) > 0 ? Number(it.costo) : (costoBySku[sku] || 0);
+      const costo = costoUnit * (Number(it.cantidad) || 0);
       row.margenVenta += total;
       row.margenCosto += costo;
     });
