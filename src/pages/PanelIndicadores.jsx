@@ -1086,7 +1086,17 @@ function ModalMargenDesglose({ desglose, margen, mostrarMonto, onExportar, onCer
                   <tr><td colSpan={mostrarMonto ? 7 : 5} style={{ padding: "14px 8px", color: "var(--text-muted)" }}>Sin adjudicaciones en el periodo.</td></tr>
                 ) : desglose.filas.map((f) => (
                   <tr key={f.licId}>
-                    <td style={{ fontWeight: 600, whiteSpace: "nowrap" }}>{f.codigo}</td>
+                    <td style={{ fontWeight: 600, whiteSpace: "nowrap" }}>
+                      <a
+                        href={`/detalle/${f.licId}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="table-link"
+                        title="Abrir el detalle de la cotización en una pestaña nueva"
+                      >
+                        {f.codigo}
+                      </a>
+                    </td>
                     <td style={{ maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--text-muted)" }} title={f.cliente}>{f.cliente}</td>
                     <td style={{ maxWidth: 150, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={f.vendedor}>{f.vendedor}</td>
                     <td style={{ textAlign: "right", fontWeight: 600 }}>{fmtCLP(f.venta)}</td>
