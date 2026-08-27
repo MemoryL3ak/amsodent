@@ -4749,6 +4749,34 @@ from (values
 ) as v(sku, peso, largo, ancho, alto)
 where p.sku = v.sku;
 
+
+-- Correcciones manuales (productos-2026-08-25(modificado).csv): SKUs que no
+-- venían en la lista de Jeremías (6) o venían incompletos. Este UPDATE corre
+-- después del anterior, así que estos valores curados a mano prevalecen.
+
+update public.productos p set
+  peso  = v.peso,
+  largo = v.largo,
+  ancho = v.ancho,
+  alto  = v.alto,
+  metro_cubico = round((v.alto * v.largo * v.ancho)::numeric, 2)
+from (values
+  ('PH00042', 0.5, 8, 8, 17),
+  ('EN00094', 0.018, 7, 1.2, 4.2),
+  ('ORT00083', 0.002, 2, 2, 1),
+  ('EQ00027', 0.035, 10, 5, 2),
+  ('INST00229', 0.065, 11, 10, 4),
+  ('IME00031', 0.02, 20, 15, 5),
+  ('CON00089', 0.38, 22, 12, 8),
+  ('OP00065', 0.028, 9.5, 3.5, 2.5),
+  ('OP00066', 0.028, 9.5, 3.5, 2.5),
+  ('OP00067', 0.028, 9.5, 3.5, 2.5),
+  ('FP00276', 0.03, 10, 6, 1.5),
+  ('MAQ00070', 0.005, 8, 5, 1),
+  ('EQ00106', 2.5, 40, 30, 15)
+) as v(sku, peso, largo, ancho, alto)
+where p.sku = v.sku;
+
 -- Verificación: completitud de todo el catálogo después de la carga.
 select
   count(*) filter (where peso > 0) as con_peso,
