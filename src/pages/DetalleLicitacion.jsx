@@ -3988,24 +3988,24 @@ export default function EditarLicitacion() {
                         </div>
                       )}
 
-                      {esAdmin && (
-                        <div className="md:col-span-2">
-                          <label className="block text-xs text-gray-600 mb-1">
-                            Margen
-                          </label>
-                          <input
-                            className={`${inputClassH10} text-sm bg-gray-50`}
-                            readOnly
-                            value={(() => {
-                              const costo = getCostoParaItem(it);
-                              const precioBase = Number(it.precio || 0);
-                              if (precioBase <= 0) return "0.00%";
-                              const margen = ((precioBase - costo) / precioBase) * 100;
-                              return `${margen.toFixed(2)}%`;
-                            })()}
-                          />
-                        </div>
-                      )}
+                      {/* Margen por línea visible para TODOS (pedido 2026-08-27);
+                          el campo Costo editable sigue siendo solo de admin. */}
+                      <div className="md:col-span-2">
+                        <label className="block text-xs text-gray-600 mb-1">
+                          Margen
+                        </label>
+                        <input
+                          className={`${inputClassH10} text-sm bg-gray-50`}
+                          readOnly
+                          value={(() => {
+                            const costo = getCostoParaItem(it);
+                            const precioBase = Number(it.precio || 0);
+                            if (precioBase <= 0) return "0.00%";
+                            const margen = ((precioBase - costo) / precioBase) * 100;
+                            return `${margen.toFixed(2)}%`;
+                          })()}
+                        />
+                      </div>
 
                       {/* Total */}
                       <div className="md:col-span-3">
