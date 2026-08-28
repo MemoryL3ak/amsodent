@@ -105,7 +105,10 @@ export default function Login() {
     }
 
     setLoading(true);
-    const { error: err } = await supabase.auth.signInWithPassword({ email, password });
+    // Cuentas internas sin correo real: si escriben solo el username (sin "@"),
+    // se completa con el dominio sintético interno (ej: lriquelme → lriquelme@amsodent.local).
+    const identificador = email.includes("@") ? email.trim() : `${email.trim()}@amsodent.local`;
+    const { error: err } = await supabase.auth.signInWithPassword({ email: identificador, password });
     setLoading(false);
 
     if (err) {
@@ -207,14 +210,14 @@ export default function Login() {
 
           <form onSubmit={handleLogin} className="login-stack">
             <div className="field">
-              <label className="field-label">Correo electrónico</label>
+              <label className="field-label">Correo electrónico o usuario</label>
               <input
-                type="email"
+                type="text"
                 className="input input-lg"
                 placeholder="correo@amsodent.cl"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                autoComplete="email"
+                autoComplete="username"
               />
             </div>
 
