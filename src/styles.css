@@ -2880,7 +2880,9 @@ a.ayuda-ruta-chip:hover { background: var(--primary-mid); }
   flex-direction: column;
   padding: 0;
   overflow: hidden;
-  max-height: calc(100vh - 32px);
+  /* Altura FIJA (no max-height): el área de mensajes scrollea por dentro y el
+     panel nunca crece con la conversación. */
+  height: min(640px, calc(100vh - 96px));
 }
 .ayuda-chat-head {
   display: flex;
@@ -2912,11 +2914,14 @@ a.ayuda-ruta-chip:hover { background: var(--primary-mid); }
 .ayuda-chat-scroll {
   flex: 1;
   overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 14px;
   display: flex;
   flex-direction: column;
   gap: 10px;
-  min-height: 220px;
+  /* min-height 0: permite que el flex encoja el área de mensajes al alto del
+     panel; sin esto el contenido empuja y el panel crece sin límite. */
+  min-height: 0;
 }
 .ayuda-chat-burbuja {
   border-radius: 12px;
@@ -2998,7 +3003,7 @@ a.ayuda-ruta-chip:hover { background: var(--primary-mid); }
 @media (max-width: 1180px) {
   .ayuda-layout { grid-template-columns: 1fr; }
   .ayuda-lateral { position: static; }
-  .ayuda-chat { max-height: 480px; }
+  .ayuda-chat { height: 480px; }
 }
 @media (max-width: 900px) {
   .ayuda-manual { grid-template-columns: 1fr; }
