@@ -66,6 +66,60 @@ export class IaController {
     return { ok: true, recomendacion };
   }
 
+  // Centro de Ayuda: DamarIA como guía de la plataforma, disponible para TODO
+  // usuario autenticado (no solo admin). Responde con el manual operativo, sin
+  // acceso a SQL ni datos de negocio. SSE con el mismo patrón que /consultar.
+  @Post('ayuda')
+  @UseGuards(AuthGuard)
+  async ayuda(
+    @Body()
+    body: {
+      pregunta?: string;
+      historial?: { role?: string; content?: string }[];
+      usuario?: string;
+      rol?: string;
+      modulos?: string[];
+    },
+    @Res() res: Response,
+  ) {
+    const pregunta = String(body?.pregunta || '').trim();
+    if (!pregunta) {
+      throw new BadRequestException('Falta la pregunta para DamarIA.');
+    }
+    if (pregunta.length > 1000) {
+      throw new BadRequestException('La pregunta es demasiado larga.');
+    }
+
+    const historial = (Array.isArray(body?.historial) ? body.historial : [])
+      .filter((h) => h && (h.role === 'user' || h.role === 'assistant') && h.content)
+      .map((h) => ({ role: String(h.role), content: String(h.content || '') }))
+      .slice(-8);
+    const usuario = String(body?.usuario || '').trim().slice(0, 80);
+    const rol = String(body?.rol || '').trim().slice(0, 40);
+    const modulos = (Array.isArray(body?.modulos) ? body.modulos : [])
+      .map((m) => String(m || '').trim())
+      .filter(Boolean)
+      .slice(0, 40);
+
+    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders?.();
+
+    const emit = (evento: any) => {
+      res.write(`data: ${JSON.stringify(evento)}\n\n`);
+    };
+
+    try {
+      await this.ia.ayudaStream(pregunta, emit, { historial, usuario, rol, modulos });
+    } catch (e: any) {
+      emit({ tipo: 'error', mensaje: e?.message || 'Error desconocido.' });
+    } finally {
+      res.end();
+    }
+  }
+
   // Endpoint SSE: emite eventos a medida que DamarIA piensa, consulta y
   // redacta la respuesta. El frontend lee el stream para mostrar el resumen
   // letra por letra y bajar la latencia percibida.

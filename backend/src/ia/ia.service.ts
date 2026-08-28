@@ -1,5 +1,6 @@
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
+import { MANUAL_SISTEMA } from './ayuda-conocimiento';
 
 // DamarIA: asistente de análisis de datos. Recibe una pregunta en lenguaje
 // natural, le pide a Claude (Anthropic) que genere consultas SQL de solo
@@ -367,6 +368,135 @@ export class IaService {
 
   // ¿El error amerita reintento? Anthropic devuelve 429 (rate limit), 529
   // (overloaded / saturado) y 500/502/503 (transitorios del lado servidor).
+  // ── Centro de Ayuda ────────────────────────────────────────────────────
+  // DamarIA como guía de la plataforma para TODOS los usuarios autenticados
+  // (a diferencia del widget de datos, que es solo admin). No tiene acceso a
+  // SQL ni a datos: responde únicamente con el manual operativo
+  // (ayuda-conocimiento.ts) y adapta la respuesta al rol del usuario.
+  private get systemAyudaConCache() {
+    return [
+      {
+        type: 'text',
+        text: `Eres DamarIA (ícono: girasol 🌻), la guía del Centro de Ayuda de la plataforma Amsodent. Tu trabajo es enseñar a usar el sistema: responder "cómo se hace X", explicar flujos, estados y reglas, y orientar a los nuevos ingresos.
+
+REGLAS:
+- Responde SOLO con la información del manual de abajo. Si algo no está en el manual, dilo honestamente y sugiere consultar a un administrador. NUNCA inventes botones, rutas ni reglas.
+- Adapta la respuesta al ROL del usuario (te lo indican en el contexto): no le des instrucciones sobre módulos que su rol no puede ver; si pregunta por uno, explícale brevemente qué es y dile que requiere otro rol o pedir acceso a un administrador.
+- Sé cálida, cercana y profesional (español de Chile, tuteo). Breve: máximo ~8 líneas. Usa **negrita** para nombres de módulos y botones, listas con "-" y pasos numerados "1." cuando expliques un procedimiento.
+- No entregas datos de la base (ventas, montos, clientes): para eso existe el widget de datos de DamarIA (solo admin). Si te piden datos, acláralo.
+- Al final agrega SIEMPRE una línea con 2 preguntas de seguimiento útiles y cortas, en el formato exacto:
+##SEGUIR## ["pregunta 1","pregunta 2"]
+
+MANUAL OPERATIVO DE LA PLATAFORMA:
+${MANUAL_SISTEMA}`,
+        cache_control: { type: 'ephemeral' },
+      },
+    ];
+  }
+
+  // Variante streaming del Centro de Ayuda. Emite:
+  //   { tipo: 'delta', texto }   — el cuerpo de la respuesta, incremental
+  //   { tipo: 'done', texto, sugerencias }
+  //   { tipo: 'error', mensaje }
+  async ayudaStream(
+    pregunta: string,
+    emit: (evento: any) => void,
+    opts: {
+      historial?: { role: string; content: string }[];
+      usuario?: string;
+      rol?: string;
+      modulos?: string[];
+    } = {},
+  ): Promise<void> {
+    if (!this.configurada()) {
+      emit({
+        tipo: 'error',
+        mensaje:
+          'DamarIA no está configurada: falta la API key de Anthropic en el servidor.',
+      });
+      return;
+    }
+
+    const historial = (Array.isArray(opts.historial) ? opts.historial : [])
+      .map((h) => ({
+        role: h?.role === 'assistant' ? 'assistant' : 'user',
+        content: String(h?.content || '').slice(0, 3000),
+      }))
+      .filter((h) => h.content.trim().length > 0)
+      .slice(-8);
+    const messages: any[] = [...historial, { role: 'user', content: pregunta }];
+
+    // Contexto dinámico (rol + módulos + nombre + fecha) en bloque SIN cache,
+    // después del bloque grande, para no romper el prefijo cacheado.
+    const system: any[] = [...this.systemAyudaConCache];
+    const partes: string[] = [];
+    const rol = String(opts.rol || '').trim().toLowerCase();
+    if (rol) partes.push(`ROL DEL USUARIO: ${rol}.`);
+    const modulos = (Array.isArray(opts.modulos) ? opts.modulos : [])
+      .map((m) => String(m || '').trim())
+      .filter(Boolean)
+      .slice(0, 40);
+    if (modulos.length) {
+      partes.push(`MÓDULOS QUE SU ROL/PERFIL PUEDE VER: ${modulos.join(', ')}.`);
+    }
+    const ctx = this.contextoUsuario(opts.usuario);
+    if (ctx) partes.push(ctx);
+    if (partes.length) system.push({ type: 'text', text: partes.join('\n') });
+
+    this.logger.log(
+      `ayudaStream · modelo=${this.model} · rol=${rol || '?'} · pregunta="${pregunta.slice(0, 60)}..."`,
+    );
+
+    // El marcador ##SEGUIR## no debe llegar al usuario: se retiene cualquier
+    // sufijo que pueda ser el comienzo del marcador hasta confirmar qué es.
+    const MARCADOR = '##SEGUIR##';
+    let emitido = 0;
+    const cuerpoSeguro = (texto: string): string => {
+      const i = texto.indexOf(MARCADOR);
+      if (i >= 0) return texto.slice(0, i);
+      for (let k = Math.min(MARCADOR.length - 1, texto.length); k > 0; k--) {
+        if (texto.endsWith(MARCADOR.slice(0, k))) return texto.slice(0, texto.length - k);
+      }
+      return texto;
+    };
+
+    try {
+      const resp = await this.llamarClaudeStream(
+        {
+          model: this.model,
+          max_tokens: 700,
+          temperature: 0.3,
+          system,
+          messages,
+          stream: true,
+        },
+        (_delta, textoCompleto) => {
+          const cuerpo = cuerpoSeguro(textoCompleto);
+          if (cuerpo.length > emitido) {
+            emit({ tipo: 'delta', texto: cuerpo.slice(emitido) });
+            emitido = cuerpo.length;
+          }
+        },
+      );
+
+      const textoFinal = (resp.content || [])
+        .filter((b: any) => b?.type === 'text')
+        .map((b: any) => b.text || '')
+        .join('');
+      const cuerpo = cuerpoSeguro(textoFinal);
+      if (cuerpo.length > emitido) {
+        emit({ tipo: 'delta', texto: cuerpo.slice(emitido) });
+      }
+      emit({
+        tipo: 'done',
+        texto: cuerpo.trim(),
+        sugerencias: this.extraerSugerencias(textoFinal),
+      });
+    } catch (e: any) {
+      emit({ tipo: 'error', mensaje: e?.message || 'Error desconocido.' });
+    }
+  }
+
   private esRetryable(status: number): boolean {
     return status === 429 || status === 529 || status === 500 || status === 502 || status === 503;
   }
