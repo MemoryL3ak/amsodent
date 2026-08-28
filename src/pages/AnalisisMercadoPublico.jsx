@@ -121,6 +121,11 @@ function codigoMpDe(id) {
   return m ? m[1] : null;
 }
 
+/* Botones de sincronización manual ocultos (pedido 2026-08-27): las fichas se
+   actualizan con la corrida automática del backend. true = vuelven los botones
+   «Sincronizar con Mercado Público» y «Forzar». */
+const MOSTRAR_SYNC = false;
+
 export default function AnalisisMercadoPublico() {
   const [estadoApi, setEstadoApi] = useState(null);
   const [resultados, setResultados] = useState([]);
@@ -641,22 +646,30 @@ export default function AnalisisMercadoPublico() {
             style={{ display: "inline-flex", alignItems: "center", gap: 7, height: 38 }}>
             <SunflowerIcon size={15} /> Pregúntale a DamarIA
           </button>
-          <button className="btn btn-primary" onClick={() => sincronizar(false)} disabled={sincronizando || sinConfig}
-            style={{ display: "inline-flex", alignItems: "center", gap: 7, height: 38, minWidth: 250, justifyContent: "center" }}>
-            <RefreshCw size={14} className={sincronizando ? "girando" : undefined} />
-            {sincronizando
-              ? progresoSync?.restantes != null
-                ? `${progresoSync.hechas} de ${progresoSync.hechas + progresoSync.restantes}${
-                    restanteAprox(progresoSync.etaMs) ? ` · ~${restanteAprox(progresoSync.etaMs)}` : ""
-                  }`
-                : "Sincronizando…"
-              : "Sincronizar con Mercado Público"}
-          </button>
-          <button className="btn btn-ghost" onClick={() => sincronizar(true)} disabled={sincronizando || sinConfig}
-            title="Vuelve a consultar TODOS los procesos, incluidos los ya resueltos. Úsalo para rellenar datos nuevos (como la fecha de adjudicación) en procesos antiguos. Consume más cuota de la API."
-            style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 38 }}>
-            <RefreshCw size={13} /> Forzar
-          </button>
+          {/* Sincronización manual OCULTA (pedido 2026-08-27): el panel se
+              alimenta de la corrida automática; los botones («Sincronizar» y
+              «Forzar») vuelven poniendo la bandera en true. La lógica queda
+              intacta por si hay que dispararla puntualmente. */}
+          {MOSTRAR_SYNC && (
+            <>
+              <button className="btn btn-primary" onClick={() => sincronizar(false)} disabled={sincronizando || sinConfig}
+                style={{ display: "inline-flex", alignItems: "center", gap: 7, height: 38, minWidth: 250, justifyContent: "center" }}>
+                <RefreshCw size={14} className={sincronizando ? "girando" : undefined} />
+                {sincronizando
+                  ? progresoSync?.restantes != null
+                    ? `${progresoSync.hechas} de ${progresoSync.hechas + progresoSync.restantes}${
+                        restanteAprox(progresoSync.etaMs) ? ` · ~${restanteAprox(progresoSync.etaMs)}` : ""
+                      }`
+                    : "Sincronizando…"
+                  : "Sincronizar con Mercado Público"}
+              </button>
+              <button className="btn btn-ghost" onClick={() => sincronizar(true)} disabled={sincronizando || sinConfig}
+                title="Vuelve a consultar TODOS los procesos, incluidos los ya resueltos. Úsalo para rellenar datos nuevos (como la fecha de adjudicación) en procesos antiguos. Consume más cuota de la API."
+                style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 38 }}>
+                <RefreshCw size={13} /> Forzar
+              </button>
+            </>
+          )}
         </div>
       </div>
 
@@ -900,7 +913,9 @@ export default function AnalisisMercadoPublico() {
             ) : ordenadas.length === 0 ? (
               <tr><td colSpan={9} style={{ padding: 26, textAlign: "center", color: "var(--text-muted)" }}>
                 {resultados.length === 0
-                  ? "Sin datos todavía. Usa \"Sincronizar con Mercado Público\" para consultar tus postulaciones."
+                  ? MOSTRAR_SYNC
+                    ? "Sin datos todavía. Usa \"Sincronizar con Mercado Público\" para consultar tus postulaciones."
+                    : "Sin datos todavía. Las postulaciones se consultan con la sincronización automática del sistema."
                   : "Sin resultados con los filtros actuales."}
               </td></tr>
             ) : (
@@ -1284,6 +1299,12 @@ function DiferenciasIndicadores({ filas, syncDesde, syncHasta }) {
        la conciliación misma lo delata. */
     const items = [];
     const usadas = new Set(); // fichas MP ya emparejadas con un cierre del período
+    /* Inconsistencias de ESTADO interno detectadas al pasar: cotizaciones que
+       el sistema da por perdidas/descartadas pero cuyo acta o cuya OC dicen lo
+       contrario. Se listan aparte porque son datos por corregir, no una
+       diferencia entre paneles. */
+    const MAL_ESTADO = new Set(["perdida", "descartada", "cancelada", "desierta"]);
+    const inconsistencias = [];
 
     for (const l of indPeriodo) {
       const mp =
@@ -1293,6 +1314,8 @@ function DiferenciasIndicadores({ filas, syncDesde, syncHasta }) {
       const bruto = brutoInd(l);
       const base = {
         codigo: String(l.id_licitacion || "").trim() || `#${l.id}`,
+        licId: l.id,
+        estadoInterno: l.estado || "",
         nombre: l.nombre || "",
         entidad: l.nombre_entidad || "",
         fechaInd: adj[l.id] || null,
@@ -1301,6 +1324,12 @@ function DiferenciasIndicadores({ filas, syncDesde, syncHasta }) {
         montoMp: null,
         efecto: -bruto,
       };
+      if (MAL_ESTADO.has(String(l.estado || "").trim().toLowerCase())) {
+        inconsistencias.push({
+          codigo: base.codigo, licId: l.id, entidad: base.entidad, monto: bruto,
+          detalle: `tiene OC registrada por ${fmt$(bruto)}, pero su estado interno dice «${l.estado}».`,
+        });
+      }
       if (!mp) {
         if (!codigoMpDe(l.id_licitacion)) {
           items.push({ ...base, cat: "fuera_mp", motivo: "La cotización no tiene código de Mercado Público (venta directa u otro canal)." });
@@ -1360,6 +1389,8 @@ function DiferenciasIndicadores({ filas, syncDesde, syncHasta }) {
       const fechaOc = adj[lid] || null;
       const base = {
         codigo: f.codigo_mp || `#${lid}`,
+        licId: lid || null,
+        estadoInterno: f.interna?.estado || "",
         nombre: f.interna?.nombre || "",
         entidad: f.interna?.nombre_entidad || f.organismo || "",
         fechaInd: fechaOc,
@@ -1368,6 +1399,12 @@ function DiferenciasIndicadores({ filas, syncDesde, syncHasta }) {
         montoMp: mMp,
         efecto: convenio ? 0 : mMp,
       };
+      if (MAL_ESTADO.has(String(f.interna?.estado || "").trim().toLowerCase())) {
+        inconsistencias.push({
+          codigo: base.codigo, licId: lid || null, entidad: base.entidad, monto: mMp,
+          detalle: `el acta oficial nos da GANADORES por ${fmt$(mMp)}, pero su estado interno dice «${f.interna.estado}».`,
+        });
+      }
       if (convenio) {
         items.push({ ...base, cat: "convenio", motivo: `Fuera del KPI de este panel (acta ${fmt$(mMp)} = demanda estimada del convenio); en Indicadores ${fechaOc ? `sus OC cuentan desde el ${diaLegible(fechaOc)}` : "va a aparecer a medida que lleguen sus OC"}.` });
       } else if (fechaOc) {
@@ -1388,13 +1425,50 @@ function DiferenciasIndicadores({ filas, syncDesde, syncHasta }) {
       porCat.set(it.cat, acc);
     }
     for (const acc of porCat.values()) acc.items.sort((a, b) => Math.abs(b.efecto) - Math.abs(a.efecto));
-    return { nInd: indPeriodo.length, nMp: ganadasMp.length, totalIndNeto, totalIndBruto, totalMp, porCat };
+    // La conciliación se auto-verifica: la suma de los efectos debe calzar AL
+    // PESO con la diferencia entre ambos KPIs. Si no calza, hay un caso mal
+    // clasificado y la pantalla lo dice en vez de fingir que cuadra.
+    const sumaEfectos = items.reduce((s, it) => s + (Number(it.efecto) || 0), 0);
+    return { nInd: indPeriodo.length, nMp: ganadasMp.length, totalIndNeto, totalIndBruto, totalMp, porCat, inconsistencias, sumaEfectos };
   }, [datos, filas, syncDesde, syncHasta]);
 
   const periodoTxt = syncDesde || syncHasta
     ? `${syncDesde ? `desde ${diaLegible(syncDesde)}` : ""}${syncDesde && syncHasta ? " " : ""}${syncHasta ? `hasta ${diaLegible(syncHasta)}` : ""}`
     : "todo el histórico";
   const dif = analisis ? analisis.totalMp - analisis.totalIndBruto : 0;
+  // ¿La conciliación cierra al peso? (debería siempre; si no, se avisa).
+  const cierraAlPeso = analisis ? Math.round(analisis.sumaEfectos) === Math.round(dif) : false;
+
+  // Exporta el cruce completo (todas las categorías, fila a fila) a Excel.
+  async function descargarCruce() {
+    if (!analisis) return;
+    const filasX = [];
+    for (const k of ORDEN_CATS_DIF) {
+      const acc = analisis.porCat.get(k);
+      if (!acc) continue;
+      for (const it of acc.items) {
+        filasX.push({
+          "Categoría": CATS_DIF[k].label,
+          "Proceso": it.codigo,
+          "Cotización interna": it.licId ?? "",
+          "Entidad": it.entidad || "",
+          "Nombre": it.nombre || "",
+          "Estado interno": it.estadoInterno || "",
+          "Fecha 1ª OC": it.fechaInd || "",
+          "Fecha acta": it.fechaMp || "",
+          "$ Indicadores (bruto)": it.montoInd ?? "",
+          "$ Análisis MP": it.montoMp ?? "",
+          "Efecto en la diferencia": it.efecto,
+          "Motivo": it.motivo || "",
+        });
+      }
+    }
+    const XLSX = await import("xlsx");
+    const ws = XLSX.utils.json_to_sheet(filasX);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Cruce adjudicadas");
+    XLSX.writeFile(wb, `cruce_adjudicadas_${new Date().toISOString().slice(0, 10)}.xlsx`);
+  }
 
   return (
     <div style={{ border: "1px solid var(--border)", borderRadius: 12, background: "var(--surface)", padding: "14px 16px", marginBottom: 16 }}>
@@ -1407,11 +1481,20 @@ function DiferenciasIndicadores({ filas, syncDesde, syncHasta }) {
             Por qué las adjudicadas de ambos paneles no calzan · {periodoTxt}
           </div>
         </div>
-        <button className="btn btn-secondary" onClick={comparar} disabled={cargando}
-          style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 34, fontSize: 12.5 }}>
-          <RefreshCw size={13} className={cargando ? "girando" : undefined} />
-          {cargando ? "Comparando…" : datos ? "Actualizar" : "Comparar"}
-        </button>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          {analisis && (
+            <button className="btn btn-ghost" onClick={descargarCruce}
+              title="Descarga el cruce completo (todas las categorías, fila a fila) en Excel"
+              style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 34, fontSize: 12.5 }}>
+              <Download size={13} /> Excel
+            </button>
+          )}
+          <button className="btn btn-secondary" onClick={comparar} disabled={cargando}
+            style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 34, fontSize: 12.5 }}>
+            <RefreshCw size={13} className={cargando ? "girando" : undefined} />
+            {cargando ? "Comparando…" : datos ? "Actualizar" : "Comparar"}
+          </button>
+        </div>
       </div>
 
       {error && (
@@ -1449,9 +1532,86 @@ function DiferenciasIndicadores({ filas, syncDesde, syncHasta }) {
               <div style={{ fontSize: 18, fontWeight: 800, color: dif === 0 ? "#15803d" : "var(--primary-dark)" }}>
                 {dif > 0 ? "+" : ""}{fmt$(dif)}
               </div>
-              <div style={{ fontSize: 10.5, color: "var(--text-muted)" }}>explicada al peso por las categorías de abajo</div>
+              {/* La conciliación se verifica sola: si la suma de efectos no
+                  calza al peso, se dice — nunca fingir que cuadra. */}
+              <div style={{ fontSize: 10.5, fontWeight: 700, color: cierraAlPeso ? "#15803d" : "#b91c1c" }}>
+                {cierraAlPeso
+                  ? "✓ conciliada al peso por las categorías de abajo"
+                  : `⚠ la suma de causas da ${fmt$(analisis.sumaEfectos)}: hay un caso sin clasificar`}
+              </div>
             </div>
           </div>
+
+          {/* Barra de conciliación: cuánto pesa cada causa en la diferencia
+              (proporcional al valor absoluto de su efecto). */}
+          {(() => {
+            const cats = ORDEN_CATS_DIF
+              .filter((k) => analisis.porCat.has(k))
+              .map((k) => ({ k, c: CATS_DIF[k], ...analisis.porCat.get(k) }))
+              .filter((x) => Math.abs(x.efecto) > 0);
+            if (!cats.length) return null;
+            return (
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ display: "flex", height: 12, borderRadius: 6, overflow: "hidden", border: "1px solid var(--border)" }}>
+                  {cats.map((x) => (
+                    <span
+                      key={x.k}
+                      title={`${x.c.label}: ${x.efecto > 0 ? "+" : "−"}${fmt$(Math.abs(x.efecto))} (${x.items.length} proceso${x.items.length === 1 ? "" : "s"})`}
+                      style={{ flex: `${Math.abs(x.efecto)} 0 2px`, background: x.c.color, minWidth: 3 }}
+                    />
+                  ))}
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 14px", marginTop: 6, fontSize: 11, color: "var(--text-muted)" }}>
+                  {cats.map((x) => (
+                    <span key={x.k} style={{ whiteSpace: "nowrap" }}>
+                      <i style={{ display: "inline-block", width: 9, height: 9, borderRadius: 2, background: x.c.color, marginRight: 5, verticalAlign: "-1px" }} />
+                      {x.c.label} {x.efecto > 0 ? "+" : "−"}{fmt$(Math.abs(x.efecto))}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* Datos por corregir detectados de pasada: estados internos que
+              contradicen lo que dicen el acta o las OC. No son diferencia
+              entre paneles, son cotizaciones mal cerradas en el sistema. */}
+          {analisis.inconsistencias.length > 0 && (
+            <div style={{ border: "1px solid #fcd34d", background: "#fffbeb", borderRadius: 10, padding: "10px 14px", marginBottom: 12 }}>
+              <div style={{ fontSize: 12.5, fontWeight: 700, color: "#92400e", display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+                <AlertTriangle size={14} />
+                {analisis.inconsistencias.length} cotización{analisis.inconsistencias.length === 1 ? "" : "es"} con estado interno por corregir
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 3, fontSize: 12, color: "#78350f", lineHeight: 1.5 }}>
+                {analisis.inconsistencias.map((x) => (
+                  <div key={`${x.codigo}-${x.licId}`}>
+                    {x.licId ? (
+                      <a href={`/detalle/${x.licId}`} target="_blank" rel="noopener noreferrer"
+                        style={{ fontWeight: 700, color: "#92400e" }}
+                        title="Abrir la cotización en una pestaña nueva para corregir su estado">
+                        {x.codigo}
+                      </a>
+                    ) : (
+                      <b>{x.codigo}</b>
+                    )}
+                    {x.entidad ? ` (${x.entidad})` : ""}: {x.detalle}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Aviso de cobertura: muchas «sin ficha» no son un error del cruce,
+              son histórico que la sincronización (desde el mes anterior por
+              defecto) nunca consultó. */}
+          {(analisis.porCat.get("sin_ficha")?.items.length || 0) >= 10 && (
+            <div style={{ border: "1px solid var(--border)", background: "var(--neutral-bg)", borderRadius: 10, padding: "10px 14px", marginBottom: 12, fontSize: 12, color: "var(--text-soft)", lineHeight: 1.55 }}>
+              <b>{analisis.porCat.get("sin_ficha").items.length} procesos sin ficha:</b> la sincronización automática
+              cubre desde el día 1 del mes anterior, así que las adjudicadas más antiguas del rango elegido nunca se han
+              consultado contra Mercado Público. Para rellenar ese histórico hay que correr una sincronización que cubra
+              esas fechas.
+            </div>
+          )}
 
           {/* Categorías: cada una explica un porqué; clic para ver los procesos. */}
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
@@ -1481,10 +1641,12 @@ function DiferenciasIndicadores({ filas, syncDesde, syncHasta }) {
                           <tr style={{ color: "var(--text-muted)", textAlign: "left" }}>
                             <th style={{ padding: "7px 12px", fontWeight: 600 }}>Proceso</th>
                             <th style={{ padding: "7px 12px", fontWeight: 600 }}>Entidad</th>
+                            <th style={{ padding: "7px 12px", fontWeight: 600 }} title="Estado de la cotización interna en el sistema">Estado</th>
                             <th style={{ padding: "7px 12px", fontWeight: 600 }} title="Fecha de la 1ª OC (criterio Indicadores)">OC</th>
                             <th style={{ padding: "7px 12px", fontWeight: 600 }} title="Fecha del acta de adjudicación (criterio de este panel)">Acta</th>
                             <th style={{ padding: "7px 12px", fontWeight: 600, textAlign: "right" }} title="Lo que suma en el Panel Indicadores, llevado a bruto">$ Indicadores</th>
                             <th style={{ padding: "7px 12px", fontWeight: 600, textAlign: "right" }} title="Lo que suma en el KPI de este panel">$ Análisis MP</th>
+                            <th style={{ padding: "7px 12px", fontWeight: 600, textAlign: "right" }} title="Cuánto aporta esta fila a la diferencia total (positivo = suma a este panel; negativo = a Indicadores)">Efecto</th>
                             <th style={{ padding: "7px 12px", fontWeight: 600, minWidth: 260, whiteSpace: "normal" }}>Por qué</th>
                           </tr>
                         </thead>
@@ -1492,14 +1654,29 @@ function DiferenciasIndicadores({ filas, syncDesde, syncHasta }) {
                           {its.map((it, i) => (
                             <tr key={`${it.codigo}-${i}`} style={{ borderTop: "1px solid var(--border)" }}>
                               <td style={{ padding: "7px 12px" }}>
-                                <div style={{ fontWeight: 600 }}>{it.codigo}</div>
+                                {/* El código abre la cotización interna en una
+                                    pestaña nueva, para sanear el dato sin
+                                    perder el cruce en pantalla. */}
+                                {it.licId ? (
+                                  <a href={`/detalle/${it.licId}`} target="_blank" rel="noopener noreferrer"
+                                    className="table-link" style={{ fontWeight: 600 }}
+                                    title="Abrir el detalle de la cotización en una pestaña nueva">
+                                    {it.codigo}
+                                  </a>
+                                ) : (
+                                  <span style={{ fontWeight: 600 }}>{it.codigo}</span>
+                                )}
                                 {it.nombre && <div style={{ fontSize: 11, color: "var(--text-muted)", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis" }}>{it.nombre}</div>}
                               </td>
                               <td style={{ padding: "7px 12px", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis" }}>{it.entidad || "—"}</td>
+                              <td style={{ padding: "7px 12px", fontSize: 11.5, color: "var(--text-muted)" }}>{it.estadoInterno || "—"}</td>
                               <td style={{ padding: "7px 12px" }}>{it.fechaInd ? diaLegible(it.fechaInd) : "—"}</td>
                               <td style={{ padding: "7px 12px" }}>{it.fechaMp ? diaLegible(it.fechaMp) : "—"}</td>
                               <td style={{ padding: "7px 12px", textAlign: "right" }}>{it.montoInd != null ? fmt$(it.montoInd) : "—"}</td>
                               <td style={{ padding: "7px 12px", textAlign: "right" }}>{it.montoMp != null ? fmt$(it.montoMp) : "—"}</td>
+                              <td style={{ padding: "7px 12px", textAlign: "right", fontWeight: 600, color: it.efecto === 0 ? "var(--text-muted)" : it.efecto > 0 ? "#15803d" : "#b91c1c" }}>
+                                {it.efecto === 0 ? "—" : `${it.efecto > 0 ? "+" : "−"}${fmt$(Math.abs(it.efecto))}`}
+                              </td>
                               <td style={{ padding: "7px 12px", whiteSpace: "normal", minWidth: 260, maxWidth: 420, fontSize: 11.5, color: "var(--text-soft)", lineHeight: 1.45 }}>{it.motivo || "Mismo monto en ambos."}</td>
                             </tr>
                           ))}

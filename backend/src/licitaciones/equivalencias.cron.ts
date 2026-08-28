@@ -5,25 +5,26 @@ import { LicitacionesService } from './licitaciones.service';
 /* ============================================================================
    Recordatorio de equivalencias sin aprovechar
    ----------------------------------------------------------------------------
-   Una vez al día (09:00 de Chile) revisa las cotizaciones MADRE del mes que
-   siguen vigentes, cuyos ítems tienen productos con equivalencias registradas
-   en el catálogo, y que aún no generaron la cotización alternativa (hija).
-   A cada vendedor dueño le deja UNA notificación en la campanita con el
-   resumen y el detalle de códigos (pedido 2026-08-13).
+   CADA 2 HORAS en horario hábil de Chile (08:00 a 20:00, pedido 2026-08-27;
+   antes era una vez al día a las 09:00) revisa las cotizaciones MADRE del mes
+   que siguen vigentes, cuyos ítems tienen productos con equivalencias
+   registradas en el catálogo, y que aún no generaron la cotización
+   alternativa (hija). A cada vendedor dueño le deja UNA notificación en la
+   campanita con el resumen y el detalle de códigos (pedido 2026-08-13).
 
-   No insiste: si el usuario ya recibió el aviso HOY, no se repite — mañana
-   vuelve a avisar si la oportunidad sigue pendiente, que es exactamente lo
-   que pide un recordatorio.
+   Insiste cada 2 horas mientras la oportunidad siga pendiente, pero no
+   duplica dentro de la misma ventana: si el usuario ya recibió el aviso en
+   las últimas 2 horas, esa pasada lo salta.
 
    Mismo patrón de reloj que los otros crones: temporizador + Intl con zona
    explícita, porque el servidor corre en UTC. Interruptores:
-     EQUIV_AVISO=off          → apagado (ej. backend local de desarrollo)
-     EQUIV_AVISO_HORAS=9      → hora(s) de Chile en que revisa
+     EQUIV_AVISO=off               → apagado (ej. backend local de desarrollo)
+     EQUIV_AVISO_HORAS=8,10,…      → hora(s) de Chile en que revisa
 ============================================================================ */
 
 const ZONA = 'America/Santiago';
 
-const HORAS = String(process.env.EQUIV_AVISO_HORAS || '9')
+const HORAS = String(process.env.EQUIV_AVISO_HORAS || '8,10,12,14,16,18,20')
   .split(',')
   .map((h) => Number(String(h).trim()))
   .filter((h) => Number.isInteger(h) && h >= 0 && h <= 23);
@@ -145,7 +146,11 @@ export class EquivalenciasCron implements OnModuleInit, OnModuleDestroy {
       const pendientes = madres.filter((l: any) => licsConEquiv.has(Number(l.id)));
       if (!pendientes.length) return { avisadas: 0, motivo: 'sin oportunidades sin aprovechar' };
 
-      // 4) Agrupar por dueño y descartar a quienes ya recibieron el aviso HOY.
+      // 4) Agrupar por dueño y descartar a quienes ya recibieron el aviso en
+      //    las ÚLTIMAS 2 HORAS (con 10 min de holgura para que un cron que
+      //    corre unos minutos tarde no salte la ventana completa). Así el
+      //    recordatorio se repite cada pasada mientras siga pendiente, sin
+      //    duplicarse dentro de la misma ventana.
       const porUsuario = new Map<string, any[]>();
       pendientes.forEach((l: any) => {
         const email = String(l.creado_por || '').trim().toLowerCase();
@@ -153,12 +158,13 @@ export class EquivalenciasCron implements OnModuleInit, OnModuleDestroy {
         if (!porUsuario.has(email)) porUsuario.set(email, []);
         porUsuario.get(email)!.push(l);
       });
-      const { data: hoy } = await client
+      const corteVentana = new Date(Date.now() - 110 * 60 * 1000).toISOString();
+      const { data: recientes } = await client
         .from('notificaciones')
         .select('user_email')
         .eq('tipo', 'equivalencias_pendientes')
-        .gte('created_at', `${fechaChile}T00:00:00-04:00`);
-      const yaAvisados = new Set((hoy || []).map((n: any) => String(n.user_email || '').toLowerCase()));
+        .gte('created_at', corteVentana);
+      const yaAvisados = new Set((recientes || []).map((n: any) => String(n.user_email || '').toLowerCase()));
 
       // 5) Una notificación por usuario, con los códigos a la vista.
       let avisadas = 0;

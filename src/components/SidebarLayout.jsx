@@ -12,6 +12,7 @@ import {
   ClipboardList,
   FileText,
   Package,
+  Boxes,
   Users,
   Megaphone,
   Target,
@@ -186,6 +187,8 @@ export default function SidebarLayout() {
     puede("mis_clientes") && { to: "/mis-clientes", icon: UserCheck,    label: "Mis clientes" },
     puede("bitacora") && { to: "/bitacora-actividades", icon: CalendarDays, label: "Bitácora actividades" },
     puede("productos") && { to: "/productos",   icon: Package,       label: "Productos" },
+    // Inventario mueve stock y valorización a costo: solo administración.
+    esAdmin && { to: "/inventario", icon: Boxes, label: "Inventario" },
     puede("campanas") && { to: "/campanas",    icon: Megaphone,     label: "Campañas" },
   ].filter(Boolean);
 

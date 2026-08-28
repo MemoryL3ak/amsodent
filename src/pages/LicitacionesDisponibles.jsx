@@ -144,6 +144,12 @@ const MP_REGIONES = [
 const MP_KEYWORDS_FALLBACK = ["dental", "odontología", "insumos dentales", "resina", "anestesia", "ortodoncia", "implante", "fresas"]
   .map((texto, i) => ({ id: `fb-${i}`, texto }));
 
+/* El Listado (xlsx) quedó OCULTO (pedido 2026-08-27): la operación diaria pasa
+   solo por «Explorar Mercado Público». El código del Listado se conserva
+   completo; con esta bandera en true vuelven las pestañas, sus stats, filtros,
+   tabla y los botones de gestión del xlsx. */
+const MOSTRAR_LISTADO = false;
+
 export default function LicitacionesDisponibles({ embedded = false }) {
   const navigate = useNavigate();
   const { rol, user, perfil } = useAuth();
@@ -200,7 +206,7 @@ export default function LicitacionesDisponibles({ embedded = false }) {
   const [descargandoFicha, setDescargandoFicha] = useState(false);
 
   // ── Sección "Explorar Mercado Público": búsqueda en vivo vía la API ──
-  const [vista, setVista] = useState("listado"); // listado | explorar
+  const [vista, setVista] = useState(MOSTRAR_LISTADO ? "listado" : "explorar"); // listado | explorar
   // todas = Compra Ágil + Licitaciones en una sola tabla (por defecto: es la
   // vista completa del mercado y cada fila indica su tipo).
   const [mpFuente, setMpFuente] = useState("todas"); // todas | agil | licitaciones
@@ -246,8 +252,42 @@ export default function LicitacionesDisponibles({ embedded = false }) {
   // publicación más reciente primero). Igual que en el Listado, lo que no trae
   // fecha va al final en ambos sentidos: no tener dato no es cerrar antes.
   const [mpOrdenCierre, setMpOrdenCierre] = useState(null);
+  /* Filtros SOBRE los resultados ya traídos (no re-consultan la API), los
+     mismos que tenía el Listado (pedido 2026-08-27): texto libre, tipo de
+     proceso, vigencia y rango por fecha de cierre. */
+  const [mpFiltroTexto, setMpFiltroTexto] = useState("");
+  const [mpFiltroTipo, setMpFiltroTipo] = useState(""); // "" | compra_agil | licitacion
+  const [mpDispon, setMpDispon] = useState("todas"); // vigentes | vencidas | todas
+  const [mpCierreDesde, setMpCierreDesde] = useState("");
+  const [mpCierreHasta, setMpCierreHasta] = useState("");
   const mpItemsOrdenados = useMemo(() => {
-    const items = mpRes?.items || [];
+    const q = mpFiltroTexto.trim().toLowerCase();
+    const items = (mpRes?.items || []).filter((it) => {
+      if (mpFiltroTipo === "compra_agil" && it.tipo_familia !== "compra_agil") return false;
+      if (mpFiltroTipo === "licitacion" && it.tipo_familia === "compra_agil") return false;
+      const tCierre = Date.parse(it?.fecha_cierre || "");
+      // Vigencia por la fecha de cierre. Sin fecha se considera vigente (no
+      // se oculta por falta de dato), igual que en el Listado.
+      if (mpDispon !== "todas") {
+        const vig = Number.isNaN(tCierre) ? true : tCierre >= Date.now();
+        if (mpDispon === "vigentes" && !vig) return false;
+        if (mpDispon === "vencidas" && vig) return false;
+      }
+      // Rango por día de cierre. Lo que no trae fecha queda fuera al filtrar
+      // por rango: no se puede afirmar que caiga dentro.
+      if (mpCierreDesde || mpCierreHasta) {
+        const dCierre = Number.isNaN(tCierre) ? null : diaLocal(new Date(tCierre));
+        if (!dCierre) return false;
+        if (mpCierreDesde && dCierre < mpCierreDesde) return false;
+        if (mpCierreHasta && dCierre > mpCierreHasta) return false;
+      }
+      if (!q) return true;
+      return (
+        String(it.codigo || "").toLowerCase().includes(q) ||
+        String(it.nombre || "").toLowerCase().includes(q) ||
+        String(it.organismo || "").toLowerCase().includes(q)
+      );
+    });
     if (!mpOrdenCierre) return items;
     const signo = mpOrdenCierre === "asc" ? 1 : -1;
     return [...items].sort((a, b) => {
@@ -258,7 +298,7 @@ export default function LicitacionesDisponibles({ embedded = false }) {
       if (Number.isNaN(tb)) return -1;
       return (ta - tb) * signo;
     });
-  }, [mpRes, mpOrdenCierre]);
+  }, [mpRes, mpOrdenCierre, mpFiltroTexto, mpFiltroTipo, mpDispon, mpCierreDesde, mpCierreHasta]);
   // Identidad de la búsqueda en curso: si el usuario lanza otra (o cambia de
   // vista), las tandas de la anterior que sigan llegando se descartan en vez
   // de mezclarse con los resultados nuevos.
@@ -1075,8 +1115,8 @@ export default function LicitacionesDisponibles({ embedded = false }) {
         <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
           <button
             type="button"
-            onClick={() => setFiltro("mias")}
-            title="Ver solo las que tomaste"
+            onClick={() => { if (MOSTRAR_LISTADO) setFiltro("mias"); }}
+            title={MOSTRAR_LISTADO ? "Ver solo las que tomaste" : "Cupo de postulaciones tomadas (se libera al crear su cotización)"}
             style={{
               fontSize: 12.5, fontWeight: 700, padding: "6px 12px", borderRadius: 999, cursor: "pointer",
               background: misTomadas >= MAX_TOMADAS ? "#fef2f2" : "#eef2ff",
@@ -1086,7 +1126,7 @@ export default function LicitacionesDisponibles({ embedded = false }) {
           >
             Mis tomadas: {misTomadas}/{MAX_TOMADAS}
           </button>
-          {esGestor && (
+          {MOSTRAR_LISTADO && esGestor && (
             <>
               {/* Confirmación oficial contra Mercado Público. Es aparte del
                   cruce con nuestras cotizaciones —que ya viene calculado— porque
@@ -1119,7 +1159,9 @@ export default function LicitacionesDisponibles({ embedded = false }) {
       </div>
 
       {/* Pestañas: listado interno / explorador en vivo de Mercado Público
-          (visible también en modo embedded, p. ej. dentro del Chat Grupal). */}
+          (visible también en modo embedded, p. ej. dentro del Chat Grupal).
+          Con el Listado oculto no hay entre qué alternar y la barra desaparece. */}
+      {MOSTRAR_LISTADO && (
       <div style={{ display: "inline-flex", borderRadius: 9, overflow: "hidden", border: "1px solid var(--border)", marginBottom: 14 }}>
         {[["listado", `Listado (${lista.length})`], ["explorar", "Explorar Mercado Público"]].map(([key, label]) => (
           <button
@@ -1136,8 +1178,9 @@ export default function LicitacionesDisponibles({ embedded = false }) {
           </button>
         ))}
       </div>
+      )}
 
-      {vista === "listado" && (
+      {MOSTRAR_LISTADO && vista === "listado" && (
       <>
       {/* Stats. `stats-5` porque son cinco: sin ella la grilla base son cuatro
           columnas y «Creadas hoy» caía sola a una segunda fila. La clase ya
@@ -1437,11 +1480,17 @@ export default function LicitacionesDisponibles({ embedded = false }) {
                   </td>
                   <td>
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-start", gap: 4 }}>
+                      {/* Crear la cotización exige tener la postulación TOMADA
+                          (pedido 2026-08-27): sin toma no hay cupo reservado ni
+                          dueño, y cualquiera podía saltarse ese control. */}
                       <button
                         className="btn btn-sm btn-ghost"
-                        onClick={(e) => { e.stopPropagation(); cargarLicitacion(row); }}
-                        title="Crear borrador de cotización con los datos de esta postulación"
-                        style={{ padding: 6, lineHeight: 0, color: "var(--primary-dark)" }}
+                        onClick={(e) => { e.stopPropagation(); if (mia) cargarLicitacion(row); }}
+                        disabled={!mia}
+                        title={mia
+                          ? "Crear borrador de cotización con los datos de esta postulación"
+                          : "Toma primero la postulación (checkbox) para poder crear su cotización"}
+                        style={{ padding: 6, lineHeight: 0, color: mia ? "var(--primary-dark)" : "var(--text-muted)", opacity: mia ? 1 : 0.45 }}
                       >
                         <FilePlus2 size={14} />
                       </button>
@@ -1837,6 +1886,68 @@ export default function LicitacionesDisponibles({ embedded = false }) {
         </div>
       )}
 
+      {/* Filtros SOBRE los resultados ya en pantalla (los mismos del antiguo
+          Listado, pedido 2026-08-27). No consultan la API: acotan la tabla de
+          abajo, que con términos amplios trae cientos de filas. */}
+      {(mpRes?.items || []).length > 0 && (
+        <div className="filter-bar" style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end", marginTop: 14 }}>
+          <div className="filter-field" style={{ flex: 2, minWidth: 220 }}>
+            <label className="filter-label">Filtrar resultados</label>
+            <div style={{ position: "relative" }}>
+              <Search size={15} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)" }} />
+              <input
+                className="input"
+                style={{ paddingLeft: 32 }}
+                placeholder="Código, nombre u organismo…"
+                value={mpFiltroTexto}
+                onChange={(e) => setMpFiltroTexto(e.target.value)}
+              />
+            </div>
+          </div>
+          <div className="filter-field">
+            <label className="filter-label">Tipo</label>
+            <select className="input" value={mpFiltroTipo} onChange={(e) => setMpFiltroTipo(e.target.value)} style={{ minWidth: 140 }} title="Tipo de proceso según el código">
+              <option value="">Todos</option>
+              <option value="compra_agil">Compra Ágil</option>
+              <option value="licitacion">Licitación</option>
+            </select>
+          </div>
+          <div className="filter-field">
+            <label className="filter-label">Disponibilidad</label>
+            <select className="input" value={mpDispon} onChange={(e) => setMpDispon(e.target.value)} style={{ minWidth: 160 }} title="Según la fecha de cierre del proceso">
+              <option value="todas">Todas</option>
+              <option value="vigentes">Vigentes (dentro de plazo)</option>
+              <option value="vencidas">Vencidas (fuera de plazo)</option>
+            </select>
+          </div>
+          <div className="filter-field">
+            <label className="filter-label">Cierra desde</label>
+            <DateFilter
+              value={mpCierreDesde}
+              onChange={setMpCierreDesde}
+              placeholder="Desde…"
+              maxDate={mpCierreHasta ? new Date(`${mpCierreHasta}T00:00:00`) : undefined}
+            />
+          </div>
+          <div className="filter-field">
+            <label className="filter-label">Cierra hasta</label>
+            <DateFilter
+              value={mpCierreHasta}
+              onChange={setMpCierreHasta}
+              placeholder="Hasta…"
+              minDate={mpCierreDesde ? new Date(`${mpCierreDesde}T00:00:00`) : undefined}
+            />
+          </div>
+          {/* Cuántas filas quedaron fuera por el filtro, para que una tabla
+              corta no se lea como una búsqueda pobre. */}
+          {mpItemsOrdenados.length !== (mpRes?.items || []).length && (
+            <span style={{ fontSize: 12, color: "var(--text-muted)", paddingBottom: 9 }}>
+              {mpItemsOrdenados.length} de {(mpRes?.items || []).length} resultados
+            </span>
+          )}
+        </div>
+      )}
+
       {/* Resultados. Alto acotado con scroll propio: la vista combinada
           devuelve todo en una sola página (89 filas con "dental", cientos con
           términos amplios como "insumo") y sin esto la página crece sin fin. */}
@@ -1850,9 +1961,13 @@ export default function LicitacionesDisponibles({ embedded = false }) {
           <div style={{ padding: "36px 24px", color: "var(--text-muted)" }}>
             Busca por palabra clave (o presiona Buscar sin filtros para ver lo más reciente).
           </div>
-        ) : (mpRes.items || []).length === 0 ? (
+        ) : mpItemsOrdenados.length === 0 ? (
           <div style={{ padding: "36px 24px", color: "var(--text-muted)" }}>
-            {mpBuscando ? "Consultando Mercado Público…" : "Sin resultados para esa búsqueda."}
+            {mpBuscando
+              ? "Consultando Mercado Público…"
+              : (mpRes.items || []).length > 0
+              ? "Sin resultados para el filtro aplicado."
+              : "Sin resultados para esa búsqueda."}
           </div>
         ) : (
           <table className="data-table" style={{ width: "100%", minWidth: 1100 }}>
@@ -2011,13 +2126,17 @@ export default function LicitacionesDisponibles({ embedded = false }) {
                           <Check size={15} />
                         </button>
                       )}
+                      {/* Solo con la toma propia (pedido 2026-08-27): antes se
+                          podía crear el borrador sin tomar, saltándose el cupo
+                          y el aviso al equipo. */}
                       <button
                         className="btn btn-sm btn-ghost"
                         title={esMia
                           ? "Cargar: crear la cotización en borrador (al guardarla se libera el cupo)"
-                          : "Crear una cotización en borrador con los datos de este proceso (sin tomarla)"}
-                        onClick={() => (esMia ? cargarLicitacion(disp) : cotizarDesdeExploracion(item))}
-                        style={{ padding: 6, lineHeight: 0, color: "#6d28d9" }}
+                          : "Toma primero la postulación (✓) para poder crear su cotización"}
+                        disabled={!esMia}
+                        onClick={() => { if (esMia) cargarLicitacion(disp); }}
+                        style={{ padding: 6, lineHeight: 0, color: esMia ? "#6d28d9" : "var(--text-muted)", opacity: esMia ? 1 : 0.45 }}
                       >
                         <FilePlus2 size={15} />
                       </button>
@@ -2267,20 +2386,23 @@ export default function LicitacionesDisponibles({ embedded = false }) {
                     <Check size={14} /> Tomar
                   </button>
                   )}
+                  {/* Crear la cotización solo con la toma propia (pedido
+                      2026-08-27): el botón queda a la vista pero deshabilitado
+                      hasta tomar, para que el flujo correcto sea evidente. */}
                   <button
                     className="btn btn-secondary"
+                    disabled={duenoFicha !== currentEmail}
                     onClick={() => {
-                      const it = mpFicha.itemExplorar;
+                      if (duenoFicha !== currentEmail) return;
                       setMpFicha(null);
                       // Con la toma propia se usa «Cargar»: marca la fila al
                       // guardar la cotización y libera el cupo.
-                      if (duenoFicha === currentEmail) cargarLicitacion(dispFicha);
-                      else cotizarDesdeExploracion(it);
+                      cargarLicitacion(dispFicha);
                     }}
                     style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
                     title={duenoFicha === currentEmail
                       ? "Cargar: crear la cotización en borrador (al guardarla se libera el cupo)"
-                      : "Crear una cotización en borrador con los datos de este proceso (sin tomarla)"}
+                      : "Toma primero la postulación para poder crear su cotización"}
                   >
                     <FilePlus2 size={14} /> {duenoFicha === currentEmail ? "Cargar (crear cotización)" : "Crear cotización (borrador)"}
                   </button>

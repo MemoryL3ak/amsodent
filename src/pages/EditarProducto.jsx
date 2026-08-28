@@ -563,30 +563,14 @@ export default function EditarProducto() {
       return;
     }
 
-    if (!producto.nombre || !producto.categoria || !producto.formato) {
+    /* En ACTUALIZACIÓN ningún campo es obligatorio (pedido 2026-08-27), con
+       UNA excepción pedida el mismo día: la imagen. Un producto no puede
+       quedar sin foto — se exige la existente o una nueva. El resto de los
+       campos se puede corregir suelto sin que el guardado exija nada más. */
+    if (!imagenFile && !(producto.imagen_url || "").toString().trim()) {
       setToast({
         type: "error",
-        message: "Debes completar Nombre, Categoria y Formato.",
-      });
-      return;
-    }
-
-    const puedeVerCosto =
-      esAdmin || (esVentasOJefe && (esProductoTransitorio || esPendienteAprobacion));
-
-    const missing = [];
-    if (puedeVerCosto && !(numFromCL(producto.costo) > 0)) missing.push("Costo");
-    if (!(numFromCL(producto.lista1) > 0)) {
-      missing.push(esVentasOJefe ? "Precio Venta Neto 1" : "Listado de Precios 1");
-    }
-    if (!(numFromCL(producto.lista2) > 0)) {
-      missing.push(esVentasOJefe ? "Precio Venta Neto 2" : "Listado de Precios 2");
-    }
-
-    if (missing.length) {
-      setToast({
-        type: "error",
-        message: `Debes completar: ${missing.join(", ")}.`,
+        message: "La imagen del producto es obligatoria: sube una foto antes de guardar.",
       });
       return;
     }
@@ -995,7 +979,7 @@ try {
             <div className="lg:col-span-1">
               <div className="surface" style={{margin:0}}>
                 <div className="surface-header">
-                  <h3 className="surface-title">Imagen del Producto</h3>
+                  <h3 className="surface-title">Imagen del Producto *</h3>
                 </div>
                 <div className="surface-body">
                   {(imagenPreview || imagenDisplayUrl) ? (
@@ -1133,7 +1117,7 @@ try {
               {(esAdmin || (esVentasOJefe && (esProductoTransitorio || esPendienteAprobacion))) && (
                 <>
                   <div>
-                    <label className="label">Costo *</label>
+                    <label className="label">Costo</label>
                     <MoneyInput
                       value={producto.costo}
                       onChange={(v) => setProducto((prev) => ({ ...prev, costo: formatearCLDesdeString(v) }))}
@@ -1146,7 +1130,7 @@ try {
 
               <div>
                 <label className="label">
-                  {esVentasOJefe ? "Precio Venta Neto 1 *" : "Listado de Precios 1 *"}
+                  {esVentasOJefe ? "Precio Venta Neto 1" : "Listado de Precios 1"}
                 </label>
                 <MoneyInput
                   value={producto.lista1}
@@ -1171,7 +1155,7 @@ try {
 
               <div>
                 <label className="label">
-                  {esVentasOJefe ? "Precio Venta Neto 2 *" : "Listado de Precios 2 *"}
+                  {esVentasOJefe ? "Precio Venta Neto 2" : "Listado de Precios 2"}
                 </label>
                 <MoneyInput
                   value={producto.lista2}

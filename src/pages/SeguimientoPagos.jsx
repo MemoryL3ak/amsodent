@@ -6,7 +6,7 @@ import useAuth from "../hooks/useAuth";
 import Toast from "../components/Toast";
 import ConfirmModal from "../components/ConfirmModal";
 import DateFilter from "../components/DateFilter";
-import { Eye, CheckCircle2, Circle, AlertTriangle, ArrowUpDown, ArrowUp, ArrowDown, Download, ChevronDown, Upload, FileMinus } from "lucide-react";
+import { Eye, CheckCircle2, Circle, AlertTriangle, ArrowUpDown, ArrowUp, ArrowDown, Download, ChevronDown, Upload, FileMinus, Mail, Copy, ExternalLink, X } from "lucide-react";
 
 // Normaliza el nombre de archivo para el storage (sin acentos ni símbolos).
 function normalizarNombreArchivo(nombre) {
@@ -144,6 +144,9 @@ export default function SeguimientoPagos() {
   // Guía por id: la factura pública deriva de una guía (deriva_de_id) y la guía
   // deriva de la OC; sirve para encadenar factura → guía → OC → monto.
   const [guiaByIdMap, setGuiaByIdMap] = useState({});
+  // Guías por cotización (número, empresa y N° de seguimiento): alimentan el
+  // correo de cobro que se genera desde cada factura.
+  const [guiasLicMap, setGuiasLicMap] = useState({});
   // N° de OC por cotización (para los reportes). Varias OC → separadas por coma.
   const [ocNumMap, setOcNumMap] = useState({});
   const [licMap, setLicMap] = useState({});
@@ -263,6 +266,7 @@ export default function SeguimientoPagos() {
         const ocSum = {};
         const ocById = {};
         const guiaById = {};
+        const guiasLic = {};
         const ocNums = {};
         const ncList = {};
         const ncSum = {};
@@ -285,6 +289,7 @@ export default function SeguimientoPagos() {
               const emp = String(d.empresa_despacho || "").trim();
               if (emp && !empresaMap[lid]) empresaMap[lid] = emp;
               guiaById[d.id] = d; // para encadenar factura → guía → OC
+              (guiasLic[lid] = guiasLic[lid] || []).push(d); // para el correo de cobro
               return;
             }
             if (d.tipo === "factura" || d.tipo === "factura_boleta") {
@@ -327,6 +332,7 @@ export default function SeguimientoPagos() {
         setMontoOcMap(ocSum);
         setOcByIdMap(ocById);
         setGuiaByIdMap(guiaById);
+        setGuiasLicMap(guiasLic);
         setNotasCreditoMap(ncList);
         setNotasCreditoSumMap(ncSum);
         const ocNumFinal = {};
@@ -661,12 +667,17 @@ export default function SeguimientoPagos() {
   }
 
   // Stats — se calculan sobre las facturas filtradas (base, sin el filtro de
-  // estado) para que los KPIs respeten los filtros aplicados.
+  // estado) para que los KPIs respeten los filtros aplicados. Además de las
+  // cifras se guarda la LISTA de filas detrás de cada KPI: cada tarjeta se
+  // puede abrir para ver su detalle (pedido 2026-08-27).
   const stats = useMemo(() => {
     let total = 0, pagadas = 0, pendientes = 0, vencidas = 0, porVencer = 0;
     let montoPagadas = 0, montoEnPlazo = 0, montoPorVencer = 0, montoVencidas = 0;
     let factoringCount = 0, montoFactoring = 0;
     let totalFacturadoCount = 0, totalFacturadoMonto = 0;
+    // Detalle por KPI: filas de factura {f, lic, monto, estadoLabel} y, para
+    // notas de crédito / forzado a cierre, sus propias filas.
+    const det = { total: [], pagadas: [], enPlazo: [], porVencer: [], vencidas: [], factoring: [], nc: [], forzado: [] };
     const licsEnVista = new Set();
     facturasFiltradasBase.forEach((f) => {
       const lic = licMap[f.licitacion_id];
@@ -681,16 +692,32 @@ export default function SeguimientoPagos() {
       // Pagada solo si los montos calzan (punto 17); si no, cae a pendiente.
       if (estaPagada(f, lic)) {
         pagadas++; montoPagadas += monto;
-        if (f.forma_pago === "factoring") { factoringCount++; montoFactoring += monto; }
+        det.total.push({ f, lic, monto, estadoLabel: "Pagada" });
+        det.pagadas.push({ f, lic, monto, estadoLabel: "Pagada" });
+        if (f.forma_pago === "factoring") {
+          factoringCount++; montoFactoring += monto;
+          det.factoring.push({ f, lic, monto, estadoLabel: "Pagada · factoring" });
+        }
         return;
       }
       pendientes++;
       const plazo = plazoDias(lic.condicion_venta);
       const dias = diasEntre(f.fecha_factura);
       const diasRestantes = dias != null ? plazo - dias : null;
-      if (diasRestantes != null && diasRestantes < 0) { vencidas++; montoVencidas += monto; }
-      else if (diasRestantes != null && diasRestantes <= 5) { porVencer++; montoPorVencer += monto; }
-      else { montoEnPlazo += monto; }
+      if (diasRestantes != null && diasRestantes < 0) {
+        vencidas++; montoVencidas += monto;
+        det.total.push({ f, lic, monto, estadoLabel: `Vencida (${Math.abs(diasRestantes)}d)` });
+        det.vencidas.push({ f, lic, monto, estadoLabel: `Vencida (${Math.abs(diasRestantes)}d)` });
+      } else if (diasRestantes != null && diasRestantes <= 5) {
+        porVencer++; montoPorVencer += monto;
+        det.total.push({ f, lic, monto, estadoLabel: `Por vencer (${diasRestantes}d)` });
+        det.porVencer.push({ f, lic, monto, estadoLabel: `Por vencer (${diasRestantes}d)` });
+      } else {
+        montoEnPlazo += monto;
+        const etiqueta = diasRestantes == null ? "Sin fecha" : `En plazo (${diasRestantes}d)`;
+        det.total.push({ f, lic, monto, estadoLabel: etiqueta });
+        det.enPlazo.push({ f, lic, monto, estadoLabel: etiqueta });
+      }
     });
     // Notas de crédito y forzado a cierre de las cotizaciones en la vista filtrada.
     let ncCount = 0, ncMonto = 0;
@@ -699,13 +726,34 @@ export default function SeguimientoPagos() {
       ncCount += (notasCreditoMap[lid]?.length || 0);
       ncMonto += Number(notasCreditoSumMap[lid] || 0);
       const lic = licMap[lid];
+      (notasCreditoMap[lid] || []).forEach((nc) => {
+        det.nc.push({
+          f: nc, lic,
+          monto: Number(nc.monto || 0), // las NC se cargan brutas
+          estadoLabel: nc.numero ? `N.C. ${nc.numero}` : "Nota de crédito",
+        });
+      });
       if (lic?.ciclo_cerrado) {
         forzadoCount++;
         forzadoMonto += Number(lic.monto_forzado || 0);
+        det.forzado.push({ f: null, lic, monto: Number(lic.monto_forzado || 0), estadoLabel: "Ciclo cerrado" });
       }
     });
-    return { total, pagadas, pendientes, vencidas, porVencer, montoPagadas, montoEnPlazo, montoPorVencer, montoVencidas, factoringCount, montoFactoring, ncCount, ncMonto, totalFacturadoCount, totalFacturadoMonto, forzadoCount, forzadoMonto };
+    return { total, pagadas, pendientes, vencidas, porVencer, montoPagadas, montoEnPlazo, montoPorVencer, montoVencidas, factoringCount, montoFactoring, ncCount, ncMonto, totalFacturadoCount, totalFacturadoMonto, forzadoCount, forzadoMonto, det };
   }, [facturasFiltradasBase, licMap, montoOcMap, notasCreditoMap, notasCreditoSumMap, comprobantesSumMap]);
+
+  /* Detalle de un KPI (modal). key = clave en stats.det; null = cerrado. */
+  const [kpiDetalle, setKpiDetalle] = useState(null);
+  const KPI_INFO = {
+    total: { titulo: "Total facturado", nota: "Todas las facturas emitidas de la vista filtrada (bruto, antes de notas de crédito)." },
+    pagadas: { titulo: "Pagadas", nota: "Facturas con pago registrado y montos que calzan." },
+    enPlazo: { titulo: "Pendientes (en plazo)", nota: "Sin pago registrado y todavía dentro del plazo de la condición de venta." },
+    porVencer: { titulo: "Por vencer", nota: "Sin pago y con 5 días o menos para el vencimiento." },
+    vencidas: { titulo: "Vencidas", nota: "Sin pago y fuera del plazo de la condición de venta." },
+    factoring: { titulo: "Factoring", nota: "Facturas pagadas vía factoring." },
+    nc: { titulo: "Notas de crédito", nota: "Notas de crédito cargadas a las cotizaciones de la vista (montos brutos, descuentan del total a cobrar)." },
+    forzado: { titulo: "Forzado a cierre", nota: "Cotizaciones con ciclo cerrado a la fuerza desde Trazabilidad, con su monto forzado." },
+  };
 
   async function abrirDocumento(doc) {
     if (!doc?.bucket || !doc?.storage_path) return;
@@ -832,6 +880,49 @@ export default function SeguimientoPagos() {
 
   function desmarcarPago(f) {
     setConfirmDesmarcar(f);
+  }
+
+  /* ── Correo de cobro (pedido 2026-08-27) ─────────────────────────────────
+     Se GENERA un borrador con N° de OC, guía, factura y datos del despacho
+     (empresa + N° de seguimiento). No se envía nada desde aquí: la persona
+     lo revisa, lo copia o lo abre en su aplicación de correo y decide. */
+  const [correoModal, setCorreoModal] = useState(null); // { asunto, cuerpo, para }
+
+  function generarCorreoCobro(f, lic) {
+    const venc = calcularFechaVencimiento(f.fecha_factura, lic.condicion_venta);
+    const dias = diasEntre(f.fecha_factura);
+    const restantes = dias != null ? plazoDias(lic.condicion_venta) - dias : null;
+    const guias = guiasLicMap[lic.id] || [];
+    const numerosGuia = [...new Set(guias.map((g) => String(g.numero || "").trim()).filter(Boolean))].join(", ");
+    const empresa = (empresaDespachoMap[lic.id] || "").trim();
+    const seguimientos = [...new Set(guias.map((g) => String(g.n_seguimiento || "").trim()).filter(Boolean))].join(", ");
+    const monto = montoFacturaBruto(f) || montoBaseFactura(f, lic);
+    const vencTxt = venc ? venc.toLocaleDateString("es-CL") : "—";
+    const estadoTxt = restantes != null && restantes < 0
+      ? `se encuentra vencida desde el ${vencTxt}`
+      : `vence el ${vencTxt}`;
+    const despachoTxt = [empresa || null, seguimientos ? `N° de seguimiento ${seguimientos}` : null]
+      .filter(Boolean).join(" · ");
+
+    const asunto = `Recordatorio de pago · Factura N° ${f.numero || "s/n"} · ${lic.nombre_entidad || ""}`.trim();
+    const cuerpo = [
+      "Estimados,",
+      "",
+      `Junto con saludar, recordamos el pago de la siguiente factura, que ${estadoTxt}:`,
+      "",
+      `• Cotización: ${lic.id_licitacion || `#${lic.id}`}`,
+      `• N° Orden de Compra: ${ocNumMap[lic.id] || "—"}`,
+      `• N° Guía de despacho: ${numerosGuia || "—"}`,
+      `• N° Factura: ${f.numero || "—"}${f.fecha_factura ? ` (emitida el ${fmtDateCL(String(f.fecha_factura).slice(0, 10))})` : ""}`,
+      `• Monto: ${fmtCLP(monto)} IVA incluido`,
+      `• Despacho: ${despachoTxt || "—"}`,
+      "",
+      "Agradeceremos gestionar el pago a la brevedad e informarnos la fecha estimada de transferencia. Quedamos atentos a cualquier antecedente adicional que necesiten.",
+      "",
+      "Saludos cordiales,",
+      "Amsodent Medical SpA",
+    ].join("\n");
+    setCorreoModal({ para: "", asunto, cuerpo });
   }
 
   // ── Voucher (comprobante de transferencia) ───────────────────────────────
@@ -1022,21 +1113,22 @@ export default function SeguimientoPagos() {
         </div>
       </div>
 
-      {/* Stats — cantidad + monto por estado. Respetan los filtros aplicados. */}
+      {/* Stats — cantidad + monto por estado. Respetan los filtros aplicados.
+          Cada tarjeta se abre con un clic para ver el detalle de sus filas. */}
       <div className="stats-row stats-8">
-        <div className="stat-card">
+        <div className="stat-card" onClick={() => setKpiDetalle("total")} style={{ cursor: "pointer" }} title="Ver el detalle de las facturas de este KPI">
           <div className="stat-label">Total facturado</div>
           <div className="stat-value" style={{ color: "var(--text)" }}>{stats.totalFacturadoCount}</div>
           <div className="stat-money" style={{ color: "var(--text)" }}>{fmtCLP(stats.totalFacturadoMonto)}</div>
           <div className="stat-sub">facturas emitidas · con IVA</div>
         </div>
-        <div className="stat-card">
+        <div className="stat-card" onClick={() => setKpiDetalle("pagadas")} style={{ cursor: "pointer" }} title="Ver el detalle de las facturas de este KPI">
           <div className="stat-label">Pagadas</div>
           <div className="stat-value" style={{ color: "var(--success)" }}>{stats.pagadas}</div>
           <div className="stat-money" style={{ color: "var(--success)" }}>{fmtCLP(stats.montoPagadas)}</div>
           <div className="stat-sub">facturas · con IVA</div>
         </div>
-        <div className="stat-card">
+        <div className="stat-card" onClick={() => setKpiDetalle("enPlazo")} style={{ cursor: "pointer" }} title="Ver el detalle de las facturas de este KPI">
           <div className="stat-label">Pendientes</div>
           <div className="stat-value" style={{ color: "var(--primary)" }}>
             {Math.max(0, stats.pendientes - stats.porVencer - stats.vencidas)}
@@ -1044,31 +1136,31 @@ export default function SeguimientoPagos() {
           <div className="stat-money" style={{ color: "var(--primary)" }}>{fmtCLP(stats.montoEnPlazo)}</div>
           <div className="stat-sub">aún en plazo · con IVA</div>
         </div>
-        <div className="stat-card">
+        <div className="stat-card" onClick={() => setKpiDetalle("porVencer")} style={{ cursor: "pointer" }} title="Ver el detalle de las facturas de este KPI">
           <div className="stat-label">Por vencer</div>
           <div className="stat-value" style={{ color: "var(--warning)" }}>{stats.porVencer}</div>
           <div className="stat-money" style={{ color: "var(--warning)" }}>{fmtCLP(stats.montoPorVencer)}</div>
           <div className="stat-sub">próximas a vencer · con IVA</div>
         </div>
-        <div className="stat-card">
+        <div className="stat-card" onClick={() => setKpiDetalle("vencidas")} style={{ cursor: "pointer" }} title="Ver el detalle de las facturas de este KPI">
           <div className="stat-label">Vencidas</div>
           <div className="stat-value" style={{ color: "var(--danger)" }}>{stats.vencidas}</div>
           <div className="stat-money" style={{ color: "var(--danger)" }}>{fmtCLP(stats.montoVencidas)}</div>
           <div className="stat-sub">fuera de plazo · con IVA</div>
         </div>
-        <div className="stat-card">
+        <div className="stat-card" onClick={() => setKpiDetalle("factoring")} style={{ cursor: "pointer" }} title="Ver el detalle de las facturas de este KPI">
           <div className="stat-label">Factoring</div>
           <div className="stat-value" style={{ color: "#7c3aed" }}>{stats.factoringCount}</div>
           <div className="stat-money" style={{ color: "#7c3aed" }}>{fmtCLP(stats.montoFactoring)}</div>
           <div className="stat-sub">pagadas por factoring · con IVA</div>
         </div>
-        <div className="stat-card">
+        <div className="stat-card" onClick={() => setKpiDetalle("nc")} style={{ cursor: "pointer" }} title="Ver el detalle de las notas de crédito">
           <div className="stat-label">Notas de crédito</div>
           <div className="stat-value" style={{ color: "#0ea5e9" }}>{stats.ncCount}</div>
           <div className="stat-money" style={{ color: "#0ea5e9" }}>{fmtCLP(stats.ncMonto)}</div>
           <div className="stat-sub">descuento aplicado a facturas</div>
         </div>
-        <div className="stat-card">
+        <div className="stat-card" onClick={() => setKpiDetalle("forzado")} style={{ cursor: "pointer" }} title="Ver el detalle de los ciclos cerrados a la fuerza">
           <div className="stat-label">Forzado a cierre</div>
           <div className="stat-value" style={{ color: "#dc2626" }}>{stats.forzadoCount}</div>
           <div className="stat-money" style={{ color: "#dc2626" }}>{fmtCLP(stats.forzadoMonto)}</div>
@@ -1076,8 +1168,17 @@ export default function SeguimientoPagos() {
         </div>
       </div>
 
-      {/* Filtros */}
+      {/* Filtros. El rango de fecha va PRIMERO (pedido 2026-08-27): es el
+          filtro que más se usa y quedaba escondido al final de la barra. */}
       <div className="filter-bar">
+        <div className="filter-field">
+          <label className="filter-label">Fecha Factura desde</label>
+          <DateFilter value={filtroDesde} onChange={setFiltroDesde} maxDate={filtroHasta ? new Date(`${filtroHasta}T00:00:00`) : undefined} placeholder="Desde…" />
+        </div>
+        <div className="filter-field">
+          <label className="filter-label">Fecha Factura hasta</label>
+          <DateFilter value={filtroHasta} onChange={setFiltroHasta} minDate={filtroDesde ? new Date(`${filtroDesde}T00:00:00`) : undefined} placeholder="Hasta…" />
+        </div>
         <div className="filter-field">
           <label className="filter-label">Estado</label>
           <select className="input" value={filtroEstado} onChange={(e) => setFiltroEstado(e.target.value)}>
@@ -1210,14 +1311,6 @@ export default function SeguimientoPagos() {
             </select>
           </div>
         )}
-        <div className="filter-field">
-          <label className="filter-label">Fecha Factura desde</label>
-          <DateFilter value={filtroDesde} onChange={setFiltroDesde} maxDate={filtroHasta ? new Date(`${filtroHasta}T00:00:00`) : undefined} placeholder="Desde…" />
-        </div>
-        <div className="filter-field">
-          <label className="filter-label">Fecha Factura hasta</label>
-          <DateFilter value={filtroHasta} onChange={setFiltroHasta} minDate={filtroDesde ? new Date(`${filtroDesde}T00:00:00`) : undefined} placeholder="Hasta…" />
-        </div>
       </div>
 
       {/* Tabla */}
@@ -1610,6 +1703,17 @@ export default function SeguimientoPagos() {
                             >
                               <FileMinus size={12} /> Nota de crédito
                             </button>
+                            {!pagadaEf && (
+                              <button
+                                type="button"
+                                onClick={() => generarCorreoCobro(f, lic)}
+                                className="btn btn-secondary btn-sm"
+                                style={{ display: "inline-flex", alignItems: "center", gap: 4 }}
+                                title="Genera el borrador del correo de cobro con N° de OC, guía, factura y despacho. No se envía nada: tú lo revisas y decides."
+                              >
+                                <Mail size={12} /> Correo cobro
+                              </button>
+                            )}
                           </div>
                         )}
                        </div>
@@ -1622,6 +1726,148 @@ export default function SeguimientoPagos() {
           </table>
         </div>
       </div>
+
+      {/* Detalle de un KPI: las filas exactas que componen la tarjeta clickeada,
+          con link al detalle de cada cotización (pestaña nueva). */}
+      {kpiDetalle && stats.det?.[kpiDetalle] && createPortal(
+        <div
+          onClick={(e) => { if (e.target === e.currentTarget) setKpiDetalle(null); }}
+          style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,.55)", zIndex: 11000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+        >
+          <div style={{ width: 860, maxWidth: "100%", maxHeight: "88vh", display: "flex", flexDirection: "column", background: "var(--surface, #fff)", border: "1px solid var(--border, #e2e8f0)", borderRadius: 14, padding: 22 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, marginBottom: 4 }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>
+                  {KPI_INFO[kpiDetalle]?.titulo || "Detalle"} · {stats.det[kpiDetalle].length} fila{stats.det[kpiDetalle].length === 1 ? "" : "s"}
+                </h3>
+                <p style={{ margin: "3px 0 0", fontSize: 12, color: "var(--text-muted)" }}>
+                  {KPI_INFO[kpiDetalle]?.nota} Respeta los filtros aplicados en la pantalla.
+                </p>
+              </div>
+              <button className="btn btn-secondary btn-sm" onClick={() => setKpiDetalle(null)}>Cerrar</button>
+            </div>
+            <div style={{ fontSize: 13, fontWeight: 700, margin: "6px 0 10px" }}>
+              Total: {fmtCLP(stats.det[kpiDetalle].reduce((s, r) => s + (Number(r.monto) || 0), 0))}
+            </div>
+            <div style={{ overflow: "auto", border: "1px solid var(--border, #e2e8f0)", borderRadius: 10 }}>
+              <table className="data-table" style={{ width: "100%", minWidth: 640 }}>
+                <thead style={{ position: "sticky", top: 0, background: "var(--surface, #fff)", boxShadow: "0 1px 0 var(--border, #e2e8f0)" }}>
+                  <tr>
+                    <th style={{ textAlign: "left" }}>Cotización</th>
+                    <th style={{ textAlign: "left" }}>Cliente</th>
+                    <th style={{ textAlign: "left" }}>{kpiDetalle === "nc" ? "N° N.C." : kpiDetalle === "forzado" ? "—" : "N° Factura"}</th>
+                    <th style={{ textAlign: "left" }}>Fecha</th>
+                    <th style={{ textAlign: "right" }}>Monto</th>
+                    <th style={{ textAlign: "left" }}>Estado</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {stats.det[kpiDetalle].length === 0 ? (
+                    <tr><td colSpan="6" style={{ textAlign: "center", padding: "30px 0", color: "var(--text-muted)" }}>Sin filas en este KPI con los filtros actuales.</td></tr>
+                  ) : (
+                    stats.det[kpiDetalle].map((r, i) => (
+                      <tr key={r.f?.id ?? `lic-${r.lic?.id}-${i}`}>
+                        <td style={{ whiteSpace: "nowrap" }}>
+                          <a href={`/detalle/${r.lic?.id}`} target="_blank" rel="noopener noreferrer" className="table-link" style={{ fontWeight: 600 }} title="Abrir el detalle de la cotización en una pestaña nueva">
+                            #{r.lic?.id}
+                          </a>
+                          {r.lic?.id_licitacion && (
+                            <span style={{ color: "var(--text-muted)", fontSize: 11, marginLeft: 6 }}>{r.lic.id_licitacion}</span>
+                          )}
+                        </td>
+                        <td style={{ fontSize: 12.5 }}>{r.lic?.nombre_entidad || "—"}</td>
+                        <td style={{ fontSize: 12.5, whiteSpace: "nowrap" }}>{kpiDetalle === "forzado" ? "—" : (r.f?.numero || "—")}</td>
+                        <td style={{ fontSize: 12.5, whiteSpace: "nowrap" }}>
+                          {kpiDetalle === "forzado"
+                            ? "—"
+                            : fmtDateCL(String(r.f?.fecha_factura || r.f?.fecha_oc || r.f?.created_at || "").slice(0, 10) || null)}
+                        </td>
+                        <td style={{ textAlign: "right", whiteSpace: "nowrap", fontWeight: 600 }}>{fmtCLP(r.monto)}</td>
+                        <td style={{ fontSize: 12, whiteSpace: "nowrap" }}>{r.estadoLabel}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* Borrador del correo de cobro: editable, se copia o se abre en la
+          aplicación de correo del usuario. Desde aquí NUNCA se envía. */}
+      {correoModal && createPortal(
+        <div
+          onClick={(e) => { if (e.target === e.currentTarget) setCorreoModal(null); }}
+          style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,.55)", zIndex: 11000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+        >
+          <div style={{ width: 620, maxWidth: "100%", maxHeight: "90vh", overflowY: "auto", background: "var(--surface, #fff)", border: "1px solid var(--border, #e2e8f0)", borderRadius: 14, padding: 22 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+              <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, display: "flex", alignItems: "center", gap: 8 }}>
+                <Mail size={17} /> Correo de cobro (borrador)
+              </h3>
+              <button className="btn btn-ghost" onClick={() => setCorreoModal(null)} style={{ padding: 6 }}><X size={16} /></button>
+            </div>
+            <p style={{ fontSize: 12.5, color: "var(--text-muted)", margin: "0 0 14px" }}>
+              Revisa y ajusta lo que necesites. Desde aquí no se envía nada: cópialo o ábrelo en tu
+              aplicación de correo y tú decides el envío.
+            </p>
+
+            <label className="filter-label">Para (opcional)</label>
+            <input
+              className="input"
+              type="email"
+              placeholder="correo del cliente…"
+              value={correoModal.para}
+              onChange={(e) => setCorreoModal((c) => ({ ...c, para: e.target.value }))}
+              style={{ marginBottom: 10 }}
+            />
+            <label className="filter-label">Asunto</label>
+            <input
+              className="input"
+              value={correoModal.asunto}
+              onChange={(e) => setCorreoModal((c) => ({ ...c, asunto: e.target.value }))}
+              style={{ marginBottom: 10 }}
+            />
+            <label className="filter-label">Mensaje</label>
+            <textarea
+              className="input"
+              rows={14}
+              value={correoModal.cuerpo}
+              onChange={(e) => setCorreoModal((c) => ({ ...c, cuerpo: e.target.value }))}
+              style={{ fontFamily: "inherit", fontSize: 13, lineHeight: 1.5, resize: "vertical" }}
+            />
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 14, flexWrap: "wrap" }}>
+              <button
+                className="btn btn-secondary"
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(`Asunto: ${correoModal.asunto}\n\n${correoModal.cuerpo}`);
+                    setToast({ type: "success", message: "Correo copiado al portapapeles." });
+                  } catch {
+                    setToast({ type: "error", message: "No se pudo copiar. Selecciona el texto y cópialo a mano." });
+                  }
+                }}
+                style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
+              >
+                <Copy size={14} /> Copiar
+              </button>
+              <a
+                className="btn btn-primary"
+                href={`mailto:${encodeURIComponent(correoModal.para || "")}?subject=${encodeURIComponent(correoModal.asunto)}&body=${encodeURIComponent(correoModal.cuerpo)}`}
+                style={{ display: "inline-flex", alignItems: "center", gap: 6, textDecoration: "none" }}
+                title="Abre el borrador en tu aplicación de correo; el envío lo decides allá"
+              >
+                <ExternalLink size={14} /> Abrir en mi correo
+              </a>
+              <button className="btn btn-secondary" onClick={() => setCorreoModal(null)}>Cerrar</button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
 
       {voucherFor && createPortal(
         <div
