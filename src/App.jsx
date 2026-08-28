@@ -73,6 +73,7 @@ import Comunicaciones from "./pages/Comunicaciones";
 // RECURSOS HUMANOS
 import RecursosHumanos from "./pages/RecursosHumanos";
 import MiFicha from "./pages/MiFicha";
+import CentroAyuda from "./pages/CentroAyuda";
 
 // MARCAJE
 import Marcaje from "./pages/Marcaje";
@@ -336,6 +337,8 @@ export default function App() {
 
           {/* MI FICHA — portal del trabajador, cada uno ve solo lo suyo */}
           <Route path="mi-ficha" element={<MiFicha />} />
+          {/* Centro de Ayuda: manual + DamarIA guía, para todos los roles. */}
+          <Route path="ayuda" element={<CentroAyuda />} />
 
           {/* MARCAJE DE ASISTENCIA — solo admin */}
           <Route
