@@ -52,6 +52,7 @@ import {
   Gauge,
   UserCircle2,
   LifeBuoy,
+  HeartHandshake,
 } from "lucide-react";
 import NotificacionesMenu from "./NotificacionesMenu";
 import RecordatoriosCorreo from "./RecordatoriosCorreo";
@@ -226,6 +227,7 @@ export default function SidebarLayout() {
   const herramientasNav = [
     puede("sorteo") && { to: "/sorteo-registros", icon: Gift, label: "Sorteo" },
     puede("eventos") && { to: "/evento-inscripciones", icon: CalendarCheck, label: "Evento" },
+    puede("comunidad") && { to: "/comunidad-registros", icon: HeartHandshake, label: "Comunidad" },
     puede("marcaje") && { to: "/marcaje", icon: Clock, label: "Marcar Asistencia" },
     // Portal del trabajador: visible para todo el equipo (cada uno ve lo suyo).
     { to: "/mi-ficha", icon: UserCircle2, label: "Mi Ficha" },

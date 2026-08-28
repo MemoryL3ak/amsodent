@@ -61,6 +61,8 @@ import SorteoRegistro from "./pages/SorteoRegistro";
 // EVENTO (inscripciones)
 import EventoRegistro from "./pages/EventoRegistro";
 import EventoInscripciones from "./pages/EventoInscripciones";
+import ComunidadRegistro from "./pages/ComunidadRegistro";
+import ComunidadRegistros from "./pages/ComunidadRegistros";
 import PortalCliente from "./pages/PortalCliente";
 import PortalDespachos from "./pages/PortalDespachos";
 import SorteoRegistros from "./pages/SorteoRegistros";
@@ -109,6 +111,8 @@ export default function App() {
         <Route path="/evento-vina" element={<EventoRegistro evento="vina" />} />
         {/* Alias antiguo: el evento de Viña del Mar se publicó primero como "Brasil". */}
         <Route path="/evento-brasil" element={<EventoRegistro evento="vina" />} />
+        {/* Comunidad Amsodent: formulario público al que apunta el QR */}
+        <Route path="/comunidad" element={<ComunidadRegistro />} />
         <Route path="/portal" element={<PortalCliente />} />
         <Route path="/despachos" element={<PortalDespachos />} />
         <Route path="/portal-cliente" element={<PortalStockCliente />} />
@@ -302,6 +306,16 @@ export default function App() {
             element={
               <RequireModulo modulo="eventos">
                 <EventoInscripciones />
+              </RequireModulo>
+            }
+          />
+
+          {/* COMUNIDAD: registros del portal público /comunidad (QR) */}
+          <Route
+            path="comunidad-registros"
+            element={
+              <RequireModulo modulo="comunidad">
+                <ComunidadRegistros />
               </RequireModulo>
             }
           />
