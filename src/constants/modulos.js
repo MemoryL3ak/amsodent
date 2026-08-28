@@ -25,6 +25,7 @@ export const MODULOS = [
   // (RequireRole en la ruta + AdminGuard en el backend).
   { key: "sorteo", label: "Sorteo", grupo: "Herramientas" },
   { key: "eventos", label: "Evento (inscripciones)", grupo: "Herramientas" },
+  { key: "comunidad", label: "Comunidad Amsodent", grupo: "Herramientas" },
   { key: "marcaje", label: "Marcar Asistencia", grupo: "Herramientas" },
   { key: "despachos_choferes", label: "Despachos y Choferes", grupo: "Logística" },
   { key: "tracking_choferes", label: "Tracking en Vivo", grupo: "Logística" },

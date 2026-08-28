@@ -23,6 +23,7 @@ export const MODULOS: string[] = [
   'cotizaciones_vendedor',
   'sorteo',
   'eventos',
+  'comunidad',
   'marcaje',
   'despachos_choferes',
   'tracking_choferes',

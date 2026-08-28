@@ -289,12 +289,13 @@ export default function EventoRegistro({ evento = "santiago" }) {
   );
 }
 
-/* Campo de texto/select con icono DENTRO del input. */
-function Campo({ label, icon, select, children }) {
+/* Campo de texto/select con icono DENTRO del input.
+   Exportado: lo reutiliza el formulario público de Comunidad (/comunidad). */
+export function Campo({ label, icon, select, optional, children }) {
   return (
     <label className="evt-field">
       <span className="evt-label">
-        {label} <span className="evt-req">*</span>
+        {label} {optional ? null : <span className="evt-req">*</span>}
       </span>
       <span className={`evt-inputwrap ${select ? "is-select" : ""}`}>
         <span className="evt-input-ic">{icon}</span>
@@ -305,7 +306,7 @@ function Campo({ label, icon, select, children }) {
   );
 }
 
-function Opcion({ selected, onClick, label }) {
+export function Opcion({ selected, onClick, label }) {
   return (
     <button type="button" className={`evt-opt ${selected ? "is-on" : ""}`} onClick={onClick}>
       {selected && <CheckCircle2 size={14} />}
@@ -314,8 +315,9 @@ function Opcion({ selected, onClick, label }) {
   );
 }
 
-/* ─────────────────────────────── ESTILOS ─────────────────────────────── */
-const EVT_STYLES = `
+/* ─────────────────────────────── ESTILOS ───────────────────────────────
+   Exportados: también los usa el formulario público de Comunidad. */
+export const EVT_STYLES = `
 .evt-page {
   --evt-teal:       #28aeb1;
   --evt-teal-dark:  #1e9295;

@@ -28,6 +28,7 @@ import { ComisionesModule } from './comisiones/comisiones.module';
 import { ProveedoresModule } from './proveedores/proveedores.module';
 import { FletesModule } from './fletes/fletes.module';
 import { EventosModule } from './eventos/eventos.module';
+import { ComunidadModule } from './comunidad/comunidad.module';
 import { MercadopublicoModule } from './mercadopublico/mercadopublico.module';
 import { MonitorModule } from './monitor/monitor.module';
 import { RrhhModule } from './rrhh/rrhh.module';
@@ -64,6 +65,7 @@ import { InventarioModule } from './inventario/inventario.module';
     ProveedoresModule,
     FletesModule,
     EventosModule,
+    ComunidadModule,
     MercadopublicoModule,
     MonitorModule,
     RrhhModule,
