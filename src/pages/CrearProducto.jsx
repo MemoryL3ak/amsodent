@@ -7,6 +7,7 @@ import { Link } from "react-router-dom";
 import Select from "react-select";
 import { FACTOR_LISTA_3, calcularLista3 } from "../lib/listas";
 import EquivalentesProducto from "../components/EquivalentesProducto";
+import ConfirmModal from "../components/ConfirmModal";
 
 /* ============================================================
    BUSCADOR MEJORADO (igual que CrearLicitacion)
@@ -209,6 +210,10 @@ export default function CrearProducto() {
   });
 
   const [toast, setToast] = useState(null);
+  // Anti doble-submit + aviso de duplicado (fix 2026-08-28: se generaban
+  // productos repetidos por dobles clics y por recrear nombres existentes).
+  const [guardando, setGuardando] = useState(false);
+  const [dupMensaje, setDupMensaje] = useState(null);
 
   const [rol, setRol] = useState(null);
   const [rolLoading, setRolLoading] = useState(true);
@@ -343,7 +348,10 @@ export default function CrearProducto() {
     return res.path;
   }
 
-  async function guardarProducto() {
+  async function guardarProducto(permitirDuplicado = false) {
+    // El botón se deshabilita al guardar, pero el estado tarda un render en
+    // llegar al DOM: este retorno temprano corta el doble clic igual.
+    if (guardando) return;
     setToast(null);
 
     const skuLimpio = (sku ?? "").toString().trim().toUpperCase();
@@ -391,6 +399,7 @@ export default function CrearProducto() {
     // ✅ Solo admin puede enviar sku; si está vacío => null (evita constraint)
     const skuPermitido = puedeIngresarSKU && skuLimpio ? skuLimpio : null;
 
+    setGuardando(true);
     let imagenUrl = "";
     try {
       imagenUrl = await subirImagenProducto();
@@ -400,6 +409,7 @@ export default function CrearProducto() {
         type: "error",
         message: "Error subiendo la imagen del producto.",
       });
+      setGuardando(false);
       return;
     }
 
@@ -441,15 +451,26 @@ export default function CrearProducto() {
     if (puedeVerCosto) {
       payload.costo = numFromCL(costo);
     }
+    // Segundo intento consciente tras el aviso de duplicado.
+    if (permitirDuplicado === true) {
+      payload.permitir_duplicado = true;
+    }
 
     try {
       await api.post("/productos", payload);
     } catch (error) {
       console.error(error);
-      setToast({
-        type: "error",
-        message: "Error al guardar el producto.",
-      });
+      setGuardando(false);
+      const msg = String(error?.message || "");
+      if (msg.startsWith("DUPLICADO:")) {
+        // Ya existe un producto igual: se pregunta antes de duplicar.
+        setDupMensaje(msg.replace(/^DUPLICADO:\s*/, ""));
+      } else {
+        setToast({
+          type: "error",
+          message: msg || "Error al guardar el producto.",
+        });
+      }
       return;
     }
 
@@ -489,6 +510,7 @@ export default function CrearProducto() {
     setAncho("");
     setImagenFile(null);
     setPrecios({ lista1: "", lista2: "", lista3: "", lista4: "" });
+    setGuardando(false);
   }
 
   return (
@@ -500,6 +522,20 @@ export default function CrearProducto() {
           onClose={() => setToast(null)}
         />
       )}
+
+      <ConfirmModal
+        open={!!dupMensaje}
+        title="Producto posiblemente duplicado"
+        message={`${dupMensaje || ""}\n\n¿Quieres crearlo de todos modos?`}
+        confirmText="Crear de todos modos"
+        cancelText="Cancelar"
+        confirmTone="warning"
+        onConfirm={() => {
+          setDupMensaje(null);
+          guardarProducto(true);
+        }}
+        onCancel={() => setDupMensaje(null)}
+      />
 
       <h1 className="text-3xl font-semibold text-gray-900 mb-8">
         Crear Producto
@@ -1004,10 +1040,13 @@ export default function CrearProducto() {
         <div className="btn-row" style={{ marginTop: "1.5rem" }}>
           <button
             type="button"
-            onClick={guardarProducto}
+            // Arrow function: onClick pasa el evento como primer argumento y
+            // NO debe llegar como `permitirDuplicado`.
+            onClick={() => guardarProducto()}
+            disabled={guardando}
             className="btn btn-primary"
           >
-            Guardar Producto
+            {guardando ? "Guardando…" : "Guardar Producto"}
           </button>
         </div>
       </div>

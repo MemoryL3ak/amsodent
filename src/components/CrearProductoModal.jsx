@@ -93,6 +93,17 @@ function interpretarError(error, contexto = "guardar") {
   const detail = String(error?.body?.message || error?.body?.error || "").toLowerCase();
   const full = `${msg} ${detail}`;
 
+  // Producto duplicado por nombre (freno del backend, 2026-08-28): se muestra
+  // el existente y se ofrece el botón "Crear de todos modos".
+  if (String(error?.message || "").startsWith("DUPLICADO:")) {
+    return {
+      titulo: "Producto posiblemente duplicado",
+      detalle: String(error.message).replace(/^DUPLICADO:\s*/, ""),
+      duplicado: true,
+      seccion: "general",
+    };
+  }
+
   // Permisos / sesión
   if (status === 401) {
     return { titulo: "Sesión expirada", detalle: "Vuelve a iniciar sesión y reintenta." };
@@ -375,7 +386,10 @@ export default function CrearProductoModal({ onClose, onCreado }) {
     return res.path;
   }
 
-  async function guardar() {
+  async function guardar(permitirDuplicado = false) {
+    // Retorno temprano anti doble-clic: el disabled del botón tarda un render
+    // en aplicarse y dos clics rápidos creaban el producto dos veces.
+    if (guardando) return;
     setError(null);
     const skuLimpio = (sku ?? "").toString().trim().toUpperCase();
 
@@ -469,6 +483,8 @@ export default function CrearProductoModal({ onClose, onCreado }) {
         creado_por: userEmail || null,
       };
       if (puedeVerCosto) payload.costo = numFromCL(costo);
+      // Segundo intento consciente tras el aviso de duplicado.
+      if (permitirDuplicado === true) payload.permitir_duplicado = true;
 
       const productoCreado = await api.post("/productos", payload);
       onCreado?.(productoCreado, estadoFinal);
@@ -646,6 +662,27 @@ export default function CrearProductoModal({ onClose, onCreado }) {
                 <div className="cpm-error-titulo">{error.titulo}</div>
                 {error.detalle && (
                   <div className="cpm-error-detalle">{error.detalle}</div>
+                )}
+                {error.duplicado && (
+                  <button
+                    type="button"
+                    onClick={() => guardar(true)}
+                    disabled={guardando}
+                    style={{
+                      marginTop: 8,
+                      padding: "6px 14px",
+                      borderRadius: 8,
+                      border: "1px solid #f59e0b",
+                      background: "#fffbeb",
+                      color: "#92400e",
+                      fontFamily: "inherit",
+                      fontSize: 12,
+                      fontWeight: 600,
+                      cursor: "pointer",
+                    }}
+                  >
+                    Crear de todos modos
+                  </button>
                 )}
               </div>
               <button
@@ -1087,7 +1124,9 @@ export default function CrearProductoModal({ onClose, onCreado }) {
             </button>
             <button
               type="button"
-              onClick={guardar}
+              // Arrow function: el evento del click NO debe llegar como
+              // `permitirDuplicado`.
+              onClick={() => guardar()}
               className="cpm-btn-save"
               disabled={guardando || rolLoading}
             >
