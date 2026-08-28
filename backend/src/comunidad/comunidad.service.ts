@@ -25,6 +25,15 @@ const RUTA_PORTAL = '/comunidad';
 const LOGO_URL = 'https://amsodentmedical.cl/wp-content/uploads/2025/12/Amsodent-1.png';
 const TIENDA_URL = 'https://amsodentmedical.cl';
 
+// Evento vigente del QR: Amsodent participa como auspiciador y el formulario
+// captura a quienes visitan el stand. Al cambiar de evento, actualizar aquí
+// (y el espejo EVENTO_QR en src/pages/ComunidadRegistro.jsx).
+const EVENTO_QR = {
+  key: 'congreso-adeo-uv-2026',
+  nombre: 'Congreso ADEO Chile 2026',
+  detalle: 'Rehabilitación Oral y Cirugía Maxilofacial · Universidad de Valparaíso',
+};
+
 function sanitizeText(input: unknown, max = 255): string {
   if (typeof input !== 'string') return '';
   return input.trim().slice(0, max);
@@ -87,6 +96,7 @@ export class ComunidadService {
     const especialidad = sanitizeText(body?.especialidad, 120) || null;
     const ciudad = sanitizeText(body?.ciudad, 120) || null;
     const comoConociste = sanitizeText(body?.como_conociste, 120) || null;
+    const origen = sanitizeText(body?.origen, 120) || EVENTO_QR.key;
 
     const faltantes: string[] = [];
     if (!nombre) faltantes.push('nombre');
@@ -124,6 +134,7 @@ export class ComunidadService {
           especialidad: perfil === 'dentista' ? especialidad : null,
           ciudad,
           como_conociste: comoConociste,
+          origen,
           ip_origen: ip || null,
           user_agent: userAgent ? userAgent.slice(0, 400) : null,
         },
@@ -201,6 +212,7 @@ export class ComunidadService {
     const mensajePerfil = esEstudiante
       ? 'Queremos acompañarte durante toda tu formación: materiales de calidad, precios pensados para estudiantes y el respaldo de un equipo que conoce lo que necesitas en cada año de la carrera.'
       : 'Queremos ser el aliado de tu práctica clínica: insumos de calidad, marcas de nivel internacional y un equipo que responde cuando lo necesitas.';
+    const intro = `¡Qué gusto conocerte en el ${EVENTO_QR.nombre}! Gracias por pasar por nuestro stand. Desde hoy eres parte de la comunidad Amsodent.`;
 
     const filasDatos = [
       ['Nombre', `${p.nombre} ${p.apellido}`],
@@ -241,9 +253,9 @@ export class ComunidadService {
       <tr><td style="padding:0 24px 8px;">
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#0f3740;background:linear-gradient(150deg,#0d2d35,#0f3740);border-radius:14px;">
           <tr><td align="center" style="padding:28px 26px;">
-            <div style="display:inline-block;background:rgba(40,174,177,.18);border:1px solid rgba(40,174,177,.5);color:#7fd6d8;font-size:11px;font-weight:bold;letter-spacing:.09em;border-radius:999px;padding:5px 12px;margin-bottom:12px;">YA ERES PARTE</div>
+            <div style="display:inline-block;background:rgba(40,174,177,.18);border:1px solid rgba(40,174,177,.5);color:#7fd6d8;font-size:11px;font-weight:bold;letter-spacing:.09em;border-radius:999px;padding:5px 12px;margin-bottom:12px;">GRACIAS POR VISITARNOS</div>
             <h1 style="margin:0 0 6px;color:#ffffff;font-size:24px;line-height:1.25;">¡Bienvenid@ a la familia<br/>AMSODENT!</h1>
-            <p style="margin:0;color:rgba(255,255,255,.75);font-size:13.5px;line-height:1.5;">La comunidad odontológica de Amsodent Medical</p>
+            <p style="margin:0;color:rgba(255,255,255,.75);font-size:13.5px;line-height:1.5;">${escapeHtml(EVENTO_QR.nombre)} · ${escapeHtml(EVENTO_QR.detalle)}</p>
           </td></tr>
         </table>
       </td></tr>
@@ -251,8 +263,11 @@ export class ComunidadService {
       <!-- Cuerpo -->
       <tr><td style="padding:22px 26px 4px;">
         <p style="margin:0 0 12px;color:#101828;font-size:14.5px;">Hola <strong>${escapeHtml(p.nombre)}</strong>:</p>
+        <p style="margin:0 0 10px;color:#475467;font-size:14px;line-height:1.6;">
+          ${escapeHtml(intro)}
+        </p>
         <p style="margin:0 0 16px;color:#475467;font-size:14px;line-height:1.6;">
-          ¡Gracias por sumarte! ${escapeHtml(mensajePerfil)}
+          ${escapeHtml(mensajePerfil)}
         </p>
 
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f8fafc;border:1px solid #eef2f6;border-radius:12px;overflow:hidden;margin-bottom:18px;">

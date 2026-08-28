@@ -148,6 +148,7 @@ export default function ComunidadRegistros() {
       Especialidad: r.especialidad || "",
       Ciudad: r.ciudad || "",
       "Cómo nos conoció": r.como_conociste || "",
+      "Evento de origen": r.origen || "",
       "Correo bienvenida": r.correo_enviado ? "Enviado" : "Sin enviar",
       Registro: String(r.created_at || "").slice(0, 16).replace("T", " "),
     }));
@@ -179,7 +180,8 @@ export default function ComunidadRegistros() {
         <div>
           <h1 className="page-title">Comunidad Amsodent</h1>
           <p className="page-subtitle">
-            Registros del formulario público al que apunta el QR — estudiantes y dentistas de la familia Amsodent.
+            Registros del formulario del stand (QR) — hoy apunta al Congreso ADEO Chile 2026
+            (U. de Valparaíso); cada registro guarda su evento de origen.
           </p>
         </div>
         <div className="btn-row">
@@ -202,7 +204,8 @@ export default function ComunidadRegistros() {
             QR de la Comunidad Amsodent
           </div>
           <p style={{ fontSize: 12.5, color: "var(--text-soft)", margin: "0 0 12px" }}>
-            Imprímelo o proyéctalo: quien lo escanee llega al formulario de registro y recibe el correo de bienvenida.
+            Imprímelo o proyéctalo en el stand del congreso: quien lo escanee llega al
+            formulario y recibe el correo de bienvenida a la familia Amsodent.
           </p>
           {qrDataUrl ? (
             <img
