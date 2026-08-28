@@ -106,6 +106,7 @@ export default function PanelIndicadores() {
   const [metaMonto, setMetaMonto] = useState(0);
   const [margenPorLic, setMargenPorLic] = useState([]); // [{licId, venta, costo}] adjudicadas del periodo
   const [margenOpen, setMargenOpen] = useState(false); // modal de desglose del margen
+  const [adjOpen, setAdjOpen] = useState(false); // modal con el detalle de las adjudicadas del período
   const [nombresVendedores, setNombresVendedores] = useState({}); // email → nombre
   const [disponibles, setDisponibles] = useState([]); // postulaciones del listado (tomadas / no aplica / vencidas)
 
@@ -434,6 +435,29 @@ export default function PanelIndicadores() {
   const cnr = useMemo(() => calcNuevosRecompra(enPeriodo, periodoInicio), [clienteAdjFechas, enPeriodo, periodoInicio]); // eslint-disable-line
   const cnrPrev = useMemo(() => calcNuevosRecompra((iso) => mesDe(iso) === mesPrev, `${mesPrev}-01`), [clienteAdjFechas, mesPrev]); // eslint-disable-line
 
+  /* Detalle de las adjudicadas del período (pedido 2026-08-27): las mismas
+     filas que suman en los KPIs «Adjudicados» y «Cotizaciones adjudicadas»
+     (fecha de adjudicación dentro del período + filtro de tipo), con la venta
+     y el adjudicado de cada una. Se abre con clic en cualquiera de esos KPIs. */
+  const adjudicadasDetalle = useMemo(() => {
+    return lics
+      .filter((l) => pasaTipo(l) && enPeriodo(adjDateByLic[l.id]))
+      .map((l) => ({
+        licId: Number(l.id),
+        codigo: l.id_licitacion || `#${l.id}`,
+        cliente: l.nombre_entidad || l.rut_entidad || "—",
+        vendedor:
+          nombresVendedores[(l.creado_por || "").trim().toLowerCase()] ||
+          (l.creado_por || "").split("@")[0] || "—",
+        tipo: esParticular(l) ? "Particular" : "Pública",
+        fecha: adjDateByLic[l.id] || null,
+        ventas: ventaDeLic(l),
+        adjudicado: adjudicadoDeLic(l),
+      }))
+      .sort((a, b) => String(b.fecha || "").localeCompare(String(a.fecha || "")));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lics, adjDateByLic, docSums, enPeriodo, filtroTipo, nombresVendedores]);
+
   // Evolución 6 meses (ventas con IVA).
   const evolucion = useMemo(() => {
     const arr = [];
@@ -707,12 +731,16 @@ export default function PanelIndicadores() {
           {/* KPIs */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 14, marginBottom: 22 }}>
             <KpiCard icon={ShoppingCart} color="#0e7490" label="Ventas Totales" sub={subVentas} value={fmtCLP(m.ventas)} delta={mostrarDelta ? <Delta actual={m.ventas} prev={mPrev.ventas} /> : null} />
-            <KpiCard icon={Banknote} color="#15803d" label="Adjudicados" sub={subAdjudicado} value={fmtCLP(m.adjudicadoMonto)} delta={mostrarDelta ? <Delta actual={m.adjudicadoMonto} prev={mPrev.adjudicadoMonto} /> : null} />
+            <div onClick={() => setAdjOpen(true)} style={{ cursor: "pointer" }} title="Ver el detalle de las adjudicadas del período">
+              <KpiCard icon={Banknote} color="#15803d" label="Adjudicados" sub={subAdjudicado} value={fmtCLP(m.adjudicadoMonto)} delta={mostrarDelta ? <Delta actual={m.adjudicadoMonto} prev={mPrev.adjudicadoMonto} /> : null} />
+            </div>
             <KpiCard icon={Target} color="#16a34a" label="Conversión" sub="Adjudicadas / cotizaciones" value={fmtPct(m.conversion)} delta={mostrarDelta ? <Delta actual={m.conversion} prev={mPrev.conversion} unidadPp /> : null} />
             <KpiCard icon={FileText} color="#6366f1" label="Cotizaciones" sub={`Creadas en el ${periodoLabel.toLowerCase()}`} value={fmtNum(m.cotizaciones)} delta={mostrarDelta ? <Delta actual={m.cotizaciones} prev={mPrev.cotizaciones} /> : null} />
             <KpiCard icon={UserPlus} color="#d97706" label="Clientes Nuevos" sub={`Primera compra el ${periodoLabel.toLowerCase()}`} value={fmtNum(cnr.nuevos)} delta={mostrarDelta ? <Delta actual={cnr.nuevos} prev={cnrPrev.nuevos} /> : null} />
             <KpiCard icon={RefreshCw} color="#0ea5e9" label="Recompra" sub="Clientes que repiten" value={fmtPct(cnr.recompra)} delta={mostrarDelta ? <Delta actual={cnr.recompra} prev={cnrPrev.recompra} unidadPp /> : null} />
-            <KpiCard icon={Award} color="#b45309" label="Cotizaciones adjudicadas" sub={`Cierres del ${periodoLabel.toLowerCase()}`} value={fmtNum(m.adjudicadas)} delta={mostrarDelta ? <Delta actual={m.adjudicadas} prev={mPrev.adjudicadas} /> : null} />
+            <div onClick={() => setAdjOpen(true)} style={{ cursor: "pointer" }} title="Ver el detalle de las adjudicadas del período">
+              <KpiCard icon={Award} color="#b45309" label="Cotizaciones adjudicadas" sub={`Cierres del ${periodoLabel.toLowerCase()} · clic para detalle`} value={fmtNum(m.adjudicadas)} delta={mostrarDelta ? <Delta actual={m.adjudicadas} prev={mPrev.adjudicadas} /> : null} />
+            </div>
             <div onClick={() => setMargenOpen(true)} style={{ cursor: "pointer" }} title="Ver desglose del margen por cotización, vendedor y tipo">
               <KpiCard icon={TrendingUp} color="#7c3aed" label="Margen %" sub="(venta − costo) / venta · clic para desglose" value={fmtPct(margenMes.pct)} />
             </div>
@@ -990,6 +1018,123 @@ export default function PanelIndicadores() {
           onCerrar={() => setMargenOpen(false)}
         />
       )}
+
+      {adjOpen && (
+        <ModalAdjudicadas
+          filas={adjudicadasDetalle}
+          periodoLabel={periodoLabel}
+          onCerrar={() => setAdjOpen(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+/* ── Modal: detalle de las adjudicadas del período ─────────────────────────
+   Las mismas filas que suman en los KPIs «Adjudicados» y «Cotizaciones
+   adjudicadas»: cotización (link al detalle en pestaña nueva), cliente,
+   vendedor, tipo, fecha de adjudicación, ventas y adjudicado. */
+function ModalAdjudicadas({ filas, periodoLabel, onCerrar }) {
+  const totalVentas = filas.reduce((s, f) => s + (Number(f.ventas) || 0), 0);
+  const totalAdj = filas.reduce((s, f) => s + (Number(f.adjudicado) || 0), 0);
+  const fmtDia = (ymd) => {
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(ymd || ""));
+    return m ? `${m[3]}-${m[2]}-${m[1]}` : "—";
+  };
+
+  async function exportar() {
+    const XLSX = await import("xlsx");
+    const ws = XLSX.utils.json_to_sheet(filas.map((f) => ({
+      "Cotización": f.codigo,
+      "Cliente": f.cliente,
+      "Vendedor": f.vendedor,
+      "Tipo": f.tipo,
+      "Fecha adjudicación": f.fecha || "",
+      "Ventas": Math.round(Number(f.ventas) || 0),
+      "Adjudicado": Math.round(Number(f.adjudicado) || 0),
+    })));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Adjudicadas");
+    XLSX.writeFile(wb, `adjudicadas_${new Date().toISOString().slice(0, 10)}.xlsx`);
+  }
+
+  return (
+    <div
+      onClick={(e) => { if (e.target === e.currentTarget) onCerrar(); }}
+      style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,.55)", zIndex: 12000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+    >
+      <div style={{ width: 860, maxWidth: "100%", maxHeight: "86vh", display: "flex", flexDirection: "column", background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", boxShadow: "var(--shadow-lg)", padding: 22 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+          <h3 style={{ margin: 0, fontSize: 17, fontWeight: 700 }}>Adjudicadas del {periodoLabel.toLowerCase()}</h3>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <button className="btn btn-secondary btn-sm" onClick={exportar} disabled={filas.length === 0} title="Descargar este detalle en Excel">
+              <Download size={14} /> Exportar
+            </button>
+            <button className="btn btn-ghost" onClick={onCerrar} style={{ padding: 6 }}><X size={18} /></button>
+          </div>
+        </div>
+        <p style={{ fontSize: 12.5, color: "var(--text-muted)", marginTop: 2, marginBottom: 12 }}>
+          <strong>{fmtNum(filas.length)}</strong> cotización{filas.length === 1 ? "" : "es"} ·
+          Ventas <strong>{fmtCLP(totalVentas)}</strong> · Adjudicado <strong>{fmtCLP(totalAdj)}</strong>.
+          Adjudicada = fecha de su 1ª OC (pública) o boleta/efectivo (particular). Ventas = Σ guías de despacho;
+          Adjudicado = Σ órdenes de compra (netas); en particulares ambas son las boletas/facturas.
+        </p>
+        <div style={{ overflowY: "auto", overflowX: "auto", flex: 1, border: "1px solid var(--border)", borderRadius: 10 }}>
+          <table className="data-table" style={{ width: "100%", minWidth: 720 }}>
+            <thead style={{ position: "sticky", top: 0, background: "var(--surface)", boxShadow: "0 1px 0 var(--border)" }}>
+              <tr>
+                <th style={{ textAlign: "left" }}>Cotización</th>
+                <th style={{ textAlign: "left" }}>Cliente</th>
+                <th style={{ textAlign: "left" }}>Vendedor</th>
+                <th style={{ textAlign: "left" }}>Tipo</th>
+                <th style={{ textAlign: "left", whiteSpace: "nowrap" }}>Adjudicada el</th>
+                <th style={{ textAlign: "right" }}>Ventas</th>
+                <th style={{ textAlign: "right" }}>Adjudicado</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filas.length === 0 ? (
+                <tr><td colSpan={7} style={{ padding: "14px 8px", color: "var(--text-muted)" }}>Sin adjudicaciones en el periodo.</td></tr>
+              ) : filas.map((f) => (
+                <tr key={f.licId}>
+                  <td style={{ fontWeight: 600, whiteSpace: "nowrap" }}>
+                    <a
+                      href={`/detalle/${f.licId}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="table-link"
+                      title="Abrir el detalle de la cotización en una pestaña nueva"
+                    >
+                      {f.codigo}
+                    </a>
+                  </td>
+                  <td style={{ maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--text-muted)" }} title={f.cliente}>{f.cliente}</td>
+                  <td style={{ maxWidth: 150, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={f.vendedor}>{f.vendedor}</td>
+                  <td>
+                    <span style={{
+                      fontSize: 10.5, fontWeight: 700, padding: "2px 8px", borderRadius: 999, whiteSpace: "nowrap",
+                      background: f.tipo === "Particular" ? "#ede9fe" : "#e0f2fe",
+                      color: f.tipo === "Particular" ? "#6d28d9" : "#0369a1",
+                    }}>{f.tipo}</span>
+                  </td>
+                  <td style={{ whiteSpace: "nowrap" }}>{fmtDia(f.fecha)}</td>
+                  <td style={{ textAlign: "right", fontWeight: 600, whiteSpace: "nowrap" }}>{fmtCLP(f.ventas)}</td>
+                  <td style={{ textAlign: "right", fontWeight: 600, whiteSpace: "nowrap" }}>{fmtCLP(f.adjudicado)}</td>
+                </tr>
+              ))}
+            </tbody>
+            {filas.length > 0 && (
+              <tfoot>
+                <tr style={{ background: "var(--bg)" }}>
+                  <td colSpan={5} style={{ fontWeight: 700 }}>Total ({fmtNum(filas.length)})</td>
+                  <td style={{ textAlign: "right", fontWeight: 700, whiteSpace: "nowrap" }}>{fmtCLP(totalVentas)}</td>
+                  <td style={{ textAlign: "right", fontWeight: 700, whiteSpace: "nowrap" }}>{fmtCLP(totalAdj)}</td>
+                </tr>
+              </tfoot>
+            )}
+          </table>
+        </div>
+      </div>
     </div>
   );
 }
