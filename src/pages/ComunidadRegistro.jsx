@@ -28,6 +28,15 @@ import { Campo, Opcion, EVT_STYLES } from "./EventoRegistro";
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3001/api";
 const AMSODENT_LOGO = "/logo_superior_ficha.png";
 
+// Evento vigente del QR: Amsodent participa como auspiciador y este
+// formulario captura a quienes visitan el stand. Al cambiar de evento,
+// actualizar aquí (y el espejo EVENTO_QR en comunidad.service.ts).
+const EVENTO_QR = {
+  key: "congreso-adeo-uv-2026",
+  badge: "Congreso ADEO Chile 2026",
+  lugar: "Universidad de Valparaíso",
+};
+
 export const ANIOS_ESTUDIO = [
   "1° año",
   "2° año",
@@ -106,6 +115,7 @@ export default function ComunidadRegistro() {
           especialidad: form.perfil === "dentista" ? form.especialidad : null,
           ciudad: form.ciudad.trim() || null,
           como_conociste: form.como_conociste || null,
+          origen: EVENTO_QR.key,
         }),
       });
 
@@ -135,14 +145,14 @@ export default function ComunidadRegistro() {
               <img src={AMSODENT_LOGO} alt="AMSODENT" className="evt-logo" />
               <div className="evt-badge">
                 <HeartHandshake size={13} />
-                <span>Comunidad Amsodent</span>
+                <span>{EVENTO_QR.badge} · {EVENTO_QR.lugar}</span>
               </div>
               <h1 className="evt-title">
-                Únete a la <span>familia Amsodent</span>
+                ¡Gracias por visitar el <span>stand de Amsodent</span>!
               </h1>
               <p className="evt-sub">
-                Déjanos tus datos y recibe promociones, invitaciones a eventos y las
-                novedades de nuestras marcas, antes que nadie.
+                Déjanos tus datos para seguir conectados después del congreso:
+                te damos la bienvenida a la familia Amsodent.
               </p>
             </div>
 
@@ -311,10 +321,11 @@ export default function ComunidadRegistro() {
               ¡Bienvenid@ a la familia{nombreRegistrado ? `, ${nombreRegistrado}` : ""}!
             </h1>
             <p className="evt-sub">
-              Ya eres parte de la comunidad Amsodent. Te enviamos un correo de
-              bienvenida — si no lo ves, revisa tu carpeta de spam.
+              Gracias por visitarnos en el {EVENTO_QR.badge}. Ya eres parte de la
+              comunidad Amsodent — te enviamos un correo de bienvenida (si no lo
+              ves, revisa tu carpeta de spam).
             </p>
-            <div className="evt-success-meta">Nos vemos pronto · Equipo AMSODENT</div>
+            <div className="evt-success-meta">¡Disfruta el congreso! · Equipo AMSODENT</div>
           </div>
         )}
       </main>
