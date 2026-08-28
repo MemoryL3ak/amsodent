@@ -175,8 +175,28 @@ export class ProductosService {
   }
 
   async create(body: Record<string, any>) {
+    // Bandera del frontend para crear a sabiendas un producto con el mismo
+    // nombre (casos legítimos: variantes reales). No se persiste.
+    const permitirDuplicado = body?.permitir_duplicado === true;
+    if (body && 'permitir_duplicado' in body) {
+      const { permitir_duplicado: _omitir, ...resto } = body;
+      body = resto;
+    }
     if (body && body.marca != null) {
       body = { ...body, marca: await this.marcaCanonica(body.marca) };
+    }
+    // Freno anti-duplicados (2026-08-28): había 64 grupos repetidos por
+    // nombre+marca+formato generados por dobles clics y recreaciones sin
+    // aviso. Si ya existe un producto "igual", se rechaza con el detalle;
+    // el frontend ofrece "crear de todos modos" (permitir_duplicado).
+    if (!permitirDuplicado) {
+      const choque = await this.buscarDuplicado(body);
+      if (choque) {
+        throw new BadRequestException(
+          `DUPLICADO: Ya existe un producto con ese nombre: "${choque.nombre}"` +
+            ` (${choque.sku ? `SKU ${choque.sku}` : 'sin SKU'}, ${choque.estado || 'sin estado'}, ID ${choque.id}).`,
+        );
+      }
     }
     if (ProductosService.cambioDePrecio(body || {}, null)) {
       body = { ...body, precio_actualizado_at: new Date().toISOString() };
@@ -189,6 +209,33 @@ export class ProductosService {
       .single();
     if (error) throw new BadRequestException(error.message);
     return data;
+  }
+
+  // ¿Existe ya un producto con el mismo nombre+marca+formato (normalizados)?
+  // Busca candidatos por nombre (ilike sin comodines, con % y _ escapados)
+  // y afina en memoria ignorando mayúsculas y espacios repetidos.
+  private async buscarDuplicado(body: Record<string, any>) {
+    const norm = (s: any) =>
+      String(s ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+    const nombre = norm(body?.nombre);
+    if (!nombre) return null;
+    const patron = String(body?.nombre ?? '').trim().replace(/([%_\\])/g, '\\$1');
+    const { data, error } = await this.supabase
+      .getClient()
+      .from('productos')
+      .select('id, sku, nombre, marca, formato, estado')
+      .ilike('nombre', patron)
+      .limit(20);
+    // Si la búsqueda falla no bloqueamos la creación: el freno es best-effort.
+    if (error || !Array.isArray(data)) return null;
+    return (
+      data.find(
+        (p) =>
+          norm(p.nombre) === nombre &&
+          norm(p.marca) === norm(body?.marca) &&
+          norm(p.formato) === norm(body?.formato),
+      ) || null
+    );
   }
 
   // Carga masiva: upsert por SKU. Solo aplica para filas con sku no vacío. Los campos
