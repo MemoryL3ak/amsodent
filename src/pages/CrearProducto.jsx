@@ -352,29 +352,33 @@ export default function CrearProducto() {
       estadoFinal = "Pendiente Aprobación";
     }
 
+    // Al CREAR, TODOS los campos son obligatorios (pedido 2026-08-27): el
+    // producto nace completo (ficha, costeo de fletes y foto). La única
+    // excepción es el SKU, que solo el admin puede asignar y puede quedar
+    // vacío (transitorio). En EDICIÓN, en cambio, nada es obligatorio.
     const missing = [];
     if (!(nombre ?? "").toString().trim()) missing.push("Nombre del Producto");
+    if (!(marca ?? "").toString().trim()) missing.push("Marca");
+    if (!(skuMarca ?? "").toString().trim()) missing.push("SKU Marca");
     if (!(categoria ?? "").toString().trim()) missing.push("Categoría");
     if (!(formato ?? "").toString().trim()) missing.push("Formato");
-    if (!(linkReferencia ?? "").toString().trim()) missing.push("Link de referencia");
     if (!(presentacion ?? "").toString().trim()) missing.push("Presentación");
     if (!(descripcion ?? "").toString().trim()) missing.push("Descripción");
     if (!(composicion ?? "").toString().trim()) missing.push("Composición");
     if (!(usoIndicaciones ?? "").toString().trim()) missing.push("Uso/Indicaciones");
     if (!(beneficios ?? "").toString().trim()) missing.push("Beneficios");
+    if (!(modoUso ?? "").toString().trim()) missing.push("Modo de uso");
+    if (!(almacenamiento ?? "").toString().trim()) missing.push("Almacenamiento");
+    if (!(datosClave ?? "").toString().trim()) missing.push("Datos Clave");
+    if (!(linkReferencia ?? "").toString().trim()) missing.push("Link de referencia");
+    if (!(Number(peso) > 0)) missing.push("Peso (kg)");
+    if (!(Number(alto) > 0)) missing.push("Alto");
+    if (!(Number(largo) > 0)) missing.push("Largo");
+    if (!(Number(ancho) > 0)) missing.push("Ancho");
+    if (!imagenFile) missing.push("Foto del producto");
     if (puedeVerCosto && !(numFromCL(costo) > 0)) missing.push("Costo");
     if (!(numFromCL(precios.lista1) > 0)) missing.push("Precio de Venta (Lista 1)");
     if (!(numFromCL(precios.lista2) > 0)) missing.push("Precio de Venta (Lista 2)");
-    // Los transitorios (sin SKU) nacen para cotizar YA, y el costeo de fletes
-    // necesita peso y dimensiones reales — sin ellos el flete se estima a
-    // ciegas. La foto también es obligatoria (pedido 2026-08-13).
-    if (estadoFinal !== "Activo") {
-      if (!(Number(peso) > 0)) missing.push("Peso (kg)");
-      if (!(Number(alto) > 0)) missing.push("Alto");
-      if (!(Number(largo) > 0)) missing.push("Largo");
-      if (!(Number(ancho) > 0)) missing.push("Ancho");
-      if (!imagenFile) missing.push("Foto del producto");
-    }
 
     if (missing.length) {
       setToast({
@@ -509,6 +513,10 @@ export default function CrearProducto() {
       </Link>
 
       <div className="bg-white border border-gray-300 rounded-xl shadow-sm p-6">
+        <p className="text-xs text-gray-500 mb-4">
+          Los campos marcados con <span className="text-red-600 font-semibold">*</span> son
+          obligatorios para crear el producto. Solo el SKU puede quedar vacío (lo asigna el administrador).
+        </p>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {/* INFORMACIÓN GENERAL */}
           <div className="md:col-span-2">
@@ -581,7 +589,7 @@ export default function CrearProducto() {
 
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Marca
+                      Marca *
                     </label>
                     <input
                       className="w-full rounded-md border border-gray-300 bg-gray-50 px-3 py-2"
@@ -593,19 +601,19 @@ export default function CrearProducto() {
 
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
-                      SKU Marca
+                      SKU Marca *
                     </label>
                     <input
                       className="w-full rounded-md border border-gray-300 bg-gray-50 px-3 py-2"
                       value={skuMarca}
                       onChange={(e) => setSkuMarca(e.target.value)}
-                      placeholder="Código del fabricante (opcional)"
+                      placeholder="Código del fabricante"
                     />
                   </div>
 
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Categoría
+                      Categoría *
                     </label>
 
                     <Select
@@ -642,7 +650,7 @@ export default function CrearProducto() {
               <div className="lg:col-span-1">
                 <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
                   <div className="text-sm font-semibold text-gray-800 mb-3">
-                    Imagen del Producto
+                    Imagen del Producto *
                   </div>
 
                   {imagenPreview ? (
@@ -753,7 +761,7 @@ export default function CrearProducto() {
 
               <div>
                 <label className="block text-sm text-gray-600 mb-1">
-                  Modo de uso
+                  Modo de uso *
                 </label>
                 <textarea
                   rows={3}
@@ -765,7 +773,7 @@ export default function CrearProducto() {
 
               <div>
                 <label className="block text-sm text-gray-600 mb-1">
-                  Almacenamiento
+                  Almacenamiento *
                 </label>
                 <textarea
                   rows={2}
@@ -777,7 +785,7 @@ export default function CrearProducto() {
 
               <div>
                 <label className="block text-sm text-gray-600 mb-1">
-                  Datos Clave
+                  Datos Clave *
                 </label>
                 <textarea
                   rows={3}
@@ -814,7 +822,7 @@ export default function CrearProducto() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm text-gray-600 mb-1">
-                  Peso (kg)
+                  Peso (kg) *
                 </label>
                 <input
                   type="number"
@@ -827,7 +835,7 @@ export default function CrearProducto() {
 
               <div>
                 <label className="block text-sm text-gray-600 mb-1">
-                  Alto (cm)
+                  Alto (cm) *
                 </label>
                 <input
                   type="number"
@@ -840,7 +848,7 @@ export default function CrearProducto() {
 
               <div>
                 <label className="block text-sm text-gray-600 mb-1">
-                  Largo (cm)
+                  Largo (cm) *
                 </label>
                 <input
                   type="number"
@@ -853,7 +861,7 @@ export default function CrearProducto() {
 
               <div>
                 <label className="block text-sm text-gray-600 mb-1">
-                  Ancho (cm)
+                  Ancho (cm) *
                 </label>
                 <input
                   type="number"

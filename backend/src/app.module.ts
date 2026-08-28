@@ -31,6 +31,7 @@ import { EventosModule } from './eventos/eventos.module';
 import { MercadopublicoModule } from './mercadopublico/mercadopublico.module';
 import { MonitorModule } from './monitor/monitor.module';
 import { RrhhModule } from './rrhh/rrhh.module';
+import { InventarioModule } from './inventario/inventario.module';
 
 @Module({
   imports: [
@@ -66,6 +67,7 @@ import { RrhhModule } from './rrhh/rrhh.module';
     MercadopublicoModule,
     MonitorModule,
     RrhhModule,
+    InventarioModule,
   ],
 })
 export class AppModule {}

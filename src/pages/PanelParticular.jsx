@@ -9,7 +9,7 @@ import MonthCalendarPicker from "../components/MonthCalendarPicker";
 import { Users, PhoneCall, FileText, ShoppingCart } from "lucide-react";
 import {
   fmtNum, fmtPct, inicioMesISO, mesDe, addMesKey, labelMesCorto, labelMesLargo, clamp,
-  Delta, KpiCard, FunnelShape, HBarList, BarChart,
+  Delta, KpiCard, FunnelShape, BarChart,
 } from "../components/panel/panelKit";
 import useEmbudoComercial, { ETAPAS_EMBUDO } from "../components/panel/useEmbudoComercial";
 import { ModalEtapaEmbudo } from "../components/panel/EmbudoComercial";
@@ -209,16 +209,10 @@ export default function PanelParticular() {
             </div>
           </div>
 
-          {/* Cotizaciones perdidas del mes, con su motivo */}
+          {/* Cotizaciones perdidas del mes. El KPI «Perdidas por motivo» se
+              quitó a pedido (2026-08-27); el desglose por motivo sigue en el
+              detalle de al lado (con su filtro por motivo). */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 16, marginBottom: 16 }}>
-            <div className="surface" style={{ padding: 18 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 14, gap: 8 }}>
-                <h3 className="surface-title" style={{ margin: 0 }}>Perdidas por motivo</h3>
-                <span style={{ fontSize: 11, color: "var(--text-muted)" }}>{fmtNum(perdidas.total)} en el mes</span>
-              </div>
-              <HBarList items={perdidas.items} color="#dc2626" emptyText="Sin cotizaciones perdidas en el mes." />
-            </div>
-
             <div className="surface" style={{ padding: 18 }}>
               <h3 className="surface-title" style={{ marginBottom: 14 }}>Perdidas (6 meses)</h3>
               <BarChart data={seriePerdidas6} max={maxPerdidas6} valueKey="perdidas" color="#dc2626" fmt={fmtNum} />

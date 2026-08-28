@@ -20,6 +20,7 @@ import DetalleLicitacion from "./pages/DetalleLicitacion";
 import Productos from "./pages/Productos";
 import CrearProducto from "./pages/CrearProducto";
 import EditarProducto from "./pages/EditarProducto";
+import Inventario from "./pages/Inventario";
 
 // CLIENTES
 import Clientes from "./pages/Clientes";
@@ -137,6 +138,16 @@ export default function App() {
           <Route path="productos" element={<Productos />} />
           <Route path="productos/nuevo" element={<CrearProducto />} />
           <Route path="productos/editar/:id" element={<EditarProducto />} />
+
+          {/* INVENTARIO — solo admin (mueve stock y valorización a costo) */}
+          <Route
+            path="inventario"
+            element={
+              <RequireRole allow={["admin"]}>
+                <Inventario />
+              </RequireRole>
+            }
+          />
 
           {/* CLIENTES */}
           <Route path="clientes" element={<Clientes />} />

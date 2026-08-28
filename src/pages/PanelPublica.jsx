@@ -450,16 +450,10 @@ export default function PanelPublica() {
             </div>
           </div>
 
-          {/* Descartadas y perdidas del mes, con su motivo */}
+          {/* Descartadas y perdidas del mes. El KPI «Perdidas por motivo» se
+              quitó a pedido (2026-08-27); el desglose por motivo sigue
+              disponible en la tabla de detalle de abajo. */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 16, marginTop: 16 }}>
-            <div className="surface" style={{ padding: 18 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 14, gap: 8 }}>
-                <h3 className="surface-title" style={{ margin: 0 }}>Perdidas por motivo</h3>
-                <span style={{ fontSize: 11, color: "var(--text-muted)" }}>{fmtNum(bajas.totalPerdidas)} en el mes</span>
-              </div>
-              <HBarList items={bajas.perdidas} color="#dc2626" emptyText="Sin licitaciones perdidas en el mes." />
-            </div>
-
             <div className="surface" style={{ padding: 18 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 14, gap: 8 }}>
                 <h3 className="surface-title" style={{ margin: 0 }}>Descartadas por motivo</h3>
