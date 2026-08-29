@@ -148,11 +148,11 @@ export default function ComunidadRegistro() {
                 <span>{EVENTO_QR.badge} · {EVENTO_QR.lugar}</span>
               </div>
               <h1 className="evt-title">
-                ¡Gracias por visitar el <span>stand de Amsodent</span>!
+                Súmate a la <span>familia Amsodent</span>
               </h1>
               <p className="evt-sub">
-                Déjanos tus datos para seguir conectados después del congreso:
-                te damos la bienvenida a la familia Amsodent.
+                Somos auspiciadores del Congreso ADEO Chile 2026. Déjanos tus
+                datos para seguir conectados después de la jornada.
               </p>
             </div>
 
@@ -321,9 +321,8 @@ export default function ComunidadRegistro() {
               ¡Bienvenid@ a la familia{nombreRegistrado ? `, ${nombreRegistrado}` : ""}!
             </h1>
             <p className="evt-sub">
-              Gracias por visitarnos en el {EVENTO_QR.badge}. Ya eres parte de la
-              comunidad Amsodent — te enviamos un correo de bienvenida (si no lo
-              ves, revisa tu carpeta de spam).
+              Ya eres parte de la comunidad Amsodent — te enviamos un correo de
+              bienvenida (si no lo ves, revisa tu carpeta de spam).
             </p>
             <div className="evt-success-meta">¡Disfruta el congreso! · Equipo AMSODENT</div>
           </div>
