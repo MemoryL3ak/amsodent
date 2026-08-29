@@ -205,7 +205,7 @@ export default function ComunidadRegistros() {
           </div>
           <p style={{ fontSize: 12.5, color: "var(--text-soft)", margin: "0 0 12px" }}>
             Imprímelo o proyéctalo en el congreso: quien lo escanee llega al
-            formulario y recibe el correo de bienvenida a la familia Amsodent.
+            formulario y recibe el correo de bienvenida a la Familia Amsodent.
           </p>
           {qrDataUrl ? (
             <img
