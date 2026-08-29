@@ -212,7 +212,7 @@ export class ComunidadService {
     const mensajePerfil = esEstudiante
       ? 'Queremos acompañarte durante toda tu formación: materiales de calidad, precios pensados para estudiantes y el respaldo de un equipo que conoce lo que necesitas en cada año de la carrera.'
       : 'Queremos ser el aliado de tu práctica clínica: insumos de calidad, marcas de nivel internacional y un equipo que responde cuando lo necesitas.';
-    const intro = `¡Qué gusto conocerte en el ${EVENTO_QR.nombre}! Gracias por pasar por nuestro stand. Desde hoy eres parte de la comunidad Amsodent.`;
+    const intro = `¡Qué gusto encontrarte en el ${EVENTO_QR.nombre}! Como auspiciadores del congreso, queremos darte la bienvenida: desde hoy eres parte de la comunidad Amsodent.`;
 
     const filasDatos = [
       ['Nombre', `${p.nombre} ${p.apellido}`],
@@ -253,7 +253,7 @@ export class ComunidadService {
       <tr><td style="padding:0 24px 8px;">
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#0f3740;background:linear-gradient(150deg,#0d2d35,#0f3740);border-radius:14px;">
           <tr><td align="center" style="padding:28px 26px;">
-            <div style="display:inline-block;background:rgba(40,174,177,.18);border:1px solid rgba(40,174,177,.5);color:#7fd6d8;font-size:11px;font-weight:bold;letter-spacing:.09em;border-radius:999px;padding:5px 12px;margin-bottom:12px;">GRACIAS POR VISITARNOS</div>
+            <div style="display:inline-block;background:rgba(40,174,177,.18);border:1px solid rgba(40,174,177,.5);color:#7fd6d8;font-size:11px;font-weight:bold;letter-spacing:.09em;border-radius:999px;padding:5px 12px;margin-bottom:12px;">GRACIAS POR SUMARTE</div>
             <h1 style="margin:0 0 6px;color:#ffffff;font-size:24px;line-height:1.25;">¡Bienvenid@ a la familia<br/>AMSODENT!</h1>
             <p style="margin:0;color:rgba(255,255,255,.75);font-size:13.5px;line-height:1.5;">${escapeHtml(EVENTO_QR.nombre)} · ${escapeHtml(EVENTO_QR.detalle)}</p>
           </td></tr>

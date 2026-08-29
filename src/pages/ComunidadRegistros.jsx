@@ -180,8 +180,8 @@ export default function ComunidadRegistros() {
         <div>
           <h1 className="page-title">Comunidad Amsodent</h1>
           <p className="page-subtitle">
-            Registros del formulario del stand (QR) — hoy apunta al Congreso ADEO Chile 2026
-            (U. de Valparaíso); cada registro guarda su evento de origen.
+            Registros del formulario del QR — hoy apunta al Congreso ADEO Chile 2026
+            (U. de Valparaíso, Amsodent auspiciador); cada registro guarda su evento de origen.
           </p>
         </div>
         <div className="btn-row">
@@ -204,7 +204,7 @@ export default function ComunidadRegistros() {
             QR de la Comunidad Amsodent
           </div>
           <p style={{ fontSize: 12.5, color: "var(--text-soft)", margin: "0 0 12px" }}>
-            Imprímelo o proyéctalo en el stand del congreso: quien lo escanee llega al
+            Imprímelo o proyéctalo en el congreso: quien lo escanee llega al
             formulario y recibe el correo de bienvenida a la familia Amsodent.
           </p>
           {qrDataUrl ? (
