@@ -17,13 +17,17 @@ create table if not exists public.comunidad_registros (
   ciudad text,
   como_conociste text,
   origen text,              -- evento/campaña del QR (ej: congreso-adeo-uv-2026)
+  acepta_datos boolean not null default false,  -- consentimiento Ley 19.628
+  acepta_datos_at timestamptz,                  -- cuándo lo otorgó
   correo_enviado boolean not null default false,
   ip_origen text,
   user_agent text,
   created_at timestamptz not null default now()
 );
 
--- Guarda por si la tabla ya se creó sin la columna.
+-- Guardas por si la tabla ya se creó sin estas columnas.
 alter table public.comunidad_registros add column if not exists origen text;
+alter table public.comunidad_registros add column if not exists acepta_datos boolean not null default false;
+alter table public.comunidad_registros add column if not exists acepta_datos_at timestamptz;
 
 alter table public.comunidad_registros enable row level security;

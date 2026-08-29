@@ -97,6 +97,7 @@ export class ComunidadService {
     const ciudad = sanitizeText(body?.ciudad, 120) || null;
     const comoConociste = sanitizeText(body?.como_conociste, 120) || null;
     const origen = sanitizeText(body?.origen, 120) || EVENTO_QR.key;
+    const aceptaDatos = body?.acepta_datos === true;
 
     const faltantes: string[] = [];
     if (!nombre) faltantes.push('nombre');
@@ -118,6 +119,12 @@ export class ComunidadService {
     if ((telefono.match(/\d/g) || []).length < 8) {
       throw new BadRequestException('El teléfono no es válido (mínimo 8 dígitos).');
     }
+    // Consentimiento obligatorio (Ley 19.628): sin él no se guarda nada.
+    if (!aceptaDatos) {
+      throw new BadRequestException(
+        'Debes aceptar el tratamiento de tus datos personales para registrarte.',
+      );
+    }
 
     const { data, error } = await this.supabase
       .getClient()
@@ -135,6 +142,8 @@ export class ComunidadService {
           ciudad,
           como_conociste: comoConociste,
           origen,
+          acepta_datos: true,
+          acepta_datos_at: new Date().toISOString(),
           ip_origen: ip || null,
           user_agent: userAgent ? userAgent.slice(0, 400) : null,
         },
@@ -184,7 +193,7 @@ export class ComunidadService {
     try {
       await this.mailings.enviarUno({
         para: p.correo,
-        asunto: '¡Bienvenid@ a la familia AMSODENT! 🦷',
+        asunto: '¡Bienvenid@ a la Familia AMSODENT! 🦷',
         remitenteNombre: 'Amsodent Medical',
         cuerpoHtml: this.htmlBienvenida(p),
       });
@@ -254,7 +263,7 @@ export class ComunidadService {
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#0f3740;background:linear-gradient(150deg,#0d2d35,#0f3740);border-radius:14px;">
           <tr><td align="center" style="padding:28px 26px;">
             <div style="display:inline-block;background:rgba(40,174,177,.18);border:1px solid rgba(40,174,177,.5);color:#7fd6d8;font-size:11px;font-weight:bold;letter-spacing:.09em;border-radius:999px;padding:5px 12px;margin-bottom:12px;">GRACIAS POR SUMARTE</div>
-            <h1 style="margin:0 0 6px;color:#ffffff;font-size:24px;line-height:1.25;">¡Bienvenid@ a la familia<br/>AMSODENT!</h1>
+            <h1 style="margin:0 0 6px;color:#ffffff;font-size:24px;line-height:1.25;">¡Bienvenid@ a la Familia<br/>AMSODENT!</h1>
             <p style="margin:0;color:rgba(255,255,255,.75);font-size:13.5px;line-height:1.5;">${escapeHtml(EVENTO_QR.nombre)} · ${escapeHtml(EVENTO_QR.detalle)}</p>
           </td></tr>
         </table>
@@ -346,7 +355,7 @@ export class ComunidadService {
     try {
       await this.mailings.enviarUno({
         para: data.correo,
-        asunto: '¡Bienvenid@ a la familia AMSODENT! 🦷',
+        asunto: '¡Bienvenid@ a la Familia AMSODENT! 🦷',
         remitenteNombre: 'Amsodent Medical',
         cuerpoHtml: this.htmlBienvenida({
           nombre: data.nombre,

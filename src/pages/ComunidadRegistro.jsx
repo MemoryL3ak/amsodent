@@ -20,7 +20,7 @@ import { Campo, Opcion, EVT_STYLES } from "./EventoRegistro";
    Portal PÚBLICO de la Comunidad Amsodent (/comunidad).
    Es el destino del QR: la persona escanea, llena sus datos
    (estudiante con su año, o dentista con su especialidad) y
-   recibe el correo de bienvenida a la familia Amsodent.
+   recibe el correo de bienvenida a la Familia Amsodent.
    Reutiliza el diseño evt-* del formulario de eventos.
    El registro llega a POST /comunidad/registrar (sin auth).
 ============================================================ */
@@ -69,6 +69,7 @@ export default function ComunidadRegistro() {
     especialidad: "",
     ciudad: "",
     como_conociste: "",
+    acepta_datos: false,
   });
   const [enviando, setEnviando] = useState(false);
   const [error, setError] = useState("");
@@ -98,6 +99,8 @@ export default function ComunidadRegistro() {
       return setError("Selecciona en qué año de la carrera estás.");
     if (form.perfil === "dentista" && !form.especialidad)
       return setError("Selecciona tu especialidad.");
+    if (!form.acepta_datos)
+      return setError("Debes aceptar el tratamiento de tus datos personales para registrarte.");
 
     setEnviando(true);
     try {
@@ -116,6 +119,7 @@ export default function ComunidadRegistro() {
           ciudad: form.ciudad.trim() || null,
           como_conociste: form.como_conociste || null,
           origen: EVENTO_QR.key,
+          acepta_datos: form.acepta_datos === true,
         }),
       });
 
@@ -148,11 +152,12 @@ export default function ComunidadRegistro() {
                 <span>{EVENTO_QR.badge} · {EVENTO_QR.lugar}</span>
               </div>
               <h1 className="evt-title">
-                Súmate a la <span>familia Amsodent</span>
+                Súmate a la <span>Familia Amsodent</span>
               </h1>
               <p className="evt-sub">
-                Somos auspiciadores del Congreso ADEO Chile 2026. Déjanos tus
-                datos para seguir conectados después de la jornada.
+                Como auspiciadores del Congreso ADEO Chile 2026, queremos
+                invitarte a ser parte de nuestra comunidad: beneficios,
+                invitaciones y novedades pensadas para tu desarrollo profesional.
               </p>
             </div>
 
@@ -285,6 +290,21 @@ export default function ComunidadRegistro() {
                 </Campo>
               </div>
 
+              <label className="evt-consent">
+                <input
+                  type="checkbox"
+                  checked={form.acepta_datos}
+                  onChange={(e) => set("acepta_datos")(e.target.checked)}
+                  required
+                />
+                <span>
+                  Acepto que Amsodent Medical trate mis datos personales para
+                  gestionar mi registro y enviarme comunicaciones de la
+                  comunidad, conforme a la Ley N° 19.628 sobre protección de la
+                  vida privada. <span className="evt-req">*</span>
+                </span>
+              </label>
+
               {error && (
                 <div className="evt-error" role="alert">
                   {error}
@@ -318,7 +338,7 @@ export default function ComunidadRegistro() {
               <CheckCircle2 size={46} />
             </div>
             <h1 className="evt-title">
-              ¡Bienvenid@ a la familia{nombreRegistrado ? `, ${nombreRegistrado}` : ""}!
+              ¡Bienvenid@ a la Familia{nombreRegistrado ? `, ${nombreRegistrado}` : ""}!
             </h1>
             <p className="evt-sub">
               Ya eres parte de la comunidad Amsodent — te enviamos un correo de
@@ -334,6 +354,32 @@ export default function ComunidadRegistro() {
       </footer>
 
       <style>{EVT_STYLES}</style>
+      {/* Estilos propios de este formulario (consentimiento de datos). */}
+      <style>{`
+.evt-consent {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  background: var(--evt-field-bg);
+  border: 1.5px solid var(--evt-border);
+  border-radius: 12px;
+  padding: 12px 14px;
+  cursor: pointer;
+}
+.evt-consent input[type="checkbox"] {
+  width: 17px;
+  height: 17px;
+  margin-top: 1px;
+  flex-shrink: 0;
+  accent-color: var(--evt-teal-dark);
+  cursor: pointer;
+}
+.evt-consent span {
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--evt-muted);
+}
+      `}</style>
     </div>
   );
 }
