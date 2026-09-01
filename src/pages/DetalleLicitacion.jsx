@@ -4131,13 +4131,25 @@ export default function EditarLicitacion() {
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Flete Estimado
               </label>
-              {/* Solo lectura (pedido 2026-09-01): el flete se fija ÚNICAMENTE
-                  con el botón de cálculo de la calculadora (deshabilitada si la
-                  cotización no está editable), para nadie es editable a mano. */}
-              <div className="form-display form-display-value">
-                ${Number(fleteEstimado || 0).toLocaleString("es-CL")}
-              </div>
-              <div className="field-hint">Se fija con la calculadora de flete.</div>
+              {/* Edición manual SOLO admin (pedido 2026-09-01), respetando el
+                  bloqueo por estado (esEditable); el resto lo fija únicamente
+                  con el botón de cálculo de la calculadora. */}
+              {esAdmin ? (
+                <input
+                  type="number"
+                  className={inputClassH10}
+                  value={fleteEstimado}
+                  onChange={(e) => setFleteEstimado(e.target.value)}
+                  disabled={!esEditable}
+                />
+              ) : (
+                <>
+                  <div className="form-display form-display-value">
+                    ${Number(fleteEstimado || 0).toLocaleString("es-CL")}
+                  </div>
+                  <div className="field-hint">Se fija con la calculadora de flete.</div>
+                </>
+              )}
             </div>
 
             <div>
