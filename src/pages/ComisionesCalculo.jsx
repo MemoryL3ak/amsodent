@@ -52,7 +52,7 @@ function pickTramo(filas, valor) {
 }
 
 // Estados que no cuentan como cotización ingresada (coherente con el resto del sistema).
-const ESTADOS_NO_CUENTAN = ["Descartada", "Desierta", "Pendiente Aprobación"];
+const ESTADOS_NO_CUENTAN = ["Descartada", "Desierta", "Pendiente Aprobación", "Pendiente Aprobación Peso"];
 
 const SIN_CANAL = "__sin_canal__";
 

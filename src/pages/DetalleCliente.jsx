@@ -44,6 +44,7 @@ const COLOR_ESTADO = {
   "Adjudicada": { bg: "#dcfce7", color: "#15803d" },
   "En espera": { bg: "#e0f2fe", color: "#0369a1" },
   "Pendiente Aprobación": { bg: "#fef3c7", color: "#b45309" },
+  "Pendiente Aprobación Peso": { bg: "#ede9fe", color: "#6d28d9" },
   "Descartada": { bg: "#fee2e2", color: "#b91c1c" },
 };
 function estiloEstado(estado) {
@@ -383,8 +384,10 @@ export default function DetalleCliente() {
     } else if (dVisita >= 30) {
       out.push({ tipo: "warn", titulo: `Cliente sin visita hace ${dVisita} días`, detalle: `Última: ${fmtFecha(visitas.ultima)}` });
     }
-    // Cotizaciones pendientes de aprobación.
-    const pend = cotizaciones.filter((c) => c.estado === "Pendiente Aprobación");
+    // Cotizaciones pendientes de aprobación (margen o peso).
+    const pend = cotizaciones.filter(
+      (c) => c.estado === "Pendiente Aprobación" || c.estado === "Pendiente Aprobación Peso",
+    );
     if (pend.length) {
       out.push({ tipo: "info", titulo: `${pend.length} cotización(es) pendiente(s) de aprobación`, detalle: "Revísalas para no perder la venta." });
     }

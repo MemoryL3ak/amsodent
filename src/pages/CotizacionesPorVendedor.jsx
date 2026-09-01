@@ -6,7 +6,7 @@ import { Target, ClipboardList, TrendingUp, Users } from "lucide-react";
 import Ventas from "./Ventas";
 
 // Estados que NO cuentan como cotización "ingresada" para la meta del equipo.
-const ESTADOS_NO_CUENTAN = ["Descartada", "Desierta", "Pendiente Aprobación"];
+const ESTADOS_NO_CUENTAN = ["Descartada", "Desierta", "Pendiente Aprobación", "Pendiente Aprobación Peso"];
 const META_DEFECTO = 900;
 
 function mesActualISO() {

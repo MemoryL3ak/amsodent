@@ -350,6 +350,15 @@ function getNotifVisuales(notif) {
       etiqueta: "Portal cliente",
     };
   }
+  // Cotización con productos sin peso: requiere revisión de un admin.
+  if (tipo === "aprobacion_peso") {
+    return {
+      icono: AlertTriangle,
+      color: "#6d28d9",
+      bg: "#ede9fe",
+      etiqueta: "Aprobación peso",
+    };
+  }
   if (tipo.startsWith("stock")) {
     return {
       icono: PackageSearch,

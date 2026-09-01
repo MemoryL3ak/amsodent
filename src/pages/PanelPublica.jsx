@@ -15,7 +15,7 @@ import {
 } from "../components/panel/panelKit";
 
 // Estados que NO cuentan como licitación participada.
-const ESTADOS_NO_PARTICIPA = ["Descartada", "Cancelada", "Pendiente Aprobación"];
+const ESTADOS_NO_PARTICIPA = ["Descartada", "Cancelada", "Pendiente Aprobación", "Pendiente Aprobación Peso"];
 
 export default function PanelPublica() {
   const { rol, cargando } = useAuth();

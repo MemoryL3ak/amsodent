@@ -137,6 +137,7 @@ export default function ListarLicitaciones() {
     if (estado === "Perdida")              return "badge badge-danger";
     if (estado === "En espera")            return "badge badge-warning";
     if (estado === "Pendiente Aprobación") return "badge badge-primary";
+    if (estado === "Pendiente Aprobación Peso") return "badge badge-primary";
     if (estado === "Cancelada")            return "badge badge-neutral";
     return "badge badge-neutral";
   }
@@ -153,7 +154,7 @@ export default function ListarLicitaciones() {
   }, [data, usuariosMap]);
 
   const opcionesEstado = [
-    "En espera","Adjudicada","Perdida","Desierta","Descartada","Cancelada","Pendiente Aprobación",
+    "En espera","Adjudicada","Perdida","Desierta","Descartada","Cancelada","Pendiente Aprobación","Pendiente Aprobación Peso",
   ];
 
   const opcionesTipoCompra = [
@@ -243,7 +244,7 @@ export default function ListarLicitaciones() {
   // ── Stats ─────────────────────────────────────────────────────
   const stats = useMemo(() => ({
     // El total de cotizaciones no cuenta las descartadas ni las pendientes de aprobación.
-    total:       dataFiltrada.filter((l) => l.estado !== "Descartada" && l.estado !== "Pendiente Aprobación").length,
+    total:       dataFiltrada.filter((l) => l.estado !== "Descartada" && l.estado !== "Pendiente Aprobación" && l.estado !== "Pendiente Aprobación Peso").length,
     adjudicadas: dataFiltrada.filter((l) => l.estado === "Adjudicada").length,
     enEspera:    dataFiltrada.filter((l) => l.estado === "En espera").length,
     perdidas:    dataFiltrada.filter((l) => l.estado === "Perdida").length,

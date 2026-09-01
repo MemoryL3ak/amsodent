@@ -1983,6 +1983,30 @@ export default function CrearLicitacion() {
 
       const requiereAprobacion = margenGeneral < 20;
 
+      // Aprobación por PESO (2026-09-01): si algún producto del catálogo viene
+      // sin peso registrado, la cotización nace "Pendiente Aprobación Peso"
+      // (prima sobre la aprobación por margen: sin peso no hay flete real).
+      // Un admin completa el peso en Productos, recalcula el flete y aprueba.
+      const productosSinPeso = (() => {
+        const vistos = new Set();
+        const lista = [];
+        for (const { it } of itemsParaGuardarConIndex) {
+          const sku = String(it?.sku || "").trim();
+          const prod =
+            (sku ? productos.find((p) => String(p.sku || "").trim() === sku) : null) ||
+            (it?.producto ? productos.find((p) => p.nombre === it.producto) : null);
+          if (prod && !(Number(prod.peso) > 0)) {
+            const clave = prod.sku || prod.nombre;
+            if (!vistos.has(clave)) {
+              vistos.add(clave);
+              lista.push(prod);
+            }
+          }
+        }
+        return lista;
+      })();
+      const requiereAprobacionPeso = productosSinPeso.length > 0;
+
       // Para cliente particular el id_licitacion final = String(id interno). Como necesitamos
       // el id antes del INSERT, mandamos un placeholder único y lo reemplazamos con un UPDATE
       // posterior. El placeholder evita colisiones por UNIQUE constraint.
@@ -2018,7 +2042,11 @@ export default function CrearLicitacion() {
 
             fecha: fechaHoy,
             creado_por: vendedorCorreoFinal,
-            estado: requiereAprobacion ? "Pendiente Aprobación" : "En espera",
+            estado: requiereAprobacionPeso
+              ? "Pendiente Aprobación Peso"
+              : requiereAprobacion
+              ? "Pendiente Aprobación"
+              : "En espera",
             // Jerarquía por equivalencias: la hija referencia a su madre y no
             // vuelve a analizar sus propias equivalencias al guardarse.
             madre_id: madreId || null,
@@ -2114,6 +2142,29 @@ export default function CrearLicitacion() {
           reportarError(errDisp, { contexto: "marcar_disponible_cargada", disponible_id: disponibleId, licitacion_id: idLicitacion });
         }
         setDisponibleId(null);
+      }
+
+      if (requiereAprobacionPeso) {
+        // Aviso a los admin en segundo plano (el guardado ya está hecho).
+        api.post(`/licitaciones/${idLicitacion}/notificar-peso`).catch((e) =>
+          console.warn("No se pudo notificar la aprobación por peso:", e?.message),
+        );
+        const detalleProds = productosSinPeso
+          .slice(0, 4)
+          .map((p) => (p.sku ? `${p.sku} — ${p.nombre}` : p.nombre))
+          .join(" · ");
+        setToast({
+          type: "warning",
+          message:
+            `Cotización enviada a APROBACIÓN POR PESO: ${productosSinPeso.length} producto(s) sin peso registrado` +
+            (detalleProds ? ` (${detalleProds}${productosSinPeso.length > 4 ? "…" : ""})` : "") +
+            `. Un administrador debe completar el peso, recalcular el flete y aprobarla.`,
+        });
+        localStorage.removeItem(STORAGE_KEY);
+        const sugerenciaPeso = !madreId ? construirSugerenciaHija(idLicitacion, itemsParaGuardar) : null;
+        limpiarDatos(false);
+        if (sugerenciaPeso) setSugerenciaEquiv(sugerenciaPeso);
+        return;
       }
 
       if (requiereAprobacion) {
