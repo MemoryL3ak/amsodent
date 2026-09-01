@@ -249,7 +249,7 @@ export default function CrearCliente() {
             </div>
 
             <div className="field">
-              <label className="field-label">Condiciones de Venta</label>
+              <label className="field-label">Condiciones de Venta *</label>
               <select
                 className="input"
                 value={condVenta}
