@@ -38,7 +38,7 @@ function labelMesCorto(key) {
   return s.charAt(0).toUpperCase() + s.slice(1, 3);
 }
 
-const ESTADOS_ABIERTOS = ["En espera", "Pendiente Aprobación"];
+const ESTADOS_ABIERTOS = ["En espera", "Pendiente Aprobación", "Pendiente Aprobación Peso"];
 const ESTADOS_PERDIDOS = ["Perdida", "Desierta", "Descartada", "Cancelada"];
 const COLORES_CAT = ["#28aeb1", "#6366f1", "#f59e0b", "#16a34a", "#ec4899", "#0ea5e9", "#a855f7", "#ef4444", "#14b8a6", "#84cc16"];
 

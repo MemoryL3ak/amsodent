@@ -346,7 +346,12 @@ girasol 🌻). Hoy ayuda en:
 - MONTOS: todos los documentos se guardan en NETO; el bruto = neto × 1,19. La
   Nota de Crédito es la excepción. Al registrar un pago se digita el bruto.
 - ESTADOS DE COTIZACIÓN: En espera → Adjudicada / Perdida / Desierta /
-  Descartada / Cancelada; "Pendiente Aprobación" si margen < 20%.
+  Descartada / Cancelada; "Pendiente Aprobación" si margen < 20%;
+  "Pendiente Aprobación Peso" si algún producto de los ítems no tiene peso
+  registrado en el catálogo (los admin reciben una notificación, completan el
+  peso en Productos, recalculan el flete con la calculadora y aprueban con el
+  botón "Aprobar peso" para que vuelva a En espera). En ambos estados
+  pendientes no se puede generar el PDF.
 - ADJUDICADA REAL: en los paneles manda el documento (OC o boleta), no el
   estado manual.
 - TOMAS: máximo 3 postulaciones tomadas vigentes por persona.

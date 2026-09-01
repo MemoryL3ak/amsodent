@@ -2359,6 +2359,7 @@ function CotizacionGenerada({ solicitud }) {
   const ESTADO_LABEL = {
     "En espera": "En preparación",
     "Pendiente Aprobación": "En revisión interna",
+    "Pendiente Aprobación Peso": "En revisión interna",
     Adjudicada: "Aceptada / Adjudicada",
     Perdida: "No concretada",
     Desierta: "No concretada",

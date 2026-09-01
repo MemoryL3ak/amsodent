@@ -12,7 +12,7 @@
 
 import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { api } from "../lib/api";
-import { useParams, useNavigate, useLocation } from "react-router-dom";
+import { useParams, useNavigate, useLocation, Link } from "react-router-dom";
 import Toast from "../components/Toast";
 import ConfirmModal from "../components/ConfirmModal";
 import DateFilter from "../components/DateFilter";
@@ -269,6 +269,7 @@ const estadoStyles = {
   Descartada: "bg-purple-50 text-purple-800 border-purple-300",
   Cancelada: "bg-slate-100 text-slate-700 border-slate-300",
   "Pendiente Aprobación": "bg-orange-50 text-orange-800 border-orange-300",
+  "Pendiente Aprobación Peso": "bg-violet-50 text-violet-800 border-violet-300",
 };
 
 /* ============================================================
@@ -1044,15 +1045,17 @@ export default function EditarLicitacion() {
   /* ============================================================
      ✅ REGLA DE EDICIÓN + ESTILOS GRIS (disabled)
 ============================================================ */
-  const esEditable = estado === "En espera" || estado === "Pendiente Aprobación";
+  const ESTADOS_EDITABLES = ["En espera", "Pendiente Aprobación", "Pendiente Aprobación Peso"];
+  const esEditable = ESTADOS_EDITABLES.includes(estado);
   // La cotización ERA editable según lo guardado en la base: cubre el caso de
   // editar ítems y adjudicar en el MISMO guardado (el select ya dice
   // "Adjudicada", esEditable pasa a false, pero los cambios pendientes de los
   // ítems sí deben persistirse o los KPIs de margen quedan con datos viejos).
-  const eraEditable =
-    estadoActualDB === "En espera" || estadoActualDB === "Pendiente Aprobación";
+  const eraEditable = ESTADOS_EDITABLES.includes(estadoActualDB);
   const estadoBloqueadoPendiente =
-    !esAdmin && estadoActualDB === "Pendiente Aprobación";
+    !esAdmin &&
+    (estadoActualDB === "Pendiente Aprobación" ||
+      estadoActualDB === "Pendiente Aprobación Peso");
   const puedeEditarEstado = !estadoBloqueadoPendiente;
 
   useEffect(() => {
@@ -1332,6 +1335,80 @@ export default function EditarLicitacion() {
       setToast({ type: "error", message: "No se pudo aprobar la licitación." });
     } finally {
       setAprobando(false);
+    }
+  }
+
+  // ── Aprobación por PESO (2026-09-01) ──────────────────────────────────
+  // Productos del catálogo usados en los ítems que NO tienen peso registrado.
+  // Acepta una lista fresca para re-verificar tras corregir el catálogo.
+  function productosSinPesoDeItems(listaProductos = productos) {
+    const vistos = new Set();
+    const lista = [];
+    for (const it of items) {
+      const sku = String(it?.sku || "").trim();
+      const prod =
+        (sku ? listaProductos.find((p) => String(p.sku || "").trim() === sku) : null) ||
+        (it?.producto ? listaProductos.find((p) => p.nombre === it.producto) : null);
+      if (prod && !(Number(prod.peso) > 0)) {
+        const clave = prod.sku || prod.nombre;
+        if (!vistos.has(clave)) {
+          vistos.add(clave);
+          lista.push(prod);
+        }
+      }
+    }
+    return lista;
+  }
+
+  const [aprobandoPeso, setAprobandoPeso] = useState(false);
+  async function aprobarPeso() {
+    if (!puedeAprobar) return;
+    if (aprobandoPeso || aprobando || guardando || generandoPDF || eliminando) return;
+    if (estado !== "Pendiente Aprobación Peso") return;
+    setAprobandoPeso(true);
+    setToast(null);
+    try {
+      // Re-verifica con el catálogo FRESCO: el peso se corrige en Productos
+      // (otra pestaña) y esta página puede tener el dato viejo en memoria.
+      const data = await api.get("/productos");
+      const visibles = (data || []).filter((p) => (p?.estado || "") !== "Inactivo");
+      setProductos(visibles);
+      const pendientes = productosSinPesoDeItems(visibles);
+      if (pendientes.length > 0) {
+        setToast({
+          type: "error",
+          message:
+            `Aún hay ${pendientes.length} producto(s) sin peso: ` +
+            `${pendientes.slice(0, 4).map((p) => p.sku || p.nombre).join(", ")}` +
+            `${pendientes.length > 4 ? "…" : ""}. Complétalo en Productos y reintenta.`,
+        });
+        return;
+      }
+      // Con los pesos listos: si el margen sigue bajo 20% y no está aprobado,
+      // pasa a la aprobación por margen; si no, vuelve a En espera.
+      const siguiente =
+        margenGeneral < 20 && !margenAprobado ? "Pendiente Aprobación" : "En espera";
+      await api.put(`/licitaciones/${id}`, { estado: siguiente });
+      setEstado(siguiente);
+      setEstadoActualDB(siguiente);
+      setToast({
+        type: "warning",
+        message:
+          siguiente === "En espera"
+            ? "Peso aprobado: la cotización volvió a En espera. RECALCULA EL FLETE con la calculadora (los pesos de los productos cambiaron)."
+            : "Peso aprobado, pero el margen sigue bajo 20%: quedó Pendiente Aprobación (margen). Recuerda recalcular el flete.",
+      });
+      // Lleva al aprobador directo a la calculadora de flete.
+      setTimeout(() => {
+        document
+          .getElementById("seccion-flete")
+          ?.scrollIntoView({ behavior: "smooth", block: "center" });
+      }, 250);
+    } catch (e) {
+      console.error("Error aprobando peso:", e);
+      setToast({ type: "error", message: "No se pudo aprobar el peso." });
+    } finally {
+      setAprobandoPeso(false);
     }
   }
 
@@ -2727,11 +2804,10 @@ export default function EditarLicitacion() {
 ============================================================ */
   async function exportarPDF() {
     if (guardando || generandoPDF) return;
-    if (estado === "Pendiente Aprobación") {
+    if (estado === "Pendiente Aprobación" || estado === "Pendiente Aprobación Peso") {
       setToast({
         type: "error",
-        message:
-          "No se puede generar PDF mientras la licitación esté en \"Pendiente Aprobación\".",
+        message: `No se puede generar PDF mientras la licitación esté en "${estado}".`,
       });
       return;
     }
@@ -2920,13 +2996,21 @@ export default function EditarLicitacion() {
         .filter(Boolean);
 
       const estadoSolicitado = estadoBloqueadoPendiente
-        ? "Pendiente Aprobación"
+        ? estadoActualDB // conserva el pendiente que corresponda (margen o peso)
         : estado;
       const requiereAprobacion = margenGeneral < 20 && !margenAprobado;
-      const estadoFinal =
+      // Aprobación por PESO: si algún producto de los ítems sigue sin peso
+      // registrado, el estado se fuerza a "Pendiente Aprobación Peso" (prima
+      // sobre la de margen; "En espera" elegido por un admin se respeta, igual
+      // que en la aprobación por margen).
+      const requiereAprobacionPeso = productosSinPesoDeItems().length > 0;
+      let estadoFinal =
         requiereAprobacion && estadoSolicitado !== "En espera"
           ? "Pendiente Aprobación"
           : estadoSolicitado;
+      if (requiereAprobacionPeso && estadoFinal !== "En espera") {
+        estadoFinal = "Pendiente Aprobación Peso";
+      }
       const margenAprobadoFinal = margenGeneral < 20 ? margenAprobado : false;
       const fechaAdjudicadaFinal =
         estadoFinal === "Adjudicada"
@@ -3020,7 +3104,20 @@ export default function EditarLicitacion() {
       setEstadoActualDB(estadoFinal);
       setTipoClienteGuardado(tipoCliente || "");
 
-      if (requiereAprobacion) {
+      if (estadoFinal === "Pendiente Aprobación Peso") {
+        // Aviso a los admin en segundo plano (el backend dedupe los no leídos).
+        api.post(`/licitaciones/${id}/notificar-peso`).catch((e) =>
+          console.warn("No se pudo notificar la aprobación por peso:", e?.message),
+        );
+        const sinPeso = productosSinPesoDeItems();
+        setToast({
+          type: "warning",
+          message:
+            `Cotización en APROBACIÓN POR PESO: ${sinPeso.length} producto(s) sin peso registrado ` +
+            `(${sinPeso.slice(0, 4).map((p) => p.sku || p.nombre).join(", ")}${sinPeso.length > 4 ? "…" : ""}). ` +
+            `Un administrador debe completar el peso, recalcular el flete y aprobarla.`,
+        });
+      } else if (requiereAprobacion) {
         const detalleLineas = lineasBajoMargen.length
           ? ` Las líneas ${lineasBajoMargen.join(", ")} tienen un % de margen menor al 20%.`
           : "";
@@ -3250,6 +3347,17 @@ export default function EditarLicitacion() {
               {aprobando ? "Aprobando…" : "Aprobar"}
             </button>
           )}
+          {puedeAprobar && estado === "Pendiente Aprobación Peso" && (
+            <button
+              type="button"
+              onClick={aprobarPeso}
+              className="btn btn-primary"
+              disabled={aprobandoPeso}
+              title="Verifica que todos los productos tengan peso y aprueba"
+            >
+              {aprobandoPeso ? "Verificando…" : "Aprobar peso"}
+            </button>
+          )}
           <button
             type="button"
             onClick={volver}
@@ -3265,6 +3373,38 @@ export default function EditarLicitacion() {
         <div className="mb-6 rounded-lg border border-yellow-200 bg-yellow-50 px-4 py-3 text-sm text-yellow-900">
           Esta licitación está en estado <b>{estado}</b>. Los campos están
           bloqueados. Para editar, cambia el estado a <b>En espera</b>.
+        </div>
+      )}
+
+      {/* Aprobación por PESO: banner con los productos a corregir. */}
+      {estado === "Pendiente Aprobación Peso" && (
+        <div className="mb-6 rounded-lg border border-violet-300 bg-violet-50 px-4 py-3 text-sm text-violet-900">
+          <div style={{ fontWeight: 700, marginBottom: 4 }}>
+            ⚖️ Pendiente Aprobación Peso — productos sin peso registrado
+          </div>
+          <div style={{ marginBottom: 6 }}>
+            Esta cotización no puede avanzar: los siguientes productos no tienen
+            peso en el catálogo (sin peso el flete se estima a ciegas). Un
+            administrador debe completarlos, <b>recalcular el flete</b> y pulsar{" "}
+            <b>Aprobar peso</b>.
+          </div>
+          <ul style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 2 }}>
+            {productosSinPesoDeItems().map((p) => (
+              <li key={p.id || p.sku || p.nombre}>
+                <b>{p.sku || "sin SKU"}</b> — {p.nombre}{" "}
+                {p.id != null && (
+                  <Link
+                    to={`/productos/editar/${p.id}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="table-link"
+                  >
+                    Agregar peso →
+                  </Link>
+                )}
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 
@@ -3445,6 +3585,7 @@ export default function EditarLicitacion() {
             >
               <option value="En espera">En espera</option>
               <option value="Pendiente Aprobación">Pendiente Aprobación</option>
+              <option value="Pendiente Aprobación Peso">Pendiente Aprobación Peso</option>
               <option value="Adjudicada">Adjudicada</option>
               <option value="Perdida">Perdida</option>
               <option value="Desierta">Desierta</option>
@@ -3794,15 +3935,47 @@ export default function EditarLicitacion() {
             {items.map((it, index) => {
               const margenItem = calcularMargenItem(it);
               const isLowMargin = margenItem > 0 && margenItem < 20;
+              // Destaca el ítem cuyo producto no tiene peso registrado
+              // (flujo "Pendiente Aprobación Peso").
+              const sinPeso =
+                estado === "Pendiente Aprobación Peso" &&
+                getPesoParaItem(it) <= 0 &&
+                Boolean(
+                  (String(it?.sku || "").trim() &&
+                    productos.some((p) => String(p.sku || "").trim() === String(it.sku).trim())) ||
+                    (it?.producto && productos.some((p) => p.nombre === it.producto)),
+                );
 
               return (
                 <SortableItem key={it.uid} itemId={it.uid} disabled={!esEditable}>
                   {({ dragHandleProps }) => (
                     <div
                       className={`bg-white border rounded-lg p-4 shadow-sm space-y-3 ${
-                        isLowMargin ? "border-red-400 bg-red-50" : "border-gray-200"
+                        sinPeso
+                          ? "border-violet-400 bg-violet-50"
+                          : isLowMargin
+                          ? "border-red-400 bg-red-50"
+                          : "border-gray-200"
                       } ${!esEditable ? "opacity-95" : ""}`}
                     >
+                    {sinPeso && (
+                      <div
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 6,
+                          background: "#ede9fe",
+                          color: "#5b21b6",
+                          border: "1px solid #c4b5fd",
+                          borderRadius: 999,
+                          padding: "2px 10px",
+                          fontSize: 11.5,
+                          fontWeight: 700,
+                        }}
+                      >
+                        ⚖️ Producto sin peso registrado
+                      </div>
+                    )}
                     <div className="grid grid-cols-1 md:grid-cols-[repeat(24,minmax(0,1fr))] gap-4 items-end">
                       {/* Items */}
                       <div className="md:col-span-1">
@@ -4115,7 +4288,8 @@ export default function EditarLicitacion() {
           <h3 className="surface-title">Resumen</h3>
         </div>
         <div className="surface-body">
-        <div className="mb-6">
+        {/* id para el scroll automático tras "Aprobar peso" (recalcular flete) */}
+        <div className="mb-6" id="seccion-flete">
           <p className="form-section-title">Logística</p>
           <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
             <div>
@@ -4957,7 +5131,7 @@ export default function EditarLicitacion() {
           {guardando ? "Guardando…" : "Guardar Cambios"}
         </button>
 
-        {estado !== "Pendiente Aprobación" && (
+        {estado !== "Pendiente Aprobación" && estado !== "Pendiente Aprobación Peso" && (
           <button
             onClick={exportarPDF}
             className="btn btn-secondary"

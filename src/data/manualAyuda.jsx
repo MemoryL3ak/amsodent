@@ -136,6 +136,7 @@ export const GRUPOS_MANUAL = [
           items: [
             { t: "En espera", tone: "neutral" },
             { t: "Pendiente Aprobación", tone: "warning" },
+            { t: "Pendiente Aprobación Peso", tone: "warning" },
             { t: "Adjudicada", tone: "success" },
             { t: "Perdida", tone: "danger" },
             { t: "Desierta", tone: "neutral" },
@@ -755,6 +756,7 @@ export const GLOSARIO = [
   { t: "Adjudicado vs Ventas", d: "Adjudicado = suma de OC (neto). Ventas = suma de guías de despacho (neto). En particulares, ambas salen de boletas/facturas." },
   { t: "Costo congelado", d: "El costo del ítem se guarda al cotizar y es el que usan los paneles de margen y las comisiones, aunque el costo del catálogo cambie después." },
   { t: "Pendiente Aprobación", d: "Cotización con margen general bajo 20% (o producto nuevo con margen 0-20%): requiere aprobación de una jefatura." },
+  { t: "Pendiente Aprobación Peso", d: "Cotización con productos sin peso registrado en el catálogo: un admin debe completar el peso, recalcular el flete y aprobarla para que vuelva a En espera." },
   { t: "SLA de despacho", d: "3 días hábiles desde la fecha de la OC para emitir las guías, contando feriados chilenos." },
   { t: "Cierre forzado", d: "Cerrar un ciclo OC→guías con saldo pendiente, con monto y archivo de respaldo. Reversible." },
   { t: "Condición de venta", d: "Plazo de pago de la factura: Contado (0 días) o 30 días. Define el vencimiento en Seguimiento de Pagos." },

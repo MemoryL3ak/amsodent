@@ -1663,9 +1663,10 @@ export class LicitacionesService {
     // estar "Pendiente Aprobación"), se le notifica por correo con el detalle.
     try {
       const aprobada =
-        estadoPrevio === 'Pendiente Aprobación' &&
+        (estadoPrevio === 'Pendiente Aprobación' ||
+          estadoPrevio === 'Pendiente Aprobación Peso') &&
         body?.estado &&
-        body.estado !== 'Pendiente Aprobación';
+        !String(body.estado).startsWith('Pendiente Aprobación');
       if (aprobada) await this.notificarAprobacion(data, aprobadorEmail);
     } catch (e: any) {
       this.logger.warn(`no se pudo notificar aprobación: ${e?.message || e}`);
@@ -1772,6 +1773,107 @@ export class LicitacionesService {
       this.logger.warn(`no se pudo crear notificación de aprobación: ${e?.message || e}`);
     }
     await this.mailings.enviarUno({ para: LicitacionesService.JEREMIAS, asunto, cuerpoHtml: html });
+  }
+
+  // Aprobación por PESO (2026-09-01): una cotización con productos sin peso
+  // registrado queda "Pendiente Aprobación Peso" y se avisa a TODOS los admin
+  // para que completen el peso en el catálogo, recalculen el flete y la
+  // aprueben. Lo llama el frontend justo después de guardar en ese estado.
+  async notificarAprobacionPeso(id: number) {
+    const client = this.supabase.getClient();
+    const { data: lic, error } = await client
+      .from('licitaciones')
+      .select('id, id_licitacion, nombre, nombre_entidad, creado_por, estado')
+      .eq('id', id)
+      .maybeSingle();
+    if (error) throw new BadRequestException(error.message);
+    if (!lic) throw new BadRequestException('Cotización no encontrada.');
+    if (lic.estado !== 'Pendiente Aprobación Peso') {
+      return { ok: true, notificados: 0, motivo: 'estado distinto' };
+    }
+
+    // Productos de la cotización sin peso en el catálogo (por SKU y, para los
+    // ítems sin SKU, por nombre — el mismo criterio del frontend).
+    const { data: items } = await client
+      .from('items_licitacion')
+      .select('sku, producto')
+      .eq('licitacion_id', id);
+    const skus = [...new Set((items || []).map((i: any) => String(i.sku || '').trim()).filter(Boolean))];
+    const nombres = [...new Set(
+      (items || [])
+        .filter((i: any) => !String(i.sku || '').trim())
+        .map((i: any) => String(i.producto || '').trim())
+        .filter(Boolean),
+    )];
+    const sinPeso: { sku: string | null; nombre: string }[] = [];
+    if (skus.length) {
+      const { data: prods } = await client
+        .from('productos').select('sku, nombre, peso').in('sku', skus);
+      for (const p of prods || []) {
+        if (!(Number(p.peso) > 0)) sinPeso.push({ sku: p.sku, nombre: p.nombre });
+      }
+    }
+    if (nombres.length) {
+      const { data: prods } = await client
+        .from('productos').select('sku, nombre, peso').in('nombre', nombres);
+      for (const p of prods || []) {
+        if (!(Number(p.peso) > 0)) sinPeso.push({ sku: p.sku || null, nombre: p.nombre });
+      }
+    }
+
+    const { data: admins } = await client
+      .from('profiles')
+      .select('email, rol')
+      .in('rol', ['admin', 'administrador']);
+    const emails = [...new Set(
+      (admins || []).map((a: any) => String(a.email || '').trim().toLowerCase()).filter(Boolean),
+    )];
+    if (!emails.length) return { ok: true, notificados: 0 };
+
+    // Dedupe: no repetir el aviso si el admin ya tiene uno SIN LEER de esta
+    // misma cotización (al editarla varias veces se avisaría en cascada).
+    const { data: previas } = await client
+      .from('notificaciones')
+      .select('user_email, metadata')
+      .eq('tipo', 'aprobacion_peso')
+      .is('leida_at', null);
+    const yaAvisados = new Set(
+      (previas || [])
+        .filter((n: any) => Number(n?.metadata?.licitacion_id) === Number(id))
+        .map((n: any) => String(n.user_email || '').toLowerCase()),
+    );
+
+    const nombreCot = lic.nombre || lic.nombre_entidad || `#${lic.id}`;
+    const idCot = lic.id_licitacion || lic.id;
+    const detalleProds = sinPeso
+      .slice(0, 4)
+      .map((p) => (p.sku ? `${p.sku} — ${p.nombre}` : p.nombre))
+      .join(' · ');
+    const mensaje =
+      `Cotización "${nombreCot}" (ID ${idCot}) pendiente de APROBACIÓN POR PESO: ` +
+      `${sinPeso.length || 'hay'} producto(s) sin peso registrado` +
+      (detalleProds ? ` (${detalleProds}${sinPeso.length > 4 ? '…' : ''})` : '') +
+      `. Completa el peso en Productos, recalcula el flete y apruébala.`;
+
+    const filas = emails
+      .filter((e) => !yaAvisados.has(e))
+      .map((email) => ({
+        user_email: email,
+        tipo: 'aprobacion_peso',
+        mensaje,
+        link: `/detalle/${lic.id}`,
+        metadata: {
+          licitacion_id: lic.id,
+          id_licitacion: idCot,
+          skus_sin_peso: sinPeso.map((p) => p.sku || p.nombre),
+          creado_por: lic.creado_por || null,
+        },
+      }));
+    if (filas.length) {
+      const { error: eIns } = await client.from('notificaciones').insert(filas);
+      if (eIns) this.logger.warn(`aprobacion_peso: no se pudo notificar: ${eIns.message}`);
+    }
+    return { ok: true, notificados: filas.length, sin_peso: sinPeso.length };
   }
 
   async remove(id: number) {
