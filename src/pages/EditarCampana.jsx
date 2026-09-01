@@ -283,7 +283,7 @@ export default function EditarCampana() {
               }}
             >
               <div className="field">
-                <label className="field-label">SKU</label>
+                <label className="field-label">SKU *</label>
                 <Select
                   options={opcionesSKU}
                   styles={selectStyles}

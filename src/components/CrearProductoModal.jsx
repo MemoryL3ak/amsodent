@@ -347,6 +347,9 @@ export default function CrearProductoModal({ onClose, onCreado }) {
   const mostrarMargen = true;
   const puedeVerCosto =
     esAdmin || (esVentasOJefe && (esTransitorio || esPendienteAprobacion));
+  // Sin SKU el producto nace Transitorio y la validación exige dimensiones,
+  // peso y foto (flete real). El asterisco de esos campos sigue esta regla.
+  const skuVacio = !(sku ?? "").toString().trim();
 
   // ====================== EFECTOS ======================
   // ESC para cerrar
@@ -860,7 +863,7 @@ export default function CrearProductoModal({ onClose, onCreado }) {
                               Sin imagen
                             </div>
                             <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>
-                              JPG o PNG, opcional
+                              {skuVacio ? "JPG o PNG · obligatoria *" : "JPG o PNG, opcional"}
                             </div>
                           </>
                         )}
@@ -979,7 +982,7 @@ export default function CrearProductoModal({ onClose, onCreado }) {
                 <div className="cpm-section">
                   <div className="cpm-grid-3">
                     <div className="cpm-field">
-                      <label>Peso (kg)</label>
+                      <label>Peso (kg){skuVacio ? " *" : ""}</label>
                       <input
                         type="number"
                         step="0.01"
@@ -989,7 +992,7 @@ export default function CrearProductoModal({ onClose, onCreado }) {
                       />
                     </div>
                     <div className="cpm-field">
-                      <label>Alto (cm)</label>
+                      <label>Alto (cm){skuVacio ? " *" : ""}</label>
                       <input
                         type="number"
                         step="0.1"
@@ -999,7 +1002,7 @@ export default function CrearProductoModal({ onClose, onCreado }) {
                       />
                     </div>
                     <div className="cpm-field">
-                      <label>Largo (cm)</label>
+                      <label>Largo (cm){skuVacio ? " *" : ""}</label>
                       <input
                         type="number"
                         step="0.1"
@@ -1009,7 +1012,7 @@ export default function CrearProductoModal({ onClose, onCreado }) {
                       />
                     </div>
                     <div className="cpm-field">
-                      <label>Ancho (cm)</label>
+                      <label>Ancho (cm){skuVacio ? " *" : ""}</label>
                       <input
                         type="number"
                         step="0.1"

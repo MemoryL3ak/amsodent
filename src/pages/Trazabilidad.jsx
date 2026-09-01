@@ -2458,7 +2458,7 @@ export default function Trazabilidad() {
             <p style={{ fontSize: 12.5, color: "var(--text-muted)", marginTop: 6, marginBottom: 14 }}>
               Factura {editFactura.numero ? `N° ${editFactura.numero}` : "sin número"}. Ingresa el <strong>monto neto</strong> (sin IVA).
             </p>
-            <label className="filter-label">Monto neto</label>
+            <label className="filter-label">Monto neto *</label>
             <input
               className="input"
               autoFocus

@@ -2879,7 +2879,7 @@ export default function CrearLicitacion() {
                       <div className={esAdmin ? "md:col-span-4" : "md:col-span-9"}>
                         <div className="flex items-center justify-between mb-1">
                           <label className="block text-xs text-gray-600">
-                            Producto
+                            Producto *
                           </label>
                           <button
                             type="button"
@@ -2958,7 +2958,7 @@ export default function CrearLicitacion() {
 
                       <div className="md:col-span-2">
                         <label className="block text-xs text-gray-600 mb-1">
-                          Cantidad
+                          Cantidad *
                         </label>
                         <input
                           type="number"
