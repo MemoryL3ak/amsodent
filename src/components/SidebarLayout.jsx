@@ -60,6 +60,7 @@ import RecordatoriosCierre from "./RecordatoriosCierre";
 import GoogleAuthSync from "./GoogleAuthSync";
 import DamarIAWidget from "./DamarIAWidget";
 import useChatNoLeidos from "../hooks/useChatNoLeidos";
+import AvisoMensajeChat from "./AvisoMensajeChat";
 
 const ROLE_LABELS = {
   admin:                "Administrador",
@@ -168,7 +169,25 @@ export default function SidebarLayout() {
     window.location.href = "/login";
   }
 
-  const chatNoLeidos = useChatNoLeidos(perfil?.email);
+  const {
+    total: chatNoLeidos,
+    aviso: avisoChat,
+    cerrarAviso: cerrarAvisoChat,
+  } = useChatNoLeidos(perfil?.email);
+
+  function abrirChatGrupal() {
+    cerrarAvisoChat();
+    requestNavigation("/bitacora-cotizaciones");
+  }
+
+  // Click en una notificación del sistema (mensaje de chat con la pestaña
+  // oculta) → useChatNoLeidos enfoca la ventana y emite este evento.
+  useEffect(() => {
+    const abrir = () => requestNavigation("/bitacora-cotizaciones");
+    window.addEventListener("chat:abrir", abrir);
+    return () => window.removeEventListener("chat:abrir", abrir);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const rolNorm = (perfil?.rol || "").toString().trim().toLowerCase();
   const esAdmin = rolNorm === "admin" || rolNorm === "administrador";
@@ -393,6 +412,11 @@ export default function SidebarLayout() {
       <RecordatoriosCorreo />
       <RecordatoriosCierre />
       {esAdmin && <DamarIAWidget />}
+      <AvisoMensajeChat
+        aviso={avisoChat}
+        onAbrir={abrirChatGrupal}
+        onCerrar={cerrarAvisoChat}
+      />
 
       <button
         type="button"
