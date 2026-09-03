@@ -77,19 +77,62 @@ export default function Inventario() {
     api.get("/bsale/estado").then(setBsale).catch(() => setBsale(null));
   }, []);
 
+  // Mientras corre una sincronización (lanzada aquí o en otra pestaña), se
+  // sondea el avance cada 2,5 s para la barra de progreso; en la fase final
+  // ("aplicando") el stock ya se está escribiendo, así que la grilla se
+  // refresca sola para verlo llegar en tiempo real. Al terminar: toast +
+  // refresco completo (grilla y libro, porque hubo ajustes).
+  const bsaleSincronizando = !!bsale?.sincronizando;
+  useEffect(() => {
+    if (!bsaleSincronizando) return;
+    let tick = 0;
+    const t = setInterval(async () => {
+      let est;
+      try {
+        est = await api.get("/bsale/estado");
+      } catch {
+        return; // backend momentáneamente inalcanzable: se reintenta al próximo tick
+      }
+      setBsale(est);
+      tick += 1;
+      if (est?.sincronizando) {
+        // Refresco silencioso (sin spinner) cada 2 ticks mientras se aplica el stock.
+        if (est?.progreso?.fase === "aplicando" && tick % 2 === 0) {
+          api.get("/inventario/resumen").then((d) => Array.isArray(d) && setFilas(d)).catch(() => {});
+        }
+        return;
+      }
+      const r = est?.ultima?.resumen;
+      if (r) {
+        setToast({
+          type: "success",
+          message: `Bsale sincronizado: ${fmtNum(r.actualizados || 0)} stocks actualizados (${fmtNum(r.matcheados || 0)} SKUs matcheados).`,
+        });
+      }
+      cargar();
+      setLibro(null);
+    }, 2500);
+    return () => clearInterval(t);
+  }, [bsaleSincronizando]); // eslint-disable-line react-hooks/exhaustive-deps
+
   async function sincronizarBsale() {
-    if (bsaleSync) return;
+    if (bsaleSync || bsale?.sincronizando) return;
     setBsaleSync(true);
     try {
       const r = await api.post("/bsale/sincronizar", {});
-      setToast({
-        type: "success",
-        message: `Bsale sincronizado: ${fmtNum(r?.actualizados || 0)} stocks actualizados (${fmtNum(r?.matcheados || 0)} SKUs matcheados).`,
-      });
-      // Refrescar estado de la tarjeta, la grilla y el libro (hubo ajustes).
-      api.get("/bsale/estado").then(setBsale).catch(() => {});
-      cargar();
-      setLibro(null);
+      if (r?.iniciado) {
+        // Arrancó en el backend; el sondeo de arriba muestra la barra y avisa al final.
+        api.get("/bsale/estado").then(setBsale).catch(() => {});
+      } else {
+        // Compatibilidad con un backend antiguo que respondía recién al terminar.
+        setToast({
+          type: "success",
+          message: `Bsale sincronizado: ${fmtNum(r?.actualizados || 0)} stocks actualizados (${fmtNum(r?.matcheados || 0)} SKUs matcheados).`,
+        });
+        api.get("/bsale/estado").then(setBsale).catch(() => {});
+        cargar();
+        setLibro(null);
+      }
     } catch (e) {
       setToast({ type: "error", message: e?.response?.data?.message || e?.message || "No se pudo sincronizar con Bsale." });
     } finally {
@@ -374,16 +417,51 @@ export default function Inventario() {
                 "Aún no se ha corrido la primera sincronización. El stock disponible de Bsale reemplazará al interno (cada cambio queda como ajuste en el libro)."
               )}
             </div>
+            {bsale.sincronizando && (() => {
+              const p = bsale.progreso;
+              const FASES = {
+                catalogo: ["1", "Bajando el catálogo de Bsale"],
+                stocks: ["2", "Bajando el stock por sucursal"],
+                aplicando: ["3", "Actualizando el stock de los productos"],
+              };
+              const [paso, etiqueta] = FASES[p?.fase] || [null, "Sincronizando con Bsale"];
+              const pct = p?.total > 0 ? Math.min(100, Math.round((p.hechas / p.total) * 100)) : null;
+              const detalle = !p?.total
+                ? "…"
+                : p.fase === "aplicando"
+                  ? ` — ${fmtNum(p.hechas)} de ${fmtNum(p.total)} productos`
+                  : ` — página ${fmtNum(p.hechas)} de ${fmtNum(p.total)}`;
+              return (
+                <div style={{ marginTop: 8, maxWidth: 520 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8, fontSize: 12, color: "var(--text-muted)", marginBottom: 4 }}>
+                    <span>{paso ? `Paso ${paso} de 3 · ` : ""}{etiqueta}{detalle}</span>
+                    {pct != null && <strong style={{ color: "var(--primary-dark)", fontVariantNumeric: "tabular-nums" }}>{pct}%</strong>}
+                  </div>
+                  <div style={{ height: 6, borderRadius: 4, background: "var(--border)", overflow: "hidden" }}>
+                    <div style={{
+                      width: `${pct ?? 12}%`, height: "100%", borderRadius: 4,
+                      background: "linear-gradient(90deg, var(--primary), #14b8a6)",
+                      transition: "width .4s ease",
+                    }} />
+                  </div>
+                  {p?.fase === "aplicando" && (
+                    <div style={{ fontSize: 11.5, color: "var(--text-muted)", marginTop: 4 }}>
+                      El stock ya se está escribiendo: la tabla de abajo se refresca sola a medida que avanza.
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
           </div>
           <button
             className="btn btn-secondary"
             onClick={sincronizarBsale}
-            disabled={bsaleSync || !bsale.token_configurado}
+            disabled={bsaleSync || bsale.sincronizando || !bsale.token_configurado}
             title={!bsale.token_configurado ? "Configura el token de Bsale en el backend" : "Traer el stock disponible desde Bsale ahora"}
             style={{ display: "inline-flex", alignItems: "center", gap: 6, flexShrink: 0 }}
           >
-            <RefreshCw size={14} style={bsaleSync ? { animation: "bsale-spin 1s linear infinite" } : undefined} />
-            {bsaleSync ? "Sincronizando…" : "Sincronizar ahora"}
+            <RefreshCw size={14} style={bsaleSync || bsale.sincronizando ? { animation: "bsale-spin 1s linear infinite" } : undefined} />
+            {bsaleSync || bsale.sincronizando ? "Sincronizando…" : "Sincronizar ahora"}
           </button>
           <style>{`@keyframes bsale-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
         </div>
