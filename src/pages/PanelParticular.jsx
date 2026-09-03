@@ -6,9 +6,9 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
 import useAuth from "../hooks/useAuth";
 import MonthCalendarPicker from "../components/MonthCalendarPicker";
-import { Users, PhoneCall, FileText, ShoppingCart } from "lucide-react";
+import { Users, PhoneCall, FileText, ShoppingCart, TrendingUp, Banknote } from "lucide-react";
 import {
-  fmtNum, fmtPct, inicioMesISO, mesDe, addMesKey, labelMesCorto, labelMesLargo, clamp,
+  fmtCLP, fmtNum, fmtPct, inicioMesISO, mesDe, toDateISO, addMesKey, labelMesCorto, labelMesLargo, clamp,
   Delta, KpiCard, FunnelShape, BarChart,
 } from "../components/panel/panelKit";
 import useEmbudoComercial, { ETAPAS_EMBUDO } from "../components/panel/useEmbudoComercial";
@@ -53,6 +53,85 @@ export default function PanelParticular() {
     })();
     return () => { activo = false; };
   }, [cargando, puedeVer]);
+
+  // ── Margen de las ventas particulares del mes (pedido 2026-09-03) ────────
+  // (venta − costo) / venta sobre los ítems de las cotizaciones particulares
+  // ADJUDICADAS en el mes (1ª boleta/factura o efectivo). Mismo criterio que
+  // el Panel de Gestión Comercial: costo congelado en el ítem, con fallback
+  // al costo vigente del catálogo por SKU.
+  const [licsPart, setLicsPart] = useState([]); // [{ id, creado_por }]
+  const [adjDatePart, setAdjDatePart] = useState({}); // licId → fecha 1ª boleta/efectivo
+  const [costoBySku, setCostoBySku] = useState({});
+  const [margenMes, setMargenMes] = useState({ monto: 0, pct: 0 });
+
+  useEffect(() => {
+    if (cargando || !puedeVer) return;
+    let activo = true;
+    (async () => {
+      try {
+        const data = await api.get("/licitaciones/with-fields?fields=id,tipo_cliente,creado_por");
+        const rows = (data || []).filter((l) => (l.tipo_cliente || "").toLowerCase().includes("particular"));
+        const ids = rows.map((l) => Number(l.id)).filter(Boolean);
+        const adj = {};
+        if (ids.length) {
+          const docs = await api.post("/licitaciones/documentos/filter", {
+            filter: { licitacion_ids: ids, tipo: ["factura_boleta", "efectivo"] },
+            fields: "licitacion_id,tipo,fecha_oc,created_at",
+          });
+          (docs || []).forEach((d) => {
+            const lid = Number(d.licitacion_id);
+            if (!lid) return;
+            const f = toDateISO(d.fecha_oc) || toDateISO(d.created_at);
+            if (f && (!adj[lid] || f < adj[lid])) adj[lid] = f;
+          });
+        }
+        const prods = await api.get("/productos");
+        const costos = {};
+        (prods || []).forEach((p) => {
+          const sku = String(p.sku || "").trim().toUpperCase();
+          if (sku) costos[sku] = Number(p.costo || 0);
+        });
+        if (!activo) return;
+        setLicsPart(rows);
+        setAdjDatePart(adj);
+        setCostoBySku(costos);
+      } catch (e) {
+        console.error("Error cargando base del margen particular:", e);
+        if (activo) { setLicsPart([]); setAdjDatePart({}); setCostoBySku({}); }
+      }
+    })();
+    return () => { activo = false; };
+  }, [cargando, puedeVer]);
+
+  useEffect(() => {
+    if (cargando || !puedeVer) return;
+    const ej = (ejecutivo || "").trim().toLowerCase();
+    const idsMes = licsPart
+      .filter((l) => mesDe(adjDatePart[l.id]) === mesActual)
+      .filter((l) => !ej || (l.creado_por || "").trim().toLowerCase() === ej)
+      .map((l) => Number(l.id))
+      .filter(Boolean);
+    if (!idsMes.length) { setMargenMes({ monto: 0, pct: 0 }); return; }
+    let activo = true;
+    api.post("/licitaciones/items/filter", {
+      licitacion_ids: idsMes,
+      fields: "licitacion_id,total,cantidad,sku,costo",
+    })
+      .then((items) => {
+        if (!activo) return;
+        let venta = 0, costo = 0;
+        (items || []).forEach((it) => {
+          venta += Number(it.total || 0);
+          const sku = String(it.sku || "").trim().toUpperCase();
+          const costoUnit = Number(it.costo) > 0 ? Number(it.costo) : (costoBySku[sku] || 0);
+          costo += costoUnit * (Number(it.cantidad) || 0);
+        });
+        const monto = Math.round(venta - costo);
+        setMargenMes({ monto, pct: venta > 0 ? (monto / venta) * 100 : 0 });
+      })
+      .catch(() => { if (activo) setMargenMes({ monto: 0, pct: 0 }); });
+    return () => { activo = false; };
+  }, [cargando, puedeVer, licsPart, adjDatePart, costoBySku, mesActual, ejecutivo]);
 
   // Perdidas del mes (por fecha de creación) agrupadas por motivo + detalle.
   const perdidas = useMemo(() => {
@@ -138,6 +217,10 @@ export default function PanelParticular() {
                 delta={<Delta actual={emb[et.key]} prev={embPrev[et.key]} />}
               />
             ))}
+            <KpiCard icon={TrendingUp} color="#7c3aed" label="Margen %" sub="Ventas particulares del mes · (venta − costo) / venta" value={fmtPct(margenMes.pct)} delta={null} />
+            {!esJefatura && (
+              <KpiCard icon={Banknote} color="#0d9488" label="Margen $" sub="Ventas particulares del mes · venta neta − costo" value={fmtCLP(margenMes.monto)} delta={null} />
+            )}
           </div>
 
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 16, marginBottom: 16 }}>

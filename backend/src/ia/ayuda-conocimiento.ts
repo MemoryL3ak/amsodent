@@ -87,8 +87,8 @@ Comunicaciones (correo masivo), Monitoreo del Sistema, widget DamarIA de datos.
     productividad = actividades de la Bitácora; conversión = adjudicadas /
     ingresadas.
 11. LECTURA — Panel de Indicadores (global y por tipo de cliente), Panel de
-    Ejecutivos (por vendedor), Metas y Resumen de canales, y Análisis Mercado
-    Público (nuestra oferta vs el ganador).
+    Ejecutivos (por vendedor), Definición de metas (con resumen por canal), y
+    Análisis Mercado Público (nuestra oferta vs el ganador).
 
 ## MÓDULOS — GRUPO COMERCIAL
 
@@ -255,10 +255,14 @@ comercial.
 Meta neta y meta de cantidad por vendedor y mes; aquí se asigna el CANAL de
 cada vendedor (Vendedor Terreno, Tienda, Mercado Público, Página Web,
 Freelance, etc.), que determina qué tablas de comisión se le aplican. Muestra
-avance, cumplimiento, brecha, proyección y ritmo del mes.
-
-### Resumen canales (/metas-canal)
-Cumplimiento agregado por canal.
+avance, cumplimiento, brecha, proyección y ritmo del mes. Incluye al pie la
+tabla "Resumen por Canal" (meta, avance, cumplimiento y brecha agregados por
+canal; antes era la página separada "Resumen canales", hoy fusionada aquí).
+Clic en el Avance Neto de un vendedor o en Cumplimiento Global abre el
+detalle de las guías de despacho y boletas que componen el avance (export a
+Excel). El avance se mide por los montos NETOS de guías de despacho
+(públicas) y boletas/facturas o efectivo (particulares) de cotizaciones
+adjudicadas en el mes.
 
 ### Comisiones (/comisiones) — admin y jefe_ventas
 Pestaña Configuración: 4 tablas de tramos por canal (venta, margen,

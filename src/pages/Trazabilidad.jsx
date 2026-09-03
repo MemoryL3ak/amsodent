@@ -709,14 +709,15 @@ export default function Trazabilidad() {
     return r === "admin" || r === "administrador" || r === "jefe_ventas_especial";
   }, [rol]);
 
-  // Forzar cierre: exige adjuntar un archivo de respaldo (y motivo opcional)
-  // antes de cerrar. El archivo queda como documento tipo 'cierre_forzado'.
+  // Forzar cierre: exige adjuntar un archivo de respaldo Y el motivo del
+  // cierre. El archivo queda como documento tipo 'cierre_forzado' y el motivo
+  // en su campo `numero` (se muestra en Seguimiento de Pagos).
   const [forzandoCierre, setForzandoCierre] = useState(null); // lic del modal
   const [guardandoCierre, setGuardandoCierre] = useState(false);
 
   async function confirmarForzarCierre(file, motivo) {
     const lic = forzandoCierre;
-    if (!lic || !file) return;
+    if (!lic || !file || !(motivo || "").trim()) return;
     setGuardandoCierre(true);
     try {
       const ext = (file.name.split(".").pop() || "pdf").toLowerCase();
@@ -2482,10 +2483,11 @@ export default function Trazabilidad() {
   );
 }
 
-/* ── Modal: forzar cierre del ciclo (respaldo obligatorio) ──────────────── */
+/* ── Modal: forzar cierre del ciclo (respaldo y motivo obligatorios) ────── */
 // Antes de forzar el cierre se exige un archivo de respaldo (autorización o
 // justificación) que queda guardado como documento 'cierre_forzado' de la
-// cotización; el motivo es opcional.
+// cotización, y el MOTIVO del cierre (se muestra en el KPI "Forzado a
+// cierre" de Seguimiento de Pagos y sale en su export).
 function ModalForzarCierre({ lic, monto, guardando, onClose, onConfirm }) {
   const [file, setFile] = useState(null);
   const [motivo, setMotivo] = useState("");
@@ -2530,7 +2532,7 @@ function ModalForzarCierre({ lic, monto, guardando, onClose, onConfirm }) {
         </div>
 
         <div className="field" style={{ marginBottom: 14 }}>
-          <label className="field-label">Motivo (opcional)</label>
+          <label className="field-label">Motivo *</label>
           <input
             className="input"
             value={motivo}
@@ -2545,8 +2547,8 @@ function ModalForzarCierre({ lic, monto, guardando, onClose, onConfirm }) {
           <button
             className="btn btn-primary"
             onClick={() => onConfirm(file, motivo)}
-            disabled={guardando || !file}
-            title={!file ? "Adjunta el archivo de respaldo para continuar" : undefined}
+            disabled={guardando || !file || !motivo.trim()}
+            title={!file ? "Adjunta el archivo de respaldo para continuar" : !motivo.trim() ? "Indica el motivo del cierre forzado" : undefined}
             style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
           >
             <Check size={15} /> {guardando ? "Cerrando…" : "Forzar cierre"}

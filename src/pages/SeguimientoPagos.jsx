@@ -182,6 +182,8 @@ export default function SeguimientoPagos() {
   const [filtroHasta, setFiltroHasta] = useState("");
   const [filtroEmpresaDespacho, setFiltroEmpresaDespacho] = useState("");
   const [empresaDespachoMap, setEmpresaDespachoMap] = useState({}); // licitacion_id → empresa
+  // licitacion_id → documento cierre_forzado (su `numero` guarda el MOTIVO del cierre).
+  const [cierreForzadoMap, setCierreForzadoMap] = useState({});
 
   useEffect(() => {
     const onClickOutside = (e) => {
@@ -271,6 +273,7 @@ export default function SeguimientoPagos() {
         const ncList = {};
         const ncSum = {};
         const empresaMap = {};
+        const cierreMap = {};
         if (ids.length > 0) {
           const docs = await api.post("/licitaciones/documentos/filter", {
             // Orden de compra (monto a cobrar), factura (Entidad Pública),
@@ -278,7 +281,7 @@ export default function SeguimientoPagos() {
             // particular (transferencia/comprobante, webpay y efectivo).
             filter: {
               licitacion_ids: ids,
-              tipo: ["orden_compra", "factura", "factura_boleta", "comprobante_pago", "webpay", "efectivo", "nota_credito", "guia_despacho"],
+              tipo: ["orden_compra", "factura", "factura_boleta", "comprobante_pago", "webpay", "efectivo", "nota_credito", "guia_despacho", "cierre_forzado"],
             },
             fields: "*",
           });
@@ -311,6 +314,15 @@ export default function SeguimientoPagos() {
               ncSum[lid] = (ncSum[lid] || 0) + Number(d.monto || 0);
               return;
             }
+            if (d.tipo === "cierre_forzado") {
+              // Respaldo del cierre forzado: su `numero` guarda el MOTIVO. Si
+              // hay más de uno (cerrar → reabrir → cerrar), gana el más nuevo.
+              const prev = cierreMap[lid];
+              const fa = String(d.fecha_oc || d.created_at || "");
+              const fp = prev ? String(prev.fecha_oc || prev.created_at || "") : "";
+              if (!prev || fa > fp) cierreMap[lid] = d;
+              return;
+            }
             // Comprobantes de pago (transferencia/webpay/efectivo): acumulamos
             // el monto pagado por cotización. Se guardan NETOS (igual que la
             // factura) → se convierten a bruto ×1,19 para comparar contra el
@@ -327,6 +339,7 @@ export default function SeguimientoPagos() {
         }
         setFacturas(dedupFacturas(allFacturas));
         setEmpresaDespachoMap(empresaMap);
+        setCierreForzadoMap(cierreMap);
         setComprobantesMap(compMap);
         setComprobantesSumMap(compSum);
         setMontoOcMap(ocSum);
@@ -736,11 +749,19 @@ export default function SeguimientoPagos() {
       if (lic?.ciclo_cerrado) {
         forzadoCount++;
         forzadoMonto += Number(lic.monto_forzado || 0);
-        det.forzado.push({ f: null, lic, monto: Number(lic.monto_forzado || 0), estadoLabel: "Ciclo cerrado" });
+        const docCierre = cierreForzadoMap[lid] || null;
+        det.forzado.push({
+          f: docCierre,
+          lic,
+          monto: Number(lic.monto_forzado || 0),
+          estadoLabel: "Ciclo cerrado",
+          // El motivo del cierre vive en el `numero` del documento cierre_forzado.
+          motivo: (docCierre?.numero || "").toString().trim() || "",
+        });
       }
     });
     return { total, pagadas, pendientes, vencidas, porVencer, montoPagadas, montoEnPlazo, montoPorVencer, montoVencidas, factoringCount, montoFactoring, ncCount, ncMonto, totalFacturadoCount, totalFacturadoMonto, forzadoCount, forzadoMonto, det };
-  }, [facturasFiltradasBase, licMap, montoOcMap, notasCreditoMap, notasCreditoSumMap, comprobantesSumMap]);
+  }, [facturasFiltradasBase, licMap, montoOcMap, notasCreditoMap, notasCreditoSumMap, comprobantesSumMap, cierreForzadoMap]);
 
   /* Detalle de un KPI (modal). key = clave en stats.det; null = cerrado. */
   const [kpiDetalle, setKpiDetalle] = useState(null);
@@ -752,8 +773,45 @@ export default function SeguimientoPagos() {
     vencidas: { titulo: "Vencidas", nota: "Sin pago y fuera del plazo de la condición de venta." },
     factoring: { titulo: "Factoring", nota: "Facturas pagadas vía factoring." },
     nc: { titulo: "Notas de crédito", nota: "Notas de crédito cargadas a las cotizaciones de la vista (montos brutos, descuentan del total a cobrar)." },
-    forzado: { titulo: "Forzado a cierre", nota: "Cotizaciones con ciclo cerrado a la fuerza desde Trazabilidad, con su monto forzado." },
+    forzado: { titulo: "Forzado a cierre", nota: "Cotizaciones con ciclo cerrado a la fuerza desde Trazabilidad, con su monto forzado y el motivo del cierre." },
   };
+
+  // Exporta el detalle del KPI abierto a Excel (pedido 2026-09-03 para el KPI
+  // "Forzado a cierre"; sirve igual para el resto de los KPIs).
+  async function exportarKpiDetalle() {
+    if (!kpiDetalle || !stats.det[kpiDetalle]?.length) return;
+    try {
+      const XLSX = await import("xlsx");
+      const esForzado = kpiDetalle === "forzado";
+      const rows = stats.det[kpiDetalle].map((r) => ({
+        "Cotización": `#${r.lic?.id || ""}`,
+        "Código": r.lic?.id_licitacion || "",
+        "Cliente": r.lic?.nombre_entidad || "",
+        "RUT": r.lic?.rut_entidad || "",
+        ...(esForzado
+          ? { "Motivo": r.motivo || "" }
+          : { "N° Documento": r.f?.numero || "" }),
+        "Fecha": String(r.f?.fecha_factura || r.f?.fecha_oc || r.f?.created_at || "").slice(0, 10),
+        "Monto": Math.round(Number(r.monto) || 0),
+        "Estado": r.estadoLabel || "",
+      }));
+      rows.push({
+        "Cotización": "TOTAL", "Código": "", "Cliente": "", "RUT": "",
+        ...(esForzado ? { "Motivo": "" } : { "N° Documento": "" }),
+        "Fecha": "",
+        "Monto": Math.round(stats.det[kpiDetalle].reduce((s, r) => s + (Number(r.monto) || 0), 0)),
+        "Estado": "",
+      });
+      const wb = XLSX.utils.book_new();
+      const nombreHoja = (KPI_INFO[kpiDetalle]?.titulo || "Detalle").slice(0, 30);
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), nombreHoja);
+      const slug = esForzado ? "forzadas_a_cierre" : kpiDetalle;
+      XLSX.writeFile(wb, `${slug}_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    } catch (e) {
+      console.error("Error exportando detalle del KPI:", e);
+      setToast({ type: "error", message: "No se pudo exportar el detalle." });
+    }
+  }
 
   async function abrirDocumento(doc) {
     if (!doc?.bucket || !doc?.storage_path) return;
@@ -1744,7 +1802,17 @@ export default function SeguimientoPagos() {
                   {KPI_INFO[kpiDetalle]?.nota} Respeta los filtros aplicados en la pantalla.
                 </p>
               </div>
-              <button className="btn btn-secondary btn-sm" onClick={() => setKpiDetalle(null)}>Cerrar</button>
+              <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+                <button
+                  className="btn btn-secondary btn-sm"
+                  onClick={exportarKpiDetalle}
+                  disabled={stats.det[kpiDetalle].length === 0}
+                  title="Descargar este detalle en Excel"
+                >
+                  Exportar
+                </button>
+                <button className="btn btn-secondary btn-sm" onClick={() => setKpiDetalle(null)}>Cerrar</button>
+              </div>
             </div>
             <div style={{ fontSize: 13, fontWeight: 700, margin: "6px 0 10px" }}>
               Total: {fmtCLP(stats.det[kpiDetalle].reduce((s, r) => s + (Number(r.monto) || 0), 0))}
@@ -1755,7 +1823,7 @@ export default function SeguimientoPagos() {
                   <tr>
                     <th style={{ textAlign: "left" }}>Cotización</th>
                     <th style={{ textAlign: "left" }}>Cliente</th>
-                    <th style={{ textAlign: "left" }}>{kpiDetalle === "nc" ? "N° N.C." : kpiDetalle === "forzado" ? "—" : "N° Factura"}</th>
+                    <th style={{ textAlign: "left" }}>{kpiDetalle === "nc" ? "N° N.C." : kpiDetalle === "forzado" ? "Motivo" : "N° Factura"}</th>
                     <th style={{ textAlign: "left" }}>Fecha</th>
                     <th style={{ textAlign: "right" }}>Monto</th>
                     <th style={{ textAlign: "left" }}>Estado</th>
@@ -1776,11 +1844,15 @@ export default function SeguimientoPagos() {
                           )}
                         </td>
                         <td style={{ fontSize: 12.5 }}>{r.lic?.nombre_entidad || "—"}</td>
-                        <td style={{ fontSize: 12.5, whiteSpace: "nowrap" }}>{kpiDetalle === "forzado" ? "—" : (r.f?.numero || "—")}</td>
+                        {kpiDetalle === "forzado" ? (
+                          <td style={{ fontSize: 12.5, maxWidth: 260, whiteSpace: "normal", wordBreak: "break-word" }} title={r.motivo || undefined}>
+                            {r.motivo || <span style={{ color: "var(--text-muted)" }}>Sin motivo registrado</span>}
+                          </td>
+                        ) : (
+                          <td style={{ fontSize: 12.5, whiteSpace: "nowrap" }}>{r.f?.numero || "—"}</td>
+                        )}
                         <td style={{ fontSize: 12.5, whiteSpace: "nowrap" }}>
-                          {kpiDetalle === "forzado"
-                            ? "—"
-                            : fmtDateCL(String(r.f?.fecha_factura || r.f?.fecha_oc || r.f?.created_at || "").slice(0, 10) || null)}
+                          {fmtDateCL(String(r.f?.fecha_factura || r.f?.fecha_oc || r.f?.created_at || "").slice(0, 10) || null)}
                         </td>
                         <td style={{ textAlign: "right", whiteSpace: "nowrap", fontWeight: 600 }}>{fmtCLP(r.monto)}</td>
                         <td style={{ fontSize: 12, whiteSpace: "nowrap" }}>{r.estadoLabel}</td>

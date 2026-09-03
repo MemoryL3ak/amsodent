@@ -17,7 +17,8 @@ export const MODULOS: string[] = [
   'mi_correo',
   'chat',
   'metas',
-  'resumen_canales',
+  // 'resumen_canales' se fusionó dentro de 'metas' (2026-09); los perfiles
+  // antiguos que aún lo tengan siguen accediendo a /metas (frontend).
   'panel_indicadores',
   'resumen_comercial',
   'cotizaciones_vendedor',
@@ -59,11 +60,11 @@ export function esRolAdmin(rol?: string): boolean {
 
 // Acceso por rol según la matriz vigente (ver SidebarLayout/RequireRole).
 export const ROLE_DEFAULTS: Record<string, string[]> = {
-  jefe_ventas: [...BASE, 'trazabilidad', 'metas', 'resumen_canales', 'panel_indicadores', 'resumen_comercial', 'cotizaciones_vendedor'],
-  jefe_ventas_especial: [...BASE, 'trazabilidad', 'seguimiento_pagos', 'cobranza', 'factoring', 'metas', 'resumen_canales', 'panel_indicadores', 'resumen_comercial', 'cotizaciones_vendedor'],
+  jefe_ventas: [...BASE, 'trazabilidad', 'metas', 'panel_indicadores', 'resumen_comercial', 'cotizaciones_vendedor'],
+  jefe_ventas_especial: [...BASE, 'trazabilidad', 'seguimiento_pagos', 'cobranza', 'factoring', 'metas', 'panel_indicadores', 'resumen_comercial', 'cotizaciones_vendedor'],
   ventas: [...BASE, 'metas'],
   ventas_especial: [...BASE, 'metas', 'sorteo', 'monitoreo_stock'],
-  contabilidad: ['mi_correo', 'chat', 'seguimiento_pagos', 'cobranza', 'metas', 'resumen_canales'],
+  contabilidad: ['mi_correo', 'chat', 'seguimiento_pagos', 'cobranza', 'metas'],
 };
 
 // Permisos efectivos de un usuario: perfil asignado o, en su defecto, por rol.

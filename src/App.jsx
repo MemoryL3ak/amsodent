@@ -48,7 +48,6 @@ import PanelParticular from "./pages/PanelParticular";
 import Comisiones from "./pages/Comisiones";
 import PanelPublica from "./pages/PanelPublica";
 import Metas from "./pages/Metas";
-import MetasPorCanal from "./pages/MetasPorCanal";
 import Trazabilidad from "./pages/Trazabilidad";
 import SeguimientoPagos from "./pages/SeguimientoPagos";
 import Cobranza from "./pages/Cobranza";
@@ -287,7 +286,8 @@ export default function App() {
             }
           />
           <Route path="metas" element={<Metas />} />
-          <Route path="metas-canal" element={<MetasPorCanal />} />
+          {/* "Resumen canales" se fusionó dentro de Definición de metas. */}
+          <Route path="metas-canal" element={<Navigate to="/metas" replace />} />
           <Route path="comisiones" element={<Comisiones />} />
 
           {/* SORTEO (admin + ventas_especial) */}
