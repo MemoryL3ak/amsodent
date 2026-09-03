@@ -430,7 +430,9 @@ export default function Inventario() {
                 ? "…"
                 : p.fase === "catalogo"
                   ? ` — página ${fmtNum(p.hechas)} de ${fmtNum(p.total)}`
-                  : ` — ${fmtNum(p.hechas)} de ${fmtNum(p.total)} productos`;
+                  : p.fase === "aplicando"
+                    ? ` — ${fmtNum(p.hechas)} de ${fmtNum(p.total)} productos`
+                    : ` — ${fmtNum(p.hechas)} de ${fmtNum(p.total)}`;
               return (
                 <div style={{ marginTop: 8, maxWidth: 520 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8, fontSize: 12, color: "var(--text-muted)", marginBottom: 4 }}>
