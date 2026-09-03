@@ -980,7 +980,41 @@ export default function SeguimientoPagos() {
       "Saludos cordiales,",
       "Amsodent Medical SpA",
     ].join("\n");
-    setCorreoModal({ para: "", asunto, cuerpo });
+    setCorreoModal({
+      para: "",
+      asunto,
+      cuerpo,
+      // Contexto para dejar la gestión registrada en la Bitácora de actividades.
+      licId: lic.id,
+      licCodigo: lic.id_licitacion || `#${lic.id}`,
+      cliente: lic.nombre_entidad || lic.rut_entidad || "",
+      facturaNumero: f.numero || "S/N",
+      registrado: false,
+    });
+  }
+
+  // Registro en la Bitácora de actividades (pedido 2026-09-03): todo correo de
+  // cobro por vencimiento queda como actividad tipo "correo" realizada. Se
+  // registra al copiar o abrir el borrador (una sola vez por modal).
+  async function registrarCorreoCobroBitacora() {
+    const c = correoModal;
+    if (!c || c.registrado || !c.licId) return;
+    setCorreoModal((prev) => (prev ? { ...prev, registrado: true } : prev));
+    try {
+      await api.post("/actividades", {
+        titulo: `Correo de cobro · Factura ${c.facturaNumero} · ${c.licCodigo}`,
+        tipo: "correo",
+        motivo: "Gestión Administrativa",
+        cliente_nombre: c.cliente,
+        licitacion_id: c.licId,
+        fecha: new Date().toISOString().slice(0, 10),
+        todo_el_dia: true,
+        estado: "realizada",
+        comentario: `Correo de cobro por vencimiento generado desde Seguimiento de Pagos${c.para ? ` para ${c.para}` : ""}. Asunto: ${c.asunto}`,
+      });
+    } catch {
+      // best effort: el registro en bitácora nunca bloquea el flujo de cobro
+    }
   }
 
   // ── Voucher (comprobante de transferencia) ───────────────────────────────
@@ -1917,7 +1951,8 @@ export default function SeguimientoPagos() {
                 onClick={async () => {
                   try {
                     await navigator.clipboard.writeText(`Asunto: ${correoModal.asunto}\n\n${correoModal.cuerpo}`);
-                    setToast({ type: "success", message: "Correo copiado al portapapeles." });
+                    setToast({ type: "success", message: "Correo copiado al portapapeles y registrado en la bitácora." });
+                    registrarCorreoCobroBitacora();
                   } catch {
                     setToast({ type: "error", message: "No se pudo copiar. Selecciona el texto y cópialo a mano." });
                   }
@@ -1929,8 +1964,9 @@ export default function SeguimientoPagos() {
               <a
                 className="btn btn-primary"
                 href={`mailto:${encodeURIComponent(correoModal.para || "")}?subject=${encodeURIComponent(correoModal.asunto)}&body=${encodeURIComponent(correoModal.cuerpo)}`}
+                onClick={() => registrarCorreoCobroBitacora()}
                 style={{ display: "inline-flex", alignItems: "center", gap: 6, textDecoration: "none" }}
-                title="Abre el borrador en tu aplicación de correo; el envío lo decides allá"
+                title="Abre el borrador en tu aplicación de correo (queda registrado en la Bitácora de actividades); el envío lo decides allá"
               >
                 <ExternalLink size={14} /> Abrir en mi correo
               </a>

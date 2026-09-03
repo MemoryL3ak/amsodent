@@ -8,6 +8,7 @@ import {
   AlertTriangle,
   Upload,
   PackageSearch,
+  Trophy,
   Inbox,
 } from "lucide-react";
 import { Link } from "react-router-dom";
@@ -348,6 +349,15 @@ function getNotifVisuales(notif) {
       color: "#0e7490",
       bg: "#cffafe",
       etiqueta: "Portal cliente",
+    };
+  }
+  // Adjudicación ganada en Mercado Público (detectada por la corrida nocturna).
+  if (tipo === "mp_adjudicada") {
+    return {
+      icono: Trophy,
+      color: "#15803d",
+      bg: "#dcfce7",
+      etiqueta: "Adjudicada MP",
     };
   }
   // Cotización con productos sin peso: requiere revisión de un admin.
