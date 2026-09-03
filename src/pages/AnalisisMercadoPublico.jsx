@@ -494,6 +494,112 @@ export default function AnalisisMercadoPublico() {
     return [...mapa.values()].sort((a, b) => a.key.localeCompare(b.key)).slice(-8);
   }, [enRango]);
 
+  /* ── Análisis de productos (pedido 2026-09-03) ──────────────────────────
+     Agrega los ítems de todas las fichas del período (detalle.comparacion_items)
+     para ver, POR PRODUCTO, en cuántos procesos aparece, cuántos ganamos o
+     perdimos, y a qué precios se está adjudicando en Mercado Público.
+     · El resultado por ítem manda cuando existe (licitaciones adjudican por
+       línea: ganado_por_nosotros); si no, hereda la clase del proceso.
+     · Los precios son PROMEDIOS unitarios; el "monto adjudicado" es
+       precio ganador × cantidad (lo que efectivamente movió el producto). */
+  const analisisProductos = useMemo(() => {
+    const mapa = new Map();
+    for (const f of enRango) {
+      const items = f?.detalle?.comparacion_items || [];
+      for (const it of items) {
+        const nombre = String(it?.nombre || "").trim();
+        const codigo = String(it?.codigo_producto || "").trim();
+        const key = (codigo || nombre).toLowerCase();
+        if (!key) continue;
+        const e = mapa.get(key) || {
+          nombre: nombre || codigo,
+          codigo,
+          procesos: new Set(),
+          ganados: 0,
+          perdidos: 0,
+          precioNuestroSum: 0, precioNuestroN: 0,
+          precioGanadorSum: 0, precioGanadorN: 0,
+          montoAdjudicado: 0,
+        };
+        // Nos quedamos con la descripción más completa que aparezca.
+        if (nombre && nombre.length > String(e.nombre || "").length) e.nombre = nombre;
+        e.procesos.add(f.codigo_mp || f.licitacion_id);
+
+        let resultado = null;
+        if (typeof it.ganado_por_nosotros === "boolean") resultado = it.ganado_por_nosotros ? "ganado" : "perdido";
+        else if (f.clase === "ganada") resultado = "ganado";
+        else if (f.clase === "perdida") resultado = "perdido";
+        if (resultado === "ganado") e.ganados += 1;
+        else if (resultado === "perdido") e.perdidos += 1;
+
+        const pn = Number(it.nuestro_precio);
+        if (Number.isFinite(pn) && pn > 0) { e.precioNuestroSum += pn; e.precioNuestroN += 1; }
+        const pg = Number(it.precio_ganador);
+        if (Number.isFinite(pg) && pg > 0) {
+          e.precioGanadorSum += pg;
+          e.precioGanadorN += 1;
+          const cant = Number(it.cantidad_ganador ?? it.nuestra_cantidad ?? 1) || 1;
+          e.montoAdjudicado += pg * cant;
+        }
+        mapa.set(key, e);
+      }
+    }
+    return [...mapa.values()]
+      .map((e) => {
+        const precioNuestro = e.precioNuestroN ? e.precioNuestroSum / e.precioNuestroN : null;
+        const precioGanador = e.precioGanadorN ? e.precioGanadorSum / e.precioGanadorN : null;
+        return {
+          nombre: e.nombre,
+          codigo: e.codigo,
+          procesos: e.procesos.size,
+          ganados: e.ganados,
+          perdidos: e.perdidos,
+          precioNuestro,
+          precioGanador,
+          brecha: precioNuestro != null && precioGanador > 0
+            ? ((precioNuestro - precioGanador) / precioGanador) * 100
+            : null,
+          montoAdjudicado: Math.round(e.montoAdjudicado),
+        };
+      })
+      .sort((a, b) => b.procesos - a.procesos || b.montoAdjudicado - a.montoAdjudicado);
+  }, [enRango]);
+
+  const [busquedaProd, setBusquedaProd] = useState("");
+  const [prodVerTodos, setProdVerTodos] = useState(false);
+
+  const productosFiltrados = useMemo(() => {
+    const q = busquedaProd.trim().toLowerCase();
+    const base = q
+      ? analisisProductos.filter((p) =>
+          p.nombre.toLowerCase().includes(q) || String(p.codigo || "").toLowerCase().includes(q))
+      : analisisProductos;
+    return prodVerTodos ? base : base.slice(0, 15);
+  }, [analisisProductos, busquedaProd, prodVerTodos]);
+
+  async function exportarProductos() {
+    if (!analisisProductos.length) return;
+    try {
+      const XLSX = await import("xlsx");
+      const rows = analisisProductos.map((p) => ({
+        "Producto": p.nombre,
+        "Código ONU": p.codigo || "",
+        "Procesos": p.procesos,
+        "Ganados": p.ganados,
+        "Perdidos": p.perdidos,
+        "Nuestro precio prom.": p.precioNuestro != null ? Math.round(p.precioNuestro) : "",
+        "Precio ganador prom.": p.precioGanador != null ? Math.round(p.precioGanador) : "",
+        "Brecha %": p.brecha != null ? Number(p.brecha.toFixed(1)) : "",
+        "Monto adjudicado": p.montoAdjudicado,
+      }));
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), "Productos MP");
+      XLSX.writeFile(wb, `analisis_productos_mp_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    } catch (e) {
+      console.error("Error exportando análisis de productos:", e);
+    }
+  }
+
   /* La tabla parte de la MISMA base que los indicadores y solo agrega encima
      los filtros propios de la tabla. Antes repetía aquí la lógica de fechas, y
      ese duplicado es lo que permitía que ambas partes divergieran. */
@@ -847,6 +953,87 @@ export default function AnalisisMercadoPublico() {
 
       {/* ── Simulador de precio ── */}
       <SimuladorPrecio filas={enRango} />
+
+      {/* ── Análisis de productos (agregado desde los ítems de cada ficha) ── */}
+      <div style={{ marginBottom: 16 }}>
+        <Panel
+          titulo="Análisis de productos"
+          sub="Qué productos se mueven en Mercado Público, cuántos ganamos/perdemos y a qué precios (promedios del período)"
+          extra={
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <input
+                className="input"
+                placeholder="Buscar producto…"
+                value={busquedaProd}
+                onChange={(e) => setBusquedaProd(e.target.value)}
+                style={{ height: 30, fontSize: 12, width: 180 }}
+              />
+              <button
+                className="btn btn-ghost"
+                onClick={exportarProductos}
+                disabled={!analisisProductos.length}
+                style={{ fontSize: 11.5, padding: "3px 10px", display: "inline-flex", alignItems: "center", gap: 5 }}
+                title="Descargar el análisis completo de productos en Excel"
+              >
+                <Download size={12} /> Excel
+              </button>
+            </div>
+          }
+        >
+          {analisisProductos.length === 0 ? (
+            <Vacio texto="Aún no hay fichas con detalle de productos en el período." />
+          ) : (
+            <>
+              <div style={{ border: "1px solid var(--border)", borderRadius: 8, overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, background: "var(--surface)", minWidth: 780 }}>
+                  <thead>
+                    <tr style={{ background: "var(--bg)", color: "var(--text-muted)", textAlign: "left" }}>
+                      <th style={{ padding: "6px 10px" }}>Producto</th>
+                      <th style={{ padding: "6px 10px", textAlign: "right" }}>Procesos</th>
+                      <th style={{ padding: "6px 10px", textAlign: "right" }}>Ganados</th>
+                      <th style={{ padding: "6px 10px", textAlign: "right" }}>Perdidos</th>
+                      <th style={{ padding: "6px 10px", textAlign: "right" }}>Nuestro precio prom.</th>
+                      <th style={{ padding: "6px 10px", textAlign: "right" }}>Precio ganador prom.</th>
+                      <th style={{ padding: "6px 10px", textAlign: "right" }}>Brecha prom.</th>
+                      <th style={{ padding: "6px 10px", textAlign: "right" }}>Monto adjudicado</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {productosFiltrados.map((p, i) => (
+                      <tr key={`${p.codigo}-${p.nombre}-${i}`} style={{ borderTop: "1px solid var(--border)" }}>
+                        <td style={{ padding: "5px 10px", maxWidth: 320 }}>
+                          <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 600 }} title={p.nombre}>{p.nombre}</div>
+                          {p.codigo && <div style={{ fontSize: 10.5, color: "var(--text-muted)" }}>ONU {p.codigo}</div>}
+                        </td>
+                        <td style={{ padding: "5px 10px", textAlign: "right", fontWeight: 700 }}>{p.procesos}</td>
+                        <td style={{ padding: "5px 10px", textAlign: "right", color: "#15803d", fontWeight: 600 }}>{p.ganados || "—"}</td>
+                        <td style={{ padding: "5px 10px", textAlign: "right", color: "#b91c1c", fontWeight: 600 }}>{p.perdidos || "—"}</td>
+                        <td style={{ padding: "5px 10px", textAlign: "right" }}>{p.precioNuestro != null ? fmt$(Math.round(p.precioNuestro)) : "—"}</td>
+                        <td style={{ padding: "5px 10px", textAlign: "right" }}>{p.precioGanador != null ? fmt$(Math.round(p.precioGanador)) : "—"}</td>
+                        <td style={{ padding: "5px 10px", textAlign: "right", fontWeight: 700, color: p.brecha == null ? "var(--text-muted)" : p.brecha > 0 ? "#b91c1c" : "#15803d" }}>
+                          {p.brecha == null ? "—" : `${p.brecha > 0 ? "+" : ""}${p.brecha.toFixed(1)}%`}
+                        </td>
+                        <td style={{ padding: "5px 10px", textAlign: "right", fontWeight: 600 }}>{fmt$(p.montoAdjudicado)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {analisisProductos.length > 15 && !busquedaProd && (
+                <div style={{ marginTop: 8, textAlign: "center" }}>
+                  <button className="btn btn-ghost" style={{ fontSize: 12, padding: "4px 12px" }} onClick={() => setProdVerTodos((v) => !v)}>
+                    {prodVerTodos ? "Ver solo el top 15" : `Ver los ${analisisProductos.length} productos`}
+                  </button>
+                </div>
+              )}
+              <p style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 8, marginBottom: 0 }}>
+                Brecha positiva = nuestro precio promedio quedó sobre el del ganador. En licitaciones el resultado es por ítem
+                (se puede ganar una línea y perder otra); "monto adjudicado" = precio del ganador × cantidad, gane quien gane.
+              </p>
+            </>
+          )}
+        </Panel>
+      </div>
 
       {/* ── Diferencias con el Panel Indicadores ── */}
       <DiferenciasIndicadores filas={filas} syncDesde={syncDesde} syncHasta={syncHasta} />

@@ -1,5 +1,6 @@
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
+import { MailingsService } from '../mailings/mailings.service';
 
 /* ============================================================
    Integración con las APIs oficiales de Mercado Público para
@@ -132,7 +133,10 @@ async function fetchConTimeout(url: string, init: any = {}, ms = 35000): Promise
 export class MercadopublicoService {
   private readonly logger = new Logger(MercadopublicoService.name);
 
-  constructor(private supabase: SupabaseService) {}
+  constructor(
+    private supabase: SupabaseService,
+    private mailings: MailingsService,
+  ) {}
 
   private get ticket(): string {
     // Se aceptan ambos nombres de variable (MERCADO_PUBLICO_TICKET fue el
@@ -232,7 +236,7 @@ export class MercadopublicoService {
       const PAGINA = 1000;
       let query = client
         .from('licitaciones')
-        .select('id, id_licitacion, nombre, total_con_iva, total_sin_iva, created_at')
+        .select('id, id_licitacion, nombre, nombre_entidad, creado_por, total_con_iva, total_sin_iva, created_at')
         .gte('created_at', desde)
         .order('created_at', { ascending: false })
         .range(pagina * PAGINA, (pagina + 1) * PAGINA - 1);
@@ -254,7 +258,7 @@ export class MercadopublicoService {
     // re-preguntando lo mismo en tandas seguidas de la misma sincronización).
     const { data: previos, error: errPrev } = await client
       .from('mp_resultados')
-      .select('licitacion_id, estado_mp, consultado_at')
+      .select('licitacion_id, estado_mp, ganamos, consultado_at')
       .range(0, 49999);
     if (errPrev) {
       throw new BadRequestException(
@@ -393,6 +397,13 @@ export class MercadopublicoService {
           if (errUp) throw new Error(errUp.message);
           actualizadas += 1;
           if (fila.estado_mp && ESTADOS_FINALES.has(fila.estado_mp)) finalizadas += 1;
+          // Transición a GANADA: si el proceso pasó a adjudicado a nuestro
+          // favor (y antes no lo estaba), se avisa al vendedor y a los jefes
+          // de ventas. Nunca corta la sincronización (maneja sus errores).
+          const previo: any = previoPorId.get(lic.id);
+          if (fila.ganamos === true && previo?.ganamos !== true) {
+            await this.notificarAdjudicacion(lic, fila);
+          }
         } catch (e: any) {
           const msg = String(e?.message || e);
           errores.push(`${codigo}: ${msg.slice(0, 140)}`);
@@ -426,6 +437,97 @@ export class MercadopublicoService {
       cuota_agotada: cuotaAgotada,
       errores,
     };
+  }
+
+  /* ── Aviso de adjudicación ganada (2026-09-03) ──
+     Cuando la corrida (nocturna o manual) detecta que un proceso pasó a
+     "ganado" (ganamos=true y antes no), avisa al VENDEDOR de la cotización y
+     a los JEFES DE VENTAS: notificación en la campana + correo SMTP. Dedupe
+     permanente por (usuario, licitación) sobre la tabla notificaciones, así
+     un vaivén de estados de la API no repite el aviso. */
+  private async notificarAdjudicacion(lic: any, fila: any) {
+    try {
+      const client = this.supabase.getClient();
+      const vendedor = String(lic?.creado_por || '').trim().toLowerCase();
+      const { data: jefes } = await client
+        .from('profiles')
+        .select('email')
+        .in('rol', ['jefe_ventas', 'jefe_ventas_especial']);
+      const emails = Array.from(new Set(
+        [vendedor, ...(jefes || []).map((j: any) => String(j?.email || '').trim().toLowerCase())].filter(Boolean),
+      ));
+      if (!emails.length) return;
+
+      // Dedupe permanente (leídas incluidas): un aviso por usuario y cotización.
+      const { data: previas } = await client
+        .from('notificaciones')
+        .select('user_email, metadata')
+        .eq('tipo', 'mp_adjudicada')
+        .in('user_email', emails);
+      const yaAvisados = new Set(
+        (previas || [])
+          .filter((n: any) => Number(n?.metadata?.licitacion_id) === Number(lic.id))
+          .map((n: any) => String(n?.user_email || '').trim().toLowerCase()),
+      );
+      const destinatarios = emails.filter((e) => !yaAvisados.has(e));
+      if (!destinatarios.length) return;
+
+      const codigo = fila?.codigo_mp || codigoMpDe(lic.id_licitacion) || String(lic.id_licitacion || '');
+      const organismo = String(fila?.organismo || lic?.nombre_entidad || '').trim();
+      const monto = num(fila?.monto_ganador) ?? num(fila?.monto_nuestro) ?? 0;
+      const montoTxt = monto > 0 ? ` por $${Math.round(monto).toLocaleString('es-CL')} neto` : '';
+      const idCot = lic.id_licitacion || `#${lic.id}`;
+      const mensaje =
+        `🏆 ¡Ganamos en Mercado Público! La cotización ${idCot}` +
+        `${organismo ? ` (${organismo})` : ''} fue adjudicada a Amsodent${montoTxt}. ` +
+        `Continúa el ciclo: OC → guía de despacho → factura.`;
+
+      const filasNotif = destinatarios.map((email) => ({
+        user_email: email,
+        tipo: 'mp_adjudicada',
+        mensaje,
+        link: `/detalle/${lic.id}`,
+        metadata: {
+          licitacion_id: lic.id,
+          id_licitacion: lic.id_licitacion || null,
+          codigo_mp: codigo,
+          estado_mp: fila?.estado_mp || null,
+          monto_ganador: monto > 0 ? monto : null,
+          vendedor: vendedor || null,
+        },
+      }));
+      const { error: errNotif } = await client.from('notificaciones').insert(filasNotif);
+      if (errNotif) throw new Error(errNotif.message);
+
+      // Correo de respaldo: la corrida es nocturna, así el aviso está en la
+      // bandeja a primera hora. Un fallo de SMTP no anula la notificación.
+      const appUrl = (process.env.PUBLIC_APP_URL || 'https://amsodent.vercel.app').replace(/\/+$/, '');
+      const urlDetalle = `${appUrl}/detalle/${lic.id}`;
+      const html =
+        `<div style="font-family:Arial,Helvetica,sans-serif;max-width:560px;margin:0 auto">` +
+        `<h2 style="color:#0f766e;margin-bottom:4px">🏆 ¡Adjudicación ganada en Mercado Público!</h2>` +
+        `<p>La cotización <strong>${idCot}</strong>${organismo ? ` de <strong>${organismo}</strong>` : ''} ` +
+        `fue adjudicada a Amsodent${montoTxt}.</p>` +
+        `<p>Proceso Mercado Público: <strong>${codigo}</strong>${fila?.estado_glosa ? ` · Estado: ${fila.estado_glosa}` : ''}.</p>` +
+        `<p>Próximos pasos: cargar la orden de compra en la cotización y continuar el ciclo (guía de despacho → factura).</p>` +
+        `<p><a href="${urlDetalle}" style="background:#0f766e;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;display:inline-block">Abrir la cotización</a></p>` +
+        `<p style="color:#94a3b8;font-size:12px">Aviso automático de la sincronización con Mercado Público.</p>` +
+        `</div>`;
+      for (const para of destinatarios) {
+        try {
+          await this.mailings.enviarUno({
+            para,
+            asunto: `🏆 Adjudicada en Mercado Público: ${idCot}${organismo ? ` · ${organismo}` : ''}`,
+            cuerpoHtml: html,
+          });
+        } catch (eMail: any) {
+          this.logger.warn(`Correo de adjudicación MP a ${para} falló: ${eMail?.message || eMail}`);
+        }
+      }
+      this.logger.log(`Adjudicación MP ${codigo} notificada a: ${destinatarios.join(', ')}`);
+    } catch (e: any) {
+      this.logger.warn(`No se pudo notificar la adjudicación MP de #${lic?.id}: ${e?.message || e}`);
+    }
   }
 
   /* ── Compra Ágil (API v2) ── */

@@ -1269,6 +1269,19 @@ function ModalCorreo({ doc, lic, guia, numeroOC, onCerrar, onEnviado, onError, r
         detalle: null,
         correo: { para: paraNorm, cc: ccArr, asunto: asunto.trim(), adjuntos },
       });
+      // Bitácora de actividades (pedido 2026-09-03): el correo de cobro por
+      // vencimiento queda registrado como actividad realizada. Best effort.
+      api.post("/actividades", {
+        titulo: `Correo de cobranza · Factura ${doc.numero || "S/N"} · ${lic.id_licitacion || `#${lic.id}`}`,
+        tipo: "correo",
+        motivo: "Gestión Administrativa",
+        cliente_nombre: lic.nombre_entidad || lic.rut_entidad || "",
+        licitacion_id: lic.id,
+        fecha: new Date().toISOString().slice(0, 10),
+        todo_el_dia: true,
+        estado: "realizada",
+        comentario: `Correo de cobranza enviado a ${paraNorm}${ccArr.length ? ` (cc: ${ccArr.join(", ")})` : ""}. Asunto: ${asunto.trim()}`,
+      }).catch(() => {});
       onEnviado("Correo de cobranza enviado.");
     } catch (e) {
       const msg = e?.response?.data?.message || e?.message || "No se pudo enviar el correo.";
