@@ -273,6 +273,7 @@ export const GRUPOS_MANUAL = [
           "Stock mínimo editable en la propia tabla (clic en el número; 0 = sin umbral).",
           "Carga masiva por planilla (sku, stock, stock_minimo): cada diferencia queda como ajuste auditado.",
           "Pestaña Movimientos: el libro completo con filtros; export a Excel.",
+          "Integración Bsale: el stock disponible de Bsale (donde se factura) se sincroniza automáticamente (y con botón «Sincronizar ahora»); cada cambio queda como ajuste «Sincronización Bsale» en el libro, y las diferencias de catálogo (SKUs de Bsale sin producto interno y viceversa) se listan y exportan.",
         ],
         figura: {
           tipo: "tabla",

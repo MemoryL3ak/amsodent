@@ -158,6 +158,12 @@ valorización (stock × costo), bajo mínimo, sin stock. El mínimo se edita en 
 tabla misma; el ajuste pide el conteo físico y el sistema calcula el delta.
 Carga masiva por planilla (sku, stock, stock_minimo) — cada diferencia queda
 como ajuste en el libro. La salida nunca deja stock negativo.
+Integración BSALE (donde Amsodent factura): el stock disponible de Bsale se
+sincroniza al sistema automáticamente (y con el botón "Sincronizar ahora" de
+la tarjeta Bsale); cada cambio queda como ajuste "Sincronización Bsale" en el
+libro, y las diferencias de catálogo (SKUs en Bsale sin producto interno y
+productos internos sin SKU en Bsale) se listan y exportan a Excel. La
+sincronización NO crea ni borra productos.
 
 ### Campañas (/campanas)
 Precios de campaña por SKU con vigencia (inicio/fin): sobrescriben la lista de
