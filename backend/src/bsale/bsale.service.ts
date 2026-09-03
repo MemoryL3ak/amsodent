@@ -101,14 +101,18 @@ export class BsaleService {
   /* GET a la API de Bsale con el token. Errores con cuerpo legible.
      Reintenta 429 (rate limit) y 5xx con espera creciente, porque la corrida
      hace miles de llamadas y un tropiezo puntual no debe botarla entera. */
-  private async apiGet(path: string, reintentos = 2): Promise<any> {
+  private async apiGet(path: string, reintentos = 4): Promise<any> {
     for (let intento = 0; ; intento++) {
       const res = await fetchConTimeout(`${this.base}/v1${path}`, {
         headers: { access_token: this.token, Accept: 'application/json' },
       });
       if (res.ok) return res.json();
       if ((res.status === 429 || res.status >= 500) && intento < reintentos) {
-        await new Promise((r) => setTimeout(r, 1500 * (intento + 1)));
+        // 429 = rate limit (visto en la primera corrida real): respetar
+        // Retry-After si viene, si no backoff exponencial 2s/4s/8s/16s.
+        const retryAfterS = Number(res.headers.get('retry-after')) || 0;
+        const espera = Math.max(retryAfterS * 1000, 2000 * 2 ** intento);
+        await new Promise((r) => setTimeout(r, Math.min(espera, 60000)));
         continue;
       }
       const cuerpo = (await res.text().catch(() => '')).slice(0, 300);
@@ -223,25 +227,49 @@ export class BsaleService {
       // 4. Stock disponible por SKU (sumando sucursales, y variantes que
       //    comparten code). Prefijado en 0 para todo SKU matcheado: existir
       //    en Bsale sin stock también es match (stock real = 0).
+      //    DOS estrategias, según lo que salga más barato en llamadas:
+      //    - Cuenta chica (pocas sucursales, ej. Amsodent: ~4.600 filas =
+      //      ~93 páginas): paginar /stocks.json completo. Ir por variante acá
+      //      serían ~4.700 llamadas y REVIENTA el rate limit de Bsale (429,
+      //      visto en la primera corrida real).
+      //    - Cuenta gigante (el paginado completo se va a horas por el offset
+      //      profundo): consultar solo las variantes matcheadas.
       const stockPorSku = new Map<string, number>();
       for (const { sku } of variantesMatcheadas) if (!stockPorSku.has(sku)) stockPorSku.set(sku, 0);
-      this.progreso = { fase: 'stocks', hechas: 0, total: variantesMatcheadas.length, actualizados: 0 };
-      const CONC_STOCK = 8; // llamadas chicas y rápidas: se tolera más paralelo que en el paginado
-      for (let i = 0; i < variantesMatcheadas.length; i += CONC_STOCK) {
-        const tanda = variantesMatcheadas.slice(i, i + CONC_STOCK);
-        await Promise.all(tanda.map(async ({ vid, sku }) => {
-          const r = await this.apiGet(`/stocks.json?variantid=${vid}&limit=${LIMITE_PAGINA}`);
-          for (const s of r?.items || []) {
-            const disp = Number(s?.quantityAvailable);
-            if (Number.isFinite(disp)) stockPorSku.set(sku, (stockPorSku.get(sku) || 0) + disp);
-          }
-        }));
-        this.progreso = {
-          fase: 'stocks',
-          hechas: Math.min(i + CONC_STOCK, variantesMatcheadas.length),
-          total: variantesMatcheadas.length,
-          actualizados: 0,
-        };
+      const primeraStocks = await this.apiGet(`/stocks.json?limit=${LIMITE_PAGINA}&offset=0`);
+      const paginasStock = Math.max(1, Math.ceil(Number(primeraStocks?.count || 0) / LIMITE_PAGINA));
+
+      if (paginasStock <= Math.max(50, variantesMatcheadas.length / 2)) {
+        this.progreso = { fase: 'stocks', hechas: 0, total: paginasStock, actualizados: 0 };
+        const filas = await this.paginado('/stocks.json', '', (h, t) => {
+          this.progreso = { fase: 'stocks', hechas: h, total: t, actualizados: 0 };
+        });
+        for (const s of filas) {
+          const vid = Number(s?.variant?.id);
+          const sku = vid ? skuPorVariante.get(vid) : undefined;
+          if (!sku || !stockPorSku.has(sku)) continue;
+          const disp = Number(s?.quantityAvailable);
+          if (Number.isFinite(disp)) stockPorSku.set(sku, (stockPorSku.get(sku) || 0) + disp);
+        }
+      } else {
+        this.progreso = { fase: 'stocks', hechas: 0, total: variantesMatcheadas.length, actualizados: 0 };
+        const CONC_STOCK = 4; // suave con el rate limit
+        for (let i = 0; i < variantesMatcheadas.length; i += CONC_STOCK) {
+          const tanda = variantesMatcheadas.slice(i, i + CONC_STOCK);
+          await Promise.all(tanda.map(async ({ vid, sku }) => {
+            const r = await this.apiGet(`/stocks.json?variantid=${vid}&limit=${LIMITE_PAGINA}`);
+            for (const s of r?.items || []) {
+              const disp = Number(s?.quantityAvailable);
+              if (Number.isFinite(disp)) stockPorSku.set(sku, (stockPorSku.get(sku) || 0) + disp);
+            }
+          }));
+          this.progreso = {
+            fase: 'stocks',
+            hechas: Math.min(i + CONC_STOCK, variantesMatcheadas.length),
+            total: variantesMatcheadas.length,
+            actualizados: 0,
+          };
+        }
       }
 
       // 5. Cruce por SKU y ajustes de stock (solo donde difiere).
