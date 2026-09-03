@@ -98,16 +98,22 @@ export class BsaleService {
     return data || { actualizado_at: null, detalle: null };
   }
 
-  /* GET a la API de Bsale con el token. Errores con cuerpo legible. */
-  private async apiGet(path: string): Promise<any> {
-    const res = await fetchConTimeout(`${this.base}/v1${path}`, {
-      headers: { access_token: this.token, Accept: 'application/json' },
-    });
-    if (!res.ok) {
+  /* GET a la API de Bsale con el token. Errores con cuerpo legible.
+     Reintenta 429 (rate limit) y 5xx con espera creciente, porque la corrida
+     hace miles de llamadas y un tropiezo puntual no debe botarla entera. */
+  private async apiGet(path: string, reintentos = 2): Promise<any> {
+    for (let intento = 0; ; intento++) {
+      const res = await fetchConTimeout(`${this.base}/v1${path}`, {
+        headers: { access_token: this.token, Accept: 'application/json' },
+      });
+      if (res.ok) return res.json();
+      if ((res.status === 429 || res.status >= 500) && intento < reintentos) {
+        await new Promise((r) => setTimeout(r, 1500 * (intento + 1)));
+        continue;
+      }
       const cuerpo = (await res.text().catch(() => '')).slice(0, 300);
       throw new Error(`Bsale ${res.status} en ${path}: ${cuerpo || res.statusText}`);
     }
-    return res.json();
   }
 
   /* Baja un recurso paginado completo (items de todas las páginas).
@@ -184,27 +190,7 @@ export class BsaleService {
         if (!descPorSku.has(sku)) descPorSku.set(sku, String(v?.description || '').trim());
       }
 
-      // 2. Stocks: disponible por variante (sumando sucursales).
-      const stocks = await this.paginado('/stocks.json', '', (h, t) => {
-        this.progreso = { fase: 'stocks', hechas: h, total: t, actualizados: 0 };
-      });
-      const disponiblePorVariante = new Map<number, number>();
-      for (const s of stocks) {
-        const vid = Number(s?.variant?.id);
-        if (!vid) continue;
-        const disp = Number(s?.quantityAvailable);
-        if (!Number.isFinite(disp)) continue;
-        disponiblePorVariante.set(vid, (disponiblePorVariante.get(vid) || 0) + disp);
-      }
-
-      // 3. Stock disponible por SKU (varias variantes con el mismo code se suman).
-      const stockPorSku = new Map<string, number>();
-      for (const [vid, sku] of skuPorVariante) {
-        const disp = disponiblePorVariante.get(vid) || 0;
-        stockPorSku.set(sku, (stockPorSku.get(sku) || 0) + disp);
-      }
-
-      // 4. Catálogo interno.
+      // 2. Catálogo interno primero, para consultarle a Bsale solo lo que existe acá.
       const { data: productos, error: errProd } = await client
         .from('productos')
         .select('id, sku, nombre, stock')
@@ -215,6 +201,47 @@ export class BsaleService {
             ? 'Falta aplicar la migración 20260827_inventario.sql (columna productos.stock).'
             : errProd.message,
         );
+      }
+
+      // 3. Variantes que interesan: bajar /stocks.json completo (cientos de
+      //    miles de filas) toma HORAS porque la paginación por offset de
+      //    Bsale se degrada con la profundidad (~7 s por página al fondo).
+      //    En cambio, el stock de una variante puntual responde en <1 s, así
+      //    que se consulta SOLO las variantes cuyo `code` calza con un SKU
+      //    interno.
+      const skusBsale = new Set<string>(skuPorVariante.values());
+      const skusInternosSet = new Set<string>();
+      for (const p of productos || []) {
+        const sku = normSku(p?.sku);
+        if (sku) skusInternosSet.add(sku);
+      }
+      const variantesMatcheadas: Array<{ vid: number; sku: string }> = [];
+      for (const [vid, sku] of skuPorVariante) {
+        if (skusInternosSet.has(sku)) variantesMatcheadas.push({ vid, sku });
+      }
+
+      // 4. Stock disponible por SKU (sumando sucursales, y variantes que
+      //    comparten code). Prefijado en 0 para todo SKU matcheado: existir
+      //    en Bsale sin stock también es match (stock real = 0).
+      const stockPorSku = new Map<string, number>();
+      for (const { sku } of variantesMatcheadas) if (!stockPorSku.has(sku)) stockPorSku.set(sku, 0);
+      this.progreso = { fase: 'stocks', hechas: 0, total: variantesMatcheadas.length, actualizados: 0 };
+      const CONC_STOCK = 8; // llamadas chicas y rápidas: se tolera más paralelo que en el paginado
+      for (let i = 0; i < variantesMatcheadas.length; i += CONC_STOCK) {
+        const tanda = variantesMatcheadas.slice(i, i + CONC_STOCK);
+        await Promise.all(tanda.map(async ({ vid, sku }) => {
+          const r = await this.apiGet(`/stocks.json?variantid=${vid}&limit=${LIMITE_PAGINA}`);
+          for (const s of r?.items || []) {
+            const disp = Number(s?.quantityAvailable);
+            if (Number.isFinite(disp)) stockPorSku.set(sku, (stockPorSku.get(sku) || 0) + disp);
+          }
+        }));
+        this.progreso = {
+          fase: 'stocks',
+          hechas: Math.min(i + CONC_STOCK, variantesMatcheadas.length),
+          total: variantesMatcheadas.length,
+          actualizados: 0,
+        };
       }
 
       // 5. Cruce por SKU y ajustes de stock (solo donde difiere).
@@ -240,14 +267,14 @@ export class BsaleService {
         if (nuevo !== actual) cambios.push({ id: Number(p.id), sku, actual, nuevo });
       }
       const skusBsaleSinProducto: Array<{ sku: string; descripcion: string }> = [];
-      for (const [sku] of stockPorSku) {
+      for (const sku of skusBsale) {
         if (skusInternos.has(sku)) continue;
         if (skusBsaleSinProducto.length < MAX_DETALLE) {
           skusBsaleSinProducto.push({ sku, descripcion: descPorSku.get(sku) || '' });
         }
       }
       let totalSkusBsaleSinProducto = 0;
-      for (const [sku] of stockPorSku) if (!skusInternos.has(sku)) totalSkusBsaleSinProducto += 1;
+      for (const sku of skusBsale) if (!skusInternos.has(sku)) totalSkusBsaleSinProducto += 1;
       let totalProductosSinBsale = 0;
       for (const p of productos || []) {
         const sku = normSku(p?.sku);
@@ -296,7 +323,7 @@ export class BsaleService {
         duracion_s: Math.round((Date.now() - inicio) / 1000),
         variantes_bsale: variantes.length,
         variantes_con_sku: skuPorVariante.size,
-        skus_bsale: stockPorSku.size,
+        skus_bsale: skusBsale.size,
         productos_internos: (productos || []).length,
         matcheados,
         actualizados,
