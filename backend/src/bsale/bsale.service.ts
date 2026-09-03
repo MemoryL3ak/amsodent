@@ -50,6 +50,10 @@ async function fetchConTimeout(url: string, init: any = {}, ms = 30000): Promise
 export class BsaleService {
   private readonly logger = new Logger(BsaleService.name);
   private sincronizando = false;
+  // Avance de la corrida en curso, para la barra de progreso del módulo
+  // Inventario (la corrida completa toma varios minutos por el volumen de
+  // páginas de Bsale). null = no hay sincronización corriendo.
+  private progreso: { fase: 'catalogo' | 'stocks' | 'aplicando'; hechas: number; total: number; actualizados: number } | null = null;
 
   constructor(private supabase: SupabaseService) {}
 
@@ -71,6 +75,7 @@ export class BsaleService {
     return {
       token_configurado: !!this.token,
       sincronizando: this.sincronizando,
+      progreso: this.progreso,
       ultima: data || null,
     };
   }
@@ -107,19 +112,46 @@ export class BsaleService {
 
   /* Baja un recurso paginado completo (items de todas las páginas).
      La primera página entrega `count`; el resto se pide en tandas. */
-  private async paginado(recurso: string, extraQs = ''): Promise<any[]> {
+  private async paginado(
+    recurso: string,
+    extraQs = '',
+    onAvance?: (paginasHechas: number, paginasTotal: number) => void,
+  ): Promise<any[]> {
     const qs = (offset: number) => `${recurso}?limit=${LIMITE_PAGINA}&offset=${offset}${extraQs}`;
     const primera = await this.apiGet(qs(0));
     const items: any[] = [...(primera?.items || [])];
     const total = Number(primera?.count || items.length);
+    const paginasTotal = Math.max(1, Math.ceil(total / LIMITE_PAGINA));
+    let paginasHechas = 1;
+    onAvance?.(paginasHechas, paginasTotal);
     const offsets: number[] = [];
     for (let off = LIMITE_PAGINA; off < total; off += LIMITE_PAGINA) offsets.push(off);
     for (let i = 0; i < offsets.length; i += CONCURRENCIA) {
       const tanda = offsets.slice(i, i + CONCURRENCIA);
       const paginas = await Promise.all(tanda.map((off) => this.apiGet(qs(off))));
       for (const p of paginas) items.push(...(p?.items || []));
+      paginasHechas += tanda.length;
+      onAvance?.(paginasHechas, paginasTotal);
     }
     return items;
+  }
+
+  /* Arranque no bloqueante de la sincronización: valida, dispara en segundo
+     plano y responde al tiro. El avance se sigue por GET /bsale/estado
+     (campo `progreso`) — así el navegador no queda colgado de un request de
+     varios minutos (que un proxy puede cortar) y la corrida sobrevive aunque
+     el usuario cierre la pestaña. */
+  iniciar(opts?: { usuario?: string }) {
+    if (!this.token) {
+      throw new BadRequestException(
+        'Falta configurar BSALE_ACCESS_TOKEN en el backend. El token se genera en Bsale: Configuración → Integraciones → API.',
+      );
+    }
+    if (this.sincronizando) {
+      throw new BadRequestException('Ya hay una sincronización con Bsale en curso.');
+    }
+    void this.sincronizar(opts).catch(() => undefined); // el error ya queda en el log y en bsale_estado no se pisa nada
+    return { iniciado: true };
   }
 
   /* Sincronización de stock Bsale → productos.stock (+ libro de movimientos). */
@@ -133,12 +165,15 @@ export class BsaleService {
       throw new BadRequestException('Ya hay una sincronización con Bsale en curso.');
     }
     this.sincronizando = true;
+    this.progreso = { fase: 'catalogo', hechas: 0, total: 0, actualizados: 0 };
     const inicio = Date.now();
     try {
       const client = this.supabase.getClient();
 
       // 1. Variantes: el SKU interno vive en `code`.
-      const variantes = await this.paginado('/variants.json');
+      const variantes = await this.paginado('/variants.json', '', (h, t) => {
+        this.progreso = { fase: 'catalogo', hechas: h, total: t, actualizados: 0 };
+      });
       const skuPorVariante = new Map<number, string>();
       const descPorSku = new Map<string, string>();
       for (const v of variantes) {
@@ -150,7 +185,9 @@ export class BsaleService {
       }
 
       // 2. Stocks: disponible por variante (sumando sucursales).
-      const stocks = await this.paginado('/stocks.json');
+      const stocks = await this.paginado('/stocks.json', '', (h, t) => {
+        this.progreso = { fase: 'stocks', hechas: h, total: t, actualizados: 0 };
+      });
       const disponiblePorVariante = new Map<number, number>();
       for (const s of stocks) {
         const vid = Number(s?.variant?.id);
@@ -221,6 +258,7 @@ export class BsaleService {
       let actualizados = 0;
       const errores: string[] = [];
       const TANDA = 8;
+      this.progreso = { fase: 'aplicando', hechas: 0, total: cambios.length, actualizados: 0 };
       for (let i = 0; i < cambios.length; i += TANDA) {
         const tanda = cambios.slice(i, i + TANDA);
         await Promise.all(tanda.map(async (c) => {
@@ -245,6 +283,12 @@ export class BsaleService {
           if (errMov) errores.push(`${c.sku} (movimiento): ${errMov.message.slice(0, 120)}`);
           actualizados += 1;
         }));
+        this.progreso = {
+          fase: 'aplicando',
+          hechas: Math.min(i + TANDA, cambios.length),
+          total: cambios.length,
+          actualizados,
+        };
       }
 
       const resumen = {
@@ -287,6 +331,7 @@ export class BsaleService {
       throw new BadRequestException(`No se pudo sincronizar con Bsale: ${msg.slice(0, 300)}`);
     } finally {
       this.sincronizando = false;
+      this.progreso = null;
     }
   }
 }

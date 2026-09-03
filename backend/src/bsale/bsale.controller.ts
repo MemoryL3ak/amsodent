@@ -25,10 +25,11 @@ export class BsaleController {
     return this.bsale.diferencias();
   }
 
-  // Sincronización manual (además de la automática del cron).
+  // Sincronización manual (además de la automática del cron). Responde al
+  // tiro con { iniciado: true }; el avance se sigue por GET /bsale/estado.
   @Post('sincronizar')
   sincronizar(@Req() req: any) {
     const usuario = (req?.user?.email || '').toString().trim().toLowerCase() || undefined;
-    return this.bsale.sincronizar({ usuario });
+    return this.bsale.iniciar({ usuario });
   }
 }
