@@ -2,11 +2,8 @@ import { Module } from '@nestjs/common';
 import { MercadopublicoController } from './mercadopublico.controller';
 import { MercadopublicoService } from './mercadopublico.service';
 import { MercadopublicoCron } from './mercadopublico.cron';
-import { MailingsModule } from '../mailings/mailings.module';
 
 @Module({
-  // MailingsModule: correo SMTP del aviso de adjudicación ganada.
-  imports: [MailingsModule],
   controllers: [MercadopublicoController],
   providers: [MercadopublicoService, MercadopublicoCron],
   // El cron se exporta para que la exploración automática (LicitacionesModule)
