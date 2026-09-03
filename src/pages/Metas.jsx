@@ -2,6 +2,7 @@
 import { api } from "../lib/api";
 import useAuth from "../hooks/useAuth";
 import MonthCalendarPicker from "../components/MonthCalendarPicker";
+import ModalAvanceMeta from "../components/ModalAvanceMeta";
 
 const CANAL_LABELS = {
   vendedor_terreno: "Vendedor Terreno",
@@ -14,11 +15,46 @@ const CANAL_LABELS = {
   vendedor_freelance: "Vendedor Freelance",
 };
 
+// Canales asignables a un vendedor (fusionado desde la antigua página
+// "Resumen canales"): la asignación de canal ahora se edita aquí mismo.
+const CANALES_ASIGNACION = [
+  { value: "vendedor_terreno", label: "Vendedor Terreno" },
+  { value: "vendedor_tienda_terreno", label: "Vendedor Tienda/Terreno" },
+  { value: "vendedor_terreno_mercado_publico", label: "Vendedor Terreno/Mercado Publico" },
+  { value: "vendedor_mercado_publico", label: "Vendedor Mercado Publico" },
+  { value: "pagina_web", label: "Pagina Web" },
+  { value: "vendedor_tienda", label: "Vendedor Tienda" },
+  { value: "vendedor_freelance", label: "Vendedor Freelance" },
+];
+
+// Canales base sobre los que se consolida el "Resumen por Canal" (los mixtos
+// se reparten entre sus bases).
+const CANALES_RESUMEN = [
+  { value: "vendedor_terreno", label: "Vendedor Terreno" },
+  { value: "vendedor_mercado_publico", label: "Vendedor Mercado Publico" },
+  { value: "pagina_web", label: "Pagina Web" },
+  { value: "vendedor_tienda", label: "Vendedor Tienda" },
+  { value: "vendedor_freelance", label: "Vendedor Freelance" },
+];
+
 function normalizeCanal(value) {
   const v = (value || "").toString().trim();
   if (v === "vendedor_terreno_mercado") return "vendedor_terreno_mercado_publico";
   return v;
 }
+
+function splitBaseCanales(canal) {
+  const c = normalizeCanal(canal);
+  if (c === "vendedor_tienda_terreno") return ["vendedor_tienda", "vendedor_terreno"];
+  if (c === "vendedor_terreno_mercado_publico") return ["vendedor_terreno", "vendedor_mercado_publico"];
+  return [];
+}
+
+const TIPO_DOC_AVANCE_LABEL = {
+  guia_despacho: "Guía de despacho",
+  factura_boleta: "Factura / Boleta",
+  efectivo: "Efectivo",
+};
 
 function canalLabel(value) {
   return CANAL_LABELS[normalizeCanal(value)] || "";
@@ -212,8 +248,13 @@ export default function Metas() {
   const [metasCantidadMap, setMetasCantidadMap] = useState({});
   const [cantidadDraftMap, setCantidadDraftMap] = useState({});
   const [canalPorVendedorMap, setCanalPorVendedorMap] = useState({});
+  // Draft de asignación de canal (editable solo por admin; se guarda junto
+  // con las metas). Puede contener "" = quitar canal.
+  const [canalDraftMap, setCanalDraftMap] = useState({});
   const [metaPeriodo, setMetaPeriodo] = useState(inicioMesISO());
   const [filtroVendedor, setFiltroVendedor] = useState("");
+  // Modal con las guías/documentos que componen el avance: null | { email, titulo }
+  const [detalleAvance, setDetalleAvance] = useState(null);
 
   const rolNorm = (rol || "").toString().trim().toLowerCase();
   const esAdmin = rolNorm === "admin" || rolNorm === "administrador";
@@ -249,7 +290,7 @@ export default function Metas() {
       setLoading(true);
       setErrorMsg("");
       try {
-        const lics = await api.get("/licitaciones/with-fields?fields=id,creado_por,tipo_compra");
+        const lics = await api.get("/licitaciones/with-fields?fields=id,id_licitacion,nombre_entidad,creado_por,tipo_compra");
 
         let rows = lics || [];
         const emailUser = (user?.email || "").trim().toLowerCase();
@@ -265,14 +306,14 @@ export default function Metas() {
           try {
             docsOcRows = await api.post("/licitaciones/documentos/filter", {
               filter: { licitacion_ids: ids, tipo: ["orden_compra", "guia_despacho", "factura_boleta", "efectivo"] },
-              fields: "licitacion_id,tipo,monto,fecha_oc,created_at",
+              fields: "licitacion_id,tipo,numero,monto,fecha_oc,created_at",
             }) || [];
           } catch (errDocsOc) {
             if (isMissingFechaOcColumnError(errDocsOc)) {
               try {
                 const docsOcSinFecha = await api.post("/licitaciones/documentos/filter", {
                   filter: { licitacion_ids: ids, tipo: ["orden_compra", "guia_despacho", "factura_boleta", "efectivo"] },
-                  fields: "licitacion_id,tipo,monto,created_at",
+                  fields: "licitacion_id,tipo,numero,monto,created_at",
                 });
                 docsOcRows = (docsOcSinFecha || []).map((d) => ({ ...d, fecha_oc: null }));
               } catch (errDocsOcSinFecha) {
@@ -422,12 +463,14 @@ export default function Metas() {
           mapa[email] = normalizeCanal(row?.canal);
         });
         setCanalPorVendedorMap(mapa);
+        setCanalDraftMap({});
       } catch (error) {
         if (!mounted) return;
         if (!isMissingAsignacionCanalTableError(error)) {
           console.error("Error cargando asignaciones de canal:", error);
         }
         setCanalPorVendedorMap({});
+        setCanalDraftMap({});
       }
     }
 
@@ -436,6 +479,12 @@ export default function Metas() {
       mounted = false;
     };
   }, [cargando, puedeVerMetas, esVentas, user?.email, metaPeriodo]);
+
+  // Canal efectivo por vendedor: el draft (si el admin lo editó) pisa al guardado.
+  const canalEfectivoMap = useMemo(
+    () => ({ ...canalPorVendedorMap, ...canalDraftMap }),
+    [canalPorVendedorMap, canalDraftMap],
+  );
 
   const opcionesVendedores = useMemo(() => {
     const correos = new Set([
@@ -532,7 +581,7 @@ export default function Metas() {
         const avanceCantParticular = Number(cantidadParticular[email] || 0);
         const avanceCantMercado = Number(cantidadMercado[email] || 0);
         const avanceCantTotal = avanceCantParticular + avanceCantMercado;
-        const canal = normalizeCanal(canalPorVendedorMap[email] || "");
+        const canal = normalizeCanal(canalEfectivoMap[email] || "");
         const splitCfg = canalSplitConfig(canal);
 
         // Si el canal es mixto, calculamos métricas por cada sub-canal.
@@ -606,10 +655,62 @@ export default function Metas() {
     metasDraftMap,
     metasMap,
     filtroVendedor,
-    canalPorVendedorMap,
+    canalEfectivoMap,
     metasDetalleMap,
     metasSplitDraftMap,
   ]);
+
+  // Documentos que componen el avance del periodo (guías de despacho +
+  // facturas/boletas + efectivo, con fecha de adjudicación dentro del mes).
+  // Alimenta el modal de detalle del avance.
+  const docsAvanceMes = useMemo(() => {
+    const finPeriodo = finMesISO(metaPeriodo);
+    const licInfo = new Map();
+    licitaciones.forEach((l) => {
+      const id = Number(l?.id || 0);
+      if (!id) return;
+      licInfo.set(id, {
+        email: (l?.creado_por || "").trim().toLowerCase(),
+        codigo: l?.id_licitacion || "",
+        entidad: l?.nombre_entidad || "",
+      });
+    });
+
+    const primeraOcPorLic = new Map();
+    (ocs || []).forEach((doc) => {
+      const licId = Number(doc?.licitacion_id || 0);
+      if (!licId) return;
+      const tipo = (doc?.tipo || "").toString();
+      if (tipo !== "orden_compra" && tipo !== "factura_boleta" && tipo !== "efectivo") return;
+      const fechaDoc = toDateISO(doc?.fecha_oc) || toDateISO(doc?.created_at);
+      if (!fechaDoc) return;
+      const actual = primeraOcPorLic.get(licId);
+      if (!actual || fechaDoc < actual) primeraOcPorLic.set(licId, fechaDoc);
+    });
+
+    const rows = [];
+    (ocs || []).forEach((doc) => {
+      const licId = Number(doc?.licitacion_id || 0);
+      const info = licInfo.get(licId);
+      if (!info?.email) return;
+      const tipo = (doc?.tipo || "").toString();
+      if (tipo !== "guia_despacho" && tipo !== "factura_boleta" && tipo !== "efectivo") return;
+      const fechaAdj = primeraOcPorLic.get(licId);
+      if (!fechaAdj || fechaAdj < metaPeriodo || fechaAdj > finPeriodo) return;
+      rows.push({
+        email: info.email,
+        licId,
+        codigo: info.codigo,
+        entidad: info.entidad,
+        tipo,
+        tipoLabel: TIPO_DOC_AVANCE_LABEL[tipo] || tipo,
+        numero: (doc?.numero || "").toString(),
+        monto: Number(doc?.monto || 0),
+        fecha: toDateISO(doc?.fecha_oc) || toDateISO(doc?.created_at),
+      });
+    });
+    return rows.sort((a, b) => (b.fecha || "").localeCompare(a.fecha || ""));
+  }, [licitaciones, ocs, metaPeriodo]);
 
   const resumenMetas = useMemo(() => {
     const metaNetaTotal = avanceMetas.reduce((acc, x) => acc + Number(x.metaNeto || 0), 0);
@@ -654,6 +755,61 @@ export default function Metas() {
     return { meta, avance, falta, pctLlevamos, pctFalta, diasMes, diasTrans, metaDiaria, esperadoHoy, pctRitmo, faltaParaRitmo };
   }, [resumenMetas, metaPeriodo]);
 
+  // Consolidado por canal base (fusionado desde la antigua página "Resumen
+  // canales"): prioridad (a) desglose guardado en canal-partes, prorrateando
+  // el avance del vendedor según el peso de cada meta parcial; (b) canal base
+  // directo; (c) canal mixto sin desglose, repartido en partes iguales.
+  const consolidadoCanales = useMemo(() => {
+    const map = new Map(
+      CANALES_RESUMEN.map((c) => [c.value, { canal: c.value, metaNeto: 0, avanceNeto: 0, personas: 0 }]),
+    );
+
+    avanceMetas.forEach((r) => {
+      const detalle = metasDetalleMap[r.email] || {};
+      const detalleEntries = Object.entries(detalle)
+        .map(([canal, meta]) => [normalizeCanal(canal), Math.max(0, Number(meta || 0))])
+        .filter(([canal, meta]) => Boolean(canal) && meta > 0 && map.has(canal));
+
+      const totalDetalleMeta = detalleEntries.reduce((acc, [, meta]) => acc + meta, 0);
+      if (totalDetalleMeta > 0) {
+        detalleEntries.forEach(([canal, meta]) => {
+          const row = map.get(canal);
+          row.metaNeto += meta;
+          row.avanceNeto += Number(r.avanceNeto || 0) * (meta / totalDetalleMeta);
+          row.personas += 1;
+        });
+        return;
+      }
+
+      if (r.canal && map.has(r.canal)) {
+        const row = map.get(r.canal);
+        row.metaNeto += Number(r.metaNeto || 0);
+        row.avanceNeto += Number(r.avanceNeto || 0);
+        row.personas += 1;
+        return;
+      }
+
+      const splitBases = splitBaseCanales(r.canal);
+      if (splitBases.length > 0) {
+        const metaParte = Number(r.metaNeto || 0) / splitBases.length;
+        const avanceParte = Number(r.avanceNeto || 0) / splitBases.length;
+        splitBases.forEach((base) => {
+          if (!map.has(base)) return;
+          const row = map.get(base);
+          row.metaNeto += metaParte;
+          row.avanceNeto += avanceParte;
+          row.personas += 1;
+        });
+      }
+    });
+
+    return Array.from(map.values()).map((r) => ({
+      ...r,
+      brechaNeto: Math.max(0, r.metaNeto - r.avanceNeto),
+      pctCumplimiento: r.metaNeto > 0 ? (r.avanceNeto / r.metaNeto) * 100 : 0,
+    }));
+  }, [avanceMetas, metasDetalleMap]);
+
   async function guardarMetas() {
     if (!puedeEditarMetas || guardandoMetas) return;
     setGuardandoMetas(true);
@@ -679,6 +835,26 @@ export default function Metas() {
         await api.post("/metas/mensuales", { rows: upserts });
       }
 
+      // Asignación de canal (fusionada desde "Resumen canales"): solo si el
+      // admin tocó algún canal. Se reemplaza el periodo completo con el mapa
+      // efectivo (guardado + drafts), así los no editados se conservan.
+      if (Object.keys(canalDraftMap).length > 0) {
+        const canalRows = Object.entries(canalEfectivoMap)
+          .map(([email, canal]) => [String(email || "").trim().toLowerCase(), normalizeCanal(canal)])
+          .filter(([email, canal]) => email && canal && CANALES_ASIGNACION.some((c) => c.value === canal))
+          .map(([email, canal]) => ({ vendedor_email: email, periodo: metaPeriodo, canal }));
+        try {
+          await api.delete(`/metas/canal?periodo=${metaPeriodo}`);
+          if (canalRows.length > 0) {
+            await api.post("/metas/canal", { rows: canalRows });
+          }
+          setCanalPorVendedorMap(Object.fromEntries(canalRows.map((r) => [r.vendedor_email, r.canal])));
+          setCanalDraftMap({});
+        } catch (errCanal) {
+          if (!isMissingAsignacionCanalTableError(errCanal)) throw errCanal;
+        }
+      }
+
       // Cantidad de la celda: draft si fue editada, si no la guardada.
       const getCant = (email, canalBase) => {
         const draft = cantidadDraftMap[email];
@@ -699,7 +875,7 @@ export default function Metas() {
 
       emailsAll.forEach((email) => {
         const metaTotal = Math.max(0, Number(metaPorEmail[email] || 0));
-        const canalAsignado = normalizeCanal(canalPorVendedorMap[email] || "");
+        const canalAsignado = normalizeCanal(canalEfectivoMap[email] || "");
         const splitCfg = canalSplitConfig(canalAsignado);
         const splitDraft = metasSplitDraftMap[email];
         const splitSaved = metasDetalleMap[email] || {};
@@ -822,6 +998,7 @@ export default function Metas() {
       {loading ? (
         <div className="surface" style={{ padding: "40px 24px", color: "var(--text-muted)" }}>Cargando metas…</div>
       ) : (
+        <>
         <div className="surface">
           {/* HEADER */}
           <div className="surface-header" style={{ flexWrap: "wrap", gap: "16px" }}>
@@ -866,12 +1043,18 @@ export default function Metas() {
           {/* KPI CARDS */}
           <div className="surface-body" style={{ borderBottom: "1px solid var(--border)" }}>
             <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1.1fr) minmax(0,1.1fr) minmax(0,1.6fr)", gap: "16px" }}>
-              <MetaGaugeCard
-                title="Cumplimiento Global"
-                value={fmtCLP(resumenMetas.avanceNetoTotal)}
-                subtitle={`Meta ${fmtCLP(resumenMetas.metaNetaTotal)} | Brecha ${fmtCLP(resumenMetas.brechaNetaTotal)}`}
-                pct={resumenMetas.pctCumplimientoTotal}
-              />
+              <div
+                onClick={() => setDetalleAvance({ email: "", titulo: "todo el equipo" })}
+                style={{ cursor: "pointer" }}
+                title="Ver las guías y documentos que componen el avance"
+              >
+                <MetaGaugeCard
+                  title="Cumplimiento Global"
+                  value={fmtCLP(resumenMetas.avanceNetoTotal)}
+                  subtitle={`Meta ${fmtCLP(resumenMetas.metaNetaTotal)} | Brecha ${fmtCLP(resumenMetas.brechaNetaTotal)} · clic para detalle`}
+                  pct={resumenMetas.pctCumplimientoTotal}
+                />
+              </div>
 
               {/* Proyección de metas: cuánto falta para la meta del mes */}
               <div style={{ background: "var(--surface)", borderRadius: "var(--radius-lg)", border: "1px solid var(--border)", borderTop: "3px solid var(--primary)", padding: "16px 18px" }}>
@@ -1002,9 +1185,27 @@ export default function Metas() {
                         <td>
                           <div style={{ fontWeight: 600, fontSize: "13px", color: "var(--text)" }}>{r.nombre}</div>
                           <div style={{ fontSize: "11px", color: "var(--text-muted)" }}>{r.email}</div>
-                          <div style={{ fontSize: "11px", color: "var(--primary-dark)", marginTop: "2px" }}>
-                            Canal: {r.canalLabel || "Sin canal asignado"}
-                          </div>
+                          {puedeEditarMetas ? (
+                            <select
+                              className="input"
+                              value={CANALES_ASIGNACION.some((c) => c.value === r.canal) ? r.canal : ""}
+                              onChange={(e) => {
+                                const canal = normalizeCanal(e.target.value);
+                                setCanalDraftMap((prev) => ({ ...prev, [r.email]: canal }));
+                              }}
+                              style={{ marginTop: "6px", minWidth: "210px", fontSize: "12px", padding: "4px 8px" }}
+                              title="Canal del vendedor (se guarda con «Guardar metas»)"
+                            >
+                              <option value="">Sin canal</option>
+                              {CANALES_ASIGNACION.map((c) => (
+                                <option key={c.value} value={c.value}>{c.label}</option>
+                              ))}
+                            </select>
+                          ) : (
+                            <div style={{ fontSize: "11px", color: "var(--primary-dark)", marginTop: "2px" }}>
+                              Canal: {r.canalLabel || "Sin canal asignado"}
+                            </div>
+                          )}
                         </td>
                         <td style={{ textAlign: "right" }}>
                           {splitCfg ? (
@@ -1106,15 +1307,19 @@ export default function Metas() {
                         </td>
                         {r.split ? (
                           <>
-                            <td style={{ textAlign: "right" }}>
+                            <td
+                              style={{ textAlign: "right", cursor: "pointer" }}
+                              onClick={() => setDetalleAvance({ email: r.email, titulo: r.nombre })}
+                              title="Ver guías y documentos que componen el avance"
+                            >
                               <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
                                 <div>
                                   <div style={{ fontSize: "10px", color: "var(--text-muted)" }}>{r.split.firstLabel}</div>
-                                  <div style={{ fontWeight: 600, color: "#15803d" }}>{fmtCLP(r.split.firstAvanceNeto)}</div>
+                                  <div style={{ fontWeight: 600, color: "#15803d", textDecoration: "underline", textDecorationStyle: "dotted", textUnderlineOffset: "3px" }}>{fmtCLP(r.split.firstAvanceNeto)}</div>
                                 </div>
                                 <div>
                                   <div style={{ fontSize: "10px", color: "var(--text-muted)" }}>{r.split.secondLabel}</div>
-                                  <div style={{ fontWeight: 600, color: "#15803d" }}>{fmtCLP(r.split.secondAvanceNeto)}</div>
+                                  <div style={{ fontWeight: 600, color: "#15803d", textDecoration: "underline", textDecorationStyle: "dotted", textUnderlineOffset: "3px" }}>{fmtCLP(r.split.secondAvanceNeto)}</div>
                                 </div>
                               </div>
                             </td>
@@ -1195,7 +1400,13 @@ export default function Metas() {
                           </>
                         ) : (
                           <>
-                            <td style={{ textAlign: "right", fontWeight: 600, color: "#15803d" }}>{fmtCLP(r.avanceNeto)}</td>
+                            <td
+                              style={{ textAlign: "right", fontWeight: 600, color: "#15803d", cursor: "pointer", textDecoration: "underline", textDecorationStyle: "dotted", textUnderlineOffset: "3px" }}
+                              onClick={() => setDetalleAvance({ email: r.email, titulo: r.nombre })}
+                              title="Ver guías y documentos que componen el avance"
+                            >
+                              {fmtCLP(r.avanceNeto)}
+                            </td>
                             <td style={{ textAlign: "right", fontWeight: 600, color: "var(--primary-dark)" }}>{fmtCLP(r.avanceBruto)}</td>
                             <td style={{ minWidth: "200px" }}>
                               <div style={{ height: "8px", borderRadius: "4px", background: "var(--bg)", border: "1px solid var(--border)", overflow: "hidden" }}>
@@ -1247,6 +1458,97 @@ export default function Metas() {
             </button>
           </div>
         </div>
+
+        {/* RESUMEN POR CANAL (fusionado desde la antigua página "Resumen canales") */}
+        {puedeVerTodo && (
+          <div className="surface" style={{ marginTop: "20px" }}>
+            <div className="surface-header">
+              <div>
+                <h3 className="surface-title">Resumen por Canal</h3>
+                <p style={{ fontSize: "12px", color: "var(--text-muted)", margin: 0 }}>
+                  Meta por canal calculada automáticamente desde la meta y el canal de cada vendedor.
+                </p>
+              </div>
+            </div>
+            <div className="table-wrap" style={{ boxShadow: "none", border: "none", borderRadius: 0 }}>
+              <div className="table-scroll">
+                <table className="data-table" style={{ minWidth: "700px" }}>
+                  <thead>
+                    <tr>
+                      <th>Canal</th>
+                      <th style={{ textAlign: "right" }}>Meta Neta Canal</th>
+                      <th style={{ textAlign: "right" }}>Avance Neto</th>
+                      <th style={{ textAlign: "right" }}>Cumplimiento</th>
+                      <th style={{ textAlign: "right" }}>Brecha</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {consolidadoCanales.map((c) => (
+                      <tr key={c.canal}>
+                        <td>
+                          <div style={{ fontWeight: 600, fontSize: "13px", color: "var(--text)" }}>{canalLabel(c.canal) || c.canal}</div>
+                          <div style={{ fontSize: "11px", color: "var(--text-muted)" }}>{c.personas} vendedor(es)</div>
+                        </td>
+                        <td style={{ textAlign: "right", fontWeight: 600 }}>{fmtCLP(c.metaNeto)}</td>
+                        <td style={{ textAlign: "right", fontWeight: 600 }}>{fmtCLP(c.avanceNeto)}</td>
+                        <td style={{ textAlign: "right" }}>
+                          <span style={{
+                            display: "inline-flex", alignItems: "center", padding: "2px 10px",
+                            borderRadius: "999px", fontSize: "12px", fontWeight: 600, border: "1px solid",
+                            color: colorCumplimiento(c.pctCumplimiento),
+                            borderColor: `${colorCumplimiento(c.pctCumplimiento)}40`,
+                            background: `${colorCumplimiento(c.pctCumplimiento)}12`,
+                          }}>
+                            {fmtPct(c.pctCumplimiento)}
+                          </span>
+                        </td>
+                        <td style={{ textAlign: "right", color: "var(--text-muted)" }}>{fmtCLP(c.brechaNeto)}</td>
+                      </tr>
+                    ))}
+                    <tr style={{ background: "var(--bg)", fontWeight: 700 }}>
+                      <td style={{ fontWeight: 700 }}>Meta Global</td>
+                      <td style={{ textAlign: "right", fontWeight: 700 }}>{fmtCLP(resumenMetas.metaNetaTotal)}</td>
+                      <td style={{ textAlign: "right", fontWeight: 700 }}>{fmtCLP(resumenMetas.avanceNetoTotal)}</td>
+                      <td style={{ textAlign: "right" }}>
+                        <span style={{
+                          display: "inline-flex", alignItems: "center", padding: "2px 10px",
+                          borderRadius: "999px", fontSize: "12px", fontWeight: 600, border: "1px solid",
+                          color: colorCumplimiento(resumenMetas.pctCumplimientoTotal),
+                          borderColor: `${colorCumplimiento(resumenMetas.pctCumplimientoTotal)}40`,
+                          background: `${colorCumplimiento(resumenMetas.pctCumplimientoTotal)}12`,
+                        }}>
+                          {fmtPct(resumenMetas.pctCumplimientoTotal)}
+                        </span>
+                      </td>
+                      <td style={{ textAlign: "right", fontWeight: 700 }}>{fmtCLP(resumenMetas.brechaNetaTotal)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+        </>
+      )}
+
+      {detalleAvance && (
+        <ModalAvanceMeta
+          titulo={`Avance de ${detalleAvance.titulo}`}
+          filas={docsAvanceMes
+            .filter((d) => (detalleAvance.email ? d.email === detalleAvance.email : (!filtroVendedor || d.email === filtroVendedor)))
+            .map((d) => ({
+              licId: d.licId,
+              codigo: d.codigo,
+              cliente: d.entidad,
+              vendedor: usuariosMap[d.email] || d.email,
+              tipoLabel: d.tipoLabel,
+              numero: d.numero,
+              monto: d.monto,
+              fecha: d.fecha,
+            }))}
+          mostrarVendedor={!detalleAvance.email}
+          onCerrar={() => setDetalleAvance(null)}
+        />
       )}
     </div>
   );

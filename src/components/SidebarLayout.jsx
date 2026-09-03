@@ -31,7 +31,6 @@ import {
   MapPin,
   Trophy,
   BarChart3,
-  SlidersHorizontal,
   Briefcase,
   Truck,
   Headphones,
@@ -226,8 +225,10 @@ export default function SidebarLayout() {
   ].filter(Boolean);
 
   const metasNav = [
-    puede("metas") && { to: "/metas", icon: Target, label: "Definición de metas" },
-    puede("resumen_canales") && { to: "/metas-canal", icon: SlidersHorizontal, label: "Resumen canales" },
+    // "Resumen canales" se fusionó dentro de Definición de metas (la asignación
+    // de canal y el consolidado por canal viven ahí). El permiso antiguo
+    // resumen_canales sigue dando acceso a la página fusionada.
+    (puede("metas") || puede("resumen_canales")) && { to: "/metas", icon: Target, label: "Definición de metas" },
     (esAdmin || rolNorm === "jefe_ventas") && { to: "/comisiones", icon: Percent, label: "Comisiones" },
   ].filter(Boolean);
 

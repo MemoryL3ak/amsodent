@@ -16,8 +16,10 @@ export const MODULOS = [
   { key: "factoring", label: "Factoring", grupo: "Post-venta" },
   { key: "mi_correo", label: "Mi Correo", grupo: "Comunicación" },
   { key: "chat", label: "Chat Grupal", grupo: "Comunicación" },
+  // "Resumen canales" se fusionó dentro de Definición de metas (2026-09):
+  // la clave resumen_canales ya no es asignable; los perfiles antiguos que
+  // la tengan siguen accediendo a /metas (ver SidebarLayout).
   { key: "metas", label: "Definición de metas", grupo: "Metas" },
-  { key: "resumen_canales", label: "Resumen canales", grupo: "Metas" },
   { key: "panel_indicadores", label: "Panel de Indicadores", grupo: "Reportes" },
   { key: "resumen_comercial", label: "Resumen Comercial (incluido en Panel de Ejecutivos)", grupo: "Reportes" },
   { key: "cotizaciones_vendedor", label: "Panel de Ejecutivos", grupo: "Reportes" },
@@ -46,11 +48,11 @@ const BASE = ["cotizaciones", "crear_cotizacion", "clientes", "mis_clientes", "b
 
 // Fallback por rol (debe reflejar backend/src/auth/permisos.ts).
 const ROLE_DEFAULTS = {
-  jefe_ventas: [...BASE, "trazabilidad", "metas", "resumen_canales", "panel_indicadores", "resumen_comercial", "cotizaciones_vendedor"],
-  jefe_ventas_especial: [...BASE, "trazabilidad", "seguimiento_pagos", "cobranza", "factoring", "metas", "resumen_canales", "panel_indicadores", "resumen_comercial", "cotizaciones_vendedor"],
+  jefe_ventas: [...BASE, "trazabilidad", "metas", "panel_indicadores", "resumen_comercial", "cotizaciones_vendedor"],
+  jefe_ventas_especial: [...BASE, "trazabilidad", "seguimiento_pagos", "cobranza", "factoring", "metas", "panel_indicadores", "resumen_comercial", "cotizaciones_vendedor"],
   ventas: [...BASE, "metas"],
   ventas_especial: [...BASE, "metas", "sorteo", "monitoreo_stock"],
-  contabilidad: ["mi_correo", "chat", "seguimiento_pagos", "cobranza", "metas", "resumen_canales"],
+  contabilidad: ["mi_correo", "chat", "seguimiento_pagos", "cobranza", "metas"],
 };
 
 export function esAdminRol(rol) {

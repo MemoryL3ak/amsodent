@@ -7,7 +7,7 @@ import { api } from "../lib/api";
 import useAuth from "../hooks/useAuth";
 import MonthCalendarPicker from "../components/MonthCalendarPicker";
 import {
-  FileText, ClipboardCheck, Target, Trophy, Banknote, PieChart, GitBranch, Download,
+  FileText, ClipboardCheck, Target, Trophy, Banknote, PieChart, GitBranch, Download, TrendingUp,
 } from "lucide-react";
 import {
   fmtCLP, fmtNum, fmtPct, inicioMesISO, mesDe, toDateISO, addMesKey,
@@ -31,6 +31,8 @@ export default function PanelPublica() {
   const [ocByLic, setOcByLic] = useState({}); // { licId: monto OC (adjudicado) }
   const [filtroMotivo, setFiltroMotivo] = useState(""); // detalle perdidas/descartadas
   const [skusConEquiv, setSkusConEquiv] = useState(new Set()); // SKUs con equivalencias válidas
+  const [costoBySku, setCostoBySku] = useState({}); // sku → costo del catálogo (para el margen)
+  const [margenMes, setMargenMes] = useState({ monto: 0, pct: 0, venta: 0 }); // margen de adjudicadas del mes
   const [itemsPorLicMes, setItemsPorLicMes] = useState({}); // { licId: [sku, …] } — madres del mes
   const [nombresVendedores, setNombresVendedores] = useState({}); // email → nombre
   const [filtroVendedorEq, setFiltroVendedorEq] = useState(""); // aprovechamiento por vendedor
@@ -76,15 +78,17 @@ export default function PanelPublica() {
             if (sku) porSku.set(sku, p);
           });
           const conEquiv = new Set();
+          const costos = {};
           porSku.forEach((p, sku) => {
             const eqs = [p.equivalente_1, p.equivalente_2, p.equivalente_3]
               .map((s) => String(s || "").trim().toUpperCase())
               .filter((s) => s && s !== sku && porSku.has(s));
             if (eqs.length) conEquiv.add(sku);
+            costos[sku] = Number(p.costo || 0); // fallback del margen cuando el ítem no trae costo
           });
-          if (activo) setSkusConEquiv(conEquiv);
+          if (activo) { setSkusConEquiv(conEquiv); setCostoBySku(costos); }
         } catch {
-          if (activo) setSkusConEquiv(new Set());
+          if (activo) { setSkusConEquiv(new Set()); setCostoBySku({}); }
         }
         if (!activo) return;
         setLics(rows);
@@ -124,6 +128,37 @@ export default function PanelPublica() {
       .catch(() => { if (activo) setItemsPorLicMes({}); });
     return () => { activo = false; };
   }, [cargando, puedeVer, lics, mesActual]);
+
+  // Margen de las adjudicadas del mes: (venta − costo) / venta sobre los ítems
+  // de las licitaciones con 1ª OC dentro del mes. Mismo criterio que el Panel
+  // de Gestión Comercial: costo congelado en el ítem, fallback al catálogo.
+  useEffect(() => {
+    if (cargando || !puedeVer) return;
+    const idsMes = lics
+      .filter((l) => mesDe(adjDateByLic[l.id]) === mesActual)
+      .map((l) => Number(l.id))
+      .filter(Boolean);
+    if (!idsMes.length) { setMargenMes({ monto: 0, pct: 0, venta: 0 }); return; }
+    let activo = true;
+    api.post("/licitaciones/items/filter", {
+      licitacion_ids: idsMes,
+      fields: "licitacion_id,total,cantidad,sku,costo",
+    })
+      .then((items) => {
+        if (!activo) return;
+        let venta = 0, costo = 0;
+        (items || []).forEach((it) => {
+          venta += Number(it.total || 0);
+          const sku = String(it.sku || "").trim().toUpperCase();
+          const costoUnit = Number(it.costo) > 0 ? Number(it.costo) : (costoBySku[sku] || 0);
+          costo += costoUnit * (Number(it.cantidad) || 0);
+        });
+        const monto = Math.round(venta - costo);
+        setMargenMes({ monto, pct: venta > 0 ? (monto / venta) * 100 : 0, venta });
+      })
+      .catch(() => { if (activo) setMargenMes({ monto: 0, pct: 0, venta: 0 }); });
+    return () => { activo = false; };
+  }, [cargando, puedeVer, lics, adjDateByLic, mesActual, costoBySku]);
 
   // Fecha de adjudicación = SIEMPRE la fecha de la primera OC cargada. Sin OC la
   // licitación NO se considera adjudicada, aunque tenga estado "Adjudicada" o una
@@ -391,6 +426,10 @@ export default function PanelPublica() {
             <KpiCard icon={Trophy} color="#b45309" label="Tasa de Adjudicación" sub="Adjudicadas / participadas" value={fmtPct(m.tasaAdj)} delta={<Delta actual={m.tasaAdj} prev={mPrev.tasaAdj} unidadPp />} />
             <KpiCard icon={Banknote} color="#15803d" label="Monto Adjudicado" sub="Del mes · órdenes de compra" value={fmtCLP(m.montoAdj)} delta={<Delta actual={m.montoAdj} prev={mPrev.montoAdj} />} />
             <KpiCard icon={PieChart} color="#0ea5e9" label="Participación en Licitaciones" sub="Participadas / publicadas" value={fmtPct(m.participacion)} delta={<Delta actual={m.participacion} prev={mPrev.participacion} unidadPp />} />
+            <KpiCard icon={TrendingUp} color="#7c3aed" label="Margen %" sub="Adjudicadas del mes · (venta − costo) / venta" value={fmtPct(margenMes.pct)} delta={null} />
+            {!esJefatura && (
+              <KpiCard icon={Banknote} color="#0d9488" label="Margen $" sub="Adjudicadas del mes · venta neta − costo" value={fmtCLP(margenMes.monto)} delta={null} />
+            )}
           </div>
 
           {/* Charts — el detalle de adjudicaciones ocupa más ancho que los gráficos. */}

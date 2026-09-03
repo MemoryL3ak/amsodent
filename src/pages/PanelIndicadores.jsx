@@ -4,6 +4,7 @@ import useAuth from "../hooks/useAuth";
 import MonthCalendarPicker from "../components/MonthCalendarPicker";
 import DateFilter from "../components/DateFilter";
 import EmbudoComercial from "../components/panel/EmbudoComercial";
+import ModalAvanceMeta from "../components/ModalAvanceMeta";
 import {
   TrendingUp, TrendingDown, Minus, ShoppingCart, Target, FileText,
   UserPlus, RefreshCw, Award, Banknote, X, Download,
@@ -98,6 +99,8 @@ export default function PanelIndicadores() {
   const [lics, setLics] = useState([]);
   const [adjDateByLic, setAdjDateByLic] = useState({});
   const [docSums, setDocSums] = useState({}); // { [licId]: { guia, oc, factbol } }
+  const [docsConsumo, setDocsConsumo] = useState([]); // guías/boletas/efectivo crudos (detalle avance de metas)
+  const [avanceMetaOpen, setAvanceMetaOpen] = useState(false); // modal detalle del avance de metas
   const [catData, setCatData] = useState([]); // [{ categoria, monto, productos:[{producto,monto}] }]
   const [margenMes, setMargenMes] = useState({ monto: 0, pct: 0 });
   const [costoBySku, setCostoBySku] = useState({}); // sku → costo (para el margen)
@@ -155,8 +158,9 @@ export default function PanelIndicadores() {
               licitacion_ids: ids,
               tipo: ["orden_compra", "guia_despacho", "factura", "factura_boleta", "efectivo"],
             },
-            fields: "licitacion_id,tipo,monto,fecha_oc,created_at",
+            fields: "licitacion_id,tipo,numero,monto,fecha_oc,created_at",
           });
+          const consumo = []; // guías/boletas/efectivo crudos (detalle avance de metas)
           (docs || []).forEach((d) => {
             const lid = Number(d.licitacion_id);
             if (!lid) return;
@@ -170,7 +174,17 @@ export default function PanelIndicadores() {
               const f = toDateISO(d.fecha_oc) || toDateISO(d.created_at);
               if (f && (!adj[lid] || f < adj[lid])) adj[lid] = f;
             }
+            if (d.tipo !== "orden_compra") {
+              consumo.push({
+                licId: lid,
+                tipo: d.tipo,
+                numero: (d.numero || "").toString(),
+                monto,
+                fecha: toDateISO(d.fecha_oc) || toDateISO(d.created_at),
+              });
+            }
           });
+          if (activo) setDocsConsumo(consumo);
         }
         if (!activo) return;
         setLics(rows);
@@ -178,7 +192,7 @@ export default function PanelIndicadores() {
         setDocSums(sums);
       } catch (e) {
         console.error("Error cargando panel:", e);
-        if (activo) { setLics([]); setAdjDateByLic({}); setDocSums({}); }
+        if (activo) { setLics([]); setAdjDateByLic({}); setDocSums({}); setDocsConsumo([]); }
       } finally {
         if (activo) setLoading(false);
       }
@@ -458,6 +472,49 @@ export default function PanelIndicadores() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lics, adjDateByLic, docSums, enPeriodo, filtroTipo, nombresVendedores]);
 
+  /* Avance de metas por ingreso de guía de despacho (pedido 2026-09-03):
+     los documentos que consumen la meta — guías de despacho (públicas) y
+     boletas/facturas/efectivo (particulares) — de cotizaciones adjudicadas
+     dentro del período. Es el MISMO criterio del módulo Definición de metas,
+     así el % de cumplimiento del panel cuadra con esa página. */
+  const avanceMeta = useMemo(() => {
+    const licById = new Map(lics.map((l) => [Number(l.id), l]));
+    const TIPO_LABEL = {
+      guia_despacho: "Guía de despacho",
+      factura: "Factura / Boleta",
+      factura_boleta: "Factura / Boleta",
+      efectivo: "Efectivo",
+    };
+    const filas = [];
+    let total = 0;
+    docsConsumo.forEach((d) => {
+      const l = licById.get(d.licId);
+      if (!l || !pasaTipo(l)) return;
+      if (!enPeriodo(adjDateByLic[d.licId])) return;
+      // Mismo criterio que ventaDeLic: en públicas cuentan las guías; en
+      // particulares las boletas/facturas y el efectivo.
+      const cuenta = esParticular(l)
+        ? (d.tipo === "factura" || d.tipo === "factura_boleta" || d.tipo === "efectivo")
+        : d.tipo === "guia_despacho";
+      if (!cuenta) return;
+      total += d.monto;
+      const email = (l.creado_por || "").trim().toLowerCase();
+      filas.push({
+        licId: d.licId,
+        codigo: l.id_licitacion || `#${d.licId}`,
+        cliente: l.nombre_entidad || l.rut_entidad || "—",
+        vendedor: nombresVendedores[email] || email.split("@")[0] || "—",
+        tipoLabel: TIPO_LABEL[d.tipo] || d.tipo,
+        numero: d.numero,
+        monto: d.monto,
+        fecha: d.fecha,
+      });
+    });
+    filas.sort((a, b) => String(b.fecha || "").localeCompare(String(a.fecha || "")));
+    return { filas, total };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [docsConsumo, lics, adjDateByLic, enPeriodo, filtroTipo, nombresVendedores]);
+
   // Evolución 6 meses (ventas con IVA).
   const evolucion = useMemo(() => {
     const arr = [];
@@ -491,9 +548,12 @@ export default function PanelIndicadores() {
     );
   }
 
-  const cumplimientoMonto = metaMonto > 0 ? (m.ventasNeto / metaMonto) * 100 : null;
+  // Cumplimiento medido por el AVANCE REAL (guías de despacho + boletas), el
+  // mismo criterio del módulo Definición de metas — no por el total cotizado.
+  const cumplimientoMonto = metaMonto > 0 ? (avanceMeta.total / metaMonto) * 100 : null;
   const cumplimientoCot = metaCotizaciones > 0 ? (m.cotizaciones / metaCotizaciones) * 100 : null;
   const cumplimiento = cumplimientoMonto != null ? cumplimientoMonto : cumplimientoCot;
+  const brechaMeta = Math.max(0, metaMonto - avanceMeta.total);
 
   const mostrarDelta = !rangoActivo; // la comparativa vs mes anterior no aplica con rango
   const periodoLabel = rangoActivo ? "Rango" : "Mes";
@@ -751,6 +811,49 @@ export default function PanelIndicadores() {
             )}
           </div>
 
+          {/* Avance de Metas por ingreso de guía de despacho */}
+          <div
+            className="surface"
+            onClick={() => setAvanceMetaOpen(true)}
+            style={{ padding: 18, marginBottom: 16, cursor: "pointer" }}
+            title="Ver las guías y documentos que componen el avance"
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
+              <div style={{ minWidth: 220 }}>
+                <h3 className="surface-title" style={{ margin: 0 }}>Avance de Metas</h3>
+                <p style={{ fontSize: 12, color: "var(--text-muted)", margin: "2px 0 0" }}>
+                  Por ingreso de guías de despacho (públicas) y boletas/facturas (particulares) · clic para el detalle
+                  {filtroTipo ? " · la meta es la global del equipo (no se filtra por tipo)" : ""}
+                </p>
+              </div>
+              <div style={{ display: "flex", gap: 26, flexWrap: "wrap", textAlign: "right" }}>
+                <div>
+                  <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: ".06em", color: "var(--text-muted)", fontWeight: 700 }}>Avance</div>
+                  <div style={{ fontSize: 20, fontWeight: 800, color: "#15803d" }}>{fmtCLP(avanceMeta.total)}</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: ".06em", color: "var(--text-muted)", fontWeight: 700 }}>Meta del mes</div>
+                  <div style={{ fontSize: 20, fontWeight: 800, color: "var(--text)" }}>{metaMonto > 0 ? fmtCLP(metaMonto) : "—"}</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: ".06em", color: "var(--text-muted)", fontWeight: 700 }}>Brecha</div>
+                  <div style={{ fontSize: 20, fontWeight: 800, color: "#b45309" }}>{metaMonto > 0 ? fmtCLP(brechaMeta) : "—"}</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: ".06em", color: "var(--text-muted)", fontWeight: 700 }}>Cumplimiento</div>
+                  <div style={{ fontSize: 20, fontWeight: 800, color: cumplimientoMonto == null ? "var(--text-muted)" : cumplimientoMonto >= 100 ? "#15803d" : cumplimientoMonto >= 70 ? "#0d9488" : "#b45309" }}>
+                    {cumplimientoMonto == null ? "Sin meta" : fmtPct(cumplimientoMonto)}
+                  </div>
+                </div>
+              </div>
+            </div>
+            {metaMonto > 0 && (
+              <div style={{ height: 10, borderRadius: 5, background: "var(--bg)", overflow: "hidden", marginTop: 12 }}>
+                <div style={{ height: "100%", width: `${clamp(cumplimientoMonto || 0, 0, 100)}%`, background: (cumplimientoMonto || 0) >= 100 ? "#16a34a" : "var(--primary)", borderRadius: 5 }} />
+              </div>
+            )}
+          </div>
+
           {/* Charts row 1 */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 16, marginBottom: 16 }}>
             {/* Evolución */}
@@ -885,8 +988,9 @@ export default function PanelIndicadores() {
                     </tr>
                   </thead>
                   <tbody>
-                    <FilaInd nombre="Ventas (neto)" actual={fmtCLP(m.ventasNeto)} meta={metaMonto > 0 ? fmtCLP(metaMonto) : "—"} cumpl={metaMonto > 0 ? (m.ventasNeto / metaMonto) * 100 : null} delta={<Delta actual={m.ventasNeto} prev={mPrev.ventasNeto} />} />
-                    <FilaInd nombre="Ventas (documentos)" actual={fmtCLP(m.ventas)} meta="—" cumpl={null} delta={<Delta actual={m.ventas} prev={mPrev.ventas} />} />
+                    <FilaInd nombre="Ventas (neto)" actual={fmtCLP(m.ventasNeto)} meta="—" cumpl={null} delta={<Delta actual={m.ventasNeto} prev={mPrev.ventasNeto} />} />
+                    {/* La meta se mide contra las ventas por DOCUMENTOS (guías/boletas), igual que en Definición de metas. */}
+                    <FilaInd nombre="Ventas (documentos)" actual={fmtCLP(m.ventas)} meta={metaMonto > 0 ? fmtCLP(metaMonto) : "—"} cumpl={metaMonto > 0 ? (m.ventas / metaMonto) * 100 : null} delta={<Delta actual={m.ventas} prev={mPrev.ventas} />} />
                     <FilaInd nombre="Adjudicado ($)" actual={fmtCLP(m.adjudicadoMonto)} meta="—" cumpl={null} delta={<Delta actual={m.adjudicadoMonto} prev={mPrev.adjudicadoMonto} />} />
                     <FilaInd nombre="N° Cotizaciones" actual={fmtNum(m.cotizaciones)} meta={metaCotizaciones > 0 ? fmtNum(metaCotizaciones) : "—"} cumpl={metaCotizaciones > 0 ? (m.cotizaciones / metaCotizaciones) * 100 : null} delta={<Delta actual={m.cotizaciones} prev={mPrev.cotizaciones} />} />
                     <FilaInd nombre="Conversión" actual={fmtPct(m.conversion)} meta="—" cumpl={null} delta={<Delta actual={m.conversion} prev={mPrev.conversion} unidadPp />} />
@@ -910,7 +1014,7 @@ export default function PanelIndicadores() {
               {cumplimiento != null ? (
                 <div>
                   <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: ".08em", color: "var(--text-muted)", fontWeight: 600 }}>
-                    Cumplimiento {cumplimientoMonto != null ? "(ventas vs meta)" : "(cotizaciones vs meta)"}
+                    Cumplimiento {cumplimientoMonto != null ? "(guías/boletas vs meta)" : "(cotizaciones vs meta)"}
                   </div>
                   <div style={{ fontSize: 30, fontWeight: 800, color: cumplimiento >= 100 ? "#15803d" : cumplimiento >= 70 ? "#0d9488" : "#b45309" }}>
                     {cumplimiento.toFixed(0)}%
@@ -1024,6 +1128,14 @@ export default function PanelIndicadores() {
           filas={adjudicadasDetalle}
           periodoLabel={periodoLabel}
           onCerrar={() => setAdjOpen(false)}
+        />
+      )}
+
+      {avanceMetaOpen && (
+        <ModalAvanceMeta
+          titulo={`Avance de metas del ${periodoLabel.toLowerCase()}`}
+          filas={avanceMeta.filas}
+          onCerrar={() => setAvanceMetaOpen(false)}
         />
       )}
     </div>
