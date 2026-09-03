@@ -11,6 +11,7 @@ import Toast from "../components/Toast";
 import {
   Boxes, Search, Plus, Minus, SlidersHorizontal, History,
   Upload, Download, X, AlertTriangle, ArrowUp, ArrowDown, ArrowUpDown,
+  RefreshCw,
 } from "lucide-react";
 
 const fmtCLP = (v) => `$${Math.round(Number(v) || 0).toLocaleString("es-CL")}`;
@@ -64,6 +65,70 @@ export default function Inventario() {
   const [libroLoading, setLibroLoading] = useState(false);
   const [filtroTipoMov, setFiltroTipoMov] = useState("");
   const [busquedaMov, setBusquedaMov] = useState("");
+
+  // Integración Bsale (etapa 1: catálogo y stock). El stock de Bsale es la
+  // fuente de verdad: la sincronización lo trae y deja cada cambio como un
+  // ajuste en el libro. null = estado aún no cargado (o backend sin el módulo).
+  const [bsale, setBsale] = useState(null);
+  const [bsaleSync, setBsaleSync] = useState(false);
+  const [bsaleDif, setBsaleDif] = useState(null); // modal: { loading, data }
+
+  useEffect(() => {
+    api.get("/bsale/estado").then(setBsale).catch(() => setBsale(null));
+  }, []);
+
+  async function sincronizarBsale() {
+    if (bsaleSync) return;
+    setBsaleSync(true);
+    try {
+      const r = await api.post("/bsale/sincronizar", {});
+      setToast({
+        type: "success",
+        message: `Bsale sincronizado: ${fmtNum(r?.actualizados || 0)} stocks actualizados (${fmtNum(r?.matcheados || 0)} SKUs matcheados).`,
+      });
+      // Refrescar estado de la tarjeta, la grilla y el libro (hubo ajustes).
+      api.get("/bsale/estado").then(setBsale).catch(() => {});
+      cargar();
+      setLibro(null);
+    } catch (e) {
+      setToast({ type: "error", message: e?.response?.data?.message || e?.message || "No se pudo sincronizar con Bsale." });
+    } finally {
+      setBsaleSync(false);
+    }
+  }
+
+  async function abrirDiferenciasBsale() {
+    setBsaleDif({ loading: true, data: null });
+    try {
+      const data = await api.get("/bsale/diferencias");
+      setBsaleDif({ loading: false, data });
+    } catch (e) {
+      setBsaleDif(null);
+      setToast({ type: "error", message: e?.message || "No se pudieron cargar las diferencias." });
+    }
+  }
+
+  async function exportarDiferenciasBsale() {
+    const det = bsaleDif?.data?.detalle;
+    if (!det) return;
+    try {
+      const XLSX = await import("xlsx");
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(
+        wb,
+        XLSX.utils.json_to_sheet((det.skus_bsale_sin_producto || []).map((r) => ({ "SKU Bsale": r.sku, "Descripción": r.descripcion || "" }))),
+        "En Bsale sin producto",
+      );
+      XLSX.utils.book_append_sheet(
+        wb,
+        XLSX.utils.json_to_sheet((det.productos_sin_bsale || []).map((r) => ({ "SKU interno": r.sku, "Producto": r.nombre || "" }))),
+        "Internos sin Bsale",
+      );
+      XLSX.writeFile(wb, `diferencias_bsale_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    } catch (e) {
+      setToast({ type: "error", message: "No se pudo exportar el archivo." });
+    }
+  }
 
   async function cargar() {
     setLoading(true);
@@ -268,6 +333,62 @@ export default function Inventario() {
         </div>
       </div>
 
+      {/* Integración Bsale: el stock disponible de Bsale (donde se factura)
+          es la fuente de verdad; cada corrida deja los cambios como ajustes
+          en el libro. La tarjeta solo aparece si el backend trae el módulo. */}
+      {bsale && (
+        <div className="surface" style={{ padding: "14px 18px", margin: "4px 0 14px", display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+          <div style={{
+            width: 38, height: 38, borderRadius: 10, flexShrink: 0,
+            background: "linear-gradient(135deg, #f97316, #fb923c)", color: "#fff",
+            display: "grid", placeItems: "center", fontWeight: 800, fontSize: 15,
+          }}>
+            B
+          </div>
+          <div style={{ flex: 1, minWidth: 240 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <strong style={{ fontSize: 13.5 }}>Integración Bsale · stock</strong>
+              {bsale.token_configurado ? (
+                <span style={{ fontSize: 10.5, fontWeight: 700, padding: "2px 8px", borderRadius: 999, background: "#dcfce7", color: "#15803d" }}>CONECTADO</span>
+              ) : (
+                <span style={{ fontSize: 10.5, fontWeight: 700, padding: "2px 8px", borderRadius: 999, background: "#fef3c7", color: "#b45309" }}>FALTA TOKEN</span>
+              )}
+              {bsale.automatica?.activa && bsale.automatica?.horas?.length > 0 && (
+                <span style={{ fontSize: 11, color: "var(--text-muted)" }}>
+                  automática a las {bsale.automatica.horas.map((h) => `${String(h).padStart(2, "0")}:00`).join(" y ")}
+                </span>
+              )}
+            </div>
+            <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 2 }}>
+              {!bsale.token_configurado ? (
+                "Configura BSALE_ACCESS_TOKEN en el backend (Bsale: Configuración → Integraciones → API) para activar la sincronización."
+              ) : bsale.ultima?.resumen ? (
+                <>
+                  Última corrida {fmtFechaHora(bsale.ultima.actualizado_at)}: {fmtNum(bsale.ultima.resumen.matcheados)} SKUs matcheados,{" "}
+                  {fmtNum(bsale.ultima.resumen.actualizados)} stocks actualizados ·{" "}
+                  <button type="button" onClick={abrirDiferenciasBsale} className="table-link" style={{ background: "none", border: "none", padding: 0, cursor: "pointer", fontSize: 12 }}>
+                    {fmtNum(bsale.ultima.resumen.skus_bsale_sin_producto)} SKUs de Bsale sin producto interno · {fmtNum(bsale.ultima.resumen.productos_sin_bsale)} internos sin Bsale
+                  </button>
+                </>
+              ) : (
+                "Aún no se ha corrido la primera sincronización. El stock disponible de Bsale reemplazará al interno (cada cambio queda como ajuste en el libro)."
+              )}
+            </div>
+          </div>
+          <button
+            className="btn btn-secondary"
+            onClick={sincronizarBsale}
+            disabled={bsaleSync || !bsale.token_configurado}
+            title={!bsale.token_configurado ? "Configura el token de Bsale en el backend" : "Traer el stock disponible desde Bsale ahora"}
+            style={{ display: "inline-flex", alignItems: "center", gap: 6, flexShrink: 0 }}
+          >
+            <RefreshCw size={14} style={bsaleSync ? { animation: "bsale-spin 1s linear infinite" } : undefined} />
+            {bsaleSync ? "Sincronizando…" : "Sincronizar ahora"}
+          </button>
+          <style>{`@keyframes bsale-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
+        </div>
+      )}
+
       {/* Pestañas */}
       <div style={{ display: "inline-flex", borderRadius: 9, overflow: "hidden", border: "1px solid var(--border)", margin: "4px 0 14px" }}>
         {[["stock", "Stock"], ["movimientos", "Movimientos"]].map(([key, label]) => (
@@ -452,6 +573,65 @@ export default function Inventario() {
             )}
           </div>
         </>
+      )}
+
+      {/* Diferencias de catálogo con Bsale (última sincronización). */}
+      {bsaleDif && createPortal(
+        <div onClick={(e) => { if (e.target === e.currentTarget) setBsaleDif(null); }}
+          style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,.55)", zIndex: 12000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+          <div style={{ width: 820, maxWidth: "100%", maxHeight: "88vh", display: "flex", flexDirection: "column", background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 14, padding: 22 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, marginBottom: 6 }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: 15.5, fontWeight: 700 }}>Diferencias de catálogo con Bsale</h3>
+                <p style={{ margin: "3px 0 0", fontSize: 12, color: "var(--text-muted)" }}>
+                  De la última sincronización ({fmtFechaHora(bsaleDif.data?.actualizado_at)}). Solo informativo: la sincronización no crea ni borra productos.
+                </p>
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button className="btn btn-secondary btn-sm" onClick={exportarDiferenciasBsale} disabled={!bsaleDif.data?.detalle} title="Descargar ambas listas en Excel">
+                  <Download size={13} /> Exportar
+                </button>
+                <button className="btn btn-ghost" onClick={() => setBsaleDif(null)} style={{ padding: 6 }}><X size={16} /></button>
+              </div>
+            </div>
+            {bsaleDif.loading ? (
+              <div style={{ padding: "36px 24px", color: "var(--text-muted)" }}>Cargando…</div>
+            ) : !bsaleDif.data?.detalle ? (
+              <div style={{ padding: "36px 24px", color: "var(--text-muted)" }}>Aún no hay una sincronización guardada.</div>
+            ) : (
+              <div style={{ overflowY: "auto", display: "flex", flexDirection: "column", gap: 16 }}>
+                {[
+                  { titulo: `En Bsale, sin producto interno (${(bsaleDif.data.detalle.skus_bsale_sin_producto || []).length})`, filas: bsaleDif.data.detalle.skus_bsale_sin_producto || [], col: "Descripción en Bsale", campo: "descripcion" },
+                  { titulo: `Internos, sin SKU en Bsale (${(bsaleDif.data.detalle.productos_sin_bsale || []).length})`, filas: bsaleDif.data.detalle.productos_sin_bsale || [], col: "Producto interno", campo: "nombre" },
+                ].map((sec) => (
+                  <div key={sec.titulo}>
+                    <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 6 }}>{sec.titulo}</div>
+                    {sec.filas.length === 0 ? (
+                      <div style={{ fontSize: 12.5, color: "var(--text-muted)" }}>Sin diferencias — todo calza.</div>
+                    ) : (
+                      <div style={{ border: "1px solid var(--border)", borderRadius: 8, maxHeight: 240, overflowY: "auto" }}>
+                        <table className="data-table" style={{ width: "100%" }}>
+                          <thead style={{ position: "sticky", top: 0, background: "var(--surface)" }}>
+                            <tr><th style={{ textAlign: "left" }}>SKU</th><th style={{ textAlign: "left" }}>{sec.col}</th></tr>
+                          </thead>
+                          <tbody>
+                            {sec.filas.map((r, i) => (
+                              <tr key={`${r.sku}-${i}`}>
+                                <td style={{ fontWeight: 600, whiteSpace: "nowrap" }}>{r.sku}</td>
+                                <td style={{ color: "var(--text-muted)" }}>{r[sec.campo] || "—"}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>,
+        document.body
       )}
 
       {movModal && (

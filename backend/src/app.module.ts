@@ -33,6 +33,7 @@ import { MercadopublicoModule } from './mercadopublico/mercadopublico.module';
 import { MonitorModule } from './monitor/monitor.module';
 import { RrhhModule } from './rrhh/rrhh.module';
 import { InventarioModule } from './inventario/inventario.module';
+import { BsaleModule } from './bsale/bsale.module';
 
 @Module({
   imports: [
@@ -70,6 +71,7 @@ import { InventarioModule } from './inventario/inventario.module';
     MonitorModule,
     RrhhModule,
     InventarioModule,
+    BsaleModule,
   ],
 })
 export class AppModule {}
