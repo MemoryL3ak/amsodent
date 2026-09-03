@@ -421,16 +421,16 @@ export default function Inventario() {
               const p = bsale.progreso;
               const FASES = {
                 catalogo: ["1", "Bajando el catálogo de Bsale"],
-                stocks: ["2", "Bajando el stock por sucursal"],
+                stocks: ["2", "Consultando el stock en Bsale"],
                 aplicando: ["3", "Actualizando el stock de los productos"],
               };
               const [paso, etiqueta] = FASES[p?.fase] || [null, "Sincronizando con Bsale"];
               const pct = p?.total > 0 ? Math.min(100, Math.round((p.hechas / p.total) * 100)) : null;
               const detalle = !p?.total
                 ? "…"
-                : p.fase === "aplicando"
-                  ? ` — ${fmtNum(p.hechas)} de ${fmtNum(p.total)} productos`
-                  : ` — página ${fmtNum(p.hechas)} de ${fmtNum(p.total)}`;
+                : p.fase === "catalogo"
+                  ? ` — página ${fmtNum(p.hechas)} de ${fmtNum(p.total)}`
+                  : ` — ${fmtNum(p.hechas)} de ${fmtNum(p.total)} productos`;
               return (
                 <div style={{ marginTop: 8, maxWidth: 520 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8, fontSize: 12, color: "var(--text-muted)", marginBottom: 4 }}>
