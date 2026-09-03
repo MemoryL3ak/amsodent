@@ -15,6 +15,7 @@ import {
   Boxes,
   Users,
   Megaphone,
+  ShoppingCart,
   Target,
   BarChart2,
   Activity,
@@ -195,21 +196,29 @@ export default function SidebarLayout() {
   const permisos = Array.isArray(perfil?.permisos) ? perfil.permisos : permisosFallback(perfil?.rol);
   const puede = (m) => esAdmin || permisos.includes(m);
 
+  // Comercial = solo VENTA: cotizar, clientes y catálogo. Lo relacionado con
+  // COMPRAR (proveedores, OC, inventario) se movió al grupo Abastecimiento
+  // para no inflar este menú (llegó a tener 11 ítems).
   const comercialNav = [
     puede("cotizaciones") && { to: "/listar",      icon: ClipboardList, label: "Cotizaciones" },
     puede("crear_cotizacion") && { to: "/crear",       icon: FilePlus,      label: "Nueva Cotización" },
     // Antes vivía como pestaña del Chat Grupal; conserva el mismo permiso para
     // que la vean exactamente quienes ya la veían ahí.
     puede("chat") && { to: "/licitaciones-disponibles", icon: Inbox, label: "Mercado Público" },
-    esAdmin && { to: "/ordenes-compra", icon: FileText, label: "Órdenes de Compra" },
-    esAdmin && { to: "/proveedores", icon: Building2, label: "Proveedores" },
     puede("clientes") && { to: "/clientes",    icon: Users,         label: "Clientes" },
     puede("mis_clientes") && { to: "/mis-clientes", icon: UserCheck,    label: "Mis clientes" },
     puede("bitacora") && { to: "/bitacora-actividades", icon: CalendarDays, label: "Bitácora actividades" },
     puede("productos") && { to: "/productos",   icon: Package,       label: "Productos" },
+    puede("campanas") && { to: "/campanas",    icon: Megaphone,     label: "Campañas" },
+  ].filter(Boolean);
+
+  // Abastecimiento (solo admin): el lado de la COMPRA — a quién le compramos,
+  // las órdenes de compra emitidas y el stock valorizado.
+  const abastecimientoNav = [
+    esAdmin && { to: "/proveedores", icon: Building2, label: "Proveedores" },
+    esAdmin && { to: "/ordenes-compra", icon: FileText, label: "Órdenes de Compra" },
     // Inventario mueve stock y valorización a costo: solo administración.
     esAdmin && { to: "/inventario", icon: Boxes, label: "Inventario" },
-    puede("campanas") && { to: "/campanas",    icon: Megaphone,     label: "Campañas" },
   ].filter(Boolean);
 
   const postVentaNav = [
@@ -442,9 +451,11 @@ export default function SidebarLayout() {
         </div>
 
         {/* Navigation — todos los grupos son colapsables con persistencia */}
-        {/* Orden por flujo de venta: Comercial → Post-Venta → Logística →
-            Portal del Cliente → Reportes → Metas → Comunicación → Herramientas
-            → Administración (config/admin siempre al final). */}
+        {/* Orden por flujo real del negocio: se VENDE (Comercial), se DESPACHA
+            (Logística), se COBRA (Post-Venta), el cliente hace seguimiento
+            (Portal del Cliente); luego la gestión: se PLANIFICA (Metas) y se
+            CONTROLA (Reportes); al final lo transversal (Comunicación,
+            Herramientas) y Administración. */}
         <NavGroup
           label="Comercial"
           items={comercialNav}
@@ -452,13 +463,13 @@ export default function SidebarLayout() {
           icon={Briefcase}
           storageKey="sidebar_group_comercial"
         />
-        {postVentaNav.length > 0 && (
+        {abastecimientoNav.length > 0 && (
           <NavGroup
-            label="Post-Venta"
-            items={postVentaNav}
+            label="Abastecimiento"
+            items={abastecimientoNav}
             collapsible
-            icon={Truck}
-            storageKey="sidebar_group_postventa"
+            icon={ShoppingCart}
+            storageKey="sidebar_group_abastecimiento"
           />
         )}
         {logisticaNav.length > 0 && (
@@ -470,6 +481,15 @@ export default function SidebarLayout() {
             storageKey="sidebar_group_logistica"
           />
         )}
+        {postVentaNav.length > 0 && (
+          <NavGroup
+            label="Post-Venta"
+            items={postVentaNav}
+            collapsible
+            icon={Truck}
+            storageKey="sidebar_group_postventa"
+          />
+        )}
         {portalClienteNav.length > 0 && (
           <NavGroup
             label="Portal del Cliente"
@@ -479,15 +499,6 @@ export default function SidebarLayout() {
             storageKey="sidebar_group_portal_cliente"
           />
         )}
-        {reportesNav.length > 0 && (
-          <NavGroup
-            label="Reportes"
-            items={reportesNav}
-            collapsible
-            icon={BarChart3}
-            storageKey="sidebar_group_reportes"
-          />
-        )}
         {metasNav.length > 0 && (
           <NavGroup
             label="Metas"
@@ -495,6 +506,15 @@ export default function SidebarLayout() {
             collapsible
             icon={Trophy}
             storageKey="sidebar_group_metas"
+          />
+        )}
+        {reportesNav.length > 0 && (
+          <NavGroup
+            label="Reportes"
+            items={reportesNav}
+            collapsible
+            icon={BarChart3}
+            storageKey="sidebar_group_reportes"
           />
         )}
         {comunicacionNav.length > 0 && (

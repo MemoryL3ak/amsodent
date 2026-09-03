@@ -39,6 +39,46 @@ function labelMesCorto(key) {
   return s.charAt(0).toUpperCase() + s.slice(1, 3);
 }
 
+// "diego.cruz" → "Diego Cruz" (fallback cuando el perfil aún no carga o no
+// tiene nombre registrado).
+function nombreDesdeEmail(email) {
+  return String(email || "")
+    .split("@")[0]
+    .split(/[._-]+/)
+    .filter(Boolean)
+    .map((p) => p.charAt(0).toUpperCase() + p.slice(1))
+    .join(" ");
+}
+
+function iniciales(nombre) {
+  const partes = String(nombre || "").trim().split(/\s+/).filter(Boolean);
+  return ((partes[0]?.[0] || "") + (partes[1]?.[0] || "")).toUpperCase() || "?";
+}
+
+// El bloque "Avance de Metas" mide SOLO al equipo comercial: los perfiles de
+// administración (aunque tengan meta asignada o cotizaciones creadas) quedan
+// fuera de la meta, del avance y de las tarjetas. Rol desconocido (perfil aún
+// no cargado) se trata como venta para no ocultar gente real mientras carga.
+const ROLES_VENTA = new Set(["ventas", "ventas_especial", "jefe_ventas", "jefe_ventas_especial"]);
+function esRolVenta(rol) {
+  const r = String(rol || "").trim().toLowerCase();
+  return !r || ROLES_VENTA.has(r);
+}
+
+// Gradiente estable por persona para el avatar (misma paleta del chat).
+const AVATAR_COLORES = [
+  ["#0f766e", "#14b8a6"], ["#0369a1", "#0ea5e9"], ["#6d28d9", "#a855f7"],
+  ["#be185d", "#f0609b"], ["#c2410c", "#fb923c"], ["#15803d", "#34d399"],
+  ["#1d4ed8", "#60a5fa"], ["#a21caf", "#e879f9"],
+];
+function avatarFondo(txt) {
+  let h = 0;
+  const t = String(txt || "?");
+  for (let i = 0; i < t.length; i++) h = (h * 31 + t.charCodeAt(i)) % AVATAR_COLORES.length;
+  const [a, b] = AVATAR_COLORES[h];
+  return `linear-gradient(135deg, ${a}, ${b})`;
+}
+
 const ESTADOS_ABIERTOS = ["En espera", "Pendiente Aprobación", "Pendiente Aprobación Peso"];
 const ESTADOS_PERDIDOS = ["Perdida", "Desierta", "Descartada", "Cancelada"];
 const COLORES_CAT = ["#28aeb1", "#6366f1", "#f59e0b", "#16a34a", "#ec4899", "#0ea5e9", "#a855f7", "#ef4444", "#14b8a6", "#84cc16"];
@@ -100,17 +140,19 @@ export default function PanelIndicadores() {
   const [adjDateByLic, setAdjDateByLic] = useState({});
   const [docSums, setDocSums] = useState({}); // { [licId]: { guia, oc, factbol } }
   const [docsConsumo, setDocsConsumo] = useState([]); // guías/boletas/efectivo crudos (detalle avance de metas)
-  const [avanceMetaOpen, setAvanceMetaOpen] = useState(false); // modal detalle del avance de metas
+  // Modal detalle del avance de metas: null | { email: null (equipo) | email del ejecutivo, nombre }
+  const [avanceMetaOpen, setAvanceMetaOpen] = useState(null);
+  const [metasPorVendedor, setMetasPorVendedor] = useState({}); // email → meta_neto del periodo
   const [catData, setCatData] = useState([]); // [{ categoria, monto, productos:[{producto,monto}] }]
   const [margenMes, setMargenMes] = useState({ monto: 0, pct: 0 });
   const [costoBySku, setCostoBySku] = useState({}); // sku → costo (para el margen)
   const [mostrarProductos, setMostrarProductos] = useState(false);
   const [metaCotizaciones, setMetaCotizaciones] = useState(0);
-  const [metaMonto, setMetaMonto] = useState(0);
   const [margenPorLic, setMargenPorLic] = useState([]); // [{licId, venta, costo}] adjudicadas del periodo
   const [margenOpen, setMargenOpen] = useState(false); // modal de desglose del margen
   const [adjOpen, setAdjOpen] = useState(false); // modal con el detalle de las adjudicadas del período
   const [nombresVendedores, setNombresVendedores] = useState({}); // email → nombre
+  const [rolesVendedores, setRolesVendedores] = useState({}); // email → rol (para ordenar el avance de metas)
   const [disponibles, setDisponibles] = useState([]); // postulaciones del listado (tomadas / no aplica / vencidas)
 
   // Público vs particular según tipo_cliente de la licitación.
@@ -283,26 +325,33 @@ export default function PanelIndicadores() {
     return () => { activo = false; };
   }, [cargando, puedeVer, lics, adjDateByLic, enPeriodo, filtroTipo, costoBySku]);
 
-  // Nombres de los vendedores (para el desglose del margen).
+  // Nombres de los vendedores (para el desglose del margen y el avance de
+  // metas). Incluye también a los que tienen META definida aunque no tengan
+  // cotizaciones en el período — si no, aparecían como "diego.cruz".
   useEffect(() => {
     if (cargando || !puedeVer) return;
-    const emails = Array.from(new Set(
-      lics.map((l) => (l.creado_por || "").trim().toLowerCase()).filter(Boolean)
-    ));
+    const emails = Array.from(new Set([
+      ...lics.map((l) => (l.creado_por || "").trim().toLowerCase()),
+      ...Object.keys(metasPorVendedor),
+    ].filter(Boolean)));
     if (!emails.length) { setNombresVendedores({}); return; }
     let activo = true;
     api.post("/usuarios/profiles/by-emails", { emails })
       .then((perfiles) => {
         if (!activo) return;
         const m = {};
+        const roles = {};
         (perfiles || []).forEach((p) => {
-          m[(p.email || "").trim().toLowerCase()] = (p.nombre || "").trim();
+          const email = (p.email || "").trim().toLowerCase();
+          m[email] = (p.nombre || "").trim();
+          roles[email] = (p.rol || "").trim().toLowerCase();
         });
         setNombresVendedores(m);
+        setRolesVendedores(roles);
       })
       .catch(() => {});
     return () => { activo = false; };
-  }, [cargando, puedeVer, lics]);
+  }, [cargando, puedeVer, lics, metasPorVendedor]);
 
   // Listado de postulaciones disponibles (mercado público): tomadas / no aplica / vencidas.
   useEffect(() => {
@@ -325,9 +374,13 @@ export default function PanelIndicadores() {
       } catch { if (activo) setMetaCotizaciones(0); }
       try {
         const mm = await api.get(`/metas/mensuales?periodo=${periodo}`);
-        const total = (mm || []).reduce((acc, r) => acc + Number(r?.meta_neto || 0), 0);
-        if (activo) setMetaMonto(total);
-      } catch { if (activo) setMetaMonto(0); }
+        const porVendedor = {};
+        (mm || []).forEach((r) => {
+          const email = (r?.vendedor_email || "").trim().toLowerCase();
+          if (email) porVendedor[email] = Number(r?.meta_neto || 0);
+        });
+        if (activo) setMetasPorVendedor(porVendedor);
+      } catch { if (activo) setMetasPorVendedor({}); }
     })();
     return () => { activo = false; };
   }, [cargando, puedeVer, periodo]);
@@ -497,12 +550,15 @@ export default function PanelIndicadores() {
         ? (d.tipo === "factura" || d.tipo === "factura_boleta" || d.tipo === "efectivo")
         : d.tipo === "guia_despacho";
       if (!cuenta) return;
-      total += d.monto;
       const email = (l.creado_por || "").trim().toLowerCase();
+      // Solo equipo de ventas: lo creado por perfiles admin no mide meta.
+      if (!esRolVenta(rolesVendedores[email])) return;
+      total += d.monto;
       filas.push({
         licId: d.licId,
         codigo: l.id_licitacion || `#${d.licId}`,
         cliente: l.nombre_entidad || l.rut_entidad || "—",
+        email,
         vendedor: nombresVendedores[email] || email.split("@")[0] || "—",
         tipoLabel: TIPO_LABEL[d.tipo] || d.tipo,
         numero: d.numero,
@@ -513,7 +569,50 @@ export default function PanelIndicadores() {
     filas.sort((a, b) => String(b.fecha || "").localeCompare(String(a.fecha || "")));
     return { filas, total };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [docsConsumo, lics, adjDateByLic, enPeriodo, filtroTipo, nombresVendedores]);
+  }, [docsConsumo, lics, adjDateByLic, enPeriodo, filtroTipo, nombresVendedores, rolesVendedores]);
+
+  // Meta del equipo de ventas (excluye metas asignadas a perfiles admin).
+  const metaMonto = useMemo(
+    () => Object.entries(metasPorVendedor).reduce(
+      (s, [email, meta]) => (esRolVenta(rolesVendedores[email]) ? s + Number(meta || 0) : s),
+      0,
+    ),
+    [metasPorVendedor, rolesVendedores],
+  );
+
+  /* Avance de metas POR EJECUTIVO: cruza la meta de cada vendedor
+     (/metas/mensuales) con sus guías/boletas del período. Entran los que
+     tienen meta definida o avance; ordenados por cumplimiento. */
+  const avancePorVendedor = useMemo(() => {
+    const avancePorEmail = {};
+    avanceMeta.filas.forEach((f) => {
+      if (!f.email) return;
+      avancePorEmail[f.email] = (avancePorEmail[f.email] || 0) + Number(f.monto || 0);
+    });
+    const emails = new Set([...Object.keys(metasPorVendedor), ...Object.keys(avancePorEmail)]);
+    return [...emails]
+      // Solo el equipo de ventas: los perfiles admin con meta asignada no se
+      // muestran (tampoco suman a la meta global, ver metaMonto).
+      .filter((email) => esRolVenta(rolesVendedores[email]))
+      .map((email) => {
+        const meta = Number(metasPorVendedor[email] || 0);
+        const avance = Number(avancePorEmail[email] || 0);
+        return {
+          email,
+          nombre: nombresVendedores[email] || nombreDesdeEmail(email),
+          meta,
+          avance,
+          brecha: Math.max(0, meta - avance),
+          pct: meta > 0 ? (avance / meta) * 100 : null,
+        };
+      })
+      .filter((r) => r.meta > 0 || r.avance > 0)
+      .sort((a, b) =>
+        (b.pct ?? -1) - (a.pct ?? -1) ||
+        b.avance - a.avance ||
+        a.nombre.localeCompare(b.nombre),
+      );
+  }, [avanceMeta, metasPorVendedor, nombresVendedores, rolesVendedores]);
 
   // Evolución 6 meses (ventas con IVA).
   const evolucion = useMemo(() => {
@@ -811,49 +910,6 @@ export default function PanelIndicadores() {
             )}
           </div>
 
-          {/* Avance de Metas por ingreso de guía de despacho */}
-          <div
-            className="surface"
-            onClick={() => setAvanceMetaOpen(true)}
-            style={{ padding: 18, marginBottom: 16, cursor: "pointer" }}
-            title="Ver las guías y documentos que componen el avance"
-          >
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
-              <div style={{ minWidth: 220 }}>
-                <h3 className="surface-title" style={{ margin: 0 }}>Avance de Metas</h3>
-                <p style={{ fontSize: 12, color: "var(--text-muted)", margin: "2px 0 0" }}>
-                  Por ingreso de guías de despacho (públicas) y boletas/facturas (particulares) · clic para el detalle
-                  {filtroTipo ? " · la meta es la global del equipo (no se filtra por tipo)" : ""}
-                </p>
-              </div>
-              <div style={{ display: "flex", gap: 26, flexWrap: "wrap", textAlign: "right" }}>
-                <div>
-                  <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: ".06em", color: "var(--text-muted)", fontWeight: 700 }}>Avance</div>
-                  <div style={{ fontSize: 20, fontWeight: 800, color: "#15803d" }}>{fmtCLP(avanceMeta.total)}</div>
-                </div>
-                <div>
-                  <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: ".06em", color: "var(--text-muted)", fontWeight: 700 }}>Meta del mes</div>
-                  <div style={{ fontSize: 20, fontWeight: 800, color: "var(--text)" }}>{metaMonto > 0 ? fmtCLP(metaMonto) : "—"}</div>
-                </div>
-                <div>
-                  <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: ".06em", color: "var(--text-muted)", fontWeight: 700 }}>Brecha</div>
-                  <div style={{ fontSize: 20, fontWeight: 800, color: "#b45309" }}>{metaMonto > 0 ? fmtCLP(brechaMeta) : "—"}</div>
-                </div>
-                <div>
-                  <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: ".06em", color: "var(--text-muted)", fontWeight: 700 }}>Cumplimiento</div>
-                  <div style={{ fontSize: 20, fontWeight: 800, color: cumplimientoMonto == null ? "var(--text-muted)" : cumplimientoMonto >= 100 ? "#15803d" : cumplimientoMonto >= 70 ? "#0d9488" : "#b45309" }}>
-                    {cumplimientoMonto == null ? "Sin meta" : fmtPct(cumplimientoMonto)}
-                  </div>
-                </div>
-              </div>
-            </div>
-            {metaMonto > 0 && (
-              <div style={{ height: 10, borderRadius: 5, background: "var(--bg)", overflow: "hidden", marginTop: 12 }}>
-                <div style={{ height: "100%", width: `${clamp(cumplimientoMonto || 0, 0, 100)}%`, background: (cumplimientoMonto || 0) >= 100 ? "#16a34a" : "var(--primary)", borderRadius: 5 }} />
-              </div>
-            )}
-          </div>
-
           {/* Charts row 1 */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 16, marginBottom: 16 }}>
             {/* Evolución */}
@@ -1103,6 +1159,136 @@ export default function PanelIndicadores() {
               </div>
             </div>
           </div>
+
+          {/* ── Avance de Metas — cierre del panel ─────────────────────────
+              Global + tarjeta por ejecutivo. Medido por guías de despacho
+              (públicas) y boletas/facturas (particulares), el mismo criterio
+              del módulo Definición de metas. */}
+          <div className="surface" style={{ marginBottom: 16 }}>
+            <div className="surface-header" style={{ flexWrap: "wrap", gap: 12 }}>
+              <div>
+                <h3 className="surface-title" style={{ margin: 0 }}>Avance de Metas</h3>
+                <p style={{ fontSize: 12, color: "var(--text-muted)", margin: 0 }}>
+                  Guías de despacho (públicas) y boletas/facturas (particulares) del {periodoLabel.toLowerCase()}
+                  {filtroTipo ? " · la meta es la global del equipo (no se filtra por tipo)" : ""}
+                </p>
+              </div>
+              <button
+                className="btn btn-secondary btn-sm"
+                onClick={() => setAvanceMetaOpen({ email: null, nombre: "equipo" })}
+                title="Ver todas las guías y documentos que componen el avance"
+                style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
+              >
+                Ver detalle del equipo
+              </button>
+            </div>
+
+            <div style={{ padding: "18px 24px" }}>
+              {/* Resumen global */}
+              <div
+                onClick={() => setAvanceMetaOpen({ email: null, nombre: "equipo" })}
+                style={{
+                  cursor: "pointer",
+                  border: "1px solid var(--border)",
+                  borderTop: "3px solid var(--primary)",
+                  borderRadius: "var(--radius-lg)",
+                  padding: "16px 20px",
+                  background: "var(--surface)",
+                }}
+                title="Ver todas las guías y documentos que componen el avance"
+              >
+                <div style={{ display: "flex", gap: "28px 40px", flexWrap: "wrap" }}>
+                  {[
+                    { label: "Avance del equipo", valor: fmtCLP(avanceMeta.total), color: "#15803d" },
+                    { label: "Meta del mes", valor: metaMonto > 0 ? fmtCLP(metaMonto) : "Sin definir", color: "var(--text)" },
+                    { label: "Brecha", valor: metaMonto > 0 ? fmtCLP(brechaMeta) : "—", color: "#b45309" },
+                    {
+                      label: "Cumplimiento",
+                      valor: cumplimientoMonto == null ? "—" : fmtPct(cumplimientoMonto),
+                      color: cumplimientoMonto == null ? "var(--text-muted)" : cumplimientoMonto >= 100 ? "#15803d" : cumplimientoMonto >= 70 ? "#0d9488" : "#b45309",
+                    },
+                  ].map((s) => (
+                    <div key={s.label}>
+                      <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: ".08em", color: "var(--text-muted)", fontWeight: 700 }}>{s.label}</div>
+                      <div style={{ fontSize: 22, fontWeight: 800, color: s.color, marginTop: 4, lineHeight: 1.15 }}>{s.valor}</div>
+                    </div>
+                  ))}
+                </div>
+                {metaMonto > 0 && (
+                  <div style={{ height: 10, borderRadius: 5, background: "var(--bg)", border: "1px solid var(--border)", overflow: "hidden", marginTop: 14 }}>
+                    <div style={{ height: "100%", borderRadius: 5, width: `${clamp(cumplimientoMonto || 0, (avanceMeta.total > 0 ? 2 : 0), 100)}%`, background: (cumplimientoMonto || 0) >= 100 ? "#16a34a" : "linear-gradient(90deg, var(--primary), #14b8a6)" }} />
+                  </div>
+                )}
+              </div>
+
+              {/* Tarjetas por ejecutivo */}
+              {avancePorVendedor.length > 0 && (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(250px, 1fr))", gap: 12, marginTop: 16 }}>
+                  {avancePorVendedor.map((v) => {
+                    const pct = v.pct ?? 0;
+                    const color = v.pct == null ? "#64748b" : pct >= 100 ? "#15803d" : pct >= 70 ? "#0d9488" : pct >= 40 ? "#b45309" : "#dc2626";
+                    return (
+                      <div
+                        key={v.email}
+                        onClick={() => setAvanceMetaOpen({ email: v.email, nombre: v.nombre })}
+                        title={`Ver las guías y documentos de ${v.nombre}`}
+                        style={{
+                          cursor: "pointer",
+                          border: "1px solid var(--border)",
+                          borderRadius: "var(--radius-lg)",
+                          padding: "14px 16px",
+                          background: "var(--surface)",
+                          boxShadow: "0 1px 2px rgba(15,23,42,.05)",
+                          transition: "box-shadow .15s ease, transform .15s ease",
+                        }}
+                        onMouseEnter={(e) => { e.currentTarget.style.boxShadow = "0 6px 16px rgba(15,23,42,.10)"; e.currentTarget.style.transform = "translateY(-1px)"; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.boxShadow = "0 1px 2px rgba(15,23,42,.05)"; e.currentTarget.style.transform = "none"; }}
+                      >
+                        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                          <div style={{
+                            width: 38, height: 38, borderRadius: "50%", flexShrink: 0,
+                            background: avatarFondo(v.email), color: "#fff",
+                            display: "grid", placeItems: "center", fontSize: 13, fontWeight: 700, letterSpacing: ".02em",
+                          }}>
+                            {iniciales(v.nombre)}
+                          </div>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 13.5, fontWeight: 700, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={v.nombre}>
+                              {v.nombre}
+                            </div>
+                            <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 1 }}>
+                              Meta {v.meta > 0 ? fmtCLP(v.meta) : "sin definir"}
+                            </div>
+                          </div>
+                          <span style={{
+                            display: "inline-flex", alignItems: "center", padding: "2px 10px",
+                            borderRadius: 999, fontSize: 12, fontWeight: 700, whiteSpace: "nowrap",
+                            color, border: `1px solid ${color}40`, background: `${color}12`,
+                          }}>
+                            {v.pct == null ? "s/m" : fmtPct(v.pct)}
+                          </span>
+                        </div>
+                        <div style={{ height: 8, borderRadius: 4, background: "var(--bg)", border: "1px solid var(--border)", overflow: "hidden", marginTop: 12 }}>
+                          <div style={{ height: "100%", borderRadius: 4, width: `${clamp(pct, v.avance > 0 ? 3 : 0, 100)}%`, background: v.pct == null ? "#94a3b8" : pct >= 100 ? "#16a34a" : "linear-gradient(90deg, var(--primary), #14b8a6)" }} />
+                        </div>
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: 11.5, marginTop: 7 }}>
+                          <span style={{ fontWeight: 700, color: "#15803d" }}>{fmtCLP(v.avance)}</span>
+                          <span style={{ color: "var(--text-muted)" }}>
+                            {v.meta > 0 ? (v.brecha > 0 ? `faltan ${fmtCLP(v.brecha)}` : "meta cumplida ✓") : "sin meta asignada"}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              {avancePorVendedor.length === 0 && (
+                <p style={{ fontSize: 12.5, color: "var(--text-muted)", marginTop: 14, marginBottom: 0 }}>
+                  Sin metas definidas ni avance en el período. Define las metas en «Definición de metas».
+                </p>
+              )}
+            </div>
+          </div>
         </>
       )}
 
@@ -1133,9 +1319,14 @@ export default function PanelIndicadores() {
 
       {avanceMetaOpen && (
         <ModalAvanceMeta
-          titulo={`Avance de metas del ${periodoLabel.toLowerCase()}`}
-          filas={avanceMeta.filas}
-          onCerrar={() => setAvanceMetaOpen(false)}
+          titulo={avanceMetaOpen.email
+            ? `Avance de ${avanceMetaOpen.nombre}`
+            : `Avance de metas del ${periodoLabel.toLowerCase()}`}
+          filas={avanceMetaOpen.email
+            ? avanceMeta.filas.filter((f) => f.email === avanceMetaOpen.email)
+            : avanceMeta.filas}
+          mostrarVendedor={!avanceMetaOpen.email}
+          onCerrar={() => setAvanceMetaOpen(null)}
         />
       )}
     </div>
