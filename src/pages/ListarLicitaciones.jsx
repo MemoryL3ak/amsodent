@@ -28,6 +28,8 @@ export default function ListarLicitaciones() {
   const [filtroCreadores,    setFiltroCreadores]    = useStickyState("cotizaciones.creadores", []);
   const [filtroEstado,       setFiltroEstado]       = useStickyState("cotizaciones.estado", []);
   const [filtroTipoCompra,   setFiltroTipoCompra]   = useStickyState("cotizaciones.tipoCompra", []);
+  const [filtroConOc,        setFiltroConOc]        = useStickyState("cotizaciones.conOc", "");   // "" | "con" | "sin"
+  const [filtroConGuia,      setFiltroConGuia]      = useStickyState("cotizaciones.conGuia", ""); // "" | "con" | "sin"
 
   const [openCreadores, setOpenCreadores] = useState(false);
   const [openEstados,   setOpenEstados]   = useState(false);
@@ -83,8 +85,10 @@ export default function ListarLicitaciones() {
       const [docsOcRes, perfilesRes] = await Promise.allSettled([
         ids.length > 0
           ? api.post("/licitaciones/documentos/filter", {
-              filter: { licitacion_ids: ids, tipo: ["orden_compra", "factura_boleta", "efectivo"] },
-              fields: "licitacion_id,fecha_oc,created_at",
+              // guia_despacho se suma SOLO para los filtros con/sin documento;
+              // la fecha de adjudicación sigue saliendo de OC/boleta/efectivo.
+              filter: { licitacion_ids: ids, tipo: ["orden_compra", "factura_boleta", "efectivo", "guia_despacho"] },
+              fields: "licitacion_id,tipo,fecha_oc,created_at",
             })
           : Promise.resolve([]),
         emailsUnicos.length > 0
@@ -93,10 +97,14 @@ export default function ListarLicitaciones() {
       ]);
 
       const primeraOcMap = {};
+      const conOcSet = new Set();
+      const conGuiaSet = new Set();
       if (docsOcRes.status === "fulfilled") {
         (docsOcRes.value || []).forEach((d) => {
           const licId = Number(d?.licitacion_id || 0);
           if (!licId) return;
+          if (d?.tipo === "guia_despacho") { conGuiaSet.add(licId); return; }
+          if (d?.tipo === "orden_compra") conOcSet.add(licId);
           const raw = d?.fecha_oc || d?.created_at;
           if (!raw) return;
           const iso = String(raw).slice(0, 10);
@@ -110,6 +118,8 @@ export default function ListarLicitaciones() {
       rows = rows.map((l) => ({
         ...l,
         fecha_adjudicacion: primeraOcMap[Number(l.id)] || null,
+        tiene_oc: conOcSet.has(Number(l.id)),
+        tiene_guia: conGuiaSet.has(Number(l.id)),
       }));
 
       setData(rows);
@@ -200,7 +210,9 @@ export default function ListarLicitaciones() {
       (filtroComuna       ? comuna.includes(filtroComuna.trim().toLowerCase())      : true) &&
       (filtroCreadores.length > 0 ? filtroCreadores.includes(email)   : true) &&
       (filtroEstado.length   > 0 ? filtroEstado.includes(l.estado)    : true) &&
-      (filtroTipoCompra.length > 0 ? filtroTipoCompra.includes(tipoCompraRow) : true)
+      (filtroTipoCompra.length > 0 ? filtroTipoCompra.includes(tipoCompraRow) : true) &&
+      (filtroConOc   ? (filtroConOc === "con" ? l.tiene_oc : !l.tiene_oc) : true) &&
+      (filtroConGuia ? (filtroConGuia === "con" ? l.tiene_guia : !l.tiene_guia) : true)
     );
   });
 
@@ -509,6 +521,25 @@ export default function ListarLicitaciones() {
               </div>
             </div>
           )}
+        </div>
+
+        {/* Con / sin documentos del ciclo (pedido 2026-09-04) */}
+        <div className="filter-field">
+          <label className="filter-label">Orden de compra</label>
+          <select className="input" value={filtroConOc} onChange={(e) => setFiltroConOc(e.target.value)}>
+            <option value="">Todas</option>
+            <option value="con">Con OC subida</option>
+            <option value="sin">Sin OC subida</option>
+          </select>
+        </div>
+
+        <div className="filter-field">
+          <label className="filter-label">Guía de despacho</label>
+          <select className="input" value={filtroConGuia} onChange={(e) => setFiltroConGuia(e.target.value)}>
+            <option value="">Todas</option>
+            <option value="con">Con guía subida</option>
+            <option value="sin">Sin guía subida</option>
+          </select>
         </div>
       </div>
 
