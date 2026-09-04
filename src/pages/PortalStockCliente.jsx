@@ -2140,9 +2140,25 @@ function PanelExploradorPrecios() {
           ) : (
             <div style={ex.grilla}>
               {filtrados.map((it) => (
-                <div key={it.url} style={ex.prodCard}>
+                <div
+                  key={it.url}
+                  style={{
+                    ...ex.prodCard,
+                    ...(it.tienda === "amsodent"
+                      ? { border: `1.5px solid ${TEAL}`, boxShadow: "0 4px 14px rgba(15,118,110,.12)" }
+                      : {}),
+                  }}
+                >
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
-                    <span style={ex.tiendaBadge}>{it.tienda_nombre}</span>
+                    <span
+                      style={
+                        it.tienda === "amsodent"
+                          ? { ...ex.tiendaBadge, background: TEAL, color: "#fff", border: `1px solid ${TEAL}` }
+                          : ex.tiendaBadge
+                      }
+                    >
+                      {it.tienda === "amsodent" ? "★ Amsodent" : it.tienda_nombre}
+                    </span>
                     {it.oferta && (
                       <span style={{ fontSize: 10.5, fontWeight: 800, color: "#b91c1c", background: "#fee2e2", padding: "2px 8px", borderRadius: 999 }}>
                         OFERTA

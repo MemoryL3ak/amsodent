@@ -251,8 +251,9 @@ recuperaciones de contraseña.
   inventario propio con semáforo, y generación de solicitudes de cotización
   que llegan al sistema. Incluye el Explorador de precios: el cliente busca un
   insumo por palabra clave y el portal compara en vivo los precios de las
-  tiendas dentales chilenas online (Orbis, Gexa, SP Dental, Clandent, J-Dent,
-  Techdent, Denteeth), guardando un histórico por producto (mínimo registrado
+  tiendas dentales chilenas online (la tienda propia amsodentmedical.cl SIEMPRE
+  primera y destacada, más Orbis, Gexa, SP Dental, Clandent, J-Dent, Techdent y
+  Denteeth), guardando un histórico por producto (mínimo registrado
   y variación contra la captura anterior), estilo Knasta/SoloTodo.
 - /despachos — Portal de Despachos internos: estado, evidencia (fotos/PDF
   hasta 20 MB), firma de recepción dibujada y bitácora.
