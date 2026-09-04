@@ -1271,8 +1271,10 @@ export default function SeguimientoPagos() {
       </div>
 
       {/* Filtros. El rango de fecha va PRIMERO (pedido 2026-08-27): es el
-          filtro que más se usa y quedaba escondido al final de la barra. */}
-      <div className="filter-bar">
+          filtro que más se usa y quedaba escondido al final de la barra.
+          Grilla uniforme de 6 columnas (pedido 2026-09-04): con 12 filtros el
+          flex dejaba la última fila con dos campos gigantes descuadrados. */}
+      <div className="filter-bar filter-bar-grid">
         <div className="filter-field">
           <label className="filter-label">Fecha Factura desde</label>
           <DateFilter value={filtroDesde} onChange={setFiltroDesde} maxDate={filtroHasta ? new Date(`${filtroHasta}T00:00:00`) : undefined} placeholder="Desde…" />
