@@ -1647,9 +1647,45 @@ export default function SeguimientoPagos() {
                       </td>
                       <td style={{ verticalAlign: "middle", textAlign: "right", fontWeight: 600, whiteSpace: "nowrap" }}>
                         {(() => {
-                          // Monto = bruto (con IVA) de la factura cargada.
+                          // Monto = bruto (con IVA) de la factura cargada; si hay
+                          // multas, se muestran restando con su detalle a la vista.
                           const m = montoFacturaBruto(f, lic);
-                          return m > 0 ? `$${m.toLocaleString("es-CL")}` : "—";
+                          const multasLic = multasMap[lic.id] || [];
+                          if (m <= 0 && multaMonto <= 0) return "—";
+                          return (
+                            <>
+                              <div>{m > 0 ? `$${m.toLocaleString("es-CL")}` : "—"}</div>
+                              {multaMonto > 0 && (
+                                <div style={{ fontSize: 11, color: "#b91c1c", fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 3 }}>
+                                  − {fmtCLP(multaMonto)} multa
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const conArchivo = multasLic.find((mu) => mu.bucket && mu.storage_path);
+                                      if (conArchivo) abrirDocumento(conArchivo);
+                                      else {
+                                        const det = multasLic
+                                          .map((mu) => `Multa ${mu.numero || "s/n"} · ${fmtFecha(mu.fecha_oc || mu.created_at)} · ${fmtCLP(mu.monto)}`)
+                                          .join(" | ");
+                                        setToast({ type: "info", message: det || "Multa sin detalle." });
+                                      }
+                                    }}
+                                    style={{ background: "none", border: "none", cursor: "pointer", color: "var(--primary)", padding: 0, display: "inline-flex" }}
+                                    title={multasLic
+                                      .map((mu) => `Multa ${mu.numero || "s/n"} · ${fmtFecha(mu.fecha_oc || mu.created_at)} · ${fmtCLP(mu.monto)}`)
+                                      .join("\n") || "Ver detalle de la multa"}
+                                  >
+                                    <Eye size={12} />
+                                  </button>
+                                </div>
+                              )}
+                              {multaMonto > 0 && m > 0 && (
+                                <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
+                                  = {fmtCLP(Math.max(0, m - multaMonto))} a cobrar
+                                </div>
+                              )}
+                            </>
+                          );
                         })()}
                       </td>
                       <td style={{ verticalAlign: "middle", textAlign: "right" }}>
