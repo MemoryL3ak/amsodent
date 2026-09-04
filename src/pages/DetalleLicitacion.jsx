@@ -1055,8 +1055,13 @@ export default function EditarLicitacion() {
   // "Adjudicada", esEditable pasa a false, pero los cambios pendientes de los
   // ítems sí deben persistirse o los KPIs de margen quedan con datos viejos).
   const eraEditable = ESTADOS_EDITABLES.includes(estadoActualDB);
+  // Bypass con OC cargada (pedido 2026-09-04): si el cliente ya emitió una
+  // orden de compra, el negocio está cerrado — no tiene sentido retener la
+  // cotización en aprobación (margen o peso) ni impedir avanzar su estado.
+  const tieneOcCargada = documentos.some((d) => d?.tipo === "orden_compra");
   const estadoBloqueadoPendiente =
     !esAdmin &&
+    !tieneOcCargada &&
     (estadoActualDB === "Pendiente Aprobación" ||
       estadoActualDB === "Pendiente Aprobación Peso");
   const puedeEditarEstado = !estadoBloqueadoPendiente;
@@ -3027,12 +3032,14 @@ export default function EditarLicitacion() {
       const estadoSolicitado = estadoBloqueadoPendiente
         ? estadoActualDB // conserva el pendiente que corresponda (margen o peso)
         : estado;
-      const requiereAprobacion = margenGeneral < 20 && !margenAprobado;
+      // Con OC cargada, las aprobaciones no retienen: el cliente ya compró
+      // (bypass del pedido 2026-09-04).
+      const requiereAprobacion = margenGeneral < 20 && !margenAprobado && !tieneOcCargada;
       // Aprobación por PESO: si algún producto de los ítems sigue sin peso
       // registrado, el estado se fuerza a "Pendiente Aprobación Peso" (prima
       // sobre la de margen; "En espera" elegido por un admin se respeta, igual
       // que en la aprobación por margen).
-      const requiereAprobacionPeso = productosSinPesoDeItems().length > 0;
+      const requiereAprobacionPeso = !tieneOcCargada && productosSinPesoDeItems().length > 0;
       let estadoFinal =
         requiereAprobacion && estadoSolicitado !== "En espera"
           ? "Pendiente Aprobación"
@@ -3635,6 +3642,11 @@ export default function EditarLicitacion() {
               <option value="Descartada">Descartada</option>
               <option value="Cancelada">Cancelada</option>
             </select>
+            {tieneOcCargada && estadoActualDB.startsWith("Pendiente Aprobación") && (
+              <div style={{ marginTop: 6, fontSize: 11.5, color: "#15803d", fontWeight: 600 }}>
+                Esta cotización tiene una OC cargada: la aprobación pendiente no retiene el avance de estado.
+              </div>
+            )}
             {estado === "Perdida" && motivoPerdida && (
               <div
                 style={{
