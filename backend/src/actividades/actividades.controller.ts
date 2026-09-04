@@ -37,6 +37,13 @@ export class ActividadesController {
     return this.actividades.usuarios(req.user);
   }
 
+  // Importación inmediata del calendario de Google del usuario (la dispara la
+  // bitácora al abrirse; con throttle interno de 1 minuto).
+  @Post('importar-calendar')
+  importarCalendar(@Req() req: any) {
+    return this.actividades.importarMias(req.user);
+  }
+
   @Post()
   crear(@Req() req: any, @Body() body: any) {
     return this.actividades.crear(req.user, body);

@@ -546,6 +546,80 @@ export class ActividadesService {
      - Solo se importan eventos CON AL MENOS OTRO INVITADO (una reunión con
        alguien); los recordatorios personales sin invitados no entran.
      - Dedupe por (evento_google_id, user_email): re-correr no duplica. */
+  // Última importación por cuenta (throttle): abrir la bitácora varias veces
+  // seguidas no debe golpear la API de Google en cada visita.
+  private ultimaImportacion = new Map<string, number>();
+  private static readonly IMPORT_THROTTLE_MS = 60_000;
+
+  // Importa el calendario de UNA cuenta conectada. Devuelve cuántas
+  // actividades nuevas creó. Lanza si Google falla (el llamador decide).
+  private async importarCuenta(c: { user_id: string; email: string; refresh_token: string }): Promise<number> {
+    const client = this.supabase.getClient();
+    const email = String(c.email || '').trim().toLowerCase();
+    const hoy = new Date().toISOString().slice(0, 10);
+    const timeMin = new Date(Date.now() - 3 * 86400000).toISOString();
+    const timeMax = new Date(Date.now() + 60 * 86400000).toISOString();
+
+    const eventos = await this.calendar.listarEventos(String(c.refresh_token), timeMin, timeMax);
+    const candidatos = (eventos || []).filter((ev: any) => {
+      if (!ev?.id || ev.status === 'cancelled') return false;
+      if (ev.extendedProperties?.private?.amsodent) return false; // creado por el sistema
+      const asistentes: any[] = Array.isArray(ev.attendees) ? ev.attendees : [];
+      const otros = asistentes.filter((a) => !a?.self && !a?.resource);
+      if (!otros.length) return false; // sin otros invitados: evento personal
+      return Boolean(ev.start?.dateTime || ev.start?.date);
+    });
+    this.ultimaImportacion.set(email, Date.now());
+    if (!candidatos.length) return 0;
+
+    const ids = candidatos.map((ev: any) => String(ev.id));
+    const { data: existentes } = await client
+      .from('actividades_cliente')
+      .select('evento_google_id')
+      .eq('user_email', email)
+      .in('evento_google_id', ids);
+    const yaImportados = new Set((existentes || []).map((r: any) => String(r.evento_google_id)));
+
+    let nombre = email;
+    try {
+      const { data: perfil } = await client.from('profiles').select('nombre').eq('id', c.user_id).maybeSingle();
+      if (perfil?.nombre) nombre = String(perfil.nombre).trim();
+    } catch { /* nombre best-effort */ }
+
+    const filas: any[] = [];
+    for (const ev of candidatos) {
+      if (yaImportados.has(String(ev.id))) continue;
+      const inicio = ev.start?.dateTime || ev.start?.date;
+      const fecha = String(inicio).slice(0, 10);
+      const horaDe = (v: any) => {
+        const m = /T(\d{2}:\d{2})/.exec(String(v || ''));
+        return m ? m[1] : null;
+      };
+      const asistentes = (Array.isArray(ev.attendees) ? ev.attendees : [])
+        .map((a: any) => ({ email: String(a?.email || '').toLowerCase(), nombre: a?.displayName || a?.email || '' }))
+        .filter((a: any) => a.email);
+      filas.push({
+        titulo: String(ev.summary || '(sin título)').slice(0, 200),
+        tipo: 'reunion',
+        comentario: ['Importada desde Google Calendar', String(ev.description || '').slice(0, 500)].filter(Boolean).join('\n'),
+        fecha,
+        hora_inicio: horaDe(ev.start?.dateTime),
+        hora_fin: horaDe(ev.end?.dateTime),
+        todo_el_dia: !ev.start?.dateTime,
+        estado: fecha < hoy ? 'realizada' : 'pendiente',
+        adjuntos: [],
+        participantes: asistentes,
+        meet_url: ev.hangoutLink || null,
+        evento_google_id: String(ev.id),
+        user_email: email,
+        user_nombre: nombre,
+      });
+    }
+    if (filas.length) await this.insertarFilas(filas);
+    return filas.length;
+  }
+
+  // Importación de TODAS las cuentas (cron de respaldo).
   async importarDesdeCalendar(): Promise<{ cuentas: number; importadas: number; errores: string[] }> {
     const client = this.supabase.getClient();
     const { data: cuentas, error } = await client
@@ -553,82 +627,50 @@ export class ActividadesService {
       .select('user_id, email, refresh_token, scopes');
     if (error) throw new BadRequestException(error.message);
 
-    const hoy = new Date().toISOString().slice(0, 10);
-    const timeMin = new Date(Date.now() - 3 * 86400000).toISOString();
-    const timeMax = new Date(Date.now() + 60 * 86400000).toISOString();
     let importadas = 0;
     const errores: string[] = [];
     let cuentasOk = 0;
-
     for (const c of cuentas || []) {
       const email = String(c.email || '').trim().toLowerCase();
       const scopes = String(c.scopes || '').toLowerCase();
       if (!c.refresh_token || !email || (scopes && !scopes.includes('calendar'))) continue;
       cuentasOk++;
       try {
-        const eventos = await this.calendar.listarEventos(String(c.refresh_token), timeMin, timeMax);
-        const candidatos = (eventos || []).filter((ev: any) => {
-          if (!ev?.id || ev.status === 'cancelled') return false;
-          if (ev.extendedProperties?.private?.amsodent) return false; // creado por el sistema
-          const asistentes: any[] = Array.isArray(ev.attendees) ? ev.attendees : [];
-          const otros = asistentes.filter((a) => !a?.self && !a?.resource);
-          if (!otros.length) return false; // sin otros invitados: evento personal
-          return Boolean(ev.start?.dateTime || ev.start?.date);
-        });
-        if (!candidatos.length) continue;
-
-        const ids = candidatos.map((ev: any) => String(ev.id));
-        const { data: existentes } = await client
-          .from('actividades_cliente')
-          .select('evento_google_id')
-          .eq('user_email', email)
-          .in('evento_google_id', ids);
-        const yaImportados = new Set((existentes || []).map((r: any) => String(r.evento_google_id)));
-
-        let nombre = email;
-        try {
-          const { data: perfil } = await client.from('profiles').select('nombre').eq('id', c.user_id).maybeSingle();
-          if (perfil?.nombre) nombre = String(perfil.nombre).trim();
-        } catch { /* nombre best-effort */ }
-
-        const filas: any[] = [];
-        for (const ev of candidatos) {
-          if (yaImportados.has(String(ev.id))) continue;
-          const inicio = ev.start?.dateTime || ev.start?.date;
-          const fecha = String(inicio).slice(0, 10);
-          const horaDe = (v: any) => {
-            const m = /T(\d{2}:\d{2})/.exec(String(v || ''));
-            return m ? m[1] : null;
-          };
-          const asistentes = (Array.isArray(ev.attendees) ? ev.attendees : [])
-            .map((a: any) => ({ email: String(a?.email || '').toLowerCase(), nombre: a?.displayName || a?.email || '' }))
-            .filter((a: any) => a.email);
-          filas.push({
-            titulo: String(ev.summary || '(sin título)').slice(0, 200),
-            tipo: 'reunion',
-            comentario: ['Importada desde Google Calendar', String(ev.description || '').slice(0, 500)].filter(Boolean).join('\n'),
-            fecha,
-            hora_inicio: horaDe(ev.start?.dateTime),
-            hora_fin: horaDe(ev.end?.dateTime),
-            todo_el_dia: !ev.start?.dateTime,
-            estado: fecha < hoy ? 'realizada' : 'pendiente',
-            adjuntos: [],
-            participantes: asistentes,
-            meet_url: ev.hangoutLink || null,
-            evento_google_id: String(ev.id),
-            user_email: email,
-            user_nombre: nombre,
-          });
-        }
-        if (filas.length) {
-          await this.insertarFilas(filas);
-          importadas += filas.length;
-        }
+        importadas += await this.importarCuenta(c as any);
       } catch (e: any) {
         errores.push(`${email}: ${String(e?.message || e).slice(0, 120)}`);
       }
     }
     return { cuentas: cuentasOk, importadas, errores };
+  }
+
+  // Importación INMEDIATA de la cuenta del usuario: la dispara el frontend al
+  // abrir la bitácora, así lo agendado en Google aparece al tiro (con un
+  // throttle de 1 minuto para no golpear la API en cada visita).
+  async importarMias(user: Usuario): Promise<{ conectado: boolean; importadas: number }> {
+    if (!user?.id) return { conectado: false, importadas: 0 };
+    const { data: c } = await this.supabase
+      .getClient()
+      .from('correo_cuentas')
+      .select('user_id, email, refresh_token, scopes')
+      .eq('user_id', user.id)
+      .maybeSingle();
+    const email = String(c?.email || '').trim().toLowerCase();
+    const scopes = String(c?.scopes || '').toLowerCase();
+    if (!c?.refresh_token || !email || (scopes && !scopes.includes('calendar'))) {
+      return { conectado: false, importadas: 0 };
+    }
+    const ultima = this.ultimaImportacion.get(email) || 0;
+    if (Date.now() - ultima < ActividadesService.IMPORT_THROTTLE_MS) {
+      return { conectado: true, importadas: 0 };
+    }
+    try {
+      const importadas = await this.importarCuenta(c as any);
+      return { conectado: true, importadas };
+    } catch {
+      // Best-effort: si Google falla, la bitácora carga igual.
+      return { conectado: true, importadas: 0 };
+    }
   }
 
   // Usuarios con actividades (para el filtro del admin).

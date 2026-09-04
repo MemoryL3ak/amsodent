@@ -2,14 +2,16 @@ import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/commo
 import { ActividadesService } from './actividades.service';
 
 /* ── Importación automática Google Calendar → bitácora (pedido 2026-09-04) ──
-   Cada 15 minutos revisa el calendario de cada cuenta de Google conectada en
+   Cada 5 minutos revisa el calendario de cada cuenta de Google conectada en
    «Mi Correo» (con permiso de Calendar) e importa como actividades los
-   eventos con invitados que no haya creado el propio sistema. Las reglas de
-   filtrado y el dedupe viven en ActividadesService.importarDesdeCalendar().
+   eventos con invitados que no haya creado el propio sistema. Es el RESPALDO:
+   además, abrir la bitácora importa la cuenta propia al instante
+   (POST /actividades/importar-calendar). Las reglas de filtrado y el dedupe
+   viven en ActividadesService.importarDesdeCalendar().
 
    Interruptor: CALENDAR_SYNC_AUTO=off lo desactiva (útil en desarrollo local
    para no competir con el backend de producción por la misma base). */
-const INTERVALO_MS = 15 * 60 * 1000;
+const INTERVALO_MS = 5 * 60 * 1000;
 
 @Injectable()
 export class CalendarSyncCron implements OnModuleInit, OnModuleDestroy {
@@ -24,7 +26,7 @@ export class CalendarSyncCron implements OnModuleInit, OnModuleDestroy {
       this.log.log('Importación de Google Calendar a la bitácora DESACTIVADA (CALENDAR_SYNC_AUTO=off).');
       return;
     }
-    this.log.log('Importación de Google Calendar a la bitácora activa: cada 15 minutos.');
+    this.log.log('Importación de Google Calendar a la bitácora activa: cada 5 minutos (+ al abrir la bitácora).');
     // Primera pasada al minuto de arrancar (deja respirar el arranque de Nest).
     this.timer = setInterval(() => void this.correr(), INTERVALO_MS);
     setTimeout(() => void this.correr(), 60_000);
