@@ -3,6 +3,7 @@ import { api } from "../lib/api";
 import { useNavigate } from "react-router-dom";
 import Select from "react-select";
 import Toast from "../components/Toast";
+import { calcularLista3 } from "../lib/listas";
 
 const selectStyles = {
   control: (base, state) => ({
@@ -42,6 +43,9 @@ export default function CrearCampana() {
   const [nombre, setNombre] = useState("");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
+  // Lista de precios a la que se asocia la campaña (pedido 2026-09-04): el
+  // "precio unitario" de referencia de cada ítem sale de esa lista.
+  const [listaPrecios, setListaPrecios] = useState(1);
 
   const [productos, setProductos] = useState([]);
   const [items, setItems] = useState([
@@ -53,7 +57,7 @@ export default function CrearCampana() {
       setLoading(true);
       try {
         const data = await api.get("/productos");
-        setProductos((data || []).map((p) => ({ sku: p.sku, nombre: p.nombre, lista1: p.lista1 })));
+        setProductos((data || []).map((p) => ({ sku: p.sku, nombre: p.nombre, lista1: p.lista1, lista2: p.lista2, lista3: p.lista3 })));
       } catch (error) {
         console.error(error);
         setToast({ type: "error", message: "Error cargando productos" });
@@ -69,6 +73,14 @@ export default function CrearCampana() {
     [productos]
   );
 
+  // Precio de referencia del producto según la lista asociada a la campaña.
+  function precioDeLista(prod, lista) {
+    if (!prod) return 0;
+    if (Number(lista) === 2) return Number(prod.lista2 ?? 0);
+    if (Number(lista) === 3) return Number(prod.lista3 ?? 0) || calcularLista3(prod.lista2);
+    return Number(prod.lista1 ?? 0);
+  }
+
   function actualizarItem(index, campo, valor) {
     const copia = [...items];
     const it = { ...copia[index] };
@@ -77,13 +89,24 @@ export default function CrearCampana() {
       it.sku = valor;
       const prod = productos.find((p) => p.sku === valor);
       it.producto = prod?.nombre || "";
-      it.precio_unitario = Number(prod?.lista1 ?? 0);
+      it.precio_unitario = precioDeLista(prod, listaPrecios);
     } else if (campo === "precio_campania") {
       it.precio_campania = valor;
     }
 
     copia[index] = it;
     setItems(copia);
+  }
+
+  // Al cambiar la lista asociada se recalcula el precio de referencia de los
+  // ítems ya cargados (el precio de campaña digitado no se toca).
+  function cambiarListaPrecios(lista) {
+    setListaPrecios(lista);
+    setItems((prev) => prev.map((it) => {
+      if (!it.sku) return it;
+      const prod = productos.find((p) => p.sku === it.sku);
+      return { ...it, precio_unitario: precioDeLista(prod, lista) };
+    }));
   }
 
   function agregarItem() {
@@ -143,6 +166,7 @@ export default function CrearCampana() {
         nombre: nombre.trim(),
         start_date: startDate,
         end_date: endDate,
+        lista_precios: Number(listaPrecios) || 1,
         items: itemsParaGuardar.map((it) => ({
           sku: String(it.sku),
           producto: String(it.producto || ""),
@@ -184,7 +208,7 @@ export default function CrearCampana() {
           <h3 className="surface-title">Datos de la campaña</h3>
         </div>
         <div className="surface-body">
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "20px" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: "20px" }}>
             <div className="field">
               <label className="field-label">Nombre Campaña *</label>
               <input
@@ -192,6 +216,18 @@ export default function CrearCampana() {
                 value={nombre}
                 onChange={(e) => setNombre(e.target.value)}
               />
+            </div>
+
+            <div className="field">
+              <label className="field-label">Lista de precios</label>
+              <select className="input" value={listaPrecios} onChange={(e) => cambiarListaPrecios(Number(e.target.value))}>
+                <option value={1}>Lista 1</option>
+                <option value={2}>Lista 2</option>
+                <option value={3}>Lista 3 (licitación 9-24 meses)</option>
+              </select>
+              <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 3 }}>
+                El precio unitario de referencia de cada SKU sale de esta lista.
+              </div>
             </div>
 
             <div className="field">

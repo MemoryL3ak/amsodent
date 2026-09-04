@@ -128,7 +128,10 @@ Numeración correlativa #0001, mismo buscador de productos que la cotización,
 costo unitario de compra, export a PDF con formato de marca.
 
 ### Proveedores (/proveedores) — solo admin
-Catálogo de proveedores: razón social, RUT, contacto, correo, teléfono, rubro.
+Catálogo de proveedores: razón social, RUT, contacto, correo, teléfono, rubro,
+MARCAS que distribuye (selector con las marcas del catálogo de productos; se
+puede crear una marca nueva escribiéndola) y PALABRAS CLAVE libres. Marcas y
+palabras clave entran en el buscador del listado.
 
 ### Clientes (/clientes), Mis clientes (/mis-clientes)
 Cartera de clientes con RUT, tipo, región/comuna, vendedor asignado. El detalle
@@ -140,6 +143,9 @@ cartera propia del ejecutivo.
 Agenda comercial: visitas, llamadas, reuniones (con enlace de Google Meet
 integrado), asociadas a cliente y cotización. Alimenta la PRODUCTIVIDAD del
 cálculo de comisiones — si no registras actividades, tu comisión baja.
+También registra actividades AUTOMÁTICAS de otros módulos (correos de
+cobranza, calendario de cobranza): el sistema les resuelve el cliente por RUT
+para que aparezcan en la ficha 360° y en el filtro por cliente.
 
 ### Productos (/productos)
 Catálogo maestro: SKU, marca, categoría, formato, 3 listas de precios (Lista 3
@@ -147,7 +153,11 @@ Catálogo maestro: SKU, marca, categoría, formato, 3 listas de precios (Lista 3
 (cm³ para el cálculo de flete), ficha técnica en PDF. Estados: Activo (con
 SKU), Transitorio (sin SKU), Pendiente Aprobación (margen 0-20%), Inactivo.
 Al CREAR un producto todos los campos son obligatorios (excepto el SKU, que lo
-asigna un admin); al EDITAR nada es obligatorio salvo la imagen. Carga masiva
+asigna un admin); al EDITAR nada es obligatorio salvo la imagen. Ventas puede
+editar peso y dimensiones de los Transitorios y Pendientes de Aprobación. Al
+usar en una cotización un transitorio con MÁS DE 30 DÍAS de creado, el sistema
+pide validar que su costo siga vigente (muestra costo y antigüedad) antes de
+agregarlo al ítem. Carga masiva
 por planilla con historial y rollback (deshace esa carga y las posteriores).
 Filtros de completitud: SKU asignado, con/sin peso, con/sin medidas.
 
@@ -167,7 +177,9 @@ sincronización NO crea ni borra productos.
 
 ### Campañas (/campanas)
 Precios de campaña por SKU con vigencia (inicio/fin): sobrescriben la lista de
-precios al cotizar y se destacan en Productos. Crear campañas es solo admin.
+precios al cotizar y se destacan en Productos. Al crear una campaña se elige la
+LISTA DE PRECIOS asociada (1, 2 o 3): el precio unitario de referencia de cada
+SKU sale de esa lista. Crear campañas es solo admin.
 
 ## MÓDULOS — GRUPO POST-VENTA
 
@@ -176,7 +188,10 @@ Vigila el ciclo documental de cada adjudicada: OC → guías → factura. SLA de
 días hábiles para despachar desde la OC (con feriados chilenos). Muestra
 "Pendiente por Despachar" (OC − guías), tracking del envío, subida de
 documentos desde la misma fila (con lectura automática por DamarIA), y cierre
-forzado de ciclos con saldo (exige monto y archivo de respaldo; reversible).
+forzado de ciclos con saldo (exige monto, MOTIVO y archivo de respaldo;
+reversible). El ícono de paquete junto a cada guía consulta la guía
+electrónica en BSALE: lista los productos despachados (SKU, cantidad, precio)
+y cruza las referencias de la guía contra el N° de la OC de la cotización.
 
 ### Seguimiento de Pagos (/seguimiento-pagos)
 El semáforo de cobro: 8 KPIs clickeables (total, pagadas, en plazo, por vencer,
@@ -186,6 +201,11 @@ Registrar pago (monto bruto → guarda neto), forma de pago, días de atraso.
 Botón "Correo cobro" genera el borrador de cobranza (OC, guía, factura,
 despacho) para que el usuario lo envíe desde su propio correo. La mora
 acumulada de un cliente bloquea nuevas cotizaciones para ese cliente.
+CALENDARIO DE COBRANZA automático (08:00, días HÁBILES respecto del
+vencimiento): 3 días antes → correo; al vencer → correo; +5 → correo; +7 →
+llamada; +10 → correo; +15 → visita. Cada hito alerta en la campana a los
+jefe_ventas_especial y agenda la gestión como actividad pendiente en su
+Bitácora; el correo lo envía siempre la persona (nada sale automático).
 
 ### Cobranza (/cobranza)
 Gestión de lo vencido: Sin gestión → En gestión → Comprometida. Acceso: admin,
@@ -241,15 +261,28 @@ adjudicada solo cuando tiene documento OC (pública) o boleta/efectivo
 (particular); la fecha de adjudicación es la fecha de la primera OC. Columna
 "Ventas" = suma de guías de despacho (neto); columna "Adjudicado" = suma de OC
 (neto); en particulares ambas salen de boletas/facturas. Los KPIs de
-adjudicadas se abren con clic y muestran el detalle con export a Excel. El
-panel Particular incluye el embudo Prospecto → Contactado → Cotiza → Compra.
+adjudicadas y de VENTAS TOTALES se abren con clic y muestran el detalle de
+documentos con export a Excel. Orden del panel: KPIs → Avance de Metas
+(global + tarjeta por ejecutivo, solo equipo de ventas) → gráficos →
+indicadores → Resumen por Región → COMPARATIVO DE FACTURACIÓN Bsale vs
+sistema (neto emitido en Bsale — facturas+boletas−NC — contra las
+facturas/boletas registradas; solo admin) → ÓRDENES DE COMPRA CON SALDO POR
+CONSUMIR (OC − despachado/facturado, SIN filtro de fecha, con export). El
+panel Particular incluye el embudo Prospecto → Contactado → Cotiza → Compra,
+más el KPI de VENTA TOTAL del mes (neto).
 
 ### Análisis Mercado Público (/analisis-mercado-publico) — solo admin
 Compara nuestra postulación vs el ganador real de cada licitación (datos de la
 API de Mercado Público, sincronización nocturna): brechas de precio,
 competidores frecuentes, simulador de descuento con recomendación de DamarIA, y
 el panel de diferencias contra el Panel de Indicadores (conciliación por causa,
-inconsistencias de estados, export).
+inconsistencias de estados, export). Al pie: ANÁLISIS DE PRODUCTOS de nuestras
+fichas (qué ganamos/perdemos y a qué precio) y ANÁLISIS GLOBAL DE PRODUCTOS
+"sin haber licitado": barre las licitaciones ADJUDICADAS de todo Mercado
+Público de los últimos 30 días que calzan con el catálogo de palabras clave y
+muestra por producto los procesos, cantidades, precio unitario adjudicado
+promedio, monto y ganador frecuente (refrescarlo gasta ~110 llamadas del
+ticket; solo exploradores autorizados).
 
 ### Panel de Ejecutivos (/cotizaciones-vendedor)
 Rendimiento por vendedor: cotizaciones, adjudicaciones, ventas y resumen

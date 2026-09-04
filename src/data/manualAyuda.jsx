@@ -222,6 +222,7 @@ export const GRUPOS_MANUAL = [
           "Crear actividad: título, acción, estado, cotización asociada, participantes, fecha u horario.",
           "Reuniones con enlace de Google Meet integrado (copiar y abrir).",
           "Crear un cliente nuevo al vuelo desde el formulario.",
+          "Refleja también las actividades automáticas de otros módulos (correos de cobranza, calendario de cobranza), amarradas al cliente por RUT para verlas en su ficha 360°.",
         ],
         tips: [
           "El número de actividades del mes es la PRODUCTIVIDAD de la fórmula de comisiones: registra todo lo que haces.",
@@ -241,6 +242,7 @@ export const GRUPOS_MANUAL = [
         funciones: [
           "Crear producto: TODOS los campos son obligatorios (la única excepción es el SKU, que lo asigna un admin). Editar: nada es obligatorio salvo la imagen.",
           "Estados automáticos: con SKU → Activo; sin SKU → Transitorio; margen 0-20% sin SKU → Pendiente Aprobación (el admin aprueba desde Editar).",
+          "Ventas puede editar peso y dimensiones de los Transitorios y Pendientes de Aprobación. Al cotizar un transitorio con más de 30 días de creado, el sistema pide validar que su costo siga vigente.",
           "Carga masiva por planilla con historial y rollback (deshace esa carga y las posteriores).",
           "Ficha técnica en PDF con logo, marca de agua e imagen; filtros de completitud (SKU / peso / medidas).",
           "Precios de campaña vigente destacados (ver módulo Campañas).",
@@ -295,7 +297,8 @@ export const GRUPOS_MANUAL = [
         quien: "Todo el equipo comercial (crear: admin)",
         resumen: "Precios promocionales por SKU con vigencia: sobrescriben la lista al cotizar.",
         funciones: [
-          "Campaña = nombre + fechas de inicio y fin + lista de SKUs con su precio de campaña.",
+          "Campaña = nombre + fechas de inicio y fin + lista de precios asociada (1, 2 o 3) + lista de SKUs con su precio de campaña.",
+          "El precio unitario de referencia de cada SKU sale de la lista asociada a la campaña.",
           "Mientras la campaña esté vigente, ese precio reemplaza al de lista en la Nueva Cotización y se destaca en Productos.",
         ],
       },
@@ -309,7 +312,7 @@ export const GRUPOS_MANUAL = [
         resumen: "Las OC de COMPRA que Amsodent emite a sus proveedores (no confundir con la OC del cliente).",
         funciones: [
           "Numeración correlativa (#0001), mismo buscador de productos que la cotización, costo unitario de compra.",
-          "Export a PDF con formato de marca; catálogo de Proveedores (razón social, RUT, contacto, rubro) en su módulo propio.",
+          "Export a PDF con formato de marca; catálogo de Proveedores en su módulo propio: razón social, RUT, contacto, rubro, MARCAS que distribuye (con creación de marcas nuevas) y palabras clave para el buscador.",
         ],
       },
     ],
@@ -334,8 +337,9 @@ export const GRUPOS_MANUAL = [
           "SLA de despacho: 3 días hábiles desde la fecha de la OC, con feriados chilenos (\"Quedan N días háb.\" o \"vencido\").",
           "Pendiente por Despachar = monto OC − guías de los ciclos abiertos.",
           "Subir factura o guía desde la misma fila, con lectura automática del PDF por DamarIA (botón del girasol 🌻: extrae número, fecha, monto y courier).",
-          "Cierre forzado de un ciclo con saldo: exige monto forzado y archivo de respaldo; es reversible.",
+          "Cierre forzado de un ciclo con saldo: exige monto forzado, motivo y archivo de respaldo; es reversible.",
           "Tracking del envío por N° de seguimiento.",
+          "Ícono de paquete junto a cada guía: consulta la guía electrónica en Bsale y muestra los productos despachados (SKU, cantidad, precio), cruzando sus referencias contra el N° de la OC de la cotización.",
         ],
         figura: { tipo: "flujo", pasos: ["OC", "Guías (≤ 3 días háb.)", "Factura", "Pago"] },
       },
@@ -355,7 +359,7 @@ export const GRUPOS_MANUAL = [
           "Registrar pago: se digita el monto BRUTO y el sistema guarda el neto; quedan la forma de pago (incluye factoring) y los días de atraso.",
           "Notas de crédito: restan del saldo de la factura.",
           "Botón \"Correo cobro\": genera el borrador con N° de OC, guías, factura y despacho (empresa + seguimiento) para copiar o abrir en tu correo — la plataforma nunca lo envía sola.",
-          "Cron diario (08:00): notifica a los jefe_ventas_especial las facturas que se vencen.",
+          "Calendario de cobranza automático (08:00, en días HÁBILES respecto del vencimiento): 3 días antes → correo; al vencer → correo; +5 → correo; +7 → llamada; +10 → correo; +15 → visita. Cada hito alerta en la campana a los jefe_ventas_especial y agenda la gestión como actividad pendiente en su Bitácora — el correo siempre lo envía la persona.",
         ],
         tips: [
           "La mora acumulada de un cliente bloquea nuevas cotizaciones para él.",
@@ -516,9 +520,12 @@ export const GRUPOS_MANUAL = [
           "Columna \"Adjudicado\" = suma de OC (neto). Columna \"Ventas\" = suma de guías de despacho (neto). En particulares, ambas salen de boletas/facturas.",
         ],
         funciones: [
-          "KPIs de adjudicadas clickeables: abren el detalle del período con export a Excel.",
+          "KPIs de adjudicadas y de Ventas Totales clickeables: abren el detalle de documentos del período con export a Excel.",
+          "Avance de Metas al inicio del panel (tras los KPIs): tarjeta global + tarjeta por ejecutivo del equipo de ventas, con detalle por clic.",
+          "Comparativo de facturación Bsale vs sistema (solo admin): neto emitido en Bsale (facturas + boletas − notas de crédito) contra lo registrado en cotizaciones, con diferencia y cobertura.",
+          "Órdenes de compra con saldo por consumir: OC menos lo despachado/facturado, de TODAS las vigentes (sin filtro de fecha), con export.",
           "Panel Entidad Pública: participación, adjudicación y equivalencias.",
-          "Panel Cliente Particular: embudo Prospecto → Contactado → Cotiza → Compra.",
+          "Panel Cliente Particular: embudo Prospecto → Contactado → Cotiza → Compra, más el KPI de Venta Total del mes (neto).",
           "Márgenes calculados con el costo congelado de cada ítem (si el ítem no tiene costo, usa el del catálogo).",
         ],
         figura: { tipo: "regla-oro" },
@@ -536,6 +543,8 @@ export const GRUPOS_MANUAL = [
           "Brechas de precio contra el ganador y competidores frecuentes.",
           "Simulador de descuento con recomendación estratégica de DamarIA.",
           "Panel de diferencias contra el Panel de Indicadores: conciliación por causa, inconsistencias de estados y export.",
+          "Análisis de productos (al pie): qué productos se mueven en nuestras fichas, cuántos ganamos/perdemos y a qué precio.",
+          "Análisis global de productos «sin haber licitado»: barre las adjudicadas de TODO Mercado Público (últimos 30 días) que calzan con las palabras clave y muestra procesos, cantidades, precio adjudicado promedio y ganador frecuente por producto. Refrescarlo gasta cuota del ticket (exploradores autorizados).",
         ],
       },
       {
