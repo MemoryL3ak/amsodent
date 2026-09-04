@@ -168,6 +168,7 @@ export default function SeguimientoPagos() {
   const [filtroEstado, setFiltroEstado] = useState("todas");
   const [filtroCierreForzado, setFiltroCierreForzado] = useState("todas"); // todas | forzado | abiertos
   const [filtroEntidad, setFiltroEntidad] = useState("");
+  const [filtroCotizacion, setFiltroCotizacion] = useState(""); // código MP o N° interno (#123)
   const [filtroRut, setFiltroRut] = useState("");
   const [filtroNumero, setFiltroNumero] = useState("");
   const [filtroTipoCotizacion, setFiltroTipoCotizacion] = useState("");
@@ -485,6 +486,15 @@ export default function SeguimientoPagos() {
       const entidad = (lic.nombre_entidad || "").toLowerCase();
       if (filtroEntidad && !entidad.includes(filtroEntidad.toLowerCase())) return false;
 
+      // Cotización: calza contra el código (ej. 1057496-18-COT26) o el N°
+      // interno, con o sin "#" (ej. #1285 o 1285).
+      if (filtroCotizacion) {
+        const v = filtroCotizacion.trim().toLowerCase().replace(/^#/, "");
+        const codigo = String(lic.id_licitacion || "").toLowerCase();
+        const interno = String(lic.id || "");
+        if (!codigo.includes(v) && !interno.includes(v)) return false;
+      }
+
       // RUT: comparación normalizada (solo dígitos y K), para que
       // "76.123.456-7" calce con "761234567" y viceversa.
       if (filtroRut) {
@@ -530,7 +540,7 @@ export default function SeguimientoPagos() {
 
       return true;
     });
-  }, [facturas, licMap, filtroEntidad, filtroRut, filtroNumero, filtroTipoCotizacion, filtroTipoCompra, filtroFormaPago, filtroEmpresaDespacho, empresaDespachoMap, filtroDesde, filtroHasta, filtroCierreForzado]);
+  }, [facturas, licMap, filtroEntidad, filtroCotizacion, filtroRut, filtroNumero, filtroTipoCotizacion, filtroTipoCompra, filtroFormaPago, filtroEmpresaDespacho, empresaDespachoMap, filtroDesde, filtroHasta, filtroCierreForzado]);
 
   // Filtros aplicados a la tabla = base + filtro de estado.
   const facturasFiltradas = useMemo(() => {
@@ -1288,6 +1298,16 @@ export default function SeguimientoPagos() {
             <option value="forzado">Cierre forzado</option>
             <option value="abiertos">Ciclos abiertos</option>
           </select>
+        </div>
+        <div className="filter-field">
+          <label className="filter-label">Cotización</label>
+          <input
+            type="text"
+            className="input"
+            placeholder="Código o N° interno (#123)..."
+            value={filtroCotizacion}
+            onChange={(e) => setFiltroCotizacion(e.target.value)}
+          />
         </div>
         <div className="filter-field">
           <label className="filter-label">Entidad</label>
