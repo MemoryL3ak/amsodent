@@ -13,6 +13,7 @@ import {
 } from "../components/panel/panelKit";
 import useEmbudoComercial, { ETAPAS_EMBUDO } from "../components/panel/useEmbudoComercial";
 import { ModalEtapaEmbudo } from "../components/panel/EmbudoComercial";
+import ModalMargenDesglose from "../components/panel/ModalMargenDesglose";
 
 const ICONOS = { prospectos: Users, contactados: PhoneCall, cotizan: FileText, compran: ShoppingCart };
 
@@ -63,13 +64,15 @@ export default function PanelParticular() {
   const [adjDatePart, setAdjDatePart] = useState({}); // licId → fecha 1ª boleta/efectivo
   const [costoBySku, setCostoBySku] = useState({});
   const [margenMes, setMargenMes] = useState({ monto: 0, pct: 0, venta: 0 });
+  const [margenPorLic, setMargenPorLic] = useState([]); // [{licId, venta, costo}] para el desglose
+  const [margenOpen, setMargenOpen] = useState(false); // modal de desglose del margen
 
   useEffect(() => {
     if (cargando || !puedeVer) return;
     let activo = true;
     (async () => {
       try {
-        const data = await api.get("/licitaciones/with-fields?fields=id,tipo_cliente,creado_por");
+        const data = await api.get("/licitaciones/with-fields?fields=id,tipo_cliente,creado_por,id_licitacion,nombre_entidad,rut_entidad");
         const rows = (data || []).filter((l) => (l.tipo_cliente || "").toLowerCase().includes("particular"));
         const ids = rows.map((l) => Number(l.id)).filter(Boolean);
         const adj = {};
@@ -111,7 +114,7 @@ export default function PanelParticular() {
       .filter((l) => !ej || (l.creado_por || "").trim().toLowerCase() === ej)
       .map((l) => Number(l.id))
       .filter(Boolean);
-    if (!idsMes.length) { setMargenMes({ monto: 0, pct: 0, venta: 0 }); return; }
+    if (!idsMes.length) { setMargenMes({ monto: 0, pct: 0, venta: 0 }); setMargenPorLic([]); return; }
     let activo = true;
     api.post("/licitaciones/items/filter", {
       licitacion_ids: idsMes,
@@ -120,18 +123,64 @@ export default function PanelParticular() {
       .then((items) => {
         if (!activo) return;
         let venta = 0, costo = 0;
+        const porLic = {}; // licId → { venta, costo } (desglose del margen)
         (items || []).forEach((it) => {
-          venta += Number(it.total || 0);
+          const v = Number(it.total || 0);
+          venta += v;
           const sku = String(it.sku || "").trim().toUpperCase();
           const costoUnit = Number(it.costo) > 0 ? Number(it.costo) : (costoBySku[sku] || 0);
-          costo += costoUnit * (Number(it.cantidad) || 0);
+          const c = costoUnit * (Number(it.cantidad) || 0);
+          costo += c;
+          const lid = Number(it.licitacion_id);
+          if (lid) {
+            const e = (porLic[lid] = porLic[lid] || { venta: 0, costo: 0 });
+            e.venta += v;
+            e.costo += c;
+          }
         });
         const monto = Math.round(venta - costo);
         setMargenMes({ monto, pct: venta > 0 ? (monto / venta) * 100 : 0, venta: Math.round(venta) });
+        setMargenPorLic(Object.entries(porLic).map(([licId, v]) => ({ licId: Number(licId), ...v })));
       })
-      .catch(() => { if (activo) setMargenMes({ monto: 0, pct: 0, venta: 0 }); });
+      .catch(() => { if (activo) { setMargenMes({ monto: 0, pct: 0, venta: 0 }); setMargenPorLic([]); } });
     return () => { activo = false; };
   }, [cargando, puedeVer, licsPart, adjDatePart, costoBySku, mesActual, ejecutivo]);
+
+  // Desglose del margen (mismo criterio que el Panel de Gestión Comercial).
+  // Sin pestaña "por tipo": aquí todo es cliente particular.
+  const margenDesglose = useMemo(() => {
+    const licById = new Map(licsPart.map((l) => [Number(l.id), l]));
+    const filas = margenPorLic.map((r) => {
+      const l = licById.get(r.licId) || {};
+      const email = (l.creado_por || "").trim().toLowerCase();
+      const monto = r.venta - r.costo;
+      return {
+        licId: r.licId,
+        codigo: l.id_licitacion || `Cot. ${r.licId}`,
+        cliente: l.nombre_entidad || l.rut_entidad || "—",
+        vendedor: nombresEjecutivos[email] || email || "Sin vendedor",
+        venta: r.venta,
+        costo: r.costo,
+        monto,
+        pct: r.venta > 0 ? (monto / r.venta) * 100 : 0,
+        sinCosto: r.venta > 0 && !(r.costo > 0),
+      };
+    }).sort((a, b) => b.venta - a.venta);
+    const porVendedor = (() => {
+      const m = {};
+      filas.forEach((f) => {
+        const k = f.vendedor || "—";
+        const e = (m[k] = m[k] || { label: k, venta: 0, costo: 0, cotizaciones: 0 });
+        e.venta += f.venta;
+        e.costo += f.costo;
+        e.cotizaciones += 1;
+      });
+      return Object.values(m)
+        .map((e) => ({ ...e, monto: e.venta - e.costo, pct: e.venta > 0 ? ((e.venta - e.costo) / e.venta) * 100 : 0 }))
+        .sort((a, b) => b.venta - a.venta);
+    })();
+    return { filas, porVendedor, porTipo: [] };
+  }, [margenPorLic, licsPart, nombresEjecutivos]);
 
   // Perdidas del mes (por fecha de creación) agrupadas por motivo + detalle.
   const perdidas = useMemo(() => {
@@ -218,9 +267,13 @@ export default function PanelParticular() {
               />
             ))}
             <KpiCard icon={ShoppingCart} color="#0e7490" label="Venta Total" sub="Ventas particulares del mes (neto)" value={fmtCLP(margenMes.venta)} delta={null} />
-            <KpiCard icon={TrendingUp} color="#7c3aed" label="Margen %" sub="Ventas particulares del mes · (venta − costo) / venta" value={fmtPct(margenMes.pct)} delta={null} />
+            <div onClick={() => setMargenOpen(true)} style={{ cursor: "pointer" }} title="Ver desglose del margen por cotización y vendedor">
+              <KpiCard icon={TrendingUp} color="#7c3aed" label="Margen %" sub="Ventas particulares del mes · clic para desglose" value={fmtPct(margenMes.pct)} delta={null} />
+            </div>
             {!esJefatura && (
-              <KpiCard icon={Banknote} color="#0d9488" label="Margen $" sub="Ventas particulares del mes · venta neta − costo" value={fmtCLP(margenMes.monto)} delta={null} />
+              <div onClick={() => setMargenOpen(true)} style={{ cursor: "pointer" }} title="Ver desglose del margen por cotización y vendedor">
+                <KpiCard icon={Banknote} color="#0d9488" label="Margen $" sub="Ventas particulares del mes · clic para desglose" value={fmtCLP(margenMes.monto)} delta={null} />
+              </div>
             )}
           </div>
 
@@ -346,6 +399,16 @@ export default function PanelParticular() {
               </div>
             </div>
           </div>
+
+          {margenOpen && (
+            <ModalMargenDesglose
+              desglose={margenDesglose}
+              margen={margenMes}
+              mostrarMonto={!esJefatura}
+              conTipo={false}
+              onCerrar={() => setMargenOpen(false)}
+            />
+          )}
 
           {etapaSel && (
             <ModalEtapaEmbudo
