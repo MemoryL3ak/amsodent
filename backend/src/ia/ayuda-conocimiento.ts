@@ -151,8 +151,10 @@ para que aparezcan en la ficha 360° y en el filtro por cliente.
 SINCRONIZACIÓN CON GOOGLE CALENDAR (bidireccional, requiere la cuenta de
 Google conectada en «Mi Correo» con el permiso de Calendar): (1) toda
 actividad con fecha creada en la bitácora se espeja como evento en el
-calendario del usuario (y se actualiza/borra al editarla/eliminarla); (2) cada
-15 minutos el sistema importa a la bitácora los eventos del calendario que
+calendario del usuario (y se actualiza/borra al editarla/eliminarla); (2) AL
+ABRIR LA BITÁCORA se importa al instante el calendario del propio usuario, y
+además un respaldo automático cada 5 minutos importa el de todas las cuentas
+conectadas — entran los eventos del calendario que
 tengan AL MENOS OTRO INVITADO (reuniones reales; los recordatorios personales
 sin invitados no se importan), sin duplicar y sin re-importar los eventos que
 creó el propio sistema. Las importadas llegan como tipo Reunión con la nota

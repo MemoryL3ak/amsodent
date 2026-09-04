@@ -219,6 +219,19 @@ export default function BitacoraActividades() {
 
   useEffect(() => { cargar(); }, [cargar]);
 
+  // Al abrir la bitácora se importa AL INSTANTE el Google Calendar del usuario
+  // (backend con throttle de 1 min); si trajo reuniones nuevas, se recarga la
+  // grilla sin spinner. Best-effort: sin cuenta conectada no pasa nada.
+  useEffect(() => {
+    let activo = true;
+    api.post("/actividades/importar-calendar", {})
+      .then((r) => { if (activo && Number(r?.importadas || 0) > 0) cargar({ silencioso: true }); })
+      .catch(() => {});
+    return () => { activo = false; };
+    // Solo al montar: el throttle del backend hace inocuo repetirlo.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Métricas del dashboard: ventana fija alrededor de hoy (independiente de la
   // navegación del calendario) para que los KPIs/paneles no cambien al navegar.
   const cargarMetricas = useCallback(async () => {
