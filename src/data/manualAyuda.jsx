@@ -496,6 +496,7 @@ export const GRUPOS_MANUAL = [
         funciones: [
           "/portal — el cliente entra con RUT + N° de cotización: ve sus cotizaciones, documentos y sube archivos.",
           "/portal-cliente — stock consignado del cliente con semáforo, y generación de solicitudes de cotización que llegan al sistema.",
+          "/portal-cliente incluye además el Explorador de precios: el cliente busca un insumo por palabra clave y compara en vivo los precios de las tiendas dentales chilenas online, con histórico (mínimo registrado y variación) que el portal va guardando en cada búsqueda.",
           "/despachos — despachos internos: cambio de estado con nota, evidencia (fotos/PDF hasta 20 MB) y firma de recepción dibujada.",
           "/portal-chofer — los viajes del chofer, con evidencia y ubicación en vivo.",
           "/evento y /sorteo — formularios públicos de inscripción.",

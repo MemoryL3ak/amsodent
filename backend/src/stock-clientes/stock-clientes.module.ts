@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { StockClientesController } from './stock-clientes.controller';
 import { StockClientesService } from './stock-clientes.service';
+import { ExploradorService } from './explorador.service';
 import { MailingsModule } from '../mailings/mailings.module';
 import { CorreosModule } from '../correos/correos.module';
 import { LicitacionesModule } from '../licitaciones/licitaciones.module';
@@ -10,7 +11,7 @@ import { AdminGuard } from '../auth/admin.guard';
 @Module({
   imports: [MailingsModule, CorreosModule, LicitacionesModule],
   controllers: [StockClientesController],
-  providers: [StockClientesService, AuthGuard, AdminGuard],
+  providers: [StockClientesService, ExploradorService, AuthGuard, AdminGuard],
   exports: [StockClientesService],
 })
 export class StockClientesModule {}
