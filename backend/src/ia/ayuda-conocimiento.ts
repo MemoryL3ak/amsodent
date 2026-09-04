@@ -361,7 +361,10 @@ girasol 🌻). Hoy ayuda en:
   registrado en el catálogo (los admin reciben una notificación, completan el
   peso en Productos, recalculan el flete con la calculadora y aprueban con el
   botón "Aprobar peso" para que vuelva a En espera). En ambos estados
-  pendientes no se puede generar el PDF.
+  pendientes no se puede generar el PDF. BYPASS: si la cotización ya tiene una
+  orden de compra cargada, la aprobación pendiente no retiene — cualquier
+  usuario puede avanzar el estado (el cliente ya compró) y al guardar no se
+  fuerza de vuelta a los estados pendientes.
 - ADJUDICADA REAL: en los paneles manda el documento (OC o boleta), no el
   estado manual.
 - TOMAS: máximo 3 postulaciones tomadas vigentes por persona.
