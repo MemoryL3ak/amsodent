@@ -79,6 +79,7 @@ export default function CampanasProductos() {
                   <th>Inicio</th>
                   <th>Fin</th>
                   <th>SKUs</th>
+                  <th>Lista</th>
                   <th>Creada por</th>
                   <th style={{ textAlign: "right" }}>Acciones</th>
                 </tr>
@@ -87,7 +88,7 @@ export default function CampanasProductos() {
               <tbody>
                 {campanas.length === 0 && (
                   <tr>
-                    <td colSpan="6" style={{ textAlign: "center", padding: "60px 0", color: "var(--text-muted)" }}>
+                    <td colSpan="7" style={{ textAlign: "center", padding: "60px 0", color: "var(--text-muted)" }}>
                       No hay campañas creadas.
                     </td>
                   </tr>
@@ -98,6 +99,7 @@ export default function CampanasProductos() {
                     <td>{formatearFecha(c.start_date)}</td>
                     <td>{formatearFecha(c.end_date)}</td>
                     <td>{c.items_count}</td>
+                    <td>{c.lista_precios ? `Lista ${c.lista_precios}` : "Lista 1"}</td>
                     <td>{c.creador_nombre}</td>
                     <td style={{ textAlign: "right" }}>
                       <button

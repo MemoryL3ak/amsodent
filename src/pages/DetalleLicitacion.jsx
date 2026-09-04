@@ -1020,6 +1020,8 @@ export default function EditarLicitacion() {
   const [productos, setProductos] = useState([]);
   // Índice del ítem para el que está abierto el buscador de catálogo (popup).
   const [pickerIndex, setPickerIndex] = useState(null);
+  // Producto transitorio con >30 días de creado: validar costo antes de usarlo.
+  const [validarCosto, setValidarCosto] = useState(null); // { prod, idx, campo?, valor?, aplicarDirecto? }
   const [items, setItems] = useState([
     {
       uid: generarUid(),
@@ -2614,7 +2616,18 @@ export default function EditarLicitacion() {
   else if (porcentajePresupuesto <= 100) colorPresupuesto = "presupuesto-warn";
   else                                   colorPresupuesto = "presupuesto-over";
 
-  function actualizarItem(index, campo, valor) {
+  // Transitorio (o pendiente de aprobación) con más de 30 días desde su
+  // creación: el costo puede estar obsoleto — se pide validarlo antes de
+  // usarlo en la cotización (pedido 2026-09-04).
+  function transitorioViejo(prod) {
+    const estado = String(prod?.estado || "").trim().toLowerCase();
+    const esTransitorio = estado ? estado !== "activo" : !String(prod?.sku || "").trim();
+    if (!esTransitorio) return false;
+    const t = Date.parse(prod?.created_at || "");
+    return Number.isFinite(t) && Date.now() - t > 30 * 86400000;
+  }
+
+  function actualizarItem(index, campo, valor, opts = {}) {
     if (!esEditable) return;
 
     const copia = [...items];
@@ -2629,6 +2642,11 @@ export default function EditarLicitacion() {
     }
     if (campo === "producto") {
       prod = productos.find((p) => p.nombre === valor);
+    }
+
+    if (prod && !opts.costoValidado && transitorioViejo(prod)) {
+      setValidarCosto({ prod, idx: index, campo, valor });
+      return;
     }
 
     if (prod) {
@@ -2680,6 +2698,16 @@ export default function EditarLicitacion() {
       return [...prev, prod];
     });
 
+    if (transitorioViejo(prod)) {
+      setValidarCosto({ prod, idx, aplicarDirecto: true });
+      return;
+    }
+    aplicarProductoDePicker(idx, prod);
+  }
+
+  // Cuerpo original de la selección del picker, separado para poder
+  // ejecutarlo también tras la validación de costo.
+  function aplicarProductoDePicker(idx, prod) {
     setItems((prev) => {
       const copia = [...prev];
       const item = { ...(copia[idx] || crearItemVacio()) };
@@ -3314,6 +3342,30 @@ export default function EditarLicitacion() {
           onProductoCreado={handleProductoCreado}
         />
       )}
+
+      {/* Producto transitorio con >30 días: validar costo antes de cotizarlo. */}
+      <ConfirmModal
+        open={validarCosto !== null}
+        title="Valida el costo de este producto transitorio"
+        message={validarCosto ? (() => {
+          const p = validarCosto.prod;
+          const dias = Math.floor((Date.now() - Date.parse(p.created_at)) / 86400000);
+          const costo = Number(p.costo ?? 0);
+          return `«${p.nombre}» es un producto transitorio creado hace ${dias} días (${String(p.created_at || "").slice(0, 10)}). ` +
+            `Su costo registrado es $${costo.toLocaleString("es-CL")}. Confirma que el costo sigue vigente antes de cotizarlo; ` +
+            `si cambió, actualízalo primero en Productos → Editar.`;
+        })() : ""}
+        confirmText="El costo sigue vigente"
+        cancelText="Cancelar"
+        onConfirm={() => {
+          const v = validarCosto;
+          setValidarCosto(null);
+          if (!v) return;
+          if (v.aplicarDirecto) aplicarProductoDePicker(v.idx, v.prod);
+          else actualizarItem(v.idx, v.campo, v.valor, { costoValidado: true });
+        }}
+        onCancel={() => setValidarCosto(null)}
+      />
 
       <div className="page-header">
         <div>

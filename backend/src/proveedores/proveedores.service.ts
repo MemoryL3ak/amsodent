@@ -25,6 +25,23 @@ export class ProveedoresService {
   }
 
   private normalizar(body: any) {
+    // Listas de texto (marcas que distribuye / palabras clave): se limpian,
+    // deduplican (case-insensitive) y acotan. Requiere la migración
+    // 20260904_proveedores_marcas_keywords.sql.
+    const lista = (v: any, max = 50) => {
+      const vistos = new Set<string>();
+      const out: string[] = [];
+      for (const item of Array.isArray(v) ? v : []) {
+        const s = String(item || '').trim().slice(0, 80);
+        if (!s) continue;
+        const k = s.toLowerCase();
+        if (vistos.has(k)) continue;
+        vistos.add(k);
+        out.push(s);
+        if (out.length >= max) break;
+      }
+      return out;
+    };
     return {
       razon_social: String(body?.razon_social || '').trim(),
       rut: String(body?.rut || '').trim(),
@@ -34,6 +51,8 @@ export class ProveedoresService {
       direccion: String(body?.direccion || '').trim(),
       rubro: String(body?.rubro || '').trim(),
       observaciones: String(body?.observaciones || '').trim(),
+      marcas: lista(body?.marcas),
+      palabras_clave: lista(body?.palabras_clave),
     };
   }
 

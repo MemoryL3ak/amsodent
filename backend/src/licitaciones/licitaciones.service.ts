@@ -2416,6 +2416,171 @@ export class LicitacionesService {
     };
   }
 
+  /* ── Análisis global de productos en Mercado Público (pedido 2026-09-04) ──
+     Qué se está adjudicando de NUESTROS rubros en todo Mercado Público,
+     hayamos postulado o no. Barre las licitaciones ADJUDICADAS de los últimos
+     30 días (una llamada v1 por día), se queda con las que calzan con el
+     catálogo de palabras clave del explorador, baja la ficha de cada una
+     (ítems con proveedor adjudicado, cantidad y precio unitario) y agrega por
+     producto. Corre en segundo plano (≈2 min por la pausa anti rate-limit de
+     la v1) y el resultado queda en `mp_analisis_productos` (fila única) para
+     leerlo sin gastar cuota. Refrescar consume ~110 llamadas del ticket, por
+     eso usa el mismo gate que la exploración manual (exploradoresMp). */
+  private analisisGlobalCorriendo = false;
+
+  async analisisProductosGlobalGuardado(email: string) {
+    const { data, error } = await this.supabase.getClient()
+      .from('mp_analisis_productos')
+      .select('resultado, actualizado_at')
+      .eq('id', 1)
+      .maybeSingle();
+    if (error) {
+      if (/does not exist|schema cache/i.test(error.message)) {
+        throw new BadRequestException('Falta aplicar la migración 20260904_mp_analisis_productos.sql en Supabase.');
+      }
+      throw new BadRequestException(error.message);
+    }
+    return {
+      corriendo: this.analisisGlobalCorriendo,
+      puede_refrescar: LicitacionesService.exploradoresMp().includes((email || '').toLowerCase()),
+      guardado: data ? { ...(data.resultado as any), actualizado_at: data.actualizado_at } : null,
+    };
+  }
+
+  iniciarAnalisisProductosGlobal(email: string) {
+    if (!LicitacionesService.exploradoresMp().includes((email || '').toLowerCase())) {
+      throw new BadRequestException('El análisis global gasta cuota del ticket: solo los exploradores autorizados pueden refrescarlo.');
+    }
+    if (this.analisisGlobalCorriendo) {
+      throw new BadRequestException('Ya hay un análisis global corriendo; espera a que termine.');
+    }
+    void this.correrAnalisisProductosGlobal().catch((e) =>
+      this.logger.error(`Análisis global de productos MP falló: ${String(e?.message || e)}`),
+    );
+    return { iniciado: true };
+  }
+
+  private async correrAnalisisProductosGlobal() {
+    this.analisisGlobalCorriendo = true;
+    try {
+      const ticket = this.mpTicket();
+      const client = this.supabase.getClient();
+      const { data: kws } = await client.from('mp_keywords').select('texto').eq('activa', true);
+      const palabras = (kws || []).map((k: any) => String(k.texto || '').trim()).filter(Boolean);
+      if (!palabras.length) throw new Error('catálogo de palabras clave vacío');
+      const norm = (s: any) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+      const defs = palabras
+        .map((kw) => ({ kw, ws: norm(kw).split(/\s+/).filter(Boolean) }))
+        .filter((d) => d.ws.length);
+      const pausa = () => new Promise((r) => setTimeout(r, 700)); // la v1 castiga peticiones seguidas
+
+      // 1) Licitaciones adjudicadas de los últimos 30 días que calzan con el rubro.
+      const DIAS = 30;
+      const detectadas: Array<{ codigo: string; matched: string[] }> = [];
+      const vistos = new Set<string>();
+      for (let i = 1; i <= DIAS; i++) {
+        const d = new Date();
+        d.setDate(d.getDate() - i);
+        const ddmmyyyy = `${String(d.getDate()).padStart(2, '0')}${String(d.getMonth() + 1).padStart(2, '0')}${d.getFullYear()}`;
+        try {
+          const { res, json } = await this.mpFetch(
+            `https://api.mercadopublico.cl/servicios/v1/publico/licitaciones.json?fecha=${ddmmyyyy}&estado=adjudicada&ticket=${encodeURIComponent(ticket)}`,
+          );
+          const listado: any[] = res.ok && Array.isArray(json?.Listado) ? json.Listado : [];
+          for (const l of listado) {
+            const codigo = String(l?.CodigoExterno || '');
+            if (!codigo || vistos.has(codigo)) continue;
+            const texto = norm(l?.Nombre);
+            const matched = defs.filter((df) => df.ws.every((w) => texto.includes(w))).map((df) => df.kw);
+            if (!matched.length) continue;
+            vistos.add(codigo);
+            detectadas.push({ codigo, matched });
+          }
+        } catch { /* día perdido: se sigue con el resto */ }
+        await pausa();
+      }
+
+      // 2) Ficha de cada una (con tope) → ítems con adjudicación estructurada.
+      const MAX_FICHAS = 80;
+      const rutNuestro = String(process.env.MP_RUT_EMPRESA || '').replace(/[.\s]/g, '').toLowerCase();
+      type Agg = {
+        codigo: string; nombre: string; procesos: number; cantidad: number;
+        montoTotal: number; precioSum: number; precioN: number;
+        proveedores: Record<string, number>; nuestros: number; keywords: Set<string>;
+      };
+      const productos = new Map<string, Agg>();
+      let fichasOk = 0;
+      for (const c of detectadas.slice(0, MAX_FICHAS)) {
+        try {
+          const { res, json } = await this.mpFetch(
+            `https://api.mercadopublico.cl/servicios/v1/publico/licitaciones.json?codigo=${encodeURIComponent(c.codigo)}&ticket=${encodeURIComponent(ticket)}`,
+          );
+          const l: any = res.ok ? json?.Listado?.[0] : null;
+          if (!l) continue;
+          fichasOk++;
+          for (const it of l?.Items?.Listado || []) {
+            const adj = it?.Adjudicacion || null;
+            const nombreProd = String(it?.NombreProducto || it?.Categoria || '').trim();
+            if (!nombreProd) continue;
+            const key = `${it?.CodigoProducto || ''}|${norm(nombreProd)}`;
+            const g: Agg = productos.get(key) || {
+              codigo: String(it?.CodigoProducto || ''), nombre: nombreProd,
+              procesos: 0, cantidad: 0, montoTotal: 0, precioSum: 0, precioN: 0,
+              proveedores: {}, nuestros: 0, keywords: new Set<string>(),
+            };
+            g.procesos += 1;
+            c.matched.forEach((k) => g.keywords.add(k));
+            const cant = Number(adj?.CantidadAdjudicada ?? it?.Cantidad ?? 0) || 0;
+            g.cantidad += cant;
+            const precio = Number(adj?.MontoUnitario || 0);
+            if (precio > 0) {
+              g.precioSum += precio;
+              g.precioN += 1;
+              g.montoTotal += precio * cant;
+            }
+            const prov = String(adj?.NombreProveedor || '').trim();
+            if (prov) g.proveedores[prov] = (g.proveedores[prov] || 0) + 1;
+            const rut = String(adj?.RutProveedor || '').replace(/[.\s]/g, '').toLowerCase();
+            if (rut && rutNuestro && rut === rutNuestro) g.nuestros += 1;
+            productos.set(key, g);
+          }
+        } catch { /* ficha perdida: se sigue */ }
+        await pausa();
+      }
+
+      const filas = [...productos.values()]
+        .map((g) => ({
+          codigo: g.codigo,
+          nombre: g.nombre,
+          procesos: g.procesos,
+          cantidad: g.cantidad,
+          precio_promedio: g.precioN ? Math.round(g.precioSum / g.precioN) : null,
+          monto_total: Math.round(g.montoTotal),
+          adjudicados_a_nosotros: g.nuestros,
+          proveedor_top: Object.entries(g.proveedores).sort((a, b) => b[1] - a[1])[0]?.[0] || null,
+          keywords: [...g.keywords].slice(0, 6),
+        }))
+        .sort((a, b) => b.monto_total - a.monto_total);
+
+      const resultado = {
+        dias: DIAS,
+        licitaciones_detectadas: detectadas.length,
+        fichas_analizadas: fichasOk,
+        keywords_usadas: palabras.length,
+        filas: filas.slice(0, 400),
+      };
+      const { error: errUp } = await client
+        .from('mp_analisis_productos')
+        .upsert([{ id: 1, resultado, actualizado_at: new Date().toISOString() }]);
+      if (errUp) throw new Error(errUp.message);
+      this.logger.log(
+        `Análisis global de productos MP: ${detectadas.length} licitaciones del rubro, ${fichasOk} fichas, ${filas.length} productos.`,
+      );
+    } finally {
+      this.analisisGlobalCorriendo = false;
+    }
+  }
+
   async crearKeywordMp(texto: string, email: string) {
     const limpio = String(texto || '').trim().slice(0, 120);
     if (!limpio) throw new BadRequestException('La palabra clave no puede ir vacía.');

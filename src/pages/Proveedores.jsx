@@ -6,8 +6,16 @@ import useAuth from "../hooks/useAuth";
 import Toast from "../components/Toast";
 import ConfirmModal from "../components/ConfirmModal";
 import { Plus, Search, Pencil, Trash2, Building2, X, Save } from "lucide-react";
+import CreatableSelect from "react-select/creatable";
 
-const VACIO = { razon_social: "", rut: "", correo: "", telefono: "", contacto: "", direccion: "", rubro: "", observaciones: "" };
+const VACIO = { razon_social: "", rut: "", correo: "", telefono: "", contacto: "", direccion: "", rubro: "", observaciones: "", marcas: [], palabras_clave: [] };
+
+// react-select compacto acorde a los inputs del proyecto.
+const SELECT_STYLES = {
+  control: (base) => ({ ...base, minHeight: 36, borderColor: "var(--border)", fontSize: 13 }),
+  menu: (base) => ({ ...base, zIndex: 12000, fontSize: 13 }),
+  multiValue: (base) => ({ ...base, background: "var(--primary-light)" }),
+};
 
 export default function Proveedores() {
   const { rol, cargando } = useAuth();
@@ -21,6 +29,23 @@ export default function Proveedores() {
   const [guardando, setGuardando] = useState(false);
   const [confirmDel, setConfirmDel] = useState(null);
   const [toast, setToast] = useState(null);
+  // Marcas existentes del catálogo de productos, para el selector (se pueden
+  // crear marcas nuevas escribiéndolas: CreatableSelect).
+  const [marcasCatalogo, setMarcasCatalogo] = useState([]);
+
+  useEffect(() => {
+    if (cargando || !puedeVer) return;
+    api.get("/productos/list")
+      .then((rows) => {
+        const s = new Set();
+        (Array.isArray(rows) ? rows : []).forEach((p) => {
+          const m = String(p?.marca || "").trim();
+          if (m) s.add(m);
+        });
+        setMarcasCatalogo([...s].sort((a, b) => a.localeCompare(b)));
+      })
+      .catch(() => {});
+  }, [cargando, puedeVer]);
 
   async function cargar() {
     setLoading(true);
@@ -45,7 +70,9 @@ export default function Proveedores() {
     const q = busqueda.trim().toLowerCase();
     if (!q) return lista;
     return lista.filter((p) =>
-      [p.razon_social, p.rut, p.correo, p.contacto, p.rubro]
+      [p.razon_social, p.rut, p.correo, p.contacto, p.rubro,
+        ...(Array.isArray(p.marcas) ? p.marcas : []),
+        ...(Array.isArray(p.palabras_clave) ? p.palabras_clave : [])]
         .some((v) => String(v || "").toLowerCase().includes(q)),
     );
   }, [lista, busqueda]);
@@ -138,14 +165,15 @@ export default function Proveedores() {
                 <th style={{ textAlign: "left" }}>Correo</th>
                 <th style={{ textAlign: "left" }}>Teléfono</th>
                 <th style={{ textAlign: "left" }}>Rubro</th>
+                <th style={{ textAlign: "left" }}>Marcas</th>
                 <th style={{ width: 90 }}></th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={7} style={{ padding: "30px 12px", color: "var(--text-muted)" }}>Cargando…</td></tr>
+                <tr><td colSpan={8} style={{ padding: "30px 12px", color: "var(--text-muted)" }}>Cargando…</td></tr>
               ) : filtrada.length === 0 ? (
-                <tr><td colSpan={7} style={{ padding: "30px 12px", color: "var(--text-muted)", textAlign: "center" }}>Sin proveedores.</td></tr>
+                <tr><td colSpan={8} style={{ padding: "30px 12px", color: "var(--text-muted)", textAlign: "center" }}>Sin proveedores.</td></tr>
               ) : filtrada.map((p) => (
                 <tr key={p.id}>
                   <td style={{ fontWeight: 600 }}>{p.razon_social}</td>
@@ -154,9 +182,21 @@ export default function Proveedores() {
                   <td>{p.correo || "—"}</td>
                   <td>{p.telefono || "—"}</td>
                   <td>{p.rubro || "—"}</td>
+                  <td style={{ maxWidth: 200 }}>
+                    {Array.isArray(p.marcas) && p.marcas.length ? (
+                      <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                        {p.marcas.slice(0, 3).map((m) => (
+                          <span key={m} style={{ fontSize: 10.5, fontWeight: 600, padding: "1px 7px", borderRadius: 999, background: "var(--primary-light)", color: "var(--primary-dark)" }}>{m}</span>
+                        ))}
+                        {p.marcas.length > 3 && (
+                          <span style={{ fontSize: 10.5, color: "var(--text-muted)" }} title={p.marcas.join(", ")}>+{p.marcas.length - 3}</span>
+                        )}
+                      </div>
+                    ) : "—"}
+                  </td>
                   <td>
                     <div style={{ display: "flex", gap: 4, justifyContent: "flex-end" }}>
-                      <button className="btn btn-sm btn-ghost" title="Editar" onClick={() => setModal({ ...p })} style={{ padding: 6 }}><Pencil size={14} /></button>
+                      <button className="btn btn-sm btn-ghost" title="Editar" onClick={() => setModal({ ...VACIO, ...p, marcas: Array.isArray(p.marcas) ? p.marcas : [], palabras_clave: Array.isArray(p.palabras_clave) ? p.palabras_clave : [] })} style={{ padding: 6 }}><Pencil size={14} /></button>
                       <button className="btn btn-sm btn-ghost" title="Eliminar" onClick={() => setConfirmDel(p)} style={{ padding: 6, color: "var(--danger)" }}><Trash2 size={14} /></button>
                     </div>
                   </td>
@@ -187,6 +227,35 @@ export default function Proveedores() {
                 <div className="field"><label className="field-label">Teléfono</label><input className="input" value={modal.telefono} onChange={(e) => set({ telefono: e.target.value })} placeholder="+56 9 …" /></div>
                 <div className="field"><label className="field-label">Correo</label><input className="input" value={modal.correo} onChange={(e) => set({ correo: e.target.value })} placeholder="correo@proveedor.cl" /></div>
                 <div className="field"><label className="field-label">Dirección</label><input className="input" value={modal.direccion} onChange={(e) => set({ direccion: e.target.value })} placeholder="Dirección" /></div>
+              </div>
+              <div className="field">
+                <label className="field-label">Marcas que distribuye</label>
+                <CreatableSelect
+                  isMulti
+                  styles={SELECT_STYLES}
+                  options={marcasCatalogo.map((m) => ({ value: m, label: m }))}
+                  value={(modal.marcas || []).map((m) => ({ value: m, label: m }))}
+                  onChange={(vals) => set({ marcas: (vals || []).map((v) => String(v.value).trim()).filter(Boolean) })}
+                  placeholder="Selecciona marcas o escribe una nueva…"
+                  formatCreateLabel={(txt) => `Crear marca «${txt}»`}
+                  noOptionsMessage={() => "Escribe para crear una marca"}
+                />
+                <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 3 }}>
+                  Las opciones salen de las marcas del catálogo de productos; también puedes crear una nueva escribiéndola.
+                </div>
+              </div>
+              <div className="field">
+                <label className="field-label">Palabras clave</label>
+                <CreatableSelect
+                  isMulti
+                  styles={SELECT_STYLES}
+                  options={[]}
+                  value={(modal.palabras_clave || []).map((m) => ({ value: m, label: m }))}
+                  onChange={(vals) => set({ palabras_clave: (vals || []).map((v) => String(v.value).trim()).filter(Boolean) })}
+                  placeholder="Escribe una palabra y presiona Enter…"
+                  formatCreateLabel={(txt) => `Agregar «${txt}»`}
+                  noOptionsMessage={() => "Escribe para agregar palabras clave"}
+                />
               </div>
               <div className="field">
                 <label className="field-label">Observaciones</label>

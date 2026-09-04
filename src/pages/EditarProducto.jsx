@@ -282,11 +282,14 @@ export default function EditarProducto() {
   }, [rolNorm]);
 
   // Ventas mirando un producto ya activo: solo edita "Detalle del Producto";
-  // el resto de secciones quedan readonly u ocultas.
-  const esVentasNoTransitorio = useMemo(
-    () => rolNorm === "ventas" && !esProductoTransitorio,
-    [rolNorm, esProductoTransitorio]
-  );
+  // el resto de secciones quedan readonly u ocultas. Los "Pendiente
+  // Aprobación" cuentan como transitorios (pedido 2026-09-04): nacen del
+  // mismo flujo de ventas y necesitan poder corregir peso/dimensiones.
+  const esVentasNoTransitorio = useMemo(() => {
+    const estado = (producto?.estado ?? "").toString().trim().toLowerCase();
+    const esPendiente = estado === "pendiente aprobación" || estado === "pendiente aprobacion";
+    return rolNorm === "ventas" && !esProductoTransitorio && !esPendiente;
+  }, [rolNorm, esProductoTransitorio, producto]);
 
   const estadoMostrado =
     producto.estado ||

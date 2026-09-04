@@ -135,6 +135,18 @@ export class LicitacionesController {
     };
   }
 
+  /* Análisis global de productos MP (adjudicadas de todo el mercado, hayamos
+     postulado o no). Va antes de 'mercado-publico/:codigo'. */
+  @Get('mercado-publico/analisis-productos')
+  analisisProductosGlobal(@Req() req: any) {
+    return this.licitacionesService.analisisProductosGlobalGuardado((req?.user?.email || '').toLowerCase());
+  }
+
+  @Post('mercado-publico/analisis-productos')
+  refrescarAnalisisProductosGlobal(@Req() req: any) {
+    return this.licitacionesService.iniciarAnalisisProductosGlobal((req?.user?.email || '').toLowerCase());
+  }
+
   /* Catálogo de palabras clave y búsquedas guardadas del explorador. Van antes
      de 'mercado-publico/:codigo' por la misma razón que 'buscar'. */
   @Get('mercado-publico/keywords')

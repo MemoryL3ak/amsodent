@@ -9,6 +9,7 @@ import Select, { components } from "react-select";
 import { generarPDFcotizacion } from "../utils/generarPDFcotizacion";
 import { calcularLista3 } from "../lib/listas";
 import ProductoPickerModal from "../components/ProductoPickerModal";
+import ConfirmModal from "../components/ConfirmModal";
 import CalculadoraFlete from "../components/CalculadoraFlete";
 
 import {
@@ -806,6 +807,9 @@ export default function CrearLicitacion() {
   const [items, setItems] = useState([crearItemVacio()]);
   // Índice del ítem para el que está abierto el buscador de productos (popup).
   const [pickerIndex, setPickerIndex] = useState(null);
+  // Producto transitorio con >30 días de creado elegido para un ítem: se pide
+  // validar el costo antes de aplicarlo (pedido 2026-09-04).
+  const [validarCosto, setValidarCosto] = useState(null); // { prod, idx } | null
   const [hydrated, setHydrated] = useState(false);
 
   // ✅ Observaciones generales
@@ -1176,7 +1180,7 @@ export default function CrearLicitacion() {
       // las fichas técnicas (textos largos) que disparan el tamaño del payload.
       const { data } = await supabase
         .from("productos")
-        .select("id, sku, nombre, marca, categoria, formato, costo, lista1, lista2, lista3, equivalente_1, equivalente_2, equivalente_3, peso, metro_cubico")
+        .select("id, sku, nombre, marca, categoria, formato, costo, lista1, lista2, lista3, equivalente_1, equivalente_2, equivalente_3, peso, metro_cubico, estado, created_at")
         .in("estado", ["Activo", "Transitorio"])
         .order("id")
         .limit(20000);
@@ -1334,37 +1338,55 @@ export default function CrearLicitacion() {
   /* ============================================================
      ACTUALIZAR ÍTEM
   ============================================================ */
-  function actualizarItem(index, campo, valor) {
-    const copia = [...items];
-    let item = { ...copia[index] };
+  // Transitorio (o pendiente de aprobación) con más de 30 días desde su
+  // creación: el costo puede estar obsoleto, así que antes de usarlo en la
+  // cotización se pide validarlo (pedido 2026-09-04).
+  function transitorioViejo(prod) {
+    const estado = String(prod?.estado || "").trim().toLowerCase();
+    const esTransitorio = estado ? estado !== "activo" : !String(prod?.sku || "").trim();
+    if (!esTransitorio) return false;
+    const t = Date.parse(prod?.created_at || "");
+    return Number.isFinite(t) && Date.now() - t > 30 * 86400000;
+  }
 
-    item[campo] = valor;
-
-    let prod = null;
-    if (campo === "sku") {
-      prod = productos.find(
-        (p) => String(p.sku || "").trim() === String(valor || "").trim()
-      );
-    }
-    if (campo === "producto") {
-      prod = productos.find((p) => p.nombre === valor);
-    }
-
-    if (prod) {
+  // Aplica un producto del catálogo sobre el ítem idx (precio, costo, totales).
+  function aplicarProductoEnItem(idx, prod) {
+    setItems((prev) => {
+      const copia = [...prev];
+      const item = { ...(copia[idx] || crearItemVacio()) };
       item.sku = prod.sku ? String(prod.sku).trim() : "";
       item.producto = prod.nombre || "";
       item.categoria = prod.categoria || "";
       item.formato = prod.formato || "";
-
       item.precio = getPrecioBaseParaSKU(prod, listado, campaignPrices);
       item.costo = Number(prod.costo ?? 0);
-
       item.precioManual = false;
       item.precioUnitarioStr = "";
-
       item.costoManual = false;
       item.costoStr = "";
+      const cantidad = Math.max(1, Number(item.cantidad || 1));
+      item.total = redondear(cantidad * (Number(item.precio || 0) + Number(fletePorUnidad || 0)));
+      copia[idx] = item;
+      return copia;
+    });
+  }
+
+  function actualizarItem(index, campo, valor) {
+    if (campo === "sku" || campo === "producto") {
+      const prod = campo === "sku"
+        ? productos.find((p) => String(p.sku || "").trim() === String(valor || "").trim())
+        : productos.find((p) => p.nombre === valor);
+      if (prod) {
+        if (transitorioViejo(prod)) { setValidarCosto({ prod, idx: index }); return; }
+        aplicarProductoEnItem(index, prod);
+        return;
+      }
     }
+
+    const copia = [...items];
+    let item = { ...copia[index] };
+
+    item[campo] = valor;
 
     const cantidad = Math.max(1, Number(item.cantidad || 1));
     const precioBase = Number(item.precio || 0);
@@ -1396,25 +1418,13 @@ export default function CrearLicitacion() {
 
     // Rellenar el ítem con los datos del prod recibido — NO usar
     // actualizarItem(sku) ni (producto) porque hacen lookup que puede fallar
-    // si productos aún no se actualizó.
-    setItems((prev) => {
-      const copia = [...prev];
-      const item = { ...(copia[idx] || crearItemVacio()) };
-      item.sku = prod.sku ? String(prod.sku).trim() : "";
-      item.producto = prod.nombre || "";
-      item.categoria = prod.categoria || "";
-      item.formato = prod.formato || "";
-      item.precio = getPrecioBaseParaSKU(prod, listado, campaignPrices);
-      item.costo = Number(prod.costo ?? 0);
-      item.precioManual = false;
-      item.precioUnitarioStr = "";
-      item.costoManual = false;
-      item.costoStr = "";
-      const cantidad = Math.max(1, Number(item.cantidad || 1));
-      item.total = redondear(cantidad * (Number(item.precio || 0) + Number(fletePorUnidad || 0)));
-      copia[idx] = item;
-      return copia;
-    });
+    // si productos aún no se actualizó. Transitorio con >30 días: primero
+    // se pide validar el costo.
+    if (transitorioViejo(prod)) {
+      setValidarCosto({ prod, idx });
+      return;
+    }
+    aplicarProductoEnItem(idx, prod);
   }
 
   // Callback cuando se crea un producto desde el modal del picker.
@@ -2421,6 +2431,24 @@ export default function CrearLicitacion() {
           onProductoCreado={handleProductoCreado}
         />
       )}
+
+      {/* Producto transitorio con >30 días: validar costo antes de cotizarlo. */}
+      <ConfirmModal
+        open={validarCosto !== null}
+        title="Valida el costo de este producto transitorio"
+        message={validarCosto ? (() => {
+          const p = validarCosto.prod;
+          const dias = Math.floor((Date.now() - Date.parse(p.created_at)) / 86400000);
+          const costo = Number(p.costo ?? 0);
+          return `«${p.nombre}» es un producto transitorio creado hace ${dias} días (${String(p.created_at || "").slice(0, 10)}). ` +
+            `Su costo registrado es $${costo.toLocaleString("es-CL")}. Confirma que el costo sigue vigente antes de cotizarlo; ` +
+            `si cambió, actualízalo primero en Productos → Editar.`;
+        })() : ""}
+        confirmText="El costo sigue vigente"
+        cancelText="Cancelar"
+        onConfirm={() => { if (validarCosto) aplicarProductoEnItem(validarCosto.idx, validarCosto.prod); setValidarCosto(null); }}
+        onCancel={() => setValidarCosto(null)}
+      />
 
       <div className="page-header">
         <div>

@@ -10,7 +10,7 @@ export class CampanasService {
 
     const { data: campanas, error: e1 } = await client
       .from('product_campaigns')
-      .select('id,nombre,start_date,end_date,created_at,created_by')
+      .select('*') // incluye lista_precios cuando la migración 20260904 está aplicada
       .order('created_at', { ascending: false });
     if (e1) throw new BadRequestException(e1.message);
 
@@ -53,7 +53,7 @@ export class CampanasService {
 
     const { data: campana, error: e1 } = await client
       .from('product_campaigns')
-      .select('id,nombre,start_date,end_date')
+      .select('*')
       .eq('id', id)
       .single();
     if (e1) throw new NotFoundException('Campaña no encontrada');
@@ -77,15 +77,33 @@ export class CampanasService {
         nombre: body.nombre,
         start_date: body.start_date,
         end_date: body.end_date,
+        // Lista de precios asociada (1..3). Requiere la migración
+        // 20260904_campanas_lista_precios.sql; default 1 (comportamiento histórico).
+        lista_precios: [1, 2, 3].includes(Number(body.lista_precios)) ? Number(body.lista_precios) : 1,
         created_by: userId,
       }])
       .select('id')
       .single();
-    if (e1) throw new BadRequestException(e1.message);
+    let campanaFila: any = campana;
+    if (e1) {
+      // Migración aún no aplicada: se crea sin la columna (comportamiento histórico).
+      if (/lista_precios/i.test(e1.message)) {
+        const { data: c2, error: e1b } = await client
+          .from('product_campaigns')
+          .insert([{ nombre: body.nombre, start_date: body.start_date, end_date: body.end_date, created_by: userId }])
+          .select('id')
+          .single();
+        if (e1b) throw new BadRequestException(e1b.message);
+        campanaFila = c2;
+      } else {
+        throw new BadRequestException(e1.message);
+      }
+    }
+    if (!campanaFila?.id) throw new BadRequestException('No se pudo crear la campaña.');
 
     if (body.items?.length > 0) {
       const payloadItems = body.items.map((it: any) => ({
-        campaign_id: campana.id,
+        campaign_id: campanaFila.id,
         sku: String(it.sku),
         producto: String(it.producto || ''),
         precio_unitario: Number(it.precio_unitario || 0),
@@ -98,7 +116,7 @@ export class CampanasService {
       if (e2) throw new BadRequestException(e2.message);
     }
 
-    return campana;
+    return campanaFila;
   }
 
   async update(id: number, body: any) {
