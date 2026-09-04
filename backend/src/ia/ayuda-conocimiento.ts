@@ -71,7 +71,9 @@ Comunicaciones (correo masivo), Monitoreo del Sistema, widget DamarIA de datos.
    plazo de la condición de venta (Contado = 0, "30 días" = 30). Semáforo:
    Pagada / En plazo / Por vencer / Vencida. Al registrar el pago se digita el
    monto BRUTO y el sistema guarda el neto; queda forma de pago (incluye
-   factoring) y días de atraso. Las notas de crédito restan del saldo. Botón
+   factoring) y días de atraso. Las notas de crédito restan del saldo, igual
+   que las MULTAS cursadas a Amsodent (botón "Multa" junto al de nota de
+   crédito: monto bruto tal cual, archivo opcional, cuelga de la factura). Botón
    "Correo cobro": genera un borrador con N° OC, guías, factura y datos de
    despacho para copiar o abrir en el correo (nunca se envía solo). Un cron
    diario notifica a los jefe_ventas_especial cuando una factura se vence.

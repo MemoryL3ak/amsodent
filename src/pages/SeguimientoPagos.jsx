@@ -136,6 +136,8 @@ export default function SeguimientoPagos() {
   // Notas de crédito por cotización: lista (para ver/abrir) y suma (descuenta del monto).
   const [notasCreditoMap, setNotasCreditoMap] = useState({});
   const [notasCreditoSumMap, setNotasCreditoSumMap] = useState({});
+  const [multasMap, setMultasMap] = useState({});       // lic_id → [docs multa]
+  const [multasSumMap, setMultasSumMap] = useState({}); // lic_id → Σ multas (brutas)
   // Suma de órdenes de compra por cotización (monto a cobrar de la columna Monto).
   const [montoOcMap, setMontoOcMap] = useState({});
   // OC por id: permite resolver el monto de la factura pública que deriva de una
@@ -273,6 +275,8 @@ export default function SeguimientoPagos() {
         const ocNums = {};
         const ncList = {};
         const ncSum = {};
+        const multaList = {};
+        const multaSum = {};
         const empresaMap = {};
         const cierreMap = {};
         if (ids.length > 0) {
@@ -282,7 +286,7 @@ export default function SeguimientoPagos() {
             // particular (transferencia/comprobante, webpay y efectivo).
             filter: {
               licitacion_ids: ids,
-              tipo: ["orden_compra", "factura", "factura_boleta", "comprobante_pago", "webpay", "efectivo", "nota_credito", "guia_despacho", "cierre_forzado"],
+              tipo: ["orden_compra", "factura", "factura_boleta", "comprobante_pago", "webpay", "efectivo", "nota_credito", "multa", "guia_despacho", "cierre_forzado"],
             },
             fields: "*",
           });
@@ -313,6 +317,13 @@ export default function SeguimientoPagos() {
               // Se usa TAL CUAL está cargada: estos montos se ingresan brutos.
               (ncList[lid] = ncList[lid] || []).push(d);
               ncSum[lid] = (ncSum[lid] || 0) + Number(d.monto || 0);
+              return;
+            }
+            if (d.tipo === "multa") {
+              // Multa cursada a Amsodent: descuenta del monto a cobrar igual
+              // que una nota de crédito (bruta, tal cual se digita).
+              (multaList[lid] = multaList[lid] || []).push(d);
+              multaSum[lid] = (multaSum[lid] || 0) + Number(d.monto || 0);
               return;
             }
             if (d.tipo === "cierre_forzado") {
@@ -349,6 +360,8 @@ export default function SeguimientoPagos() {
         setGuiasLicMap(guiasLic);
         setNotasCreditoMap(ncList);
         setNotasCreditoSumMap(ncSum);
+        setMultasMap(multaList);
+        setMultasSumMap(multaSum);
         const ocNumFinal = {};
         Object.entries(ocNums).forEach(([lid, arr]) => {
           ocNumFinal[lid] = Array.from(new Set(arr)).join(", ");
@@ -453,11 +466,14 @@ export default function SeguimientoPagos() {
   function notasCreditoDe(f) {
     return Number(notasCreditoSumMap[f.licitacion_id] || 0);
   }
-  // Saldo por cobrar = base − notas de crédito − comprobantes cargados.
+  function multasDe(f) {
+    return Number(multasSumMap[f.licitacion_id] || 0);
+  }
+  // Saldo por cobrar = base − notas de crédito − multas − comprobantes cargados.
   function saldoFactura(f, lic) {
     const base = montoBaseFactura(f, lic);
     const pagado = Number(comprobantesSumMap[f.licitacion_id] || 0);
-    return Math.round(base - notasCreditoDe(f) - pagado);
+    return Math.round(base - notasCreditoDe(f) - multasDe(f) - pagado);
   }
   // Punto 17: si los montos cargados (comprobantes/transferencias + notas de
   // crédito) no cuadran con el total a cobrar (saldo ≠ 0), la factura no puede
@@ -465,7 +481,7 @@ export default function SeguimientoPagos() {
   // pagada. Aplica a cualquier tipo de cliente. Si todavía no se cargó ningún
   // monto, no se fuerza el descalce (respeta el flujo simple de "marcar pagada").
   function descalceMontos(f, lic) {
-    const cargas = Number(comprobantesSumMap[f.licitacion_id] || 0) + notasCreditoDe(f);
+    const cargas = Number(comprobantesSumMap[f.licitacion_id] || 0) + notasCreditoDe(f) + multasDe(f);
     if (cargas <= 0) return false; // nada cargado aún
     return saldoFactura(f, lic) > 1; // tolerancia $1
   }
@@ -558,7 +574,7 @@ export default function SeguimientoPagos() {
       if (filtroEstado === "por_vencer" && (pagadaEf || diasRestantes == null || diasRestantes < 0 || diasRestantes > 5)) return false;
       return true;
     });
-  }, [facturasFiltradasBase, licMap, filtroEstado, notasCreditoSumMap, comprobantesSumMap, montoOcMap]);
+  }, [facturasFiltradasBase, licMap, filtroEstado, notasCreditoSumMap, multasSumMap, comprobantesSumMap, montoOcMap]);
 
   // Ordenamiento
   const facturasOrdenadas = useMemo(() => {
@@ -633,9 +649,10 @@ export default function SeguimientoPagos() {
       else if (restantes <= 5) estado = "Por vencer";
       else estado = "En plazo";
       const nc = notasCreditoDe(f);
+      const multas = multasDe(f);
       // Saldo por cobrar: lo mostramos cuando hay montos cargados (notas de
-      // crédito o comprobantes); si no se ha cargado nada, queda en blanco.
-      const cargas = Number(comprobantesSumMap[f.licitacion_id] || 0) + nc;
+      // crédito, multas o comprobantes); si no se ha cargado nada, queda en blanco.
+      const cargas = Number(comprobantesSumMap[f.licitacion_id] || 0) + nc + multas;
       const saldoPorPagar = cargas > 0 ? saldoFactura(f, lic) : "";
       return {
         "ID Cotización": lic.id_licitacion || lic.id || "",
@@ -647,6 +664,7 @@ export default function SeguimientoPagos() {
         "Condición Venta": lic.condicion_venta || "",
         "Monto": montoFacturaBruto(f, lic),
         "Notas de crédito": nc || "",
+        "Multas": multas || "",
         "Saldo por pagar": saldoPorPagar,
         "Estado": estado,
         "Pagada": estaPagada(f, lic) ? "Sí" : "No",
@@ -1044,6 +1062,14 @@ export default function SeguimientoPagos() {
     setVFecha(new Date().toISOString().slice(0, 10));
     setVNumero("");
   }
+  function abrirMulta(f) {
+    setVoucherTipo("multa");
+    setVoucherFor(f);
+    setVFile(null);
+    setVMonto("");
+    setVFecha(new Date().toISOString().slice(0, 10));
+    setVNumero("");
+  }
   function cerrarVoucher() {
     setVoucherFor(null);
     setVoucherTipo("comprobante");
@@ -1056,9 +1082,11 @@ export default function SeguimientoPagos() {
     e?.preventDefault?.();
     if (!voucherFor || subiendoVoucher) return;
     const esNC = voucherTipo === "nota_credito";
-    const etiqueta = esNC ? "nota de crédito" : "comprobante";
-    // El comprobante requiere archivo; la nota de crédito lo acepta opcional.
-    if (!esNC && !vFile) { setToast({ type: "error", message: "Selecciona el archivo del comprobante." }); return; }
+    const esMulta = voucherTipo === "multa";
+    const esDescuento = esNC || esMulta; // ambos restan del monto a cobrar, en bruto
+    const etiqueta = esNC ? "nota de crédito" : esMulta ? "multa" : "comprobante";
+    // El comprobante requiere archivo; la nota de crédito y la multa lo aceptan opcional.
+    if (!esDescuento && !vFile) { setToast({ type: "error", message: "Selecciona el archivo del comprobante." }); return; }
     const montoNum = Math.round(Number(String(vMonto).replace(/[^\d]/g, "")) || 0);
     if (montoNum <= 0) { setToast({ type: "error", message: `Ingresa el monto de la ${etiqueta}.` }); return; }
     if (!vFecha) { setToast({ type: "error", message: `Ingresa la fecha de la ${etiqueta}.` }); return; }
@@ -1077,12 +1105,12 @@ export default function SeguimientoPagos() {
       try {
         await api.post("/licitaciones/documentos", {
           licitacion_id: Number(voucherFor.licitacion_id),
-          tipo: esNC ? "nota_credito" : "comprobante_pago",
+          tipo: esNC ? "nota_credito" : esMulta ? "multa" : "comprobante_pago",
           numero: (vNumero || "").trim() || null,
           // El comprobante se digita en BRUTO (lo transferido) pero se guarda
-          // NETO (÷1,19), la convención de toda la app. La nota de crédito se
-          // usa en bruto tal cual se digita.
-          monto: esNC ? montoNum : Math.round(montoNum / 1.19),
+          // NETO (÷1,19), la convención de toda la app. La nota de crédito y
+          // la multa se usan en bruto tal cual se digitan.
+          monto: esDescuento ? montoNum : Math.round(montoNum / 1.19),
           fecha_oc: vFecha,
           deriva_de_id: Number(voucherFor.id),
           bucket: storagePath ? bucket : null,
@@ -1097,7 +1125,7 @@ export default function SeguimientoPagos() {
         }
         throw insErr;
       }
-      setToast({ type: "success", message: esNC ? "Nota de crédito cargada." : "Comprobante de transferencia cargado." });
+      setToast({ type: "success", message: esNC ? "Nota de crédito cargada." : esMulta ? "Multa registrada." : "Comprobante de transferencia cargado." });
       cerrarVoucher();
       recargar();
     } catch (err) {
@@ -1507,6 +1535,7 @@ export default function SeguimientoPagos() {
                   const descalce = descalceMontos(f, lic);
                   const pagadaEf = estaPagada(f, lic);
                   const ncMonto = notasCreditoDe(f);
+                  const multaMonto = multasDe(f);
                   // Punto 17: si los montos no calzan, la factura queda "pendiente de pago".
                   const sem = descalce
                     ? { color: "#b45309", bg: "#fef3c7", label: "Pendiente de pago" }
@@ -1629,7 +1658,7 @@ export default function SeguimientoPagos() {
                           // Lo mostramos cuando hay montos cargados (comprobantes
                           // o notas de crédito); aplica a cualquier tipo de cliente.
                           const pagado = Number(comprobantesSumMap[lic.id] || 0);
-                          const cargas = pagado + ncMonto;
+                          const cargas = pagado + ncMonto + multaMonto;
                           if (cargas <= 0) {
                             return <span style={{ color: "var(--text-muted)" }}>—</span>;
                           }
@@ -1816,6 +1845,33 @@ export default function SeguimientoPagos() {
                               title="Agregar nota de crédito (descuenta del total a cobrar)"
                             >
                               <FileMinus size={12} /> Nota de crédito
+                            </button>
+                            {(multasMap[lic.id]?.length || 0) > 0 && (
+                              <span style={{ fontSize: 11, color: "#b91c1c", whiteSpace: "nowrap" }}>
+                                {multasMap[lic.id].length} multa{multasMap[lic.id].length === 1 ? "" : "s"}
+                                {multasMap[lic.id].some((m) => m.bucket && m.storage_path) && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const conArchivo = multasMap[lic.id].find((m) => m.bucket && m.storage_path);
+                                      if (conArchivo) abrirDocumento(conArchivo);
+                                    }}
+                                    style={{ background: "none", border: "none", cursor: "pointer", color: "var(--primary)", padding: "0 0 0 4px", verticalAlign: "middle" }}
+                                    title="Ver multa"
+                                  >
+                                    <Eye size={12} />
+                                  </button>
+                                )}
+                              </span>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => abrirMulta(f)}
+                              className="btn btn-secondary btn-sm"
+                              style={{ display: "inline-flex", alignItems: "center", gap: 4 }}
+                              title="Registrar multa cursada a Amsodent (descuenta del total a cobrar)"
+                            >
+                              <FileMinus size={12} /> Multa
                             </button>
                             {!pagadaEf && (
                               <button
@@ -2011,12 +2067,12 @@ export default function SeguimientoPagos() {
           >
             <div style={{ padding: "16px 20px", borderBottom: "1px solid var(--border)" }}>
               <strong style={{ fontSize: 15 }}>
-                {voucherTipo === "nota_credito" ? "Agregar nota de crédito" : "Subir comprobante de transferencia"}
+                {voucherTipo === "nota_credito" ? "Agregar nota de crédito" : voucherTipo === "multa" ? "Registrar multa" : "Subir comprobante de transferencia"}
               </strong>
               <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 2 }}>
                 Factura {voucherFor.numero || "S/N"} · {licMap[voucherFor.licitacion_id]?.nombre_entidad || ""}
               </div>
-              {voucherTipo === "nota_credito" && (
+              {(voucherTipo === "nota_credito" || voucherTipo === "multa") && (
                 <div style={{ fontSize: 11.5, color: "var(--text-muted)", marginTop: 4 }}>
                   El monto se descontará del total a cobrar de esta factura.
                 </div>
@@ -2024,7 +2080,7 @@ export default function SeguimientoPagos() {
             </div>
             <div style={{ padding: "16px 20px", display: "flex", flexDirection: "column", gap: 12 }}>
               <div style={{ fontSize: 13, fontWeight: 600 }}>
-                Archivo{voucherTipo === "nota_credito" ? " (opcional)" : ""}
+                Archivo{voucherTipo === "nota_credito" || voucherTipo === "multa" ? " (opcional)" : ""}
                 <div style={{ marginTop: 6, display: "flex", alignItems: "center", gap: 10 }}>
                   <label className="btn btn-secondary btn-sm" style={{ cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
                     <Upload size={13} /> Seleccionar archivo
@@ -2044,24 +2100,24 @@ export default function SeguimientoPagos() {
                 </div>
               </div>
               <label style={{ fontSize: 13, fontWeight: 600 }}>
-                {voucherTipo === "nota_credito" ? "Monto" : "Monto bruto (lo transferido)"}
+                {voucherTipo === "nota_credito" ? "Monto" : voucherTipo === "multa" ? "Monto de la multa (bruto)" : "Monto bruto (lo transferido)"}
                 <input type="text" inputMode="numeric" className="input" value={vMonto} onChange={(e) => setVMonto(e.target.value.replace(/[^\d]/g, ""))} placeholder="0" style={{ marginTop: 4 }} />
               </label>
               <label style={{ fontSize: 13, fontWeight: 600 }}>
-                {voucherTipo === "nota_credito" ? "Fecha de la nota de crédito" : "Fecha del comprobante"}
+                {voucherTipo === "nota_credito" ? "Fecha de la nota de crédito" : voucherTipo === "multa" ? "Fecha de la multa" : "Fecha del comprobante"}
                 <div style={{ marginTop: 4 }}>
                   <DateFilter value={vFecha} onChange={setVFecha} placeholder="Fecha" />
                 </div>
               </label>
               <label style={{ fontSize: 13, fontWeight: 600 }}>
                 N° / referencia (opcional)
-                <input type="text" className="input" value={vNumero} onChange={(e) => setVNumero(e.target.value)} placeholder={voucherTipo === "nota_credito" ? "N° nota de crédito…" : "N° operación, banco…"} style={{ marginTop: 4 }} />
+                <input type="text" className="input" value={vNumero} onChange={(e) => setVNumero(e.target.value)} placeholder={voucherTipo === "nota_credito" ? "N° nota de crédito…" : voucherTipo === "multa" ? "N° resolución / multa…" : "N° operación, banco…"} style={{ marginTop: 4 }} />
               </label>
             </div>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, padding: "14px 20px", borderTop: "1px solid var(--border)", background: "var(--bg)" }}>
               <button type="button" onClick={cerrarVoucher} disabled={subiendoVoucher} className="btn btn-secondary">Cancelar</button>
               <button type="submit" disabled={subiendoVoucher} className="btn btn-primary">
-                {subiendoVoucher ? "Guardando…" : voucherTipo === "nota_credito" ? "Agregar nota de crédito" : "Subir comprobante"}
+                {subiendoVoucher ? "Guardando…" : voucherTipo === "nota_credito" ? "Agregar nota de crédito" : voucherTipo === "multa" ? "Registrar multa" : "Subir comprobante"}
               </button>
             </div>
           </form>
