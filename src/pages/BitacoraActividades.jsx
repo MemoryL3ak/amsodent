@@ -196,8 +196,10 @@ export default function BitacoraActividades() {
     return { desde: ymd(ini), hasta: ymd(addDays(ini, 41)) };
   }, [vista, ancla]);
 
-  const cargar = useCallback(async () => {
-    setLoading(true);
+  const cargar = useCallback(async (opts = {}) => {
+    // silencioso: refresco tras guardar — sin vaciar el calendario con el
+    // spinner (la recarga completa se sentía como lentitud al crear).
+    if (!opts.silencioso) setLoading(true);
     try {
       const params = new URLSearchParams();
       params.set("desde", rango.desde);
@@ -448,14 +450,18 @@ export default function BitacoraActividades() {
           setToast({ type: "success", message: "Actividad registrada." });
         }
       }
-      cargar();
-      cargarMetricas();
-      if (verTodas) { try { const u = await api.get("/actividades/usuarios"); setUsuarios(Array.isArray(u) ? u : []); } catch { /* */ } }
       // Si se generó un Meet, dejamos el modal abierto para mostrar/copiar la URL.
       // En ese caso adoptamos el id devuelto para que un nuevo guardado sea una
       // EDICIÓN (PUT) y no reintente crear el Meet (evita duplicados/errores).
       if (r?.id) setModal((m) => (m ? { ...m, id: r.id, meet_url: r.meet_url ?? m.meet_url } : m));
       if (!r?._meet_generado) setModal(null);
+      // El modal se cierra AL TIRO; las recargas siguen en segundo plano sin
+      // vaciar el calendario (pedido 2026-09-04: se sentía lento al crear).
+      cargar({ silencioso: true });
+      cargarMetricas();
+      if (verTodas) {
+        api.get("/actividades/usuarios").then((u) => setUsuarios(Array.isArray(u) ? u : [])).catch(() => {});
+      }
       return r;
     } catch (e) {
       setToast({ type: "error", message: e?.message || "No se pudo guardar la actividad." });
@@ -1063,6 +1069,7 @@ function ModalActividad({ inicial, clienteOptions, cotizacionOptions, perfiles, 
   const [tipo, setTipo] = useState(inicial.tipo || "gestion");
   const [motivo, setMotivo] = useState(inicial.motivo || "");
   const [clienteId, setClienteId] = useState(inicial.cliente_id ?? null);
+  const [errorForm, setErrorForm] = useState(""); // validación visible (no retorno silencioso)
   const [filtroTipoCli, setFiltroTipoCli] = useState(""); // filtra el selector de cliente por tipo
   // Alta rápida de cliente desde el modal.
   const [nuevoCli, setNuevoCli] = useState(false);
@@ -1210,8 +1217,11 @@ function ModalActividad({ inicial, clienteOptions, cotizacionOptions, perfiles, 
 
   async function submit(e) {
     e.preventDefault();
-    if (!titulo.trim()) return;
-    if (!clienteSel && !clienteOpcional) return;
+    // Avisos explícitos: antes el submit retornaba en silencio y el usuario
+    // creía haber guardado (típico en actividades automáticas sin cliente).
+    if (!titulo.trim()) { setErrorForm("Falta el título de la actividad."); return; }
+    if (!clienteSel && !clienteOpcional) { setErrorForm("Selecciona el cliente para poder guardar."); return; }
+    setErrorForm("");
     setGuardando(true);
     const form = {
       id: inicial.id,
@@ -1503,6 +1513,9 @@ function ModalActividad({ inicial, clienteOptions, cotizacionOptions, perfiles, 
         </div>
 
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, padding: "11px 18px", borderTop: "1px solid var(--border)", background: "var(--bg)", position: "sticky", bottom: 0 }}>
+          {errorForm && (
+            <span style={{ fontSize: 12.5, color: "#dc2626", fontWeight: 600 }}>{errorForm}</span>
+          )}
           {inicial.id && !meetCreado ? (
             <button type="button" onClick={() => onDelete(inicial)} className="btn btn-ghost" style={{ color: "#dc2626", display: "inline-flex", alignItems: "center", gap: 5 }}>
               <Trash2 size={14} /> Eliminar

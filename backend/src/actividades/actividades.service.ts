@@ -169,6 +169,46 @@ export class ActividadesService {
       adjuntos: Array.isArray(body.adjuntos) ? body.adjuntos : [],
     };
 
+    // Actividades automáticas (correos de cobranza, gestiones desde otros
+    // módulos) llegan sin cliente_id: se intenta amarrarlas al cliente por el
+    // RUT de la cotización o por el nombre, para que aparezcan en la ficha
+    // 360° del cliente y en el filtro por cliente de la bitácora. Best-effort:
+    // si no calza nada, la actividad se guarda igual (pedido 2026-09-04).
+    if (base.cliente_id == null && (base.licitacion_id != null || base.cliente_nombre)) {
+      try {
+        const client = this.supabase.getClient();
+        const normRut = (v: any) => String(v || '').toLowerCase().replace(/[.\-\s]/g, '');
+        let rut = '';
+        let nombreCli = String(base.cliente_nombre || '').trim();
+        if (base.licitacion_id != null) {
+          const { data: lic } = await client
+            .from('licitaciones')
+            .select('rut_entidad, nombre_entidad')
+            .eq('id', base.licitacion_id)
+            .maybeSingle();
+          rut = normRut(lic?.rut_entidad);
+          if (!nombreCli) nombreCli = String(lic?.nombre_entidad || '').trim();
+        }
+        let clienteId: string | null = null;
+        if (rut) {
+          const { data: porRut } = await client.from('clientes').select('id, rut').not('rut', 'is', null).limit(5000);
+          clienteId = (porRut || []).find((c: any) => normRut(c.rut) === rut)?.id || null;
+        }
+        if (!clienteId && nombreCli) {
+          const { data: porNombre } = await client
+            .from('clientes')
+            .select('id')
+            .ilike('nombre', nombreCli)
+            .limit(2);
+          if ((porNombre || []).length === 1) clienteId = porNombre![0].id;
+        }
+        if (clienteId) {
+          base.cliente_id = clienteId;
+          if (!base.cliente_nombre && nombreCli) base.cliente_nombre = nombreCli;
+        }
+      } catch { /* best-effort: sin cliente resuelto se guarda igual */ }
+    }
+
     // Reunión con participantes → se replica la actividad para cada uno.
     const participantes = Array.isArray(body.participantes)
       ? body.participantes.filter((p: any) => p && p.email)

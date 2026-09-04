@@ -360,6 +360,15 @@ function getNotifVisuales(notif) {
       etiqueta: "Adjudicada MP",
     };
   }
+  // Acción del calendario de cobranza (correo/llamada/visita por vencimiento).
+  if (tipo === "cobranza_accion" || tipo === "factura_vencida") {
+    return {
+      icono: AlertCircle,
+      color: "#b45309",
+      bg: "#fef3c7",
+      etiqueta: "Cobranza",
+    };
+  }
   // Cotización con productos sin peso: requiere revisión de un admin.
   if (tipo === "aprobacion_peso") {
     return {
