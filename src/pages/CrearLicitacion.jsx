@@ -9,7 +9,7 @@ import Select, { components } from "react-select";
 import { generarPDFcotizacion } from "../utils/generarPDFcotizacion";
 import { calcularLista3 } from "../lib/listas";
 import ProductoPickerModal from "../components/ProductoPickerModal";
-import ConfirmModal from "../components/ConfirmModal";
+import ModalValidarTransitorio from "../components/ModalValidarTransitorio";
 import CalculadoraFlete from "../components/CalculadoraFlete";
 
 import {
@@ -2433,21 +2433,11 @@ export default function CrearLicitacion() {
       )}
 
       {/* Producto transitorio con >30 días: validar costo antes de cotizarlo. */}
-      <ConfirmModal
+      <ModalValidarTransitorio
         open={validarCosto !== null}
-        title="Valida el costo de este producto transitorio"
-        message={validarCosto ? (() => {
-          const p = validarCosto.prod;
-          const dias = Math.floor((Date.now() - Date.parse(p.created_at)) / 86400000);
-          const costo = Number(p.costo ?? 0);
-          return `«${p.nombre}» es un producto transitorio creado hace ${dias} días (${String(p.created_at || "").slice(0, 10)}). ` +
-            `Su costo registrado es $${costo.toLocaleString("es-CL")}. Confirma que el costo sigue vigente antes de cotizarlo; ` +
-            `si cambió, actualízalo primero en Productos → Editar.`;
-        })() : ""}
-        confirmText="El costo sigue vigente"
-        cancelText="Cancelar"
-        onConfirm={() => { if (validarCosto) aplicarProductoEnItem(validarCosto.idx, validarCosto.prod); setValidarCosto(null); }}
-        onCancel={() => setValidarCosto(null)}
+        prod={validarCosto?.prod}
+        onValidado={() => { if (validarCosto) aplicarProductoEnItem(validarCosto.idx, validarCosto.prod); setValidarCosto(null); }}
+        onCancelar={() => setValidarCosto(null)}
       />
 
       <div className="page-header">

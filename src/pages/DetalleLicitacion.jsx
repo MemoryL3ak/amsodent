@@ -15,6 +15,7 @@ import { api } from "../lib/api";
 import { useParams, useNavigate, useLocation, Link } from "react-router-dom";
 import Toast from "../components/Toast";
 import ConfirmModal from "../components/ConfirmModal";
+import ModalValidarTransitorio from "../components/ModalValidarTransitorio";
 import DateFilter from "../components/DateFilter";
 import Select, { components } from "react-select";
 import ProductoPickerModal from "../components/ProductoPickerModal";
@@ -3344,27 +3345,17 @@ export default function EditarLicitacion() {
       )}
 
       {/* Producto transitorio con >30 días: validar costo antes de cotizarlo. */}
-      <ConfirmModal
+      <ModalValidarTransitorio
         open={validarCosto !== null}
-        title="Valida el costo de este producto transitorio"
-        message={validarCosto ? (() => {
-          const p = validarCosto.prod;
-          const dias = Math.floor((Date.now() - Date.parse(p.created_at)) / 86400000);
-          const costo = Number(p.costo ?? 0);
-          return `«${p.nombre}» es un producto transitorio creado hace ${dias} días (${String(p.created_at || "").slice(0, 10)}). ` +
-            `Su costo registrado es $${costo.toLocaleString("es-CL")}. Confirma que el costo sigue vigente antes de cotizarlo; ` +
-            `si cambió, actualízalo primero en Productos → Editar.`;
-        })() : ""}
-        confirmText="El costo sigue vigente"
-        cancelText="Cancelar"
-        onConfirm={() => {
+        prod={validarCosto?.prod}
+        onValidado={() => {
           const v = validarCosto;
           setValidarCosto(null);
           if (!v) return;
           if (v.aplicarDirecto) aplicarProductoDePicker(v.idx, v.prod);
           else actualizarItem(v.idx, v.campo, v.valor, { costoValidado: true });
         }}
-        onCancel={() => setValidarCosto(null)}
+        onCancelar={() => setValidarCosto(null)}
       />
 
       <div className="page-header">
