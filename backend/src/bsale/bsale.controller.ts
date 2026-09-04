@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Req, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { BsaleService } from './bsale.service';
 import { BsaleCron } from './bsale.cron';
 import { AdminGuard } from '../auth/admin.guard';
@@ -23,6 +23,19 @@ export class BsaleController {
   @Get('diferencias')
   diferencias() {
     return this.bsale.diferencias();
+  }
+
+  // Venta total emitida en Bsale en un rango (comparativo del Panel de Indicadores).
+  @Get('ventas')
+  ventas(@Query('desde') desde: string, @Query('hasta') hasta: string) {
+    return this.bsale.ventas(String(desde || ''), String(hasta || ''));
+  }
+
+  // Guía de despacho emitida en Bsale (por número): ítems + referencias,
+  // para el cruce guía↔OC de Trazabilidad.
+  @Get('guia')
+  guia(@Query('numero') numero: string) {
+    return this.bsale.guiaDespacho(String(numero || ''));
   }
 
   // Sincronización manual (además de la automática del cron). Responde al

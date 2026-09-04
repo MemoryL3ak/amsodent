@@ -146,6 +146,83 @@ export class BsaleService {
     return items;
   }
 
+  /* Venta total emitida en Bsale en un rango de fechas (comparativo del
+     Panel de Indicadores): NETO de facturas (SII 33/34) + boletas (39/41)
+     menos notas de crédito (61). Fechas YYYY-MM-DD; los documentos anulados
+     (state=1) no cuentan. */
+  async ventas(desde: string, hasta: string) {
+    if (!this.token) return { disponible: false, motivo: 'Falta BSALE_ACCESS_TOKEN en el backend.' };
+    const d1 = Date.parse(`${desde}T00:00:00Z`) / 1000;
+    const d2 = Date.parse(`${hasta}T23:59:59Z`) / 1000;
+    if (!Number.isFinite(d1) || !Number.isFinite(d2) || d2 < d1) {
+      throw new BadRequestException('Rango de fechas inválido (se espera YYYY-MM-DD).');
+    }
+    const rango = `emissiondaterange=[${Math.floor(d1)},${Math.floor(d2)}]`;
+    const sumar = async (codes: number[]) => {
+      let neto = 0;
+      let docs = 0;
+      for (const code of codes) {
+        const filas = await this.paginado('/documents.json', `&codesii=${code}&${rango}`);
+        for (const f of filas) {
+          if (Number(f?.state) === 1) continue; // anulado
+          neto += Number(f?.netAmount || 0);
+          docs += 1;
+        }
+      }
+      return { neto, docs };
+    };
+    const ventas = await sumar([33, 34, 39, 41]); // facturas afectas/exentas + boletas
+    const nc = await sumar([61]); // notas de crédito
+    return {
+      disponible: true,
+      desde,
+      hasta,
+      ventas_neto: Math.round(ventas.neto),
+      notas_credito_neto: Math.round(nc.neto),
+      neto: Math.round(ventas.neto - nc.neto),
+      documentos: ventas.docs,
+      notas_credito: nc.docs,
+    };
+  }
+
+  /* Guía de despacho electrónica emitida en Bsale, buscada por NÚMERO
+     (codeSii 52): ítems despachados y referencias del documento — para que
+     Trazabilidad muestre QUÉ productos salieron con cada guía y cruce la
+     referencia contra la OC de la cotización (pedido 2026-09-04). */
+  async guiaDespacho(numero: string) {
+    if (!this.token) return { disponible: false, motivo: 'Falta BSALE_ACCESS_TOKEN en el backend.' };
+    const num = String(numero || '').replace(/\D/g, '');
+    if (!num) throw new BadRequestException('Número de guía inválido.');
+    const r = await this.apiGet(`/documents.json?codesii=52&number=${num}&expand=[details,references]&limit=10`);
+    const candidatos: any[] = r?.items || [];
+    const doc = candidatos.find((d: any) => Number(d?.state) !== 1) || candidatos[0];
+    if (!doc) return { disponible: true, encontrado: false, numero: num };
+    const detalles: any[] = doc?.details?.items || doc?.details || [];
+    const referencias: any[] = doc?.references?.items || doc?.references || [];
+    return {
+      disponible: true,
+      encontrado: true,
+      numero: doc?.number ?? num,
+      emitida: doc?.emissionDate ? new Date(Number(doc.emissionDate) * 1000).toISOString().slice(0, 10) : null,
+      neto: Number(doc?.netAmount || 0),
+      total: Number(doc?.totalAmount || 0),
+      anulada: Number(doc?.state) === 1,
+      url_pdf: doc?.urlPdf || doc?.urlPublicView || null,
+      items: (Array.isArray(detalles) ? detalles : []).map((d: any) => ({
+        sku: String(d?.variant?.code || '').trim(),
+        producto: String(d?.variant?.description || '').trim(),
+        cantidad: Number(d?.quantity || 0),
+        precio_neto: Number(d?.netUnitValue || 0),
+        total_neto: Number(d?.netAmount ?? (Number(d?.quantity || 0) * Number(d?.netUnitValue || 0))) || 0,
+      })),
+      referencias: (Array.isArray(referencias) ? referencias : []).map((x: any) => ({
+        numero: String(x?.number ?? '').trim(),
+        razon: String(x?.reason ?? '').trim(),
+        fecha: x?.referenceDate != null ? String(x.referenceDate) : null,
+      })),
+    };
+  }
+
   /* Arranque no bloqueante de la sincronización: valida, dispara en segundo
      plano y responde al tiro. El avance se sigue por GET /bsale/estado
      (campo `progreso`) — así el navegador no queda colgado de un request de
