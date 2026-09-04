@@ -1433,33 +1433,39 @@ export default function PanelIndicadores() {
                 <div>
                   <h3 className="surface-title" style={{ margin: 0 }}>Comparativo de facturación · Bsale vs sistema</h3>
                   <p style={{ fontSize: 12, color: "var(--text-muted)", margin: 0 }}>
-                    Neto emitido en Bsale (facturas + boletas − notas de crédito) contra las facturas/boletas registradas en las cotizaciones, por fecha del documento, en el {periodoLabel.toLowerCase()}
+                    Neto emitido en Bsale (facturas + boletas − notas de crédito) contra las facturas y boletas registradas en las cotizaciones, ambos por fecha del documento, en el {periodoLabel.toLowerCase()} · un descuadre suele venir de documentos registrados con otra fecha o aún sin emitir
                   </p>
                 </div>
               </div>
-              <div style={{ padding: "18px 24px", display: "flex", gap: "28px 40px", flexWrap: "wrap" }}>
+              <div style={{ padding: "14px 18px 18px", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 14 }}>
                 {(() => {
                   const bsaleNeto = Number(bsaleVentas.neto || 0);
-                  const dif = bsaleNeto - facturadoSistema;
-                  const pctReg = bsaleNeto > 0 ? (facturadoSistema / bsaleNeto) * 100 : null;
+                  const dif = facturadoSistema - bsaleNeto; // >0: el sistema registra más que lo emitido en Bsale
+                  const pct = bsaleNeto > 0 ? (dif / bsaleNeto) * 100 : null;
+                  const cuadrado = Math.abs(dif) < 1;
+                  const casiCuadrado = pct != null && Math.abs(pct) <= 5;
                   return [
-                    { label: "Facturado en Bsale (neto)", valor: fmtCLP(bsaleNeto), color: "#c2570c", sub: `${fmtNum(bsaleVentas.documentos || 0)} documentos emitidos` },
-                    { label: "Registrado en el sistema", valor: fmtCLP(facturadoSistema), color: "var(--text)", sub: "facturas y boletas de cotizaciones" },
+                    { label: "Facturado en Bsale", valor: fmtCLP(bsaleNeto), accent: "#c2570c", valColor: "var(--text)", sub: `${fmtNum(bsaleVentas.documentos || 0)} documentos emitidos (neto)` },
+                    { label: "Registrado en el sistema", valor: fmtCLP(facturadoSistema), accent: "#0e7490", valColor: "var(--text)", sub: "facturas y boletas de cotizaciones" },
                     {
-                      label: "Diferencia", valor: fmtCLP(Math.abs(dif)),
-                      color: Math.abs(dif) < 1 ? "#15803d" : "#b45309",
-                      sub: dif >= 1 ? "emitido en Bsale sin registrar acá" : dif <= -1 ? "registrado acá sin emitir en Bsale" : "cuadrado ✓",
+                      label: "Diferencia",
+                      valor: `${cuadrado ? "" : dif > 0 ? "+" : "−"}${fmtCLP(Math.abs(dif))}`,
+                      accent: cuadrado ? "#15803d" : "#b45309",
+                      valColor: cuadrado ? "#15803d" : "#b45309",
+                      sub: cuadrado ? "cuadrado ✓" : dif > 0 ? "registrado acá por sobre lo emitido en Bsale" : "emitido en Bsale sin registrar acá",
                     },
                     {
-                      label: "Cobertura", valor: pctReg == null ? "—" : fmtPct(pctReg),
-                      color: pctReg != null && pctReg >= 95 ? "#15803d" : "#b45309",
-                      sub: "sistema / Bsale",
+                      label: "Descuadre",
+                      valor: pct == null ? "—" : cuadrado ? "0%" : `${dif > 0 ? "+" : "−"}${fmtPct(Math.abs(pct))}`,
+                      accent: cuadrado || casiCuadrado ? "#15803d" : "#b45309",
+                      valColor: cuadrado || casiCuadrado ? "#15803d" : "#b45309",
+                      sub: "diferencia respecto de lo facturado en Bsale",
                     },
                   ].map((s) => (
-                    <div key={s.label}>
-                      <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: ".08em", color: "var(--text-muted)", fontWeight: 700 }}>{s.label}</div>
-                      <div style={{ fontSize: 22, fontWeight: 800, color: s.color, marginTop: 4, lineHeight: 1.15 }}>{s.valor}</div>
-                      <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>{s.sub}</div>
+                    <div key={s.label} style={{ background: "var(--surface)", border: "1px solid var(--border)", borderTop: `3px solid ${s.accent}`, borderRadius: "var(--radius-lg)", padding: "14px 16px" }}>
+                      <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: ".04em", color: "var(--text-muted)", fontWeight: 700 }}>{s.label}</div>
+                      <div style={{ fontSize: 22, fontWeight: 800, color: s.valColor, marginTop: 6, lineHeight: 1.15, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{s.valor}</div>
+                      <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4, lineHeight: 1.35 }}>{s.sub}</div>
                     </div>
                   ));
                 })()}
