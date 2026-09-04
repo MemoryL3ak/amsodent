@@ -1180,7 +1180,7 @@ export default function CrearLicitacion() {
       // las fichas técnicas (textos largos) que disparan el tamaño del payload.
       const { data } = await supabase
         .from("productos")
-        .select("id, sku, nombre, marca, categoria, formato, costo, lista1, lista2, lista3, equivalente_1, equivalente_2, equivalente_3, peso, metro_cubico, estado, created_at")
+        .select("id, sku, nombre, marca, categoria, formato, costo, lista1, lista2, lista3, equivalente_1, equivalente_2, equivalente_3, peso, metro_cubico, estado, created_at, link_referencia")
         .in("estado", ["Activo", "Transitorio"])
         .order("id")
         .limit(20000);

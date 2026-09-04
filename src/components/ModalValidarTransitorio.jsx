@@ -78,6 +78,22 @@ export default function ModalValidarTransitorio({ open, prod, onValidado, onCanc
                 {prod.categoria ? <Fila label="Categoría">{prod.categoria}</Fila> : null}
                 {prod.formato ? <Fila label="Formato">{prod.formato}</Fila> : null}
                 <Fila label="Costo registrado"><span style={{ color: "#b45309" }}>{fmtCLP(costo)}</span></Fila>
+                <Fila label="URL de referencia">
+                  {prod.link_referencia ? (
+                    <a
+                      href={prod.link_referencia}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{ color: "#0f766e", fontWeight: 600, textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 5, maxWidth: 260, overflow: "hidden" }}
+                      title={prod.link_referencia}
+                    >
+                      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", direction: "rtl" }}>{prod.link_referencia}</span>
+                      <ExternalLink size={13} style={{ flexShrink: 0 }} />
+                    </a>
+                  ) : (
+                    <span style={{ color: "#94a3b8", fontWeight: 500 }}>No registrada</span>
+                  )}
+                </Fila>
                 {urlEditar && (
                   <a
                     href={urlEditar}
