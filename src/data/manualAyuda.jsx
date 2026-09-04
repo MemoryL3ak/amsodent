@@ -223,6 +223,7 @@ export const GRUPOS_MANUAL = [
           "Reuniones con enlace de Google Meet integrado (copiar y abrir).",
           "Crear un cliente nuevo al vuelo desde el formulario.",
           "Refleja también las actividades automáticas de otros módulos (correos de cobranza, calendario de cobranza), amarradas al cliente por RUT para verlas en su ficha 360°.",
+          "Sincronización con Google Calendar (con la cuenta conectada en «Mi Correo»): toda actividad con fecha se espeja como evento en tu calendario, y cada 15 minutos se importan a la bitácora las reuniones de tu calendario que tengan invitados (los recordatorios personales sin invitados no entran).",
         ],
         tips: [
           "El número de actividades del mes es la PRODUCTIVIDAD de la fórmula de comisiones: registra todo lo que haces.",
