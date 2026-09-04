@@ -62,7 +62,7 @@ export default function PanelParticular() {
   const [licsPart, setLicsPart] = useState([]); // [{ id, creado_por }]
   const [adjDatePart, setAdjDatePart] = useState({}); // licId → fecha 1ª boleta/efectivo
   const [costoBySku, setCostoBySku] = useState({});
-  const [margenMes, setMargenMes] = useState({ monto: 0, pct: 0 });
+  const [margenMes, setMargenMes] = useState({ monto: 0, pct: 0, venta: 0 });
 
   useEffect(() => {
     if (cargando || !puedeVer) return;
@@ -111,7 +111,7 @@ export default function PanelParticular() {
       .filter((l) => !ej || (l.creado_por || "").trim().toLowerCase() === ej)
       .map((l) => Number(l.id))
       .filter(Boolean);
-    if (!idsMes.length) { setMargenMes({ monto: 0, pct: 0 }); return; }
+    if (!idsMes.length) { setMargenMes({ monto: 0, pct: 0, venta: 0 }); return; }
     let activo = true;
     api.post("/licitaciones/items/filter", {
       licitacion_ids: idsMes,
@@ -127,9 +127,9 @@ export default function PanelParticular() {
           costo += costoUnit * (Number(it.cantidad) || 0);
         });
         const monto = Math.round(venta - costo);
-        setMargenMes({ monto, pct: venta > 0 ? (monto / venta) * 100 : 0 });
+        setMargenMes({ monto, pct: venta > 0 ? (monto / venta) * 100 : 0, venta: Math.round(venta) });
       })
-      .catch(() => { if (activo) setMargenMes({ monto: 0, pct: 0 }); });
+      .catch(() => { if (activo) setMargenMes({ monto: 0, pct: 0, venta: 0 }); });
     return () => { activo = false; };
   }, [cargando, puedeVer, licsPart, adjDatePart, costoBySku, mesActual, ejecutivo]);
 
@@ -217,6 +217,7 @@ export default function PanelParticular() {
                 delta={<Delta actual={emb[et.key]} prev={embPrev[et.key]} />}
               />
             ))}
+            <KpiCard icon={ShoppingCart} color="#0e7490" label="Venta Total" sub="Ventas particulares del mes (neto)" value={fmtCLP(margenMes.venta)} delta={null} />
             <KpiCard icon={TrendingUp} color="#7c3aed" label="Margen %" sub="Ventas particulares del mes · (venta − costo) / venta" value={fmtPct(margenMes.pct)} delta={null} />
             {!esJefatura && (
               <KpiCard icon={Banknote} color="#0d9488" label="Margen $" sub="Ventas particulares del mes · venta neta − costo" value={fmtCLP(margenMes.monto)} delta={null} />

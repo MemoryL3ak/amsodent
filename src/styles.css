@@ -2369,6 +2369,16 @@ img, video, canvas { height: auto; }
 .trazabilidad-table tbody tr:hover td:first-child::before {
   opacity: 1;
 }
+/* Bajo 900px la tabla deja de "caber a la fuerza" (table-fit partía cada celda
+   en varias líneas y desalineaba los ciclos OC→Guía→Factura con rowSpan):
+   recupera un ancho mínimo legible y se desplaza dentro de .table-scroll,
+   que ya tiene overflow-x. El body de la página nunca scrollea lateral. */
+@media (max-width: 900px) {
+  .trazabilidad-table.table-fit {
+    table-layout: auto;
+    min-width: 760px;
+  }
+}
 
 /* Autocompletado de Google Places: el dropdown se monta en <body>; subimos su
    z-index para que no quede tapado por los modales (overlay z-index 1000+). */

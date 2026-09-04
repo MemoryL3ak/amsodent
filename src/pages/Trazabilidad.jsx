@@ -70,7 +70,7 @@ function SLABadge({ fechaOc }) {
     </span>
   );
 }
-import { Upload, Eye, Trash2, ArrowUpDown, ArrowUp, ArrowDown, Calendar, FileCheck, ChevronDown, Truck, Download, Clock, CheckCircle2, Check, Pencil, X, AlertTriangle } from "lucide-react";
+import { Upload, Eye, Trash2, ArrowUpDown, ArrowUp, ArrowDown, Calendar, FileCheck, ChevronDown, Truck, Download, Clock, CheckCircle2, Check, Pencil, X, AlertTriangle, Package } from "lucide-react";
 import { SunflowerIcon } from "../components/DamarIAWidget";
 
 // Mapping empresa courier → builder de URL de tracking. Si la empresa no
@@ -423,6 +423,9 @@ export default function Trazabilidad() {
   // Upload documento state (per cotización): factura o guía de despacho
   const [uploadingFor, setUploadingFor] = useState(null);
   const [docTipoUp, setDocTipoUp] = useState("factura"); // "factura" | "guia_despacho"
+  // Productos despachados según la guía emitida en Bsale (modal):
+  // { numero, ocNumero, cliente } | null.
+  const [guiaBsale, setGuiaBsale] = useState(null);
   const [facturaNumero, setFacturaNumero] = useState("");
   const [facturaFecha, setFacturaFecha] = useState("");
   const [facturaMonto, setFacturaMonto] = useState(""); // monto NETO de la factura (solo dígitos)
@@ -1403,9 +1406,10 @@ export default function Trazabilidad() {
   return (
     <div className="page vista-compacta">
       {toast && <Toast type={toast.type} message={toast.message} onClose={() => setToast(null)} />}
+      {guiaBsale && <ModalGuiaBsale {...guiaBsale} onCerrar={() => setGuiaBsale(null)} />}
 
       {/* Header */}
-      <div className="page-header" style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16 }}>
+      <div className="page-header" style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
         <div>
           <h1 className="page-title">Trazabilidad de Facturación</h1>
           <p className="page-subtitle">
@@ -1589,11 +1593,13 @@ export default function Trazabilidad() {
         {/* Separador sutil */}
         <div style={{ height: 1, backgroundColor: "#f1f5f9" }} />
 
-        {/* Fila 2: período + tipo cotización + tipo compra + flags + limpiar */}
+        {/* Fila 2: período + tipo cotización + tipo compra + flags + limpiar.
+            auto-fit: en pantallas chicas los filtros se apilan en vez de
+            comprimirse en 5 columnas (pedido responsive 2026-09-04). */}
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "1.3fr 0.9fr 0.9fr 1.4fr auto",
+            gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 220px), 1fr))",
             gap: 18,
             alignItems: "end",
           }}
@@ -2043,6 +2049,16 @@ export default function Trazabilidad() {
                                   >
                                     <Eye size={13} />
                                   </button>
+                                  {guia.numero && (
+                                    <button
+                                      type="button"
+                                      onClick={() => setGuiaBsale({ numero: guia.numero, ocNumero: oc?.numero || null, cliente: lic.nombre_entidad || "" })}
+                                      style={{ background: "none", border: "none", cursor: "pointer", color: "#c2570c", padding: 0 }}
+                                      title="Ver los productos despachados (guía emitida en Bsale)"
+                                    >
+                                      <Package size={13} />
+                                    </button>
+                                  )}
                                 </div>
                                 <div style={{ color: "var(--text-muted)", fontSize: "11px" }}>
                                   {(guia.fecha_oc || guia.created_at)
@@ -2556,5 +2572,134 @@ function ModalForzarCierre({ lic, monto, guardando, onClose, onConfirm }) {
         </div>
       </div>
     </div>
+  );
+}
+
+/* ── Modal: productos despachados según la guía emitida en Bsale ──────────
+   Busca la guía electrónica (SII 52) por número en Bsale y muestra sus
+   ítems y referencias; si la cotización tiene OC, cruza la referencia de la
+   guía contra el número de la OC (pedido 2026-09-04). */
+function ModalGuiaBsale({ numero, ocNumero, cliente, onCerrar }) {
+  const [estado, setEstado] = useState({ loading: true, data: null, error: "" });
+
+  useEffect(() => {
+    let activo = true;
+    api.get(`/bsale/guia?numero=${encodeURIComponent(numero)}`)
+      .then((data) => { if (activo) setEstado({ loading: false, data, error: "" }); })
+      .catch((e) => {
+        if (!activo) return;
+        const msg = e?.response?.status === 403
+          ? "Solo administración puede consultar los documentos de Bsale."
+          : (e?.response?.data?.message || e?.message || "No se pudo consultar Bsale.");
+        setEstado({ loading: false, data: null, error: msg });
+      });
+    return () => { activo = false; };
+  }, [numero]);
+
+  const d = estado.data;
+  const soloDigitos = (v) => String(v || "").replace(/\D/g, "");
+  const refs = d?.referencias || [];
+  const cruceOc = ocNumero
+    ? refs.some((r) =>
+        (soloDigitos(r.numero) && soloDigitos(r.numero) === soloDigitos(ocNumero)) ||
+        (r.razon || "").toLowerCase().includes(String(ocNumero).toLowerCase()))
+    : null;
+  const fmt$ = (v) => `$${Math.round(Number(v) || 0).toLocaleString("es-CL")}`;
+
+  return createPortal(
+    <div
+      onClick={(e) => { if (e.target === e.currentTarget) onCerrar(); }}
+      style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.55)", display: "grid", placeItems: "center", zIndex: 12000, padding: 16 }}
+    >
+      <div style={{ background: "var(--surface)", borderRadius: "var(--radius-lg)", border: "1px solid var(--border)", width: "min(760px, 100%)", maxHeight: "86vh", overflow: "auto", boxShadow: "var(--shadow-lg)" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, padding: "14px 18px", borderBottom: "1px solid var(--border)", position: "sticky", top: 0, background: "var(--surface)", zIndex: 1 }}>
+          <div>
+            <h3 className="surface-title" style={{ margin: 0, display: "flex", alignItems: "center", gap: 8 }}>
+              <Package size={16} color="#c2570c" /> Guía N° {numero} · productos despachados
+            </h3>
+            <p style={{ fontSize: 12, color: "var(--text-muted)", margin: "2px 0 0" }}>
+              Según la guía electrónica emitida en Bsale{cliente ? ` · ${cliente}` : ""}
+            </p>
+          </div>
+          <button className="btn btn-ghost" style={{ padding: 6 }} onClick={onCerrar}><X size={16} /></button>
+        </div>
+
+        <div style={{ padding: "14px 18px" }}>
+          {estado.loading ? (
+            <div style={{ color: "var(--text-muted)", padding: "20px 0" }}>Consultando Bsale…</div>
+          ) : estado.error ? (
+            <div style={{ color: "var(--danger)", padding: "12px 0" }}>{estado.error}</div>
+          ) : d?.disponible === false ? (
+            <div style={{ color: "var(--text-muted)", padding: "12px 0" }}>
+              La integración con Bsale no está configurada en el backend (falta el token).
+            </div>
+          ) : !d?.encontrado ? (
+            <div style={{ color: "var(--text-muted)", padding: "12px 0" }}>
+              Bsale no tiene una guía de despacho electrónica con el N° {numero}. Puede tratarse de una
+              guía manual o emitida fuera de Bsale.
+            </div>
+          ) : (
+            <>
+              <div style={{ display: "flex", gap: 16, flexWrap: "wrap", fontSize: 12.5, marginBottom: 12 }}>
+                {d.emitida && <span><strong>Emitida:</strong> {d.emitida}</span>}
+                <span><strong>Neto:</strong> {fmt$(d.neto)}</span>
+                {d.anulada && <span style={{ color: "var(--danger)", fontWeight: 700 }}>ANULADA en Bsale</span>}
+                {d.url_pdf && (
+                  <a className="table-link" href={d.url_pdf} target="_blank" rel="noreferrer">Ver PDF de Bsale</a>
+                )}
+              </div>
+
+              {/* Cruce guía ↔ OC de la cotización */}
+              {ocNumero && (
+                <div style={{
+                  fontSize: 12.5, padding: "8px 12px", borderRadius: 8, marginBottom: 12,
+                  background: cruceOc ? "#dcfce7" : "#fef3c7",
+                  color: cruceOc ? "#15803d" : "#a16207",
+                  border: `1px solid ${cruceOc ? "#bbf7d0" : "#fde68a"}`,
+                }}>
+                  {cruceOc
+                    ? `✓ La guía referencia la OC N° ${ocNumero} de esta cotización.`
+                    : `⚠ La guía emitida en Bsale no trae una referencia que calce con la OC N° ${ocNumero} de esta cotización — revisar que corresponda.`}
+                </div>
+              )}
+              {refs.length > 0 && (
+                <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 12 }}>
+                  <strong>Referencias de la guía:</strong>{" "}
+                  {refs.map((r, i) => `${r.razon || "Ref."}${r.numero ? ` N° ${r.numero}` : ""}`).join(" · ")}
+                </div>
+              )}
+
+              <div style={{ border: "1px solid var(--border)", borderRadius: 8, overflowX: "auto" }}>
+                <table className="data-table" style={{ width: "100%", fontSize: 12.5, minWidth: 520 }}>
+                  <thead>
+                    <tr>
+                      <th style={{ textAlign: "left" }}>SKU</th>
+                      <th style={{ textAlign: "left" }}>Producto</th>
+                      <th style={{ textAlign: "right" }}>Cantidad</th>
+                      <th style={{ textAlign: "right" }}>Precio neto</th>
+                      <th style={{ textAlign: "right" }}>Total neto</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(d.items || []).length === 0 ? (
+                      <tr><td colSpan={5} style={{ padding: "16px 12px", color: "var(--text-muted)", textAlign: "center" }}>La guía no trae detalle de ítems.</td></tr>
+                    ) : d.items.map((it, i) => (
+                      <tr key={i}>
+                        <td>{it.sku || "—"}</td>
+                        <td>{it.producto || "—"}</td>
+                        <td style={{ textAlign: "right" }}>{Number(it.cantidad || 0).toLocaleString("es-CL")}</td>
+                        <td style={{ textAlign: "right" }}>{fmt$(it.precio_neto)}</td>
+                        <td style={{ textAlign: "right", fontWeight: 600 }}>{fmt$(it.total_neto)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }

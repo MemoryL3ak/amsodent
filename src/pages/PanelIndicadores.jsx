@@ -140,6 +140,11 @@ export default function PanelIndicadores() {
   const [adjDateByLic, setAdjDateByLic] = useState({});
   const [docSums, setDocSums] = useState({}); // { [licId]: { guia, oc, factbol } }
   const [docsConsumo, setDocsConsumo] = useState([]); // guías/boletas/efectivo crudos (detalle avance de metas)
+  const [docsOC, setDocsOC] = useState([]); // órdenes de compra crudas: { licId, numero, monto, fecha }
+  const [cerradasForzadas, setCerradasForzadas] = useState(() => new Set()); // licIds con cierre forzado
+  const [ventasOpen, setVentasOpen] = useState(false); // modal detalle del KPI Ventas Totales
+  // Comparativo de facturación contra Bsale: null = sin datos (no admin / sin token / cargando)
+  const [bsaleVentas, setBsaleVentas] = useState(null);
   // Modal detalle del avance de metas: null | { email: null (equipo) | email del ejecutivo, nombre }
   const [avanceMetaOpen, setAvanceMetaOpen] = useState(null);
   const [metasPorVendedor, setMetasPorVendedor] = useState({}); // email → meta_neto del periodo
@@ -198,14 +203,17 @@ export default function PanelIndicadores() {
           const docs = await api.post("/licitaciones/documentos/filter", {
             filter: {
               licitacion_ids: ids,
-              tipo: ["orden_compra", "guia_despacho", "factura", "factura_boleta", "efectivo"],
+              tipo: ["orden_compra", "guia_despacho", "factura", "factura_boleta", "efectivo", "cierre_forzado"],
             },
             fields: "licitacion_id,tipo,numero,monto,fecha_oc,created_at",
           });
           const consumo = []; // guías/boletas/efectivo crudos (detalle avance de metas)
+          const ocs = []; // órdenes de compra crudas (saldo por consumir)
+          const cerradas = new Set(); // cierre forzado: fuera del saldo por consumir
           (docs || []).forEach((d) => {
             const lid = Number(d.licitacion_id);
             if (!lid) return;
+            if (d.tipo === "cierre_forzado") { cerradas.add(lid); return; }
             const monto = Number(d.monto || 0);
             const acc = (sums[lid] = sums[lid] || { guia: 0, oc: 0, factbol: 0 });
             if (d.tipo === "guia_despacho") acc.guia += monto;
@@ -216,17 +224,17 @@ export default function PanelIndicadores() {
               const f = toDateISO(d.fecha_oc) || toDateISO(d.created_at);
               if (f && (!adj[lid] || f < adj[lid])) adj[lid] = f;
             }
-            if (d.tipo !== "orden_compra") {
-              consumo.push({
-                licId: lid,
-                tipo: d.tipo,
-                numero: (d.numero || "").toString(),
-                monto,
-                fecha: toDateISO(d.fecha_oc) || toDateISO(d.created_at),
-              });
-            }
+            const fila = {
+              licId: lid,
+              tipo: d.tipo,
+              numero: (d.numero || "").toString(),
+              monto,
+              fecha: toDateISO(d.fecha_oc) || toDateISO(d.created_at),
+            };
+            if (d.tipo === "orden_compra") ocs.push(fila);
+            else consumo.push(fila);
           });
-          if (activo) setDocsConsumo(consumo);
+          if (activo) { setDocsConsumo(consumo); setDocsOC(ocs); setCerradasForzadas(cerradas); }
         }
         if (!activo) return;
         setLics(rows);
@@ -637,6 +645,131 @@ export default function PanelIndicadores() {
       .sort((a, b) => b.monto - a.monto).slice(0, 5);
   }, [lics, adjDateByLic, docSums, enPeriodo, filtroTipo]);
 
+  /* Detalle del KPI «Ventas Totales» (pedido 2026-09-04): los mismos
+     documentos que suman en m.ventas — guías (públicas) y boletas/facturas/
+     efectivo (particulares) de cotizaciones adjudicadas en el período. A
+     diferencia del avance de metas, aquí NO se filtra por rol: es la venta
+     de la empresa, no la medición del equipo. */
+  const ventasDetalle = useMemo(() => {
+    const licById = new Map(lics.map((l) => [Number(l.id), l]));
+    const TIPO_LABEL = {
+      guia_despacho: "Guía de despacho",
+      factura: "Factura / Boleta",
+      factura_boleta: "Factura / Boleta",
+      efectivo: "Efectivo",
+    };
+    const filas = [];
+    docsConsumo.forEach((d) => {
+      const l = licById.get(d.licId);
+      if (!l || !pasaTipo(l)) return;
+      if (!enPeriodo(adjDateByLic[d.licId])) return;
+      const cuenta = esParticular(l)
+        ? (d.tipo === "factura" || d.tipo === "factura_boleta" || d.tipo === "efectivo")
+        : d.tipo === "guia_despacho";
+      if (!cuenta) return;
+      const email = (l.creado_por || "").trim().toLowerCase();
+      filas.push({
+        licId: d.licId,
+        codigo: l.id_licitacion || `#${d.licId}`,
+        cliente: l.nombre_entidad || l.rut_entidad || "—",
+        vendedor: nombresVendedores[email] || email.split("@")[0] || "—",
+        tipoLabel: TIPO_LABEL[d.tipo] || d.tipo,
+        numero: d.numero,
+        monto: d.monto,
+        fecha: d.fecha,
+      });
+    });
+    filas.sort((a, b) => String(b.fecha || "").localeCompare(String(a.fecha || "")));
+    return filas;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [docsConsumo, lics, adjDateByLic, enPeriodo, filtroTipo, nombresVendedores]);
+
+  /* OC con saldo por consumir (pedido 2026-09-04): monto de las órdenes de
+     compra de cada cotización menos lo ya despachado/facturado. SIN filtro
+     de fecha del panel (a propósito): muestra todo lo vigente, de cualquier
+     mes. Quedan fuera las cotizaciones con cierre forzado. */
+  const ocsConSaldo = useMemo(() => {
+    const filas = [];
+    lics.forEach((l) => {
+      if (!pasaTipo(l)) return;
+      const lid = Number(l.id);
+      if (cerradasForzadas.has(lid)) return;
+      const ds = docSums[lid] || {};
+      const oc = Number(ds.oc || 0);
+      if (oc <= 0) return;
+      const consumido = esParticular(l) ? Number(ds.factbol || 0) : Number(ds.guia || 0);
+      const saldo = oc - consumido;
+      if (saldo <= 0.5) return; // consumida completa
+      const email = (l.creado_por || "").trim().toLowerCase();
+      const ocsDeLic = docsOC.filter((d) => d.licId === lid);
+      filas.push({
+        licId: lid,
+        codigo: l.id_licitacion || `#${lid}`,
+        cliente: l.nombre_entidad || l.rut_entidad || "—",
+        vendedor: nombresVendedores[email] || email.split("@")[0] || "—",
+        numeroOC: ocsDeLic.map((d) => d.numero).filter(Boolean).join(", ") || "—",
+        fechaOC: ocsDeLic.reduce((min, d) => (d.fecha && (!min || d.fecha < min) ? d.fecha : min), null),
+        oc,
+        consumido,
+        saldo,
+        pct: (consumido / oc) * 100,
+      });
+    });
+    filas.sort((a, b) => b.saldo - a.saldo);
+    return { filas, totalSaldo: filas.reduce((s, f) => s + f.saldo, 0) };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lics, docSums, docsOC, cerradasForzadas, filtroTipo, nombresVendedores]);
+
+  async function exportarOcsSaldo() {
+    try {
+      const XLSX = await import("xlsx");
+      const ws = XLSX.utils.json_to_sheet(ocsConSaldo.filas.map((f) => ({
+        "Cotización": f.codigo,
+        "Cliente": f.cliente,
+        "Vendedor": f.vendedor,
+        "N° OC": f.numeroOC,
+        "Fecha OC": f.fechaOC || "",
+        "Monto OC (neto)": f.oc,
+        "Consumido": f.consumido,
+        "Saldo por consumir": f.saldo,
+        "% consumido": Math.round(f.pct),
+      })));
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "OC con saldo");
+      XLSX.writeFile(wb, `oc_saldo_por_consumir_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    } catch { /* sin librería no hay export */ }
+  }
+
+  // Facturación registrada en el sistema (facturas + boletas por fecha del
+  // documento) — la contraparte interna del comparativo con Bsale.
+  const facturadoSistema = useMemo(() => {
+    let t = 0;
+    docsConsumo.forEach((d) => {
+      if (d.tipo !== "factura" && d.tipo !== "factura_boleta") return;
+      if (!enPeriodo(d.fecha)) return;
+      t += Number(d.monto || 0);
+    });
+    return t;
+  }, [docsConsumo, enPeriodo]);
+
+  /* Comparativo con Bsale (pedido 2026-09-04): venta total emitida en Bsale
+     (facturas + boletas netas, menos notas de crédito) en el mismo período.
+     El endpoint /bsale es solo admin: si no hay acceso o falta el token, la
+     sección simplemente no se muestra. */
+  useEffect(() => {
+    if (cargando || !puedeVer) return;
+    let activo = true;
+    const iso = (dt) => `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
+    const [y, mm] = mesActual.split("-").map(Number);
+    const desde = rangoActivo ? (rangoDesde || `${mesActual}-01`) : `${mesActual}-01`;
+    const hasta = rangoActivo ? (rangoHasta || iso(new Date())) : iso(new Date(y, mm, 0));
+    setBsaleVentas(null);
+    api.get(`/bsale/ventas?desde=${desde}&hasta=${hasta}`)
+      .then((r) => { if (activo && r && r.disponible !== false) setBsaleVentas(r); })
+      .catch(() => {});
+    return () => { activo = false; };
+  }, [cargando, puedeVer, rangoActivo, rangoDesde, rangoHasta, mesActual]);
+
   if (!cargando && !puedeVer) {
     return (
       <div className="page">
@@ -889,7 +1022,9 @@ export default function PanelIndicadores() {
         <>
           {/* KPIs */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 14, marginBottom: 22 }}>
-            <KpiCard icon={ShoppingCart} color="#0e7490" label="Ventas Totales" sub={subVentas} value={fmtCLP(m.ventas)} delta={mostrarDelta ? <Delta actual={m.ventas} prev={mPrev.ventas} /> : null} />
+            <div onClick={() => setVentasOpen(true)} style={{ cursor: "pointer" }} title="Ver los documentos que componen la venta del período">
+              <KpiCard icon={ShoppingCart} color="#0e7490" label="Ventas Totales" sub={subVentas} value={fmtCLP(m.ventas)} delta={mostrarDelta ? <Delta actual={m.ventas} prev={mPrev.ventas} /> : null} />
+            </div>
             <div onClick={() => setAdjOpen(true)} style={{ cursor: "pointer" }} title="Ver el detalle de las adjudicadas del período">
               <KpiCard icon={Banknote} color="#15803d" label="Adjudicados" sub={subAdjudicado} value={fmtCLP(m.adjudicadoMonto)} delta={mostrarDelta ? <Delta actual={m.adjudicadoMonto} prev={mPrev.adjudicadoMonto} /> : null} />
             </div>
@@ -908,6 +1043,136 @@ export default function PanelIndicadores() {
                 <KpiCard icon={Banknote} color="#0d9488" label="Margen $" sub="Venta neta − costo · clic para desglose" value={fmtCLP(margenMes.monto)} />
               </div>
             )}
+          </div>
+
+          {/* ── Avance de Metas — primero tras los KPIs (pedido 2026-09-04)
+              Global + tarjeta por ejecutivo. Medido por guías de despacho
+              (públicas) y boletas/facturas (particulares), el mismo criterio
+              del módulo Definición de metas. */}
+          <div className="surface" style={{ marginBottom: 16 }}>
+            <div className="surface-header" style={{ flexWrap: "wrap", gap: 12 }}>
+              <div>
+                <h3 className="surface-title" style={{ margin: 0 }}>Avance de Metas</h3>
+                <p style={{ fontSize: 12, color: "var(--text-muted)", margin: 0 }}>
+                  Guías de despacho (públicas) y boletas/facturas (particulares) del {periodoLabel.toLowerCase()}
+                  {filtroTipo ? " · la meta es la global del equipo (no se filtra por tipo)" : ""}
+                </p>
+              </div>
+              <button
+                className="btn btn-secondary btn-sm"
+                onClick={() => setAvanceMetaOpen({ email: null, nombre: "equipo" })}
+                title="Ver todas las guías y documentos que componen el avance"
+                style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
+              >
+                Ver detalle del equipo
+              </button>
+            </div>
+
+            <div style={{ padding: "18px 24px" }}>
+              {/* Resumen global */}
+              <div
+                onClick={() => setAvanceMetaOpen({ email: null, nombre: "equipo" })}
+                style={{
+                  cursor: "pointer",
+                  border: "1px solid var(--border)",
+                  borderTop: "3px solid var(--primary)",
+                  borderRadius: "var(--radius-lg)",
+                  padding: "16px 20px",
+                  background: "var(--surface)",
+                }}
+                title="Ver todas las guías y documentos que componen el avance"
+              >
+                <div style={{ display: "flex", gap: "28px 40px", flexWrap: "wrap" }}>
+                  {[
+                    { label: "Avance del equipo", valor: fmtCLP(avanceMeta.total), color: "#15803d" },
+                    { label: "Meta del mes", valor: metaMonto > 0 ? fmtCLP(metaMonto) : "Sin definir", color: "var(--text)" },
+                    { label: "Brecha", valor: metaMonto > 0 ? fmtCLP(brechaMeta) : "—", color: "#b45309" },
+                    {
+                      label: "Cumplimiento",
+                      valor: cumplimientoMonto == null ? "—" : fmtPct(cumplimientoMonto),
+                      color: cumplimientoMonto == null ? "var(--text-muted)" : cumplimientoMonto >= 100 ? "#15803d" : cumplimientoMonto >= 70 ? "#0d9488" : "#b45309",
+                    },
+                  ].map((s) => (
+                    <div key={s.label}>
+                      <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: ".08em", color: "var(--text-muted)", fontWeight: 700 }}>{s.label}</div>
+                      <div style={{ fontSize: 22, fontWeight: 800, color: s.color, marginTop: 4, lineHeight: 1.15 }}>{s.valor}</div>
+                    </div>
+                  ))}
+                </div>
+                {metaMonto > 0 && (
+                  <div style={{ height: 10, borderRadius: 5, background: "var(--bg)", border: "1px solid var(--border)", overflow: "hidden", marginTop: 14 }}>
+                    <div style={{ height: "100%", borderRadius: 5, width: `${clamp(cumplimientoMonto || 0, (avanceMeta.total > 0 ? 2 : 0), 100)}%`, background: (cumplimientoMonto || 0) >= 100 ? "#16a34a" : "linear-gradient(90deg, var(--primary), #14b8a6)" }} />
+                  </div>
+                )}
+              </div>
+
+              {/* Tarjetas por ejecutivo */}
+              {avancePorVendedor.length > 0 && (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(250px, 1fr))", gap: 12, marginTop: 16 }}>
+                  {avancePorVendedor.map((v) => {
+                    const pct = v.pct ?? 0;
+                    const color = v.pct == null ? "#64748b" : pct >= 100 ? "#15803d" : pct >= 70 ? "#0d9488" : pct >= 40 ? "#b45309" : "#dc2626";
+                    return (
+                      <div
+                        key={v.email}
+                        onClick={() => setAvanceMetaOpen({ email: v.email, nombre: v.nombre })}
+                        title={`Ver las guías y documentos de ${v.nombre}`}
+                        style={{
+                          cursor: "pointer",
+                          border: "1px solid var(--border)",
+                          borderRadius: "var(--radius-lg)",
+                          padding: "14px 16px",
+                          background: "var(--surface)",
+                          boxShadow: "0 1px 2px rgba(15,23,42,.05)",
+                          transition: "box-shadow .15s ease, transform .15s ease",
+                        }}
+                        onMouseEnter={(e) => { e.currentTarget.style.boxShadow = "0 6px 16px rgba(15,23,42,.10)"; e.currentTarget.style.transform = "translateY(-1px)"; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.boxShadow = "0 1px 2px rgba(15,23,42,.05)"; e.currentTarget.style.transform = "none"; }}
+                      >
+                        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                          <div style={{
+                            width: 38, height: 38, borderRadius: "50%", flexShrink: 0,
+                            background: avatarFondo(v.email), color: "#fff",
+                            display: "grid", placeItems: "center", fontSize: 13, fontWeight: 700, letterSpacing: ".02em",
+                          }}>
+                            {iniciales(v.nombre)}
+                          </div>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 13.5, fontWeight: 700, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={v.nombre}>
+                              {v.nombre}
+                            </div>
+                            <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 1 }}>
+                              Meta {v.meta > 0 ? fmtCLP(v.meta) : "sin definir"}
+                            </div>
+                          </div>
+                          <span style={{
+                            display: "inline-flex", alignItems: "center", padding: "2px 10px",
+                            borderRadius: 999, fontSize: 12, fontWeight: 700, whiteSpace: "nowrap",
+                            color, border: `1px solid ${color}40`, background: `${color}12`,
+                          }}>
+                            {v.pct == null ? "s/m" : fmtPct(v.pct)}
+                          </span>
+                        </div>
+                        <div style={{ height: 8, borderRadius: 4, background: "var(--bg)", border: "1px solid var(--border)", overflow: "hidden", marginTop: 12 }}>
+                          <div style={{ height: "100%", borderRadius: 4, width: `${clamp(pct, v.avance > 0 ? 3 : 0, 100)}%`, background: v.pct == null ? "#94a3b8" : pct >= 100 ? "#16a34a" : "linear-gradient(90deg, var(--primary), #14b8a6)" }} />
+                        </div>
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: 11.5, marginTop: 7 }}>
+                          <span style={{ fontWeight: 700, color: "#15803d" }}>{fmtCLP(v.avance)}</span>
+                          <span style={{ color: "var(--text-muted)" }}>
+                            {v.meta > 0 ? (v.brecha > 0 ? `faltan ${fmtCLP(v.brecha)}` : "meta cumplida ✓") : "sin meta asignada"}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              {avancePorVendedor.length === 0 && (
+                <p style={{ fontSize: 12.5, color: "var(--text-muted)", marginTop: 14, marginBottom: 0 }}>
+                  Sin metas definidas ni avance en el período. Define las metas en «Definición de metas».
+                </p>
+              )}
+            </div>
           </div>
 
           {/* Charts row 1 */}
@@ -1160,135 +1425,111 @@ export default function PanelIndicadores() {
             </div>
           </div>
 
-          {/* ── Avance de Metas — cierre del panel ─────────────────────────
-              Global + tarjeta por ejecutivo. Medido por guías de despacho
-              (públicas) y boletas/facturas (particulares), el mismo criterio
-              del módulo Definición de metas. */}
-          <div className="surface" style={{ marginBottom: 16 }}>
-            <div className="surface-header" style={{ flexWrap: "wrap", gap: 12 }}>
-              <div>
-                <h3 className="surface-title" style={{ margin: 0 }}>Avance de Metas</h3>
-                <p style={{ fontSize: 12, color: "var(--text-muted)", margin: 0 }}>
-                  Guías de despacho (públicas) y boletas/facturas (particulares) del {periodoLabel.toLowerCase()}
-                  {filtroTipo ? " · la meta es la global del equipo (no se filtra por tipo)" : ""}
-                </p>
+          {/* ── Comparativo de facturación con Bsale (solo admin: si el
+              endpoint no responde — sin token, sin permiso — no se pinta) */}
+          {bsaleVentas && (
+            <div className="surface" style={{ marginBottom: 16 }}>
+              <div className="surface-header" style={{ flexWrap: "wrap", gap: 12 }}>
+                <div>
+                  <h3 className="surface-title" style={{ margin: 0 }}>Comparativo de facturación · Bsale vs sistema</h3>
+                  <p style={{ fontSize: 12, color: "var(--text-muted)", margin: 0 }}>
+                    Neto emitido en Bsale (facturas + boletas − notas de crédito) contra las facturas/boletas registradas en las cotizaciones, por fecha del documento, en el {periodoLabel.toLowerCase()}
+                  </p>
+                </div>
               </div>
-              <button
-                className="btn btn-secondary btn-sm"
-                onClick={() => setAvanceMetaOpen({ email: null, nombre: "equipo" })}
-                title="Ver todas las guías y documentos que componen el avance"
-                style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
-              >
-                Ver detalle del equipo
-              </button>
-            </div>
-
-            <div style={{ padding: "18px 24px" }}>
-              {/* Resumen global */}
-              <div
-                onClick={() => setAvanceMetaOpen({ email: null, nombre: "equipo" })}
-                style={{
-                  cursor: "pointer",
-                  border: "1px solid var(--border)",
-                  borderTop: "3px solid var(--primary)",
-                  borderRadius: "var(--radius-lg)",
-                  padding: "16px 20px",
-                  background: "var(--surface)",
-                }}
-                title="Ver todas las guías y documentos que componen el avance"
-              >
-                <div style={{ display: "flex", gap: "28px 40px", flexWrap: "wrap" }}>
-                  {[
-                    { label: "Avance del equipo", valor: fmtCLP(avanceMeta.total), color: "#15803d" },
-                    { label: "Meta del mes", valor: metaMonto > 0 ? fmtCLP(metaMonto) : "Sin definir", color: "var(--text)" },
-                    { label: "Brecha", valor: metaMonto > 0 ? fmtCLP(brechaMeta) : "—", color: "#b45309" },
+              <div style={{ padding: "18px 24px", display: "flex", gap: "28px 40px", flexWrap: "wrap" }}>
+                {(() => {
+                  const bsaleNeto = Number(bsaleVentas.neto || 0);
+                  const dif = bsaleNeto - facturadoSistema;
+                  const pctReg = bsaleNeto > 0 ? (facturadoSistema / bsaleNeto) * 100 : null;
+                  return [
+                    { label: "Facturado en Bsale (neto)", valor: fmtCLP(bsaleNeto), color: "#c2570c", sub: `${fmtNum(bsaleVentas.documentos || 0)} documentos emitidos` },
+                    { label: "Registrado en el sistema", valor: fmtCLP(facturadoSistema), color: "var(--text)", sub: "facturas y boletas de cotizaciones" },
                     {
-                      label: "Cumplimiento",
-                      valor: cumplimientoMonto == null ? "—" : fmtPct(cumplimientoMonto),
-                      color: cumplimientoMonto == null ? "var(--text-muted)" : cumplimientoMonto >= 100 ? "#15803d" : cumplimientoMonto >= 70 ? "#0d9488" : "#b45309",
+                      label: "Diferencia", valor: fmtCLP(Math.abs(dif)),
+                      color: Math.abs(dif) < 1 ? "#15803d" : "#b45309",
+                      sub: dif >= 1 ? "emitido en Bsale sin registrar acá" : dif <= -1 ? "registrado acá sin emitir en Bsale" : "cuadrado ✓",
+                    },
+                    {
+                      label: "Cobertura", valor: pctReg == null ? "—" : fmtPct(pctReg),
+                      color: pctReg != null && pctReg >= 95 ? "#15803d" : "#b45309",
+                      sub: "sistema / Bsale",
                     },
                   ].map((s) => (
                     <div key={s.label}>
                       <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: ".08em", color: "var(--text-muted)", fontWeight: 700 }}>{s.label}</div>
                       <div style={{ fontSize: 22, fontWeight: 800, color: s.color, marginTop: 4, lineHeight: 1.15 }}>{s.valor}</div>
+                      <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>{s.sub}</div>
                     </div>
-                  ))}
-                </div>
-                {metaMonto > 0 && (
-                  <div style={{ height: 10, borderRadius: 5, background: "var(--bg)", border: "1px solid var(--border)", overflow: "hidden", marginTop: 14 }}>
-                    <div style={{ height: "100%", borderRadius: 5, width: `${clamp(cumplimientoMonto || 0, (avanceMeta.total > 0 ? 2 : 0), 100)}%`, background: (cumplimientoMonto || 0) >= 100 ? "#16a34a" : "linear-gradient(90deg, var(--primary), #14b8a6)" }} />
-                  </div>
-                )}
+                  ));
+                })()}
               </div>
-
-              {/* Tarjetas por ejecutivo */}
-              {avancePorVendedor.length > 0 && (
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(250px, 1fr))", gap: 12, marginTop: 16 }}>
-                  {avancePorVendedor.map((v) => {
-                    const pct = v.pct ?? 0;
-                    const color = v.pct == null ? "#64748b" : pct >= 100 ? "#15803d" : pct >= 70 ? "#0d9488" : pct >= 40 ? "#b45309" : "#dc2626";
-                    return (
-                      <div
-                        key={v.email}
-                        onClick={() => setAvanceMetaOpen({ email: v.email, nombre: v.nombre })}
-                        title={`Ver las guías y documentos de ${v.nombre}`}
-                        style={{
-                          cursor: "pointer",
-                          border: "1px solid var(--border)",
-                          borderRadius: "var(--radius-lg)",
-                          padding: "14px 16px",
-                          background: "var(--surface)",
-                          boxShadow: "0 1px 2px rgba(15,23,42,.05)",
-                          transition: "box-shadow .15s ease, transform .15s ease",
-                        }}
-                        onMouseEnter={(e) => { e.currentTarget.style.boxShadow = "0 6px 16px rgba(15,23,42,.10)"; e.currentTarget.style.transform = "translateY(-1px)"; }}
-                        onMouseLeave={(e) => { e.currentTarget.style.boxShadow = "0 1px 2px rgba(15,23,42,.05)"; e.currentTarget.style.transform = "none"; }}
-                      >
-                        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                          <div style={{
-                            width: 38, height: 38, borderRadius: "50%", flexShrink: 0,
-                            background: avatarFondo(v.email), color: "#fff",
-                            display: "grid", placeItems: "center", fontSize: 13, fontWeight: 700, letterSpacing: ".02em",
-                          }}>
-                            {iniciales(v.nombre)}
-                          </div>
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ fontSize: 13.5, fontWeight: 700, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={v.nombre}>
-                              {v.nombre}
-                            </div>
-                            <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 1 }}>
-                              Meta {v.meta > 0 ? fmtCLP(v.meta) : "sin definir"}
-                            </div>
-                          </div>
-                          <span style={{
-                            display: "inline-flex", alignItems: "center", padding: "2px 10px",
-                            borderRadius: 999, fontSize: 12, fontWeight: 700, whiteSpace: "nowrap",
-                            color, border: `1px solid ${color}40`, background: `${color}12`,
-                          }}>
-                            {v.pct == null ? "s/m" : fmtPct(v.pct)}
-                          </span>
-                        </div>
-                        <div style={{ height: 8, borderRadius: 4, background: "var(--bg)", border: "1px solid var(--border)", overflow: "hidden", marginTop: 12 }}>
-                          <div style={{ height: "100%", borderRadius: 4, width: `${clamp(pct, v.avance > 0 ? 3 : 0, 100)}%`, background: v.pct == null ? "#94a3b8" : pct >= 100 ? "#16a34a" : "linear-gradient(90deg, var(--primary), #14b8a6)" }} />
-                        </div>
-                        <div style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: 11.5, marginTop: 7 }}>
-                          <span style={{ fontWeight: 700, color: "#15803d" }}>{fmtCLP(v.avance)}</span>
-                          <span style={{ color: "var(--text-muted)" }}>
-                            {v.meta > 0 ? (v.brecha > 0 ? `faltan ${fmtCLP(v.brecha)}` : "meta cumplida ✓") : "sin meta asignada"}
-                          </span>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-              {avancePorVendedor.length === 0 && (
-                <p style={{ fontSize: 12.5, color: "var(--text-muted)", marginTop: 14, marginBottom: 0 }}>
-                  Sin metas definidas ni avance en el período. Define las metas en «Definición de metas».
-                </p>
-              )}
             </div>
+          )}
+
+          {/* ── OC con saldo por consumir — SIN filtro de fecha (a pedido) */}
+          <div className="surface" style={{ marginBottom: 16 }}>
+            <div className="surface-header" style={{ flexWrap: "wrap", gap: 12 }}>
+              <div>
+                <h3 className="surface-title" style={{ margin: 0 }}>Órdenes de compra con saldo por consumir</h3>
+                <p style={{ fontSize: 12, color: "var(--text-muted)", margin: 0 }}>
+                  Monto de la OC menos lo despachado/facturado · todas las vigentes, sin filtro de fecha del panel
+                </p>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 12.5, color: "var(--text-muted)" }}>
+                  {fmtNum(ocsConSaldo.filas.length)} OC · saldo total{" "}
+                  <strong style={{ color: "#b45309" }}>{fmtCLP(ocsConSaldo.totalSaldo)}</strong>
+                </span>
+                <button className="btn btn-secondary btn-sm" onClick={exportarOcsSaldo} disabled={!ocsConSaldo.filas.length}>
+                  Exportar
+                </button>
+              </div>
+            </div>
+            {ocsConSaldo.filas.length === 0 ? (
+              <div style={{ padding: "16px 24px", fontSize: 13, color: "var(--text-muted)" }}>
+                No hay órdenes de compra con saldo pendiente.
+              </div>
+            ) : (
+              <div style={{ padding: "6px 24px 18px", overflowX: "auto", maxHeight: 420, overflowY: "auto" }}>
+                <table className="data-table" style={{ width: "100%", fontSize: 13 }}>
+                  <thead>
+                    <tr>
+                      <th>Cotización</th><th>Cliente</th><th>Vendedor</th><th>N° OC</th><th>Fecha OC</th>
+                      <th style={{ textAlign: "right" }}>Monto OC</th>
+                      <th style={{ textAlign: "right" }}>Consumido</th>
+                      <th style={{ textAlign: "right" }}>Saldo</th>
+                      <th style={{ width: 130 }}>% consumido</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {ocsConSaldo.filas.map((f) => (
+                      <tr key={f.licId}>
+                        <td><a className="table-link" href={`/detalle/${f.licId}`} target="_blank" rel="noreferrer">{f.codigo}</a></td>
+                        <td>{f.cliente}</td>
+                        <td>{f.vendedor}</td>
+                        <td>{f.numeroOC}</td>
+                        <td>{f.fechaOC || "—"}</td>
+                        <td style={{ textAlign: "right" }}>{fmtCLP(f.oc)}</td>
+                        <td style={{ textAlign: "right" }}>{fmtCLP(f.consumido)}</td>
+                        <td style={{ textAlign: "right", fontWeight: 700, color: "#b45309" }}>{fmtCLP(f.saldo)}</td>
+                        <td>
+                          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                            <div style={{ flex: 1, height: 6, borderRadius: 3, background: "var(--bg)", border: "1px solid var(--border)", overflow: "hidden" }}>
+                              <div style={{ height: "100%", width: `${clamp(f.pct, 0, 100)}%`, background: "linear-gradient(90deg, var(--primary), #14b8a6)" }} />
+                            </div>
+                            <span style={{ fontSize: 11.5, color: "var(--text-muted)", minWidth: 32, textAlign: "right" }}>{Math.round(f.pct)}%</span>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
+
+
         </>
       )}
 
@@ -1314,6 +1555,16 @@ export default function PanelIndicadores() {
           filas={adjudicadasDetalle}
           periodoLabel={periodoLabel}
           onCerrar={() => setAdjOpen(false)}
+        />
+      )}
+
+      {ventasOpen && (
+        <ModalAvanceMeta
+          titulo={`Ventas totales del ${periodoLabel.toLowerCase()}`}
+          subtitulo="Guías de despacho (públicas) y boletas/facturas/efectivo (particulares) de cotizaciones adjudicadas en el período"
+          filas={ventasDetalle}
+          mostrarVendedor
+          onCerrar={() => setVentasOpen(false)}
         />
       )}
 
