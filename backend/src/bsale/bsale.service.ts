@@ -253,6 +253,7 @@ export class BsaleService {
       const neto = Number(doc?.netAmount || 0);
       if (!anulada) total += neto;
       guias.push({
+        id: doc?.id,
         numero: doc?.number,
         emitida: doc?.emissionDate ? new Date(Number(doc.emissionDate) * 1000).toISOString().slice(0, 10) : null,
         neto,
@@ -261,7 +262,36 @@ export class BsaleService {
       });
     }
     guias.sort((a, b) => String(a.emitida || '').localeCompare(String(b.emitida || '')));
-    return { disponible: true, oc: String(oc || ''), desde: desdeOk, guias, total_neto: Math.round(total) };
+
+    /* Detalle de PRODUCTOS despachados (pedido 2026-09-04): se abren los
+       ítems de cada guía que calza (solo las vigentes, con tope defensivo) y
+       se agregan por SKU — así Trazabilidad puede comparar despachado vs
+       pendiente producto a producto contra la cotización. */
+    const productosMap = new Map<string, { sku: string; nombre: string; cantidad: number; neto: number }>();
+    const vigentes = guias.filter((g) => !g.anulada && g.id != null).slice(0, 12);
+    for (const g of vigentes) {
+      try {
+        const det = await this.apiGet(`/documents/${g.id}/details.json?limit=50`);
+        for (const it of det?.items || []) {
+          const sku = String(it?.variant?.code || '').trim();
+          const nombre = String(it?.variant?.description || '').trim();
+          const key = sku || nombre.toLowerCase();
+          if (!key) continue;
+          const e = productosMap.get(key) || { sku, nombre, cantidad: 0, neto: 0 };
+          e.cantidad += Number(it?.quantity || 0);
+          e.neto += Number(it?.netAmount ?? (Number(it?.quantity || 0) * Number(it?.netUnitValue || 0))) || 0;
+          if (!e.nombre && nombre) e.nombre = nombre;
+          productosMap.set(key, e);
+        }
+      } catch {
+        // una guía sin detalle no bota el cruce: se sigue con las demás
+      }
+    }
+    const productos = [...productosMap.values()]
+      .map((p) => ({ ...p, neto: Math.round(p.neto) }))
+      .sort((a, b) => b.neto - a.neto);
+
+    return { disponible: true, oc: String(oc || ''), desde: desdeOk, guias, productos, total_neto: Math.round(total) };
   }
 
   /* Arranque no bloqueante de la sincronización: valida, dispara en segundo

@@ -2025,7 +2025,7 @@ export default function Trazabilidad() {
                                     {oc.numero && (
                                       <button
                                         type="button"
-                                        onClick={() => setDespachoBsale({ ocNumero: oc.numero, ocMonto: Number(oc.monto || 0), ocFecha: oc.fecha_oc || null, cliente: lic.nombre_entidad || "" })}
+                                        onClick={() => setDespachoBsale({ ocNumero: oc.numero, ocMonto: Number(oc.monto || 0), ocFecha: oc.fecha_oc || null, cliente: lic.nombre_entidad || "", licId: lic.id })}
                                         style={{ background: "none", border: "none", cursor: "pointer", color: "#c2570c", padding: 0 }}
                                         title="Cuánto falta por despachar según las guías emitidas en Bsale"
                                       >
@@ -2736,8 +2736,9 @@ function ModalGuiaBsale({ numero, ocNumero, cliente, onCerrar }) {
    Busca en Bsale TODAS las guías electrónicas emitidas desde la fecha de la
    OC que la referencian (incluidas las no registradas en el sistema), suma su
    neto y muestra cuánto falta por despachar: monto OC − despachado Bsale. */
-function ModalDespachoBsale({ ocNumero, ocMonto, ocFecha, cliente, onCerrar }) {
+function ModalDespachoBsale({ ocNumero, ocMonto, ocFecha, cliente, licId, onCerrar }) {
   const [estado, setEstado] = useState({ loading: true, data: null, error: "" });
+  const [itemsCot, setItemsCot] = useState(null); // ítems de la cotización, para el detalle por producto
 
   useEffect(() => {
     let activo = true;
@@ -2754,7 +2755,45 @@ function ModalDespachoBsale({ ocNumero, ocMonto, ocFecha, cliente, onCerrar }) {
     return () => { activo = false; };
   }, [ocNumero, ocFecha]);
 
+  useEffect(() => {
+    if (!licId) { setItemsCot([]); return; }
+    let activo = true;
+    api.post("/licitaciones/items/filter", { licitacion_ids: [Number(licId)], fields: "sku,cantidad,producto" })
+      .then((rows) => { if (activo) setItemsCot(rows || []); })
+      .catch(() => { if (activo) setItemsCot([]); });
+    return () => { activo = false; };
+  }, [licId]);
+
   const d = estado.data;
+
+  // Cruce por producto: ítems de la cotización vs cantidades despachadas en
+  // las guías de Bsale (agregadas por SKU; sin SKU, por nombre).
+  const detalleProductos = useMemo(() => {
+    const despachados = d?.productos || [];
+    if (!despachados.length && !(itemsCot || []).length) return [];
+    const clave = (sku, nombre) => (String(sku || "").trim().toUpperCase() || String(nombre || "").trim().toLowerCase());
+    const m = new Map();
+    (itemsCot || []).forEach((it) => {
+      const k = clave(it.sku, it.producto);
+      if (!k) return;
+      const e = m.get(k) || { sku: String(it.sku || "").trim(), nombre: it.producto || "", cotizada: 0, despachada: 0, enCotizacion: true };
+      e.cotizada += Number(it.cantidad || 0);
+      e.enCotizacion = true;
+      if (!e.nombre) e.nombre = it.producto || "";
+      m.set(k, e);
+    });
+    despachados.forEach((p) => {
+      const k = clave(p.sku, p.nombre);
+      if (!k) return;
+      const e = m.get(k) || { sku: p.sku, nombre: p.nombre, cotizada: 0, despachada: 0, enCotizacion: false };
+      e.despachada += Number(p.cantidad || 0);
+      if (!e.nombre) e.nombre = p.nombre;
+      m.set(k, e);
+    });
+    return [...m.values()]
+      .map((e) => ({ ...e, pendiente: Math.max(0, e.cotizada - e.despachada) }))
+      .sort((a, b) => b.pendiente - a.pendiente || b.despachada - a.despachada);
+  }, [d, itemsCot]);
   const fmt$ = (v) => `$${Math.round(Number(v) || 0).toLocaleString("es-CL")}`;
   const despachado = Number(d?.total_neto || 0);
   const falta = Math.max(0, Number(ocMonto || 0) - despachado);
@@ -2765,7 +2804,7 @@ function ModalDespachoBsale({ ocNumero, ocMonto, ocFecha, cliente, onCerrar }) {
       onClick={(e) => { if (e.target === e.currentTarget) onCerrar(); }}
       style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.55)", display: "grid", placeItems: "center", zIndex: 12000, padding: 16 }}
     >
-      <div style={{ background: "var(--surface)", borderRadius: "var(--radius-lg)", border: "1px solid var(--border)", width: "min(620px, 100%)", maxHeight: "86vh", overflow: "auto", boxShadow: "var(--shadow-lg)" }}>
+      <div style={{ background: "var(--surface)", borderRadius: "var(--radius-lg)", border: "1px solid var(--border)", width: "min(760px, 100%)", maxHeight: "86vh", overflow: "auto", boxShadow: "var(--shadow-lg)" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, padding: "14px 18px", borderBottom: "1px solid var(--border)", position: "sticky", top: 0, background: "var(--surface)", zIndex: 1 }}>
           <div>
             <h3 className="surface-title" style={{ margin: 0, display: "flex", alignItems: "center", gap: 8 }}>
@@ -2863,10 +2902,66 @@ function ModalDespachoBsale({ ocNumero, ocMonto, ocFecha, cliente, onCerrar }) {
                   </table>
                 </div>
               )}
+              {/* Detalle por producto: cotizado vs despachado vs pendiente (pedido 2026-09-04) */}
+              {detalleProductos.length > 0 && (
+                <>
+                  <div style={{ fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".06em", color: "var(--text-muted)", margin: "16px 0 6px" }}>
+                    Detalle por producto · despachado vs pendiente
+                  </div>
+                  <div style={{ border: "1px solid var(--border)", borderRadius: 8, overflowX: "auto" }}>
+                    <table className="data-table" style={{ width: "100%", fontSize: 12.5, minWidth: 520 }}>
+                      <thead>
+                        <tr>
+                          <th style={{ textAlign: "left" }}>Producto</th>
+                          <th style={{ textAlign: "left" }}>SKU</th>
+                          <th style={{ textAlign: "right" }}>Cotizado</th>
+                          <th style={{ textAlign: "right" }}>Despachado</th>
+                          <th style={{ textAlign: "right" }}>Pendiente</th>
+                          <th style={{ textAlign: "left" }}>Estado</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {detalleProductos.map((p, i) => {
+                          const completoProd = p.enCotizacion && p.cotizada > 0 && p.pendiente <= 0;
+                          const sinDespachar = p.enCotizacion && p.despachada <= 0;
+                          const chip = !p.enCotizacion
+                            ? { t: "No está en la cotización", bg: "#e0e7ff", c: "#3730a3" }
+                            : completoProd
+                            ? { t: "Completo", bg: "#dcfce7", c: "#15803d" }
+                            : sinDespachar
+                            ? { t: "Sin despachar", bg: "#fee2e2", c: "#b91c1c" }
+                            : { t: "Parcial", bg: "#fef3c7", c: "#b45309" };
+                          return (
+                            <tr key={i}>
+                              <td style={{ maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={p.nombre}>{p.nombre || "—"}</td>
+                              <td style={{ whiteSpace: "nowrap", color: "var(--text-muted)" }}>{p.sku || "—"}</td>
+                              <td style={{ textAlign: "right" }}>{p.enCotizacion ? p.cotizada.toLocaleString("es-CL") : "—"}</td>
+                              <td style={{ textAlign: "right", fontWeight: 600 }}>{p.despachada.toLocaleString("es-CL")}</td>
+                              <td style={{ textAlign: "right", fontWeight: 700, color: p.pendiente > 0 ? "#b45309" : "#15803d" }}>
+                                {p.enCotizacion ? p.pendiente.toLocaleString("es-CL") : "—"}
+                              </td>
+                              <td>
+                                <span style={{ fontSize: 10.5, fontWeight: 700, padding: "2px 8px", borderRadius: 999, whiteSpace: "nowrap", background: chip.bg, color: chip.c }}>
+                                  {chip.t}
+                                </span>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                  {itemsCot === null && (
+                    <p style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 6, marginBottom: 0 }}>Cargando ítems de la cotización…</p>
+                  )}
+                </>
+              )}
+
               <p style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 10, marginBottom: 0 }}>
                 Fuente: guías electrónicas (SII 52) emitidas en Bsale desde la fecha de la OC (con una semana de
                 margen) cuyas referencias calzan con el N° de la OC. Incluye guías aunque no estén registradas en
-                el sistema — por eso este número es el control contra el documento real.
+                el sistema — por eso este número es el control contra el documento real. El detalle por producto
+                compara los ítems de la cotización con las cantidades de esas guías (cruce por SKU).
               </p>
             </>
           )}
