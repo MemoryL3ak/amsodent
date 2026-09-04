@@ -14,6 +14,8 @@ import { SupabaseService } from '../supabase/supabase.service';
    consulta (búsquedas repetidas no vuelven a golpear los sitios). */
 
 const TIENDAS: Array<{ id: string; nombre: string; tipo: 'shopify' | 'woo'; base: string }> = [
+  // La tienda propia va SIEMPRE primera en los resultados (ver orden en buscar()).
+  { id: 'amsodent', nombre: 'Amsodent', tipo: 'woo', base: 'https://amsodentmedical.cl' },
   { id: 'orbisdental', nombre: 'Orbis Dental', tipo: 'shopify', base: 'https://www.orbisdental.cl' },
   { id: 'gexachile', nombre: 'Gexa Chile', tipo: 'shopify', base: 'https://gexachile.cl' },
   { id: 'spdental', nombre: 'SP Dental', tipo: 'shopify', base: 'https://spdental.shop' },
@@ -88,7 +90,13 @@ export class ExploradorService {
     const tiendasCaidas = TIENDAS.filter((_, i) => (porTienda[i] as any).error).map((t) => t.nombre);
 
     await this.adjuntarHistoricoYGuardar(q, items);
-    items.sort((a, b) => a.precio - b.precio);
+    // Amsodent siempre encabeza; dentro de cada grupo, del más barato al más caro.
+    items.sort((a, b) => {
+      const propiaA = a.tienda === 'amsodent' ? 0 : 1;
+      const propiaB = b.tienda === 'amsodent' ? 0 : 1;
+      if (propiaA !== propiaB) return propiaA - propiaB;
+      return a.precio - b.precio;
+    });
 
     const data = {
       consulta: q,
