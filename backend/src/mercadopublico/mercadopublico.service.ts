@@ -437,11 +437,11 @@ export class MercadopublicoService {
 
   /* ── Aviso de adjudicación ganada (2026-09-03) ──
      Cuando la corrida (nocturna o manual) detecta que un proceso pasó a
-     "ganado" (ganamos=true y antes no), avisa al VENDEDOR de la cotización y
-     a los JEFES DE VENTAS con una notificación en la campana (sin correo, a
-     pedido 2026-09-04). Dedupe permanente por (usuario, licitación) sobre la
-     tabla notificaciones, así un vaivén de estados de la API no repite el
-     aviso. */
+     "ganado" (ganamos=true y antes no), avisa al VENDEDOR de la cotización,
+     a los JEFES DE VENTAS y a los correos extra configurados, con una
+     notificación en la campana (sin correo, a pedido 2026-09-04). Dedupe
+     permanente por (usuario, licitación) sobre la tabla notificaciones, así
+     un vaivén de estados de la API no repite el aviso. */
   private async notificarAdjudicacion(lic: any, fila: any) {
     try {
       const client = this.supabase.getClient();
@@ -450,8 +450,15 @@ export class MercadopublicoService {
         .from('profiles')
         .select('email')
         .in('rol', ['jefe_ventas', 'jefe_ventas_especial']);
+      // Destinatarios extra fuera de la regla por rol (separados por coma).
+      // Default: Jeremías Alarcón (admin, pedido 2026-09-03); la env permite
+      // cambiar la lista sin tocar código.
+      const extras = (process.env.MP_ADJUDICADA_EXTRA_CORREOS ?? 'jer.consorcio@gmail.com')
+        .split(',')
+        .map((e) => e.trim().toLowerCase())
+        .filter(Boolean);
       const emails = Array.from(new Set(
-        [vendedor, ...(jefes || []).map((j: any) => String(j?.email || '').trim().toLowerCase())].filter(Boolean),
+        [vendedor, ...(jefes || []).map((j: any) => String(j?.email || '').trim().toLowerCase()), ...extras].filter(Boolean),
       ));
       if (!emails.length) return;
 
