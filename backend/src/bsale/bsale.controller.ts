@@ -38,6 +38,13 @@ export class BsaleController {
     return this.bsale.guiaDespacho(String(numero || ''));
   }
 
+  // Despacho según Bsale de una OC: guías que la referencian + total, para
+  // calcular cuánto falta por despachar contra el documento real.
+  @Get('despacho')
+  despacho(@Query('oc') oc: string, @Query('desde') desde: string) {
+    return this.bsale.despachoPorOc(String(oc || ''), String(desde || ''));
+  }
+
   // Sincronización manual (además de la automática del cron). Responde al
   // tiro con { iniciado: true }; el avance se sigue por GET /bsale/estado.
   @Post('sincronizar')

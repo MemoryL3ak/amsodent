@@ -340,6 +340,7 @@ export const GRUPOS_MANUAL = [
           "Cierre forzado de un ciclo con saldo: exige monto forzado, motivo y archivo de respaldo; es reversible.",
           "Tracking del envío por N° de seguimiento.",
           "Ícono de paquete junto a cada guía: consulta la guía electrónica en Bsale y muestra los productos despachados (SKU, cantidad, precio), cruzando sus referencias contra el N° de la OC de la cotización.",
+          "Ícono de camión junto a cada OC: busca en Bsale TODAS las guías que referencian esa OC (incluidas las no registradas acá) y muestra el monto despachado y cuánto FALTA por despachar contra el documento real.",
         ],
         figura: { tipo: "flujo", pasos: ["OC", "Guías (≤ 3 días háb.)", "Factura", "Pago"] },
       },
