@@ -1,3 +1,4 @@
+// Redeploy 2026-09-04: activar aviso de adjudicación MP + integración Bsale.
 import * as path from 'path';
 import * as dotenv from 'dotenv';
 
