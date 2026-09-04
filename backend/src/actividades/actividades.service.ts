@@ -243,6 +243,30 @@ export class ActividadesService {
       }
     }
 
+    // Espejo en Google Calendar (pedido 2026-09-04): TODA actividad con fecha
+    // se refleja como evento simple en el calendario de la cuenta conectada
+    // (las reuniones con Meet ya crearon el suyo arriba). Best-effort: si la
+    // cuenta no está conectada o Google falla, la actividad se guarda igual.
+    if (!base.evento_google_id && base.fecha) {
+      try {
+        const cuenta = await this.cuentaGoogle(user.id);
+        if (cuenta && (!cuenta.scopes || cuenta.scopes.toLowerCase().includes('calendar'))) {
+          const ev = await this.calendar.crearEventoSimple(cuenta.refreshToken, {
+            titulo: base.titulo,
+            descripcion: [base.comentario, `Actividad Amsodent · ${tipo}`].filter(Boolean).join('\n'),
+            fecha: base.fecha,
+            horaInicio: base.hora_inicio,
+            horaFin: base.hora_fin,
+            todoElDia: Boolean(base.todo_el_dia),
+            invitados: participantes.map((p: any) => p.email),
+          });
+          base.evento_google_id = ev.eventId;
+        }
+      } catch (e: any) {
+        // El espejo nunca bloquea la bitácora.
+      }
+    }
+
     if (tipo === 'reunion' && participantes.length) {
       const grupo_id = randomUUID();
       const todos = [{ email, nombre: nombre || email }, ...participantes];
@@ -356,6 +380,28 @@ export class ActividadesService {
     }
 
     const data = await this.actualizarConTolerancia(patch, (q) => q.eq('id', id));
+
+    // Espejo en Calendar: si la actividad tiene evento asociado y cambió algo
+    // visible (título, fecha, horario o comentario), se actualiza el evento.
+    // Best-effort con la cuenta del usuario que edita.
+    const cambioVisible = ['titulo', 'fecha', 'hora_inicio', 'hora_fin', 'todo_el_dia', 'comentario']
+      .some((k) => compartidos[k] !== undefined);
+    if (fila.evento_google_id && cambioVisible) {
+      try {
+        const cuenta = await this.cuentaGoogle(user.id);
+        if (cuenta) {
+          const nuevo = { ...fila, ...compartidos };
+          await this.calendar.actualizarEvento(cuenta.refreshToken, fila.evento_google_id, {
+            titulo: nuevo.titulo,
+            descripcion: [nuevo.comentario, `Actividad Amsodent · ${nuevo.tipo || ''}`].filter(Boolean).join('\n'),
+            fecha: nuevo.fecha,
+            horaInicio: nuevo.hora_inicio,
+            horaFin: nuevo.hora_fin,
+            todoElDia: Boolean(nuevo.todo_el_dia),
+          });
+        }
+      } catch { /* el espejo nunca bloquea la edición */ }
+    }
 
     // Reunión grupal: propagar los campos compartidos al resto del grupo.
     if (fila.grupo_id && Object.keys(compartidos).length > 0) {
@@ -472,12 +518,117 @@ export class ActividadesService {
   async eliminar(user: Usuario, id: number) {
     const fila = await this.verificarPropiedad(user, id);
     const client = this.supabase.getClient();
+
+    // Espejo en Calendar: borrar el evento asociado antes de borrar la
+    // actividad (best-effort con la cuenta del usuario que elimina).
+    if (fila.evento_google_id) {
+      try {
+        const cuenta = await this.cuentaGoogle(user.id);
+        if (cuenta) await this.calendar.eliminarEvento(cuenta.refreshToken, fila.evento_google_id);
+      } catch { /* el espejo nunca bloquea la eliminación */ }
+    }
+
     const query = fila.grupo_id
       ? client.from('actividades_cliente').delete().eq('grupo_id', fila.grupo_id)
       : client.from('actividades_cliente').delete().eq('id', id);
     const { error } = await query;
     if (error) throw new BadRequestException(error.message);
     return { deleted: true };
+  }
+
+  /* ── Importación Calendar → bitácora (pedido 2026-09-04) ────────────────
+     Por cada cuenta de Google conectada en «Mi Correo» con permiso de
+     Calendar, trae los eventos del calendario principal (ventana: 3 días
+     hacia atrás, 60 hacia adelante) y crea la actividad correspondiente.
+     Reglas para no ensuciar la bitácora:
+     - Se saltan los eventos creados por el propio sistema (marca privada
+       `amsodent` en el evento) y los cancelados.
+     - Solo se importan eventos CON AL MENOS OTRO INVITADO (una reunión con
+       alguien); los recordatorios personales sin invitados no entran.
+     - Dedupe por (evento_google_id, user_email): re-correr no duplica. */
+  async importarDesdeCalendar(): Promise<{ cuentas: number; importadas: number; errores: string[] }> {
+    const client = this.supabase.getClient();
+    const { data: cuentas, error } = await client
+      .from('correo_cuentas')
+      .select('user_id, email, refresh_token, scopes');
+    if (error) throw new BadRequestException(error.message);
+
+    const hoy = new Date().toISOString().slice(0, 10);
+    const timeMin = new Date(Date.now() - 3 * 86400000).toISOString();
+    const timeMax = new Date(Date.now() + 60 * 86400000).toISOString();
+    let importadas = 0;
+    const errores: string[] = [];
+    let cuentasOk = 0;
+
+    for (const c of cuentas || []) {
+      const email = String(c.email || '').trim().toLowerCase();
+      const scopes = String(c.scopes || '').toLowerCase();
+      if (!c.refresh_token || !email || (scopes && !scopes.includes('calendar'))) continue;
+      cuentasOk++;
+      try {
+        const eventos = await this.calendar.listarEventos(String(c.refresh_token), timeMin, timeMax);
+        const candidatos = (eventos || []).filter((ev: any) => {
+          if (!ev?.id || ev.status === 'cancelled') return false;
+          if (ev.extendedProperties?.private?.amsodent) return false; // creado por el sistema
+          const asistentes: any[] = Array.isArray(ev.attendees) ? ev.attendees : [];
+          const otros = asistentes.filter((a) => !a?.self && !a?.resource);
+          if (!otros.length) return false; // sin otros invitados: evento personal
+          return Boolean(ev.start?.dateTime || ev.start?.date);
+        });
+        if (!candidatos.length) continue;
+
+        const ids = candidatos.map((ev: any) => String(ev.id));
+        const { data: existentes } = await client
+          .from('actividades_cliente')
+          .select('evento_google_id')
+          .eq('user_email', email)
+          .in('evento_google_id', ids);
+        const yaImportados = new Set((existentes || []).map((r: any) => String(r.evento_google_id)));
+
+        let nombre = email;
+        try {
+          const { data: perfil } = await client.from('profiles').select('nombre').eq('id', c.user_id).maybeSingle();
+          if (perfil?.nombre) nombre = String(perfil.nombre).trim();
+        } catch { /* nombre best-effort */ }
+
+        const filas: any[] = [];
+        for (const ev of candidatos) {
+          if (yaImportados.has(String(ev.id))) continue;
+          const inicio = ev.start?.dateTime || ev.start?.date;
+          const fecha = String(inicio).slice(0, 10);
+          const horaDe = (v: any) => {
+            const m = /T(\d{2}:\d{2})/.exec(String(v || ''));
+            return m ? m[1] : null;
+          };
+          const asistentes = (Array.isArray(ev.attendees) ? ev.attendees : [])
+            .map((a: any) => ({ email: String(a?.email || '').toLowerCase(), nombre: a?.displayName || a?.email || '' }))
+            .filter((a: any) => a.email);
+          filas.push({
+            titulo: String(ev.summary || '(sin título)').slice(0, 200),
+            tipo: 'reunion',
+            comentario: ['Importada desde Google Calendar', String(ev.description || '').slice(0, 500)].filter(Boolean).join('\n'),
+            fecha,
+            hora_inicio: horaDe(ev.start?.dateTime),
+            hora_fin: horaDe(ev.end?.dateTime),
+            todo_el_dia: !ev.start?.dateTime,
+            estado: fecha < hoy ? 'realizada' : 'pendiente',
+            adjuntos: [],
+            participantes: asistentes,
+            meet_url: ev.hangoutLink || null,
+            evento_google_id: String(ev.id),
+            user_email: email,
+            user_nombre: nombre,
+          });
+        }
+        if (filas.length) {
+          await this.insertarFilas(filas);
+          importadas += filas.length;
+        }
+      } catch (e: any) {
+        errores.push(`${email}: ${String(e?.message || e).slice(0, 120)}`);
+      }
+    }
+    return { cuentas: cuentasOk, importadas, errores };
   }
 
   // Usuarios con actividades (para el filtro del admin).

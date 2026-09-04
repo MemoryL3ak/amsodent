@@ -83,6 +83,9 @@ export class CalendarApiService {
               conferenceSolutionKey: { type: 'hangoutsMeet' },
             },
           },
+          // Marca privada: identifica los eventos creados por el sistema para
+          // que la importación Calendar→bitácora no los vuelva a traer (loop).
+          extendedProperties: { private: { amsodent: 'actividad' } },
         },
       });
     } catch (err: any) {
@@ -126,5 +129,120 @@ export class CalendarApiService {
       null;
     this.logger.log(`Evento Meet creado (${data.id || 'sin id'}) → ${meetUrl || 'sin enlace'}`);
     return { meetUrl, eventId: data.id || null, htmlLink: data.htmlLink || null };
+  }
+
+  /* ── Sincronización bitácora ↔ Calendar (pedido 2026-09-04) ────────────── */
+
+  // Evento SIMPLE (sin Meet) que espeja cualquier actividad de la bitácora en
+  // el calendario del usuario. Best-effort: los que llaman capturan el error.
+  async crearEventoSimple(
+    refreshToken: string,
+    datos: CrearEventoMeet & { todoElDia?: boolean },
+  ): Promise<{ eventId: string | null; htmlLink: string | null }> {
+    if (!refreshToken) throw new BadRequestException('La cuenta de Google no está conectada.');
+    const cliente = this.oauth2Client();
+    cliente.setCredentials({ refresh_token: refreshToken });
+    const calendar = google.calendar({ version: 'v3', auth: cliente });
+    const tz = datos.zona || 'America/Santiago';
+    let start: any;
+    let end: any;
+    if (datos.todoElDia || !datos.horaInicio) {
+      // Todo el día: en Calendar `end.date` es EXCLUSIVO → día siguiente.
+      const fin = new Date(`${datos.fecha}T00:00:00Z`);
+      fin.setUTCDate(fin.getUTCDate() + 1);
+      start = { date: datos.fecha };
+      end = { date: fin.toISOString().slice(0, 10) };
+    } else {
+      const hi = datos.horaInicio.slice(0, 5);
+      const hf = (datos.horaFin || '').slice(0, 5) || this.sumarHora(hi);
+      start = { dateTime: `${datos.fecha}T${hi}:00`, timeZone: tz };
+      end = { dateTime: `${datos.fecha}T${hf}:00`, timeZone: tz };
+    }
+    const invitados = Array.from(
+      new Set((datos.invitados || []).map((e) => String(e || '').trim().toLowerCase()).filter(Boolean)),
+    );
+    const res = await calendar.events.insert({
+      calendarId: 'primary',
+      sendUpdates: invitados.length ? 'all' : 'none',
+      requestBody: {
+        summary: datos.titulo,
+        description: datos.descripcion || undefined,
+        start,
+        end,
+        attendees: invitados.map((email) => ({ email })),
+        extendedProperties: { private: { amsodent: 'actividad' } },
+      },
+    });
+    return { eventId: res.data?.id || null, htmlLink: res.data?.htmlLink || null };
+  }
+
+  // Actualiza el evento espejo cuando se edita la actividad (best-effort).
+  async actualizarEvento(
+    refreshToken: string,
+    eventId: string,
+    datos: CrearEventoMeet & { todoElDia?: boolean },
+  ): Promise<void> {
+    if (!refreshToken || !eventId) return;
+    const cliente = this.oauth2Client();
+    cliente.setCredentials({ refresh_token: refreshToken });
+    const calendar = google.calendar({ version: 'v3', auth: cliente });
+    const tz = datos.zona || 'America/Santiago';
+    let start: any;
+    let end: any;
+    if (datos.todoElDia || !datos.horaInicio) {
+      const fin = new Date(`${datos.fecha}T00:00:00Z`);
+      fin.setUTCDate(fin.getUTCDate() + 1);
+      start = { date: datos.fecha };
+      end = { date: fin.toISOString().slice(0, 10) };
+    } else {
+      const hi = datos.horaInicio.slice(0, 5);
+      const hf = (datos.horaFin || '').slice(0, 5) || this.sumarHora(hi);
+      start = { dateTime: `${datos.fecha}T${hi}:00`, timeZone: tz };
+      end = { dateTime: `${datos.fecha}T${hf}:00`, timeZone: tz };
+    }
+    await calendar.events.patch({
+      calendarId: 'primary',
+      eventId,
+      sendUpdates: 'none',
+      requestBody: {
+        summary: datos.titulo,
+        description: datos.descripcion || undefined,
+        start,
+        end,
+      },
+    });
+  }
+
+  // Borra el evento espejo al eliminar la actividad (best-effort; un evento ya
+  // borrado en Google no es error).
+  async eliminarEvento(refreshToken: string, eventId: string): Promise<void> {
+    if (!refreshToken || !eventId) return;
+    const cliente = this.oauth2Client();
+    cliente.setCredentials({ refresh_token: refreshToken });
+    const calendar = google.calendar({ version: 'v3', auth: cliente });
+    try {
+      await calendar.events.delete({ calendarId: 'primary', eventId, sendUpdates: 'none' });
+    } catch (e: any) {
+      const status = e?.response?.status || e?.code;
+      if (status !== 404 && status !== 410) throw e;
+    }
+  }
+
+  // Lista los eventos del calendario principal en una ventana, para la
+  // importación Calendar → bitácora (instancias individuales, no recurrencias).
+  async listarEventos(refreshToken: string, timeMinISO: string, timeMaxISO: string): Promise<any[]> {
+    if (!refreshToken) return [];
+    const cliente = this.oauth2Client();
+    cliente.setCredentials({ refresh_token: refreshToken });
+    const calendar = google.calendar({ version: 'v3', auth: cliente });
+    const res = await calendar.events.list({
+      calendarId: 'primary',
+      timeMin: timeMinISO,
+      timeMax: timeMaxISO,
+      singleEvents: true,
+      orderBy: 'startTime',
+      maxResults: 250,
+    });
+    return res.data?.items || [];
   }
 }
