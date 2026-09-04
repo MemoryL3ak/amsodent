@@ -2597,11 +2597,15 @@ function ModalGuiaBsale({ numero, ocNumero, cliente, onCerrar }) {
   }, [numero]);
 
   const d = estado.data;
-  const soloDigitos = (v) => String(v || "").replace(/\D/g, "");
+  // Solo dígitos y SIN ceros a la izquierda: Bsale guarda "000761-26" donde el
+  // sistema tiene "OCS 00761-26" (misma OC, verificado con datos reales
+  // 2026-09-04). Para códigos MP tipo 1057539-7037-AG26 los dígitos calzan tal
+  // cual.
+  const normNum = (v) => String(v || "").replace(/\D/g, "").replace(/^0+/, "");
   const refs = d?.referencias || [];
   const cruceOc = ocNumero
     ? refs.some((r) =>
-        (soloDigitos(r.numero) && soloDigitos(r.numero) === soloDigitos(ocNumero)) ||
+        (normNum(r.numero) && normNum(r.numero) === normNum(ocNumero)) ||
         (r.razon || "").toLowerCase().includes(String(ocNumero).toLowerCase()))
     : null;
   const fmt$ = (v) => `$${Math.round(Number(v) || 0).toLocaleString("es-CL")}`;
