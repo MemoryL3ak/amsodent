@@ -1665,14 +1665,14 @@ export default function SeguimientoPagos() {
                                       if (conArchivo) abrirDocumento(conArchivo);
                                       else {
                                         const det = multasLic
-                                          .map((mu) => `Multa ${mu.numero || "s/n"} · ${fmtFecha(mu.fecha_oc || mu.created_at)} · ${fmtCLP(mu.monto)}`)
+                                          .map((mu) => `Multa ${mu.numero || "s/n"} · ${String(mu.fecha_oc || mu.created_at || "").slice(0, 10)} · ${fmtCLP(mu.monto)}`)
                                           .join(" | ");
                                         setToast({ type: "info", message: det || "Multa sin detalle." });
                                       }
                                     }}
                                     style={{ background: "none", border: "none", cursor: "pointer", color: "var(--primary)", padding: 0, display: "inline-flex" }}
                                     title={multasLic
-                                      .map((mu) => `Multa ${mu.numero || "s/n"} · ${fmtFecha(mu.fecha_oc || mu.created_at)} · ${fmtCLP(mu.monto)}`)
+                                      .map((mu) => `Multa ${mu.numero || "s/n"} · ${String(mu.fecha_oc || mu.created_at || "").slice(0, 10)} · ${fmtCLP(mu.monto)}`)
                                       .join("\n") || "Ver detalle de la multa"}
                                   >
                                     <Eye size={12} />
