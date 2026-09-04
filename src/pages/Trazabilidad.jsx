@@ -426,6 +426,9 @@ export default function Trazabilidad() {
   // Productos despachados según la guía emitida en Bsale (modal):
   // { numero, ocNumero, cliente } | null.
   const [guiaBsale, setGuiaBsale] = useState(null);
+  // Falta por despachar de una OC según las guías emitidas en Bsale (modal):
+  // { ocNumero, ocMonto, ocFecha, cliente } | null.
+  const [despachoBsale, setDespachoBsale] = useState(null);
   const [facturaNumero, setFacturaNumero] = useState("");
   const [facturaFecha, setFacturaFecha] = useState("");
   const [facturaMonto, setFacturaMonto] = useState(""); // monto NETO de la factura (solo dígitos)
@@ -1407,6 +1410,7 @@ export default function Trazabilidad() {
     <div className="page vista-compacta">
       {toast && <Toast type={toast.type} message={toast.message} onClose={() => setToast(null)} />}
       {guiaBsale && <ModalGuiaBsale {...guiaBsale} onCerrar={() => setGuiaBsale(null)} />}
+      {despachoBsale && <ModalDespachoBsale {...despachoBsale} onCerrar={() => setDespachoBsale(null)} />}
 
       {/* Header */}
       <div className="page-header" style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
@@ -2008,6 +2012,16 @@ export default function Trazabilidad() {
                                     >
                                       <Eye size={13} />
                                     </button>
+                                    {oc.numero && (
+                                      <button
+                                        type="button"
+                                        onClick={() => setDespachoBsale({ ocNumero: oc.numero, ocMonto: Number(oc.monto || 0), ocFecha: oc.fecha_oc || null, cliente: lic.nombre_entidad || "" })}
+                                        style={{ background: "none", border: "none", cursor: "pointer", color: "#c2570c", padding: 0 }}
+                                        title="Cuánto falta por despachar según las guías emitidas en Bsale"
+                                      >
+                                        <Truck size={13} />
+                                      </button>
+                                    )}
                                   </div>
                                   <div style={{ color: "var(--text-muted)", fontSize: "11px" }}>
                                     {oc.fecha_oc
@@ -2699,6 +2713,151 @@ function ModalGuiaBsale({ numero, ocNumero, cliente, onCerrar }) {
                   </tbody>
                 </table>
               </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+/* ── Modal: falta por despachar según Bsale (pedido 2026-09-04) ───────────
+   Busca en Bsale TODAS las guías electrónicas emitidas desde la fecha de la
+   OC que la referencian (incluidas las no registradas en el sistema), suma su
+   neto y muestra cuánto falta por despachar: monto OC − despachado Bsale. */
+function ModalDespachoBsale({ ocNumero, ocMonto, ocFecha, cliente, onCerrar }) {
+  const [estado, setEstado] = useState({ loading: true, data: null, error: "" });
+
+  useEffect(() => {
+    let activo = true;
+    const desde = ocFecha ? String(ocFecha).slice(0, 10) : "";
+    api.get(`/bsale/despacho?oc=${encodeURIComponent(ocNumero)}&desde=${encodeURIComponent(desde)}`)
+      .then((data) => { if (activo) setEstado({ loading: false, data, error: "" }); })
+      .catch((e) => {
+        if (!activo) return;
+        const msg = e?.response?.status === 403
+          ? "Solo administración puede consultar los documentos de Bsale."
+          : (e?.response?.data?.message || e?.message || "No se pudo consultar Bsale.");
+        setEstado({ loading: false, data: null, error: msg });
+      });
+    return () => { activo = false; };
+  }, [ocNumero, ocFecha]);
+
+  const d = estado.data;
+  const fmt$ = (v) => `$${Math.round(Number(v) || 0).toLocaleString("es-CL")}`;
+  const despachado = Number(d?.total_neto || 0);
+  const falta = Math.max(0, Number(ocMonto || 0) - despachado);
+  const completo = Number(ocMonto || 0) > 0 && falta <= 0.5;
+
+  return createPortal(
+    <div
+      onClick={(e) => { if (e.target === e.currentTarget) onCerrar(); }}
+      style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.55)", display: "grid", placeItems: "center", zIndex: 12000, padding: 16 }}
+    >
+      <div style={{ background: "var(--surface)", borderRadius: "var(--radius-lg)", border: "1px solid var(--border)", width: "min(620px, 100%)", maxHeight: "86vh", overflow: "auto", boxShadow: "var(--shadow-lg)" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, padding: "14px 18px", borderBottom: "1px solid var(--border)", position: "sticky", top: 0, background: "var(--surface)", zIndex: 1 }}>
+          <div>
+            <h3 className="surface-title" style={{ margin: 0, display: "flex", alignItems: "center", gap: 8 }}>
+              <Truck size={16} color="#c2570c" /> Despacho según Bsale · OC {ocNumero}
+            </h3>
+            <p style={{ fontSize: 12, color: "var(--text-muted)", margin: "2px 0 0" }}>
+              Guías electrónicas emitidas en Bsale que referencian esta OC{cliente ? ` · ${cliente}` : ""}
+            </p>
+          </div>
+          <button className="btn btn-ghost" style={{ padding: 6 }} onClick={onCerrar}><X size={16} /></button>
+        </div>
+
+        <div style={{ padding: "14px 18px" }}>
+          {estado.loading ? (
+            <div style={{ color: "var(--text-muted)", padding: "20px 0" }}>Buscando guías en Bsale…</div>
+          ) : estado.error ? (
+            <div style={{ color: "var(--danger)", padding: "12px 0" }}>{estado.error}</div>
+          ) : d?.disponible === false ? (
+            <div style={{ color: "var(--text-muted)", padding: "12px 0" }}>
+              La integración con Bsale no está configurada en el backend (falta el token).
+            </div>
+          ) : (
+            <>
+              {/* Resumen: OC vs despachado vs falta */}
+              <div style={{ display: "flex", gap: "20px 36px", flexWrap: "wrap", marginBottom: 14 }}>
+                {[
+                  { label: "Monto OC (neto)", valor: Number(ocMonto) > 0 ? fmt$(ocMonto) : "—", color: "var(--text)" },
+                  { label: "Despachado según Bsale", valor: fmt$(despachado), color: "#0e7490" },
+                  {
+                    label: "Falta por despachar",
+                    valor: Number(ocMonto) > 0 ? fmt$(falta) : "—",
+                    color: completo ? "#15803d" : "#b45309",
+                  },
+                ].map((s) => (
+                  <div key={s.label}>
+                    <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: ".08em", color: "var(--text-muted)", fontWeight: 700 }}>{s.label}</div>
+                    <div style={{ fontSize: 20, fontWeight: 800, color: s.color, marginTop: 3 }}>{s.valor}</div>
+                  </div>
+                ))}
+              </div>
+              {Number(ocMonto) > 0 && (
+                <div style={{ height: 8, borderRadius: 4, background: "var(--bg)", border: "1px solid var(--border)", overflow: "hidden", marginBottom: 14 }}>
+                  <div style={{
+                    height: "100%", borderRadius: 4,
+                    width: `${Math.min(100, Math.round((despachado / Number(ocMonto)) * 100))}%`,
+                    background: completo ? "#16a34a" : "linear-gradient(90deg, var(--primary), #14b8a6)",
+                  }} />
+                </div>
+              )}
+              {completo && (
+                <div style={{ fontSize: 12.5, padding: "8px 12px", borderRadius: 8, marginBottom: 12, background: "#dcfce7", color: "#15803d", border: "1px solid #bbf7d0" }}>
+                  ✓ La OC está completamente despachada según los documentos emitidos en Bsale.
+                </div>
+              )}
+
+              {(d?.guias || []).length === 0 ? (
+                <div style={{ color: "var(--text-muted)", padding: "8px 0" }}>
+                  Bsale no tiene guías electrónicas que referencien la OC {ocNumero}
+                  {d?.desde ? ` desde el ${d.desde}` : ""}. Si se despachó con guía manual, este cruce no la ve.
+                </div>
+              ) : (
+                <div style={{ border: "1px solid var(--border)", borderRadius: 8, overflowX: "auto" }}>
+                  <table className="data-table" style={{ width: "100%", fontSize: 12.5, minWidth: 420 }}>
+                    <thead>
+                      <tr>
+                        <th style={{ textAlign: "left" }}>Guía Bsale</th>
+                        <th style={{ textAlign: "left" }}>Emitida</th>
+                        <th style={{ textAlign: "right" }}>Neto</th>
+                        <th></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {d.guias.map((g, i) => (
+                        <tr key={i} style={g.anulada ? { opacity: 0.55 } : undefined}>
+                          <td style={{ fontWeight: 600 }}>
+                            N° {g.numero}{g.anulada ? " · ANULADA" : ""}
+                          </td>
+                          <td>{g.emitida || "—"}</td>
+                          <td style={{ textAlign: "right" }}>{fmt$(g.neto)}</td>
+                          <td style={{ textAlign: "right" }}>
+                            {g.url_pdf && (
+                              <a className="table-link" href={g.url_pdf} target="_blank" rel="noreferrer" style={{ fontSize: 12 }}>PDF</a>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr>
+                        <td colSpan={2} style={{ fontWeight: 700 }}>Total despachado (sin anuladas)</td>
+                        <td style={{ textAlign: "right", fontWeight: 800 }}>{fmt$(despachado)}</td>
+                        <td></td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              )}
+              <p style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 10, marginBottom: 0 }}>
+                Fuente: guías electrónicas (SII 52) emitidas en Bsale desde la fecha de la OC (con una semana de
+                margen) cuyas referencias calzan con el N° de la OC. Incluye guías aunque no estén registradas en
+                el sistema — por eso este número es el control contra el documento real.
+              </p>
             </>
           )}
         </div>

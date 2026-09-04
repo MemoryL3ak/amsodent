@@ -223,6 +223,47 @@ export class BsaleService {
     };
   }
 
+  /* Despacho según Bsale para UNA orden de compra (pedido 2026-09-04): busca
+     TODAS las guías electrónicas (SII 52) emitidas desde la fecha de la OC
+     cuyas referencias apuntan a ese N° de OC — incluidas las que nadie
+     registró en el sistema — y suma su neto. Con eso Trazabilidad muestra
+     cuánto FALTA por despachar contra el documento real. La comparación de
+     números normaliza a dígitos sin ceros iniciales ("000761-26" ≡
+     "OCS 00761-26", verificado con datos reales). */
+  async despachoPorOc(oc: string, desde?: string) {
+    if (!this.token) return { disponible: false, motivo: 'Falta BSALE_ACCESS_TOKEN en el backend.' };
+    const norm = (v: any) => String(v || '').replace(/\D/g, '').replace(/^0+/, '');
+    const ocNorm = norm(oc);
+    if (!ocNorm) throw new BadRequestException('Número de OC inválido.');
+    const desdeOk = desde && /^\d{4}-\d{2}-\d{2}$/.test(desde) ? desde : '2024-01-01';
+    const d1 = Math.floor(Date.parse(`${desdeOk}T00:00:00Z`) / 1000) - 7 * 86400; // margen: guías emitidas días antes de registrar la OC
+    const d2 = Math.floor(Date.now() / 1000) + 86400;
+    const filas = await this.paginado(
+      '/documents.json',
+      `&codesii=52&emissiondaterange=[${d1},${d2}]&expand=[references]`,
+    );
+    const guias: any[] = [];
+    let total = 0;
+    for (const doc of filas) {
+      const refsRaw = doc?.references?.items || doc?.references || [];
+      const refs = Array.isArray(refsRaw) ? refsRaw : [];
+      const calza = refs.some((r: any) => norm(r?.number) === ocNorm || norm(r?.reason) === ocNorm);
+      if (!calza) continue;
+      const anulada = Number(doc?.state) === 1;
+      const neto = Number(doc?.netAmount || 0);
+      if (!anulada) total += neto;
+      guias.push({
+        numero: doc?.number,
+        emitida: doc?.emissionDate ? new Date(Number(doc.emissionDate) * 1000).toISOString().slice(0, 10) : null,
+        neto,
+        anulada,
+        url_pdf: doc?.urlPdf || doc?.urlPublicView || null,
+      });
+    }
+    guias.sort((a, b) => String(a.emitida || '').localeCompare(String(b.emitida || '')));
+    return { disponible: true, oc: String(oc || ''), desde: desdeOk, guias, total_neto: Math.round(total) };
+  }
+
   /* Arranque no bloqueante de la sincronización: valida, dispara en segundo
      plano y responde al tiro. El avance se sigue por GET /bsale/estado
      (campo `progreso`) — así el navegador no queda colgado de un request de

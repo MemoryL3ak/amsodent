@@ -191,7 +191,10 @@ documentos desde la misma fila (con lectura automática por DamarIA), y cierre
 forzado de ciclos con saldo (exige monto, MOTIVO y archivo de respaldo;
 reversible). El ícono de paquete junto a cada guía consulta la guía
 electrónica en BSALE: lista los productos despachados (SKU, cantidad, precio)
-y cruza las referencias de la guía contra el N° de la OC de la cotización.
+y cruza las referencias de la guía contra el N° de la OC de la cotización. El
+ícono de camión junto a cada OC busca en Bsale TODAS las guías que la
+referencian (incluidas las no registradas en el sistema) y muestra el monto
+despachado y CUÁNTO FALTA POR DESPACHAR = monto OC − despachado según Bsale.
 
 ### Seguimiento de Pagos (/seguimiento-pagos)
 El semáforo de cobro: 8 KPIs clickeables (total, pagadas, en plazo, por vencer,
