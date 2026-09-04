@@ -404,12 +404,15 @@ export default function Trazabilidad() {
   const [filtroEstadoCiclo, setFiltroEstadoCiclo] = useStickyState("trazabilidad.estadoCiclo", "");
   const [openTipoCompra, setOpenTipoCompra] = useState(false);
   const [openDescargar, setOpenDescargar] = useState(false);
-  // Filtro de documentos: match EXACTO. Sin selección → cotizaciones sin ningún
-  // documento (OC/Guía/Factura). Con selección → cotizaciones cuyo conjunto de
-  // documentos coincide exactamente con los flags activos.
+  // Filtro de documentos — INCLUSIVO (cambiado a pedido 2026-09-04): cada flag
+  // marcado exige que la cotización TENGA ese documento, sin excluir a las que
+  // además tienen otros (OC+Guía marcados muestra también las que ya tienen
+  // factura). Sin flags → todas. El caso "sin ningún documento" tiene su
+  // propio chip aparte.
   const [flagOc, setFlagOc] = useStickyState("trazabilidad.flagOc", false);
   const [flagGuia, setFlagGuia] = useStickyState("trazabilidad.flagGuia", false);
   const [flagFactura, setFlagFactura] = useStickyState("trazabilidad.flagFactura", false);
+  const [flagSinDocs, setFlagSinDocs] = useStickyState("trazabilidad.flagSinDocs", false);
 
   // Ordenamiento
   const [sortCol, setSortCol] = useStickyState("trazabilidad.sortCol", "id");
@@ -677,7 +680,8 @@ export default function Trazabilidad() {
         const tieneFactBoleta = docs.some(
           (d) => d.tipo === "factura" || d.tipo === "factura_boleta" || d.tipo === "efectivo",
         );
-        if (tieneFactBoleta !== flagFactura) return false;
+        if (flagSinDocs) return !tieneFactBoleta;
+        if (flagFactura && !tieneFactBoleta) return false;
         return true;
       }
 
@@ -685,13 +689,17 @@ export default function Trazabilidad() {
       const tieneGuia = docs.some((d) => d.tipo === "guia_despacho");
       const tieneFactura = docs.some((d) => d.tipo === "factura");
 
-      if (tieneOC !== flagOc) return false;
-      if (tieneGuia !== flagGuia) return false;
-      if (tieneFactura !== flagFactura) return false;
+      // "Sin documentos": ninguno de los tres tipos del ciclo.
+      if (flagSinDocs) return !tieneOC && !tieneGuia && !tieneFactura;
+
+      // Inclusivo: cada flag marcado exige tener ese documento; tener más no excluye.
+      if (flagOc && !tieneOC) return false;
+      if (flagGuia && !tieneGuia) return false;
+      if (flagFactura && !tieneFactura) return false;
 
       return true;
     });
-  }, [data, filtroId, filtroEntidad, filtroVendedor, filtroOC, filtroFactura, filtroFechaDesde, filtroFechaHasta, filtroTipoCotizacion, filtroTipoCompra, filtroEstadoCiclo, flagOc, flagGuia, flagFactura, usuariosMap, documentosMap]);
+  }, [data, filtroId, filtroEntidad, filtroVendedor, filtroOC, filtroFactura, filtroFechaDesde, filtroFechaHasta, filtroTipoCotizacion, filtroTipoCompra, filtroEstadoCiclo, flagOc, flagGuia, flagFactura, flagSinDocs, usuariosMap, documentosMap]);
 
   /* ── Ordenamiento ──────────────────────────────────────────── */
   function toggleSort(col) {
@@ -1705,14 +1713,15 @@ export default function Trazabilidad() {
           </div>
 
           <div>
-            <label className="filter-label">Filtrar por documentos (match exacto)</label>
+            <label className="filter-label" title="Cada botón marcado exige que la cotización tenga ese documento; tener más documentos no la excluye">Filtrar por documentos (tiene al menos…)</label>
             <div style={{ display: "flex", gap: 6 }}>
               {[
-                { key: "oc", label: "OC", value: flagOc, set: setFlagOc, color: "#1d4ed8", bg: "#dbeafe" },
-                { key: "guia", label: "Guía", value: flagGuia, set: setFlagGuia, color: "#b45309", bg: "#fef3c7" },
-                { key: "factura", label: esSoloClienteParticular ? "Factura / Boleta" : "Factura", value: flagFactura, set: setFlagFactura, color: "#15803d", bg: "#dcfce7" },
+                { key: "oc", label: "OC", value: flagOc, set: (v) => { setFlagOc(v); if (v) setFlagSinDocs(false); }, color: "#1d4ed8", bg: "#dbeafe" },
+                { key: "guia", label: "Guía", value: flagGuia, set: (v) => { setFlagGuia(v); if (v) setFlagSinDocs(false); }, color: "#b45309", bg: "#fef3c7" },
+                { key: "factura", label: esSoloClienteParticular ? "Factura / Boleta" : "Factura", value: flagFactura, set: (v) => { setFlagFactura(v); if (v) setFlagSinDocs(false); }, color: "#15803d", bg: "#dcfce7" },
+                { key: "sindocs", label: "Sin docs", value: flagSinDocs, set: (v) => { setFlagSinDocs(v); if (v) { setFlagOc(false); setFlagGuia(false); setFlagFactura(false); } }, color: "#475569", bg: "#e2e8f0" },
               ]
-                .filter((b) => !esSoloClienteParticular || b.key === "factura")
+                .filter((b) => !esSoloClienteParticular || b.key === "factura" || b.key === "sindocs")
                 .map(({ label, value, set, color, bg }) => (
                 <button
                   key={label}
@@ -1747,7 +1756,7 @@ export default function Trazabilidad() {
           </div>
 
           <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "end" }}>
-            {(filtroId || filtroEntidad || filtroVendedor || filtroOC || filtroFactura || filtroFechaDesde || filtroFechaHasta || filtroTipoCotizacion || filtroTipoCompra.length > 0 || filtroEstadoCiclo || flagOc || flagGuia || flagFactura) ? (
+            {(filtroId || filtroEntidad || filtroVendedor || filtroOC || filtroFactura || filtroFechaDesde || filtroFechaHasta || filtroTipoCotizacion || filtroTipoCompra.length > 0 || filtroEstadoCiclo || flagOc || flagGuia || flagFactura || flagSinDocs) ? (
               <button
                 type="button"
                 className="btn btn-secondary btn-sm"
@@ -1766,6 +1775,7 @@ export default function Trazabilidad() {
                   setFlagOc(false);
                   setFlagGuia(false);
                   setFlagFactura(false);
+                  setFlagSinDocs(false);
                 }}
               >
                 Limpiar filtros
