@@ -1525,7 +1525,9 @@ function PantallaDeclaracion({ cliente, setToast }) {
         contadorSolicitudes={solicitudes.length}
       />
 
-      {tab === "solicitudes" ? (
+      {tab === "explorador" ? (
+        <PanelExploradorPrecios />
+      ) : tab === "solicitudes" ? (
         <PanelMisSolicitudes
           solicitudes={solicitudes}
           cotizacionesHist={cotizacionesHist}
@@ -1923,6 +1925,7 @@ function TabNavigator({ tab, onChange, contadorSolicitudes }) {
   const opciones = [
     { id: "declaracion", label: "Gestión de Stock", icono: Database },
     { id: "solicitudes", label: "Mis cotizaciones", icono: FileSpreadsheet },
+    { id: "explorador", label: "Explorador de precios", icono: Search },
   ];
   return (
     <div style={tabStyles.contenedor}>
@@ -2000,6 +2003,211 @@ const tabStyles = {
     lineHeight: 1.5,
   },
 };
+
+/* ── Explorador de precios dentales (2026-09-04) ──────────────────────────
+   Estilo Knasta/SoloTodo: el cliente busca una palabra clave y el backend
+   consulta en vivo las tiendas dentales chilenas con API pública, con
+   histórico de capturas (mínimo registrado y variación vs la captura
+   anterior). Los precios son referenciales, de sitios externos. */
+function PanelExploradorPrecios() {
+  const [q, setQ] = useState("");
+  const [cargando, setCargando] = useState(false);
+  const [error, setError] = useState("");
+  const [resultado, setResultado] = useState(null); // respuesta del backend
+  const [tiendaFiltro, setTiendaFiltro] = useState(""); // "" = todas
+
+  async function buscar(e) {
+    e?.preventDefault?.();
+    const term = q.trim();
+    if (term.length < 3) { setError("Escribe al menos 3 letras para buscar."); return; }
+    setCargando(true);
+    setError("");
+    setTiendaFiltro("");
+    try {
+      const data = await apiRequest(`/stock-clientes/explorador?q=${encodeURIComponent(term)}`);
+      setResultado(data);
+    } catch (err) {
+      setError(err?.message || "No se pudo completar la búsqueda. Intenta de nuevo.");
+      setResultado(null);
+    } finally {
+      setCargando(false);
+    }
+  }
+
+  const items = resultado?.items || [];
+  const tiendas = [...new Set(items.map((i) => i.tienda_nombre))];
+  const filtrados = tiendaFiltro ? items.filter((i) => i.tienda_nombre === tiendaFiltro) : items;
+
+  const ex = {
+    card: { background: "#fff", borderRadius: 18, border: "1px solid #e2e8f0", boxShadow: "0 2px 12px rgba(15,23,42,.05)", padding: "22px 24px" },
+    titulo: { fontSize: 17, fontWeight: 800, color: "#0f172a", margin: 0 },
+    sub: { fontSize: 12.5, color: "#64748b", margin: "4px 0 0", lineHeight: 1.5 },
+    form: { display: "flex", gap: 10, marginTop: 16, flexWrap: "wrap" },
+    input: {
+      flex: "1 1 240px", height: 44, borderRadius: 12, border: "1px solid #e2e8f0", padding: "0 14px",
+      fontSize: 14, outline: "none", background: "#f8fafc",
+    },
+    boton: {
+      height: 44, padding: "0 22px", borderRadius: 12, border: "none", cursor: "pointer",
+      background: `linear-gradient(135deg, ${TEAL}, ${TEAL_LIGHT})`, color: "#fff", fontWeight: 700, fontSize: 14,
+      display: "inline-flex", alignItems: "center", gap: 8, opacity: cargando ? 0.7 : 1,
+    },
+    chip: (activo) => ({
+      fontSize: 12, fontWeight: 700, padding: "5px 12px", borderRadius: 999, cursor: "pointer",
+      border: `1px solid ${activo ? TEAL : "#e2e8f0"}`, background: activo ? TEAL : "#fff",
+      color: activo ? "#fff" : "#475569",
+    }),
+    grilla: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(250px, 1fr))", gap: 14, marginTop: 16 },
+    prodCard: {
+      border: "1px solid #e2e8f0", borderRadius: 14, padding: 14, display: "flex", flexDirection: "column",
+      gap: 8, background: "#fff",
+    },
+    prodNombre: {
+      fontSize: 13, fontWeight: 700, color: "#0f172a", lineHeight: 1.35, minHeight: 35,
+      display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden",
+    },
+    tiendaBadge: {
+      fontSize: 10.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".04em",
+      color: TEAL, background: "#f0fdfa", border: "1px solid #ccfbf1", padding: "2px 8px",
+      borderRadius: 999, alignSelf: "flex-start",
+    },
+    precio: { fontSize: 19, fontWeight: 800, color: "#0f172a" },
+    hist: { fontSize: 11.5, color: "#64748b", lineHeight: 1.5 },
+    verLink: {
+      marginTop: "auto", display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12.5,
+      fontWeight: 700, color: TEAL, textDecoration: "none",
+    },
+  };
+
+  return (
+    <div style={ex.card}>
+      <h2 style={ex.titulo}>Explorador de precios dentales</h2>
+      <p style={ex.sub}>
+        Busca un insumo por palabra clave y compara en vivo los precios publicados por las principales
+        tiendas dentales online de Chile, con el histórico que registra el portal en cada búsqueda.
+      </p>
+
+      <form onSubmit={buscar} style={ex.form}>
+        <input
+          style={ex.input}
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Ej: resina, ionómero, guantes nitrilo, lidocaína…"
+          maxLength={60}
+        />
+        <button type="submit" style={ex.boton} disabled={cargando}>
+          <Search size={16} /> {cargando ? "Buscando…" : "Buscar"}
+        </button>
+      </form>
+
+      {cargando && (
+        <p style={{ marginTop: 18, fontSize: 13, color: "#64748b" }}>
+          Consultando {resultado?.tiendas_consultadas?.length || 7} tiendas… esto toma unos segundos.
+        </p>
+      )}
+      {error && !cargando && (
+        <p style={{ marginTop: 18, fontSize: 13, color: "#b91c1c" }}>{error}</p>
+      )}
+
+      {resultado && !cargando && (
+        <>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginTop: 18 }}>
+            <span style={{ fontSize: 12.5, color: "#475569" }}>
+              <strong>{resultado.total}</strong> resultado{resultado.total === 1 ? "" : "s"} para «{resultado.consulta}»
+            </span>
+            {tiendas.length > 1 && (
+              <>
+                <button type="button" style={ex.chip(!tiendaFiltro)} onClick={() => setTiendaFiltro("")}>Todas</button>
+                {tiendas.map((t) => (
+                  <button key={t} type="button" style={ex.chip(tiendaFiltro === t)} onClick={() => setTiendaFiltro(t)}>
+                    {t} ({items.filter((i) => i.tienda_nombre === t).length})
+                  </button>
+                ))}
+              </>
+            )}
+          </div>
+          {resultado.tiendas_sin_respuesta?.length > 0 && (
+            <p style={{ marginTop: 8, fontSize: 11.5, color: "#b45309" }}>
+              Sin respuesta en este momento: {resultado.tiendas_sin_respuesta.join(", ")}.
+            </p>
+          )}
+
+          {filtrados.length === 0 ? (
+            <p style={{ marginTop: 16, fontSize: 13, color: "#64748b" }}>
+              Ninguna tienda publicó resultados para esa búsqueda. Prueba con una palabra más general
+              (por ejemplo la marca o el tipo de insumo).
+            </p>
+          ) : (
+            <div style={ex.grilla}>
+              {filtrados.map((it) => (
+                <div key={it.url} style={ex.prodCard}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+                    <span style={ex.tiendaBadge}>{it.tienda_nombre}</span>
+                    {it.oferta && (
+                      <span style={{ fontSize: 10.5, fontWeight: 800, color: "#b91c1c", background: "#fee2e2", padding: "2px 8px", borderRadius: 999 }}>
+                        OFERTA
+                      </span>
+                    )}
+                  </div>
+                  {it.imagen ? (
+                    <img
+                      src={it.imagen}
+                      alt=""
+                      loading="lazy"
+                      style={{ width: "100%", height: 110, objectFit: "contain", background: "#f8fafc", borderRadius: 10 }}
+                    />
+                  ) : (
+                    <div style={{ width: "100%", height: 110, background: "#f8fafc", borderRadius: 10, display: "grid", placeItems: "center", color: "#cbd5e1" }}>
+                      <Search size={26} />
+                    </div>
+                  )}
+                  <div style={ex.prodNombre} title={it.nombre}>{it.nombre}</div>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+                    <span style={ex.precio}>{fmtMoneda(it.precio)}</span>
+                    {it.precio_normal && (
+                      <span style={{ fontSize: 12.5, color: "#94a3b8", textDecoration: "line-through" }}>
+                        {fmtMoneda(it.precio_normal)}
+                      </span>
+                    )}
+                  </div>
+                  <div style={ex.hist}>
+                    {it.historico ? (
+                      <>
+                        {it.historico.variacion != null && it.historico.variacion !== 0 && (
+                          <span style={{ color: it.historico.variacion > 0 ? "#b91c1c" : "#15803d", fontWeight: 700 }}>
+                            {it.historico.variacion > 0 ? "▲ subió" : "▼ bajó"} {fmtMoneda(Math.abs(it.historico.variacion))}
+                            {" "}desde el {it.historico.anterior?.fecha}
+                            <br />
+                          </span>
+                        )}
+                        Mínimo registrado: <strong>{fmtMoneda(it.historico.precio_min)}</strong>
+                        {" "}· {it.historico.capturas + 1} captura{it.historico.capturas === 0 ? "" : "s"}
+                      </>
+                    ) : (
+                      "Primera vez que el portal registra este producto."
+                    )}
+                    {!it.disponible && (
+                      <span style={{ color: "#b45309" }}><br />Sin stock en la tienda.</span>
+                    )}
+                  </div>
+                  <a href={it.url} target="_blank" rel="noopener noreferrer" style={ex.verLink}>
+                    Ver en tienda <ExternalLink size={13} />
+                  </a>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <p style={{ marginTop: 16, fontSize: 11, color: "#94a3b8", lineHeight: 1.5 }}>
+            * Precios referenciales publicados por tiendas externas al momento de la búsqueda; pueden
+            cambiar sin aviso y no constituyen una oferta de Amsodent. Para condiciones preferentes,
+            solicita tu cotización en la pestaña «Mis cotizaciones».
+          </p>
+        </>
+      )}
+    </div>
+  );
+}
 
 // Historial de cotizaciones del sistema principal a nombre del cliente (por RUT).
 // Cada fila se expande para ver los productos y descargar el PDF.

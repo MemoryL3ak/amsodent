@@ -249,7 +249,11 @@ recuperaciones de contraseña.
   cotizaciones, documentos y puede subir archivos.
 - /portal-cliente — Portal de Stock del cliente: acuerdo de confidencialidad,
   inventario propio con semáforo, y generación de solicitudes de cotización
-  que llegan al sistema.
+  que llegan al sistema. Incluye el Explorador de precios: el cliente busca un
+  insumo por palabra clave y el portal compara en vivo los precios de las
+  tiendas dentales chilenas online (Orbis, Gexa, SP Dental, Clandent, J-Dent,
+  Techdent, Denteeth), guardando un histórico por producto (mínimo registrado
+  y variación contra la captura anterior), estilo Knasta/SoloTodo.
 - /despachos — Portal de Despachos internos: estado, evidencia (fotos/PDF
   hasta 20 MB), firma de recepción dibujada y bitácora.
 - /portal-chofer — Portal del Chofer: sus viajes, cambio de estado, foto de

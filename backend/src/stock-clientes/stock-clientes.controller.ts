@@ -12,13 +12,17 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { StockClientesService } from './stock-clientes.service';
+import { ExploradorService } from './explorador.service';
 import { StockPortalGuard } from './stock-clientes.guard';
 import { AuthGuard } from '../auth/auth.guard';
 import { AdminGuard } from '../auth/admin.guard';
 
 @Controller('stock-clientes')
 export class StockClientesController {
-  constructor(private stockClientes: StockClientesService) {}
+  constructor(
+    private stockClientes: StockClientesService,
+    private explorador: ExploradorService,
+  ) {}
 
   // ============================================================
   // Público — acceso del cliente al portal
@@ -240,6 +244,15 @@ export class StockClientesController {
       q,
       limit ? Number(limit) : undefined,
     );
+  }
+
+  // Explorador de precios dentales (2026-09-04): busca la palabra clave en
+  // las tiendas dentales chilenas con API pública y devuelve precios en vivo
+  // + histórico de capturas (estilo Knasta/SoloTodo).
+  @UseGuards(StockPortalGuard)
+  @Get('explorador')
+  async explorarPrecios(@Query('q') q: string) {
+    return await this.explorador.buscar(q);
   }
 
   // ============================================================
