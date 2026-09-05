@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { APP_GUARD } from '@nestjs/core';
+import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { SupabaseModule } from './supabase/supabase.module';
 import { AuthModule } from './auth/auth.module';
 import { ClientesModule } from './clientes/clientes.module';
@@ -38,6 +40,11 @@ import { BsaleModule } from './bsale/bsale.module';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
+    // Rate limiting global (contención auditoría 2026-09-04): tope generoso
+    // para el uso normal de la app; los logins e IA llevan además límites
+    // estrictos con @Throttle en sus controladores. Usa req.ip (trust proxy
+    // está configurado en main.ts, así que es la IP real tras Railway).
+    ThrottlerModule.forRoot([{ ttl: 60_000, limit: 600 }]),
     SupabaseModule,
     AuthModule,
     ClientesModule,
@@ -73,5 +80,6 @@ import { BsaleModule } from './bsale/bsale.module';
     InventarioModule,
     BsaleModule,
   ],
+  providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
 })
 export class AppModule {}

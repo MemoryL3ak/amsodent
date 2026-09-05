@@ -69,12 +69,19 @@ async function bootstrap() {
   app.getHttpAdapter().getInstance().set('trust proxy', 1);
 
   // Whitelist por env: CORS_ORIGIN="https://amsodent.vercel.app,https://otro.com"
-  // Si no se define, en dev permite cualquier origen.
+  // FAIL-CLOSED (contención auditoría 2026-09-04): sin CORS_ORIGIN definido se
+  // bloquea todo origen cruzado — antes el fallback reflejaba cualquier origen
+  // CON credenciales, dejando el backend expuesto a CSRF si la variable
+  // faltaba en un despliegue. Las peticiones sin Origin (curl, apps móviles,
+  // health checks) no pasan por CORS y siguen funcionando.
   const corsOrigin = process.env.CORS_ORIGIN;
+  if (!corsOrigin) {
+    console.warn('[CORS] CORS_ORIGIN no está definido: se bloquea todo origen cruzado (fail-closed).');
+  }
   app.enableCors({
     origin: corsOrigin
       ? corsOrigin.split(',').map((o) => o.trim()).filter(Boolean)
-      : true,
+      : false,
     credentials: true,
   });
 

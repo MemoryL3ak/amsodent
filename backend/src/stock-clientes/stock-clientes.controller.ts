@@ -11,6 +11,7 @@ import {
   Req,
   UseGuards,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { StockClientesService } from './stock-clientes.service';
 import { ExploradorService } from './explorador.service';
 import { StockPortalGuard } from './stock-clientes.guard';
@@ -32,12 +33,14 @@ export class StockClientesController {
   // El frontend usa esto para decidir el flujo: directo al portal o acuerdo
   // + razón social primero.
   @Post('verificar-rut')
+  @Throttle({ default: { ttl: 60_000, limit: 10 } })
   async verificarRut(@Body() body: { rut: string }) {
     return await this.stockClientes.verificarRut(body?.rut);
   }
 
   // Login del cliente con RUT + contraseña.
   @Post('login')
+  @Throttle({ default: { ttl: 60_000, limit: 10 } })
   async login(
     @Req() req: any,
     @Body() body: { rut: string; password: string },
@@ -51,6 +54,7 @@ export class StockClientesController {
 
   // Solicitud de recuperación de clave (el cliente no está autenticado).
   @Post('recuperacion')
+  @Throttle({ default: { ttl: 60_000, limit: 5 } })
   async solicitarRecuperacion(@Req() req: any, @Body() body: any) {
     const ip =
       req?.headers?.['x-forwarded-for']?.toString().split(',')[0]?.trim() ||

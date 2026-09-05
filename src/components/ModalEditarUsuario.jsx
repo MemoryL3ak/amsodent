@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { supabase } from "../lib/supabase";
 import { api } from "../lib/api";
 import Avatar from "./Avatar";
 
@@ -70,14 +69,18 @@ export default function ModalEditarUsuario({ user, perfiles = [], close, onToast
     if (!nombre.trim()) { setError("El nombre es obligatorio."); return; }
 
     setSaving(true);
-    const { error: e } = await supabase
-      .from("profiles")
-      .update({ nombre: nombre.trim(), rol, permission_profile_id: perfilId || null })
-      .eq("id", user.id);
-
-    if (e) {
+    // Vía backend con AdminGuard (contención auditoría 2026-09-04): el update
+    // directo a profiles desde el navegador permitía a cualquiera cambiar
+    // roles; ahora la tabla queda cerrada por RLS y solo el backend escribe.
+    try {
+      await api.put(`/usuarios/profiles/${user.id}`, {
+        nombre: nombre.trim(),
+        rol,
+        permission_profile_id: perfilId || null,
+      });
+    } catch (e) {
       setSaving(false);
-      setError("Error al guardar los cambios.");
+      setError(e?.message || "Error al guardar los cambios.");
       console.error(e);
       return;
     }

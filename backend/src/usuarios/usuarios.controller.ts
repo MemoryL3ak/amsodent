@@ -28,12 +28,17 @@ export class UsuariosController {
     return this.usuariosService.getProfilesByIds(body.ids);
   }
 
+  // Editar y eliminar perfiles cambia roles y accesos: SOLO admin
+  // (contención auditoría 2026-09-04 — antes bastaba estar autenticado, lo que
+  // permitía a cualquier usuario asignarse rol admin).
   @Put('profiles/:id')
+  @UseGuards(AdminGuard)
   updateProfile(@Param('id') id: string, @Body() body: any) {
     return this.usuariosService.updateProfile(id, body);
   }
 
   @Delete('profiles/:id')
+  @UseGuards(AdminGuard)
   deleteProfile(@Param('id') id: string) {
     return this.usuariosService.deleteProfile(id);
   }

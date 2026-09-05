@@ -142,12 +142,13 @@ export class ChoferesService {
   }
 
   private get secret(): string {
-    return (
+    // Contención auditoría 2026-09-04: sin literal 'dev-secret' forjable.
+    const s =
       process.env.PORTAL_CHOFER_JWT_SECRET ||
       process.env.PORTAL_JWT_SECRET ||
-      process.env.SUPABASE_SERVICE_ROLE_KEY ||
-      'dev-secret-chofer'
-    );
+      process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (!s) throw new BadRequestException('El portal no está configurado (falta PORTAL_CHOFER_JWT_SECRET).');
+    return s;
   }
 
   // ── Token del portal del chofer ───────────────────────────────────────

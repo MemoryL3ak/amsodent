@@ -6,6 +6,7 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import { LicitacionesService } from './licitaciones.service';
 import { AuthGuard } from '../auth/auth.guard';
+import { AdminGuard } from '../auth/admin.guard';
 
 @Controller('licitaciones')
 @UseGuards(AuthGuard)
@@ -75,7 +76,9 @@ export class LicitacionesController {
     return this.licitacionesService.desmarcarDisponible(dispId);
   }
 
+  // Vaciar el listado completo es destructivo: solo admin (auditoría 2026-09-04).
   @Delete('disponibles/todas')
+  @UseGuards(AdminGuard)
   eliminarTodasDisponibles() {
     return this.licitacionesService.eliminarTodasDisponibles();
   }
@@ -204,7 +207,10 @@ export class LicitacionesController {
     return this.licitacionesService.update(id, body, aprobadorEmail);
   }
 
+  // Borrado duro de la cotización y sus documentos: solo admin (auditoría
+  // 2026-09-04; el botón del listado ya era solo-admin, esto lo hace real).
   @Delete(':id')
+  @UseGuards(AdminGuard)
   remove(@Param('id', ParseIntPipe) id: number) {
     return this.licitacionesService.remove(id);
   }
