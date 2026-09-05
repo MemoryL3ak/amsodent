@@ -10,6 +10,7 @@ import {
   UploadedFile,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { Throttle } from '@nestjs/throttler';
 import type { Response } from 'express';
 import { AdminGuard } from '../auth/admin.guard';
 import { AuthGuard } from '../auth/auth.guard';
@@ -24,10 +25,20 @@ export class IaController {
   // equipo autenticado: es quien digita facturas/guías a diario.
   @Post('extraer-documento')
   @UseGuards(AuthGuard)
+  @Throttle({ default: { ttl: 60_000, limit: 6 } }) // visión es lo más caro: 6/min por IP
   @UseInterceptors(FileInterceptor('file'))
   async extraerDocumento(@UploadedFile() file: Express.Multer.File) {
     if (!file?.buffer?.length) {
       throw new BadRequestException('Falta el archivo a leer.');
+    }
+    // Tope de tamaño y tipos (contención auditoría 2026-09-04): antes cualquier
+    // archivo de hasta 8 MB llegaba directo a la API de visión.
+    if (file.buffer.length > 10 * 1024 * 1024) {
+      throw new BadRequestException('El archivo supera el máximo de 10 MB.');
+    }
+    const mime = String(file.mimetype || '').toLowerCase();
+    if (!/^(application\/pdf|image\/(png|jpe?g|webp|gif))$/.test(mime)) {
+      throw new BadRequestException('Solo se aceptan PDF o imágenes (PNG/JPG/WebP).');
     }
     const datos = await this.ia.extraerDocumento(file.buffer, file.mimetype || '');
     return { ok: true, datos };
@@ -71,6 +82,7 @@ export class IaController {
   // acceso a SQL ni datos de negocio. SSE con el mismo patrón que /consultar.
   @Post('ayuda')
   @UseGuards(AuthGuard)
+  @Throttle({ default: { ttl: 60_000, limit: 15 } }) // cuota por IP: protege la API key
   async ayuda(
     @Body()
     body: {

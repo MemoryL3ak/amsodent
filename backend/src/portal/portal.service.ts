@@ -35,7 +35,13 @@ export class PortalService {
   constructor(private supabase: SupabaseService) {}
 
   private get secret(): string {
-    return process.env.PORTAL_JWT_SECRET || process.env.SUPABASE_SERVICE_ROLE_KEY || 'dev-secret';
+    // Contención auditoría 2026-09-04: sin secreto configurado NO se cae a un
+    // literal conocido (cualquiera con el repo podía forjar tokens). El
+    // fallback a la service key se mantiene por compatibilidad hasta definir
+    // PORTAL_JWT_SECRET en el entorno — hacerlo es parte del checklist.
+    const s = process.env.PORTAL_JWT_SECRET || process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (!s) throw new BadRequestException('El portal no está configurado (falta PORTAL_JWT_SECRET).');
+    return s;
   }
 
   signToken(payload: Record<string, any>): string {

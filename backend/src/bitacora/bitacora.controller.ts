@@ -11,6 +11,7 @@ import {
 } from '@nestjs/common';
 import type { Request } from 'express';
 import { AuthGuard } from '../auth/auth.guard';
+import { AdminGuard } from '../auth/admin.guard';
 import { BitacoraService } from './bitacora.service';
 
 @Controller('bitacora-cotizaciones')
@@ -56,7 +57,10 @@ export class BitacoraController {
     });
   }
 
+  // La bitácora es registro de auditoría del flujo comercial: borrar entradas
+  // es acción de admin (auditoría 2026-09-04).
   @Delete(':id')
+  @UseGuards(AdminGuard)
   eliminar(@Param('id') id: string) {
     return this.service.eliminar(id);
   }

@@ -2,6 +2,7 @@ import {
   Controller, Post, Get, Body, Req, Query, UseGuards, UseInterceptors, UploadedFile, ParseIntPipe,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { Throttle } from '@nestjs/throttler';
 import { PortalService } from './portal.service';
 import { PortalGuard } from './portal.guard';
 
@@ -9,8 +10,10 @@ import { PortalGuard } from './portal.guard';
 export class PortalController {
   constructor(private portalService: PortalService) {}
 
-  // Público — login del cliente
+  // Público — login del cliente. RUT + N° de cotización son de baja entropía:
+  // sin este freno el portal era enumerable (auditoría 2026-09-04).
   @Post('login')
+  @Throttle({ default: { ttl: 60_000, limit: 10 } })
   login(@Body() body: { rut: string; id_licitacion: string }) {
     return this.portalService.login(body?.rut, body?.id_licitacion);
   }

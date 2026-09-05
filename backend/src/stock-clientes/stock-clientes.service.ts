@@ -209,12 +209,13 @@ export class StockClientesService {
   ) {}
 
   private get secret(): string {
-    return (
+    // Contención auditoría 2026-09-04: sin literal 'dev-secret' forjable.
+    const s =
       process.env.PORTAL_STOCK_JWT_SECRET ||
       process.env.PORTAL_JWT_SECRET ||
-      process.env.SUPABASE_SERVICE_ROLE_KEY ||
-      'dev-secret-stock'
-    );
+      process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (!s) throw new BadRequestException('El portal no está configurado (falta PORTAL_STOCK_JWT_SECRET).');
+    return s;
   }
 
   // ── Token del portal de stock ─────────────────────────────────────────
@@ -311,13 +312,14 @@ export class StockClientesService {
       .maybeSingle();
     if (errPortal) throw new BadRequestException(errPortal.message);
 
+    // Contención auditoría 2026-09-04: este endpoint es público y devolvía
+    // email y teléfono del cliente — un oráculo para extraer el maestro
+    // completo iterando RUTs. Solo se entrega lo mínimo para el flujo.
     return {
       rut: rutN,
       rut_formateado: formatearRut(rutN),
       existe: !!portalCli,
       razon_social: cliente.nombre,
-      email: cliente.email || null,
-      telefono: cliente.telefono || null,
       requiere_acuerdo: !portalCli?.acepto_acuerdo_en,
     };
   }

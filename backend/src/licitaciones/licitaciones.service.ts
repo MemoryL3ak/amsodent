@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException, NotFoundException, Logger } from '@nestjs/common';
+import { Injectable, BadRequestException, ForbiddenException, NotFoundException, Logger } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
 import { MailingsService } from '../mailings/mailings.service';
 import { ChatService } from '../chat/chat.service';
@@ -1611,6 +1611,43 @@ export class LicitacionesService {
     throw new BadRequestException(error.message);
   }
 
+  // ¿Puede este correo aprobar cotizaciones? Admin, lista de aprobadores
+  // (APROBADORES_COTIZACION, espejo backend de la lista del frontend) o
+  // bypass con OC cargada (contención auditoría 2026-09-04).
+  private async puedeAprobarCotizacion(licId: number, email?: string): Promise<boolean> {
+    const client = this.supabase.getClient();
+    const e = String(email || '').trim().toLowerCase();
+    if (e) {
+      const aprobadores = (process.env.APROBADORES_COTIZACION ??
+        'benja.alarcon.z@gmail.com,diego.cruz@bvan.cl,ventas@amsodentmedical.cl')
+        .split(',')
+        .map((x) => x.trim().toLowerCase())
+        .filter(Boolean);
+      if (aprobadores.includes(e)) return true;
+      try {
+        const { data: perfil } = await client
+          .from('profiles')
+          .select('rol')
+          .ilike('email', e)
+          .maybeSingle();
+        const rol = String(perfil?.rol || '').trim().toLowerCase();
+        if (rol === 'admin' || rol === 'administrador') return true;
+      } catch { /* sigue con el bypass */ }
+    }
+    // Bypass de negocio: con una OC cargada el avance de estado no se retiene.
+    try {
+      const { data: oc } = await client
+        .from('licitacion_documentos')
+        .select('id')
+        .eq('licitacion_id', licId)
+        .eq('tipo', 'orden_compra')
+        .limit(1);
+      return (oc || []).length > 0;
+    } catch {
+      return false;
+    }
+  }
+
   async update(id: number, body: Record<string, any>, aprobadorEmail?: string) {
     const client = this.supabase.getClient();
 
@@ -1627,21 +1664,44 @@ export class LicitacionesService {
 
     // Estado previo para detectar una aprobación (Pendiente Aprobación → otro).
     let estadoPrevio: string | null = null;
+    let margenAprobadoPrevio = false;
     try {
       const { data: prev } = await client
         .from('licitaciones')
-        .select('estado')
+        .select('estado, margen_aprobado')
         .eq('id', id)
         .single();
       estadoPrevio = prev?.estado || null;
+      margenAprobadoPrevio = prev?.margen_aprobado === true;
     } catch { /* no bloquear el update */ }
+
+    /* Contención auditoría 2026-09-04 — la aprobación ahora se valida AQUÍ,
+       no solo en el frontend. Cuenta como "aprobar": poner margen_aprobado en
+       true (cuando no lo estaba) o sacar la cotización de un estado Pendiente
+       Aprobación. Pueden hacerlo: los admin, los correos de
+       APROBADORES_COTIZACION, o cualquiera si la cotización ya tiene una OC
+       cargada (bypass de negocio: el cliente ya compró). */
+    const esPendiente = (v: any) => String(v || '').startsWith('Pendiente Aprobación');
+    const intentaAprobar =
+      (body?.margen_aprobado === true && !margenAprobadoPrevio) ||
+      (esPendiente(estadoPrevio) && body?.estado !== undefined && !esPendiente(body.estado));
+    if (intentaAprobar) {
+      const autorizado = await this.puedeAprobarCotizacion(id, aprobadorEmail);
+      if (!autorizado) {
+        throw new ForbiddenException(
+          'Solo un administrador o un aprobador autorizado puede aprobar esta cotización (o debe tener una orden de compra cargada).',
+        );
+      }
+    }
 
     const ejecutar = (payload: Record<string, any>) =>
       client.from('licitaciones').update(payload).eq('id', id).select().single();
 
     // Tolerar columnas aún no migradas (motivo_descarte, comentario_descarte, etc.):
     // si la columna no existe, se quita del payload y se reintenta.
+    // Campos de identidad NUNCA editables vía API (contención auditoría).
     const payload = { ...body };
+    for (const k of ['id', 'created_at', 'creado_por', 'created_by']) delete payload[k];
     let res = await ejecutar(payload);
     let intentos = 0;
     while (res.error && intentos < 6) {
@@ -2301,16 +2361,47 @@ export class LicitacionesService {
     return { deleted: true };
   }
 
-  // Storage
-  async uploadDocFile(bucket: string, path: string, file: Buffer, contentType: string) {
+  // Storage — contención auditoría 2026-09-04: estos endpoints usan la llave
+  // de servicio (ignora RLS), así que bucket y path NO pueden venir libres del
+  // cliente. Lista blanca de los buckets que este módulo realmente usa (RRHH,
+  // despachos y viajes tienen sus propias rutas con AdminGuard) y path sin
+  // traversal. Antes, cualquier usuario autenticado podía leer, sobrescribir
+  // (upsert) o borrar CUALQUIER archivo de CUALQUIER bucket, liquidaciones de
+  // sueldo incluidas.
+  private static readonly BUCKETS_DOCUMENTOS = [
+    'factura',        // facturas, boletas, comprobantes, NC, multas, cierres
+    'orden-compra',   // OC del cliente
+    'guia-despacho',  // guías de despacho
+    'portal-cliente', // "otro" subido por el cliente desde su portal
+    'product-images', // imágenes y fichas técnicas de productos
+    'chat-adjuntos',  // adjuntos de cobranza/bitácora/chat
+  ];
+
+  private validarBucketPath(bucket: string, path: string) {
+    const b = String(bucket || '').trim();
+    if (!LicitacionesService.BUCKETS_DOCUMENTOS.includes(b)) {
+      throw new BadRequestException('Bucket no permitido desde este módulo.');
+    }
+    const p = String(path || '').trim();
+    if (!p || p.length > 512 || p.startsWith('/') || p.includes('..') || p.includes('\\')) {
+      throw new BadRequestException('Ruta de archivo inválida.');
+    }
+    return { bucket: b, path: p };
+  }
+
+  async uploadDocFile(bucketIn: string, pathIn: string, file: Buffer, contentType: string) {
+    const { bucket, path } = this.validarBucketPath(bucketIn, pathIn);
+    // upsert:false — los paths llevan timestamp+aleatorio, una colisión real no
+    // existe; permitir upsert habilitaba sobrescribir archivos ajenos.
     const { error } = await this.supabase.getClient()
       .storage.from(bucket)
-      .upload(path, file, { contentType, upsert: true });
+      .upload(path, file, { contentType, upsert: false });
     if (error) throw new BadRequestException(error.message);
     return { path };
   }
 
-  async getSignedUrl(bucket: string, path: string, expiresIn = 3600) {
+  async getSignedUrl(bucketIn: string, pathIn: string, expiresIn = 3600) {
+    const { bucket, path } = this.validarBucketPath(bucketIn, pathIn);
     const { data, error } = await this.supabase.getClient()
       .storage.from(bucket)
       .createSignedUrl(path, expiresIn);
@@ -2318,7 +2409,8 @@ export class LicitacionesService {
     return data;
   }
 
-  async removeFile(bucket: string, path: string) {
+  async removeFile(bucketIn: string, pathIn: string) {
+    const { bucket, path } = this.validarBucketPath(bucketIn, pathIn);
     const { error } = await this.supabase.getClient()
       .storage.from(bucket)
       .remove([path]);

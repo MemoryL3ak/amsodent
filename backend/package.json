@@ -27,6 +27,7 @@
     "@nestjs/config": "^4.0.3",
     "@nestjs/core": "^11.0.1",
     "@nestjs/platform-express": "^11.1.18",
+    "@nestjs/throttler": "^6.5.0",
     "@supabase/supabase-js": "^2.101.1",
     "@types/nodemailer": "^8.0.0",
     "compression": "^1.8.1",

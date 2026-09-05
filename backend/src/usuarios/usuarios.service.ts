@@ -33,9 +33,17 @@ export class UsuariosService {
   }
 
   async updateProfile(id: string, body: Record<string, any>) {
+    // Whitelist de campos (contención auditoría 2026-09-04): solo lo que la
+    // pantalla de usuarios edita. Nada de mass assignment sobre profiles.
+    const PERMITIDOS = ['nombre', 'rol', 'permission_profile_id', 'avatar_url'];
+    const patch: Record<string, any> = {};
+    for (const k of PERMITIDOS) if (body?.[k] !== undefined) patch[k] = body[k];
+    if (Object.keys(patch).length === 0) {
+      throw new BadRequestException('Nada que actualizar.');
+    }
     const { data, error } = await this.supabase.getClient()
       .from('profiles')
-      .update(body)
+      .update(patch)
       .eq('id', id)
       .select()
       .single();

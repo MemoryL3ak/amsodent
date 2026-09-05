@@ -13,6 +13,7 @@ import {
   UploadedFile,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { Throttle } from '@nestjs/throttler';
 import { ChoferesService } from './choferes.service';
 import { ChoferPortalGuard } from './choferes.guard';
 import { AdminGuard } from '../auth/admin.guard';
@@ -34,11 +35,13 @@ export class ChoferesController {
 
   // ── Portal del chofer (público / token propio) ───────────────────────
   @Post('login')
+  @Throttle({ default: { ttl: 60_000, limit: 10 } })
   async login(@Req() req: any, @Body() body: { rut: string; password: string }) {
     return this.choferes.login({ ...body, ip: ipDe(req) });
   }
 
   @Post('recuperacion')
+  @Throttle({ default: { ttl: 60_000, limit: 5 } })
   async recuperacion(@Req() req: any, @Body() body: any) {
     return this.choferes.solicitarRecuperacion({
       ...body,

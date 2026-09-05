@@ -107,7 +107,9 @@ export class ClientesController {
     return this.clientesService.update(id, body);
   }
 
+  // Eliminar un cliente completo es destructivo: solo admin (auditoría 2026-09-04).
   @Delete(':id')
+  @UseGuards(AdminGuard)
   remove(@Param('id') id: string) {
     return this.clientesService.remove(id);
   }
