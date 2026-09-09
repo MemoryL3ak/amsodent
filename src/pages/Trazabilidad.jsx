@@ -828,17 +828,21 @@ export default function Trazabilidad() {
     const rows = [...dataFiltrada];
     const dir = sortDir === "asc" ? 1 : -1;
 
-    // Primer nivel SIEMPRE: cotizaciones con factura pendiente de pago arriba
-    // (factura/factura_boleta cargada y sin el flag pagada). El orden elegido
-    // por el usuario aplica dentro de cada grupo.
-    const tienePendientePago = (licId) =>
-      (documentosMap[licId] || []).some(
-        (d) => (d.tipo === "factura" || d.tipo === "factura_boleta") && !d.pagada,
+    // Primer nivel SIEMPRE (por estado de cobro): 0 = factura emitida y aún
+    // impaga (pendiente de pago), 1 = todavía sin facturar, 2 = todo pagado.
+    // El orden elegido por el usuario aplica dentro de cada grupo.
+    const tierPago = (licId) => {
+      const facturas = (documentosMap[licId] || []).filter(
+        (d) => d.tipo === "factura" || d.tipo === "factura_boleta",
       );
+      if (facturas.some((d) => !d.pagada)) return 0;
+      if (facturas.length === 0) return 1;
+      return 2;
+    };
 
     rows.sort((a, b) => {
-      const pa = tienePendientePago(a.id) ? 0 : 1;
-      const pb = tienePendientePago(b.id) ? 0 : 1;
+      const pa = tierPago(a.id);
+      const pb = tierPago(b.id);
       if (pa !== pb) return pa - pb;
 
       let va, vb;
@@ -2166,6 +2170,19 @@ export default function Trazabilidad() {
                                   ? `Neto $${Number(factura.monto).toLocaleString("es-CL")}`
                                   : "Sin monto"}
                               </div>
+                              {/* Estado de cobro (flag de Seguimiento de Pagos) — es el
+                                  criterio del orden de la tabla: impagas primero. */}
+                              {(factura.tipo === "factura" || factura.tipo === "factura_boleta") && (
+                                <div style={{ marginTop: 2 }}>
+                                  {factura.pagada ? (
+                                    <span style={{ fontSize: "10px", fontWeight: 600, color: "#15803d" }}>✓ Pagada</span>
+                                  ) : (
+                                    <span style={{ fontSize: "10px", fontWeight: 600, color: "#b45309", background: "#fef3c7", padding: "1px 6px", borderRadius: 8 }}>
+                                      Pago pendiente
+                                    </span>
+                                  )}
+                                </div>
+                              )}
                             </div>
                           ) : (
                             <span className="badge badge-warning">Pendiente</span>
