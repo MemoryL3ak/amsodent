@@ -828,7 +828,19 @@ export default function Trazabilidad() {
     const rows = [...dataFiltrada];
     const dir = sortDir === "asc" ? 1 : -1;
 
+    // Primer nivel SIEMPRE: cotizaciones con factura pendiente de pago arriba
+    // (factura/factura_boleta cargada y sin el flag pagada). El orden elegido
+    // por el usuario aplica dentro de cada grupo.
+    const tienePendientePago = (licId) =>
+      (documentosMap[licId] || []).some(
+        (d) => (d.tipo === "factura" || d.tipo === "factura_boleta") && !d.pagada,
+      );
+
     rows.sort((a, b) => {
+      const pa = tienePendientePago(a.id) ? 0 : 1;
+      const pb = tienePendientePago(b.id) ? 0 : 1;
+      if (pa !== pb) return pa - pb;
+
       let va, vb;
       switch (sortCol) {
         case "id":
