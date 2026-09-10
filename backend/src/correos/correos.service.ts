@@ -850,6 +850,43 @@ export class CorreosService {
     return { ...res, de: cuenta.email };
   }
 
+  // (Punto 5 — 2026-09-10) Hilo Gmail completo de una gestión de cobranza:
+  // el correo enviado + todas las respuestas del cliente, estilo Gmail. El
+  // hilo vive en el buzón de quien envió el correo original; si quien
+  // consulta es otra persona del equipo, se intenta abrir con la cuenta del
+  // remitente registrado en la gestión (correo_cuentas o impersonación DWD).
+  async hiloCobranza(userId: string, threadId: string, remitente?: string) {
+    const tid = String(threadId || '').trim();
+    if (!tid) throw new BadRequestException('Falta el id del hilo.');
+
+    const propia = await this.cuentaDeUsuario(userId);
+    if (propia) {
+      try {
+        return await this.gmailApi.obtenerHilo(this.credsDe(propia), tid);
+      } catch {
+        // El hilo no está en el buzón de quien consulta: probamos abajo con
+        // la cuenta del remitente original.
+      }
+    }
+
+    const rem = String(remitente || '').trim().toLowerCase();
+    if (rem && rem !== (propia?.email || '')) {
+      const perfilId = await this.perfilIdPorEmail(rem);
+      const cuentaRem = perfilId ? await this.cuentaDeUsuario(perfilId) : null;
+      if (cuentaRem) {
+        try {
+          return await this.gmailApi.obtenerHilo(this.credsDe(cuentaRem), tid);
+        } catch {
+          // cae al error genérico de abajo
+        }
+      }
+    }
+
+    throw new BadRequestException(
+      'No se pudo abrir el hilo: el correo fue enviado desde una cuenta que no está conectada o el hilo ya no existe.',
+    );
+  }
+
   // Destinatarios disponibles para autocompletar al redactar: usuarios de la
   // plataforma + correos a los que has escrito recientemente.
   async destinatariosBuzon(userId: string) {

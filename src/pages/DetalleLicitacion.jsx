@@ -769,6 +769,9 @@ export default function EditarLicitacion() {
       contacto: contacto || "",
       email: email || "",
       telefono: telefono || "",
+      contacto2: contacto2 || "",
+      email2: email2 || "",
+      telefono2: telefono2 || "",
       condVenta: condVenta || "",
       fleteEstimado: fleteEstimado || 0,
       tipoCompra: tipoCompra || "Compra ágil",
@@ -816,6 +819,10 @@ export default function EditarLicitacion() {
   const [confirmEliminarOpen, setConfirmEliminarOpen] = useState(false);
   const [confirmEliminarDocOpen, setConfirmEliminarDocOpen] = useState(false);
   const [confirmDuplicarOpen, setConfirmDuplicarOpen] = useState(false);
+  // (Punto 1 — 2026-09-10) Timeline de la cotización.
+  const [historialOpen, setHistorialOpen] = useState(false);
+  const [historialData, setHistorialData] = useState(null);
+  const [cargandoHistorial, setCargandoHistorial] = useState(false);
   const [adjudicarPrompt, setAdjudicarPrompt] = useState(null); // { stage:"check"|"modificar", total, resolve }
   const [docAEliminar, setDocAEliminar] = useState(null);
   const [docEditando, setDocEditando] = useState(null);
@@ -958,6 +965,10 @@ export default function EditarLicitacion() {
   const [contacto, setContacto] = useState("");
   const [email, setEmail] = useState("");
   const [telefono, setTelefono] = useState("");
+  // (Punto 2 — 2026-09-10) Segundo contacto, solo cotizaciones tipo licitación.
+  const [contacto2, setContacto2] = useState("");
+  const [email2, setEmail2] = useState("");
+  const [telefono2, setTelefono2] = useState("");
   const [condVenta, setCondVenta] = useState("");
 
   // Puebla los datos de despacho con los de una sucursal. Determinista: setea
@@ -1927,6 +1938,9 @@ export default function EditarLicitacion() {
       setContacto(data.contacto || "");
       setEmail(data.email || "");
       setTelefono(data.telefono || "");
+      setContacto2(data.contacto2 || "");
+      setEmail2(data.email2 || "");
+      setTelefono2(data.telefono2 || "");
       setCondVenta(data.condVenta || "");
 
       setFleteEstimado(data.fleteEstimado || 0);
@@ -1992,6 +2006,9 @@ export default function EditarLicitacion() {
       contacto,
       email,
       telefono,
+      contacto2,
+      email2,
+      telefono2,
       condVenta,
       fleteEstimado,
       items,
@@ -2026,6 +2043,9 @@ export default function EditarLicitacion() {
     contacto,
     email,
     telefono,
+    contacto2,
+    email2,
+    telefono2,
     condVenta,
     fleteEstimado,
     items,
@@ -2060,6 +2080,9 @@ export default function EditarLicitacion() {
       contacto: contacto || "",
       email: email || "",
       telefono: telefono || "",
+      contacto2: contacto2 || "",
+      email2: email2 || "",
+      telefono2: telefono2 || "",
       condVenta: condVenta || "",
 
       fleteEstimado: Number(fleteEstimado || 0),
@@ -2137,6 +2160,9 @@ export default function EditarLicitacion() {
     contacto,
     email,
     telefono,
+    contacto2,
+    email2,
+    telefono2,
     condVenta,
     fleteEstimado,
     items,
@@ -2199,6 +2225,9 @@ export default function EditarLicitacion() {
     setContacto(lic.contacto || "");
     setEmail(lic.email || "");
     setTelefono(lic.telefono || "");
+    setContacto2(lic.contacto_2 || "");
+    setEmail2(lic.email_2 || "");
+    setTelefono2(lic.telefono_2 || "");
     setCondVenta(lic.condicion_venta || "");
     setFleteEstimado(lic.flete_estimado || 0);
 
@@ -2390,6 +2419,9 @@ export default function EditarLicitacion() {
       setContacto(lic.contacto || "");
       setEmail(lic.email || "");
       setTelefono(lic.telefono || "");
+      setContacto2(lic.contacto_2 || "");
+      setEmail2(lic.email_2 || "");
+      setTelefono2(lic.telefono_2 || "");
       setCondVenta(lic.condicion_venta || "");
       setFleteEstimado(lic.flete_estimado || 0);
 
@@ -2846,6 +2878,25 @@ export default function EditarLicitacion() {
       return;
     }
 
+    // (Punto 9 — 2026-09-10) Sin flete calculado no se genera el PDF. Un flete
+    // $0 solo pasa cuando calza con la regla de despacho gratis (compra ≥
+    // $70.000 con destino en la Región Metropolitana); en cualquier otro caso
+    // se recuerda pasar por la Calculadora de Flete.
+    const regionNormPdf = String(region || "").trim().toLowerCase();
+    const esRMPdf =
+      regionNormPdf === "rm" ||
+      regionNormPdf === "santiago" ||
+      regionNormPdf.includes("metropolitana");
+    const fleteGratisEvidente = Number(totalConIVA) >= 70000 && esRMPdf;
+    if (!(Number(fleteEstimado) > 0) && !fleteGratisEvidente) {
+      setToast({
+        type: "warning",
+        message:
+          "Falta calcular el flete: usa la Calculadora de Flete y aplica el resultado antes de generar el PDF.",
+      });
+      return;
+    }
+
     setGenerandoPDF(true);
     setToast({ type: "info", message: "Generando PDF…" });
 
@@ -2909,16 +2960,42 @@ export default function EditarLicitacion() {
 
         observaciones: (observaciones ?? "").toString(),
 
-        items: items.map((it, idx) => ({
-          n: idx + 1,
-          sku: String(it.sku || "").trim(),
-          producto: it.producto || "",
-          formato: it.formato || "",
-          cantidad: it.cantidad,
-          precio_unitario: formatear(Number(it.precio || 0) + fletePorUnidad),
-          total: formatear(it.total),
-          observacion: it.observacion || "",
-        })),
+        items: (() => {
+          // (Punto 10 — 2026-09-10) Cliente particular: el flete va como ítem
+          // aparte en el PDF (precios SIN el flete diluido). Entidad pública
+          // mantiene el prorrateo en cada precio.
+          const fleteTotalPdf = redondear(fletePorUnidad * cantidadProductos);
+          const separarFlete = esParticularPdf && fleteTotalPdf > 0;
+          const filas = items.map((it, idx) => {
+            const cantidad = Math.max(1, Number(it.cantidad || 1));
+            const precioPdf = separarFlete
+              ? Number(it.precio || 0)
+              : Number(it.precio || 0) + fletePorUnidad;
+            return {
+              n: idx + 1,
+              sku: String(it.sku || "").trim(),
+              producto: it.producto || "",
+              formato: it.formato || "",
+              cantidad: it.cantidad,
+              precio_unitario: formatear(precioPdf),
+              total: formatear(separarFlete ? redondear(cantidad * precioPdf) : it.total),
+              observacion: it.observacion || "",
+            };
+          });
+          if (separarFlete) {
+            filas.push({
+              n: filas.length + 1,
+              sku: "",
+              producto: "Despacho / Flete",
+              formato: "",
+              cantidad: 1,
+              precio_unitario: formatear(fleteTotalPdf),
+              total: formatear(fleteTotalPdf),
+              observacion: "",
+            });
+          }
+          return filas;
+        })(),
 
         afecto: formatear(totalNeto),
         iva: formatear(totalIVA),
@@ -3107,6 +3184,11 @@ export default function EditarLicitacion() {
           contacto,
           email,
           telefono,
+          // Segundo contacto (solo con datos, para no romper si la migración
+          // 20260910_licitaciones_contacto2 aún no está aplicada).
+          ...(contacto2 || email2 || telefono2
+            ? { contacto_2: contacto2 || null, email_2: email2 || null, telefono_2: telefono2 || null }
+            : {}),
           condicion_venta: condVenta,
 
           estado: estadoFinal,
@@ -3386,6 +3468,26 @@ export default function EditarLicitacion() {
             className="btn btn-secondary"
           >
             Duplicar
+          </button>
+          <button
+            type="button"
+            onClick={async () => {
+              setHistorialOpen(true);
+              setCargandoHistorial(true);
+              try {
+                const data = await api.get(`/licitaciones/${id}/historial`);
+                setHistorialData(data);
+              } catch (e) {
+                console.error(e);
+                setHistorialData({ eventos: [], error: true });
+              } finally {
+                setCargandoHistorial(false);
+              }
+            }}
+            className="btn btn-secondary"
+            title="Línea de tiempo con todo lo ocurrido en esta cotización"
+          >
+            🕐 Historial
           </button>
           {puedeAprobar && estado === "Pendiente Aprobación" && (
             <button
@@ -3946,6 +4048,46 @@ export default function EditarLicitacion() {
               disabled={!esEditable}
             />
           </div>
+
+          {/* (Punto 2) Segundo contacto — solo licitaciones (entidad pública) */}
+          {!esCotizacionParticular && (
+            <>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Nombre (contacto 2)
+                </label>
+                <input
+                  className={inputClass}
+                  value={contacto2}
+                  onChange={(e) => setContacto2(e.target.value)}
+                  disabled={!esEditable}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Correo (contacto 2)
+                </label>
+                <input
+                  type="email"
+                  className={inputClass}
+                  value={email2}
+                  onChange={(e) => setEmail2(e.target.value)}
+                  disabled={!esEditable}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Teléfono (contacto 2)
+                </label>
+                <input
+                  className={inputClass}
+                  value={telefono2}
+                  onChange={(e) => setTelefono2(e.target.value)}
+                  disabled={!esEditable}
+                />
+              </div>
+            </>
+          )}
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -5222,6 +5364,16 @@ export default function EditarLicitacion() {
         }}
       />
 
+      {historialOpen && (
+        <ModalHistorialCotizacion
+          cargando={cargandoHistorial}
+          data={historialData}
+          codigo={idLicitacionInput || String(id)}
+          entidad={nombreEntidad}
+          onClose={() => setHistorialOpen(false)}
+        />
+      )}
+
       <ConfirmModal
         open={confirmEliminarDocOpen}
         title="Eliminar documento"
@@ -5670,6 +5822,117 @@ function CompartirPortalModal({ rut, idLicitacion, onClose, onToast }) {
           <button type="button" onClick={onClose} className="btn btn-primary">
             Listo
           </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ============================================================
+   (Punto 1 — 2026-09-10) Timeline de la cotización
+   Línea de tiempo vertical con todos los hitos que el sistema tiene
+   registrados para esta cotización (endpoint /licitaciones/:id/historial).
+============================================================ */
+const HISTORIAL_ESTILOS = {
+  creacion:     { color: "#6366f1", icono: "✦", label: "Creación" },
+  adjudicacion: { color: "#16a34a", icono: "★", label: "Adjudicación" },
+  documento:    { color: "#0ea5e9", icono: "▤", label: "Documento" },
+  despacho:     { color: "#c2570c", icono: "⛟", label: "Despacho" },
+  pago:         { color: "#15803d", icono: "$", label: "Pago" },
+  cobranza:     { color: "#b45309", icono: "☎", label: "Cobranza" },
+  actividad:    { color: "#7c3aed", icono: "✎", label: "Actividad" },
+  cierre:       { color: "#dc2626", icono: "■", label: "Cierre" },
+};
+
+function ModalHistorialCotizacion({ cargando, data, codigo, entidad, onClose }) {
+  const eventos = Array.isArray(data?.eventos) ? data.eventos : [];
+
+  const fmtFechaHora = (iso) => {
+    const s = String(iso || "");
+    if (!s) return "—";
+    const fecha = s.slice(0, 10);
+    const hora = s.length > 10 ? s.slice(11, 16) : "";
+    const [y, m, d] = fecha.split("-");
+    if (!y || !m || !d) return s;
+    return `${d}-${m}-${y}${hora && hora !== "00:00" ? ` · ${hora}` : ""}`;
+  };
+
+  return (
+    <div
+      style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,.55)", zIndex: 90, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div style={{ background: "var(--surface, #fff)", borderRadius: 14, width: "min(700px, 96vw)", maxHeight: "86vh", display: "flex", flexDirection: "column", boxShadow: "0 24px 60px rgba(15,23,42,.35)" }}>
+        <div style={{ padding: "14px 20px", borderBottom: "1px solid var(--border, #e2e8f0)", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+          <div>
+            <div style={{ fontSize: 16, fontWeight: 700, color: "var(--text)" }}>
+              Historial de la cotización {codigo}
+            </div>
+            <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 2 }}>
+              {entidad || ""} · {eventos.length} hito{eventos.length === 1 ? "" : "s"} registrados
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            style={{ background: "none", border: "none", cursor: "pointer", fontSize: 22, lineHeight: 1, color: "var(--text-muted)" }}
+          >
+            ×
+          </button>
+        </div>
+
+        <div style={{ padding: "6px 20px 4px", display: "flex", gap: 10, flexWrap: "wrap", borderBottom: "1px solid var(--border, #eef2f7)" }}>
+          {Object.entries(HISTORIAL_ESTILOS).map(([k, v]) => (
+            <span key={k} style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 10.5, color: "var(--text-muted)", padding: "3px 0" }}>
+              <span style={{ width: 8, height: 8, borderRadius: 4, background: v.color, display: "inline-block" }} />
+              {v.label}
+            </span>
+          ))}
+        </div>
+
+        <div style={{ overflowY: "auto", padding: "16px 24px 20px" }}>
+          {cargando ? (
+            <div style={{ color: "var(--text-muted)", fontSize: 13, padding: "20px 0" }}>Cargando historial…</div>
+          ) : data?.error ? (
+            <div style={{ color: "var(--danger, #dc2626)", fontSize: 13, padding: "20px 0" }}>No se pudo cargar el historial.</div>
+          ) : eventos.length === 0 ? (
+            <div style={{ color: "var(--text-muted)", fontSize: 13, padding: "20px 0" }}>Sin hitos registrados todavía.</div>
+          ) : (
+            <div style={{ position: "relative", paddingLeft: 26 }}>
+              {/* riel vertical */}
+              <div style={{ position: "absolute", left: 9, top: 6, bottom: 6, width: 2, background: "linear-gradient(180deg,#e0e7ff,#e2e8f0)", borderRadius: 2 }} />
+              {eventos.map((ev, i) => {
+                const est = HISTORIAL_ESTILOS[ev.categoria] || HISTORIAL_ESTILOS.documento;
+                return (
+                  <div key={i} style={{ position: "relative", paddingBottom: i === eventos.length - 1 ? 0 : 18 }}>
+                    <span
+                      style={{
+                        position: "absolute", left: -26, top: 1, width: 20, height: 20, borderRadius: 10,
+                        background: "#fff", border: `2px solid ${est.color}`, color: est.color,
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                        fontSize: 10, fontWeight: 700, boxShadow: "0 1px 3px rgba(15,23,42,.15)",
+                      }}
+                    >
+                      {est.icono}
+                    </span>
+                    <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: "var(--text)" }}>{ev.titulo}</span>
+                      <span style={{ fontSize: 11, fontWeight: 600, color: est.color, background: `${est.color}14`, padding: "1px 8px", borderRadius: 9 }}>
+                        {fmtFechaHora(ev.fecha)}
+                      </span>
+                    </div>
+                    {ev.detalle && (
+                      <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 2 }}>{ev.detalle}</div>
+                    )}
+                    {ev.persona && (
+                      <div style={{ fontSize: 11.5, color: "#475569", marginTop: 2 }}>
+                        <span style={{ opacity: 0.7 }}>Responsable:</span> {ev.persona}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       </div>
     </div>

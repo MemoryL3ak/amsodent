@@ -208,7 +208,7 @@ export class GmailApiService {
   async enviarComo(
     creds: GmailCreds | string,
     opts: EnviarComoOpts,
-  ): Promise<{ enviado: boolean; messageId?: string }> {
+  ): Promise<{ enviado: boolean; messageId?: string; threadId?: string }> {
     const gmail = this.clienteGmail(creds);
     const raw = await this.construirRaw(opts);
     const res = await gmail.users.messages.send({
@@ -218,7 +218,13 @@ export class GmailApiService {
     this.logger.log(
       `Correo enviado vía Gmail API como ${opts.remitente} → ${opts.para} (${res.data?.id || 'ok'}).`,
     );
-    return { enviado: true, messageId: res.data?.id || undefined };
+    // threadId: permite reconstruir después el hilo completo (enviado +
+    // respuestas del cliente) para el historial de cobranza.
+    return {
+      enviado: true,
+      messageId: res.data?.id || undefined,
+      threadId: res.data?.threadId || undefined,
+    };
   }
 
   private construirRaw(opts: EnviarComoOpts): Promise<string> {
@@ -356,6 +362,53 @@ export class GmailApiService {
       adjuntos,
       leido: !(data.labelIds || []).includes('UNREAD'),
     };
+  }
+
+  // ── Hilos (conversaciones estilo Gmail) ──────────────────────────────
+  // Devuelve TODOS los mensajes de un hilo (los enviados por nosotros Y las
+  // respuestas recibidas del cliente) en orden cronológico, con su cuerpo
+  // renderizable. Lo usa el historial de gestiones de cobranza
+  // (punto 5 — 2026-09-10).
+  async obtenerHilo(creds: GmailCreds | string, threadId: string) {
+    const gmail = this.clienteGmail(creds);
+    const r = await gmail.users.threads.get({
+      userId: 'me',
+      id: threadId,
+      format: 'full',
+    });
+    const mensajes = (r.data.messages || []).map((data: any) => {
+      const headers = (data.payload?.headers || []) as Array<{ name: string; value: string }>;
+      const h = (n: string) =>
+        headers.find((x) => x.name?.toLowerCase() === n.toLowerCase())?.value || '';
+      const html = buscarParte(data.payload, 'text/html');
+      const texto = buscarParte(data.payload, 'text/plain');
+      const cuerpoHtml = html
+        ? decodificar(html)
+        : texto
+          ? `<pre style="white-space:pre-wrap;font-family:inherit;">${escapeHtml(decodificar(texto))}</pre>`
+          : '';
+      const dir = parseDireccion(h('From'));
+      return {
+        id: data.id,
+        threadId: data.threadId,
+        de: dir.email,
+        deNombre: dir.nombre,
+        para: h('To'),
+        cc: h('Cc'),
+        asunto: h('Subject'),
+        fecha: aIso(data.internalDate, h('Date')),
+        snippet: data.snippet || '',
+        cuerpoHtml,
+        adjuntos: recolectarAdjuntos(data.payload).map((a) => ({
+          attachmentId: a.attachmentId,
+          filename: a.filename,
+          mimeType: a.mimeType,
+          size: a.size,
+        })),
+      };
+    });
+    mensajes.sort((a, b) => String(a.fecha || '').localeCompare(String(b.fecha || '')));
+    return { id: r.data.id, mensajes };
   }
 
   async marcarLeido(creds: GmailCreds | string, id: string): Promise<void> {

@@ -425,6 +425,36 @@ girasol 🌻). Hoy ayuda en:
 - MORA: cliente con facturas vencidas queda bloqueado para nuevas cotizaciones.
 - SLA DESPACHO: 3 días hábiles desde la OC (feriados chilenos).
 - LISTAS DE PRECIO: Lista 3 = Lista 2 × 1,08 (automática).
+- FLETE GRATIS: única regla — compra ≥ $70.000 (bruto) con destino en la
+  Región Metropolitana (cualquier tipo de cotización y courier). En cualquier
+  otro caso el flete se calcula con la Calculadora de Flete.
+- FLETE OBLIGATORIO PARA EL PDF: no se puede generar el PDF de una cotización
+  sin haber calculado y aplicado el flete (aunque el resultado sea $0). El
+  sistema recuerda con un aviso pasar por la Calculadora de Flete.
+- PDF CLIENTE PARTICULAR: el flete aparece como un ítem aparte ("Despacho /
+  Flete") con los precios de los productos sin el flete diluido. En entidad
+  pública el flete sigue prorrateado dentro del precio de cada producto.
+- PRODUCTOS SIN PESO: al crear una cotización, los ítems cuyo producto no
+  tiene peso registrado se destacan en color violeta con el aviso "Producto
+  sin peso registrado".
+- MEDIDAS Y PESO DE PRODUCTOS: solo se pueden editar en productos
+  TRANSITORIOS (y en Pendiente Aprobación); en los Activos vienen del maestro
+  y quedan de solo lectura.
+- HISTORIAL DE LA COTIZACIÓN: en el detalle de cada cotización, el botón
+  "Historial" abre una línea de tiempo con todos los hitos (creación,
+  adjudicación, documentos, pagos, actividades y gestiones de cobranza).
+- SEGUNDO CONTACTO: las cotizaciones tipo licitación (entidad pública) tienen
+  campos adicionales Nombre/Correo/Teléfono (contacto 2).
+- FILTRO RUT: el listado de cotizaciones permite filtrar por RUT del cliente
+  (sin importar el formato de puntos y guion).
+- BANCO DEL PAGO: al registrar un pago en Seguimiento de Pagos (todas las
+  formas salvo efectivo) se elige el banco receptor: Itaú o Santander.
+- COBRANZA ESTILO GMAIL: en Cobranza → Historial de gestiones, cada correo
+  enviado guarda su hilo de Gmail; "Ver conversación completa" muestra el
+  correo enviado y TODAS las respuestas del cliente en la misma vista.
+- CARRITO DEL PORTAL: en el Explorador de Precios del portal cliente, el botón
+  "Agregar" junta productos en "Mi pedido"; al enviarlo llega al equipo como
+  solicitud (campana + correo) con precio y tienda de referencia por producto.
 - Si un módulo muestra "Falta aplicar la migración X": el admin debe ejecutar
   ese archivo SQL en Supabase (carpeta supabase/migrations).
 `;

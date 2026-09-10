@@ -191,6 +191,14 @@ export class LicitacionesController {
     return this.licitacionesService.getHijas(id);
   }
 
+  // Timeline de la cotización: compone en un solo listado todos los hitos
+  // registrados (creación, adjudicación, documentos, pagos, actividades de
+  // bitácora y gestiones de cobranza).
+  @Get(':id/historial')
+  getHistorial(@Param('id', ParseIntPipe) id: number) {
+    return this.licitacionesService.getHistorial(id);
+  }
+
   @Get(':id')
   findOne(@Param('id', ParseIntPipe) id: number) {
     return this.licitacionesService.findOne(id);

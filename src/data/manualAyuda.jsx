@@ -126,7 +126,7 @@ export const GRUPOS_MANUAL = [
           "Todas las cotizaciones de la empresa con sus estados, filtros y acciones. Cada fila abre el Detalle, donde vive el ciclo documental completo.",
         ],
         funciones: [
-          "Filtrar por código, cliente, vendedor, estado, tipo de compra y fechas.",
+          "Filtrar por código, cliente, RUT (sin importar puntos ni guion), vendedor, estado, tipo de compra, fechas y con/sin OC o guía de despacho.",
           "Aprobar cotizaciones en \"Pendiente Aprobación\" (margen general bajo 20%) — admin y jefaturas.",
           "Acceso directo al PDF de la cotización y al Detalle.",
         ],
@@ -160,11 +160,14 @@ export const GRUPOS_MANUAL = [
           "Datos de negocio: tipo de cliente (Entidad Pública / Cliente Particular), tipo de compra, condición de venta (Contado / 30 días), lista de precios 1, 2 o 3.",
           "Ítems por SKU con buscador y modal de productos; los precios de campaña vigente se aplican solos.",
           "Margen por línea visible para todos; el costo del ítem queda congelado y es el que usarán los paneles y comisiones para siempre.",
-          "Flete estimado con calculadora por courier (peso/volumen de los productos).",
+          "Flete estimado con calculadora por courier (peso/volumen de los productos). Regla de flete GRATIS: compra ≥ $70.000 (bruto) con destino en la Región Metropolitana.",
           "Cotización hija: si hay productos equivalentes, el sistema ofrece crear la variante (jerarquía madre/hija).",
+          "Segundo contacto en licitaciones (entidad pública): Nombre, Correo y Teléfono adicionales al contacto principal.",
+          "Los ítems cuyo producto no tiene peso registrado se destacan en violeta con el aviso «Producto sin peso registrado».",
         ],
         tips: [
           "Si el margen general es menor a 20%, la cotización queda \"Pendiente Aprobación\" y no genera PDF hasta que la apruebe una jefatura.",
+          "Sin flete calculado no se genera la cotización ni su PDF: usa la calculadora y aplica el resultado, aunque sea $0.",
           "Un cliente con facturas en mora queda bloqueado: el sistema no deja guardar cotizaciones nuevas para él.",
         ],
       },
@@ -183,7 +186,8 @@ export const GRUPOS_MANUAL = [
           "Cambiar estado: Adjudicada (confirma el monto y bloquea la edición), Perdida (con motivo), Desierta, Descartada o Cancelada.",
           "Subir documentos: orden_compra (número, monto neto, fecha, PDF) → guia_despacho (empresa, N° de seguimiento) → factura o factura_boleta → comprobante de pago / webpay / efectivo / nota de crédito.",
           "Compartir el Portal del Cliente (entra con RUT + N° de cotización).",
-          "Exportar el PDF de la cotización con el formato de marca.",
+          "Exportar el PDF de la cotización con el formato de marca. En cliente particular el flete aparece como ítem aparte («Despacho / Flete»); requiere el flete calculado.",
+          "Botón «Historial»: línea de tiempo con todos los hitos de la cotización — creación, adjudicación, cada documento, pagos, actividades de bitácora y gestiones de cobranza, con fecha y responsable.",
         ],
         tips: [
           "La guía de despacho siempre deriva de una OC — el sistema lo exige.",
@@ -358,7 +362,7 @@ export const GRUPOS_MANUAL = [
         ],
         funciones: [
           "8 KPIs clickeables que abren el detalle de sus filas: total, pagadas, en plazo, por vencer, vencidas, factoring, notas de crédito y cierre forzado.",
-          "Registrar pago: se digita el monto BRUTO y el sistema guarda el neto; quedan la forma de pago (incluye factoring) y los días de atraso.",
+          "Registrar pago: se digita el monto BRUTO y el sistema guarda el neto; quedan la forma de pago (incluye factoring), el banco receptor (Itaú o Santander — no aplica a efectivo) y los días de atraso. El cambio se refleja al instante, sin recargar la página.",
           "Notas de crédito: restan del saldo de la factura.",
           "Botón \"Correo cobro\": genera el borrador con N° de OC, guías, factura y despacho (empresa + seguimiento) para copiar o abrir en tu correo — la plataforma nunca lo envía sola.",
           "Calendario de cobranza automático (08:00, en días HÁBILES respecto del vencimiento): 3 días antes → correo; al vencer → correo; +5 → correo; +7 → llamada; +10 → correo; +15 → visita. Cada hito alerta en la campana a los jefe_ventas_especial y agenda la gestión como actividad pendiente en su Bitácora — el correo siempre lo envía la persona.",
@@ -388,6 +392,8 @@ export const GRUPOS_MANUAL = [
         funciones: [
           "Cada factura vencida avanza por los estados de gestión con sus observaciones.",
           "Se alimenta sola desde Seguimiento de Pagos.",
+          "Historial de gestiones estilo Gmail: cada correo de cobranza guarda su hilo, y «Ver conversación completa» muestra en la misma vista el correo enviado y TODAS las respuestas del cliente (con adjuntos), como en Gmail.",
+          "El campo «Para» del correo de cobranza se precarga con el email del cliente registrado en la cotización.",
         ],
       },
       {
@@ -498,6 +504,7 @@ export const GRUPOS_MANUAL = [
           "/portal — el cliente entra con RUT + N° de cotización: ve sus cotizaciones, documentos y sube archivos.",
           "/portal-cliente — stock consignado del cliente con semáforo, y generación de solicitudes de cotización que llegan al sistema.",
           "/portal-cliente incluye además el Explorador de precios: el cliente busca un insumo por palabra clave y compara en vivo los precios de las tiendas dentales chilenas online, con histórico (mínimo registrado y variación) que el portal va guardando en cada búsqueda.",
+          "Carrito de pedido del explorador: con el botón «Agregar» el cliente junta productos en «Mi pedido» (cantidades, total referencial, nota) y al enviarlo llega al equipo como solicitud —campana y correo— con la tienda y el precio de referencia de cada producto.",
           "/despachos — despachos internos: cambio de estado con nota, evidencia (fotos/PDF hasta 20 MB) y firma de recepción dibujada.",
           "/portal-chofer — los viajes del chofer, con evidencia y ubicación en vivo.",
           "/evento y /sorteo — formularios públicos de inscripción.",

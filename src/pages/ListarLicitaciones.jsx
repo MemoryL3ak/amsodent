@@ -25,6 +25,7 @@ export default function ListarLicitaciones() {
   const [filtroNumeroCot,    setFiltroNumeroCot]    = useStickyState("cotizaciones.numeroCot", "");
   const [filtroMontoMin,     setFiltroMontoMin]     = useStickyState("cotizaciones.montoMin", "");
   const [filtroComuna,       setFiltroComuna]       = useStickyState("cotizaciones.comuna", "");
+  const [filtroRut,          setFiltroRut]          = useStickyState("cotizaciones.rut", "");
   const [filtroCreadores,    setFiltroCreadores]    = useStickyState("cotizaciones.creadores", []);
   const [filtroEstado,       setFiltroEstado]       = useStickyState("cotizaciones.estado", []);
   const [filtroTipoCompra,   setFiltroTipoCompra]   = useStickyState("cotizaciones.tipoCompra", []);
@@ -67,7 +68,7 @@ export default function ListarLicitaciones() {
       // Solo los campos que usa el listado: evita traer columnas pesadas
       // (ítems de la cotización, etc.) que disparan el tamaño del payload.
       const licitaciones = await api.get(
-        "/licitaciones/with-fields?fields=id,id_licitacion,fecha,comuna,total_con_iva,tipo_compra,estado,creado_por"
+        "/licitaciones/with-fields?fields=id,id_licitacion,fecha,comuna,rut_entidad,total_con_iva,tipo_compra,estado,creado_por"
       );
 
       let rows = licitaciones || [];
@@ -198,6 +199,9 @@ export default function ListarLicitaciones() {
 
     const fechaAdj = l.fecha_adjudicacion || "";
     const tipoCompraRow = (l.tipo_compra || "").toString().trim();
+    // RUT: se compara sin puntos, guion ni espacios para que dé igual el formato.
+    const rutRow = (l.rut_entidad || "").toString().replace(/[.\-\s]/g, "").toLowerCase();
+    const rutBuscado = filtroRut.replace(/[.\-\s]/g, "").toLowerCase();
 
     return (
       (filtroFechaDesde   ? fecha >= filtroFechaDesde   : true) &&
@@ -208,6 +212,7 @@ export default function ListarLicitaciones() {
       (filtroNumeroCot    ? numeroCot.includes(filtroNumeroCot.trim()) : true) &&
       (montoMin != null ? montoTotal >= montoMin : true) &&
       (filtroComuna       ? comuna.includes(filtroComuna.trim().toLowerCase())      : true) &&
+      (rutBuscado         ? rutRow.includes(rutBuscado)                             : true) &&
       (filtroCreadores.length > 0 ? filtroCreadores.includes(email)   : true) &&
       (filtroEstado.length   > 0 ? filtroEstado.includes(l.estado)    : true) &&
       (filtroTipoCompra.length > 0 ? filtroTipoCompra.includes(tipoCompraRow) : true) &&
@@ -434,6 +439,12 @@ export default function ListarLicitaciones() {
           <label className="filter-label">Comuna</label>
           <input type="text" className="input" placeholder="Buscar comuna…"
             value={filtroComuna} onChange={(e) => setFiltroComuna(e.target.value)} />
+        </div>
+
+        <div className="filter-field">
+          <label className="filter-label">RUT</label>
+          <input type="text" className="input" placeholder="Buscar RUT…"
+            value={filtroRut} onChange={(e) => setFiltroRut(e.target.value)} />
         </div>
 
         {/* Creado por */}

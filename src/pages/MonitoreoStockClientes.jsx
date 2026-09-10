@@ -1305,7 +1305,24 @@ function DetalleDeclaracion({ declaracion, onCerrar, setToast }) {
                               <tbody>
                                 {itemsSol.map((it, idx) => (
                                   <tr key={idx}>
-                                    <td style={styles.td}>{it.nombre}</td>
+                                    <td style={styles.td}>
+                                      {it.nombre}
+                                      {/* (Punto 14) Referencia del carrito del Explorador de Precios */}
+                                      {(it.tienda || it.precio_referencia || it.url) && (
+                                        <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>
+                                          {it.tienda ? `Ref. ${it.tienda}` : "Ref. explorador"}
+                                          {it.precio_referencia ? ` · $${Number(it.precio_referencia).toLocaleString("es-CL")}` : ""}
+                                          {it.url ? (
+                                            <>
+                                              {" · "}
+                                              <a href={it.url} target="_blank" rel="noopener noreferrer" style={{ color: "#0f766e" }}>
+                                                ver producto
+                                              </a>
+                                            </>
+                                          ) : null}
+                                        </div>
+                                      )}
+                                    </td>
                                     <td
                                       style={{
                                         ...styles.td,

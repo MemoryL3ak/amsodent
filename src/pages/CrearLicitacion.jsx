@@ -776,6 +776,11 @@ export default function CrearLicitacion() {
   const [contacto, setContacto] = useState("");
   const [email, setEmail] = useState("");
   const [telefono, setTelefono] = useState("");
+  // (Punto 2 — 2026-09-10) Segundo contacto, solo cotizaciones tipo licitación
+  // (entidad pública). Requiere la migración 20260910_licitaciones_contacto2.
+  const [contacto2, setContacto2] = useState("");
+  const [email2, setEmail2] = useState("");
+  const [telefono2, setTelefono2] = useState("");
   const [condVenta, setCondVenta] = useState("30 días");
 
   const esParticular = tipoCliente.toLowerCase() === "cliente particular";
@@ -797,6 +802,10 @@ export default function CrearLicitacion() {
   }, [esParticular, puedeEditarCondVenta, condVenta]);
 
   const [fleteEstimado, setFleteEstimado] = useState(0);
+  // (Punto 9 — 2026-09-10) true cuando el flete se fijó con la calculadora
+  // (o a mano por un admin). Sin esto no se deja generar la cotización/PDF:
+  // un flete $0 legítimo (regla gratis) también marca el flag.
+  const [fleteCalculado, setFleteCalculado] = useState(false);
   const [tipoCompra, setTipoCompra] = useState("Compra ágil");
   const [region, setRegion] = useState("");
   const [comuna, setComuna] = useState("");
@@ -1072,9 +1081,13 @@ export default function CrearLicitacion() {
       setContacto(data.contacto || "");
       setEmail(data.email || "");
       setTelefono(data.telefono || "");
+      setContacto2(data.contacto2 || "");
+      setEmail2(data.email2 || "");
+      setTelefono2(data.telefono2 || "");
       setCondVenta(data.condVenta || "");
 
       setFleteEstimado(data.fleteEstimado || 0);
+      setFleteCalculado(Boolean(data.fleteCalculado) || Number(data.fleteEstimado) > 0);
       setTipoCompra(data.tipoCompra || "Compra ágil");
       setRegion(data.region || "");
       setComuna(data.comuna || "");
@@ -1119,8 +1132,12 @@ export default function CrearLicitacion() {
       contacto,
       email,
       telefono,
+      contacto2,
+      email2,
+      telefono2,
       condVenta,
       fleteEstimado,
+      fleteCalculado,
       tipoCompra,
       region,
       comuna,
@@ -1161,8 +1178,12 @@ export default function CrearLicitacion() {
     contacto,
     email,
     telefono,
+    contacto2,
+    email2,
+    telefono2,
     condVenta,
     fleteEstimado,
+    fleteCalculado,
     tipoCompra,
     region,
     comuna,
@@ -1188,6 +1209,38 @@ export default function CrearLicitacion() {
       setProductos(data || []);
     }
     cargar();
+  }, []);
+
+  // (Punto 11 — 2026-09-10) Si se valida/edita el costo de un producto (p.ej.
+  // un transitorio abierto en otra pestaña desde el popup de validación), al
+  // volver a esta pestaña se refresca SU ficha desde el catálogo: costo
+  // (margen), peso y datos del producto se actualizan SOLO en la cotización
+  // en curso — las cotizaciones ya guardadas no se tocan.
+  const itemsRefrescoRef = useRef(items);
+  useEffect(() => {
+    itemsRefrescoRef.current = items;
+  }, [items]);
+  useEffect(() => {
+    async function refrescarProductosUsados() {
+      const usados = itemsRefrescoRef.current || [];
+      const skus = Array.from(
+        new Set(usados.map((it) => String(it?.sku || "").trim()).filter(Boolean)),
+      );
+      if (!skus.length) return;
+      try {
+        const { data } = await supabase
+          .from("productos")
+          .select("id, sku, nombre, marca, categoria, formato, costo, lista1, lista2, lista3, equivalente_1, equivalente_2, equivalente_3, peso, metro_cubico, estado, created_at, link_referencia")
+          .in("sku", skus);
+        if (!data?.length) return;
+        const porId = new Map(data.map((p) => [p.id, p]));
+        setProductos((prev) => prev.map((p) => (porId.has(p.id) ? { ...p, ...porId.get(p.id) } : p)));
+      } catch {
+        // best effort: si falla, el catálogo en memoria queda como estaba
+      }
+    }
+    window.addEventListener("focus", refrescarProductosUsados);
+    return () => window.removeEventListener("focus", refrescarProductosUsados);
   }, []);
 
   useEffect(() => {
@@ -1693,9 +1746,13 @@ export default function CrearLicitacion() {
     setContacto("");
     setEmail("");
     setTelefono("");
+    setContacto2("");
+    setEmail2("");
+    setTelefono2("");
     setCondVenta("");
 
     setFleteEstimado(0);
+    setFleteCalculado(false);
     setItems([crearItemVacio()]);
 
     setObservaciones("");
@@ -1793,6 +1850,7 @@ export default function CrearLicitacion() {
     setTelefono(f.telefono || "");
     setCondVenta(f.condVenta || "");
     setFleteEstimado(f.fleteEstimado || 0);
+    setFleteCalculado(Number(f.fleteEstimado) > 0);
     setTipoCompra(f.tipoCompra || "");
     setRegion(f.region || "");
     setComuna(f.comuna || "");
@@ -2017,6 +2075,18 @@ export default function CrearLicitacion() {
       })();
       const requiereAprobacionPeso = productosSinPeso.length > 0;
 
+      // (Punto 9 — 2026-09-10) Sin flete calculado no se genera la cotización
+      // ni su PDF. Se exceptúan las que van a Aprobación por Peso: sin pesos
+      // no hay flete posible y el flujo de aprobación ya obliga a recalcularlo.
+      if (!requiereAprobacionPeso && !fleteCalculado && !(Number(fleteEstimado) > 0)) {
+        setToast({
+          type: "warning",
+          message:
+            "Falta calcular el flete: usa la Calculadora de Flete y aplica el resultado (aunque sea $0) antes de generar la cotización y su PDF.",
+        });
+        return;
+      }
+
       // Para cliente particular el id_licitacion final = String(id interno). Como necesitamos
       // el id antes del INSERT, mandamos un placeholder único y lo reemplazamos con un UPDATE
       // posterior. El placeholder evita colisiones por UNIQUE constraint.
@@ -2048,6 +2118,11 @@ export default function CrearLicitacion() {
             contacto,
             email,
             telefono,
+            // Segundo contacto (solo con datos, para no romper si la migración
+            // 20260910_licitaciones_contacto2 aún no está aplicada).
+            ...(contacto2 || email2 || telefono2
+              ? { contacto_2: contacto2 || null, email_2: email2 || null, telefono_2: telefono2 || null }
+              : {}),
             condicion_venta: condVenta,
 
             fecha: fechaHoy,
@@ -2218,16 +2293,42 @@ export default function CrearLicitacion() {
 
         observaciones: (observaciones ?? "").toString(),
 
-        items: itemsParaGuardar.map((it, idx) => ({
-          n: idx + 1,
-          sku: String(it.sku || "").trim(),
-          producto: it.producto || "",
-          formato: it.formato || "",
-          cantidad: it.cantidad,
-          precio_unitario: formatear(Number(it.precio || 0) + fletePorUnidad),
-          total: formatear(it.total),
-          observacion: it.observacion || "",
-        })),
+        items: (() => {
+          // (Punto 10 — 2026-09-10) Cliente particular: el flete va como ítem
+          // aparte en el PDF (los precios se muestran SIN el flete diluido).
+          // Entidad pública mantiene el flete prorrateado en cada precio.
+          const fleteTotalPdf = redondear(fletePorUnidad * cantidadProductos);
+          const separarFlete = esClienteParticular && fleteTotalPdf > 0;
+          const filas = itemsParaGuardar.map((it, idx) => {
+            const cantidad = Math.max(1, Number(it.cantidad || 1));
+            const precioPdf = separarFlete
+              ? Number(it.precio || 0)
+              : Number(it.precio || 0) + fletePorUnidad;
+            return {
+              n: idx + 1,
+              sku: String(it.sku || "").trim(),
+              producto: it.producto || "",
+              formato: it.formato || "",
+              cantidad: it.cantidad,
+              precio_unitario: formatear(precioPdf),
+              total: formatear(separarFlete ? redondear(cantidad * precioPdf) : it.total),
+              observacion: it.observacion || "",
+            };
+          });
+          if (separarFlete) {
+            filas.push({
+              n: filas.length + 1,
+              sku: "",
+              producto: "Despacho / Flete",
+              formato: "",
+              cantidad: 1,
+              precio_unitario: formatear(fleteTotalPdf),
+              total: formatear(fleteTotalPdf),
+              observacion: "",
+            });
+          }
+          return filas;
+        })(),
 
         afecto: formatear(totalNeto),
         iva: formatear(totalIVA),
@@ -2827,6 +2928,43 @@ export default function CrearLicitacion() {
             />
           </div>
 
+          {/* (Punto 2) Segundo contacto — solo licitaciones (entidad pública) */}
+          {!esParticular && (
+            <>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Nombre (contacto 2)
+                </label>
+                <input
+                  className="w-full rounded-md border border-gray-300 px-3 py-2"
+                  value={contacto2}
+                  onChange={(e) => setContacto2(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Correo (contacto 2)
+                </label>
+                <input
+                  type="email"
+                  className="w-full rounded-md border border-gray-300 px-3 py-2"
+                  value={email2}
+                  onChange={(e) => setEmail2(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Teléfono (contacto 2)
+                </label>
+                <input
+                  className="w-full rounded-md border border-gray-300 px-3 py-2"
+                  value={telefono2}
+                  onChange={(e) => setTelefono2(e.target.value)}
+                />
+              </div>
+            </>
+          )}
+
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
               Condiciones de Venta *
@@ -2878,6 +3016,10 @@ export default function CrearLicitacion() {
                 ? it.equivOpciones.map((sku) => buscarProductoPorSku(sku)).filter(Boolean)
                 : [];
               const tieneEquiv = equivOpciones.length > 1;
+              // Producto sin peso registrado: destaque propio (violeta) — la
+              // cotización caerá a "Pendiente Aprobación Peso" al guardarse.
+              const tieneProductoSel = Boolean(String(it.sku || "").trim() || String(it.producto || "").trim());
+              const sinPeso = tieneProductoSel && getPesoParaItem(it) === 0;
 
               return (
                 <SortableItem
@@ -2889,9 +3031,20 @@ export default function CrearLicitacion() {
                   {({ dragHandleProps, onInsertAfter }) => (
                     <div
                       className={`bg-white border rounded-lg p-4 shadow-sm space-y-3 ${
-                        isLowMargin ? "border-red-400 bg-red-50" : tieneEquiv ? "border-amber-400 bg-amber-50" : "border-gray-200"
+                        isLowMargin ? "border-red-400 bg-red-50" : sinPeso ? "border-violet-500 bg-violet-50" : tieneEquiv ? "border-amber-400 bg-amber-50" : "border-gray-200"
                       }`}
+                      style={sinPeso ? { boxShadow: "0 0 0 1px #8b5cf6, 0 1px 2px rgba(139,92,246,.25)" } : undefined}
                     >
+                    {sinPeso && (
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 10px", borderRadius: 8, background: "linear-gradient(90deg,#f5f3ff,#ede9fe)", border: "1px solid #c4b5fd" }}>
+                        <span style={{ fontSize: 11.5, fontWeight: 700, color: "#6d28d9" }}>
+                          ⚖ Producto sin peso registrado
+                        </span>
+                        <span style={{ fontSize: 11, color: "#7c3aed" }}>
+                          — la cotización quedará en "Pendiente Aprobación Peso" y el flete no lo considera
+                        </span>
+                      </div>
+                    )}
                     {tieneEquiv && (
                       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", padding: "6px 10px", borderRadius: 8, background: "#fffbeb", border: "1px solid #fde68a" }}>
                         <span style={{ fontSize: 11.5, fontWeight: 700, color: "#a16207" }}>
@@ -3233,7 +3386,10 @@ export default function CrearLicitacion() {
                   type="number"
                   className="w-full h-10 rounded-md border border-gray-300 px-3"
                   value={fleteEstimado}
-                  onChange={(e) => setFleteEstimado(e.target.value)}
+                  onChange={(e) => {
+                    setFleteEstimado(e.target.value);
+                    if (String(e.target.value).trim() !== "") setFleteCalculado(true);
+                  }}
                 />
               ) : (
                 <>
@@ -3281,7 +3437,10 @@ export default function CrearLicitacion() {
             direccionCliente={direccion}
             tipoCotizacion={esParticular || tipoCompra === "Cliente particular" ? "particular" : "publico"}
             totalCompra={totalConIVA}
-            onAplicar={(neto) => setFleteEstimado(neto)}
+            onAplicar={(neto) => {
+              setFleteEstimado(neto);
+              setFleteCalculado(true);
+            }}
           />
         </div>
 

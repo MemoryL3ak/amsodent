@@ -315,6 +315,18 @@ export class CorreosController {
     });
   }
 
+  // (Punto 5 — 2026-09-10) Hilo Gmail completo de una gestión de cobranza:
+  // el correo enviado + todas las respuestas recibidas, estilo Gmail.
+  @Get('cobranza/hilo')
+  @UseGuards(CobranzaGuard)
+  async hiloCobranza(
+    @Req() req: any,
+    @Query('threadId') threadId: string,
+    @Query('remitente') remitente?: string,
+  ) {
+    return this.correos.hiloCobranza(idDe(req), threadId, remitente);
+  }
+
   @Get('buzon/destinatarios')
   @UseGuards(BuzonGuard)
   async destinatariosBuzon(@Req() req: any) {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
 import { api } from "../lib/api";
@@ -238,6 +238,29 @@ export default function Cobranza() {
   const [hEntidad, setHEntidad] = useState("");
   const [hNumero, setHNumero] = useState("");
   const [hTipo, setHTipo] = useState("");
+  // (Punto 5 — 2026-09-10) Hilos Gmail del historial: conversación completa
+  // (correo enviado + respuestas del cliente) por gestión de tipo correo.
+  const [hiloAbiertoId, setHiloAbiertoId] = useState(null); // id de la gestión expandida
+  const [hilosCache, setHilosCache] = useState({}); // { [threadId]: { mensajes } | { error } }
+  const [cargandoHilo, setCargandoHilo] = useState(null); // threadId en carga
+
+  async function abrirHilo(g) {
+    if (hiloAbiertoId === g.id) { setHiloAbiertoId(null); return; }
+    setHiloAbiertoId(g.id);
+    const tid = g.gmail_thread_id;
+    if (!tid || hilosCache[tid]) return;
+    setCargandoHilo(tid);
+    try {
+      const data = await api.get(
+        `/correos/cobranza/hilo?threadId=${encodeURIComponent(tid)}&remitente=${encodeURIComponent(g.creado_por_email || "")}`,
+      );
+      setHilosCache((prev) => ({ ...prev, [tid]: data }));
+    } catch (e) {
+      setHilosCache((prev) => ({ ...prev, [tid]: { error: e?.message || "No se pudo cargar la conversación." } }));
+    } finally {
+      setCargandoHilo(null);
+    }
+  }
 
   // Modales
   const [modalGestion, setModalGestion] = useState(null); // { doc, lic }
@@ -255,7 +278,7 @@ export default function Cobranza() {
       setLoading(true);
       try {
         const licsAdj = await api.get(
-          "/licitaciones/with-fields?fields=id,id_licitacion,nombre_entidad,rut_entidad,fecha_adjudicada,total_con_iva,creado_por,condicion_venta,comuna,estado,tipo_compra,tipo_cliente",
+          "/licitaciones/with-fields?fields=id,id_licitacion,nombre_entidad,rut_entidad,fecha_adjudicada,total_con_iva,creado_por,condicion_venta,comuna,estado,tipo_compra,tipo_cliente,email,contacto",
         );
         const rows = (licsAdj || []).filter((l) => l.estado === "Adjudicada");
         const mapa = {};
@@ -578,8 +601,18 @@ export default function Cobranza() {
       creado_por_email: yoEmail,
       creado_por_nombre: yoNombre,
       created_at: new Date().toISOString(),
+      // (Punto 5 — 2026-09-10) ids de Gmail: permiten abrir después el hilo
+      // completo (correo enviado + respuestas del cliente) estilo Gmail.
+      gmail_message_id: correo?.gmailMessageId || null,
+      gmail_thread_id: correo?.gmailThreadId || null,
     };
-    const { data, error } = await supabase.from("cobranza_gestiones").insert(fila).select().single();
+    let { data, error } = await supabase.from("cobranza_gestiones").insert(fila).select().single();
+    if (error && /gmail_/.test(error.message || "")) {
+      // Migración 20260910_cobranza_gmail_hilos aún no aplicada: se registra
+      // la gestión igual, solo sin los ids del hilo.
+      const { gmail_message_id, gmail_thread_id, ...sinGmail } = fila;
+      ({ data, error } = await supabase.from("cobranza_gestiones").insert(sinGmail).select().single());
+    }
     if (error) throw error;
     setGestionesPorDoc((prev) => ({ ...prev, [documento_id]: [data, ...(prev[documento_id] || [])] }));
     // Primera gestión sobre una factura sin gestión → pasa a "en gestión".
@@ -950,8 +983,11 @@ export default function Cobranza() {
                     const lic = licMap[g.licitacion_id];
                     const meta = TIPO_GESTION_MAP[g.tipo];
                     const I = meta?.icon || StickyNote;
+                    const hilo = g.gmail_thread_id ? hilosCache[g.gmail_thread_id] : null;
+                    const hiloExpandido = hiloAbiertoId === g.id;
                     return (
-                      <tr key={g.id}>
+                      <Fragment key={g.id}>
+                      <tr>
                         <td style={{ verticalAlign: "top", whiteSpace: "nowrap", fontSize: 12, color: "var(--text-muted)" }}>
                           {fmtFechaHora(g.created_at)}
                         </td>
@@ -990,8 +1026,79 @@ export default function Cobranza() {
                             <span style={{ color: "var(--text-muted)", fontSize: 12 }}>—</span>
                           )}
                           <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 3 }}>{g.creado_por_nombre || g.creado_por_email}</div>
+                          {/* (Punto 5) Conversación Gmail: enviado + respuestas */}
+                          {g.tipo === "correo" && g.gmail_thread_id && (
+                            <button
+                              type="button"
+                              onClick={() => abrirHilo(g)}
+                              style={{
+                                marginTop: 6, display: "inline-flex", alignItems: "center", gap: 5,
+                                fontSize: 11.5, fontWeight: 700, color: "#0f766e", background: "#f0fdfa",
+                                border: "1px solid #ccfbf1", borderRadius: 999, padding: "3px 10px", cursor: "pointer",
+                              }}
+                            >
+                              <Mail size={12} />
+                              {hiloExpandido ? "Ocultar conversación" : "Ver conversación completa"}
+                            </button>
+                          )}
                         </td>
                       </tr>
+                      {hiloExpandido && (
+                        <tr>
+                          <td colSpan="5" style={{ background: "#f8fafc", padding: "12px 18px" }}>
+                            {cargandoHilo === g.gmail_thread_id ? (
+                              <span style={{ fontSize: 12.5, color: "var(--text-muted)" }}>Cargando conversación desde Gmail…</span>
+                            ) : hilo?.error ? (
+                              <span style={{ fontSize: 12.5, color: "#b91c1c" }}>{hilo.error}</span>
+                            ) : !hilo?.mensajes?.length ? (
+                              <span style={{ fontSize: 12.5, color: "var(--text-muted)" }}>Sin mensajes en el hilo.</span>
+                            ) : (
+                              <div style={{ display: "flex", flexDirection: "column", gap: 10, maxWidth: 860 }}>
+                                <div style={{ fontSize: 11.5, fontWeight: 700, color: "#475569", textTransform: "uppercase", letterSpacing: ".05em" }}>
+                                  Conversación · {hilo.mensajes.length} mensaje{hilo.mensajes.length === 1 ? "" : "s"}
+                                </div>
+                                {hilo.mensajes.map((m) => {
+                                  const esNuestro = (m.de || "").toLowerCase() === (g.creado_por_email || "").toLowerCase();
+                                  return (
+                                    <div
+                                      key={m.id}
+                                      style={{
+                                        border: `1px solid ${esNuestro ? "#ccfbf1" : "#e2e8f0"}`,
+                                        borderLeft: `3px solid ${esNuestro ? "#0f766e" : "#64748b"}`,
+                                        borderRadius: 10, background: "#fff", padding: "10px 14px",
+                                      }}
+                                    >
+                                      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                                        <span style={{ fontSize: 12.5, fontWeight: 700, color: esNuestro ? "#0f766e" : "#0f172a" }}>
+                                          {esNuestro ? "Nosotros" : (m.deNombre || m.de || "Cliente")}
+                                          <span style={{ fontWeight: 400, color: "var(--text-muted)", marginLeft: 6, fontSize: 11.5 }}>
+                                            {m.de}
+                                          </span>
+                                        </span>
+                                        <span style={{ fontSize: 11.5, color: "var(--text-muted)" }}>{fmtFechaHora(m.fecha)}</span>
+                                      </div>
+                                      <div style={{ fontSize: 11.5, color: "var(--text-muted)", marginTop: 1 }}>Para: {m.para || "—"}</div>
+                                      {/* Cuerpo en iframe sandbox: HTML externo sin scripts */}
+                                      <iframe
+                                        title={`msg-${m.id}`}
+                                        sandbox=""
+                                        srcDoc={m.cuerpoHtml || `<p>${m.snippet || ""}</p>`}
+                                        style={{ width: "100%", height: 220, border: "1px solid #f1f5f9", borderRadius: 8, marginTop: 8, background: "#fff" }}
+                                      />
+                                      {m.adjuntos?.length > 0 && (
+                                        <div style={{ fontSize: 11.5, color: "var(--text-muted)", marginTop: 6 }}>
+                                          📎 {m.adjuntos.map((a) => a.filename).filter(Boolean).join(" · ") || `${m.adjuntos.length} adjunto(s)`}
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      )}
+                      </Fragment>
                     );
                   })
                 )}
@@ -1187,7 +1294,8 @@ function ModalCorreo({ doc, lic, guia, numeroOC, onCerrar, onEnviado, onError, r
     ? `Factura ${doc.numero || "S/N"} - Cotización ${lic?.id_licitacion || lic?.id || ""}`.trim()
     : `${numeroOC ? `OC ${numeroOC} - ` : ""}Factura ${doc.numero || "S/N"}`.trim();
 
-  const [para, setPara] = useState("");
+  // Prefill con el correo del cliente registrado en la cotización (editable).
+  const [para, setPara] = useState(String(lic?.email || "").trim().toLowerCase());
   // Copia por defecto a Jeremías y Benjamín (Alarcón).
   const [cc, setCc] = useState("jer.consorcio@gmail.com, benja.alarcon.z@gmail.com");
   const [asunto, setAsunto] = useState(asuntoInicial);
@@ -1257,7 +1365,7 @@ function ModalCorreo({ doc, lic, guia, numeroOC, onCerrar, onEnviado, onError, r
     const ccArr = cc.split(/[,;\s]+/).map((s) => s.trim()).filter(Boolean);
     setEnviando(true);
     try {
-      await api.post("/correos/cobranza/enviar", {
+      const envio = await api.post("/correos/cobranza/enviar", {
         para: paraNorm,
         cc: ccArr,
         asunto: asunto.trim(),
@@ -1267,7 +1375,12 @@ function ModalCorreo({ doc, lic, guia, numeroOC, onCerrar, onEnviado, onError, r
       await registrarGestion({
         doc, lic, tipo: "correo",
         detalle: null,
-        correo: { para: paraNorm, cc: ccArr, asunto: asunto.trim(), adjuntos },
+        correo: {
+          para: paraNorm, cc: ccArr, asunto: asunto.trim(), adjuntos,
+          // (Punto 5) ids devueltos por Gmail para reconstruir el hilo después
+          gmailMessageId: envio?.messageId || null,
+          gmailThreadId: envio?.threadId || null,
+        },
       });
       // Bitácora de actividades (pedido 2026-09-03): el correo de cobro por
       // vencimiento queda registrado como actividad realizada. Best effort.
