@@ -221,6 +221,8 @@ export default function SeguimientoPagos() {
   const [pagandoId, setPagandoId] = useState(null);
   const [fechaPago, setFechaPago] = useState("");
   const [formaPago, setFormaPago] = useState("transferencia");
+  // (Punto 6) Banco receptor del pago — todas las formas salvo efectivo.
+  const [bancoPago, setBancoPago] = useState("");
   const [montoPago, setMontoPago] = useState("");
   const [guardando, setGuardando] = useState(false);
 
@@ -230,6 +232,33 @@ export default function SeguimientoPagos() {
   // Actualiza un solo registro en memoria (sin refetch ni pantalla de carga).
   function actualizarFacturaLocal(id, cambios) {
     setFacturas((prev) => prev.map((f) => (f.id === id ? { ...f, ...cambios } : f)));
+  }
+
+  // (Punto 3 — 2026-09-10) Aplica un documento recién creado (comprobante,
+  // nota de crédito o multa) a los mapas en memoria: los saldos y estados se
+  // recalculan al instante SIN recargar toda la página.
+  function registrarDocLocal(doc) {
+    const lid = doc.licitacion_id;
+    if (doc.tipo === "nota_credito") {
+      setNotasCreditoMap((prev) => ({ ...prev, [lid]: [...(prev[lid] || []), doc] }));
+      setNotasCreditoSumMap((prev) => ({ ...prev, [lid]: (prev[lid] || 0) + Number(doc.monto || 0) }));
+      return;
+    }
+    if (doc.tipo === "multa") {
+      setMultasMap((prev) => ({ ...prev, [lid]: [...(prev[lid] || []), doc] }));
+      setMultasSumMap((prev) => ({ ...prev, [lid]: (prev[lid] || 0) + Number(doc.monto || 0) }));
+      return;
+    }
+    // comprobante_pago / webpay / efectivo: suman al pagado (neto → bruto ×1,19)
+    setComprobantesSumMap((prev) => ({ ...prev, [lid]: (prev[lid] || 0) + Math.round(Number(doc.monto || 0) * 1.19) }));
+    if (doc.tipo === "comprobante_pago") {
+      setComprobantesMap((prev) => {
+        const p = prev[lid];
+        const fa = String(doc.fecha_oc || doc.created_at || "");
+        const fp = p ? String(p.fecha_oc || p.created_at || "") : "";
+        return !p || fa >= fp ? { ...prev, [lid]: doc } : prev;
+      });
+    }
   }
 
   // Punto 36: dropdown descarga reporte
@@ -242,16 +271,10 @@ export default function SeguimientoPagos() {
       setLoading(true);
       try {
         // 1. Cotizaciones adjudicadas
-        const lics = await api.get(
-          "/licitaciones/with-fields?fields=id,id_licitacion,nombre_entidad,rut_entidad,fecha_adjudicada,total_con_iva,total_sin_iva,creado_por,condicion_venta,comuna,tipo_compra,tipo_cliente"
-        );
-        let rows = (lics || []).filter((l) => l.estado === "Adjudicada" || l.estado == null);
-
-        // Cotizaciones adjudicadas reales
         const licsAdj = await api.get(
           "/licitaciones/with-fields?fields=id,id_licitacion,nombre_entidad,rut_entidad,fecha_adjudicada,total_con_iva,total_sin_iva,creado_por,condicion_venta,comuna,estado,tipo_compra,tipo_cliente,ciclo_cerrado,monto_forzado"
         );
-        rows = (licsAdj || []).filter((l) => l.estado === "Adjudicada");
+        let rows = (licsAdj || []).filter((l) => l.estado === "Adjudicada");
 
         const rolNorm = (rol ?? "").toString().trim().toLowerCase();
         const emailUser = (user?.email || "").trim().toLowerCase();
@@ -670,6 +693,7 @@ export default function SeguimientoPagos() {
         "Pagada": estaPagada(f, lic) ? "Sí" : "No",
         "Fecha Pago": fmtFecha(f.fecha_pago),
         "Forma Pago": f.forma_pago || "",
+        "Banco": f.banco_pago || "",
       };
     });
   }
@@ -861,6 +885,7 @@ export default function SeguimientoPagos() {
     setPagandoId(f.id);
     setFechaPago(f.fecha_pago || new Date().toISOString().slice(0, 10));
     setFormaPago(f.forma_pago || "transferencia");
+    setBancoPago(f.banco_pago || "");
     // Prefill con el saldo pendiente (base − notas de crédito − comprobantes),
     // que en el caso normal es el total a cobrar. Editable o se puede dejar en
     // blanco si no se quiere registrar el valor del pago.
@@ -873,6 +898,7 @@ export default function SeguimientoPagos() {
     setPagandoId(null);
     setFechaPago("");
     setFormaPago("transferencia");
+    setBancoPago("");
     setMontoPago("");
   }
 
@@ -900,30 +926,39 @@ export default function SeguimientoPagos() {
     // (punto 17): si no cubre el total, la factura queda "pendiente de pago".
     const montoNum = Math.round(Number(String(montoPago).replace(/[^\d]/g, "")) || 0);
     const montoNetoPago = Math.round(montoNum / 1.19);
+    // (Punto 6 — 2026-09-10) Banco receptor del pago (Itaú/Santander); no
+    // aplica al pago en efectivo.
+    const banco = formaPago !== "efectivo" ? (bancoPago || null) : null;
     try {
       await api.put(`/licitaciones/documentos/${f.id}`, {
         pagada: true,
         fecha_pago: fechaPago,
         forma_pago: formaPago,
         dias_atraso_pago: diasAtraso,
+        banco_pago: banco,
       });
       if (montoNum > 0) {
-        await api.post("/licitaciones/documentos", {
+        const nuevo = await api.post("/licitaciones/documentos", {
           licitacion_id: Number(f.licitacion_id),
           tipo: "comprobante_pago",
           monto: montoNetoPago, // neto: bruto digitado ÷ 1,19
           fecha_oc: fechaPago,
           deriva_de_id: Number(f.id),
         });
+        // (Punto 3) reflejar el comprobante en memoria, sin recargar la página
+        registrarDocLocal({
+          id: nuevo?.id,
+          licitacion_id: Number(f.licitacion_id),
+          tipo: "comprobante_pago",
+          monto: montoNetoPago,
+          fecha_oc: fechaPago,
+          created_at: new Date().toISOString(),
+          deriva_de_id: Number(f.id),
+        });
       }
       setToast({ type: "success", message: "Pago registrado." });
       cancelarPago();
-      // Si se registró un monto, recargamos para recalcular saldos y estado.
-      if (montoNum > 0) {
-        recargar();
-      } else {
-        actualizarFacturaLocal(f.id, { pagada: true, fecha_pago: fechaPago, forma_pago: formaPago, dias_atraso_pago: diasAtraso });
-      }
+      actualizarFacturaLocal(f.id, { pagada: true, fecha_pago: fechaPago, forma_pago: formaPago, dias_atraso_pago: diasAtraso, banco_pago: banco });
     } catch (e) {
       console.error(e);
       setToast({ type: "error", message: "Error al registrar el pago." });
@@ -1102,8 +1137,9 @@ export default function SeguimientoPagos() {
         fd.append("file", vFile);
         await api.postForm(`/licitaciones/storage/upload?bucket=${bucket}&path=${encodeURIComponent(storagePath)}`, fd);
       }
+      let nuevoDoc = null;
       try {
-        await api.post("/licitaciones/documentos", {
+        nuevoDoc = await api.post("/licitaciones/documentos", {
           licitacion_id: Number(voucherFor.licitacion_id),
           tipo: esNC ? "nota_credito" : esMulta ? "multa" : "comprobante_pago",
           numero: (vNumero || "").trim() || null,
@@ -1126,8 +1162,21 @@ export default function SeguimientoPagos() {
         throw insErr;
       }
       setToast({ type: "success", message: esNC ? "Nota de crédito cargada." : esMulta ? "Multa registrada." : "Comprobante de transferencia cargado." });
+      // (Punto 3) reflejar el documento en memoria, sin recargar la página
+      registrarDocLocal({
+        id: nuevoDoc?.id,
+        licitacion_id: Number(voucherFor.licitacion_id),
+        tipo: esNC ? "nota_credito" : esMulta ? "multa" : "comprobante_pago",
+        numero: (vNumero || "").trim() || null,
+        monto: esDescuento ? montoNum : Math.round(montoNum / 1.19),
+        fecha_oc: vFecha,
+        created_at: new Date().toISOString(),
+        deriva_de_id: Number(voucherFor.id),
+        bucket: storagePath ? bucket : null,
+        storage_path: storagePath,
+        file_name: vFile ? vFile.name : null,
+      });
       cerrarVoucher();
-      recargar();
     } catch (err) {
       console.error(err);
       setToast({ type: "error", message: `No se pudo cargar la ${etiqueta}.` });
@@ -1780,6 +1829,7 @@ export default function SeguimientoPagos() {
                             </div>
                             <div style={{ color: "var(--text-muted)", fontSize: "11px" }}>
                               {FORMAS_PAGO.find((x) => x.value === f.forma_pago)?.label || f.forma_pago || "—"}
+                              {f.banco_pago ? ` · ${f.banco_pago}` : ""}
                             </div>
                           </div>
                         ) : (
@@ -1806,6 +1856,19 @@ export default function SeguimientoPagos() {
                                 <option key={fp.value} value={fp.value}>{fp.label}</option>
                               ))}
                             </select>
+                            {/* (Punto 6) Banco receptor — todas las formas salvo efectivo */}
+                            {formaPago !== "efectivo" && (
+                              <select
+                                className="input"
+                                value={bancoPago}
+                                onChange={(e) => setBancoPago(e.target.value)}
+                                disabled={guardando}
+                              >
+                                <option value="">Banco…</option>
+                                <option value="Itaú">Itaú</option>
+                                <option value="Santander">Santander</option>
+                              </select>
+                            )}
                             <input
                               className="input"
                               inputMode="numeric"

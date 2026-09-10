@@ -274,27 +274,24 @@ export class FletesService {
       throw new BadRequestException('Empresa inválida (Starken, Blue o Interno).');
     }
 
-    // ── Reglas de despacho GRATIS (antes de tarificar) ──
-    // 1) Cotización particular con compra ≥ $70.000 (bruto): despacho $0.
-    if (tipoCotizacion === 'particular' && totalCompra >= 70000) {
+    // ── Regla de despacho GRATIS (antes de tarificar) ──
+    // Única regla (definida por el negocio el 2026-09-10): despacho $0 cuando
+    // la compra es ≥ $70.000 (bruto) Y el destino está en la Región
+    // Metropolitana. Aplica a cualquier tipo de cotización y courier.
+    // Se detecta RM por el nombre de la región o, si no viene, por la comuna
+    // (lista de la provincia de Santiago + San Bernardo).
+    const regionNorm = FletesService.normComuna(region);
+    const esRM =
+      regionNorm === 'rm' ||
+      regionNorm === 'santiago' ||
+      regionNorm.includes('metropolitana') ||
+      (comuna ? this.esComunaGratis(comuna) : false);
+    if (totalCompra >= 70000 && esRM) {
       return {
         empresa,
         neto: 0,
         gratis: true,
-        detalle: `Despacho gratis: compra particular ≥ $70.000 (total $${Math.round(totalCompra).toLocaleString('es-CL')})`,
-      };
-    }
-    // 2) Despacho interno hacia comunas de la provincia de Santiago: siempre $0.
-    // 3) Cotización pública con destino en la provincia de Santiago: $0 con
-    //    cualquier courier.
-    if (comuna && this.esComunaGratis(comuna) && (empresa === 'Interno' || tipoCotizacion === 'publico')) {
-      return {
-        empresa,
-        neto: 0,
-        gratis: true,
-        detalle: empresa === 'Interno'
-          ? `Despacho interno gratis: ${comuna} pertenece a la provincia de Santiago`
-          : `Despacho gratis: cotización pública con destino en la provincia de Santiago (${comuna})`,
+        detalle: `Despacho gratis: compra ≥ $70.000 (total $${Math.round(totalCompra).toLocaleString('es-CL')}) con destino en la Región Metropolitana`,
       };
     }
 

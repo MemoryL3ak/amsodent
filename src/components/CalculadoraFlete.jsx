@@ -12,10 +12,9 @@ import { api } from "../lib/api";
      (fletes_interno_config). Los km se obtienen por Google Maps desde
      la dirección del cliente (POST /fletes/interno/distancia) y son
      editables a mano.
-   ─ Reglas de despacho GRATIS (las resuelve el backend):
-     · particular con compra ≥ $70.000 (bruto) → $0;
-     · interno hacia comunas de la provincia de Santiago → $0;
-     · cotización pública con destino en la provincia de Santiago → $0.
+   ─ Regla de despacho GRATIS (la resuelve el backend):
+     · compra ≥ $70.000 (bruto) Y destino en la Región Metropolitana → $0
+       (cualquier tipo de cotización y courier).
    El cálculo corre en el backend (POST /fletes/tarifas/calcular); al
    obtener el valor se aplica al Flete Estimado vía onAplicar(neto).
    La región/localidad se precargan desde la dirección del cliente
@@ -56,7 +55,7 @@ export default function CalculadoraFlete({
   comunaCliente = "",
   direccionCliente = "",
   tipoCotizacion = "", // "particular" | "publico" (para las reglas de despacho gratis)
-  totalCompra = 0, // total BRUTO de la cotización (regla particular ≥ $70.000)
+  totalCompra = 0, // total BRUTO de la cotización (regla gratis ≥ $70.000 en RM)
 }) {
   const [empresa, setEmpresa] = useState("");
   const [regiones, setRegiones] = useState([]);

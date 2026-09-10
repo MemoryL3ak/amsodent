@@ -1063,32 +1063,43 @@ try {
         </div>
       </div>
 
-      {/* DIMENSIONES Y PESO — oculto para ventas en productos no transitorios */}
-      {!esVentasNoTransitorio && (
+      {/* DIMENSIONES Y PESO — oculto para ventas en productos no transitorios.
+          (Punto 13 — 2026-09-10) Solo los productos TRANSITORIOS (y los
+          Pendiente Aprobación, que nacen del mismo flujo y necesitan corregir
+          su peso) permiten editar medidas y peso; en los Activos el maestro
+          (lista Jeremías) es la fuente y los campos quedan de solo lectura. */}
+      {!esVentasNoTransitorio && (() => {
+        const medidasEditables = esProductoTransitorio || esPendienteAprobacion;
+        return (
         <div className="surface">
           <div className="surface-header">
             <h3 className="surface-title">Dimensiones y Peso</h3>
+            {!medidasEditables && (
+              <span className="field-hint" style={{ margin: 0 }}>
+                Solo editable en productos transitorios — en los activos las medidas vienen del maestro.
+              </span>
+            )}
           </div>
           <div className="surface-body">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div>
                 <label className="label">Peso (kg)</label>
-                <input type="number" step="0.01" className="input" value={producto.peso}
+                <input type="number" step="0.01" className="input" value={producto.peso} disabled={!medidasEditables}
                   onChange={(e) => setProducto((prev) => ({ ...prev, peso: e.target.value }))} />
               </div>
               <div>
                 <label className="label">Alto (cm)</label>
-                <input type="number" step="0.1" className="input" value={producto.alto}
+                <input type="number" step="0.1" className="input" value={producto.alto} disabled={!medidasEditables}
                   onChange={(e) => setProducto((prev) => ({ ...prev, alto: e.target.value }))} />
               </div>
               <div>
                 <label className="label">Largo (cm)</label>
-                <input type="number" step="0.1" className="input" value={producto.largo}
+                <input type="number" step="0.1" className="input" value={producto.largo} disabled={!medidasEditables}
                   onChange={(e) => setProducto((prev) => ({ ...prev, largo: e.target.value }))} />
               </div>
               <div>
                 <label className="label">Ancho (cm)</label>
-                <input type="number" step="0.1" className="input" value={producto.ancho}
+                <input type="number" step="0.1" className="input" value={producto.ancho} disabled={!medidasEditables}
                   onChange={(e) => setProducto((prev) => ({ ...prev, ancho: e.target.value }))} />
               </div>
               <div>
@@ -1098,7 +1109,8 @@ try {
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* LISTA DE PRECIOS — oculto para ventas en productos no transitorios */}
       {!esVentasNoTransitorio && (

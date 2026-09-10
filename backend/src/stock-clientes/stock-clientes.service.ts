@@ -1349,6 +1349,11 @@ export class StockClientesService {
         nombre: string;
         unidad?: string;
         cantidad: number | string;
+        // (Punto 14 — 2026-09-10) Referencia opcional cuando el pedido nace
+        // del carrito del Explorador de Precios del portal.
+        precio_referencia?: number | string;
+        tienda?: string;
+        url?: string;
       }>;
       nota?: string;
       contacto_nombre?: string;
@@ -1383,7 +1388,18 @@ export class StockClientesService {
         const nombre = String(it?.nombre || '').trim().slice(0, 200);
         const unidad = String(it?.unidad || '').trim().slice(0, 50) || null;
         const cantidad = Number(it?.cantidad) || 0;
-        return { nombre, unidad, cantidad };
+        // Referencia del Explorador de Precios (opcional, punto 14).
+        const precioRef = Number((it as any)?.precio_referencia) || 0;
+        const tienda = String((it as any)?.tienda || '').trim().slice(0, 80);
+        const url = String((it as any)?.url || '').trim().slice(0, 500);
+        return {
+          nombre,
+          unidad,
+          cantidad,
+          ...(precioRef > 0 ? { precio_referencia: precioRef } : {}),
+          ...(tienda ? { tienda } : {}),
+          ...(url ? { url } : {}),
+        };
       })
       .filter((it) => it.nombre.length > 0 && it.cantidad > 0);
 

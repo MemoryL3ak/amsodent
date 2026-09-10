@@ -1568,6 +1568,168 @@ export class LicitacionesService {
     return data || [];
   }
 
+  /* ===========================================================
+     TIMELINE DE LA COTIZACIÓN (punto 1 — 2026-09-10)
+     Compone en un listado cronológico todos los hitos registrados en el
+     sistema para una cotización: creación, adjudicación, documentos del
+     ciclo (OC/guía/factura/comprobantes/NC/multas/cierre), pagos,
+     actividades de bitácora y gestiones de cobranza. No existe una tabla
+     de historial: se arma cruzando las fuentes existentes, tolerando que
+     alguna tabla/columna aún no esté migrada.
+  =========================================================== */
+  async getHistorial(licId: number) {
+    const client = this.supabase.getClient();
+
+    const [licRes, docsRes, actsRes, gestRes] = await Promise.all([
+      client
+        .from('licitaciones')
+        .select('id, id_licitacion, nombre, nombre_entidad, created_at, fecha, creado_por, estado, estado_entrega, ciclo_cerrado, fecha_adjudicada, fecha_publicacion_resultados, tipo_cliente, tipo_compra')
+        .eq('id', licId)
+        .maybeSingle(),
+      client
+        .from('licitacion_documentos')
+        .select('id, tipo, numero, monto, fecha_oc, created_at, subido_por_cliente, pagada, fecha_pago, forma_pago, empresa_despacho, n_seguimiento')
+        .eq('licitacion_id', licId)
+        .order('created_at', { ascending: true }),
+      client
+        .from('actividades_cliente')
+        .select('id, titulo, tipo, motivo, comentario, fecha, estado, user_email, user_nombre, created_at')
+        .eq('licitacion_id', licId)
+        .order('created_at', { ascending: true }),
+      client
+        .from('cobranza_gestiones')
+        .select('id, tipo, detalle, correo_para, correo_asunto, creado_por_email, creado_por_nombre, created_at')
+        .eq('licitacion_id', String(licId))
+        .order('created_at', { ascending: true }),
+    ]);
+
+    const lic = licRes.data as any;
+    if (licRes.error || !lic) {
+      throw new BadRequestException('Cotización no encontrada.');
+    }
+
+    type Evento = {
+      fecha: string | null;
+      categoria: string;
+      titulo: string;
+      detalle?: string | null;
+      persona?: string | null;
+      monto?: number | null;
+    };
+    const eventos: Evento[] = [];
+
+    eventos.push({
+      fecha: lic.created_at || lic.fecha || null,
+      categoria: 'creacion',
+      titulo: 'Cotización creada',
+      detalle: lic.id_licitacion ? `ID ${lic.id_licitacion}` : null,
+      persona: lic.creado_por || null,
+    });
+    if (lic.fecha_adjudicada) {
+      eventos.push({
+        fecha: lic.fecha_adjudicada,
+        categoria: 'adjudicacion',
+        titulo: 'Cotización adjudicada',
+        detalle: null,
+        persona: null,
+      });
+    }
+
+    const ETIQUETA_DOC: Record<string, string> = {
+      orden_compra: 'Orden de compra cargada',
+      guia_despacho: 'Guía de despacho cargada',
+      factura: 'Factura cargada',
+      factura_boleta: 'Factura / boleta cargada',
+      comprobante_pago: 'Comprobante de pago registrado',
+      webpay: 'Pago Webpay registrado',
+      efectivo: 'Pago en efectivo registrado',
+      nota_credito: 'Nota de crédito registrada',
+      multa: 'Multa registrada',
+      info_despacho: 'Información de despacho cargada',
+      cierre_forzado: 'Cierre forzado del ciclo',
+      boleta_garantia: 'Boleta de garantía cargada',
+    };
+    const CATEGORIA_DOC: Record<string, string> = {
+      orden_compra: 'documento',
+      guia_despacho: 'despacho',
+      factura: 'documento',
+      factura_boleta: 'documento',
+      comprobante_pago: 'pago',
+      webpay: 'pago',
+      efectivo: 'pago',
+      nota_credito: 'pago',
+      multa: 'pago',
+      info_despacho: 'despacho',
+      cierre_forzado: 'cierre',
+    };
+
+    for (const d of ((docsRes.error ? [] : docsRes.data) || []) as any[]) {
+      const num = String(d.numero || '').trim();
+      const partes: string[] = [];
+      if (d.tipo === 'cierre_forzado') {
+        if (num) partes.push(`Motivo: ${num}`);
+      } else if (num) {
+        partes.push(`N° ${num}`);
+      }
+      if (Number(d.monto) > 0) partes.push(`$${Number(d.monto).toLocaleString('es-CL')} neto`);
+      if (d.empresa_despacho) partes.push(String(d.empresa_despacho));
+      if (d.n_seguimiento) partes.push(`Seguimiento ${d.n_seguimiento}`);
+      eventos.push({
+        fecha: d.created_at || d.fecha_oc || null,
+        categoria: CATEGORIA_DOC[d.tipo] || 'documento',
+        titulo: ETIQUETA_DOC[d.tipo] || `Documento ${d.tipo} cargado`,
+        detalle: partes.join(' · ') || null,
+        persona: d.subido_por_cliente ? 'Cliente (portal)' : null,
+        monto: Number(d.monto) || null,
+      });
+      if ((d.tipo === 'factura' || d.tipo === 'factura_boleta') && d.pagada && d.fecha_pago) {
+        eventos.push({
+          fecha: d.fecha_pago,
+          categoria: 'pago',
+          titulo: `Factura ${num || 'S/N'} pagada`,
+          detalle: d.forma_pago ? `Forma: ${d.forma_pago}` : null,
+          persona: null,
+        });
+      }
+    }
+
+    for (const a of ((actsRes.error ? [] : actsRes.data) || []) as any[]) {
+      eventos.push({
+        fecha: a.fecha || a.created_at || null,
+        categoria: 'actividad',
+        titulo: a.titulo || `Actividad ${a.tipo || ''}`.trim(),
+        detalle: [a.motivo, a.comentario].filter(Boolean).join(' · ') || null,
+        persona: a.user_nombre || a.user_email || null,
+      });
+    }
+
+    for (const g of ((gestRes.error ? [] : gestRes.data) || []) as any[]) {
+      const partes = [g.detalle, g.correo_para ? `Para: ${g.correo_para}` : null, g.correo_asunto ? `Asunto: ${g.correo_asunto}` : null].filter(Boolean);
+      eventos.push({
+        fecha: g.created_at || null,
+        categoria: 'cobranza',
+        titulo: `Gestión de cobranza (${g.tipo || 'gestión'})`,
+        detalle: partes.join(' · ') || null,
+        persona: g.creado_por_nombre || g.creado_por_email || null,
+      });
+    }
+
+    eventos.sort((a, b) => String(a.fecha || '').localeCompare(String(b.fecha || '')));
+
+    return {
+      licitacion: {
+        id: lic.id,
+        id_licitacion: lic.id_licitacion,
+        nombre: lic.nombre,
+        nombre_entidad: lic.nombre_entidad,
+        estado: lic.estado,
+        estado_entrega: lic.estado_entrega,
+        ciclo_cerrado: lic.ciclo_cerrado,
+      },
+      eventos,
+    };
+  }
+
   async create(body: Record<string, any>) {
     // Bloqueo por mora: no permitir cotizar a clientes con atraso ≥ umbral
     // (120 días mercado público / 60 días cliente particular), salvo override
@@ -2339,6 +2501,7 @@ export class LicitacionesService {
         'factoring_empresa',
         'factoring_comision_pct',
         'factoring_vencimiento',
+        'banco_pago',
       ];
       const aQuitar = opcionales.filter((c) => msg.includes(c));
       if (aQuitar.length) {

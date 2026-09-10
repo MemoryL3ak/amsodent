@@ -829,20 +829,33 @@ export default function Trazabilidad() {
     const dir = sortDir === "asc" ? 1 : -1;
 
     // Primer nivel SIEMPRE (por estado de cobro): 0 = factura emitida y aún
-    // impaga (pendiente de pago), 1 = todavía sin facturar, 2 = todo pagado.
-    // El orden elegido por el usuario aplica dentro de cada grupo.
-    const tierPago = (licId) => {
-      const facturas = (documentosMap[licId] || []).filter(
+    // impaga (pendiente de pago), 1 = ciclo abierto (sin facturar, o con
+    // saldo de OC por consumir aunque lo facturado esté pagado), 2 = todo
+    // pagado y consumido. El orden del usuario aplica dentro de cada grupo.
+    const tierPago = (lic) => {
+      const docs = documentosMap[lic.id] || [];
+      const facturas = docs.filter(
         (d) => d.tipo === "factura" || d.tipo === "factura_boleta",
       );
       if (facturas.some((d) => !d.pagada)) return 0;
       if (facturas.length === 0) return 1;
+      // Facturas todas pagadas, pero la OC aún tiene saldo por consumir
+      // (ej: licitaciones grandes con entregas parciales) → sigue activa.
+      if (!lic.ciclo_cerrado) {
+        const sumaOC = docs
+          .filter((d) => d.tipo === "orden_compra")
+          .reduce((acc, d) => acc + Number(d.monto || 0), 0);
+        const sumaGuias = docs
+          .filter((d) => d.tipo === "guia_despacho")
+          .reduce((acc, d) => acc + Number(d.monto || 0), 0);
+        if (sumaOC - sumaGuias > 0) return 1;
+      }
       return 2;
     };
 
     rows.sort((a, b) => {
-      const pa = tierPago(a.id);
-      const pb = tierPago(b.id);
+      const pa = tierPago(a);
+      const pb = tierPago(b);
       if (pa !== pb) return pa - pb;
 
       let va, vb;
