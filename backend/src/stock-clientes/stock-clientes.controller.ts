@@ -300,6 +300,14 @@ export class StockClientesController {
     return await this.stockClientes.listarSolicitudesPorRut(rut);
   }
 
+  // (2026-09-10) Bandeja "Pedidos del Portal": todos los pedidos/solicitudes
+  // del portal cliente, de cualquier cliente y origen.
+  @UseGuards(AuthGuard)
+  @Get('solicitudes')
+  async listarSolicitudesTodas() {
+    return await this.stockClientes.listarSolicitudesTodas();
+  }
+
   // Sucursales de un cliente (para el detalle/monitoreo admin).
   @UseGuards(AuthGuard)
   @Get('sucursales-por-rut')

@@ -1799,6 +1799,40 @@ export class StockClientesService {
     return await this.enriquecerSolicitudes(data || [], 'equipo');
   }
 
+  // (2026-09-10) Bandeja del equipo "Pedidos del Portal": TODOS los pedidos y
+  // solicitudes generados desde el portal cliente, de cualquier cliente y sin
+  // importar el origen (carrito del Explorador de Precios o Gestión de
+  // Stock), con la cotización vinculada, la sucursal y los mensajes sin leer.
+  async listarSolicitudesTodas(limit = 400) {
+    const client = this.supabase.getClient();
+    const { data, error } = await client
+      .from('stock_solicitudes_cotizacion')
+      .select(
+        'id, rut, razon_social, sucursal_id, items, nota, contacto_nombre, contacto_email, contacto_telefono, estado, respondida_at, created_at, licitacion_id',
+      )
+      .order('created_at', { ascending: false })
+      .limit(limit);
+    if (error) throw new BadRequestException(error.message);
+    const rows: any[] = await this.enriquecerSolicitudes(data || [], 'equipo');
+
+    // Nombre de la sucursal asociada (si la solicitud traía una).
+    const sucIds = [...new Set(rows.map((r) => r.sucursal_id).filter(Boolean))];
+    if (sucIds.length) {
+      const { data: sucs } = await client
+        .from('stock_sucursales')
+        .select('id, nombre')
+        .in('id', sucIds);
+      const m: Record<number, string> = {};
+      (sucs || []).forEach((s: any) => {
+        m[s.id] = s.nombre;
+      });
+      rows.forEach((r) => {
+        r.sucursal_nombre = r.sucursal_id ? m[r.sucursal_id] || null : null;
+      });
+    }
+    return rows;
+  }
+
   async listarMisSolicitudes(rut: string, limit = 50) {
     const rutN = normalizarRut(rut);
     const { data, error } = await this.supabase

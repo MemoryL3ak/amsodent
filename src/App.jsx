@@ -83,6 +83,7 @@ import MonitoreoMarcajes from "./pages/MonitoreoMarcajes";
 // PORTAL DE STOCK
 import PortalStockCliente from "./pages/PortalStockCliente";
 import MonitoreoStockClientes from "./pages/MonitoreoStockClientes";
+import PedidosPortal from "./pages/PedidosPortal";
 import AccesoPortalClientes from "./pages/AccesoPortalClientes";
 // DESPACHOS INTERNOS / CHOFERES
 import DespachosChoferes from "./pages/DespachosChoferes";
@@ -380,6 +381,16 @@ export default function App() {
             element={
               <RequireModulo modulo="monitoreo_stock">
                 <MonitoreoStockClientes />
+              </RequireModulo>
+            }
+          />
+
+          {/* PEDIDOS DEL PORTAL — bandeja con todo lo pedido desde el portal cliente */}
+          <Route
+            path="pedidos-portal"
+            element={
+              <RequireModulo modulo="monitoreo_stock">
+                <PedidosPortal />
               </RequireModulo>
             }
           />

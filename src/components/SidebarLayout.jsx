@@ -272,6 +272,7 @@ export default function SidebarLayout() {
 
   const portalClienteNav = [
     puede("monitoreo_stock") && { to: "/monitoreo-stock", icon: PackageSearch, label: "Monitoreo Stock Clientes" },
+    puede("monitoreo_stock") && { to: "/pedidos-portal", icon: ShoppingCart, label: "Pedidos del Portal" },
     puede("portal_accesos") && { to: "/portal-accesos", icon: KeyRound, label: "Acceso Portal Clientes" },
   ].filter(Boolean);
 
