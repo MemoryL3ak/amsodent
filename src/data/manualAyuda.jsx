@@ -481,6 +481,21 @@ export const GRUPOS_MANUAL = [
         ],
       },
       {
+        id: "pedidos-portal",
+        titulo: "Pedidos del Portal",
+        icono: "ShoppingCart",
+        ruta: "/pedidos-portal",
+        acceso: { tipo: "modulo", key: "monitoreo_stock" },
+        quien: "Ventas especial y administración",
+        resumen: "La bandeja con todo lo que los clientes piden desde el portal, sin importar el origen.",
+        funciones: [
+          "Reúne los pedidos del carrito del Explorador de Precios y las solicitudes de cotización de Gestión de Stock, cada uno con su badge de origen.",
+          "Ficha completa por pedido: cliente y RUT, sucursal, contacto (nombre/correo/teléfono), ítems con cantidad y su referencia (tienda, precio y link), total referencial, nota del cliente y mensajes sin leer.",
+          "KPIs clickeables (pendientes, respondidas, canceladas, del explorador) + filtros por texto, estado y origen.",
+          "Cambiar el estado del pedido en la misma tarjeta, abrir la cotización vinculada o crear una nueva con el cliente y el detalle precargados (queda vinculada y el pedido pasa a Respondida).",
+        ],
+      },
+      {
         id: "portal-accesos",
         titulo: "Acceso Portal Clientes",
         icono: "KeyRound",

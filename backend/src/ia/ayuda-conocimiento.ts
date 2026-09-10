@@ -455,6 +455,12 @@ girasol 🌻). Hoy ayuda en:
 - CARRITO DEL PORTAL: en el Explorador de Precios del portal cliente, el botón
   "Agregar" junta productos en "Mi pedido"; al enviarlo llega al equipo como
   solicitud (campana + correo) con precio y tienda de referencia por producto.
+- PEDIDOS DEL PORTAL (/pedidos-portal): bandeja interna con TODOS los pedidos
+  generados desde el portal cliente, sin importar el origen (carrito del
+  Explorador de Precios o Gestión de Stock). Muestra cliente, contacto,
+  sucursal, ítems con referencias, nota y mensajes; permite cambiar estado,
+  abrir la cotización vinculada o crear una nueva precargada desde el pedido.
+  Acceso: mismos permisos que Monitoreo Stock (ventas especial y admin).
 - Si un módulo muestra "Falta aplicar la migración X": el admin debe ejecutar
   ese archivo SQL en Supabase (carpeta supabase/migrations).
 `;
