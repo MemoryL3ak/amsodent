@@ -453,8 +453,12 @@ girasol 🌻). Hoy ayuda en:
   enviado guarda su hilo de Gmail; "Ver conversación completa" muestra el
   correo enviado y TODAS las respuestas del cliente en la misma vista.
 - CARRITO DEL PORTAL: en el Explorador de Precios del portal cliente, el botón
-  "Agregar" junta productos en "Mi pedido"; al enviarlo llega al equipo como
-  solicitud (campana + correo) con precio y tienda de referencia por producto.
+  "Agregar" junta productos en "Mi pedido". Checkout en 2 pasos: primero se
+  edita el carrito (cantidades, nota) y "Revisar pedido" abre el resumen
+  formal (cliente, fecha, detalle con subtotales, total referencial y datos
+  de contacto opcionales); recién "Confirmar y enviar pedido" lo despacha —
+  nunca se envía directo. Llega al equipo como solicitud (campana + correo)
+  con precio y tienda de referencia por producto.
 - PEDIDOS DEL PORTAL (/pedidos-portal): bandeja interna con TODOS los pedidos
   generados desde el portal cliente, sin importar el origen (carrito del
   Explorador de Precios o Gestión de Stock). Muestra cliente, contacto,

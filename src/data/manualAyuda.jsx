@@ -519,7 +519,7 @@ export const GRUPOS_MANUAL = [
           "/portal — el cliente entra con RUT + N° de cotización: ve sus cotizaciones, documentos y sube archivos.",
           "/portal-cliente — stock consignado del cliente con semáforo, y generación de solicitudes de cotización que llegan al sistema.",
           "/portal-cliente incluye además el Explorador de precios: el cliente busca un insumo por palabra clave y compara en vivo los precios de las tiendas dentales chilenas online, con histórico (mínimo registrado y variación) que el portal va guardando en cada búsqueda.",
-          "Carrito de pedido del explorador: con el botón «Agregar» el cliente junta productos en «Mi pedido» (cantidades, total referencial, nota) y al enviarlo llega al equipo como solicitud —campana y correo— con la tienda y el precio de referencia de cada producto.",
+          "Carrito de pedido del explorador (checkout en 2 pasos): con «Agregar» el cliente junta productos en «Mi pedido» y edita cantidades y nota; «Revisar pedido» muestra el resumen formal (cliente, fecha, detalle con subtotales, total referencial y datos de contacto opcionales) y recién «Confirmar y enviar» lo despacha — nunca se envía directo. Llega al equipo como solicitud (campana y correo) con la tienda y el precio de referencia de cada producto.",
           "/despachos — despachos internos: cambio de estado con nota, evidencia (fotos/PDF hasta 20 MB) y firma de recepción dibujada.",
           "/portal-chofer — los viajes del chofer, con evidencia y ubicación en vivo.",
           "/evento y /sorteo — formularios públicos de inscripción.",
