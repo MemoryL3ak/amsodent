@@ -459,6 +459,10 @@ girasol 🌻). Hoy ayuda en:
   de contacto opcionales); recién "Confirmar y enviar pedido" lo despacha —
   nunca se envía directo. Llega al equipo como solicitud (campana + correo)
   con precio y tienda de referencia por producto.
+- SALDO OC (Despachos y Choferes → pestaña "Saldo OC"): detalle de las OC de
+  adjudicadas con ciclo abierto en dos grupos — pendientes de envío (sin
+  ninguna guía) y con saldo por consumir (OC − guías > 0, despachos
+  parciales) — con antigüedad, montos netos y link a la cotización.
 - PEDIDOS DEL PORTAL (/pedidos-portal): bandeja interna con TODOS los pedidos
   generados desde el portal cliente, sin importar el origen (carrito del
   Explorador de Precios o Gestión de Stock). Muestra cliente, contacto,

@@ -24,6 +24,7 @@ import {
   Package,
   BarChart3,
 } from "lucide-react";
+import { Link } from "react-router-dom";
 import { api } from "../lib/api";
 import Toast from "../components/Toast";
 import DateFilter from "../components/DateFilter";
@@ -151,6 +152,10 @@ export default function DespachosChoferes() {
   const [viajes, setViajes] = useState([]);
   const [porDespachar, setPorDespachar] = useState([]);
   const [recuperaciones, setRecuperaciones] = useState([]);
+  // (2026-09-10) OC de cotizaciones adjudicadas + sus guías, para la pestaña
+  // "Saldo OC": pendientes de envío (sin guía) y con saldo por consumir.
+  const [ocLics, setOcLics] = useState([]);
+  const [ocDocs, setOcDocs] = useState([]);
   const [cargando, setCargando] = useState(true);
 
   // Filtros viajes
@@ -167,16 +172,37 @@ export default function DespachosChoferes() {
   const cargar = useCallback(async () => {
     setCargando(true);
     try {
-      const [ch, vi, pend, rec] = await Promise.all([
+      const [ch, vi, pend, rec, lics] = await Promise.all([
         api.get("/choferes"),
         api.get("/choferes/viajes"),
         api.get("/choferes/despachos/pendientes").catch(() => []),
         api.get("/choferes/recuperaciones"),
+        api
+          .get("/licitaciones/with-fields?fields=id,id_licitacion,nombre_entidad,comuna,estado,ciclo_cerrado,tipo_cliente,tipo_compra")
+          .catch(() => []),
       ]);
       setChoferes(Array.isArray(ch) ? ch : []);
       setViajes(Array.isArray(vi) ? vi : []);
       setPorDespachar(Array.isArray(pend) ? pend : []);
       setRecuperaciones(Array.isArray(rec) ? rec : []);
+
+      // Documentos OC + guía de las adjudicadas con ciclo abierto (Saldo OC).
+      const adjAbiertas = (Array.isArray(lics) ? lics : []).filter(
+        (l) => l.estado === "Adjudicada" && !l.ciclo_cerrado,
+      );
+      setOcLics(adjAbiertas);
+      const ids = adjAbiertas.map((l) => l.id);
+      if (ids.length > 0) {
+        const docs = await api
+          .post("/licitaciones/documentos/filter", {
+            filter: { licitacion_ids: ids, tipo: ["orden_compra", "guia_despacho"] },
+            fields: "id,licitacion_id,tipo,numero,monto,fecha_oc,created_at,deriva_de_id",
+          })
+          .catch(() => []);
+        setOcDocs(Array.isArray(docs) ? docs : []);
+      } else {
+        setOcDocs([]);
+      }
     } catch (e) {
       setToast({ type: "error", message: e?.message || "No se pudieron cargar los datos." });
     } finally {
@@ -197,6 +223,43 @@ export default function DespachosChoferes() {
     activos: viajes.filter((v) => v.estado === "Asignado" || v.estado === "En ruta").length,
     enRuta: viajes.filter((v) => v.estado === "En ruta").length,
   }), [choferes, viajes, porDespachar]);
+
+  // (2026-09-10) Detalle por OC: guías que derivan de cada una → despachado y
+  // saldo (OC − guías). "Pendiente de envío" = OC sin ninguna guía; "saldo por
+  // consumir" = OC con guías parciales y saldo > 0. Solo adjudicadas con
+  // ciclo abierto (los cierres forzados no cuentan).
+  const saldosOc = useMemo(() => {
+    const licMap = {};
+    ocLics.forEach((l) => { licMap[l.id] = l; });
+    const ocs = ocDocs.filter((d) => d.tipo === "orden_compra");
+    const guias = ocDocs.filter((d) => d.tipo === "guia_despacho");
+    const guiasPorOc = {};
+    guias.forEach((g) => {
+      if (!g.deriva_de_id) return;
+      (guiasPorOc[g.deriva_de_id] = guiasPorOc[g.deriva_de_id] || []).push(g);
+    });
+    const pendientesEnvio = [];
+    const parciales = [];
+    ocs.forEach((oc) => {
+      const lic = licMap[oc.licitacion_id];
+      if (!lic) return;
+      const gs = guiasPorOc[oc.id] || [];
+      const despachado = gs.reduce((acc, g) => acc + Number(g.monto || 0), 0);
+      const saldo = Math.round(Number(oc.monto || 0) - despachado);
+      const fecha = String(oc.fecha_oc || oc.created_at || "").slice(0, 10);
+      const dias = fecha
+        ? Math.max(0, Math.floor((Date.now() - new Date(`${fecha}T00:00:00`).getTime()) / 86400000))
+        : null;
+      const fila = { oc, lic, guias: gs.length, despachado, saldo, fecha, dias };
+      if (gs.length === 0) pendientesEnvio.push(fila);
+      else if (saldo > 0) parciales.push(fila);
+    });
+    // Las más antiguas primero: son las más urgentes de despachar.
+    const porFecha = (a, b) => String(a.fecha || "").localeCompare(String(b.fecha || ""));
+    pendientesEnvio.sort(porFecha);
+    parciales.sort(porFecha);
+    return { pendientesEnvio, parciales };
+  }, [ocLics, ocDocs]);
 
   const viajesFiltrados = useMemo(() => {
     return viajes.filter((v) => {
@@ -244,6 +307,7 @@ export default function DespachosChoferes() {
   const TABS = [
     { id: "choferes", label: "Choferes", icon: Truck, count: choferes.length },
     { id: "despachos", label: "Despachos", icon: MapPin, count: viajes.length + porDespachar.length },
+    { id: "saldos-oc", label: "Saldo OC", icon: Package, count: saldosOc.pendientesEnvio.length + saldosOc.parciales.length },
     { id: "estadisticas", label: "Estadísticas", icon: BarChart3, count: 0 },
     { id: "recuperaciones", label: "Recuperaciones de clave", icon: Inbox, count: pendientes },
   ];
@@ -350,6 +414,8 @@ export default function DespachosChoferes() {
           onAsignarChofer={(guia) => setModalViaje({ guia })}
           onEditar={(v) => setModalViaje({ viaje: v })}
         />
+      ) : tab === "saldos-oc" ? (
+        <SaldosOcTab pendientes={saldosOc.pendientesEnvio} parciales={saldosOc.parciales} />
       ) : tab === "estadisticas" ? (
         <EstadisticasTab setToast={setToast} />
       ) : (
@@ -662,6 +728,144 @@ function RecuperacionesTab({ recuperaciones, onRegenerar, onResolver }) {
           </div>
         );
       })}
+    </div>
+  );
+}
+
+/* ── Tab: Saldo OC (2026-09-10) ─────────────────────────────────────────
+   Detalle de las órdenes de compra de cotizaciones adjudicadas con ciclo
+   abierto, en dos grupos: PENDIENTES DE ENVÍO (sin ninguna guía emitida) y
+   CON SALDO POR CONSUMIR (guías parciales: OC − guías > 0). Montos NETOS. */
+function SaldosOcTab({ pendientes, parciales }) {
+  const fmtCLP = (n) => `$${Math.round(Number(n) || 0).toLocaleString("es-CL")}`;
+  const fmtFecha = (iso) => {
+    const s = String(iso || "").slice(0, 10);
+    const [y, m, d] = s.split("-");
+    return y ? `${d}-${m}-${y}` : "—";
+  };
+  const chipDias = (dias) => {
+    if (dias == null) return null;
+    const color = dias > 7 ? { bg: "#fee2e2", fg: "#b91c1c" } : dias > 3 ? { bg: "#fef3c7", fg: "#b45309" } : { bg: "#f1f5f9", fg: "#475569" };
+    return (
+      <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 9px", borderRadius: 999, background: color.bg, color: color.fg, whiteSpace: "nowrap" }}>
+        {dias} día{dias === 1 ? "" : "s"}
+      </span>
+    );
+  };
+
+  const totalPendiente = pendientes.reduce((acc, f) => acc + f.saldo, 0);
+  const totalParcial = parciales.reduce((acc, f) => acc + f.saldo, 0);
+
+  const Tabla = ({ filas, mostrarDespachado }) => (
+    <div className="table-wrap" style={{ marginTop: 10 }}>
+      <table className="data-table">
+        <thead>
+          <tr>
+            <th style={{ textAlign: "left" }}>Orden de Compra</th>
+            <th style={{ textAlign: "left" }}>Cotización / Cliente</th>
+            <th style={{ textAlign: "left", width: 110 }}>Fecha OC</th>
+            <th style={{ textAlign: "center", width: 90 }}>Antigüedad</th>
+            <th style={{ textAlign: "right", width: 120 }}>Monto OC</th>
+            {mostrarDespachado && <th style={{ textAlign: "right", width: 120 }}>Despachado</th>}
+            <th style={{ textAlign: "right", width: 130 }}>{mostrarDespachado ? "Saldo por consumir" : "Por despachar"}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {filas.length === 0 ? (
+            <tr>
+              <td colSpan={mostrarDespachado ? 7 : 6} style={{ textAlign: "center", padding: "36px 0", color: "var(--text-muted)" }}>
+                Nada pendiente en este grupo. 🎉
+              </td>
+            </tr>
+          ) : (
+            filas.map((f) => (
+              <tr key={f.oc.id}>
+                <td style={{ fontWeight: 700, whiteSpace: "nowrap" }}>{f.oc.numero || "S/N"}</td>
+                <td>
+                  <Link to={`/detalle/${f.lic.id}`} className="table-link" style={{ fontWeight: 600 }}>
+                    #{f.lic.id}
+                  </Link>
+                  {f.lic.id_licitacion && (
+                    <span style={{ color: "var(--text-muted)", fontSize: 11, marginLeft: 6 }}>{f.lic.id_licitacion}</span>
+                  )}
+                  <div style={{ fontSize: 12, color: "#475569", marginTop: 1 }}>
+                    {f.lic.nombre_entidad || "—"}
+                    {f.lic.comuna ? <span style={{ color: "var(--text-muted)" }}> · {f.lic.comuna}</span> : null}
+                  </div>
+                </td>
+                <td style={{ whiteSpace: "nowrap", fontSize: 12.5 }}>{fmtFecha(f.fecha)}</td>
+                <td style={{ textAlign: "center" }}>{chipDias(f.dias)}</td>
+                <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmtCLP(f.oc.monto)}</td>
+                {mostrarDespachado && (
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#15803d" }}>
+                    {fmtCLP(f.despachado)}
+                    <div style={{ fontSize: 10.5, color: "var(--text-muted)" }}>{f.guias} guía{f.guias === 1 ? "" : "s"}</div>
+                  </td>
+                )}
+                <td style={{ textAlign: "right", fontWeight: 800, fontVariantNumeric: "tabular-nums", color: "#b45309" }}>
+                  {fmtCLP(f.saldo)}
+                </td>
+              </tr>
+            ))
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
+      {/* Resumen del grupo */}
+      <div className="stats-row" style={{ marginBottom: 0 }}>
+        <div className="stat-card">
+          <div className="stat-label">OC pendientes de envío</div>
+          <div className="stat-value" style={{ color: "#b91c1c" }}>{pendientes.length}</div>
+          <div className="stat-sub">sin ninguna guía emitida</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-label">Monto pendiente de envío</div>
+          <div className="stat-value" style={{ color: "#b91c1c" }}>{fmtCLP(totalPendiente)}</div>
+          <div className="stat-sub">neto</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-label">OC con saldo por consumir</div>
+          <div className="stat-value" style={{ color: "#b45309" }}>{parciales.length}</div>
+          <div className="stat-sub">despachadas en parte</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-label">Saldo por consumir</div>
+          <div className="stat-value" style={{ color: "#b45309" }}>{fmtCLP(totalParcial)}</div>
+          <div className="stat-sub">OC − guías · neto</div>
+        </div>
+      </div>
+
+      {/* Grupo 1: sin guía */}
+      <div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ width: 10, height: 10, borderRadius: 5, background: "#b91c1c", display: "inline-block" }} />
+          <h3 style={{ fontSize: 14.5, fontWeight: 800, color: "var(--text)", margin: 0 }}>
+            OC pendientes de envío
+          </h3>
+          <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
+            — adjudicadas con orden de compra y ninguna guía de despacho todavía (las más antiguas primero)
+          </span>
+        </div>
+        <Tabla filas={pendientes} mostrarDespachado={false} />
+      </div>
+
+      {/* Grupo 2: parciales */}
+      <div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ width: 10, height: 10, borderRadius: 5, background: "#b45309", display: "inline-block" }} />
+          <h3 style={{ fontSize: 14.5, fontWeight: 800, color: "var(--text)", margin: 0 }}>
+            OC con saldo por consumir
+          </h3>
+          <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
+            — con despachos parciales: aún queda saldo entre la OC y sus guías
+          </span>
+        </div>
+        <Tabla filas={parciales} mostrarDespachado={true} />
+      </div>
     </div>
   );
 }
