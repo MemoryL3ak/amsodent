@@ -425,7 +425,8 @@ export const GRUPOS_MANUAL = [
         resumen: "Los choferes internos, sus viajes y sus credenciales del portal.",
         funciones: [
           "KPIs: choferes, por despachar, viajes activos, en ruta ahora.",
-          "Pestañas: choferes (contacto, patente, acceso al portal), despachos (asignación de viajes) y estadísticas.",
+          "Pestañas: choferes (contacto, patente, acceso al portal), despachos (asignación de viajes), Saldo OC y estadísticas.",
+          "Pestaña «Saldo OC»: detalle de las órdenes de compra de cotizaciones adjudicadas con ciclo abierto, en dos grupos — OC pendientes de envío (sin ninguna guía emitida) y OC con saldo por consumir (OC − guías > 0, despachos parciales) — con fecha, antigüedad, montos netos y link a la cotización.",
           "El chofer opera desde su portal público (/portal-chofer): estado del viaje, foto de evidencia y ubicación en vivo.",
         ],
       },
