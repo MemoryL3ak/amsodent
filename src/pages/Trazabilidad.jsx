@@ -828,34 +828,51 @@ export default function Trazabilidad() {
     const rows = [...dataFiltrada];
     const dir = sortDir === "asc" ? 1 : -1;
 
-    // Primer nivel SIEMPRE (por estado de cobro): 0 = factura emitida y aún
-    // impaga (pendiente de pago), 1 = ciclo abierto (sin facturar, o con
-    // saldo de OC por consumir aunque lo facturado esté pagado), 2 = todo
-    // pagado y consumido. El orden del usuario aplica dentro de cada grupo.
-    const tierPago = (lic) => {
+    // Primer nivel SIEMPRE (pedido 2026-09-10): por AVANCE del ciclo
+    // documental — lo menos completo arriba. Así, filtrando por OC aparecen
+    // primero las que les falta guía y factura; con OC+Guía, primero las que
+    // les falta factura; y así sucesivamente:
+    //   0 = sin OC · 1 = falta guía · 2 = falta factura · 3 = factura impaga
+    //   4 = pagada pero con saldo de OC por consumir · 5 = todo completo.
+    // Cliente particular no usa OC/guía: parte en "falta factura/boleta".
+    // El orden elegido por el usuario aplica dentro de cada grupo.
+    const tierCiclo = (lic) => {
       const docs = documentosMap[lic.id] || [];
-      const facturas = docs.filter(
-        (d) => d.tipo === "factura" || d.tipo === "factura_boleta",
+      const esPart =
+        (lic.tipo_cliente || "").toLowerCase().includes("particular") ||
+        (lic.tipo_compra || "").toLowerCase().includes("particular");
+      const tieneOC = docs.some((d) => d.tipo === "orden_compra");
+      const tieneGuia = docs.some((d) => d.tipo === "guia_despacho");
+      const tieneFactura = docs.some(
+        (d) => d.tipo === "factura" || d.tipo === "factura_boleta" || d.tipo === "efectivo",
       );
-      if (facturas.some((d) => !d.pagada)) return 0;
-      if (facturas.length === 0) return 1;
-      // Facturas todas pagadas, pero la OC aún tiene saldo por consumir
-      // (ej: licitaciones grandes con entregas parciales) → sigue activa.
-      if (!lic.ciclo_cerrado) {
+      const facturaImpaga = docs.some(
+        (d) => (d.tipo === "factura" || d.tipo === "factura_boleta") && !d.pagada,
+      );
+
+      if (!esPart) {
+        if (!tieneOC) return 0;
+        if (!tieneGuia) return 1;
+      }
+      if (!tieneFactura) return 2;
+      if (facturaImpaga) return 3;
+      // Todo facturado y pagado, pero la OC aún tiene saldo por consumir
+      // (licitaciones grandes con entregas parciales) → sigue activa.
+      if (!esPart && !lic.ciclo_cerrado) {
         const sumaOC = docs
           .filter((d) => d.tipo === "orden_compra")
           .reduce((acc, d) => acc + Number(d.monto || 0), 0);
         const sumaGuias = docs
           .filter((d) => d.tipo === "guia_despacho")
           .reduce((acc, d) => acc + Number(d.monto || 0), 0);
-        if (sumaOC - sumaGuias > 0) return 1;
+        if (sumaOC - sumaGuias > 0) return 4;
       }
-      return 2;
+      return 5;
     };
 
     rows.sort((a, b) => {
-      const pa = tierPago(a);
-      const pb = tierPago(b);
+      const pa = tierCiclo(a);
+      const pb = tierCiclo(b);
       if (pa !== pb) return pa - pb;
 
       let va, vb;
@@ -2183,8 +2200,9 @@ export default function Trazabilidad() {
                                   ? `Neto $${Number(factura.monto).toLocaleString("es-CL")}`
                                   : "Sin monto"}
                               </div>
-                              {/* Estado de cobro (flag de Seguimiento de Pagos) — es el
-                                  criterio del orden de la tabla: impagas primero. */}
+                              {/* Estado de cobro (flag de Seguimiento de Pagos); el orden
+                                  de la tabla prioriza el ciclo incompleto (falta guía /
+                                  factura primero, luego impagas, al final lo completo). */}
                               {(factura.tipo === "factura" || factura.tipo === "factura_boleta") && (
                                 <div style={{ marginTop: 2 }}>
                                   {factura.pagada ? (
