@@ -2037,7 +2037,12 @@ function PanelExploradorPrecios() {
     try { return JSON.parse(localStorage.getItem("portal_carrito") || "[]"); } catch { return []; }
   });
   const [carritoAbierto, setCarritoAbierto] = useState(false);
+  // Flujo en dos pasos: "carrito" (editar) → "resumen" (revisar y confirmar).
+  // El pedido NUNCA se envía directo desde el carrito: siempre pasa por la
+  // revisión del detalle completo.
+  const [pasoCarrito, setPasoCarrito] = useState("carrito");
   const [notaPedido, setNotaPedido] = useState("");
+  const [contactoPedido, setContactoPedido] = useState({ nombre: "", email: "", telefono: "" });
   const [enviandoPedido, setEnviandoPedido] = useState(false);
   const [pedidoEnviado, setPedidoEnviado] = useState(null); // { id }
   const [errorPedido, setErrorPedido] = useState("");
@@ -2096,11 +2101,16 @@ function PanelExploradorPrecios() {
             url: c.url || undefined,
           })),
           nota: notaFinal,
+          contacto_nombre: contactoPedido.nombre.trim() || undefined,
+          contacto_email: contactoPedido.email.trim() || undefined,
+          contacto_telefono: contactoPedido.telefono.trim() || undefined,
         }),
       });
       setPedidoEnviado({ id: resp?.solicitud?.id });
       setCarrito([]);
       setNotaPedido("");
+      setPasoCarrito("carrito");
+      setCarritoAbierto(false);
     } catch (err) {
       setErrorPedido(err?.message || "No se pudo enviar el pedido. Intenta de nuevo.");
     } finally {
@@ -2346,7 +2356,7 @@ function PanelExploradorPrecios() {
       {carrito.length > 0 && !carritoAbierto && (
         <button
           type="button"
-          onClick={() => setCarritoAbierto(true)}
+          onClick={() => { setPasoCarrito("carrito"); setCarritoAbierto(true); }}
           style={{
             position: "fixed", right: 22, bottom: 22, zIndex: 60,
             display: "inline-flex", alignItems: "center", gap: 10,
@@ -2363,98 +2373,254 @@ function PanelExploradorPrecios() {
         </button>
       )}
 
-      {/* (Punto 14) Panel del carrito de pedido */}
-      {carritoAbierto && (
+      {/* (Punto 14) Panel del carrito de pedido — checkout en DOS pasos:
+          1) "carrito": editar productos, cantidades y nota (aquí NO se envía nada)
+          2) "resumen": revisión formal del detalle + datos de contacto → recién
+             ahí el botón "Confirmar y enviar" despacha el pedido a Amsodent. */}
+      {carritoAbierto && (() => {
+        const clientePortal = (() => {
+          try { return JSON.parse(localStorage.getItem(CLIENTE_KEY) || "null"); } catch { return null; }
+        })();
+        const enResumen = pasoCarrito === "resumen";
+        const hoy = new Date();
+        const fechaHoy = `${String(hoy.getDate()).padStart(2, "0")}-${String(hoy.getMonth() + 1).padStart(2, "0")}-${hoy.getFullYear()}`;
+        return (
         <div
           style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,.5)", zIndex: 70, display: "flex", justifyContent: "flex-end" }}
-          onMouseDown={(e) => { if (e.target === e.currentTarget) setCarritoAbierto(false); }}
+          onMouseDown={(e) => { if (e.target === e.currentTarget && !enviandoPedido) setCarritoAbierto(false); }}
         >
-          <div style={{ width: "min(430px, 96vw)", height: "100%", background: "#fff", display: "flex", flexDirection: "column", boxShadow: "-16px 0 44px rgba(15,23,42,.25)" }}>
-            <div style={{ padding: "18px 20px", borderBottom: "1px solid #e2e8f0", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <div>
+          <div style={{ width: "min(460px, 96vw)", height: "100%", background: "#fff", display: "flex", flexDirection: "column", boxShadow: "-16px 0 44px rgba(15,23,42,.25)" }}>
+            {/* Cabecera con indicador de paso */}
+            <div style={{ padding: "16px 20px 12px", borderBottom: "1px solid #e2e8f0" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                 <div style={{ fontSize: 16, fontWeight: 800, color: "#0f172a", display: "flex", alignItems: "center", gap: 8 }}>
-                  <ShoppingCart size={18} style={{ color: TEAL }} /> Mi pedido
+                  <ShoppingCart size={18} style={{ color: TEAL }} />
+                  {enResumen ? "Revisa tu pedido" : "Mi pedido"}
                 </div>
-                <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>
-                  {totalUnidades} unidad{totalUnidades === 1 ? "" : "es"} · llega como solicitud a Amsodent
-                </div>
+                <button type="button" onClick={() => !enviandoPedido && setCarritoAbierto(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "#64748b" }}>
+                  <X size={20} />
+                </button>
               </div>
-              <button type="button" onClick={() => setCarritoAbierto(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "#64748b" }}>
-                <X size={20} />
-              </button>
+              {/* Pasos */}
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10 }}>
+                {[
+                  { n: 1, label: "Carrito", activo: !enResumen },
+                  { n: 2, label: "Revisión y envío", activo: enResumen },
+                ].map((p, i) => (
+                  <Fragment key={p.n}>
+                    {i > 0 && <div style={{ flex: 1, height: 2, background: enResumen ? TEAL : "#e2e8f0", borderRadius: 2 }} />}
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                      <span style={{
+                        width: 20, height: 20, borderRadius: 10, display: "grid", placeItems: "center",
+                        fontSize: 11, fontWeight: 800,
+                        background: p.activo ? TEAL : "#f1f5f9",
+                        color: p.activo ? "#fff" : "#94a3b8",
+                      }}>{p.n}</span>
+                      <span style={{ fontSize: 11.5, fontWeight: 700, color: p.activo ? "#0f172a" : "#94a3b8" }}>{p.label}</span>
+                    </span>
+                  </Fragment>
+                ))}
+              </div>
             </div>
 
-            <div style={{ flex: 1, overflowY: "auto", padding: "14px 20px", display: "flex", flexDirection: "column", gap: 12 }}>
-              {carrito.length === 0 ? (
-                <p style={{ fontSize: 13, color: "#64748b" }}>Tu pedido está vacío. Agrega productos desde el explorador.</p>
-              ) : carrito.map((c) => (
-                <div key={c.url} style={{ display: "flex", gap: 10, border: "1px solid #e2e8f0", borderRadius: 12, padding: 10 }}>
-                  {c.imagen ? (
-                    <img src={c.imagen} alt="" style={{ width: 52, height: 52, objectFit: "contain", background: "#f8fafc", borderRadius: 8, flexShrink: 0 }} />
-                  ) : (
-                    <div style={{ width: 52, height: 52, background: "#f8fafc", borderRadius: 8, display: "grid", placeItems: "center", color: "#cbd5e1", flexShrink: 0 }}>
-                      <Search size={18} />
+            {/* ── PASO 1: carrito editable ── */}
+            {!enResumen && (
+              <>
+                <div style={{ flex: 1, overflowY: "auto", padding: "14px 20px", display: "flex", flexDirection: "column", gap: 12 }}>
+                  {carrito.length === 0 ? (
+                    <p style={{ fontSize: 13, color: "#64748b" }}>Tu pedido está vacío. Agrega productos desde el explorador.</p>
+                  ) : carrito.map((c) => (
+                    <div key={c.url} style={{ display: "flex", gap: 10, border: "1px solid #e2e8f0", borderRadius: 12, padding: 10 }}>
+                      {c.imagen ? (
+                        <img src={c.imagen} alt="" style={{ width: 52, height: 52, objectFit: "contain", background: "#f8fafc", borderRadius: 8, flexShrink: 0 }} />
+                      ) : (
+                        <div style={{ width: 52, height: 52, background: "#f8fafc", borderRadius: 8, display: "grid", placeItems: "center", color: "#cbd5e1", flexShrink: 0 }}>
+                          <Search size={18} />
+                        </div>
+                      )}
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 12.5, fontWeight: 700, color: "#0f172a", lineHeight: 1.3, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
+                          {c.nombre}
+                        </div>
+                        <div style={{ fontSize: 11, color: c.esAmsodent ? TEAL : "#64748b", fontWeight: 700, marginTop: 2 }}>
+                          {c.esAmsodent ? "★ Amsodent" : c.tienda} · ref. {fmtMoneda(c.precio)}
+                        </div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}>
+                          <button type="button" onClick={() => cambiarCantidad(c.url, -1)} style={{ width: 24, height: 24, borderRadius: 7, border: "1px solid #e2e8f0", background: "#fff", cursor: "pointer", display: "grid", placeItems: "center", color: "#475569" }}>
+                            <Minus size={12} />
+                          </button>
+                          <span style={{ fontSize: 13, fontWeight: 800, minWidth: 20, textAlign: "center" }}>{c.cantidad}</span>
+                          <button type="button" onClick={() => cambiarCantidad(c.url, +1)} style={{ width: 24, height: 24, borderRadius: 7, border: "1px solid #e2e8f0", background: "#fff", cursor: "pointer", display: "grid", placeItems: "center", color: "#475569" }}>
+                            <Plus size={12} />
+                          </button>
+                          <button type="button" onClick={() => cambiarCantidad(c.url, -Number(c.cantidad || 0))} title="Quitar del pedido" style={{ marginLeft: "auto", background: "none", border: "none", cursor: "pointer", color: "#b91c1c" }}>
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div style={{ padding: "14px 20px 18px", borderTop: "1px solid #e2e8f0", display: "flex", flexDirection: "column", gap: 10 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: "#475569" }}>
+                    <span>Total referencial*</span>
+                    <strong style={{ color: "#0f172a" }}>{fmtMoneda(totalReferencial)}</strong>
+                  </div>
+                  <textarea
+                    value={notaPedido}
+                    onChange={(e) => setNotaPedido(e.target.value)}
+                    placeholder="Nota para Amsodent (opcional): plazos, dirección de entrega, referencias…"
+                    maxLength={600}
+                    rows={2}
+                    style={{ width: "100%", borderRadius: 10, border: "1px solid #e2e8f0", padding: "8px 12px", fontSize: 12.5, resize: "vertical", background: "#f8fafc" }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => { setErrorPedido(""); setPasoCarrito("resumen"); }}
+                    disabled={carrito.length === 0}
+                    style={{
+                      height: 44, borderRadius: 12, border: "none", cursor: "pointer",
+                      background: `linear-gradient(135deg, ${TEAL}, ${TEAL_LIGHT})`, color: "#fff",
+                      fontWeight: 800, fontSize: 14, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8,
+                      opacity: carrito.length === 0 ? 0.6 : 1,
+                    }}
+                  >
+                    Revisar pedido →
+                  </button>
+                  <p style={{ fontSize: 10.5, color: "#94a3b8", margin: 0, lineHeight: 1.4 }}>
+                    Aún no se envía nada: en el siguiente paso verás el resumen completo antes de confirmar.
+                  </p>
+                </div>
+              </>
+            )}
+
+            {/* ── PASO 2: resumen formal + confirmación ── */}
+            {enResumen && (
+              <>
+                <div style={{ flex: 1, overflowY: "auto", padding: "14px 20px", display: "flex", flexDirection: "column", gap: 14 }}>
+                  {/* Encabezado del pedido */}
+                  <div style={{ border: "1px solid #e2e8f0", borderRadius: 12, padding: "12px 14px", background: "#f8fafc" }}>
+                    <div style={{ fontSize: 11, fontWeight: 800, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".05em" }}>Solicitud de pedido</div>
+                    <div style={{ fontSize: 14, fontWeight: 800, color: "#0f172a", marginTop: 4 }}>
+                      {clientePortal?.razon_social || "Cliente del portal"}
+                    </div>
+                    <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>
+                      {clientePortal?.rut ? `RUT ${clientePortal.rut} · ` : ""}Fecha {fechaHoy} · {totalUnidades} unidad{totalUnidades === 1 ? "" : "es"} en {carrito.length} producto{carrito.length === 1 ? "" : "s"}
+                    </div>
+                  </div>
+
+                  {/* Detalle de productos */}
+                  <div style={{ border: "1px solid #e2e8f0", borderRadius: 12, overflow: "hidden" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+                      <thead>
+                        <tr style={{ background: "#f8fafc" }}>
+                          <th style={{ textAlign: "left", padding: "8px 12px", fontSize: 10.5, fontWeight: 800, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".04em" }}>Producto</th>
+                          <th style={{ textAlign: "right", padding: "8px 8px", fontSize: 10.5, fontWeight: 800, color: "#94a3b8", textTransform: "uppercase" }}>Cant.</th>
+                          <th style={{ textAlign: "right", padding: "8px 12px", fontSize: 10.5, fontWeight: 800, color: "#94a3b8", textTransform: "uppercase" }}>Ref.</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {carrito.map((c) => (
+                          <tr key={c.url} style={{ borderTop: "1px solid #f1f5f9" }}>
+                            <td style={{ padding: "8px 12px" }}>
+                              <div style={{ fontWeight: 600, color: "#0f172a", lineHeight: 1.3 }}>{c.nombre}</div>
+                              <div style={{ fontSize: 10.5, color: c.esAmsodent ? TEAL : "#94a3b8", fontWeight: 700 }}>
+                                {c.esAmsodent ? "★ Amsodent" : c.tienda}
+                              </div>
+                            </td>
+                            <td style={{ padding: "8px 8px", textAlign: "right", fontWeight: 800, whiteSpace: "nowrap" }}>{c.cantidad}</td>
+                            <td style={{ padding: "8px 12px", textAlign: "right", whiteSpace: "nowrap", color: "#475569" }}>
+                              {fmtMoneda(Number(c.precio || 0) * Number(c.cantidad || 0))}
+                            </td>
+                          </tr>
+                        ))}
+                        <tr style={{ borderTop: "1px solid #e2e8f0", background: "#f8fafc" }}>
+                          <td colSpan={2} style={{ padding: "8px 12px", fontWeight: 700, color: "#475569" }}>Total referencial*</td>
+                          <td style={{ padding: "8px 12px", textAlign: "right", fontWeight: 800, color: "#0f172a" }}>{fmtMoneda(totalReferencial)}</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Nota */}
+                  {notaPedido.trim() && (
+                    <div style={{ fontSize: 12.5, color: "#475569", border: "1px solid #e2e8f0", borderRadius: 12, padding: "10px 14px" }}>
+                      <span style={{ fontWeight: 800, color: "#334155" }}>Nota para Amsodent:</span> {notaPedido.trim()}
                     </div>
                   )}
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 12.5, fontWeight: 700, color: "#0f172a", lineHeight: 1.3, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
-                      {c.nombre}
+
+                  {/* Datos de contacto (opcionales) */}
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    <div style={{ fontSize: 11.5, fontWeight: 800, color: "#475569", textTransform: "uppercase", letterSpacing: ".04em" }}>
+                      ¿A quién contactamos por este pedido? <span style={{ fontWeight: 400, textTransform: "none", color: "#94a3b8" }}>(opcional)</span>
                     </div>
-                    <div style={{ fontSize: 11, color: c.esAmsodent ? TEAL : "#64748b", fontWeight: 700, marginTop: 2 }}>
-                      {c.esAmsodent ? "★ Amsodent" : c.tienda} · ref. {fmtMoneda(c.precio)}
-                    </div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}>
-                      <button type="button" onClick={() => cambiarCantidad(c.url, -1)} style={{ width: 24, height: 24, borderRadius: 7, border: "1px solid #e2e8f0", background: "#fff", cursor: "pointer", display: "grid", placeItems: "center", color: "#475569" }}>
-                        <Minus size={12} />
-                      </button>
-                      <span style={{ fontSize: 13, fontWeight: 800, minWidth: 20, textAlign: "center" }}>{c.cantidad}</span>
-                      <button type="button" onClick={() => cambiarCantidad(c.url, +1)} style={{ width: 24, height: 24, borderRadius: 7, border: "1px solid #e2e8f0", background: "#fff", cursor: "pointer", display: "grid", placeItems: "center", color: "#475569" }}>
-                        <Plus size={12} />
-                      </button>
-                      <button type="button" onClick={() => cambiarCantidad(c.url, -Number(c.cantidad || 0))} title="Quitar del pedido" style={{ marginLeft: "auto", background: "none", border: "none", cursor: "pointer", color: "#b91c1c" }}>
-                        <Trash2 size={14} />
-                      </button>
+                    <input
+                      value={contactoPedido.nombre}
+                      onChange={(e) => setContactoPedido((p) => ({ ...p, nombre: e.target.value }))}
+                      placeholder="Nombre de contacto"
+                      maxLength={120}
+                      style={{ height: 40, borderRadius: 10, border: "1px solid #e2e8f0", padding: "0 12px", fontSize: 13, background: "#f8fafc" }}
+                    />
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <input
+                        value={contactoPedido.email}
+                        onChange={(e) => setContactoPedido((p) => ({ ...p, email: e.target.value }))}
+                        placeholder="Correo"
+                        type="email"
+                        maxLength={120}
+                        style={{ flex: 1, height: 40, borderRadius: 10, border: "1px solid #e2e8f0", padding: "0 12px", fontSize: 13, background: "#f8fafc", minWidth: 0 }}
+                      />
+                      <input
+                        value={contactoPedido.telefono}
+                        onChange={(e) => setContactoPedido((p) => ({ ...p, telefono: e.target.value }))}
+                        placeholder="Teléfono"
+                        maxLength={30}
+                        style={{ width: 140, height: 40, borderRadius: 10, border: "1px solid #e2e8f0", padding: "0 12px", fontSize: 13, background: "#f8fafc" }}
+                      />
                     </div>
                   </div>
                 </div>
-              ))}
-            </div>
 
-            <div style={{ padding: "14px 20px 18px", borderTop: "1px solid #e2e8f0", display: "flex", flexDirection: "column", gap: 10 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: "#475569" }}>
-                <span>Total referencial*</span>
-                <strong style={{ color: "#0f172a" }}>{fmtMoneda(totalReferencial)}</strong>
-              </div>
-              <textarea
-                value={notaPedido}
-                onChange={(e) => setNotaPedido(e.target.value)}
-                placeholder="Nota para Amsodent (opcional): plazos, dirección de entrega, referencias…"
-                maxLength={600}
-                rows={2}
-                style={{ width: "100%", borderRadius: 10, border: "1px solid #e2e8f0", padding: "8px 12px", fontSize: 12.5, resize: "vertical", background: "#f8fafc" }}
-              />
-              {errorPedido && <div style={{ fontSize: 12, color: "#b91c1c" }}>{errorPedido}</div>}
-              <button
-                type="button"
-                onClick={enviarPedido}
-                disabled={enviandoPedido || carrito.length === 0}
-                style={{
-                  height: 44, borderRadius: 12, border: "none", cursor: "pointer",
-                  background: `linear-gradient(135deg, ${TEAL}, ${TEAL_LIGHT})`, color: "#fff",
-                  fontWeight: 800, fontSize: 14, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8,
-                  opacity: enviandoPedido || carrito.length === 0 ? 0.6 : 1,
-                }}
-              >
-                <Send size={15} /> {enviandoPedido ? "Enviando pedido…" : "Enviar solicitud de pedido"}
-              </button>
-              <p style={{ fontSize: 10.5, color: "#94a3b8", margin: 0, lineHeight: 1.4 }}>
-                * Los precios son referenciales de las tiendas consultadas. Amsodent te responderá con
-                una cotización formal con sus propias condiciones.
-              </p>
-            </div>
+                <div style={{ padding: "14px 20px 18px", borderTop: "1px solid #e2e8f0", display: "flex", flexDirection: "column", gap: 10 }}>
+                  {errorPedido && <div style={{ fontSize: 12, color: "#b91c1c" }}>{errorPedido}</div>}
+                  <div style={{ display: "flex", gap: 10 }}>
+                    <button
+                      type="button"
+                      onClick={() => setPasoCarrito("carrito")}
+                      disabled={enviandoPedido}
+                      style={{
+                        height: 44, borderRadius: 12, cursor: "pointer", padding: "0 16px",
+                        border: "1px solid #e2e8f0", background: "#fff", color: "#475569", fontWeight: 700, fontSize: 13.5,
+                      }}
+                    >
+                      ← Volver
+                    </button>
+                    <button
+                      type="button"
+                      onClick={enviarPedido}
+                      disabled={enviandoPedido || carrito.length === 0}
+                      style={{
+                        flex: 1, height: 44, borderRadius: 12, border: "none", cursor: "pointer",
+                        background: `linear-gradient(135deg, ${TEAL}, ${TEAL_LIGHT})`, color: "#fff",
+                        fontWeight: 800, fontSize: 14, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8,
+                        opacity: enviandoPedido || carrito.length === 0 ? 0.6 : 1,
+                      }}
+                    >
+                      <Send size={15} /> {enviandoPedido ? "Enviando pedido…" : "Confirmar y enviar pedido"}
+                    </button>
+                  </div>
+                  <p style={{ fontSize: 10.5, color: "#94a3b8", margin: 0, lineHeight: 1.4 }}>
+                    * Los precios son referenciales de las tiendas consultadas al momento de la búsqueda.
+                    Amsodent te responderá con una cotización formal con sus propias condiciones.
+                  </p>
+                </div>
+              </>
+            )}
           </div>
         </div>
-      )}
+        );
+      })()}
     </div>
   );
 }
