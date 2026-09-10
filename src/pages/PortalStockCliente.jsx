@@ -69,6 +69,18 @@ async function apiRequest(path, options = {}) {
   const text = await res.text();
   const body = text ? safeJSON(text) : null;
   if (!res.ok) {
+    // Sesión inválida o expirada (p.ej. el secreto del portal cambió): en vez
+    // de dejar la pantalla pegada en "Cargando…", se cierra la sesión y se
+    // vuelve al login. Solo aplica a llamadas que iban CON token: el login
+    // mismo también responde 401 y ese error sí debe mostrarse.
+    if (res.status === 401 && token) {
+      try {
+        localStorage.removeItem(TOKEN_KEY);
+        localStorage.removeItem(CLIENTE_KEY);
+      } catch { /* */ }
+      window.location.reload();
+      return null;
+    }
     const err = new Error((body && (body.message || body.error)) || `Error ${res.status}`);
     err.status = res.status;
     throw err;
