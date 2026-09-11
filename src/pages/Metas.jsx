@@ -240,6 +240,9 @@ export default function Metas() {
   const [licitaciones, setLicitaciones] = useState([]);
   const [ocs, setOcs] = useState([]);
   const [usuariosMap, setUsuariosMap] = useState({});
+  // Nombre por correo para TODOS los perfiles (incluye admins que venden y
+  // correos alternos) — usuariosMap queda solo como seed de filas.
+  const [nombresMap, setNombresMap] = useState({});
   const [metasMap, setMetasMap] = useState({});
   const [metasDraftMap, setMetasDraftMap] = useState({});
   const [metasSplitDraftMap, setMetasSplitDraftMap] = useState({});
@@ -333,16 +336,30 @@ export default function Metas() {
 
         const perfilesVendedores = await api.get("/usuarios/profiles");
 
+        // usuariosMap: SEED de filas — roles de venta aparecen siempre en la
+        // tabla aunque no tengan cotizaciones ni meta todavía.
+        // nombresMap: etiquetas — TODOS los perfiles, para que un admin que
+        // vende (ej: Diego Cruz) aparezca con su nombre y no con el correo
+        // crudo. Incluye el correo alterno (2026-09-10) como alias.
         const mapa = {};
-        (perfilesVendedores || []).filter((p) => ["ventas", "jefe_ventas"].includes(p?.rol)).forEach((p) => {
+        const nombres = {};
+        (perfilesVendedores || []).forEach((p) => {
           const email = (p?.email || "").trim().toLowerCase();
-          if (email) mapa[email] = (p?.nombre || "").trim() || email;
+          if (!email) return;
+          const nombre = (p?.nombre || "").trim() || email;
+          nombres[email] = nombre;
+          const alt = (p?.email_alterno || "").trim().toLowerCase();
+          if (alt) nombres[alt] = nombre;
+          if (["ventas", "ventas_especial", "jefe_ventas"].includes(p?.rol)) {
+            mapa[email] = nombre;
+          }
         });
 
         if (!mounted) return;
         setLicitaciones(rows);
         setOcs(docsOcRows);
         setUsuariosMap(mapa);
+        setNombresMap(nombres);
       } catch (e) {
         console.error("Error cargando metas:", e);
         if (!mounted) return;
@@ -496,9 +513,9 @@ export default function Metas() {
     ]);
     return Array.from(correos)
       .filter(Boolean)
-      .map((email) => ({ value: email, label: usuariosMap[email] || email }))
+      .map((email) => ({ value: email, label: nombresMap[email] || usuariosMap[email] || email }))
       .sort((a, b) => a.label.localeCompare(b.label));
-  }, [usuariosMap, licitaciones, metasMap, metasDraftMap, canalPorVendedorMap]);
+  }, [usuariosMap, nombresMap, licitaciones, metasMap, metasDraftMap, canalPorVendedorMap]);
 
   const avanceMetas = useMemo(() => {
     const finPeriodo = finMesISO(metaPeriodo);
@@ -1540,7 +1557,7 @@ export default function Metas() {
               licId: d.licId,
               codigo: d.codigo,
               cliente: d.entidad,
-              vendedor: usuariosMap[d.email] || d.email,
+              vendedor: nombresMap[d.email] || usuariosMap[d.email] || d.email,
               tipoLabel: d.tipoLabel,
               numero: d.numero,
               monto: d.monto,
