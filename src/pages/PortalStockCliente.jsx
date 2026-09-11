@@ -2099,6 +2099,7 @@ function PanelExploradorPrecios() {
             precio_referencia: Number(c.precio || 0) || undefined,
             tienda: c.tienda || undefined,
             url: c.url || undefined,
+            observacion: String(c.observacion || "").trim() || undefined,
           })),
           nota: notaFinal,
           contacto_nombre: contactoPedido.nombre.trim() || undefined,
@@ -2493,6 +2494,19 @@ function PanelExploradorPrecios() {
                             <Trash2 size={14} />
                           </button>
                         </div>
+                        {/* Observación por producto (2026-09-10): viaja con el
+                            ítem y la ve el equipo en Pedidos del Portal. */}
+                        <input
+                          value={c.observacion || ""}
+                          onChange={(e) =>
+                            setCarrito((prev) =>
+                              prev.map((p) => (p.url === c.url ? { ...p, observacion: e.target.value } : p)),
+                            )
+                          }
+                          placeholder="Observación (opcional): tono, formato, marca…"
+                          maxLength={300}
+                          style={{ marginTop: 7, width: "100%", height: 30, borderRadius: 8, border: "1px solid #e2e8f0", padding: "0 10px", fontSize: 11.5, background: "#f8fafc" }}
+                        />
                       </div>
                     </div>
                   ))}
@@ -2564,6 +2578,11 @@ function PanelExploradorPrecios() {
                               <div style={{ fontSize: 10.5, color: c.esAmsodent ? TEAL : "#94a3b8", fontWeight: 700 }}>
                                 {c.esAmsodent ? "★ Amsodent" : c.tienda}
                               </div>
+                              {String(c.observacion || "").trim() && (
+                                <div style={{ fontSize: 10.5, color: "#64748b", marginTop: 2, fontStyle: "italic" }}>
+                                  Obs: {String(c.observacion).trim()}
+                                </div>
+                              )}
                             </td>
                             <td style={{ padding: "8px 8px", textAlign: "right", fontWeight: 800, whiteSpace: "nowrap" }}>{c.cantidad}</td>
                             <td style={{ padding: "8px 12px", textAlign: "right", whiteSpace: "nowrap", color: "#475569" }}>

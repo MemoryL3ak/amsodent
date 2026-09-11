@@ -173,7 +173,7 @@ export default function PedidosPortal() {
       0,
     );
     const rows = items.map((i) => [
-      i?.nombre || "—",
+      `${i?.nombre || "—"}${i?.observacion ? `\nObs: ${i.observacion}` : ""}`,
       `${i?.cantidad || 0}${i?.unidad ? ` ${i.unidad}` : ""}`,
       i?.tienda || "—",
       i?.precio_referencia ? fmtCLP(i.precio_referencia) : "—",
@@ -223,7 +223,8 @@ export default function PedidosPortal() {
         i?.tienda ? `ref. ${i.tienda}` : null,
         i?.precio_referencia ? fmtCLP(i.precio_referencia) : null,
       ].filter(Boolean).join(" ");
-      return `  • ${i?.nombre || "?"} — ${i?.cantidad || 0}${i?.unidad ? ` ${i.unidad}` : ""}${ref ? ` (${ref})` : ""}`;
+      const obs = i?.observacion ? ` — Obs: ${i.observacion}` : "";
+      return `  • ${i?.nombre || "?"} — ${i?.cantidad || 0}${i?.unidad ? ` ${i.unidad}` : ""}${ref ? ` (${ref})` : ""}${obs}`;
     });
     const obs = [
       `Pedido del portal N° ${s.id} (${origenDe(s) === "explorador" ? "Explorador de Precios" : "Gestión de Stock"}) del ${fmtFechaHora(s.created_at)}:`,
@@ -482,7 +483,14 @@ export default function PedidosPortal() {
                                     <tbody>
                                       {items.map((i, idx) => (
                                         <tr key={idx}>
-                                          <td>{i?.nombre || "—"}</td>
+                                          <td>
+                                            {i?.nombre || "—"}
+                                            {i?.observacion && (
+                                              <div style={{ fontSize: 11, color: "#64748b", fontStyle: "italic", marginTop: 1 }}>
+                                                Obs: {i.observacion}
+                                              </div>
+                                            )}
+                                          </td>
                                           <td style={{ textAlign: "right", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
                                             {i?.cantidad || 0}{i?.unidad ? ` ${i.unidad}` : ""}
                                           </td>

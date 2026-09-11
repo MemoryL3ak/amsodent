@@ -1307,6 +1307,11 @@ function DetalleDeclaracion({ declaracion, onCerrar, setToast }) {
                                   <tr key={idx}>
                                     <td style={styles.td}>
                                       {it.nombre}
+                                      {it.observacion && (
+                                        <div style={{ fontSize: 11, color: "#64748b", fontStyle: "italic", marginTop: 1 }}>
+                                          Obs: {it.observacion}
+                                        </div>
+                                      )}
                                       {/* (Punto 14) Referencia del carrito del Explorador de Precios */}
                                       {(it.tienda || it.precio_referencia || it.url) && (
                                         <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>

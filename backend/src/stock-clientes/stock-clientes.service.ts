@@ -1392,6 +1392,8 @@ export class StockClientesService {
         const precioRef = Number((it as any)?.precio_referencia) || 0;
         const tienda = String((it as any)?.tienda || '').trim().slice(0, 80);
         const url = String((it as any)?.url || '').trim().slice(0, 500);
+        // Observación del cliente por producto (opcional, 2026-09-10).
+        const observacion = String((it as any)?.observacion || '').trim().slice(0, 300);
         return {
           nombre,
           unidad,
@@ -1399,6 +1401,7 @@ export class StockClientesService {
           ...(precioRef > 0 ? { precio_referencia: precioRef } : {}),
           ...(tienda ? { tienda } : {}),
           ...(url ? { url } : {}),
+          ...(observacion ? { observacion } : {}),
         };
       })
       .filter((it) => it.nombre.length > 0 && it.cantidad > 0);
