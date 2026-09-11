@@ -13,7 +13,12 @@ import { SupabaseService } from '../supabase/supabase.service';
    8 s, User-Agent identificable y caché en memoria de 10 minutos por
    consulta (búsquedas repetidas no vuelven a golpear los sitios). */
 
-const TIENDAS: Array<{ id: string; nombre: string; tipo: 'shopify' | 'woo'; base: string }> = [
+type Tienda = { id: string; nombre: string; tipo: 'shopify' | 'woo'; base: string };
+
+// Fallback si la tabla explorador_tiendas aún no existe (migración pendiente)
+// o quedó vacía. Desde el 2026-09-10 la lista viva se administra en el
+// mantenedor de la plataforma (tabla explorador_tiendas).
+const TIENDAS_FALLBACK: Tienda[] = [
   // La tienda propia va SIEMPRE primera en los resultados (ver orden en buscar()).
   { id: 'amsodent', nombre: 'Amsodent', tipo: 'woo', base: 'https://amsodentmedical.cl' },
   { id: 'orbisdental', nombre: 'Orbis Dental', tipo: 'shopify', base: 'https://www.orbisdental.cl' },
@@ -66,8 +71,46 @@ function limpiarNombre(s: any): string {
 export class ExploradorService {
   private readonly logger = new Logger(ExploradorService.name);
   private cache = new Map<string, { ts: number; data: any }>();
+  // Tiendas activas (mantenedor): caché de 5 min para no leer la tabla en
+  // cada búsqueda; se invalida al guardar/eliminar desde el mantenedor.
+  private tiendasCache: { ts: number; tiendas: Tienda[] } | null = null;
 
   constructor(private supabase: SupabaseService) {}
+
+  private async tiendasActivas(): Promise<Tienda[]> {
+    if (this.tiendasCache && Date.now() - this.tiendasCache.ts < 5 * 60 * 1000) {
+      return this.tiendasCache.tiendas;
+    }
+    try {
+      const { data, error } = await this.supabase
+        .getClient()
+        .from('explorador_tiendas')
+        .select('id, nombre, tipo, base_url, activa, orden')
+        .eq('activa', true)
+        .order('orden', { ascending: true });
+      if (error) throw new Error(error.message);
+      const tiendas: Tienda[] = (data || [])
+        .filter((t: any) => t?.id && t?.base_url && (t?.tipo === 'shopify' || t?.tipo === 'woo'))
+        .map((t: any) => ({
+          id: String(t.id),
+          nombre: String(t.nombre || t.id),
+          tipo: t.tipo,
+          base: String(t.base_url).replace(/\/+$/, ''),
+        }));
+      if (tiendas.length) {
+        this.tiendasCache = { ts: Date.now(), tiendas };
+        return tiendas;
+      }
+    } catch (e: any) {
+      this.logger.warn(`Explorador: tabla de tiendas no disponible (${String(e?.message || e).slice(0, 100)}); uso el fallback.`);
+    }
+    return TIENDAS_FALLBACK;
+  }
+
+  invalidarTiendas() {
+    this.tiendasCache = null;
+    this.cache.clear();
+  }
 
   async buscar(qRaw: string) {
     const q = String(qRaw || '').trim().slice(0, 60);
@@ -77,8 +120,9 @@ export class ExploradorService {
     const enCache = this.cache.get(key);
     if (enCache && Date.now() - enCache.ts < CACHE_MS) return enCache.data;
 
+    const tiendas = await this.tiendasActivas();
     const porTienda = await Promise.all(
-      TIENDAS.map((t) =>
+      tiendas.map((t) =>
         this.buscarEnTienda(t, q).catch((e) => {
           this.logger.warn(`Explorador: ${t.id} falló para "${q}": ${String(e?.message || e).slice(0, 120)}`);
           return { items: [] as Hallazgo[], error: true };
@@ -87,7 +131,7 @@ export class ExploradorService {
     );
 
     const items = porTienda.flatMap((r) => r.items);
-    const tiendasCaidas = TIENDAS.filter((_, i) => (porTienda[i] as any).error).map((t) => t.nombre);
+    const tiendasCaidas = tiendas.filter((_, i) => (porTienda[i] as any).error).map((t) => t.nombre);
 
     await this.adjuntarHistoricoYGuardar(q, items);
     // Amsodent siempre encabeza; dentro de cada grupo, del más barato al más caro.
@@ -101,7 +145,7 @@ export class ExploradorService {
     const data = {
       consulta: q,
       total: items.length,
-      tiendas_consultadas: TIENDAS.map((t) => t.nombre),
+      tiendas_consultadas: tiendas.map((t) => t.nombre),
       tiendas_sin_respuesta: tiendasCaidas,
       items,
     };
@@ -123,7 +167,123 @@ export class ExploradorService {
     return res.json();
   }
 
-  private async buscarEnTienda(t: (typeof TIENDAS)[number], q: string): Promise<{ items: Hallazgo[] }> {
+  /* ── Mantenedor de tiendas (admin, 2026-09-10) ────────────────────── */
+  async listarTiendas() {
+    const { data, error } = await this.supabase
+      .getClient()
+      .from('explorador_tiendas')
+      .select('*')
+      .order('orden', { ascending: true });
+    if (error) {
+      throw new BadRequestException(
+        /does not exist|schema cache/i.test(error.message)
+          ? 'Falta aplicar la migración 20260910_explorador_tiendas.sql en Supabase.'
+          : error.message,
+      );
+    }
+    return data || [];
+  }
+
+  async guardarTienda(body: {
+    id?: string;
+    nombre?: string;
+    tipo?: string;
+    base_url?: string;
+    activa?: boolean;
+    orden?: number | string;
+  }) {
+    const nombre = String(body?.nombre || '').trim().slice(0, 80);
+    if (!nombre) throw new BadRequestException('Falta el nombre de la tienda.');
+    const tipo = String(body?.tipo || '').trim().toLowerCase();
+    if (tipo !== 'shopify' && tipo !== 'woo') {
+      throw new BadRequestException('El tipo debe ser "shopify" o "woo" (solo se soportan tiendas con esas APIs públicas de búsqueda).');
+    }
+    let base = String(body?.base_url || '').trim().replace(/\/+$/, '');
+    if (!/^https:\/\/[a-z0-9.-]+\.[a-z]{2,}(\/.*)?$/i.test(base)) {
+      throw new BadRequestException('La URL base debe ser https:// y un dominio válido (ej: https://gexachile.cl).');
+    }
+    // id: slug estable; si no viene, se deriva del nombre.
+    const id = String(body?.id || nombre)
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[̀-ͯ]/g, '')
+      .replace(/[^a-z0-9]/g, '')
+      .slice(0, 40);
+    if (!id) throw new BadRequestException('No se pudo derivar un identificador para la tienda.');
+
+    const activa = body?.activa !== false;
+    if (id === 'amsodent' && !activa) {
+      throw new BadRequestException('La tienda Amsodent no se puede desactivar: siempre encabeza el explorador.');
+    }
+    const orden = Number.isFinite(Number(body?.orden)) ? Number(body?.orden) : 100;
+
+    const { data, error } = await this.supabase
+      .getClient()
+      .from('explorador_tiendas')
+      .upsert(
+        [{ id, nombre, tipo, base_url: base, activa, orden, updated_at: new Date().toISOString() }],
+        { onConflict: 'id' },
+      )
+      .select()
+      .single();
+    if (error) {
+      throw new BadRequestException(
+        /does not exist|schema cache/i.test(error.message)
+          ? 'Falta aplicar la migración 20260910_explorador_tiendas.sql en Supabase.'
+          : error.message,
+      );
+    }
+    this.invalidarTiendas();
+    return data;
+  }
+
+  async eliminarTienda(id: string) {
+    const idN = String(id || '').trim().toLowerCase();
+    if (idN === 'amsodent') {
+      throw new BadRequestException('La tienda Amsodent no se puede eliminar.');
+    }
+    const { error } = await this.supabase
+      .getClient()
+      .from('explorador_tiendas')
+      .delete()
+      .eq('id', idN);
+    if (error) throw new BadRequestException(error.message);
+    this.invalidarTiendas();
+    return { deleted: true };
+  }
+
+  // Prueba en vivo una tienda (o una configuración aún no guardada): corre la
+  // búsqueda real contra su API y devuelve cuántos resultados entrega. Sirve
+  // para validar una página nueva antes de activarla — si el sitio no es
+  // Shopify ni WooCommerce con Store API pública, la prueba lo dirá.
+  async probarTienda(body: { tipo?: string; base_url?: string; q?: string }) {
+    const tipo = String(body?.tipo || '').trim().toLowerCase();
+    if (tipo !== 'shopify' && tipo !== 'woo') {
+      throw new BadRequestException('El tipo debe ser "shopify" o "woo".');
+    }
+    const base = String(body?.base_url || '').trim().replace(/\/+$/, '');
+    if (!/^https:\/\//i.test(base)) throw new BadRequestException('La URL base debe partir con https://');
+    const q = String(body?.q || 'resina').trim().slice(0, 40) || 'resina';
+    const t: Tienda = { id: 'prueba', nombre: 'Prueba', tipo: tipo as Tienda['tipo'], base };
+    try {
+      const r = await this.buscarEnTienda(t, q);
+      return {
+        ok: true,
+        consulta: q,
+        resultados: r.items.length,
+        ejemplo: r.items[0] ? { nombre: r.items[0].nombre, precio: r.items[0].precio, url: r.items[0].url } : null,
+      };
+    } catch (e: any) {
+      return {
+        ok: false,
+        consulta: q,
+        resultados: 0,
+        error: String(e?.message || e).slice(0, 160),
+      };
+    }
+  }
+
+  private async buscarEnTienda(t: Tienda, q: string): Promise<{ items: Hallazgo[] }> {
     const enc = encodeURIComponent(q);
     if (t.tipo === 'shopify') {
       const json = await this.fetchJson(

@@ -259,6 +259,32 @@ export class StockClientesController {
     return await this.explorador.buscar(q);
   }
 
+  // Mantenedor de tiendas del explorador (2026-09-10, solo admin): permite
+  // customizar las páginas que consulta el buscador de precios.
+  @UseGuards(AdminGuard)
+  @Get('explorador/tiendas')
+  async listarTiendasExplorador() {
+    return await this.explorador.listarTiendas();
+  }
+
+  @UseGuards(AdminGuard)
+  @Post('explorador/tiendas')
+  async guardarTiendaExplorador(@Body() body: Record<string, any>) {
+    return await this.explorador.guardarTienda(body);
+  }
+
+  @UseGuards(AdminGuard)
+  @Delete('explorador/tiendas/:id')
+  async eliminarTiendaExplorador(@Param('id') id: string) {
+    return await this.explorador.eliminarTienda(id);
+  }
+
+  @UseGuards(AdminGuard)
+  @Post('explorador/tiendas/probar')
+  async probarTiendaExplorador(@Body() body: Record<string, any>) {
+    return await this.explorador.probarTienda(body);
+  }
+
   // ============================================================
   // Admin — dashboard, clientes y configuración de destinatarios
   // ============================================================

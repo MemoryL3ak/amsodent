@@ -458,7 +458,17 @@ girasol 🌻). Hoy ayuda en:
   formal (cliente, fecha, detalle con subtotales, total referencial y datos
   de contacto opcionales); recién "Confirmar y enviar pedido" lo despacha —
   nunca se envía directo. Llega al equipo como solicitud (campana + correo)
-  con precio y tienda de referencia por producto.
+  con precio y tienda de referencia por producto. Cada producto del carrito
+  acepta una OBSERVACION del cliente (tono, formato, marca) que el equipo ve
+  en Pedidos del Portal y en el PDF del pedido. Las tarjetas del explorador
+  muestran el chip "EN EL PEDIDO" con contador -/+ cuando el producto ya está
+  en el carrito.
+- TIENDAS DEL EXPLORADOR (mantenedor, solo admin): en Acceso Portal Clientes →
+  pestaña "Tiendas del Explorador" se administran las páginas que consulta el
+  buscador (agregar/editar/activar/ordenar). Solo se soportan tiendas Shopify
+  o WooCommerce con API pública; el botón "Probar conexión" valida el sitio
+  con una búsqueda real antes de activarlo. Amsodent siempre va primera y no
+  se puede desactivar. Requiere la migración 20260910_explorador_tiendas.
 - SALDO OC (Despachos y Choferes → pestaña "Saldo OC"): detalle de las OC de
   adjudicadas con ciclo abierto en dos grupos — pendientes de envío (sin
   ninguna guía) y con saldo por consumir (OC − guías > 0, despachos

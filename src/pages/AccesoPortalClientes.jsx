@@ -19,6 +19,10 @@ import {
   Copy,
   Building2,
   AlertTriangle,
+  Globe,
+  Pencil,
+  Trash2,
+  Zap,
 } from "lucide-react";
 import { api } from "../lib/api";
 import Toast from "../components/Toast";
@@ -181,6 +185,12 @@ export default function AccesoPortalClientes() {
           <Inbox size={15} /> Recuperaciones de clave
           {pendientes > 0 && <span style={s.badge}>{pendientes}</span>}
         </button>
+        <button
+          style={{ ...s.tab, ...(tab === "tiendas" ? s.tabActiva : {}) }}
+          onClick={() => setTab("tiendas")}
+        >
+          <Globe size={15} /> Tiendas del Explorador
+        </button>
       </div>
 
       {tab === "accesos" && (
@@ -298,6 +308,13 @@ export default function AccesoPortalClientes() {
             </div>
           )}
         </section>
+      )}
+
+      {tab === "tiendas" && (
+        <SeccionTiendasExplorador
+          onOk={(msg) => setToast({ type: "success", message: msg })}
+          onError={(msg) => setToast({ type: "error", message: msg })}
+        />
       )}
 
       {modalHabilitar && (
@@ -857,6 +874,287 @@ function ModalSucursalesHabilitar({ rut, razonSocial, onCerrar, onOk, onError })
       </div>
       <div style={s.modalFooter}>
         <button style={s.btnGhost} onClick={onCerrar}>Cerrar</button>
+      </div>
+    </Overlay>
+  );
+}
+
+/* ── Tiendas del Explorador de Precios (mantenedor, 2026-09-10) ─────────
+   Administra las páginas que consulta el buscador del portal cliente.
+   Solo se soportan tiendas Shopify (search/suggest.json) o WooCommerce
+   (Store API pública); el botón "Probar" valida en vivo si el sitio
+   responde antes de activarlo. Amsodent está protegida: no se puede
+   eliminar ni desactivar y siempre encabeza los resultados. */
+function SeccionTiendasExplorador({ onOk, onError }) {
+  const [tiendas, setTiendas] = useState([]);
+  const [cargando, setCargando] = useState(true);
+  const [errorCarga, setErrorCarga] = useState("");
+  const [modal, setModal] = useState(null); // {} nueva | { tienda }
+  const [guardandoId, setGuardandoId] = useState(null);
+
+  async function cargarTiendas() {
+    setCargando(true);
+    setErrorCarga("");
+    try {
+      const data = await api.get("/stock-clientes/explorador/tiendas");
+      setTiendas(Array.isArray(data) ? data : []);
+    } catch (e) {
+      setErrorCarga(e?.message || "No se pudieron cargar las tiendas.");
+    } finally {
+      setCargando(false);
+    }
+  }
+  useEffect(() => { cargarTiendas(); }, []);
+
+  async function toggleActiva(t) {
+    setGuardandoId(t.id);
+    try {
+      await api.post("/stock-clientes/explorador/tiendas", { ...t, activa: !t.activa });
+      setTiendas((prev) => prev.map((x) => (x.id === t.id ? { ...x, activa: !t.activa } : x)));
+      onOk?.(!t.activa ? `${t.nombre} activada en el explorador.` : `${t.nombre} desactivada.`);
+    } catch (e) {
+      onError?.(e?.message || "No se pudo actualizar la tienda.");
+    } finally {
+      setGuardandoId(null);
+    }
+  }
+
+  async function eliminar(t) {
+    if (!window.confirm(`¿Eliminar la tienda ${t.nombre} del explorador? Su histórico de precios se conserva.`)) return;
+    try {
+      await api.delete(`/stock-clientes/explorador/tiendas/${t.id}`);
+      setTiendas((prev) => prev.filter((x) => x.id !== t.id));
+      onOk?.(`${t.nombre} eliminada.`);
+    } catch (e) {
+      onError?.(e?.message || "No se pudo eliminar la tienda.");
+    }
+  }
+
+  return (
+    <section style={s.card}>
+      <div style={s.infoNota}>
+        <Globe size={14} style={{ flexShrink: 0, marginTop: 1 }} />
+        <span>
+          Estas son las páginas que consulta el <strong>Explorador de Precios</strong> del portal cliente.
+          Solo funcionan tiendas <strong>Shopify</strong> o <strong>WooCommerce</strong> con API pública de
+          búsqueda — usa <strong>Probar</strong> antes de activar una nueva. Amsodent siempre va primera y
+          no se puede desactivar.
+        </span>
+      </div>
+      <div style={s.cardHead}>
+        <strong style={{ fontSize: 14, color: "#0f172a" }}>
+          {tiendas.length} tienda{tiendas.length === 1 ? "" : "s"} configurada{tiendas.length === 1 ? "" : "s"}
+        </strong>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button style={s.btnGhost} onClick={cargarTiendas}>
+            <RefreshCw size={14} /> Actualizar
+          </button>
+          <button style={s.btnPrimario} onClick={() => setModal({})}>
+            <Plus size={15} /> Agregar tienda
+          </button>
+        </div>
+      </div>
+
+      {cargando ? (
+        <div style={s.vacio}>Cargando…</div>
+      ) : errorCarga ? (
+        <div style={{ ...s.vacio, color: "#b91c1c" }}>{errorCarga}</div>
+      ) : tiendas.length === 0 ? (
+        <div style={s.vacio}>Sin tiendas configuradas. Usa «Agregar tienda».</div>
+      ) : (
+        <div style={s.tablaWrap}>
+          <table style={s.tabla}>
+            <thead>
+              <tr>
+                <th style={{ ...s.th, width: 54 }}>Orden</th>
+                <th style={s.th}>Tienda</th>
+                <th style={s.th}>URL</th>
+                <th style={{ ...s.th, width: 100 }}>Tipo</th>
+                <th style={{ ...s.th, width: 110 }}>Estado</th>
+                <th style={{ ...s.th, textAlign: "right", width: 150 }}>Acciones</th>
+              </tr>
+            </thead>
+            <tbody>
+              {tiendas.map((t) => {
+                const esPropia = t.id === "amsodent";
+                return (
+                  <tr key={t.id} style={s.tr}>
+                    <td style={{ ...s.td, textAlign: "center", color: "#94a3b8", fontWeight: 700 }}>{t.orden}</td>
+                    <td style={s.td}>
+                      <span style={{ fontWeight: 700, color: esPropia ? TEAL_DARK : "#0f172a" }}>
+                        {esPropia ? "★ " : ""}{t.nombre}
+                      </span>
+                    </td>
+                    <td style={{ ...s.td, fontSize: 12 }}>
+                      <a href={t.base_url} target="_blank" rel="noopener noreferrer" style={{ color: "#475569" }}>
+                        {String(t.base_url).replace(/^https:\/\//, "")}
+                      </a>
+                    </td>
+                    <td style={s.td}>
+                      <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 9px", borderRadius: 999, background: t.tipo === "shopify" ? "#eef2ff" : "#f0fdf4", color: t.tipo === "shopify" ? "#4f46e5" : "#15803d" }}>
+                        {t.tipo === "shopify" ? "Shopify" : "WooCommerce"}
+                      </span>
+                    </td>
+                    <td style={s.td}>
+                      <button
+                        type="button"
+                        onClick={() => !esPropia && toggleActiva(t)}
+                        disabled={esPropia || guardandoId === t.id}
+                        title={esPropia ? "Amsodent siempre está activa" : t.activa ? "Desactivar del explorador" : "Activar en el explorador"}
+                        style={{
+                          fontSize: 11.5, fontWeight: 700, padding: "3px 11px", borderRadius: 999, border: "none",
+                          cursor: esPropia ? "default" : "pointer",
+                          background: t.activa ? "#dcfce7" : "#f1f5f9",
+                          color: t.activa ? "#15803d" : "#64748b",
+                          opacity: guardandoId === t.id ? 0.6 : 1,
+                        }}
+                      >
+                        {t.activa ? "Activa" : "Inactiva"}
+                      </button>
+                    </td>
+                    <td style={{ ...s.td, textAlign: "right", whiteSpace: "nowrap" }}>
+                      <button type="button" title="Editar" onClick={() => setModal({ tienda: t })} style={{ background: "none", border: "none", cursor: "pointer", color: TEAL_DARK, padding: 5 }}>
+                        <Pencil size={14} />
+                      </button>
+                      {!esPropia && (
+                        <button type="button" title="Eliminar" onClick={() => eliminar(t)} style={{ background: "none", border: "none", cursor: "pointer", color: "#b91c1c", padding: 5 }}>
+                          <Trash2 size={14} />
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {modal && (
+        <ModalTiendaExplorador
+          tienda={modal.tienda || null}
+          onCerrar={() => setModal(null)}
+          onHecho={(msg) => {
+            setModal(null);
+            onOk?.(msg);
+            cargarTiendas();
+          }}
+          onError={onError}
+        />
+      )}
+    </section>
+  );
+}
+
+function ModalTiendaExplorador({ tienda, onCerrar, onHecho, onError }) {
+  const [nombre, setNombre] = useState(tienda?.nombre || "");
+  const [baseUrl, setBaseUrl] = useState(tienda?.base_url || "https://");
+  const [tipo, setTipo] = useState(tienda?.tipo || "woo");
+  const [orden, setOrden] = useState(tienda?.orden ?? 100);
+  const [activa, setActiva] = useState(tienda ? tienda.activa !== false : true);
+  const [guardando, setGuardando] = useState(false);
+  const [probando, setProbando] = useState(false);
+  const [prueba, setPrueba] = useState(null); // resultado de "Probar"
+  const esPropia = tienda?.id === "amsodent";
+
+  async function probar() {
+    setProbando(true);
+    setPrueba(null);
+    try {
+      const r = await api.post("/stock-clientes/explorador/tiendas/probar", {
+        tipo,
+        base_url: baseUrl.trim(),
+      });
+      setPrueba(r);
+    } catch (e) {
+      setPrueba({ ok: false, error: e?.message || "No se pudo probar la tienda." });
+    } finally {
+      setProbando(false);
+    }
+  }
+
+  async function guardar() {
+    if (guardando) return;
+    setGuardando(true);
+    try {
+      await api.post("/stock-clientes/explorador/tiendas", {
+        id: tienda?.id,
+        nombre: nombre.trim(),
+        tipo,
+        base_url: baseUrl.trim(),
+        activa,
+        orden: Number(orden),
+      });
+      onHecho?.(tienda ? "Tienda actualizada." : "Tienda agregada al explorador.");
+    } catch (e) {
+      onError?.(e?.message || "No se pudo guardar la tienda.");
+    } finally {
+      setGuardando(false);
+    }
+  }
+
+  return (
+    <Overlay onCerrar={onCerrar}>
+      <h2 style={s.modalTitle}>
+        <Globe size={18} /> {tienda ? `Editar ${tienda.nombre}` : "Agregar tienda al explorador"}
+      </h2>
+      <div style={s.modalBody}>
+        <label style={s.label}>Nombre</label>
+        <input style={s.input} value={nombre} onChange={(e) => setNombre(e.target.value)} placeholder="Ej: Gexa Chile" maxLength={80} />
+
+        <label style={{ ...s.label, marginTop: 12 }}>URL base (https://…)</label>
+        <input style={s.input} value={baseUrl} onChange={(e) => { setBaseUrl(e.target.value); setPrueba(null); }} placeholder="https://gexachile.cl" maxLength={200} disabled={esPropia} />
+
+        <label style={{ ...s.label, marginTop: 12 }}>Tipo de tienda</label>
+        <select style={s.input} value={tipo} onChange={(e) => { setTipo(e.target.value); setPrueba(null); }} disabled={esPropia}>
+          <option value="woo">WooCommerce (WordPress — /wp-json/wc/store)</option>
+          <option value="shopify">Shopify (/search/suggest.json)</option>
+        </select>
+
+        <div style={{ display: "flex", gap: 12, marginTop: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
+          <div>
+            <label style={s.label}>Orden</label>
+            <input style={{ ...s.input, width: 90 }} type="number" value={orden} onChange={(e) => setOrden(e.target.value)} disabled={esPropia} />
+          </div>
+          {!esPropia && (
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 7, fontSize: 13, color: "#0f172a", paddingBottom: 9, cursor: "pointer" }}>
+              <input type="checkbox" checked={activa} onChange={(e) => setActiva(e.target.checked)} style={{ width: 16, height: 16 }} />
+              Activa en el explorador
+            </label>
+          )}
+        </div>
+
+        {/* Probar conexión: consulta real ("resina") contra la API del sitio */}
+        <div style={{ marginTop: 14, padding: "10px 12px", border: "1px dashed #cbd5e1", borderRadius: 10, background: "#f8fafc" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <button type="button" style={s.btnGhost} onClick={probar} disabled={probando || !/^https:\/\/.+/.test(baseUrl.trim())}>
+              <Zap size={14} /> {probando ? "Probando…" : "Probar conexión"}
+            </button>
+            <span style={{ fontSize: 11.5, color: "#94a3b8" }}>
+              Hace una búsqueda real («resina») contra la API del sitio.
+            </span>
+          </div>
+          {prueba && (
+            <div style={{ marginTop: 8, fontSize: 12.5, color: prueba.ok && prueba.resultados > 0 ? "#15803d" : "#b91c1c", fontWeight: 600 }}>
+              {prueba.ok && prueba.resultados > 0 ? (
+                <>
+                  ✓ Responde: {prueba.resultados} resultado{prueba.resultados === 1 ? "" : "s"} para «{prueba.consulta}»
+                  {prueba.ejemplo ? ` — ej: ${prueba.ejemplo.nombre} ($${Number(prueba.ejemplo.precio).toLocaleString("es-CL")})` : ""}
+                </>
+              ) : prueba.ok ? (
+                <>⚠ El sitio responde pero sin resultados para «{prueba.consulta}» — puede ser el tipo equivocado o un catálogo sin ese término.</>
+              ) : (
+                <>✕ No responde como {tipo === "shopify" ? "Shopify" : "WooCommerce"}: {prueba.error || "sin detalle"}. Prueba con el otro tipo o descarta el sitio.</>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+      <div style={s.modalFooter}>
+        <button style={s.btnGhost} onClick={onCerrar}>Cancelar</button>
+        <button style={s.btnPrimario} onClick={guardar} disabled={guardando || !nombre.trim() || !/^https:\/\/.+/.test(baseUrl.trim())}>
+          {guardando ? "Guardando…" : "Guardar tienda"}
+        </button>
       </div>
     </Overlay>
   );

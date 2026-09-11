@@ -506,6 +506,7 @@ export const GRUPOS_MANUAL = [
         resumen: "Credenciales del portal de stock: crear, renovar, revocar y recuperaciones.",
         funciones: [
           "Vigencia y expiración por cliente, último acceso, y atención de solicitudes de cambio de clave.",
+          "Pestaña «Tiendas del Explorador»: mantenedor de las páginas que consulta el Explorador de Precios del portal — agregar, editar, activar/desactivar y ordenar tiendas (solo Shopify o WooCommerce con API pública), con botón «Probar conexión» que hace una búsqueda real antes de activarlas. Amsodent siempre va primera y no se puede desactivar.",
         ],
       },
       {
@@ -520,7 +521,8 @@ export const GRUPOS_MANUAL = [
           "/portal — el cliente entra con RUT + N° de cotización: ve sus cotizaciones, documentos y sube archivos.",
           "/portal-cliente — stock consignado del cliente con semáforo, y generación de solicitudes de cotización que llegan al sistema.",
           "/portal-cliente incluye además el Explorador de precios: el cliente busca un insumo por palabra clave y compara en vivo los precios de las tiendas dentales chilenas online, con histórico (mínimo registrado y variación) que el portal va guardando en cada búsqueda.",
-          "Carrito de pedido del explorador (checkout en 2 pasos): con «Agregar» el cliente junta productos en «Mi pedido» y edita cantidades y nota; «Revisar pedido» muestra el resumen formal (cliente, fecha, detalle con subtotales, total referencial y datos de contacto opcionales) y recién «Confirmar y enviar» lo despacha — nunca se envía directo. Llega al equipo como solicitud (campana y correo) con la tienda y el precio de referencia de cada producto.",
+          "Carrito de pedido del explorador (checkout en 2 pasos): con «Agregar» el cliente junta productos en «Mi pedido» y edita cantidades, una observación por producto (tono, formato, marca…) y la nota general; «Revisar pedido» muestra el resumen formal (cliente, fecha, detalle con subtotales, total referencial y datos de contacto opcionales) y recién «Confirmar y enviar» lo despacha — nunca se envía directo. Llega al equipo como solicitud (campana y correo) con la tienda, el precio de referencia y la observación de cada producto.",
+          "Las tarjetas del explorador muestran cuando un producto ya está en el pedido (chip «EN EL PEDIDO») con un contador −/+ para ajustar la cantidad ahí mismo.",
           "/despachos — despachos internos: cambio de estado con nota, evidencia (fotos/PDF hasta 20 MB) y firma de recepción dibujada.",
           "/portal-chofer — los viajes del chofer, con evidencia y ubicación en vivo.",
           "/evento y /sorteo — formularios públicos de inscripción.",
