@@ -1,7 +1,8 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { api } from "../lib/api";
 import Toast from "../components/Toast";
+import { descargarReportePDF } from "../lib/reporteStock";
 import {
   Inbox,
   ShoppingCart,
@@ -9,6 +10,7 @@ import {
   ExternalLink,
   MessageCircle,
   FilePlus,
+  FileDown,
   RefreshCw,
   Phone,
   Mail,
@@ -85,7 +87,6 @@ function BadgeOrigen({ origen, compacto = false }) {
 }
 
 export default function PedidosPortal() {
-  const navigate = useNavigate();
   const [pedidos, setPedidos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState(null);
@@ -162,9 +163,59 @@ export default function PedidosPortal() {
     }
   }
 
+  // Descarga el detalle del pedido como PDF con la marca Amsodent (mismo
+  // motor de reportes del stock: jsPDF).
+  async function descargarPdfPedido(s) {
+    const items = Array.isArray(s.items) ? s.items : [];
+    const origen = origenDe(s);
+    const totalRef = items.reduce(
+      (acc, i) => acc + Number(i?.precio_referencia || 0) * Number(i?.cantidad || 0),
+      0,
+    );
+    const rows = items.map((i) => [
+      i?.nombre || "—",
+      `${i?.cantidad || 0}${i?.unidad ? ` ${i.unidad}` : ""}`,
+      i?.tienda || "—",
+      i?.precio_referencia ? fmtCLP(i.precio_referencia) : "—",
+      i?.precio_referencia ? fmtCLP(Number(i.precio_referencia) * Number(i?.cantidad || 0)) : "—",
+    ]);
+    if (totalRef > 0) rows.push(["TOTAL REFERENCIAL", "", "", "", fmtCLP(totalRef)]);
+    const contacto = [s.contacto_nombre, s.contacto_email, s.contacto_telefono].filter(Boolean).join(" · ");
+    if (contacto) rows.push([`Contacto: ${contacto}`, "", "", "", ""]);
+    if (s.nota) rows.push([`Nota del cliente: ${s.nota}`, "", "", "", ""]);
+    try {
+      await descargarReportePDF({
+        filename: `pedido-portal-${s.id}.pdf`,
+        orientation: "portrait",
+        titulo: `Pedido del Portal N° ${s.id}`,
+        subtitulo: origen === "explorador" ? "Origen: Explorador de Precios" : "Origen: Gestión de Stock",
+        meta: [
+          { label: "Cliente", valor: s.razon_social || "—" },
+          { label: "RUT", valor: formatearRutVisual(s.rut) || "—" },
+          { label: "Fecha", valor: fmtFechaHora(s.created_at) },
+          { label: "Estado", valor: estadoMeta(s.estado || "pendiente").label },
+          ...(s.sucursal_nombre ? [{ label: "Sucursal", valor: s.sucursal_nombre }] : []),
+        ],
+        resumen: [
+          { label: "Productos", valor: items.length, tono: "neutro" },
+          { label: "Unidades", valor: items.reduce((a, i) => a + Number(i?.cantidad || 0), 0), tono: "neutro" },
+          ...(totalRef > 0 ? [{ label: "Total referencial", valor: fmtCLP(totalRef), tono: "verde" }] : []),
+        ],
+        headers: ["Producto", "Cantidad", "Tienda ref.", "Precio ref.", "Subtotal ref."],
+        aligns: ["left", "center", "left", "right", "right"],
+        rows,
+      });
+    } catch (e) {
+      console.error(e);
+      setToast({ type: "error", message: "No se pudo generar el PDF del pedido." });
+    }
+  }
+
   // Arranca una cotización desde el pedido: precarga cliente + observaciones
   // con el detalle y deja el vínculo (solicitud_stock_id) para que al
   // guardarse quede asociada y el pedido pase a "Respondida".
+  // Se abre en una PESTAÑA NUEVA: el borrador viaja por localStorage (la
+  // misma clave que hidrata /crear), así la bandeja queda abierta.
   function crearCotizacion(s) {
     const items = Array.isArray(s.items) ? s.items : [];
     const lineas = items.map((i) => {
@@ -182,23 +233,25 @@ export default function PedidosPortal() {
 
     if ((s.estado || "pendiente") === "pendiente") {
       api.put(`/stock-clientes/solicitudes/${s.id}/estado`, { estado: "respondida" }).catch(() => undefined);
+      setPedidos((prev) => prev.map((p) => (p.id === s.id ? { ...p, estado: "respondida" } : p)));
     }
-    navigate("/crear", {
-      state: {
-        duplicarLicitacion: {
-          rutEntidad: formatearRutVisual(s.rut),
-          nombreEntidad: s.razon_social || "",
-          tipoCliente: "Entidad Pública",
-          tipoCompra: "Compra ágil",
-          listado: "2",
-          contacto: s.contacto_nombre || "",
-          email: s.contacto_email || "",
-          telefono: s.contacto_telefono || "",
-          observaciones: obs,
-          solicitud_stock_id: s.id,
-        },
-      },
-    });
+    const draft = {
+      rutEntidad: formatearRutVisual(s.rut),
+      nombreEntidad: s.razon_social || "",
+      tipoCliente: "Entidad Pública",
+      tipoCompra: "Compra ágil",
+      listado: "2",
+      contacto: s.contacto_nombre || "",
+      email: s.contacto_email || "",
+      telefono: s.contacto_telefono || "",
+      observaciones: obs,
+      solicitud_stock_id: s.id,
+    };
+    try {
+      // Misma clave que hidrata CrearLicitacion al montar.
+      localStorage.setItem("crear_licitacion_draft", JSON.stringify(draft));
+    } catch { /* */ }
+    window.open("/crear", "_blank", "noopener");
   }
 
   if (loading) {
@@ -388,10 +441,18 @@ export default function PedidosPortal() {
                               #{s.cotizacion.id}{s.cotizacion.id_licitacion && s.cotizacion.id_licitacion !== String(s.cotizacion.id) ? ` · ${s.cotizacion.id_licitacion}` : ""}
                             </Link>
                           ) : (
-                            <button type="button" className="btn btn-primary btn-sm" onClick={() => crearCotizacion(s)}>
+                            <button type="button" className="btn btn-primary btn-sm" onClick={() => crearCotizacion(s)} title="Crear cotización desde el pedido (se abre en una pestaña nueva)">
                               <FilePlus size={12} style={{ marginRight: 4 }} /> Crear
                             </button>
                           )}
+                          <button
+                            type="button"
+                            onClick={() => descargarPdfPedido(s)}
+                            title="Descargar el detalle del pedido en PDF"
+                            style={{ background: "none", border: "none", cursor: "pointer", color: "var(--primary-dark)", padding: 4, marginLeft: 6, verticalAlign: "middle" }}
+                          >
+                            <FileDown size={15} />
+                          </button>
                         </td>
                       </tr>
 
@@ -459,10 +520,13 @@ export default function PedidosPortal() {
                                     Abrir cotización #{s.cotizacion.id} ({s.cotizacion.estado || "—"})
                                   </Link>
                                 ) : (
-                                  <button type="button" className="btn btn-primary btn-sm" onClick={() => crearCotizacion(s)}>
+                                  <button type="button" className="btn btn-primary btn-sm" onClick={() => crearCotizacion(s)} title="Se abre en una pestaña nueva">
                                     <FilePlus size={13} style={{ marginRight: 5 }} /> Crear cotización desde el pedido
                                   </button>
                                 )}
+                                <button type="button" className="btn btn-secondary btn-sm" onClick={() => descargarPdfPedido(s)}>
+                                  <FileDown size={13} style={{ marginRight: 5 }} /> Descargar PDF
+                                </button>
                                 <Link to="/monitoreo-stock" style={{ fontSize: 12, color: "var(--text-muted)", textDecoration: "none" }}>
                                   Ver en Monitoreo Stock →
                                 </Link>

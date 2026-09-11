@@ -2312,20 +2312,56 @@ function PanelExploradorPrecios() {
                     <a href={it.url} target="_blank" rel="noopener noreferrer" style={{ ...ex.verLink, marginTop: 0 }}>
                       Ver en tienda <ExternalLink size={13} />
                     </a>
-                    <button
-                      type="button"
-                      onClick={() => agregarAlCarrito(it)}
-                      title="Agregar al pedido para Amsodent"
-                      style={{
-                        display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11.5, fontWeight: 800,
-                        padding: "6px 10px", borderRadius: 999, cursor: "pointer",
-                        border: `1px solid ${TEAL}`,
-                        background: it.tienda === "amsodent" ? TEAL : "#fff",
-                        color: it.tienda === "amsodent" ? "#fff" : TEAL,
-                      }}
-                    >
-                      <ShoppingCart size={13} /> Agregar
-                    </button>
+                    {(() => {
+                      // Si el producto ya está en el pedido, la tarjeta lo dice
+                      // y muestra el stepper con la cantidad seleccionada.
+                      const enCarro = carrito.find((p) => p.url === it.url);
+                      const cant = Number(enCarro?.cantidad || 0);
+                      if (cant > 0) {
+                        return (
+                          <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 3 }}>
+                            <span style={{ fontSize: 10, fontWeight: 800, color: TEAL, display: "inline-flex", alignItems: "center", gap: 4 }}>
+                              <CheckCircle2 size={11} /> EN EL PEDIDO
+                            </span>
+                            <div style={{ display: "inline-flex", alignItems: "center", gap: 7, border: `1.5px solid ${TEAL}`, borderRadius: 999, padding: "3px 7px", background: "#f0fdfa" }}>
+                              <button
+                                type="button"
+                                onClick={() => cambiarCantidad(it.url, -1)}
+                                title="Quitar una unidad"
+                                style={{ width: 20, height: 20, borderRadius: 10, border: "none", background: "#fff", cursor: "pointer", display: "grid", placeItems: "center", color: TEAL, boxShadow: "0 1px 2px rgba(15,23,42,.12)" }}
+                              >
+                                <Minus size={11} />
+                              </button>
+                              <span style={{ fontSize: 13, fontWeight: 900, color: TEAL, minWidth: 18, textAlign: "center" }}>{cant}</span>
+                              <button
+                                type="button"
+                                onClick={() => cambiarCantidad(it.url, +1)}
+                                title="Agregar una unidad"
+                                style={{ width: 20, height: 20, borderRadius: 10, border: "none", background: TEAL, cursor: "pointer", display: "grid", placeItems: "center", color: "#fff" }}
+                              >
+                                <Plus size={11} />
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      }
+                      return (
+                        <button
+                          type="button"
+                          onClick={() => agregarAlCarrito(it)}
+                          title="Agregar al pedido para Amsodent"
+                          style={{
+                            display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11.5, fontWeight: 800,
+                            padding: "6px 10px", borderRadius: 999, cursor: "pointer",
+                            border: `1px solid ${TEAL}`,
+                            background: it.tienda === "amsodent" ? TEAL : "#fff",
+                            color: it.tienda === "amsodent" ? "#fff" : TEAL,
+                          }}
+                        >
+                          <ShoppingCart size={13} /> Agregar
+                        </button>
+                      );
+                    })()}
                   </div>
                 </div>
               ))}
