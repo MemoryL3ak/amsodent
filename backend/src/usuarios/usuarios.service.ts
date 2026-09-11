@@ -14,13 +14,43 @@ export class UsuariosService {
     return data;
   }
 
+  // Resuelve perfiles por correo. Desde el 2026-09-10 también matchea el
+  // correo alterno (profiles.email_alterno): una persona con dos casillas
+  // (ej: Jeremías con jer.consorcio@gmail.com y jer.alarcon@amsodentmedical.cl)
+  // resuelve al mismo perfil por cualquiera de las dos. Cada perfil se
+  // devuelve BAJO EL CORREO CONSULTADO, así los mapas del frontend
+  // (email → nombre) funcionan sin cambios.
   async getProfilesByEmails(emails: string[]) {
-    const { data, error } = await this.supabase.getClient()
+    const lista = (emails || [])
+      .map((e) => String(e || '').trim().toLowerCase())
+      .filter(Boolean);
+    if (!lista.length) return [];
+
+    const inVals = lista.map((e) => `"${e}"`).join(',');
+    let { data, error } = await this.supabase.getClient()
       .from('profiles')
-      .select('email,nombre,rol,avatar_url')
-      .in('email', emails);
+      .select('email,nombre,rol,avatar_url,email_alterno')
+      .or(`email.in.(${inVals}),email_alterno.in.(${inVals})`);
+
+    // Migración 20260910_profiles_email_alterno pendiente: solo por email.
+    if (error && /email_alterno/i.test(error.message || '')) {
+      ({ data, error } = await this.supabase.getClient()
+        .from('profiles')
+        .select('email,nombre,rol,avatar_url')
+        .in('email', lista));
+    }
     if (error) throw new BadRequestException(error.message);
-    return data;
+
+    const out: any[] = [];
+    for (const p of (data || []) as any[]) {
+      const propios = new Set(
+        [String(p.email || '').toLowerCase(), String(p.email_alterno || '').toLowerCase()].filter(Boolean),
+      );
+      for (const e of lista) {
+        if (propios.has(e)) out.push({ ...p, email: e });
+      }
+    }
+    return out;
   }
 
   async getProfilesByIds(ids: string[]) {
@@ -35,9 +65,16 @@ export class UsuariosService {
   async updateProfile(id: string, body: Record<string, any>) {
     // Whitelist de campos (contención auditoría 2026-09-04): solo lo que la
     // pantalla de usuarios edita. Nada de mass assignment sobre profiles.
-    const PERMITIDOS = ['nombre', 'rol', 'permission_profile_id', 'avatar_url'];
+    const PERMITIDOS = ['nombre', 'rol', 'permission_profile_id', 'avatar_url', 'email_alterno'];
     const patch: Record<string, any> = {};
     for (const k of PERMITIDOS) if (body?.[k] !== undefined) patch[k] = body[k];
+    if (patch.email_alterno !== undefined) {
+      const e = String(patch.email_alterno || '').trim().toLowerCase();
+      if (e && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) {
+        throw new BadRequestException('El correo alterno no es un email válido.');
+      }
+      patch.email_alterno = e || null;
+    }
     if (Object.keys(patch).length === 0) {
       throw new BadRequestException('Nada que actualizar.');
     }
@@ -47,7 +84,13 @@ export class UsuariosService {
       .eq('id', id)
       .select()
       .single();
-    if (error) throw new BadRequestException(error.message);
+    if (error) {
+      throw new BadRequestException(
+        /email_alterno/i.test(error.message || '')
+          ? 'Falta aplicar la migración 20260910_profiles_email_alterno.sql en Supabase.'
+          : error.message,
+      );
+    }
     return data;
   }
 
