@@ -27,18 +27,19 @@ export class UsuariosService {
     if (!lista.length) return [];
 
     const inVals = lista.map((e) => `"${e}"`).join(',');
-    let { data, error } = await this.supabase.getClient()
+    let res: { data: any[] | null; error: any } = await this.supabase.getClient()
       .from('profiles')
       .select('email,nombre,rol,avatar_url,email_alterno')
       .or(`email.in.(${inVals}),email_alterno.in.(${inVals})`);
 
     // Migración 20260910_profiles_email_alterno pendiente: solo por email.
-    if (error && /email_alterno/i.test(error.message || '')) {
-      ({ data, error } = await this.supabase.getClient()
+    if (res.error && /email_alterno/i.test(res.error.message || '')) {
+      res = await this.supabase.getClient()
         .from('profiles')
         .select('email,nombre,rol,avatar_url')
-        .in('email', lista));
+        .in('email', lista);
     }
+    const { data, error } = res;
     if (error) throw new BadRequestException(error.message);
 
     const out: any[] = [];
