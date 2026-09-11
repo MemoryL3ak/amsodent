@@ -479,6 +479,10 @@ girasol 🌻). Hoy ayuda en:
   sucursal, ítems con referencias, nota y mensajes; permite cambiar estado,
   abrir la cotización vinculada o crear una nueva precargada desde el pedido.
   Acceso: mismos permisos que Monitoreo Stock (ventas especial y admin).
+- CORREO ALTERNO: en Usuarios, cada persona puede tener una segunda casilla
+  asociada (profiles.email_alterno); la plataforma reconoce ambos correos
+  como el mismo usuario (ej: Jeremías con jer.consorcio@gmail.com y
+  jer.alarcon@amsodentmedical.cl).
 - Si un módulo muestra "Falta aplicar la migración X": el admin debe ejecutar
   ese archivo SQL en Supabase (carpeta supabase/migrations).
 `;

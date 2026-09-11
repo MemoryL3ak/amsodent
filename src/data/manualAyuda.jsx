@@ -757,6 +757,7 @@ export const GRUPOS_MANUAL = [
         resumen: "Cuentas, roles y perfiles de permisos por módulo.",
         funciones: [
           "Crear usuario (genera contraseña temporal), editar, reset de clave y eliminar.",
+          "Correo alterno: cada usuario puede tener una segunda casilla asociada (ej: personal + corporativa) y la plataforma reconoce ambas como la misma persona — nombres en paneles, resolución de vendedor y envío de correos.",
           "Perfiles de permisos: eligen módulo por módulo qué ve un usuario, por sobre el fallback de su rol.",
           "También existen cuentas internas sin correo real (username + dominio interno) creadas por el admin.",
         ],

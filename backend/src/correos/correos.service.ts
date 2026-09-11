@@ -181,7 +181,9 @@ export class CorreosService {
     return null;
   }
 
-  // Id de perfil a partir del correo de inicio de sesión.
+  // Id de perfil a partir del correo de inicio de sesión. Desde el 2026-09-10
+  // también matchea el correo alterno (profiles.email_alterno): un vendedor
+  // con dos casillas resuelve al mismo perfil por cualquiera de las dos.
   private async perfilIdPorEmail(email: string): Promise<string | null> {
     const e = String(email || '').trim().toLowerCase();
     if (!e) return null;
@@ -196,7 +198,20 @@ export class CorreosService {
         this.logger.warn(`No se pudo resolver perfil por email: ${error.message}`);
         return null;
       }
-      return data?.id ? String(data.id) : null;
+      if (data?.id) return String(data.id);
+      // Alias: correo alterno (tolerante si la migración aún no está aplicada).
+      try {
+        const { data: alt } = await this.supabase
+          .getClient()
+          .from('profiles')
+          .select('id')
+          .ilike('email_alterno', e)
+          .maybeSingle();
+        if (alt?.id) return String(alt.id);
+      } catch {
+        /* columna email_alterno aún no migrada */
+      }
+      return null;
     } catch (e: any) {
       this.logger.warn(`Error resolviendo perfil por email: ${e?.message || e}`);
       return null;

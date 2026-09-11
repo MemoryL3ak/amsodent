@@ -14,6 +14,7 @@ const ROLES = [
 export default function ModalEditarUsuario({ user, perfiles = [], close, onToast }) {
   const [nombre, setNombre] = useState(user.nombre || "");
   const [rol,    setRol]    = useState(user.rol    || "ventas");
+  const [emailAlterno, setEmailAlterno] = useState(user.email_alterno || "");
   const [perfilId, setPerfilId] = useState(user.permission_profile_id || "");
   const [avatarUrl, setAvatarUrl] = useState(user.avatar_url || "");
   const [saving, setSaving] = useState(false);
@@ -77,6 +78,7 @@ export default function ModalEditarUsuario({ user, perfiles = [], close, onToast
         nombre: nombre.trim(),
         rol,
         permission_profile_id: perfilId || null,
+        email_alterno: emailAlterno.trim().toLowerCase() || null,
       });
     } catch (e) {
       setSaving(false);
@@ -152,6 +154,25 @@ export default function ModalEditarUsuario({ user, perfiles = [], close, onToast
               readOnly
               style={{ background: "var(--bg)", color: "var(--text-muted)" }}
             />
+          </div>
+
+          {/* Correo alterno (alias): la plataforma reconoce ambos correos
+              como la misma persona (nombres, vendedor, envío de correos). */}
+          <div className="field">
+            <label className="field-label">Correo alterno</label>
+            <input
+              className="input"
+              type="email"
+              placeholder="segunda.casilla@dominio.cl (opcional)"
+              value={emailAlterno}
+              onChange={(e) => setEmailAlterno(e.target.value)}
+              disabled={saving}
+            />
+            <div className="field-hint">
+              Segunda casilla de la misma persona: la plataforma la reconocerá
+              como este usuario (nombres en paneles, resolución de vendedor y
+              correos).
+            </div>
           </div>
 
           <div className="field">
