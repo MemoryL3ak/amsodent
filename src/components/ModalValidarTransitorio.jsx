@@ -27,7 +27,9 @@ export default function ModalValidarTransitorio({ open, prod, onValidado, onCanc
     : null;
   const creado = String(prod.created_at || "").slice(0, 10);
   const costo = Number(prod.costo ?? 0);
-  const urlEditar = prod.id != null ? `/productos/editar/${prod.id}` : null;
+  // ?validacion=1 marca el origen: lo que se edite desde aquí afecta SOLO a la
+  // cotización que se está creando, no a las cotizaciones ya guardadas.
+  const urlEditar = prod.id != null ? `/productos/editar/${prod.id}?validacion=1` : null;
 
   const Fila = ({ label, children }) => (
     <div style={{ display: "flex", justifyContent: "space-between", gap: 12, padding: "7px 0", borderBottom: "1px solid #f1f5f9", fontSize: 13 }}>

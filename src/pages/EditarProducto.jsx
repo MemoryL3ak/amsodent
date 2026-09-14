@@ -137,6 +137,17 @@ const selectStyles = {
 export default function EditarProducto() {
   const { id } = useParams();
   const navigate = useNavigate();
+  // ?validacion=1 → la pantalla se abrió desde el modal de validación de un
+  // transitorio, con una cotización en curso en otra pestaña: los cambios NO
+  // se propagan a las cotizaciones ya creadas (solo a la que se está
+  // creando, que los recoge al volver a su pestaña).
+  const desdeValidacion = (() => {
+    try {
+      return new URLSearchParams(window.location.search).get("validacion") === "1";
+    } catch {
+      return false;
+    }
+  })();
 
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState(null);
@@ -645,8 +656,14 @@ export default function EditarProducto() {
       payload.link_referencia = (producto.link_referencia || "").trim() || null;
     }
 
+    let guardado;
     try {
-      await api.put(`/productos/${id}`, payload);
+      // Al completar el SKU o el costo, el backend rellena esos mismos huecos
+      // en los ítems de cotizaciones que ya usaban el producto (nunca pisa
+      // valores existentes). Si esta pantalla se abrió desde la validación de
+      // un transitorio mientras se crea una cotización (?validacion=1), NO se
+      // propaga: ese flujo solo debe afectar la cotización en curso.
+      guardado = await api.put(`/productos/${id}`, { ...payload, propagar: !desdeValidacion });
     } catch (error) {
       console.error(error);
       setToast({ type: "error", message: "Error al guardar cambios" });
@@ -661,7 +678,18 @@ export default function EditarProducto() {
       imagen_url: imagenUrl || "",
     }));
 
-    setToast({ type: "success", message: "Producto actualizado" });
+    const prop = guardado?.propagado || {};
+    const partes = [];
+    if (prop.sku > 0) partes.push(`${prop.sku} ítem(s) recibieron el SKU`);
+    if (prop.costo > 0) partes.push(`${prop.costo} ítem(s) recibieron el costo`);
+    setToast({
+      type: "success",
+      message: partes.length
+        ? `Producto actualizado · En cotizaciones ya creadas: ${partes.join(" y ")}.`
+        : desdeValidacion
+        ? "Producto actualizado. Vuelve a la pestaña de la cotización: se aplicará ahí."
+        : "Producto actualizado",
+    });
   }
 
   async function aprobarProducto() {

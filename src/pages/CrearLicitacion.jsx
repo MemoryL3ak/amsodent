@@ -1241,15 +1241,50 @@ export default function CrearLicitacion() {
       const skus = Array.from(
         new Set(usados.map((it) => String(it?.sku || "").trim()).filter(Boolean)),
       );
-      if (!skus.length) return;
+      // Los transitorios NO tienen SKU: buscarlos también por nombre, que es
+      // justo el caso del popup de validación (se le acaba de poner SKU/costo
+      // al producto en la otra pestaña).
+      const nombres = Array.from(
+        new Set(
+          usados
+            .filter((it) => !String(it?.sku || "").trim())
+            .map((it) => String(it?.producto || "").trim())
+            .filter(Boolean),
+        ),
+      );
+      if (!skus.length && !nombres.length) return;
       try {
-        const { data } = await supabase
-          .from("productos")
-          .select("id, sku, nombre, marca, categoria, formato, costo, lista1, lista2, lista3, equivalente_1, equivalente_2, equivalente_3, peso, metro_cubico, estado, created_at, link_referencia")
-          .in("sku", skus);
-        if (!data?.length) return;
-        const porId = new Map(data.map((p) => [p.id, p]));
+        const campos =
+          "id, sku, nombre, marca, categoria, formato, costo, lista1, lista2, lista3, equivalente_1, equivalente_2, equivalente_3, peso, metro_cubico, estado, created_at, link_referencia";
+        const [porSku, porNombre] = await Promise.all([
+          skus.length
+            ? supabase.from("productos").select(campos).in("sku", skus)
+            : Promise.resolve({ data: [] }),
+          nombres.length
+            ? supabase.from("productos").select(campos).in("nombre", nombres)
+            : Promise.resolve({ data: [] }),
+        ]);
+        const frescos = [...(porSku?.data || []), ...(porNombre?.data || [])];
+        if (!frescos.length) return;
+        const porId = new Map(frescos.map((p) => [p.id, p]));
         setProductos((prev) => prev.map((p) => (porId.has(p.id) ? { ...p, ...porId.get(p.id) } : p)));
+
+        // Si el producto acaba de recibir SKU, el ítem de ESTA cotización lo
+        // adopta (el costo y el margen ya se resuelven contra el catálogo).
+        const skuPorNombre = new Map(
+          frescos
+            .filter((p) => String(p?.sku || "").trim() && String(p?.nombre || "").trim())
+            .map((p) => [String(p.nombre).trim(), String(p.sku).trim()]),
+        );
+        if (skuPorNombre.size) {
+          setItems((prev) =>
+            prev.map((it) => {
+              if (String(it?.sku || "").trim()) return it;
+              const skuNuevo = skuPorNombre.get(String(it?.producto || "").trim());
+              return skuNuevo ? { ...it, sku: skuNuevo } : it;
+            }),
+          );
+        }
       } catch {
         // best effort: si falla, el catálogo en memoria queda como estaba
       }
