@@ -60,7 +60,7 @@ const MASCOTAS = [
   {
     id: "volantin",
     nombre: "Volantín",
-    frase: "¡Que no se corte el hilo!",
+    frase: "¡Que vuele alto!",
     dibujo: (
       <>
         <circle cx="20" cy="20" r="20" fill="#eaf6fb" />
