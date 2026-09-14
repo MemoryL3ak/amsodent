@@ -204,10 +204,19 @@ export default function Clientes() {
       {/* TABLA */}
       <div className="table-wrap">
         <div className="table-scroll" style={{ maxHeight: "calc(100vh - 320px)" }}>
-          <table className="data-table" style={{ tableLayout: "fixed", width: "100%" }}>
+          {/* minWidth = suma de los anchos del colgroup. Sin él, con
+              table-layout:fixed + width:100%, en pantallas más angostas que
+              esa suma la única columna sin ancho (Nombre) se quedaba con 0 px:
+              el nombre del cliente desaparecía y su encabezado se montaba
+              sobre el de RUT. Ahora la tabla conserva su ancho y el
+              contenedor hace scroll horizontal. */}
+          <table
+            className="data-table"
+            style={{ tableLayout: "fixed", width: "100%", minWidth: esAdmin ? 1610 : 1440 }}
+          >
             <colgroup>
               <col style={{ width: 130 }} />
-              <col />
+              <col style={{ width: 260 }} />
               <col style={{ width: 150 }} />
               <col style={{ width: 120 }} />
               <col style={{ width: 180 }} />
