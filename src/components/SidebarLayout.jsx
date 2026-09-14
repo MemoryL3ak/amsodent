@@ -55,7 +55,7 @@ import {
   HeartHandshake,
 } from "lucide-react";
 import NotificacionesMenu from "./NotificacionesMenu";
-import { ES_FIESTAS_PATRIAS, FOTO_ALLENDE, GuirnaldaBanderines, CintaTricolor, BanderaChile, Copihue } from "./FiestasPatrias";
+import { ES_FIESTAS_PATRIAS, FOTO_ALLENDE, GuirnaldaBanderines, CintaTricolor, BanderaChile, Copihue, SaludoFiestasPatrias } from "./FiestasPatrias";
 import RecordatoriosCorreo from "./RecordatoriosCorreo";
 import RecordatoriosCierre from "./RecordatoriosCierre";
 import GoogleAuthSync from "./GoogleAuthSync";
@@ -440,8 +440,10 @@ export default function SidebarLayout() {
         <ChevronLeft size={16} strokeWidth={2.5} />
       </button>
 
-      {/* Cinta tricolor de Fiestas Patrias en el borde superior */}
+      {/* Cinta tricolor de Fiestas Patrias en el borde superior + saludo
+          de bienvenida (una vez al día por persona) */}
       {ES_FIESTAS_PATRIAS && <CintaTricolor />}
+      {ES_FIESTAS_PATRIAS && perfil && <SaludoFiestasPatrias nombre={perfil.nombre} />}
 
       <aside className="sidebar">
         {/* Brand */}
@@ -466,9 +468,9 @@ export default function SidebarLayout() {
           <div style={{ padding: "0 10px 4px" }}>
             <GuirnaldaBanderines />
             <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, fontSize: 11, fontWeight: 800, color: "#d52b1e", letterSpacing: ".02em", marginTop: 2, whiteSpace: "nowrap", overflow: "hidden" }}>
-              <Copihue size={11} />
+              <Copihue size={15} />
               <span><BanderaChile size={11} /> ¡Felices Fiestas Patrias!</span>
-              <Copihue size={11} espejo />
+              <Copihue size={15} espejo />
             </div>
           </div>
         ))}
