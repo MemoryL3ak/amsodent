@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { supabase } from "../lib/supabase";
+import { ES_FIESTAS_PATRIAS, GuirnaldaBanderines, CintaTricolor } from "../components/FiestasPatrias";
 
 /* ── Hero graphic ──────────────────────────────────────────────── */
 function HeroGraphic() {
@@ -123,6 +124,9 @@ export default function Login() {
   return (
     <div className="login-shell">
 
+      {/* Fiestas Patrias: cinta tricolor arriba (5–25 de septiembre) */}
+      {ES_FIESTAS_PATRIAS && <CintaTricolor />}
+
       {/* ── LEFT: hero panel ──────────────────────────── */}
       <div className="login-hero">
         <div className="login-hero-noise" />
@@ -136,6 +140,16 @@ export default function Login() {
               style={{ width: "auto", maxWidth: "240px", height: "auto" }}
             />
           </div>
+
+          {/* Fiestas Patrias: guirnalda + saludo en el hero */}
+          {ES_FIESTAS_PATRIAS && (
+            <div style={{ margin: "0 auto 10px", maxWidth: "300px" }}>
+              <GuirnaldaBanderines height={24} cordel="rgba(255,255,255,0.55)" />
+              <div style={{ textAlign: "center", fontSize: 12.5, fontWeight: 800, color: "#ffffff", letterSpacing: ".03em", marginTop: 4, textShadow: "0 1px 2px rgba(0,0,0,.25)" }}>
+                🇨🇱 ¡Felices Fiestas Patrias!
+              </div>
+            </div>
+          )}
 
           {/* Graphic */}
           <div style={{ margin: "0 auto 16px", maxWidth: "300px" }}>
@@ -205,6 +219,18 @@ export default function Login() {
             <div>
               <h2 className="login-form-title">Iniciar sesión</h2>
               <p className="login-form-sub">Ingresa tus credenciales para continuar</p>
+              {/* Fiestas Patrias: chip también en la tarjeta (visible en móvil,
+                  donde el hero no se muestra) */}
+              {ES_FIESTAS_PATRIAS && (
+                <span style={{
+                  display: "inline-flex", alignItems: "center", gap: 6, marginTop: 8,
+                  fontSize: 11.5, fontWeight: 800, color: "#d52b1e",
+                  background: "#fef2f2", border: "1px solid #fecaca",
+                  padding: "3px 12px", borderRadius: 999,
+                }}>
+                  🇨🇱 ¡Felices Fiestas Patrias!
+                </span>
+              )}
             </div>
           </div>
 
