@@ -558,18 +558,25 @@ export class ProductosService {
 
     // El body puede venir parcial (ej: solo el costo): para lo que no venga,
     // vale lo que ya tenía el producto.
-    const nombre = String(actualizado?.nombre ?? anterior?.nombre ?? '').trim();
+    const nombreRaw = String(actualizado?.nombre ?? anterior?.nombre ?? '');
+    const nombre = nombreRaw.trim();
     const sku = String(actualizado?.sku ?? anterior?.sku ?? '').trim();
     const costo = Number(actualizado?.costo ?? anterior?.costo);
+
+    // El ítem guardó el nombre TAL CUAL venía del catálogo, y varios nombres
+    // del maestro traen espacios al final ("…MOD1 "). Comparar solo contra la
+    // versión recortada dejaba fuera justamente esos casos, así que se buscan
+    // ambas variantes.
+    const nombres = Array.from(new Set([nombreRaw, nombre].filter(Boolean)));
 
     // 1) El producto tiene SKU: los ítems de ese producto que quedaron sin
     //    SKU lo reciben (se encuentran por el nombre, que es lo único que
     //    guardaron cuando el producto era transitorio).
-    if (sku && nombre) {
+    if (sku && nombres.length) {
       const { data, error } = await client
         .from('items_licitacion')
         .update({ sku })
-        .eq('producto', nombre)
+        .in('producto', nombres)
         .or('sku.is.null,sku.eq.')
         .select('id');
       if (error) {
@@ -585,7 +592,9 @@ export class ProductosService {
     if (Number.isFinite(costo) && costo > 0) {
       const filtros: Array<(q: any) => any> = [];
       if (sku) filtros.push((q: any) => q.eq('sku', sku));
-      if (nombre) filtros.push((q: any) => q.eq('producto', nombre).or('sku.is.null,sku.eq.'));
+      if (nombres.length) {
+        filtros.push((q: any) => q.in('producto', nombres).or('sku.is.null,sku.eq.'));
+      }
 
       const vistos = new Set<number>();
       for (const aplicar of filtros) {
