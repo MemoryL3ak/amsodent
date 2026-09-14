@@ -274,12 +274,22 @@ export class FletesService {
       throw new BadRequestException('Empresa inválida (Starken, Blue o Interno).');
     }
 
-    // ── Regla de despacho GRATIS (antes de tarificar) ──
-    // Única regla (definida por el negocio el 2026-09-10): despacho $0 cuando
-    // la compra es ≥ $70.000 (bruto) Y el destino está en la Región
-    // Metropolitana. Aplica a cualquier tipo de cotización y courier.
-    // Se detecta RM por el nombre de la región o, si no viene, por la comuna
-    // (lista de la provincia de Santiago + San Bernardo).
+    // ── Reglas de despacho GRATIS (antes de tarificar) ──
+    // 1) San Bernardo (2026-09-14): SIEMPRE gratis, sin mínimo de compra
+    //    (es la comuna de la bodega de Amsodent).
+    if (comuna && FletesService.normComuna(comuna) === 'san bernardo') {
+      return {
+        empresa,
+        neto: 0,
+        gratis: true,
+        detalle: 'Despacho gratis: destino San Bernardo (sin mínimo de compra)',
+      };
+    }
+    // 2) Regla general (2026-09-10): despacho $0 cuando la compra es
+    //    ≥ $70.000 (bruto) Y el destino está en la Región Metropolitana.
+    //    Aplica a cualquier tipo de cotización y courier. Se detecta RM por el
+    //    nombre de la región o, si no viene, por la comuna (lista de la
+    //    provincia de Santiago).
     const regionNorm = FletesService.normComuna(region);
     const esRM =
       regionNorm === 'rm' ||

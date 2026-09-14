@@ -12,9 +12,13 @@ import { api } from "../lib/api";
      (fletes_interno_config). Los km se obtienen por Google Maps desde
      la dirección del cliente (POST /fletes/interno/distancia) y son
      editables a mano.
-   ─ Regla de despacho GRATIS (la resuelve el backend):
+   ─ Reglas de despacho GRATIS (las resuelve el backend):
+     · destino San Bernardo → $0 SIEMPRE, sin mínimo de compra;
      · compra ≥ $70.000 (bruto) Y destino en la Región Metropolitana → $0
        (cualquier tipo de cotización y courier).
+   ─ Cliente particular puede además marcar "Flete por pagar": no se cobra
+     flete en la cotización (el cliente lo paga al courier) y esta
+     calculadora queda deshabilitada.
    El cálculo corre en el backend (POST /fletes/tarifas/calcular); al
    obtener el valor se aplica al Flete Estimado vía onAplicar(neto).
    La región/localidad se precargan desde la dirección del cliente
