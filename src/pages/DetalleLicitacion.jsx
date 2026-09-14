@@ -774,6 +774,7 @@ export default function EditarLicitacion() {
       telefono2: telefono2 || "",
       condVenta: condVenta || "",
       fleteEstimado: fleteEstimado || 0,
+      fletePorPagar: Boolean(fletePorPagar),
       tipoCompra: tipoCompra || "Compra ágil",
       region: region || "",
       comuna: comuna || "",
@@ -1025,6 +1026,12 @@ export default function EditarLicitacion() {
      FLETE
   ================================ */
   const [fleteEstimado, setFleteEstimado] = useState(0);
+  // (2026-09-14) Cliente particular: flete POR PAGAR (el cliente lo paga al
+  // courier; la cotización no cobra flete). fletePorPagarDB recuerda el valor
+  // guardado para saber si hay que enviarlo al actualizar (tolerancia a la
+  // migración 20260914 pendiente).
+  const [fletePorPagar, setFletePorPagar] = useState(false);
+  const [fletePorPagarDB, setFletePorPagarDB] = useState(false);
 
   /* ===============================
      PRODUCTOS / ÍTEMS
@@ -1944,6 +1951,7 @@ export default function EditarLicitacion() {
       setCondVenta(data.condVenta || "");
 
       setFleteEstimado(data.fleteEstimado || 0);
+      setFletePorPagar(Boolean(data.fletePorPagar));
       setObservaciones(data.observaciones || "");
       setMotivoPerdida(data.motivoPerdida || "");
       setMotivoPerdidaOtro(data.motivoPerdidaOtro || "");
@@ -2011,6 +2019,7 @@ export default function EditarLicitacion() {
       telefono2,
       condVenta,
       fleteEstimado,
+      fletePorPagar,
       items,
       observaciones,
       vendedorNombre,
@@ -2048,6 +2057,7 @@ export default function EditarLicitacion() {
     telefono2,
     condVenta,
     fleteEstimado,
+    fletePorPagar,
     items,
     observaciones,
     vendedorNombre,
@@ -2086,6 +2096,7 @@ export default function EditarLicitacion() {
       condVenta: condVenta || "",
 
       fleteEstimado: Number(fleteEstimado || 0),
+      fletePorPagar: Boolean(fletePorPagar),
       observaciones: observaciones || "",
 
       vendedorNombre: vendedorNombre || "",
@@ -2165,6 +2176,7 @@ export default function EditarLicitacion() {
     telefono2,
     condVenta,
     fleteEstimado,
+    fletePorPagar,
     items,
     observaciones,
     vendedorNombre,
@@ -2230,6 +2242,8 @@ export default function EditarLicitacion() {
     setTelefono2(lic.telefono_2 || "");
     setCondVenta(lic.condicion_venta || "");
     setFleteEstimado(lic.flete_estimado || 0);
+    setFletePorPagar(Boolean(lic.flete_por_pagar));
+    setFletePorPagarDB(Boolean(lic.flete_por_pagar));
 
     setObservaciones(lic.observaciones || "");
     setMotivoPerdida(lic.motivo_perdida || "");
@@ -2424,6 +2438,8 @@ export default function EditarLicitacion() {
       setTelefono2(lic.telefono_2 || "");
       setCondVenta(lic.condicion_venta || "");
       setFleteEstimado(lic.flete_estimado || 0);
+      setFletePorPagar(Boolean(lic.flete_por_pagar));
+      setFletePorPagarDB(Boolean(lic.flete_por_pagar));
 
       setObservaciones(lic.observaciones || "");
       setMotivoPerdida(lic.motivo_perdida || "");
@@ -2888,7 +2904,7 @@ export default function EditarLicitacion() {
       regionNormPdf === "santiago" ||
       regionNormPdf.includes("metropolitana");
     const fleteGratisEvidente = Number(totalConIVA) >= 70000 && esRMPdf;
-    if (!(Number(fleteEstimado) > 0) && !fleteGratisEvidente) {
+    if (!(Number(fleteEstimado) > 0) && !fleteGratisEvidente && !fletePorPagar) {
       setToast({
         type: "warning",
         message:
@@ -2991,6 +3007,20 @@ export default function EditarLicitacion() {
               cantidad: 1,
               precio_unitario: formatear(fleteTotalPdf),
               total: formatear(fleteTotalPdf),
+              observacion: "",
+            });
+          }
+          // (2026-09-14) Flete por pagar: el PDF lo declara como ítem sin
+          // costo — el cliente lo paga directo al courier al recibir.
+          if (esParticularPdf && fletePorPagar) {
+            filas.push({
+              n: filas.length + 1,
+              sku: "",
+              producto: "Despacho / Flete — POR PAGAR (lo paga el cliente al courier)",
+              formato: "",
+              cantidad: 1,
+              precio_unitario: "Por pagar",
+              total: "Por pagar",
               observacion: "",
             });
           }
@@ -3194,7 +3224,10 @@ export default function EditarLicitacion() {
           estado: estadoFinal,
           margen_aprobado: margenAprobadoFinal,
           fecha_adjudicada: fechaAdjudicadaFinal,
-          flete_estimado: Number(fleteEstimado),
+          flete_estimado: fletePorPagar ? 0 : Number(fleteEstimado),
+          // Se envía solo si hay algo que decir (true, o volver a false tras
+          // haber estado guardado en true): tolera la migración 20260914.
+          ...(fletePorPagar || fletePorPagarDB ? { flete_por_pagar: fletePorPagar } : {}),
 
           total_con_iva: totalConIVA,
           total_sin_iva: totalNeto,
@@ -4502,10 +4535,35 @@ export default function EditarLicitacion() {
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Flete Estimado
               </label>
+              {/* (2026-09-14) Cliente particular: flete POR PAGAR — sin cobro
+                  de flete en la cotización; el cliente lo paga al courier. */}
+              {esCotizacionParticular && (
+                <label style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12.5, color: "#0f172a", marginBottom: 6, cursor: esEditable ? "pointer" : "default" }}>
+                  <input
+                    type="checkbox"
+                    checked={fletePorPagar}
+                    disabled={!esEditable}
+                    onChange={(e) => {
+                      const v = e.target.checked;
+                      setFletePorPagar(v);
+                      if (v) setFleteEstimado(0);
+                    }}
+                    style={{ width: 15, height: 15 }}
+                  />
+                  <span>
+                    <strong>Flete por pagar</strong>
+                    <span style={{ color: "var(--text-muted)" }}> — lo paga el cliente al courier</span>
+                  </span>
+                </label>
+              )}
               {/* Edición manual SOLO admin (pedido 2026-09-01), respetando el
                   bloqueo por estado (esEditable); el resto lo fija únicamente
                   con el botón de cálculo de la calculadora. */}
-              {esAdmin ? (
+              {fletePorPagar ? (
+                <div className="form-display form-display-value" style={{ color: "#b45309", fontWeight: 700 }}>
+                  POR PAGAR
+                </div>
+              ) : esAdmin ? (
                 <input
                   type="number"
                   className={inputClassH10}
@@ -4559,7 +4617,7 @@ export default function EditarLicitacion() {
             direccionCliente={direccion}
             tipoCotizacion={esCotizacionParticular ? "particular" : "publico"}
             totalCompra={totalConIVA}
-            deshabilitado={!esEditable}
+            deshabilitado={!esEditable || fletePorPagar}
             onAplicar={(neto) => setFleteEstimado(neto)}
           />
         </div>

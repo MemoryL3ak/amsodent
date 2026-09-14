@@ -806,6 +806,10 @@ export default function CrearLicitacion() {
   // (o a mano por un admin). Sin esto no se deja generar la cotización/PDF:
   // un flete $0 legítimo (regla gratis) también marca el flag.
   const [fleteCalculado, setFleteCalculado] = useState(false);
+  // (2026-09-14) Cliente particular: "flete por pagar" — el cliente paga el
+  // despacho directo al courier; la cotización no cobra flete y el PDF lo
+  // indica como ítem "Despacho / Flete — POR PAGAR".
+  const [fletePorPagar, setFletePorPagar] = useState(false);
   const [tipoCompra, setTipoCompra] = useState("Compra ágil");
   const [region, setRegion] = useState("");
   const [comuna, setComuna] = useState("");
@@ -1088,6 +1092,7 @@ export default function CrearLicitacion() {
 
       setFleteEstimado(data.fleteEstimado || 0);
       setFleteCalculado(Boolean(data.fleteCalculado) || Number(data.fleteEstimado) > 0);
+      setFletePorPagar(Boolean(data.fletePorPagar));
       setTipoCompra(data.tipoCompra || "Compra ágil");
       setRegion(data.region || "");
       setComuna(data.comuna || "");
@@ -1138,6 +1143,7 @@ export default function CrearLicitacion() {
       condVenta,
       fleteEstimado,
       fleteCalculado,
+      fletePorPagar,
       tipoCompra,
       region,
       comuna,
@@ -1184,6 +1190,7 @@ export default function CrearLicitacion() {
     condVenta,
     fleteEstimado,
     fleteCalculado,
+    fletePorPagar,
     tipoCompra,
     region,
     comuna,
@@ -1753,6 +1760,7 @@ export default function CrearLicitacion() {
 
     setFleteEstimado(0);
     setFleteCalculado(false);
+    setFletePorPagar(false);
     setItems([crearItemVacio()]);
 
     setObservaciones("");
@@ -2078,7 +2086,7 @@ export default function CrearLicitacion() {
       // (Punto 9 — 2026-09-10) Sin flete calculado no se genera la cotización
       // ni su PDF. Se exceptúan las que van a Aprobación por Peso: sin pesos
       // no hay flete posible y el flujo de aprobación ya obliga a recalcularlo.
-      if (!requiereAprobacionPeso && !fleteCalculado && !(Number(fleteEstimado) > 0)) {
+      if (!requiereAprobacionPeso && !fletePorPagar && !fleteCalculado && !(Number(fleteEstimado) > 0)) {
         setToast({
           type: "warning",
           message:
@@ -2136,7 +2144,10 @@ export default function CrearLicitacion() {
             // vuelve a analizar sus propias equivalencias al guardarse.
             madre_id: madreId || null,
             jerarquia: madreId ? "hija" : "madre",
-            flete_estimado: Number(fleteEstimado),
+            flete_estimado: fletePorPagar ? 0 : Number(fleteEstimado),
+            // Solo con valor true (tolera que la migración
+            // 20260914_licitaciones_flete_por_pagar esté pendiente).
+            ...(fletePorPagar ? { flete_por_pagar: true } : {}),
             total_con_iva: totalConIVA,
             total_sin_iva: totalNeto,
             total_iva: totalIVA,
@@ -2324,6 +2335,20 @@ export default function CrearLicitacion() {
               cantidad: 1,
               precio_unitario: formatear(fleteTotalPdf),
               total: formatear(fleteTotalPdf),
+              observacion: "",
+            });
+          }
+          // (2026-09-14) Flete por pagar: el PDF lo declara como ítem sin
+          // costo — el cliente lo paga directo al courier al recibir.
+          if (esClienteParticular && fletePorPagar) {
+            filas.push({
+              n: filas.length + 1,
+              sku: "",
+              producto: "Despacho / Flete — POR PAGAR (lo paga el cliente al courier)",
+              formato: "",
+              cantidad: 1,
+              precio_unitario: "Por pagar",
+              total: "Por pagar",
               observacion: "",
             });
           }
@@ -3379,9 +3404,38 @@ export default function CrearLicitacion() {
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Flete Estimado
               </label>
+              {/* (2026-09-14) Cliente particular: flete POR PAGAR — sin cobro
+                  de flete en la cotización; el cliente lo paga al courier. */}
+              {(esParticular || tipoCompra === "Cliente particular") && (
+                <label style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12.5, color: "#0f172a", marginBottom: 6, cursor: "pointer" }}>
+                  <input
+                    type="checkbox"
+                    checked={fletePorPagar}
+                    onChange={(e) => {
+                      const v = e.target.checked;
+                      setFletePorPagar(v);
+                      if (v) {
+                        setFleteEstimado(0);
+                        setFleteCalculado(true);
+                      } else {
+                        setFleteCalculado(Number(fleteEstimado) > 0);
+                      }
+                    }}
+                    style={{ width: 15, height: 15 }}
+                  />
+                  <span>
+                    <strong>Flete por pagar</strong>
+                    <span style={{ color: "var(--text-muted)" }}> — lo paga el cliente al courier</span>
+                  </span>
+                </label>
+              )}
               {/* Edición manual SOLO admin (pedido 2026-09-01): el resto lo
                   fija únicamente con el botón de cálculo de la calculadora. */}
-              {esAdmin ? (
+              {fletePorPagar ? (
+                <div className="form-display form-display-value" style={{ color: "#b45309", fontWeight: 700 }}>
+                  POR PAGAR
+                </div>
+              ) : esAdmin ? (
                 <input
                   type="number"
                   className="w-full h-10 rounded-md border border-gray-300 px-3"
@@ -3437,6 +3491,7 @@ export default function CrearLicitacion() {
             direccionCliente={direccion}
             tipoCotizacion={esParticular || tipoCompra === "Cliente particular" ? "particular" : "publico"}
             totalCompra={totalConIVA}
+            deshabilitado={fletePorPagar}
             onAplicar={(neto) => {
               setFleteEstimado(neto);
               setFleteCalculado(true);

@@ -425,9 +425,14 @@ girasol 🌻). Hoy ayuda en:
 - MORA: cliente con facturas vencidas queda bloqueado para nuevas cotizaciones.
 - SLA DESPACHO: 3 días hábiles desde la OC (feriados chilenos).
 - LISTAS DE PRECIO: Lista 3 = Lista 2 × 1,08 (automática).
-- FLETE GRATIS: única regla — compra ≥ $70.000 (bruto) con destino en la
-  Región Metropolitana (cualquier tipo de cotización y courier). En cualquier
-  otro caso el flete se calcula con la Calculadora de Flete.
+- FLETE GRATIS: dos reglas — (1) destino San Bernardo: SIEMPRE gratis, sin
+  mínimo de compra; (2) compra ≥ $70.000 (bruto) con destino en la Región
+  Metropolitana (cualquier tipo de cotización y courier). En cualquier otro
+  caso el flete se calcula con la Calculadora de Flete.
+- FLETE POR PAGAR (solo cliente particular): checkbox en la sección de flete;
+  la cotización no cobra flete (queda "POR PAGAR"), el cliente lo paga
+  directo al courier al recibir, y el PDF lo declara como ítem "Despacho /
+  Flete — POR PAGAR". Con esta opción no se exige calcular el flete.
 - FLETE OBLIGATORIO PARA EL PDF: no se puede generar el PDF de una cotización
   sin haber calculado y aplicado el flete (aunque el resultado sea $0). El
   sistema recuerda con un aviso pasar por la Calculadora de Flete.
