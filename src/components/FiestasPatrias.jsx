@@ -59,8 +59,10 @@ const MASCOTAS = [
   },
   {
     id: "volantin",
-    nombre: "Volantín",
-    frase: "¡Que vuele alto!",
+    // Sin nombre de personaje: el volantín es un objeto, no un "personaje"
+    // como la empanada o el quiltro. Se muestra solo el mensaje.
+    nombre: "",
+    frase: "¡Se siente el 18!",
     dibujo: (
       <>
         <circle cx="20" cy="20" r="20" fill="#eaf6fb" />
