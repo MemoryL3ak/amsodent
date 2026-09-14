@@ -55,7 +55,7 @@ import {
   HeartHandshake,
 } from "lucide-react";
 import NotificacionesMenu from "./NotificacionesMenu";
-import { ES_FIESTAS_PATRIAS, FOTO_ALLENDE, GuirnaldaBanderines, CintaTricolor, BanderaChile, Copihue, SaludoFiestasPatrias } from "./FiestasPatrias";
+import { ES_FIESTAS_PATRIAS, MascotaDieciochera, mascotaDelDia, GuirnaldaBanderines, CintaTricolor, BanderaChile, Copihue, SaludoFiestasPatrias } from "./FiestasPatrias";
 import RecordatoriosCorreo from "./RecordatoriosCorreo";
 import RecordatoriosCierre from "./RecordatoriosCierre";
 import GoogleAuthSync from "./GoogleAuthSync";
@@ -570,36 +570,29 @@ export default function SidebarLayout() {
           />
         )}
 
-        {/* Fiestas Patrias: fotito de Salvador Allende en el rincón. Colapsado
-            va sola la foto, centrada y sin texto. */}
-        {ES_FIESTAS_PATRIAS && (
-          <div
-            title="Salvador Allende · Fiestas Patrias"
-            style={{
-              display: "flex", alignItems: "center", gap: 9, opacity: 0.95,
-              padding: colapsada ? "10px 0 6px" : "10px 14px 6px",
-              justifyContent: colapsada ? "center" : "flex-start",
-            }}
-          >
-            <img
-              src={FOTO_ALLENDE}
-              alt="Salvador Allende"
-              loading="lazy"
-              onError={(e) => { e.currentTarget.parentElement.style.display = "none"; }}
+        {/* Fiestas Patrias: mascota del día en el rincón (rota cada día).
+            Colapsado va sola, centrada y sin texto. */}
+        {ES_FIESTAS_PATRIAS && (() => {
+          const m = mascotaDelDia();
+          return (
+            <div
+              title={`${m.nombre} · ${m.frase}`}
               style={{
-                width: colapsada ? 28 : 34, height: colapsada ? 28 : 34,
-                borderRadius: "50%", objectFit: "cover", objectPosition: "top",
-                border: "2px solid #d52b1e", boxShadow: "0 0 0 2px #0039a6", flexShrink: 0,
+                display: "flex", alignItems: "center", gap: 9, opacity: 0.95,
+                padding: colapsada ? "10px 0 6px" : "10px 14px 6px",
+                justifyContent: colapsada ? "center" : "flex-start",
               }}
-            />
-            {!colapsada && (
-              <div style={{ fontSize: 10.5, color: "var(--text-muted)", lineHeight: 1.3, minWidth: 0, overflow: "hidden" }}>
-                <div style={{ fontWeight: 700, color: "var(--text)", whiteSpace: "nowrap" }}>Salvador Allende</div>
-                <div style={{ whiteSpace: "nowrap" }}>¡Viva Chile!</div>
-              </div>
-            )}
-          </div>
-        )}
+            >
+              <MascotaDieciochera size={colapsada ? 28 : 34} />
+              {!colapsada && (
+                <div style={{ fontSize: 10.5, color: "var(--text-muted)", lineHeight: 1.3, minWidth: 0, overflow: "hidden" }}>
+                  <div style={{ fontWeight: 700, color: "var(--text)", whiteSpace: "nowrap" }}>{m.nombre}</div>
+                  <div style={{ whiteSpace: "nowrap" }}>{m.frase}</div>
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
         {/* User section */}
         {perfil && (

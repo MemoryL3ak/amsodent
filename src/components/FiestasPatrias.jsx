@@ -8,9 +8,104 @@ export const ES_FIESTAS_PATRIAS = (() => {
   return hoy.getMonth() === 8 && hoy.getDate() >= 5 && hoy.getDate() <= 25;
 })();
 
-// Retrato de dominio público (Wikimedia Commons).
-export const FOTO_ALLENDE =
-  "https://commons.wikimedia.org/wiki/Special:FilePath/Salvador%20Allende%202.jpg?width=120";
+/* Mascotas dieciocheras (2026-09-14): reemplazan al retrato que había antes
+   en el rincón del sidebar. Son dibujos propios (nada de fotos externas) y
+   ROTAN cada día, así el equipo se encuentra con una distinta: empanada con
+   chupalla, quiltro con chupalla y volantín. Sin carga política, con humor. */
+const MASCOTAS = [
+  {
+    id: "empanada",
+    nombre: "Empanada de pino",
+    frase: "¡Feliz 18, equipo!",
+    dibujo: (
+      <>
+        <circle cx="20" cy="20" r="20" fill="#fff7ed" />
+        <path d="M7 27 C7 17 13 12 20 12 C27 12 33 17 33 27 C33 31 27 34 20 34 C13 34 7 31 7 27 Z" fill="#e3a04a" />
+        <path d="M7 27 C7 17 13 12 20 12 C27 12 33 17 33 27 C33 29 30 30 27 30 C27 22 24 17 20 17 C16 17 13 22 13 30 C10 30 7 29 7 27 Z" fill="#d08c36" />
+        <path d="M8 28 q3 -3 5 0 q3 -3 5 0 q3 -3 5 0 q3 -3 5 0" fill="none" stroke="#b8762a" strokeWidth="1.6" strokeLinecap="round" />
+        <ellipse cx="20" cy="12" rx="13" ry="3.4" fill="#e8cf9a" />
+        <path d="M13 12 C13 6 15 4 20 4 C25 4 27 6 27 12 Z" fill="#d9bb78" />
+        <path d="M13 10.6 C16 12 24 12 27 10.6" fill="none" stroke="#b8965a" strokeWidth="1.5" />
+        <circle cx="16.5" cy="23" r="1.5" fill="#5b3a16" />
+        <circle cx="23.5" cy="23" r="1.5" fill="#5b3a16" />
+        <path d="M17 27.5 q3 2.5 6 0" fill="none" stroke="#5b3a16" strokeWidth="1.5" strokeLinecap="round" />
+      </>
+    ),
+  },
+  {
+    id: "quiltro",
+    nombre: "Quiltro dieciochero",
+    frase: "¡Viva Chile!",
+    dibujo: (
+      <>
+        <circle cx="20" cy="20" r="20" fill="#f5f0e6" />
+        <path d="M9 17 C5 19 5 28 9 30 C11 27 11 20 9 17 Z" fill="#8a5a32" />
+        <path d="M31 17 C35 19 35 28 31 30 C29 27 29 20 31 17 Z" fill="#8a5a32" />
+        <path d="M20 12 C28 12 31 18 31 24 C31 31 26 35 20 35 C14 35 9 31 9 24 C9 18 12 12 20 12 Z" fill="#b07a45" />
+        <path d="M12 17 C15 14 19 14 21 16 C18 19 14 20 12 17 Z" fill="#8a5a32" />
+        <ellipse cx="20" cy="29" rx="7" ry="5" fill="#e8d3b6" />
+        <ellipse cx="20" cy="26" rx="2.6" ry="2" fill="#3a2a1c" />
+        <path d="M20 28 L20 30 M20 30 q-2.5 2 -4 0 M20 30 q2.5 2 4 0" fill="none" stroke="#3a2a1c" strokeWidth="1.2" strokeLinecap="round" />
+        <path d="M18.5 32 q1.5 3 3 0 Z" fill="#e2727f" />
+        <circle cx="15.5" cy="22" r="1.7" fill="#2b1d10" />
+        <circle cx="24.5" cy="22" r="1.7" fill="#2b1d10" />
+        <circle cx="16.1" cy="21.4" r=".55" fill="#fff" />
+        <circle cx="25.1" cy="21.4" r=".55" fill="#fff" />
+        <ellipse cx="20" cy="12" rx="14" ry="3.6" fill="#e8cf9a" />
+        <path d="M13 12 C13 5.5 15 3.5 20 3.5 C25 3.5 27 5.5 27 12 Z" fill="#d9bb78" />
+        <path d="M13 10.4 C16 11.8 24 11.8 27 10.4" fill="none" stroke="#b8965a" strokeWidth="1.5" />
+      </>
+    ),
+  },
+  {
+    id: "volantin",
+    nombre: "Volantín",
+    frase: "¡Que no se corte el hilo!",
+    dibujo: (
+      <>
+        <circle cx="20" cy="20" r="20" fill="#eaf6fb" />
+        <ellipse cx="9" cy="9" rx="6" ry="3" fill="#fff" />
+        <ellipse cx="31" cy="13" rx="5" ry="2.5" fill="#fff" />
+        <g transform="rotate(-12 20 17)">
+          <path d="M20 5 L29 17 L20 29 L11 17 Z" fill="#ffffff" stroke="#cbd5e1" strokeWidth=".7" />
+          <path d="M20 5 L29 17 L20 17 Z" fill="#0039a6" />
+          <path d="M20 17 L29 17 L20 29 Z" fill="#d52b1e" />
+          <path d="M20 5 L20 29 M11 17 L29 17" stroke="#94a3b8" strokeWidth=".8" />
+          <text x="24" y="13.5" fontSize="5" fill="#fff" textAnchor="middle">★</text>
+        </g>
+        <path d="M19 30 C15 33 22 34 18 37 C15 39 20 39.5 21 38" fill="none" stroke="#d52b1e" strokeWidth="1.6" strokeLinecap="round" />
+        <path d="M12 20 C7 26 5 31 4 37" fill="none" stroke="#94a3b8" strokeWidth=".9" />
+      </>
+    ),
+  },
+];
+
+// Mascota del día (rota con la fecha, igual para todo el equipo).
+export function mascotaDelDia() {
+  return MASCOTAS[new Date().getDate() % MASCOTAS.length];
+}
+
+export function MascotaDieciochera({ size = 34, style }) {
+  const m = mascotaDelDia();
+  return (
+    <svg
+      viewBox="0 0 40 40"
+      width={size}
+      height={size}
+      role="img"
+      aria-label={m.nombre}
+      style={{
+        borderRadius: "50%",
+        border: "2px solid #d52b1e",
+        boxShadow: "0 0 0 2px #0039a6",
+        flexShrink: 0,
+        ...style,
+      }}
+    >
+      {m.dibujo}
+    </svg>
+  );
+}
 
 // Banderines chilenos colgando de un cordel (azul con estrella / blanco / rojo).
 export function GuirnaldaBanderines({ height = 22, cordel = "#94a3b8" }) {
