@@ -619,7 +619,16 @@ export default function ListarLicitaciones() {
                     <td>
                       <span className={estadoBadgeClass(l.estado)}>{l.estado || "—"}</span>
                     </td>
-                    <td>{nombre || "Sin nombre"}</td>
+                    {/* Compacta con elipsis: si no, la tabla desborda y la
+                        columna Acción (sticky) tapa el nombre. */}
+                    <td>
+                      <div
+                        title={nombre || "Sin nombre"}
+                        style={{ maxWidth: 130, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                      >
+                        {nombre || "Sin nombre"}
+                      </div>
+                    </td>
                     <td style={{ textAlign: "left" }}>
                       <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-start", gap: "8px" }}>
                         {esAdmin && l.estado === "Pendiente Aprobación" && (

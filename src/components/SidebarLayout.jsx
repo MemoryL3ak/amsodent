@@ -455,15 +455,21 @@ export default function SidebarLayout() {
           </div>
         </div>
 
-        {/* Fiestas Patrias: guirnalda + saludo bajo el logo */}
-        {ES_FIESTAS_PATRIAS && (
+        {/* Fiestas Patrias: guirnalda + saludo bajo el logo. Con el sidebar
+            colapsado no cabe (el texto se apilaba letra a letra): solo la
+            banderita. */}
+        {ES_FIESTAS_PATRIAS && (colapsada ? (
+          <div style={{ textAlign: "center", fontSize: 15, padding: "0 0 4px" }} title="¡Felices Fiestas Patrias!">
+            🇨🇱
+          </div>
+        ) : (
           <div style={{ padding: "0 10px 4px" }}>
             <GuirnaldaBanderines />
-            <div style={{ textAlign: "center", fontSize: 11, fontWeight: 800, color: "#d52b1e", letterSpacing: ".02em", marginTop: 2 }}>
+            <div style={{ textAlign: "center", fontSize: 11, fontWeight: 800, color: "#d52b1e", letterSpacing: ".02em", marginTop: 2, whiteSpace: "nowrap", overflow: "hidden" }}>
               🇨🇱 ¡Felices Fiestas Patrias!
             </div>
           </div>
-        )}
+        ))}
 
         {/* Navigation — todos los grupos son colapsables con persistencia */}
         {/* Orden por flujo real del negocio: se VENDE (Comercial), se DESPACHA
@@ -560,11 +566,16 @@ export default function SidebarLayout() {
           />
         )}
 
-        {/* Fiestas Patrias: fotito de Salvador Allende en el rincón */}
+        {/* Fiestas Patrias: fotito de Salvador Allende en el rincón. Colapsado
+            va sola la foto, centrada y sin texto. */}
         {ES_FIESTAS_PATRIAS && (
           <div
             title="Salvador Allende · Fiestas Patrias"
-            style={{ display: "flex", alignItems: "center", gap: 9, padding: "10px 14px 6px", opacity: 0.95 }}
+            style={{
+              display: "flex", alignItems: "center", gap: 9, opacity: 0.95,
+              padding: colapsada ? "10px 0 6px" : "10px 14px 6px",
+              justifyContent: colapsada ? "center" : "flex-start",
+            }}
           >
             <img
               src={FOTO_ALLENDE}
@@ -572,14 +583,17 @@ export default function SidebarLayout() {
               loading="lazy"
               onError={(e) => { e.currentTarget.parentElement.style.display = "none"; }}
               style={{
-                width: 34, height: 34, borderRadius: "50%", objectFit: "cover", objectPosition: "top",
+                width: colapsada ? 28 : 34, height: colapsada ? 28 : 34,
+                borderRadius: "50%", objectFit: "cover", objectPosition: "top",
                 border: "2px solid #d52b1e", boxShadow: "0 0 0 2px #0039a6", flexShrink: 0,
               }}
             />
-            <div style={{ fontSize: 10.5, color: "var(--text-muted)", lineHeight: 1.3, minWidth: 0 }}>
-              <div style={{ fontWeight: 700, color: "var(--text)", whiteSpace: "nowrap" }}>Salvador Allende</div>
-              <div style={{ whiteSpace: "nowrap" }}>¡Viva Chile! · 18 de septiembre</div>
-            </div>
+            {!colapsada && (
+              <div style={{ fontSize: 10.5, color: "var(--text-muted)", lineHeight: 1.3, minWidth: 0, overflow: "hidden" }}>
+                <div style={{ fontWeight: 700, color: "var(--text)", whiteSpace: "nowrap" }}>Salvador Allende</div>
+                <div style={{ whiteSpace: "nowrap" }}>¡Viva Chile! · 18 de septiembre</div>
+              </div>
+            )}
           </div>
         )}
 
