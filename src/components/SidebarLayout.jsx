@@ -591,7 +591,7 @@ export default function SidebarLayout() {
             {!colapsada && (
               <div style={{ fontSize: 10.5, color: "var(--text-muted)", lineHeight: 1.3, minWidth: 0, overflow: "hidden" }}>
                 <div style={{ fontWeight: 700, color: "var(--text)", whiteSpace: "nowrap" }}>Salvador Allende</div>
-                <div style={{ whiteSpace: "nowrap" }}>¡Viva Chile! · 18 de septiembre</div>
+                <div style={{ whiteSpace: "nowrap" }}>¡Viva Chile!</div>
               </div>
             )}
           </div>
