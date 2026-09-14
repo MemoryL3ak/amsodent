@@ -39,6 +39,24 @@ export function GuirnaldaBanderines({ height = 22, cordel = "#94a3b8" }) {
   );
 }
 
+// Banderita chilena en SVG: el emoji 🇨🇱 se ve como "CL" en Windows.
+export function BanderaChile({ size = 13 }) {
+  return (
+    <svg
+      viewBox="0 0 30 20"
+      width={size * 1.5}
+      height={size}
+      style={{ display: "inline-block", verticalAlign: "-1.5px", borderRadius: 2, boxShadow: "0 0 0 1px rgba(15,23,42,.15)" }}
+      aria-label="Bandera de Chile"
+    >
+      <rect width="30" height="10" fill="#ffffff" />
+      <rect y="10" width="30" height="10" fill="#d52b1e" />
+      <rect width="10" height="10" fill="#0039a6" />
+      <text x="5" y="7.8" textAnchor="middle" fontSize="8" fill="#fff">★</text>
+    </svg>
+  );
+}
+
 // Cinta tricolor fija en el borde superior de la pantalla.
 export function CintaTricolor() {
   return (

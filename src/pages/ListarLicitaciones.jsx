@@ -624,7 +624,7 @@ export default function ListarLicitaciones() {
                     <td>
                       <div
                         title={nombre || "Sin nombre"}
-                        style={{ maxWidth: 130, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                        style={{ maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
                       >
                         {nombre || "Sin nombre"}
                       </div>

@@ -55,7 +55,7 @@ import {
   HeartHandshake,
 } from "lucide-react";
 import NotificacionesMenu from "./NotificacionesMenu";
-import { ES_FIESTAS_PATRIAS, FOTO_ALLENDE, GuirnaldaBanderines, CintaTricolor } from "./FiestasPatrias";
+import { ES_FIESTAS_PATRIAS, FOTO_ALLENDE, GuirnaldaBanderines, CintaTricolor, BanderaChile } from "./FiestasPatrias";
 import RecordatoriosCorreo from "./RecordatoriosCorreo";
 import RecordatoriosCierre from "./RecordatoriosCierre";
 import GoogleAuthSync from "./GoogleAuthSync";
@@ -459,14 +459,14 @@ export default function SidebarLayout() {
             colapsado no cabe (el texto se apilaba letra a letra): solo la
             banderita. */}
         {ES_FIESTAS_PATRIAS && (colapsada ? (
-          <div style={{ textAlign: "center", fontSize: 15, padding: "0 0 4px" }} title="¡Felices Fiestas Patrias!">
-            🇨🇱
+          <div style={{ textAlign: "center", padding: "0 0 4px" }} title="¡Felices Fiestas Patrias!">
+            <BanderaChile size={13} />
           </div>
         ) : (
           <div style={{ padding: "0 10px 4px" }}>
             <GuirnaldaBanderines />
             <div style={{ textAlign: "center", fontSize: 11, fontWeight: 800, color: "#d52b1e", letterSpacing: ".02em", marginTop: 2, whiteSpace: "nowrap", overflow: "hidden" }}>
-              🇨🇱 ¡Felices Fiestas Patrias!
+              <BanderaChile size={11} /> ¡Felices Fiestas Patrias!
             </div>
           </div>
         ))}
