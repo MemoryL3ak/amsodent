@@ -1032,6 +1032,10 @@ export default function EditarLicitacion() {
   // migración 20260914 pendiente).
   const [fletePorPagar, setFletePorPagar] = useState(false);
   const [fletePorPagarDB, setFletePorPagarDB] = useState(false);
+  // "Flete por pagar" solo existe en cliente particular: si la cotización deja
+  // de serlo, el flag no aplica aunque haya quedado marcado antes (el checkbox
+  // se oculta, pero su estado sobrevivía y se guardaba igual).
+  const fletePorPagarEfectivo = fletePorPagar && esCotizacionParticular;
 
   /* ===============================
      PRODUCTOS / ÍTEMS
@@ -2904,7 +2908,7 @@ export default function EditarLicitacion() {
       regionNormPdf === "santiago" ||
       regionNormPdf.includes("metropolitana");
     const fleteGratisEvidente = Number(totalConIVA) >= 70000 && esRMPdf;
-    if (!(Number(fleteEstimado) > 0) && !fleteGratisEvidente && !fletePorPagar) {
+    if (!(Number(fleteEstimado) > 0) && !fleteGratisEvidente && !fletePorPagarEfectivo) {
       setToast({
         type: "warning",
         message:
@@ -3224,10 +3228,13 @@ export default function EditarLicitacion() {
           estado: estadoFinal,
           margen_aprobado: margenAprobadoFinal,
           fecha_adjudicada: fechaAdjudicadaFinal,
-          flete_estimado: fletePorPagar ? 0 : Number(fleteEstimado),
+          // "Flete por pagar" es EXCLUSIVO de cliente particular: si la
+          // cotización dejó de serlo, el flag se apaga al guardar (así una
+          // pública no queda con flete $0 sin que el PDF lo diga).
+          flete_estimado: fletePorPagarEfectivo ? 0 : Number(fleteEstimado),
           // Se envía solo si hay algo que decir (true, o volver a false tras
           // haber estado guardado en true): tolera la migración 20260914.
-          ...(fletePorPagar || fletePorPagarDB ? { flete_por_pagar: fletePorPagar } : {}),
+          ...(fletePorPagarEfectivo || fletePorPagarDB ? { flete_por_pagar: fletePorPagarEfectivo } : {}),
 
           total_con_iva: totalConIVA,
           total_sin_iva: totalNeto,

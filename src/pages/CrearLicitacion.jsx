@@ -811,6 +811,14 @@ export default function CrearLicitacion() {
   // indica como ítem "Despacho / Flete — POR PAGAR".
   const [fletePorPagar, setFletePorPagar] = useState(false);
   const [tipoCompra, setTipoCompra] = useState("Compra ágil");
+  // Si la cotización deja de ser particular, el flete por pagar se apaga solo
+  // (el checkbox se oculta y no debe quedar activo por debajo).
+  useEffect(() => {
+    const esPart =
+      (tipoCliente || "").toLowerCase() === "cliente particular" ||
+      tipoCompra === "Cliente particular";
+    if (!esPart) setFletePorPagar(false);
+  }, [tipoCliente, tipoCompra]);
   const [region, setRegion] = useState("");
   const [comuna, setComuna] = useState("");
 
@@ -1902,6 +1910,9 @@ export default function CrearLicitacion() {
     }
 
     const esClienteParticular = tipoCliente.toLowerCase() === "cliente particular" || tipoCompra === "Cliente particular";
+    // El checkbox se oculta al cambiar de tipo, pero su estado sobrevivía y se
+    // guardaba igual: el flag solo vale si la cotización ES particular.
+    const fletePorPagarEfectivo = fletePorPagar && esClienteParticular;
 
     const errores = [];
     // Para cliente particular el ID se genera automáticamente (igual al id interno) — no validamos.
@@ -2086,7 +2097,7 @@ export default function CrearLicitacion() {
       // (Punto 9 — 2026-09-10) Sin flete calculado no se genera la cotización
       // ni su PDF. Se exceptúan las que van a Aprobación por Peso: sin pesos
       // no hay flete posible y el flujo de aprobación ya obliga a recalcularlo.
-      if (!requiereAprobacionPeso && !fletePorPagar && !fleteCalculado && !(Number(fleteEstimado) > 0)) {
+      if (!requiereAprobacionPeso && !fletePorPagarEfectivo && !fleteCalculado && !(Number(fleteEstimado) > 0)) {
         setToast({
           type: "warning",
           message:
@@ -2144,10 +2155,14 @@ export default function CrearLicitacion() {
             // vuelve a analizar sus propias equivalencias al guardarse.
             madre_id: madreId || null,
             jerarquia: madreId ? "hija" : "madre",
-            flete_estimado: fletePorPagar ? 0 : Number(fleteEstimado),
+            // "Flete por pagar" es EXCLUSIVO de cliente particular: si la
+            // cotización dejó de serlo (se cambió el tipo después de marcarlo),
+            // el flag no viaja y el flete vuelve a ser el calculado. Sin esto
+            // una pública podía guardarse en $0 sin mostrarlo en el PDF.
+            flete_estimado: fletePorPagarEfectivo ? 0 : Number(fleteEstimado),
             // Solo con valor true (tolera que la migración
             // 20260914_licitaciones_flete_por_pagar esté pendiente).
-            ...(fletePorPagar ? { flete_por_pagar: true } : {}),
+            ...(fletePorPagarEfectivo ? { flete_por_pagar: true } : {}),
             total_con_iva: totalConIVA,
             total_sin_iva: totalNeto,
             total_iva: totalIVA,
