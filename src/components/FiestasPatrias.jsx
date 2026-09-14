@@ -60,33 +60,33 @@ export function BanderaChile({ size = 13 }) {
   );
 }
 
-// Copihue (flor nacional): campana colgante de pétalos abiertos. Dibujado
-// ancho a propósito para que se lea como flor —y no como una mancha— incluso
-// a 14–16 px, que es el tamaño al que se usa junto al texto.
+// Copihue (flor nacional) estilizado: campana roja colgante con tallo.
+// Un toque elegante y sobrio, menos literal que más banderas. Proporción
+// alargada a propósito: es la que lee mejor como flor colgante (se probó
+// una versión ancha y parecía un ají).
 export function Copihue({ size = 22, espejo = false, style }) {
   return (
     <svg
-      viewBox="0 0 44 56"
+      viewBox="0 0 40 64"
       width={size}
-      height={size * 1.27}
+      height={size * 1.6}
       style={{ transform: espejo ? "scaleX(-1)" : undefined, ...style }}
       aria-hidden="true"
     >
       <g className="fp-copihue" style={{ animationDelay: espejo ? "1.4s" : "0s" }}>
-        {/* tallo curvo del que cuelga la flor */}
-        <path d="M4 2 C16 4 22 8 22 14" fill="none" stroke="#2f7d32" strokeWidth="2.6" strokeLinecap="round" />
-        {/* hojita */}
-        <path d="M6 3 C12 5 13 10 9 13 C5 12 4 7 6 3 Z" fill="#3d8b40" />
-        {/* pétalos laterales abiertos (la campana del copihue) */}
-        <path d="M22 13 C6 22 4 38 12 50 C16 42 17 26 22 13 Z" fill="#b3122a" />
-        <path d="M22 13 C38 22 40 38 32 50 C28 42 27 26 22 13 Z" fill="#d52b1e" />
-        {/* pétalo central al frente */}
-        <path d="M22 13 C14 26 14 42 22 54 C30 42 30 26 22 13 Z" fill="#e63946" />
-        {/* brillo suave */}
-        <path d="M19 22 C17 30 17 40 19.5 47" fill="none" stroke="rgba(255,255,255,.5)" strokeWidth="1.6" strokeLinecap="round" />
-        {/* estambres asomando */}
-        <path d="M20 50 L19 55" stroke="#f6d04d" strokeWidth="1.3" strokeLinecap="round" />
-        <path d="M24 50 L25 55.5" stroke="#f6d04d" strokeWidth="1.3" strokeLinecap="round" />
+        {/* tallo y hojita */}
+        <path d="M6 0 C14 6 20 10 20 18" fill="none" stroke="#2e7d32" strokeWidth="2" strokeLinecap="round" />
+        <path d="M6 0 C10 8 8 12 4 16" fill="none" stroke="#2e7d32" strokeWidth="1.6" strokeLinecap="round" />
+        {/* pétalos exteriores */}
+        <path d="M20 16 C8 26 8 44 16 56 C19 48 19 28 20 16" fill="#c8102e" />
+        <path d="M20 16 C32 26 32 44 24 56 C21 48 21 28 20 16" fill="#d52b1e" />
+        {/* pétalo central */}
+        <path d="M20 16 C15 30 15 46 20 60 C25 46 25 30 20 16" fill="#e63946" />
+        {/* brillo */}
+        <path d="M18 24 C16.5 32 16.5 42 18.5 50" fill="none" stroke="rgba(255,255,255,.45)" strokeWidth="1.4" strokeLinecap="round" />
+        {/* estambres */}
+        <circle cx="18" cy="58" r="1.3" fill="#f8e16c" />
+        <circle cx="22" cy="59.5" r="1.3" fill="#f8e16c" />
       </g>
     </svg>
   );
