@@ -680,6 +680,28 @@ body {
   margin-bottom: 28px;
 }
 
+/* Fiestas Patrias: movimiento sutil — los banderines se mecen y los
+   copihues penden con un vaivén lento, como colgados de verdad. Se apaga
+   con prefers-reduced-motion. */
+@keyframes fp-sway {
+  0%   { transform: rotate(-2.2deg); }
+  50%  { transform: rotate(2.6deg); }
+  100% { transform: rotate(-2.2deg); }
+}
+.fp-banderin {
+  transform-box: fill-box;
+  transform-origin: 50% 0%;
+  animation: fp-sway 3.8s ease-in-out infinite;
+}
+.fp-copihue {
+  transform-box: fill-box;
+  transform-origin: 50% 0%;
+  animation: fp-sway 5.2s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .fp-banderin, .fp-copihue { animation: none; }
+}
+
 /* Fiestas Patrias (5–25 de septiembre): subrayado tricolor sobrio bajo el
    título de cada página. La clase .es-fiestas la pone SidebarLayout solo
    durante la fecha, así el resto del año no existe. */

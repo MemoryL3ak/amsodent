@@ -146,9 +146,9 @@ export default function Login() {
             <div style={{ margin: "0 auto 10px", maxWidth: "300px" }}>
               <GuirnaldaBanderines height={24} cordel="rgba(255,255,255,0.55)" />
               <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, fontSize: 12.5, fontWeight: 800, color: "#ffffff", letterSpacing: ".03em", marginTop: 4, textShadow: "0 1px 2px rgba(0,0,0,.25)" }}>
-                <Copihue size={14} />
+                <Copihue size={18} />
                 <span><BanderaChile size={12} /> ¡Felices Fiestas Patrias!</span>
-                <Copihue size={14} espejo />
+                <Copihue size={18} espejo />
               </div>
             </div>
           )}
