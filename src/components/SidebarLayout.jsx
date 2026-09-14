@@ -576,7 +576,7 @@ export default function SidebarLayout() {
           const m = mascotaDelDia();
           return (
             <div
-              title={`${m.nombre} · ${m.frase}`}
+              title={m.nombre ? `${m.nombre} · ${m.frase}` : m.frase}
               style={{
                 display: "flex", alignItems: "center", gap: 9, opacity: 0.95,
                 padding: colapsada ? "10px 0 6px" : "10px 14px 6px",
@@ -586,8 +586,15 @@ export default function SidebarLayout() {
               <MascotaDieciochera size={colapsada ? 28 : 34} />
               {!colapsada && (
                 <div style={{ fontSize: 10.5, color: "var(--text-muted)", lineHeight: 1.3, minWidth: 0, overflow: "hidden" }}>
-                  <div style={{ fontWeight: 700, color: "var(--text)", whiteSpace: "nowrap" }}>{m.nombre}</div>
-                  <div style={{ whiteSpace: "nowrap" }}>{m.frase}</div>
+                  {/* Sin nombre de personaje (ej: el volantín): solo el mensaje. */}
+                  {m.nombre ? (
+                    <>
+                      <div style={{ fontWeight: 700, color: "var(--text)", whiteSpace: "nowrap" }}>{m.nombre}</div>
+                      <div style={{ whiteSpace: "nowrap" }}>{m.frase}</div>
+                    </>
+                  ) : (
+                    <div style={{ fontWeight: 700, color: "var(--text)", whiteSpace: "nowrap" }}>{m.frase}</div>
+                  )}
                 </div>
               )}
             </div>
