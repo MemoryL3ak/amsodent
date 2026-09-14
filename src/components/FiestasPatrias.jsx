@@ -60,33 +60,57 @@ export function BanderaChile({ size = 13 }) {
   );
 }
 
-// Copihue (flor nacional) estilizado: campana roja colgante con tallo.
-// Un toque elegante y sobrio, menos literal que más banderas. Proporción
-// alargada a propósito: es la que lee mejor como flor colgante (se probó
-// una versión ancha y parecía un ají).
+// Copihue (flor nacional) dibujado según la flor real: campana tubular
+// colgante cuyos tépalos se ABREN en la punta, en rojo carmesí con brillo,
+// colgando de un pedúnculo verde con su hoja. La silueta es un solo trazo
+// con tres puntas y dos valles — a 12–14 px (el tamaño en que se usa junto
+// al texto) se sigue leyendo como flor.
+let copihueSeq = 0;
 export function Copihue({ size = 22, espejo = false, style }) {
+  // Id único por instancia: dos gradientes con el mismo id se pisan.
+  const gid = `cop${(copihueSeq += 1)}`;
   return (
     <svg
-      viewBox="0 0 40 64"
+      viewBox="0 0 44 64"
       width={size}
-      height={size * 1.6}
+      height={size * 1.45}
       style={{ transform: espejo ? "scaleX(-1)" : undefined, ...style }}
       aria-hidden="true"
     >
+      <defs>
+        <linearGradient id={gid} x1="0" y1="0" x2="1" y2="0.2">
+          <stop offset="0%" stopColor="#bf1733" />
+          <stop offset="30%" stopColor="#e8354c" />
+          <stop offset="55%" stopColor="#f8697c" />
+          <stop offset="78%" stopColor="#ee3a51" />
+          <stop offset="100%" stopColor="#c31c36" />
+        </linearGradient>
+      </defs>
       <g className="fp-copihue" style={{ animationDelay: espejo ? "1.4s" : "0s" }}>
-        {/* tallo y hojita */}
-        <path d="M6 0 C14 6 20 10 20 18" fill="none" stroke="#2e7d32" strokeWidth="2" strokeLinecap="round" />
-        <path d="M6 0 C10 8 8 12 4 16" fill="none" stroke="#2e7d32" strokeWidth="1.6" strokeLinecap="round" />
-        {/* pétalos exteriores */}
-        <path d="M20 16 C8 26 8 44 16 56 C19 48 19 28 20 16" fill="#c8102e" />
-        <path d="M20 16 C32 26 32 44 24 56 C21 48 21 28 20 16" fill="#d52b1e" />
-        {/* pétalo central */}
-        <path d="M20 16 C15 30 15 46 20 60 C25 46 25 30 20 16" fill="#e63946" />
-        {/* brillo */}
-        <path d="M18 24 C16.5 32 16.5 42 18.5 50" fill="none" stroke="rgba(255,255,255,.45)" strokeWidth="1.4" strokeLinecap="round" />
-        {/* estambres */}
-        <circle cx="18" cy="58" r="1.3" fill="#f8e16c" />
-        <circle cx="22" cy="59.5" r="1.3" fill="#f8e16c" />
+        {/* pedúnculo del que cuelga la flor + hoja */}
+        <path d="M4 4 C14 2 21 5 22 12" fill="none" stroke="#2f8f3e" strokeWidth="2.3" strokeLinecap="round" />
+        <path d="M6 2 C14 0.5 18 4 16.5 8.5 C11 9.5 6.5 6.5 6 2 Z" fill="#3aa04a" />
+        {/* corola: campana con tres puntas abiertas */}
+        <path
+          d="M22 11
+             C14 21 10 35 9.5 48
+             C9 54 7.5 59 10 60
+             C13 57 15 52 16 46
+             C16.5 52 17 57 19 61.5
+             C20.5 63.2 23.5 63.2 25 61.5
+             C27 57 27.5 52 28 46
+             C29 52 31 57 34 60
+             C36.5 59 35 54 34.5 48
+             C34 35 30 21 22 11 Z"
+          fill={`url(#${gid})`}
+        />
+        {/* nervaduras longitudinales */}
+        <path d="M19 20 C16 32 15.5 45 16.5 52" fill="none" stroke="rgba(255,255,255,.34)" strokeWidth="1.1" strokeLinecap="round" />
+        <path d="M25 20 C28 32 28.5 45 27.5 52" fill="none" stroke="rgba(0,0,0,.12)" strokeWidth="1.1" strokeLinecap="round" />
+        <path d="M22 16 C21 32 21 48 22 60" fill="none" stroke="rgba(255,255,255,.22)" strokeWidth="1" strokeLinecap="round" />
+        {/* estambres asomando bajo la corola */}
+        <path d="M21 60 L20 64" stroke="#f4d35e" strokeWidth="1.2" strokeLinecap="round" />
+        <path d="M23.5 60.5 L24.5 64" stroke="#f4d35e" strokeWidth="1.2" strokeLinecap="round" />
       </g>
     </svg>
   );
