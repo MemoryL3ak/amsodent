@@ -540,7 +540,12 @@ export class ProductosService {
       · SOLO se rellenan ítems vacíos (sku nulo/'' o costo nulo/0). Nunca se
         pisa un SKU o un costo ya registrado: el costo congelado de una
         cotización cerrada sigue siendo el que se usó al venderla.
-      · El match es por SKU nuevo o por nombre exacto del producto.
+      · No importa el ORDEN ni en cuántos guardados se complete la ficha: el
+        caso normal es en dos pasos (primero el SKU, después el costo), así
+        que cada guardado vuelve a rellenar lo que siga vacío. Por eso la
+        condición es "el producto tiene el dato", no "el dato es nuevo".
+      · El match es por SKU y, para los ítems que todavía no lo tienen, por
+        nombre exacto del producto.
       · Con `propagar: false` no se toca nada — lo usa la validación de
         transitorios desde una cotización en curso, que solo debe afectar a
         esa cotización (aún en borrador) y no a las ya creadas. */
@@ -551,18 +556,19 @@ export class ProductosService {
     const resultado = { sku: 0, costo: 0 };
     const client = this.supabase.getClient();
 
-    const nombre = String(actualizado?.nombre || '').trim();
-    const skuNuevo = String(actualizado?.sku || '').trim();
-    const skuAntes = String(anterior?.sku || '').trim();
-    const costoNuevo = Number(actualizado?.costo);
-    const costoAntes = Number(anterior?.costo);
+    // El body puede venir parcial (ej: solo el costo): para lo que no venga,
+    // vale lo que ya tenía el producto.
+    const nombre = String(actualizado?.nombre ?? anterior?.nombre ?? '').trim();
+    const sku = String(actualizado?.sku ?? anterior?.sku ?? '').trim();
+    const costo = Number(actualizado?.costo ?? anterior?.costo);
 
-    // 1) SKU recién asignado (el producto no tenía): completar los ítems que
-    //    quedaron sin SKU, buscándolos por el nombre del producto.
-    if (skuNuevo && !skuAntes && nombre) {
+    // 1) El producto tiene SKU: los ítems de ese producto que quedaron sin
+    //    SKU lo reciben (se encuentran por el nombre, que es lo único que
+    //    guardaron cuando el producto era transitorio).
+    if (sku && nombre) {
       const { data, error } = await client
         .from('items_licitacion')
-        .update({ sku: skuNuevo })
+        .update({ sku })
         .eq('producto', nombre)
         .or('sku.is.null,sku.eq.')
         .select('id');
@@ -573,22 +579,26 @@ export class ProductosService {
       }
     }
 
-    // 2) Costo recién cargado (antes 0/vacío): completar los ítems sin costo
-    //    de ese producto (por SKU si lo tiene, si no por nombre).
-    const teniaCosto = Number.isFinite(costoAntes) && costoAntes > 0;
-    if (Number.isFinite(costoNuevo) && costoNuevo > 0 && !teniaCosto) {
-      const skuMatch = skuNuevo || skuAntes;
-      let q = client
-        .from('items_licitacion')
-        .update({ costo: costoNuevo })
-        .or('costo.is.null,costo.eq.0');
-      q = skuMatch ? q.eq('sku', skuMatch) : q.eq('producto', nombre);
-      const { data, error } = await q.select('id');
-      if (error) {
-        this.logger.warn(`Propagación de costo falló: ${error.message}`);
-      } else {
-        resultado.costo = (data || []).length;
+    // 2) El producto tiene costo: los ítems sin costo lo reciben. Se busca
+    //    por SKU y también por nombre, porque puede haber ítems viejos que
+    //    nunca recibieron el SKU (nombre editado, por ejemplo).
+    if (Number.isFinite(costo) && costo > 0) {
+      const filtros: Array<(q: any) => any> = [];
+      if (sku) filtros.push((q: any) => q.eq('sku', sku));
+      if (nombre) filtros.push((q: any) => q.eq('producto', nombre).or('sku.is.null,sku.eq.'));
+
+      const vistos = new Set<number>();
+      for (const aplicar of filtros) {
+        const { data, error } = await aplicar(
+          client.from('items_licitacion').update({ costo }).or('costo.is.null,costo.eq.0'),
+        ).select('id');
+        if (error) {
+          this.logger.warn(`Propagación de costo falló: ${error.message}`);
+          continue;
+        }
+        (data || []).forEach((r: any) => vistos.add(Number(r.id)));
       }
+      resultado.costo = vistos.size;
     }
 
     return resultado;
