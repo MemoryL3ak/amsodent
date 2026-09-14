@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { supabase } from "../lib/supabase";
-import { ES_FIESTAS_PATRIAS, GuirnaldaBanderines, CintaTricolor } from "../components/FiestasPatrias";
+import { ES_FIESTAS_PATRIAS, GuirnaldaBanderines, CintaTricolor, BanderaChile } from "../components/FiestasPatrias";
 
 /* ── Hero graphic ──────────────────────────────────────────────── */
 function HeroGraphic() {
@@ -146,7 +146,7 @@ export default function Login() {
             <div style={{ margin: "0 auto 10px", maxWidth: "300px" }}>
               <GuirnaldaBanderines height={24} cordel="rgba(255,255,255,0.55)" />
               <div style={{ textAlign: "center", fontSize: 12.5, fontWeight: 800, color: "#ffffff", letterSpacing: ".03em", marginTop: 4, textShadow: "0 1px 2px rgba(0,0,0,.25)" }}>
-                🇨🇱 ¡Felices Fiestas Patrias!
+                <BanderaChile size={12} /> ¡Felices Fiestas Patrias!
               </div>
             </div>
           )}
@@ -228,7 +228,7 @@ export default function Login() {
                   background: "#fef2f2", border: "1px solid #fecaca",
                   padding: "3px 12px", borderRadius: 999,
                 }}>
-                  🇨🇱 ¡Felices Fiestas Patrias!
+                  <BanderaChile size={11} /> ¡Felices Fiestas Patrias!
                 </span>
               )}
             </div>

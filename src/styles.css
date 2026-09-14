@@ -1272,15 +1272,28 @@ select.input {
   padding-right: 10px;
   white-space: nowrap;
 }
-/* ID Cotización (col 2) más compacta */
+/* Reparto de anchos (2026-09-14): con layout auto el espacio sobrante se lo
+   regalaba entero a "ID Cotización" y "Creado por" quedaba aplastada bajo la
+   columna Acción sticky. Ahora ID va compacta con ancho fijo, Comuna absorbe
+   el sobrante (única sin width) y Creado por respira. */
+.data-table.cotizaciones-table th:nth-child(1) { width: 48px; }
 .data-table.cotizaciones-table th:nth-child(2),
 .data-table.cotizaciones-table td:nth-child(2) {
-  width: 1%;
+  width: 175px;
+  max-width: 195px;
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-size: 11.5px;
   padding-left: 6px;
   padding-right: 6px;
   letter-spacing: -0.2px;
 }
+.data-table.cotizaciones-table th:nth-child(3) { width: 95px; }  /* Fecha */
+.data-table.cotizaciones-table th:nth-child(4) { width: 110px; } /* Adjudicación */
+.data-table.cotizaciones-table th:nth-child(5) { width: 115px; } /* Monto */
+/* Comuna (col 6) queda SIN width: es la que absorbe el espacio libre. */
+.data-table.cotizaciones-table th:nth-child(7) { width: 150px; } /* Estado */
+.data-table.cotizaciones-table th:nth-child(8) { width: 165px; } /* Creado por */
 .data-table.cotizaciones-table th:last-child,
 .data-table.cotizaciones-table td:last-child {
   position: sticky;
