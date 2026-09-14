@@ -9,7 +9,13 @@ import { AlertTriangle, ExternalLink, CheckCircle2, X } from "lucide-react";
 
 const fmtCLP = (v) => `$${Number(v || 0).toLocaleString("es-CL")}`;
 
-export default function ModalValidarTransitorio({ open, prod, onValidado, onCancelar }) {
+/* `enBorrador` distingue de DÓNDE se abre este modal:
+    · true  → desde Nueva Cotización: la cotización aún no existe, así que
+      editar el producto NO debe tocar las cotizaciones ya creadas (se abre
+      la ficha con ?validacion=1 y el guardado va sin propagación).
+    · false → desde el Detalle de una cotización YA creada: ahí sí conviene
+      que el SKU/costo se completen también en las cotizaciones guardadas. */
+export default function ModalValidarTransitorio({ open, prod, onValidado, onCancelar, enBorrador = false }) {
   const [paso, setPaso] = useState("aviso"); // aviso | info
   useEffect(() => { if (open) setPaso("aviso"); }, [open]);
 
@@ -27,9 +33,10 @@ export default function ModalValidarTransitorio({ open, prod, onValidado, onCanc
     : null;
   const creado = String(prod.created_at || "").slice(0, 10);
   const costo = Number(prod.costo ?? 0);
-  // ?validacion=1 marca el origen: lo que se edite desde aquí afecta SOLO a la
-  // cotización que se está creando, no a las cotizaciones ya guardadas.
-  const urlEditar = prod.id != null ? `/productos/editar/${prod.id}?validacion=1` : null;
+  const urlEditar =
+    prod.id != null
+      ? `/productos/editar/${prod.id}${enBorrador ? "?validacion=1" : ""}`
+      : null;
 
   const Fila = ({ label, children }) => (
     <div style={{ display: "flex", justifyContent: "space-between", gap: 12, padding: "7px 0", borderBottom: "1px solid #f1f5f9", fontSize: 13 }}>

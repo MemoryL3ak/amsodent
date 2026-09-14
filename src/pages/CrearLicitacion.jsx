@@ -2612,6 +2612,7 @@ export default function CrearLicitacion() {
       <ModalValidarTransitorio
         open={validarCosto !== null}
         prod={validarCosto?.prod}
+        enBorrador
         onValidado={() => { if (validarCosto) aplicarProductoEnItem(validarCosto.idx, validarCosto.prod); setValidarCosto(null); }}
         onCancelar={() => setValidarCosto(null)}
       />
