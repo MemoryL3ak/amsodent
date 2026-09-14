@@ -468,9 +468,9 @@ export default function SidebarLayout() {
           <div style={{ padding: "0 10px 4px" }}>
             <GuirnaldaBanderines />
             <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, fontSize: 11, fontWeight: 800, color: "#d52b1e", letterSpacing: ".02em", marginTop: 2, whiteSpace: "nowrap", overflow: "hidden" }}>
-              <Copihue size={15} />
+              <Copihue size={12} />
               <span><BanderaChile size={11} /> ¡Felices Fiestas Patrias!</span>
-              <Copihue size={15} espejo />
+              <Copihue size={12} espejo />
             </div>
           </div>
         ))}
