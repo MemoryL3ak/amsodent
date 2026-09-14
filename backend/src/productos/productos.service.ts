@@ -530,7 +530,93 @@ export class ProductosService {
       : msg;
   }
 
+  /* ── Propagación producto → ítems de cotizaciones (2026-09-14) ─────────
+     Un producto transitorio nace sin SKU y muchas veces sin costo. Cuando
+     después se completa esa información, las cotizaciones que ya lo usaron
+     quedaban con el ítem sin SKU y con costo 0 (margen ficticio del 100% en
+     los paneles). Al guardar el producto, esos huecos se completan.
+
+     Reglas, deliberadamente conservadoras:
+      · SOLO se rellenan ítems vacíos (sku nulo/'' o costo nulo/0). Nunca se
+        pisa un SKU o un costo ya registrado: el costo congelado de una
+        cotización cerrada sigue siendo el que se usó al venderla.
+      · El match es por SKU nuevo o por nombre exacto del producto.
+      · Con `propagar: false` no se toca nada — lo usa la validación de
+        transitorios desde una cotización en curso, que solo debe afectar a
+        esa cotización (aún en borrador) y no a las ya creadas. */
+  private async propagarAItems(
+    anterior: Record<string, any> | null,
+    actualizado: Record<string, any>,
+  ): Promise<{ sku: number; costo: number }> {
+    const resultado = { sku: 0, costo: 0 };
+    const client = this.supabase.getClient();
+
+    const nombre = String(actualizado?.nombre || '').trim();
+    const skuNuevo = String(actualizado?.sku || '').trim();
+    const skuAntes = String(anterior?.sku || '').trim();
+    const costoNuevo = Number(actualizado?.costo);
+    const costoAntes = Number(anterior?.costo);
+
+    // 1) SKU recién asignado (el producto no tenía): completar los ítems que
+    //    quedaron sin SKU, buscándolos por el nombre del producto.
+    if (skuNuevo && !skuAntes && nombre) {
+      const { data, error } = await client
+        .from('items_licitacion')
+        .update({ sku: skuNuevo })
+        .eq('producto', nombre)
+        .or('sku.is.null,sku.eq.')
+        .select('id');
+      if (error) {
+        this.logger.warn(`Propagación de SKU falló: ${error.message}`);
+      } else {
+        resultado.sku = (data || []).length;
+      }
+    }
+
+    // 2) Costo recién cargado (antes 0/vacío): completar los ítems sin costo
+    //    de ese producto (por SKU si lo tiene, si no por nombre).
+    const teniaCosto = Number.isFinite(costoAntes) && costoAntes > 0;
+    if (Number.isFinite(costoNuevo) && costoNuevo > 0 && !teniaCosto) {
+      const skuMatch = skuNuevo || skuAntes;
+      let q = client
+        .from('items_licitacion')
+        .update({ costo: costoNuevo })
+        .or('costo.is.null,costo.eq.0');
+      q = skuMatch ? q.eq('sku', skuMatch) : q.eq('producto', nombre);
+      const { data, error } = await q.select('id');
+      if (error) {
+        this.logger.warn(`Propagación de costo falló: ${error.message}`);
+      } else {
+        resultado.costo = (data || []).length;
+      }
+    }
+
+    return resultado;
+  }
+
   async update(id: number, body: Record<string, any>) {
+    // `propagar` es una instrucción del cliente, no una columna del producto.
+    const propagar = body?.propagar !== false;
+    if (body && 'propagar' in body) {
+      const { propagar: _omit, ...resto } = body;
+      body = resto;
+    }
+
+    // Estado previo: necesario para saber si el SKU o el costo son NUEVOS
+    // (solo entonces se propaga).
+    let anterior: Record<string, any> | null = null;
+    try {
+      const { data } = await this.supabase
+        .getClient()
+        .from('productos')
+        .select('sku, costo, nombre')
+        .eq('id', id)
+        .maybeSingle();
+      anterior = (data as any) || null;
+    } catch {
+      anterior = null;
+    }
+
     if (body && body.marca != null) {
       body = { ...body, marca: await this.marcaCanonica(body.marca) };
     }
@@ -555,7 +641,18 @@ export class ProductosService {
       .select()
       .single();
     if (error) throw new BadRequestException(error.message);
-    return data;
+
+    // Completar SKU/costo en los ítems de cotizaciones que quedaron vacíos.
+    // Best effort: si falla, el producto igual quedó guardado.
+    let propagado = { sku: 0, costo: 0 };
+    if (propagar) {
+      try {
+        propagado = await this.propagarAItems(anterior, data as any);
+      } catch (e: any) {
+        this.logger.warn(`Propagación a cotizaciones falló: ${e?.message || e}`);
+      }
+    }
+    return { ...(data as any), propagado };
   }
 
   async remove(id: number) {
