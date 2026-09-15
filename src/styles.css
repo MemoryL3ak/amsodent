@@ -1050,6 +1050,22 @@ body {
 
 .input::placeholder { color: var(--text-muted); }
 
+/* Campo bloqueado (2026-09-15): hasta ahora un input deshabilitado se veía
+   idéntico a uno editable —blanco y con el mismo borde—, así que la única
+   pista era el texto de ayuda al lado. Se distingue igual que los campos de
+   solo lectura, que ya usaban este fondo. Aplica a toda la plataforma. */
+.input:disabled,
+.input[disabled],
+.input[readonly] {
+  background: var(--bg);
+  color: var(--text-muted);
+  border-color: var(--border);
+  cursor: not-allowed;
+  opacity: 1; /* el gris translúcido del navegador se ve "roto" sobre el fondo claro */
+}
+
+select.input:disabled { cursor: not-allowed; }
+
 select.input {
   appearance: none;
   -webkit-appearance: none;
