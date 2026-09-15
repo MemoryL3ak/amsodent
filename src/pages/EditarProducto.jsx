@@ -1097,7 +1097,11 @@ try {
           su peso) permiten editar medidas y peso; en los Activos el maestro
           (lista Jeremías) es la fuente y los campos quedan de solo lectura. */}
       {!esVentasNoTransitorio && (() => {
-        const medidasEditables = esProductoTransitorio || esPendienteAprobacion;
+        // El admin mantiene el maestro: siempre puede corregir medidas y peso,
+        // incluso en productos Activos. Para el resto de los roles sigue
+        // limitado a transitorios (y a los Pendiente Aprobación, que nacen del
+        // mismo flujo de ventas).
+        const medidasEditables = esAdmin || esProductoTransitorio || esPendienteAprobacion;
         return (
         <div className="surface">
           <div className="surface-header">
