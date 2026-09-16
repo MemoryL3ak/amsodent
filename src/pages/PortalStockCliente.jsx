@@ -36,6 +36,7 @@ import {
   Download,
   ShoppingCart,
   Minus,
+  Truck,
 } from "lucide-react";
 
 import { descargarCSV, descargarReportePDF } from "../lib/reporteStock";
@@ -149,6 +150,48 @@ function parsePrecio(v) {
 function fmtPrecioInput(v) {
   const n = parsePrecio(v);
   return n ? n.toLocaleString("es-CL") : "";
+}
+
+/* Flete del portal (2026-09-16): el pedido que nace en el portal tiene su
+   propia regla, distinta de la del particular en plataforma ($70.000):
+   sobre $150.000 en Región Metropolitana el despacho es gratuito; bajo ese
+   monto (o fuera de la RM) lo cotiza el vendedor y viaja como ítem aparte. */
+const PORTAL_FLETE_GRATIS_RM = 150000;
+
+// Aviso del umbral: si falta poco, dice cuánto; si ya lo superó, lo celebra.
+function AvisoDespachoGratis({ total, compacto = false }) {
+  const alcanza = Number(total || 0) >= PORTAL_FLETE_GRATIS_RM;
+  const falta = Math.max(0, PORTAL_FLETE_GRATIS_RM - Number(total || 0));
+  const pct = Math.min(100, (Number(total || 0) / PORTAL_FLETE_GRATIS_RM) * 100);
+  return (
+    <div
+      style={{
+        border: `1px solid ${alcanza ? "#bbf7d0" : "#e2e8f0"}`,
+        background: alcanza ? "#f0fdf4" : "#f8fafc",
+        borderRadius: 10,
+        padding: compacto ? "8px 11px" : "10px 13px",
+        display: "flex",
+        flexDirection: "column",
+        gap: 6,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 11.5, lineHeight: 1.4, color: alcanza ? "#15803d" : "#475569" }}>
+        <Truck size={14} style={{ flexShrink: 0 }} />
+        {alcanza ? (
+          <span><strong>¡Despacho gratuito!</strong> Tu pedido supera los $150.000 en Región Metropolitana.</span>
+        ) : (
+          <span>
+            <strong>Sobre $150.000 en RM despacho gratuito.</strong> Te faltan {fmtMoneda(falta)}.
+          </span>
+        )}
+      </div>
+      {!alcanza && (
+        <div style={{ height: 4, background: "#e2e8f0", borderRadius: 3, overflow: "hidden" }}>
+          <div style={{ width: `${pct}%`, height: "100%", background: TEAL, borderRadius: 3, transition: "width .25s" }} />
+        </div>
+      )}
+    </div>
+  );
 }
 
 const SEMAFORO_BADGES = {
@@ -2517,6 +2560,7 @@ function PanelExploradorPrecios() {
                     <span>Total referencial*</span>
                     <strong style={{ color: "#0f172a" }}>{fmtMoneda(totalReferencial)}</strong>
                   </div>
+                  <AvisoDespachoGratis total={totalReferencial} compacto />
                   <textarea
                     value={notaPedido}
                     onChange={(e) => setNotaPedido(e.target.value)}
@@ -2597,6 +2641,8 @@ function PanelExploradorPrecios() {
                       </tbody>
                     </table>
                   </div>
+
+                  <AvisoDespachoGratis total={totalReferencial} />
 
                   {/* Nota */}
                   {notaPedido.trim() && (

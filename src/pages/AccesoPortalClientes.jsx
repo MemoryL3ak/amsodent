@@ -984,6 +984,13 @@ function SeccionTiendasExplorador({ onOk, onError }) {
                       <span style={{ fontWeight: 700, color: esPropia ? TEAL_DARK : "#0f172a" }}>
                         {esPropia ? "★ " : ""}{t.nombre}
                       </span>
+                      {/* La nota explica por qué una tienda quedó inactiva
+                          (ej: Cloudflare bloquea las consultas). */}
+                      {t.nota ? (
+                        <div style={{ fontSize: 11.5, color: "#b45309", marginTop: 3, lineHeight: 1.4, maxWidth: 320 }}>
+                          {t.nota}
+                        </div>
+                      ) : null}
                     </td>
                     <td style={{ ...s.td, fontSize: 12 }}>
                       <a href={t.base_url} target="_blank" rel="noopener noreferrer" style={{ color: "#475569" }}>
@@ -1052,6 +1059,7 @@ function ModalTiendaExplorador({ tienda, onCerrar, onHecho, onError }) {
   const [tipo, setTipo] = useState(tienda?.tipo || "woo");
   const [orden, setOrden] = useState(tienda?.orden ?? 100);
   const [activa, setActiva] = useState(tienda ? tienda.activa !== false : true);
+  const [nota, setNota] = useState(tienda?.nota || "");
   const [guardando, setGuardando] = useState(false);
   const [probando, setProbando] = useState(false);
   const [prueba, setPrueba] = useState(null); // resultado de "Probar"
@@ -1084,6 +1092,7 @@ function ModalTiendaExplorador({ tienda, onCerrar, onHecho, onError }) {
         base_url: baseUrl.trim(),
         activa,
         orden: Number(orden),
+        nota: nota.trim(),
       });
       onHecho?.(tienda ? "Tienda actualizada." : "Tienda agregada al explorador.");
     } catch (e) {
@@ -1122,6 +1131,18 @@ function ModalTiendaExplorador({ tienda, onCerrar, onHecho, onError }) {
               Activa en el explorador
             </label>
           )}
+        </div>
+
+        <label style={{ ...s.label, marginTop: 12 }}>Nota (opcional)</label>
+        <input
+          style={s.input}
+          value={nota}
+          onChange={(e) => setNota(e.target.value)}
+          placeholder="Ej: la protege Cloudflare, no se puede consultar"
+          maxLength={400}
+        />
+        <div style={{ fontSize: 11.5, color: "#94a3b8", marginTop: 4 }}>
+          Queda a la vista en la lista. Sirve para dejar escrito por qué una tienda está inactiva.
         </div>
 
         {/* Probar conexión: consulta real ("resina") contra la API del sitio */}

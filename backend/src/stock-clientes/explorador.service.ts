@@ -25,6 +25,7 @@ const TIENDAS_FALLBACK: Tienda[] = [
   { id: 'gexachile', nombre: 'Gexa Chile', tipo: 'shopify', base: 'https://gexachile.cl' },
   { id: 'spdental', nombre: 'SP Dental', tipo: 'shopify', base: 'https://spdental.shop' },
   { id: 'clandent', nombre: 'Clandent', tipo: 'woo', base: 'https://clandent.cl' },
+  { id: 'dentica', nombre: 'Dentica', tipo: 'woo', base: 'https://dentica.cl' },
   { id: 'jdent', nombre: 'J-Dent', tipo: 'woo', base: 'https://www.j-dent.cl' },
   { id: 'techdent', nombre: 'Techdent', tipo: 'woo', base: 'https://techdent.cl' },
   { id: 'denteeth', nombre: 'Denteeth', tipo: 'woo', base: 'https://denteeth.cl' },
@@ -191,6 +192,7 @@ export class ExploradorService {
     base_url?: string;
     activa?: boolean;
     orden?: number | string;
+    nota?: string;
   }) {
     const nombre = String(body?.nombre || '').trim().slice(0, 80);
     if (!nombre) throw new BadRequestException('Falta el nombre de la tienda.');
@@ -216,16 +218,28 @@ export class ExploradorService {
       throw new BadRequestException('La tienda Amsodent no se puede desactivar: siempre encabeza el explorador.');
     }
     const orden = Number.isFinite(Number(body?.orden)) ? Number(body?.orden) : 100;
+    const nota = String(body?.nota ?? '').trim().slice(0, 400) || null;
 
-    const { data, error } = await this.supabase
+    const fila: Record<string, any> = {
+      id, nombre, tipo, base_url: base, activa, orden,
+      updated_at: new Date().toISOString(),
+    };
+    let { data, error } = await this.supabase
       .getClient()
       .from('explorador_tiendas')
-      .upsert(
-        [{ id, nombre, tipo, base_url: base, activa, orden, updated_at: new Date().toISOString() }],
-        { onConflict: 'id' },
-      )
+      .upsert([{ ...fila, nota }], { onConflict: 'id' })
       .select()
       .single();
+    // La columna `nota` llegó con la migración 20260916; si aún no está
+    // aplicada, se guarda igual el resto en vez de fallar.
+    if (error && /nota/i.test(error.message) && /column|schema cache/i.test(error.message)) {
+      ({ data, error } = await this.supabase
+        .getClient()
+        .from('explorador_tiendas')
+        .upsert([fila], { onConflict: 'id' })
+        .select()
+        .single());
+    }
     if (error) {
       throw new BadRequestException(
         /does not exist|schema cache/i.test(error.message)

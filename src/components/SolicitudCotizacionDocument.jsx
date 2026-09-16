@@ -13,9 +13,6 @@ const PAD_Y = 32;
 const PAGE_W = 612;
 const PAGE_H = 792;
 
-const ITEMS_PAGE1 = 18;
-const ITEMS_REST  = 30;
-
 const s = StyleSheet.create({
   page: {
     paddingTop: PAD_Y, paddingBottom: PAD_Y,
@@ -154,32 +151,17 @@ function InfoLine({ label, value, labelWidth }) {
   );
 }
 
+/* Paginación (2026-09-16): igual que en la cotización, repartir los ítems a
+   mano cortaba la tabla cuando un nombre de producto ocupaba dos líneas.
+   Ahora fluye sola, con la cabecera repetida y filas indivisibles. */
 export function SolicitudCotizacionDocument({ datos, items, logoSrc, marcaAguaSrc }) {
-  const pages = [];
-  if (items.length === 0) {
-    pages.push([]);
-  } else if (items.length <= ITEMS_PAGE1) {
-    pages.push(items);
-  } else {
-    pages.push(items.slice(0, ITEMS_PAGE1));
-    let rest = items.slice(ITEMS_PAGE1);
-    while (rest.length > 0) {
-      pages.push(rest.slice(0, ITEMS_REST));
-      rest = rest.slice(ITEMS_REST);
-    }
-  }
-
   return (
     <Document>
-      {pages.map((pageItems, pageIdx) => {
-        const isFirst = pageIdx === 0;
-        const isLast  = pageIdx === pages.length - 1;
-        return (
-          <Page key={pageIdx} size="LETTER" style={s.page}>
-            {marcaAguaSrc && <Image src={marcaAguaSrc} style={s.watermark} />}
+      <Page size="LETTER" style={s.page} wrap>
+            {marcaAguaSrc && <Image src={marcaAguaSrc} style={s.watermark} fixed />}
 
-            {/* HEADER */}
-            <View style={s.header}>
+            {/* HEADER — se repite en todas las páginas */}
+            <View style={s.header} fixed>
               <View style={s.headerLeft}>
                 {logoSrc
                   ? <Image src={logoSrc} style={s.logo} />
@@ -199,8 +181,7 @@ export function SolicitudCotizacionDocument({ datos, items, logoSrc, marcaAguaSr
               </View>
             </View>
 
-            {isFirst && (
-              <>
+            <View>
                 <Text style={s.sectionTitle}>Datos del Cliente</Text>
                 <View style={s.infoRow}>
                   <InfoLine label="Señor(es):" value={datos.razon_social} />
@@ -216,38 +197,48 @@ export function SolicitudCotizacionDocument({ datos, items, logoSrc, marcaAguaSr
                 </View>
 
                 <Text style={s.sectionTitle}>Productos Solicitados</Text>
-              </>
-            )}
+            </View>
 
-            {/* TABLA ITEMS */}
+            {/* TABLA ITEMS — fluye entre páginas sin cortar filas */}
             <View style={s.table}>
-              <View style={s.tHeader}>
+              <View style={s.tHeader} fixed>
                 <TH w={C.item} align="center">Ítem</TH>
                 <TH flex>Producto</TH>
                 <TH w={C.cant} align="right" last>Cantidad</TH>
               </View>
-              {pageItems.map((item, idx) => (
-                <View key={idx} style={s.tRow}>
-                  <TD w={C.item} align="center" bold>{item.n}</TD>
-                  <TD flex>{item.nombre}</TD>
-                  <TD w={C.cant} align="right" last>{item.cantidad}</TD>
+              {items.map((item, idx) => (
+                <View key={idx} wrap={false}>
+                  <View style={s.tRow}>
+                    <TD w={C.item} align="center" bold>{item.n}</TD>
+                    <TD flex>{item.nombre}</TD>
+                    <TD w={C.cant} align="right" last>{item.cantidad}</TD>
+                  </View>
+                  {/* Observación que el cliente escribió en el carro */}
+                  {String(item.observacion || "").trim() ? (
+                    <View style={[s.tRow, { backgroundColor: "#fafafa" }]}>
+                      <TD w={C.item}>{""}</TD>
+                      <TD flex last>Observación: {String(item.observacion).trim()}</TD>
+                    </View>
+                  ) : null}
                 </View>
               ))}
             </View>
 
-            {isLast && datos.nota ? (
-              <View style={s.obsBox}>
+            {datos.nota ? (
+              <View style={s.obsBox} wrap={false}>
                 <Text style={s.obsTitle}>COMENTARIO DEL CLIENTE</Text>
                 <Text style={s.obsText}>{datos.nota}</Text>
               </View>
             ) : null}
 
-            <Text style={s.footer} fixed>
-              Solicitud generada desde el monitoreo de stock de clientes · Amsodent Medical Spa
-            </Text>
-          </Page>
-        );
-      })}
+            <Text
+              style={s.footer}
+              fixed
+              render={({ pageNumber, totalPages }) =>
+                `Solicitud generada desde el monitoreo de stock de clientes · Amsodent Medical Spa · Página ${pageNumber} de ${totalPages}`
+              }
+            />
+      </Page>
     </Document>
   );
 }
