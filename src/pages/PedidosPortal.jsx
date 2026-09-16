@@ -38,6 +38,45 @@ const ESTADOS = [
 ];
 const estadoMeta = (e) => ESTADOS.find((x) => x.value === e) || ESTADOS[0];
 
+/* Etapas del flujo de aprobación y pago (2026-09-16). Es una dimensión
+   distinta del estado comercial de arriba: describe en qué punto del
+   camino va el pedido, de quién depende avanzar y cuánto se demoró. */
+const FLUJO = [
+  { value: "pendiente_aprobacion", label: "Espera al cliente", bg: "#fef3c7", fg: "#b45309", ayuda: "El pedido lo armó un asistente; falta que lo apruebe el administrador de la cuenta." },
+  { value: "aprobado_cliente", label: "Por validar", bg: "#e0f2fe", fg: "#0369a1", ayuda: "El cliente ya aprobó: nos toca confirmar existencias y emitir el link de pago." },
+  { value: "validado_plataforma", label: "Por pagar", bg: "#ede9fe", fg: "#6d28d9", ayuda: "Existencias confirmadas y link de pago enviado; esperamos el pago." },
+  { value: "pagado", label: "Pagado", bg: "#dcfce7", fg: "#15803d", ayuda: "Pagado. Plazo de despacho: 48 a 72 hrs." },
+  { value: "rechazado", label: "Rechazado", bg: "#fee2e2", fg: "#b91c1c", ayuda: "El pedido fue rechazado." },
+  { value: "cancelado", label: "Cancelado", bg: "#f1f5f9", fg: "#475569", ayuda: "El pedido fue cancelado." },
+];
+const flujoDe = (s) => String(s?.flujo_estado || "pendiente_aprobacion");
+const flujoMeta = (v) => FLUJO.find((f) => f.value === v) || FLUJO[0];
+
+function BadgeFlujo({ valor }) {
+  const m = flujoMeta(valor);
+  return (
+    <span
+      title={m.ayuda}
+      style={{
+        display: "inline-block", fontSize: 10.5, fontWeight: 800, textTransform: "uppercase",
+        letterSpacing: ".03em", padding: "3px 9px", borderRadius: 999,
+        background: m.bg, color: m.fg, whiteSpace: "nowrap",
+      }}
+    >
+      {m.label}
+    </span>
+  );
+}
+
+// Horas entre dos marcas de tiempo, en formato corto ("3,2 h" / "2 d").
+function lapso(desde, hasta) {
+  if (!desde || !hasta) return null;
+  const h = (new Date(hasta).getTime() - new Date(desde).getTime()) / 3600000;
+  if (!Number.isFinite(h) || h < 0) return null;
+  if (h < 24) return `${h.toFixed(1).replace(".", ",")} h`;
+  return `${Math.round(h / 24)} d`;
+}
+
 function formatearRutVisual(input) {
   const limpio = String(input || "").replace(/[^0-9kK]/g, "");
   if (!limpio) return "";
@@ -151,6 +190,73 @@ export default function PedidosPortal() {
     });
     return { total, ...porEstado, explorador };
   }, [pedidos]);
+
+  /* ── Acciones del flujo (2026-09-16) ───────────────────────────────── */
+
+  const [modalValidar, setModalValidar] = useState(null); // pedido a validar
+  const [kpis, setKpis] = useState(null);
+  const [accionando, setAccionando] = useState(false);
+
+  async function cargarKpis() {
+    try {
+      setKpis(await api.get("/stock-clientes/solicitudes-kpis"));
+    } catch { setKpis(null); /* la migración puede estar pendiente */ }
+  }
+  useEffect(() => { cargarKpis(); }, []);
+
+  function reemplazar(pedido) {
+    setPedidos((prev) => prev.map((p) => (p.id === pedido.id ? { ...p, ...pedido } : p)));
+  }
+
+  async function validarPedido(pedido, payload) {
+    setAccionando(true);
+    try {
+      const r = await api.post(`/stock-clientes/solicitudes/${pedido.id}/validar`, payload);
+      reemplazar(r.pedido);
+      setModalValidar(null);
+      setToast({ type: "success", message: "Existencias confirmadas y link de pago enviado al cliente." });
+      cargarKpis();
+    } catch (e) {
+      setToast({ type: "error", message: e?.message || "No se pudo validar el pedido." });
+    } finally {
+      setAccionando(false);
+    }
+  }
+
+  async function revertirPedido(pedido) {
+    const motivo = window.prompt(
+      "¿Por qué se devuelve el pedido a la etapa anterior?\n(Queda registrado en la bitácora del pedido.)",
+      "",
+    );
+    if (motivo === null) return;
+    try {
+      const r = await api.post(`/stock-clientes/solicitudes/${pedido.id}/revertir`, { motivo });
+      reemplazar(r.pedido);
+      setToast({ type: "success", message: "El pedido volvió a la etapa anterior." });
+      cargarKpis();
+    } catch (e) {
+      setToast({ type: "error", message: e?.message || "No se pudo revertir el pedido." });
+    }
+  }
+
+  async function alternarSos(pedido) {
+    const activo = Boolean(pedido.sos);
+    let motivo = "";
+    if (!activo) {
+      motivo = window.prompt("SOS: el pedido se despacha dentro de 24 hrs.\n¿Motivo?", "") ?? null;
+      if (motivo === null) return;
+    } else if (!window.confirm("¿Quitar el SOS de este pedido?")) {
+      return;
+    }
+    try {
+      const r = await api.post(`/stock-clientes/solicitudes/${pedido.id}/sos`, { motivo, quitar: activo });
+      reemplazar(r.pedido);
+      setToast({ type: "success", message: activo ? "SOS retirado." : "Pedido marcado como SOS: despacho en 24 hrs." });
+      cargarKpis();
+    } catch (e) {
+      setToast({ type: "error", message: e?.message || "No se pudo cambiar el SOS." });
+    }
+  }
 
   async function cambiarEstado(s, estado) {
     const anterior = s.estado;
@@ -311,6 +417,33 @@ export default function PedidosPortal() {
         </div>
       </div>
 
+      {/* Tiempos de respuesta (punto 18): cuánto demora cada tramo del flujo.
+          Si la migración del flujo aún no está aplicada, esto no aparece. */}
+      {kpis && (
+        <div className="surface" style={{ marginTop: 12, padding: "12px 16px" }}>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>
+            <strong style={{ fontSize: 13, color: "var(--text)" }}>Tiempos de respuesta</strong>
+            <span style={{ fontSize: 11.5, color: "var(--text-muted)" }}>
+              promedio de cada tramo · {kpis.total} pedido{kpis.total === 1 ? "" : "s"}
+            </span>
+          </div>
+          <div className="kpi-grid">
+            <KpiTiempo label="Cliente aprueba" horas={kpis.horas_a_aprobacion} detalle="desde que se envía el pedido" />
+            <KpiTiempo label="Validamos" horas={kpis.horas_a_validacion} detalle="desde que el cliente aprueba" objetivo={48} />
+            <KpiTiempo label="Paga" horas={kpis.horas_a_pago} detalle="desde que enviamos el link" />
+            <KpiTiempo label="Ciclo completo" horas={kpis.horas_total} detalle="del envío al pago" />
+            <div className="kpi-card" style={{ background: "var(--surface)", border: "1px solid var(--border)", borderTop: "3px solid #15803d", borderRadius: "var(--radius-lg)", padding: "12px 14px" }}>
+              <div style={{ fontSize: 10.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".04em", color: "var(--text-muted)" }}>Pagado</div>
+              <div className="kpi-value" style={{ fontWeight: 800, color: "var(--text)", lineHeight: 1.1 }}>{fmtCLP(kpis.monto_pagado)}</div>
+              <div style={{ fontSize: 10.5, color: "var(--text-muted)" }}>
+                {kpis.por_estado?.pagado || 0} pedido{(kpis.por_estado?.pagado || 0) === 1 ? "" : "s"}
+                {kpis.sos > 0 ? ` · ${kpis.sos} con SOS` : ""}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Filtros */}
       <div className="filter-bar" style={{ marginTop: 12 }}>
         <div className="filter-field" style={{ minWidth: 260 }}>
@@ -347,12 +480,13 @@ export default function PedidosPortal() {
             <colgroup>
               <col style={{ width: 36 }} />
               <col style={{ width: "9%" }} />
-              <col style={{ width: "27%" }} />
-              <col style={{ width: "13%" }} />
-              <col style={{ width: "21%" }} />
+              <col style={{ width: "23%" }} />
+              <col style={{ width: "11%" }} />
+              <col style={{ width: "18%" }} />
+              <col style={{ width: "9%" }} />
+              <col style={{ width: "11%" }} />
               <col style={{ width: "9%" }} />
               <col style={{ width: "10%" }} />
-              <col style={{ width: "11%" }} />
             </colgroup>
             <thead>
               <tr>
@@ -362,6 +496,7 @@ export default function PedidosPortal() {
                 <th style={{ textAlign: "left" }}>Origen</th>
                 <th style={{ textAlign: "left" }}>Ítems</th>
                 <th style={{ textAlign: "right" }}>Total ref.</th>
+                <th style={{ textAlign: "left" }}>Etapa</th>
                 <th style={{ textAlign: "left" }}>Estado</th>
                 <th style={{ textAlign: "left" }}>Cotización</th>
               </tr>
@@ -369,7 +504,7 @@ export default function PedidosPortal() {
             <tbody>
               {visibles.length === 0 ? (
                 <tr>
-                  <td colSpan={8} style={{ textAlign: "center", padding: "50px 0", color: "var(--text-muted)" }}>
+                  <td colSpan={9} style={{ textAlign: "center", padding: "50px 0", color: "var(--text-muted)" }}>
                     No hay pedidos que coincidan con los filtros.
                   </td>
                 </tr>
@@ -424,6 +559,19 @@ export default function PedidosPortal() {
                         </td>
                         <td style={{ textAlign: "right", fontWeight: 700, fontVariantNumeric: "tabular-nums", color: totalRef > 0 ? "var(--text)" : "var(--text-muted)" }}>
                           {totalRef > 0 ? fmtCLP(totalRef) : "—"}
+                          {s.monto_total > 0 && (
+                            <div style={{ fontSize: 10.5, color: "#6d28d9", fontWeight: 700 }}>
+                              validado {fmtCLP(s.monto_total)}
+                            </div>
+                          )}
+                        </td>
+                        <td>
+                          <BadgeFlujo valor={flujoDe(s)} />
+                          {s.sos && (
+                            <div style={{ fontSize: 10, fontWeight: 800, color: "#b91c1c", marginTop: 3 }} title={s.sos_motivo || "Despacho comprometido en 24 hrs"}>
+                              ⚡ SOS 24 h
+                            </div>
+                          )}
                         </td>
                         <td onClick={(e) => e.stopPropagation()}>
                           <select
@@ -522,6 +670,14 @@ export default function PedidosPortal() {
                                 </div>
                               )}
 
+                              {/* Flujo de aprobación y pago (2026-09-16) */}
+                              <PanelFlujoPedido
+                                pedido={s}
+                                onValidar={() => setModalValidar(s)}
+                                onRevertir={() => revertirPedido(s)}
+                                onSos={() => alternarSos(s)}
+                              />
+
                               <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
                                 {s.cotizacion ? (
                                   <Link to={`/detalle/${s.cotizacion.id}`} className="btn btn-secondary btn-sm" style={{ textDecoration: "none" }}>
@@ -583,6 +739,252 @@ export default function PedidosPortal() {
           )}
         </div>
       )}
+
+      {modalValidar && (
+        <ModalValidarPedido
+          pedido={modalValidar}
+          guardando={accionando}
+          onCerrar={() => setModalValidar(null)}
+          onConfirmar={(payload) => validarPedido(modalValidar, payload)}
+        />
+      )}
+    </div>
+  );
+}
+
+/* Tarjeta de un tramo del flujo. `objetivo` es el compromiso que le damos al
+   cliente (48 hrs para validar): si se pasa, el número se pone en rojo. */
+function KpiTiempo({ label, horas, detalle, objetivo }) {
+  const hay = horas != null;
+  const excedido = hay && objetivo != null && horas > objetivo;
+  const texto = !hay
+    ? "—"
+    : horas < 24
+      ? `${horas.toFixed(1).replace(".", ",")} h`
+      : `${(horas / 24).toFixed(1).replace(".", ",")} d`;
+  return (
+    <div className="kpi-card" style={{ background: "var(--surface)", border: "1px solid var(--border)", borderTop: `3px solid ${excedido ? "#b91c1c" : TEAL}`, borderRadius: "var(--radius-lg)", padding: "12px 14px" }}>
+      <div style={{ fontSize: 10.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".04em", color: "var(--text-muted)" }}>{label}</div>
+      <div className="kpi-value" style={{ fontWeight: 800, lineHeight: 1.1, color: excedido ? "#b91c1c" : "var(--text)" }}>{texto}</div>
+      <div style={{ fontSize: 10.5, color: "var(--text-muted)" }}>
+        {detalle}{objetivo != null ? ` · meta ${objetivo} h` : ""}
+      </div>
+    </div>
+  );
+}
+
+/* ── Panel del flujo dentro del detalle del pedido ─────────────────────── */
+function PanelFlujoPedido({ pedido, onValidar, onRevertir, onSos }) {
+  const estado = flujoDe(pedido);
+  const m = flujoMeta(estado);
+  const pasos = [
+    { key: "pendiente_aprobacion", label: "Enviado", fecha: pedido.created_at },
+    { key: "aprobado_cliente", label: "Aprobado por el cliente", fecha: pedido.aprobado_cliente_at, quien: pedido.aprobado_cliente_por },
+    { key: "validado_plataforma", label: "Validado por Amsodent", fecha: pedido.validado_at, quien: pedido.validado_por },
+    { key: "pagado", label: "Pagado", fecha: pedido.pago_at, quien: pedido.pago_medio },
+  ];
+
+  return (
+    <div style={{ background: "#fff", border: "1px solid #eef2f7", borderRadius: 10, padding: "12px 14px", display: "flex", flexDirection: "column", gap: 10 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <strong style={{ fontSize: 12.5, color: "#334155" }}>Flujo del pedido</strong>
+        <BadgeFlujo valor={estado} />
+        <span style={{ fontSize: 11.5, color: "var(--text-muted)" }}>{m.ayuda}</span>
+      </div>
+
+      {/* Línea de tiempo con los tiempos de respuesta de cada tramo */}
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+        {pasos.map((p, i) => {
+          const hecho = Boolean(p.fecha);
+          const previo = i > 0 ? pasos[i - 1].fecha : null;
+          const demora = i > 0 ? lapso(previo, p.fecha) : null;
+          return (
+            <div
+              key={p.key}
+              style={{
+                flex: "1 1 150px", minWidth: 0, border: "1px solid", borderRadius: 9, padding: "7px 10px",
+                borderColor: hecho ? "#d1fae5" : "#e2e8f0",
+                background: hecho ? "#f0fdf4" : "#f8fafc",
+              }}
+            >
+              <div style={{ fontSize: 10.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".03em", color: hecho ? "#15803d" : "#94a3b8" }}>
+                {p.label}
+              </div>
+              <div style={{ fontSize: 11.5, color: hecho ? "#334155" : "#cbd5e1" }}>
+                {hecho ? fmtFechaHora(p.fecha) : "Pendiente"}
+              </div>
+              {p.quien && hecho && (
+                <div style={{ fontSize: 10.5, color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis" }}>{p.quien}</div>
+              )}
+              {demora && <div style={{ fontSize: 10.5, color: "#0369a1", fontWeight: 700 }}>+{demora}</div>}
+            </div>
+          );
+        })}
+      </div>
+
+      {Array.isArray(pedido.disponibilidad) && pedido.disponibilidad.length > 0 && (
+        <div style={{ fontSize: 12, color: "#475569" }}>
+          <strong>Existencias confirmadas:</strong>{" "}
+          {pedido.disponibilidad.map((d) => `${d.nombre} (${d.cantidad_disponible}/${d.cantidad_solicitada})`).join(" · ")}
+        </div>
+      )}
+
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        {estado === "aprobado_cliente" || estado === "validado_plataforma" ? (
+          <button type="button" className="btn btn-primary btn-sm" onClick={onValidar}>
+            {estado === "validado_plataforma" ? "Revalidar existencias" : "Validar existencias y enviar link de pago"}
+          </button>
+        ) : null}
+        {estado === "pendiente_aprobacion" && (
+          <span style={{ fontSize: 12, color: "#b45309" }}>
+            Esperando que el administrador de la cuenta del cliente apruebe el pedido.
+          </span>
+        )}
+        {estado !== "pagado" && estado !== "pendiente_aprobacion" && (
+          <button type="button" className="btn btn-secondary btn-sm" onClick={onRevertir} title="Devuelve el pedido a la etapa anterior">
+            Volver atrás
+          </button>
+        )}
+        <button
+          type="button"
+          className="btn btn-secondary btn-sm"
+          onClick={onSos}
+          style={{ color: pedido.sos ? "#b91c1c" : undefined }}
+          title="SOS: despacho comprometido en 24 hrs"
+        >
+          {pedido.sos ? "Quitar SOS" : "Marcar SOS (24 h)"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* ── Modal: confirmar existencias producto por producto y emitir el pago ── */
+function ModalValidarPedido({ pedido, guardando, onCerrar, onConfirmar }) {
+  const itemsPedido = Array.isArray(pedido.items) ? pedido.items : [];
+  const previos = Array.isArray(pedido.disponibilidad) ? pedido.disponibilidad : [];
+  const [filas, setFilas] = useState(() =>
+    itemsPedido.map((it) => {
+      const previo = previos.find((p) => p.nombre === it.nombre);
+      return {
+        nombre: it?.nombre || "",
+        cantidad_solicitada: Number(it?.cantidad) || 0,
+        cantidad_disponible: previo ? Number(previo.cantidad_disponible) : Number(it?.cantidad) || 0,
+        precio_unitario: previo ? Number(previo.precio_unitario) : Number(it?.precio_referencia) || 0,
+        nota: previo?.nota || "",
+      };
+    }),
+  );
+  const [nota, setNota] = useState("");
+
+  const set = (i, patch) => setFilas((prev) => prev.map((f, k) => (k === i ? { ...f, ...patch } : f)));
+  const total = filas.reduce((acc, f) => acc + Number(f.cantidad_disponible || 0) * Number(f.precio_unitario || 0), 0);
+  const faltantes = filas.filter((f) => Number(f.cantidad_disponible) < Number(f.cantidad_solicitada));
+
+  return (
+    <div
+      onMouseDown={(e) => { if (e.target === e.currentTarget) onCerrar(); }}
+      style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,.55)", zIndex: 12000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+    >
+      <div style={{ width: 760, maxWidth: "100%", maxHeight: "88vh", overflow: "auto", background: "var(--surface)", borderRadius: 14, padding: 20, border: "1px solid var(--border)" }}>
+        <h3 style={{ margin: "0 0 4px", fontSize: 16, fontWeight: 800, color: "var(--text)" }}>
+          Validar el pedido N° {pedido.id}
+        </h3>
+        <p style={{ margin: "0 0 14px", fontSize: 12.5, color: "var(--text-muted)" }}>
+          Confirma cuánto hay de cada producto y a qué precio. Con eso se calcula el monto y se le
+          envía al cliente el link de pago, al portal y por correo.
+        </p>
+
+        <div className="table-wrap">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th style={{ textAlign: "left" }}>Producto</th>
+                <th style={{ textAlign: "right", width: 90 }}>Pedido</th>
+                <th style={{ textAlign: "right", width: 110 }}>Disponible</th>
+                <th style={{ textAlign: "right", width: 130 }}>Precio unit.</th>
+                <th style={{ textAlign: "right", width: 120 }}>Subtotal</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filas.map((f, i) => {
+                const falta = Number(f.cantidad_disponible) < Number(f.cantidad_solicitada);
+                return (
+                  <tr key={i} style={{ background: falta ? "#fff7ed" : undefined }}>
+                    <td>
+                      <div style={{ fontWeight: 600, color: "var(--text)" }}>{f.nombre}</div>
+                      <input
+                        className="input"
+                        value={f.nota}
+                        onChange={(e) => set(i, { nota: e.target.value })}
+                        placeholder="Nota para el cliente (opcional)"
+                        style={{ height: 28, fontSize: 11.5, marginTop: 4 }}
+                      />
+                    </td>
+                    <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{f.cantidad_solicitada}</td>
+                    <td style={{ textAlign: "right" }}>
+                      <input
+                        className="input"
+                        type="number"
+                        min={0}
+                        value={f.cantidad_disponible}
+                        onChange={(e) => set(i, { cantidad_disponible: e.target.value })}
+                        style={{ height: 30, width: 90, textAlign: "right" }}
+                      />
+                    </td>
+                    <td style={{ textAlign: "right" }}>
+                      <input
+                        className="input"
+                        type="number"
+                        min={0}
+                        value={f.precio_unitario}
+                        onChange={(e) => set(i, { precio_unitario: e.target.value })}
+                        style={{ height: 30, width: 110, textAlign: "right" }}
+                      />
+                    </td>
+                    <td style={{ textAlign: "right", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
+                      {fmtCLP(Number(f.cantidad_disponible || 0) * Number(f.precio_unitario || 0))}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        {faltantes.length > 0 && (
+          <div style={{ marginTop: 10, fontSize: 12.5, color: "#b45309", background: "#fff7ed", border: "1px solid #fed7aa", borderRadius: 9, padding: "8px 12px" }}>
+            {faltantes.length} producto{faltantes.length === 1 ? "" : "s"} sin stock completo. El cliente lo verá
+            en el detalle y el monto considera solo lo disponible.
+          </div>
+        )}
+
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 14, gap: 12, flexWrap: "wrap" }}>
+          <input
+            className="input"
+            value={nota}
+            onChange={(e) => setNota(e.target.value)}
+            placeholder="Nota general del pedido (opcional)"
+            style={{ flex: "1 1 260px" }}
+          />
+          <div style={{ fontSize: 15, fontWeight: 800, color: "var(--text)" }}>
+            Total a pagar: {fmtCLP(total)}
+          </div>
+        </div>
+
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 16 }}>
+          <button type="button" className="btn btn-secondary" onClick={onCerrar}>Cancelar</button>
+          <button
+            type="button"
+            className="btn btn-primary"
+            disabled={guardando || total <= 0}
+            onClick={() => onConfirmar({ disponibilidad: filas, monto_total: total, nota })}
+            title={total <= 0 ? "El monto debe ser mayor a cero" : "Confirma y envía el link de pago"}
+          >
+            {guardando ? "Guardando…" : "Confirmar y enviar link de pago"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

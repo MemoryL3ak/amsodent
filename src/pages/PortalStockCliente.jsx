@@ -1161,6 +1161,45 @@ function PantallaDeclaracion({ cliente, setToast }) {
     }
   }
 
+  /* Retorno de Webpay (2026-09-16): Transbank devuelve al navegador con
+     ?token_ws=… El pago no se da por hecho aquí — se manda el token al
+     backend, que lo confirma contra Transbank. Si el usuario anula, vuelve
+     con TBK_TOKEN y sin token_ws. */
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get("token_ws");
+    const anulado = params.get("TBK_TOKEN");
+    if (!token && !anulado) return;
+    // La URL se limpia siempre, para que recargar no reintente el pago.
+    const limpia = () => window.history.replaceState({}, "", window.location.pathname);
+
+    if (!token) {
+      limpia();
+      setToast({ type: "warning", titulo: "Pago anulado", mensaje: "No se completó el pago. Puedes intentarlo de nuevo cuando quieras." });
+      return;
+    }
+    (async () => {
+      try {
+        const r = await apiRequest("/stock-clientes/pagos/webpay/confirmar", {
+          method: "POST",
+          body: JSON.stringify({ token_ws: token }),
+        });
+        limpia();
+        setToast({
+          type: r?.aprobada ? "success" : "error",
+          titulo: r?.aprobada ? "Pago confirmado" : "El pago no se completó",
+          mensaje: r?.mensaje || (r?.aprobada ? "Tienen un plazo de 48 a 72 hrs para despachar el pedido." : "Intenta nuevamente."),
+        });
+        cargarSolicitudes();
+      } catch (e) {
+        limpia();
+        setToast({ type: "error", titulo: "No pudimos confirmar el pago", mensaje: e?.message || "Contáctanos para verificarlo." });
+      }
+    })();
+    // Solo al montar: el retorno de Transbank ocurre una vez.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   async function cargarSolicitudes() {
     setCargandoSolicitudes(true);
     try {
@@ -1614,6 +1653,9 @@ function PantallaDeclaracion({ cliente, setToast }) {
           cotizacionesHist={cotizacionesHist}
           cargando={cargandoSolicitudes}
           onSolicitarNueva={() => setMostrarSolicitud(true)}
+          esAdminPortal={esAdminPortal}
+          onRecargar={cargarSolicitudes}
+          setToast={setToast}
         />
       ) : (
       /* Listado de productos */
@@ -3184,8 +3226,83 @@ const histStyles = {
   btnPdf: { display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 13px", borderRadius: 9, fontSize: 12.5, fontWeight: 700, cursor: "pointer", border: "1px solid rgba(40,174,177,.35)", background: "#fff", color: "#0f5f61" },
 };
 
-function PanelMisSolicitudes({ solicitudes, cotizacionesHist = [], cargando, onSolicitarNueva }) {
+/* Etapas del pedido tal como las ve el cliente (2026-09-16). */
+const FLUJO_CLIENTE = {
+  pendiente_aprobacion: { label: "Espera tu aprobación", color: "#b45309", bg: "#fef3c7" },
+  aprobado_cliente: { label: "En revisión de Amsodent", color: "#0369a1", bg: "#e0f2fe" },
+  validado_plataforma: { label: "Listo para pagar", color: "#6d28d9", bg: "#ede9fe" },
+  pagado: { label: "Pagado", color: "#15803d", bg: "#dcfce7" },
+  rechazado: { label: "Rechazado", color: "#b91c1c", bg: "#fee2e2" },
+  cancelado: { label: "Cancelado", color: "#475569", bg: "#f1f5f9" },
+};
+
+function PanelMisSolicitudes({ solicitudes, cotizacionesHist = [], cargando, onSolicitarNueva, esAdminPortal = true, onRecargar, setToast }) {
   const [expandidaId, setExpandidaId] = useState(null);
+  const [trabajando, setTrabajando] = useState(null); // id del pedido en curso
+
+  /* Punto 9: el administrador de la cuenta aprueba el pedido que armó un
+     asistente. Punto 15: recién ahí le prometemos 24-48 hrs. */
+  async function aprobar(s) {
+    setTrabajando(s.id);
+    try {
+      const r = await apiRequest(`/stock-clientes/mis-solicitudes/${s.id}/aprobar`, { method: "POST" });
+      setToast?.({
+        type: "success",
+        titulo: "Pedido aprobado",
+        mensaje: r?.mensaje || "Se revisará tu solicitud, en un plazo de 24-48 hrs.",
+      });
+      onRecargar?.();
+    } catch (e) {
+      setToast?.({ type: "error", titulo: "No se pudo aprobar", mensaje: e?.message || "Intenta nuevamente." });
+    } finally {
+      setTrabajando(null);
+    }
+  }
+
+  /* Punto 13: el pago va por Webpay. Se pide el token al backend y se manda
+     al formulario de Transbank por POST, que es como lo exige. */
+  async function pagar(s) {
+    setTrabajando(s.id);
+    try {
+      const r = await apiRequest(`/stock-clientes/mis-solicitudes/${s.id}/pagar`, {
+        method: "POST",
+        body: JSON.stringify({ return_url: `${window.location.origin}/portal-cliente?pago=retorno` }),
+      });
+      if (!r?.url || !r?.token) throw new Error("No recibimos el formulario de pago.");
+      const form = document.createElement("form");
+      form.method = "POST";
+      form.action = r.url;
+      const input = document.createElement("input");
+      input.type = "hidden";
+      input.name = "token_ws";
+      input.value = r.token;
+      form.appendChild(input);
+      document.body.appendChild(form);
+      form.submit();
+    } catch (e) {
+      setToast?.({ type: "error", titulo: "No se pudo iniciar el pago", mensaje: e?.message || "Intenta nuevamente." });
+      setTrabajando(null);
+    }
+  }
+
+  // Punto 17: SOS — el cliente pide que se despache dentro de 24 hrs.
+  async function pedirSos(s) {
+    const motivo = window.prompt("SOS: pedir que el despacho salga dentro de 24 hrs.\n¿Por qué es urgente?", "");
+    if (motivo === null) return;
+    setTrabajando(s.id);
+    try {
+      await apiRequest(`/stock-clientes/mis-solicitudes/${s.id}/sos`, {
+        method: "POST",
+        body: JSON.stringify({ motivo }),
+      });
+      setToast?.({ type: "success", titulo: "SOS enviado", mensaje: "Avisamos a nuestro equipo que este pedido es urgente." });
+      onRecargar?.();
+    } catch (e) {
+      setToast?.({ type: "error", titulo: "No se pudo enviar el SOS", mensaje: e?.message || "Intenta nuevamente." });
+    } finally {
+      setTrabajando(null);
+    }
+  }
 
   if (cargando) {
     return (
@@ -3273,6 +3390,14 @@ function PanelMisSolicitudes({ solicitudes, cotizacionesHist = [], cargando, onS
 
             {expandida && (
               <div style={solStyles.cardBody}>
+                <BloqueFlujoPedido
+                  pedido={s}
+                  esAdminPortal={esAdminPortal}
+                  trabajando={trabajando === s.id}
+                  onAprobar={() => aprobar(s)}
+                  onPagar={() => pagar(s)}
+                  onSos={() => pedirSos(s)}
+                />
                 {items.length > 0 && (
                   <div style={solStyles.tablaWrap}>
                     <table style={solStyles.tabla}>
@@ -3473,6 +3598,96 @@ function HiloMensajesCliente({ solicitudId }) {
         </button>
       </form>
       {error && <div style={{ fontSize: 11.5, color: "#b91c1c", marginTop: 6 }}>{error}</div>}
+    </div>
+  );
+}
+
+/* Bloque del flujo dentro del pedido, en el portal del cliente: en qué etapa
+   va, qué falta y el botón de la acción que le toca a él. */
+function BloqueFlujoPedido({ pedido, esAdminPortal, trabajando, onAprobar, onPagar, onSos }) {
+  const estado = String(pedido?.flujo_estado || "");
+  // Sin flujo (migración pendiente o pedido antiguo) no se muestra nada.
+  if (!estado || !FLUJO_CLIENTE[estado]) return null;
+  const m = FLUJO_CLIENTE[estado];
+  const disponibilidad = Array.isArray(pedido.disponibilidad) ? pedido.disponibilidad : [];
+  const faltantes = disponibilidad.filter((d) => Number(d.cantidad_disponible) < Number(d.cantidad_solicitada));
+
+  return (
+    <div style={{ border: "1px solid #e2e8f0", borderRadius: 12, padding: "12px 14px", marginBottom: 12, background: "#f8fafc" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 11, fontWeight: 800, padding: "3px 10px", borderRadius: 999, background: m.bg, color: m.color }}>
+          {m.label}
+        </span>
+        {pedido.sos && (
+          <span style={{ fontSize: 11, fontWeight: 800, color: "#b91c1c" }}>⚡ SOS · despacho en 24 hrs</span>
+        )}
+      </div>
+
+      {estado === "pendiente_aprobacion" && (
+        <p style={{ fontSize: 12.5, color: "#475569", margin: "8px 0 0", lineHeight: 1.5 }}>
+          {esAdminPortal
+            ? "Este pedido está esperando tu aprobación. Al aprobarlo, lo enviamos a revisión con Amsodent."
+            : "Este pedido está esperando la aprobación del administrador de la cuenta."}
+        </p>
+      )}
+      {estado === "aprobado_cliente" && (
+        <p style={{ fontSize: 12.5, color: "#475569", margin: "8px 0 0", lineHeight: 1.5 }}>
+          Se revisará tu solicitud, en un plazo de 24-48 hrs.
+        </p>
+      )}
+      {estado === "validado_plataforma" && (
+        <div style={{ margin: "8px 0 0" }}>
+          <p style={{ fontSize: 12.5, color: "#475569", margin: 0, lineHeight: 1.5 }}>
+            Confirmamos las existencias de tu pedido. Total a pagar:{" "}
+            <strong style={{ color: "#0f172a" }}>{fmtMoneda(pedido.monto_total)}</strong>.
+          </p>
+          {disponibilidad.length > 0 && (
+            <ul style={{ margin: "8px 0 0", paddingLeft: 18, fontSize: 12, color: "#475569", lineHeight: 1.6 }}>
+              {disponibilidad.map((d, i) => (
+                <li key={i} style={{ color: Number(d.cantidad_disponible) < Number(d.cantidad_solicitada) ? "#b45309" : undefined }}>
+                  {d.nombre}: {d.cantidad_disponible} de {d.cantidad_solicitada}
+                  {d.precio_unitario ? ` · ${fmtMoneda(d.precio_unitario)} c/u` : ""}
+                  {d.nota ? ` — ${d.nota}` : ""}
+                </li>
+              ))}
+            </ul>
+          )}
+          {faltantes.length > 0 && (
+            <p style={{ fontSize: 11.5, color: "#b45309", margin: "6px 0 0" }}>
+              {faltantes.length} producto{faltantes.length === 1 ? "" : "s"} sin stock completo: el monto
+              considera solo lo disponible.
+            </p>
+          )}
+        </div>
+      )}
+      {estado === "pagado" && (
+        <p style={{ fontSize: 12.5, color: "#15803d", margin: "8px 0 0", lineHeight: 1.5, fontWeight: 600 }}>
+          Pago recibido. Tienen un plazo de 48 a 72 hrs para despachar el pedido.
+        </p>
+      )}
+
+      <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+        {estado === "pendiente_aprobacion" && esAdminPortal && (
+          <button type="button" onClick={onAprobar} disabled={trabajando} style={{ ...styles.btnPrimarioChico, opacity: trabajando ? 0.6 : 1 }}>
+            {trabajando ? "Aprobando…" : "Aprobar pedido"}
+          </button>
+        )}
+        {estado === "validado_plataforma" && esAdminPortal && (
+          <button type="button" onClick={onPagar} disabled={trabajando} style={{ ...styles.btnPrimarioChico, opacity: trabajando ? 0.6 : 1 }}>
+            {trabajando ? "Abriendo el pago…" : `Pagar ${fmtMoneda(pedido.monto_total)} con Webpay`}
+          </button>
+        )}
+        {estado === "validado_plataforma" && !esAdminPortal && (
+          <span style={{ fontSize: 12, color: "#b45309" }}>
+            El pago lo realiza el administrador de la cuenta.
+          </span>
+        )}
+        {estado !== "pagado" && estado !== "cancelado" && !pedido.sos && (
+          <button type="button" onClick={onSos} disabled={trabajando} style={styles.btnSecundarioChico} title="Pedir despacho dentro de 24 hrs">
+            Necesito SOS (24 h)
+          </button>
+        )}
+      </div>
     </div>
   );
 }

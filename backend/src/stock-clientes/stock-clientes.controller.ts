@@ -15,6 +15,8 @@ import {
 import { Throttle } from '@nestjs/throttler';
 import { StockClientesService, rolDeToken } from './stock-clientes.service';
 import { ExploradorService } from './explorador.service';
+import { PedidosFlujoService } from './pedidos-flujo.service';
+import { WebpayService } from './webpay.service';
 import { StockPortalGuard } from './stock-clientes.guard';
 import { AuthGuard } from '../auth/auth.guard';
 import { AdminGuard } from '../auth/admin.guard';
@@ -24,6 +26,8 @@ export class StockClientesController {
   constructor(
     private stockClientes: StockClientesService,
     private explorador: ExploradorService,
+    private pedidosFlujo: PedidosFlujoService,
+    private webpay: WebpayService,
   ) {}
 
   // ============================================================
@@ -115,10 +119,68 @@ export class StockClientesController {
     return await this.stockClientes.eliminarUsuarioPortal(req.stockPortal.rut, Number(id));
   }
 
-  private exigirAdminPortal(req: any) {
+  /* ── Flujo del pedido: lado del cliente (2026-09-16) ────────────────────
+     Aprobar y pagar son exclusivos del rol admin del portal (punto 6). */
+
+  @UseGuards(StockPortalGuard)
+  @Post('mis-solicitudes/:id/aprobar')
+  async aprobarPedido(@Req() req: any, @Param('id', ParseIntPipe) id: number) {
+    this.exigirAdminPortal(req, 'Solo el administrador de la cuenta puede aprobar el pedido.');
+    return await this.pedidosFlujo.aprobarComoCliente(
+      id,
+      req.stockPortal.usuario_email || 'cuenta principal',
+      req.stockPortal.rut,
+    );
+  }
+
+  @UseGuards(StockPortalGuard)
+  @Get('mis-solicitudes/:id/eventos')
+  async eventosPedidoCliente(@Req() req: any, @Param('id', ParseIntPipe) id: number) {
+    const pedido = await this.pedidosFlujo.obtener(id);
+    if (String(pedido.rut) !== String(req.stockPortal.rut)) {
+      throw new ForbiddenException('Este pedido pertenece a otra cuenta.');
+    }
+    return await this.pedidosFlujo.eventosDe(id);
+  }
+
+  @UseGuards(StockPortalGuard)
+  @Post('mis-solicitudes/:id/pagar')
+  async pagarPedido(@Req() req: any, @Param('id', ParseIntPipe) id: number, @Body() body: { return_url?: string }) {
+    this.exigirAdminPortal(req, 'Solo el administrador de la cuenta puede pagar el pedido.');
+    const base = String(process.env.PORTAL_URL || 'https://amsodent.vercel.app').replace(/\/+$/, '');
+    const returnUrl = String(body?.return_url || `${base}/portal-cliente?pago=retorno`);
+    return await this.pedidosFlujo.iniciarPago(id, req.stockPortal.rut, returnUrl, this.webpay);
+  }
+
+  // Retorno de Webpay. Es público a propósito: quien vuelve del formulario de
+  // Transbank no trae el token del portal. La verdad del pago la da Transbank
+  // (se confirma contra su API), no quien llama a este endpoint.
+  @Post('pagos/webpay/confirmar')
+  @Throttle({ default: { ttl: 60_000, limit: 20 } })
+  async confirmarPagoWebpay(@Body() body: { token_ws?: string; token?: string }) {
+    return await this.pedidosFlujo.confirmarPago(
+      String(body?.token_ws || body?.token || ''),
+      this.webpay,
+    );
+  }
+
+  @UseGuards(StockPortalGuard)
+  @Post('mis-solicitudes/:id/sos')
+  async sosPedidoCliente(@Req() req: any, @Param('id', ParseIntPipe) id: number, @Body() body: { motivo?: string }) {
+    const pedido = await this.pedidosFlujo.obtener(id);
+    if (String(pedido.rut) !== String(req.stockPortal.rut)) {
+      throw new ForbiddenException('Este pedido pertenece a otra cuenta.');
+    }
+    return await this.pedidosFlujo.marcarSos(id, String(body?.motivo || ''), {
+      tipo: 'cliente',
+      email: req.stockPortal.usuario_email || 'cuenta principal',
+    });
+  }
+
+  private exigirAdminPortal(req: any, mensaje?: string) {
     if (rolDeToken(req.stockPortal) !== 'admin') {
       throw new ForbiddenException(
-        'Solo el administrador de la cuenta puede administrar usuarios.',
+        mensaje || 'Solo el administrador de la cuenta puede administrar usuarios.',
       );
     }
   }
@@ -425,6 +487,53 @@ export class StockClientesController {
     @Body() body: { estado: string },
   ) {
     return await this.stockClientes.actualizarEstadoSolicitud(id, body?.estado);
+  }
+
+  /* ── Flujo del pedido: lado de la plataforma (2026-09-16) ────────────── */
+
+  // Punto 11: validar existencias producto por producto y emitir el link de
+  // pago. Punto 12: el cliente se entera por el portal y por correo.
+  @UseGuards(AuthGuard)
+  @Post('solicitudes/:id/validar')
+  async validarPedido(@Req() req: any, @Param('id', ParseIntPipe) id: number, @Body() body: any) {
+    return await this.pedidosFlujo.validarDesdePlataforma(
+      id,
+      body,
+      (req?.user?.email || '').toLowerCase(),
+    );
+  }
+
+  // Punto 14: volver un paso atrás mientras el pedido no esté pagado.
+  @UseGuards(AuthGuard)
+  @Post('solicitudes/:id/revertir')
+  async revertirPedido(@Req() req: any, @Param('id', ParseIntPipe) id: number, @Body() body: { motivo?: string }) {
+    return await this.pedidosFlujo.revertir(id, String(body?.motivo || ''), {
+      tipo: 'plataforma',
+      email: (req?.user?.email || '').toLowerCase(),
+    });
+  }
+
+  @UseGuards(AuthGuard)
+  @Get('solicitudes/:id/eventos')
+  async eventosPedido(@Param('id', ParseIntPipe) id: number) {
+    return await this.pedidosFlujo.eventosDe(id);
+  }
+
+  // Punto 17: SOS — despacho comprometido en 24 hrs.
+  @UseGuards(AuthGuard)
+  @Post('solicitudes/:id/sos')
+  async sosPedido(@Req() req: any, @Param('id', ParseIntPipe) id: number, @Body() body: { motivo?: string; quitar?: boolean }) {
+    const actor = { tipo: 'plataforma' as const, email: (req?.user?.email || '').toLowerCase() };
+    return body?.quitar
+      ? await this.pedidosFlujo.quitarSos(id, actor)
+      : await this.pedidosFlujo.marcarSos(id, String(body?.motivo || ''), actor);
+  }
+
+  // Punto 18: KPI de tiempos de respuesta del submódulo de pedidos.
+  @UseGuards(AuthGuard)
+  @Get('solicitudes-kpis')
+  async kpisPedidos(@Query('desde') desde?: string, @Query('hasta') hasta?: string) {
+    return await this.pedidosFlujo.kpis(desde, hasta);
   }
 
   // Vincula la solicitud con la cotización creada a partir de ella.
