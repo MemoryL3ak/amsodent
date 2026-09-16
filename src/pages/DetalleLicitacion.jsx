@@ -1052,6 +1052,10 @@ export default function EditarLicitacion() {
   // (2026-09-16) Estado del envío (solo cliente particular). estadoEnvioDB
   // recuerda lo guardado, para tolerar que la migración 20260916 aún no esté
   // aplicada (igual que con flete_por_pagar).
+  /* (2026-09-16) ¿La cotización nació de un pedido del portal? Cambia dos
+     cosas: el mínimo de despacho gratis en la RM ($150.000) y que el flete
+     vaya como ítem aparte en el PDF. */
+  const [vieneDelPortal, setVieneDelPortal] = useState(false);
   const [estadoEnvio, setEstadoEnvio] = useState("");
   const [estadoEnvioDB, setEstadoEnvioDB] = useState("");
   const [estadoEnvioActualizado, setEstadoEnvioActualizado] = useState("");
@@ -2268,6 +2272,7 @@ export default function EditarLicitacion() {
     setFleteEstimado(lic.flete_estimado || 0);
     setFletePorPagar(Boolean(lic.flete_por_pagar));
     setFletePorPagarDB(Boolean(lic.flete_por_pagar));
+    setVieneDelPortal(lic.solicitud_stock_id != null);
     setEstadoEnvio(lic.estado_envio || "");
     setEstadoEnvioDB(lic.estado_envio || "");
     setEstadoEnvioActualizado(lic.estado_envio_actualizado_at || "");
@@ -3007,8 +3012,12 @@ export default function EditarLicitacion() {
           // (Punto 10 — 2026-09-10) Cliente particular: el flete va como ítem
           // aparte en el PDF (precios SIN el flete diluido). Entidad pública
           // mantiene el prorrateo en cada precio.
+          // (2026-09-16, punto 19) La cotización nacida de un pedido del
+          // portal también lleva el flete como ítem aparte, aunque quede
+          // registrada como entidad pública: en el portal el flete se cotiza
+          // y se muestra por separado, no diluido en cada precio.
           const fleteTotalPdf = redondear(fletePorUnidad * cantidadProductos);
-          const separarFlete = esParticularPdf && fleteTotalPdf > 0;
+          const separarFlete = (esParticularPdf || vieneDelPortal) && fleteTotalPdf > 0;
           const filas = items.map((it, idx) => {
             const cantidad = Math.max(1, Number(it.cantidad || 1));
             const precioPdf = separarFlete
@@ -4682,6 +4691,7 @@ export default function EditarLicitacion() {
             direccionCliente={direccion}
             tipoCotizacion={esCotizacionParticular ? "particular" : "publico"}
             totalCompra={totalConIVA}
+            origen={vieneDelPortal ? "portal" : ""}
             deshabilitado={!esEditable || fletePorPagar}
             onAplicar={(neto) => setFleteEstimado(neto)}
           />

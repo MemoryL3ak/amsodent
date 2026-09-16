@@ -3534,6 +3534,9 @@ export default function CrearLicitacion() {
             </div>
           </div>
 
+          {/* `origen="portal"` cuando la cotización nace de un pedido del
+              portal: ahí el mínimo de despacho gratis en la RM es $150.000,
+              no los $70.000 del resto. */}
           <CalculadoraFlete
             pesoTotal={pesoTotalGeneral}
             volumenTotal={metroCubicoGeneral}
@@ -3542,6 +3545,7 @@ export default function CrearLicitacion() {
             direccionCliente={direccion}
             tipoCotizacion={esParticular || tipoCompra === "Cliente particular" ? "particular" : "publico"}
             totalCompra={totalConIVA}
+            origen={solicitudStockId ? "portal" : ""}
             deshabilitado={fletePorPagar}
             onAplicar={(neto) => {
               setFleteEstimado(neto);

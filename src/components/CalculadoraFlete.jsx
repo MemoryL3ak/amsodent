@@ -15,6 +15,7 @@ import { api } from "../lib/api";
    ─ Reglas de despacho GRATIS (las resuelve el backend):
      · destino San Bernardo → $0 SIEMPRE, sin mínimo de compra;
      · compra ≥ $70.000 (bruto) Y destino en la Región Metropolitana → $0
+       (el pedido nacido del portal tiene su propio mínimo: $150.000)
        (cualquier tipo de cotización y courier).
    ─ Cliente particular puede además marcar "Flete por pagar": no se cobra
      flete en la cotización (el cliente lo paga al courier) y esta
@@ -60,6 +61,10 @@ export default function CalculadoraFlete({
   direccionCliente = "",
   tipoCotizacion = "", // "particular" | "publico" (para las reglas de despacho gratis)
   totalCompra = 0, // total BRUTO de la cotización (regla gratis ≥ $70.000 en RM)
+  // (2026-09-16) Origen de la cotización: "portal" cambia el mínimo de
+  // despacho gratis en la RM a $150.000, que es lo que se le promete al
+  // cliente en el portal.
+  origen = "",
 }) {
   const [empresa, setEmpresa] = useState("");
   const [regiones, setRegiones] = useState([]);
@@ -176,6 +181,7 @@ export default function CalculadoraFlete({
         comuna: comunaCliente || undefined,
         tipo_cotizacion: tipoCotizacion || undefined,
         total_compra: Number(totalCompra) || 0,
+        origen: origen || undefined,
       });
       setResultado(res);
       onAplicar?.(Number(res?.neto) || 0, res);
