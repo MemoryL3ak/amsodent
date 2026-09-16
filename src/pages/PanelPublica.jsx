@@ -468,7 +468,7 @@ export default function PanelPublica() {
       ) : (
         <>
           {/* KPIs */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 14, marginBottom: 22 }}>
+          <div className="kpi-grid" style={{ marginBottom: 22 }}>
             <KpiCard icon={FileText} color="#0e7490" label="Licitaciones Publicadas" sub="Registradas en el mes" value={fmtNum(m.publicadas)} delta={<Delta actual={m.publicadas} prev={mPrev.publicadas} />} />
             <KpiCard icon={ClipboardCheck} color="#6366f1" label="Licitaciones Participadas" sub="Excl. descartadas y pend. aprobación" value={fmtNum(m.participadas)} delta={<Delta actual={m.participadas} prev={mPrev.participadas} />} />
             <KpiCard icon={Target} color="#16a34a" label="Adjudicaciones Obtenidas" sub="Cierres del mes" value={fmtNum(m.adjudicadas)} delta={<Delta actual={m.adjudicadas} prev={mPrev.adjudicadas} />} />

@@ -62,17 +62,17 @@ export function Delta({ actual, prev, unidadPp = false }) {
 /* ── Tarjeta KPI ──────────────────────────────────────────────────────── */
 export function KpiCard({ icon: Icon, color, label, sub, value, delta }) {
   return (
-    <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderTop: `3px solid ${color}`, borderRadius: "var(--radius-lg)", padding: "16px 18px" }}>
+    <div className="kpi-card" style={{ background: "var(--surface)", border: "1px solid var(--border)", borderTop: `3px solid ${color}`, borderRadius: "var(--radius-lg)", padding: "16px 18px" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
         <span style={{ width: 30, height: 30, borderRadius: 8, background: `${color}18`, color, display: "grid", placeItems: "center", flexShrink: 0 }}>
           <Icon size={16} />
         </span>
-        <div style={{ lineHeight: 1.15 }}>
+        <div className="kpi-card-head" style={{ lineHeight: 1.15 }}>
           <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".04em", color: "var(--text-muted)" }}>{label}</div>
           {sub ? <div style={{ fontSize: 10, color: "var(--text-muted)" }}>{sub}</div> : null}
         </div>
       </div>
-      <div style={{ fontSize: 24, fontWeight: 800, color: "var(--text)", lineHeight: 1.1 }}>{value}</div>
+      <div className="kpi-value" style={{ fontWeight: 800, color: "var(--text)", lineHeight: 1.1 }}>{value}</div>
       {delta ? <div style={{ marginTop: 6 }}>{delta}</div> : null}
     </div>
   );

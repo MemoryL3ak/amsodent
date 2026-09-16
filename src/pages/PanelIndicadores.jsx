@@ -39,6 +39,14 @@ function labelMesCorto(key) {
   const s = new Date(y, m - 1, 1).toLocaleDateString("es-CL", { month: "short" });
   return s.charAt(0).toUpperCase() + s.slice(1, 3);
 }
+// "septiembre de 2026" → "Septiembre de 2026": en español el mes va en
+// minúscula, pero encabezando un dato del panel se lee como un título.
+function labelMesLargo(key) {
+  const [y, m] = String(key).split("-").map(Number);
+  if (!y || !m) return "";
+  const s = new Date(y, m - 1, 1).toLocaleDateString("es-CL", { month: "long", year: "numeric" });
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
 
 // "diego.cruz" → "Diego Cruz" (fallback cuando el perfil aún no carga o no
 // tiene nombre registrado).
@@ -107,17 +115,17 @@ function Delta({ actual, prev, modo = "pct", unidadPp = false }) {
 
 function KpiCard({ icon: Icon, color, label, sub, value, delta }) {
   return (
-    <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderTop: `3px solid ${color}`, borderRadius: "var(--radius-lg)", padding: "16px 18px" }}>
+    <div className="kpi-card" style={{ background: "var(--surface)", border: "1px solid var(--border)", borderTop: `3px solid ${color}`, borderRadius: "var(--radius-lg)", padding: "16px 18px" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
         <span style={{ width: 30, height: 30, borderRadius: 8, background: `${color}18`, color, display: "grid", placeItems: "center", flexShrink: 0 }}>
           <Icon size={16} />
         </span>
-        <div style={{ lineHeight: 1.15 }}>
+        <div className="kpi-card-head" style={{ lineHeight: 1.15 }}>
           <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".04em", color: "var(--text-muted)" }}>{label}</div>
           {sub ? <div style={{ fontSize: 10, color: "var(--text-muted)" }}>{sub}</div> : null}
         </div>
       </div>
-      <div style={{ fontSize: 24, fontWeight: 800, color: "var(--text)", lineHeight: 1.1 }}>{value}</div>
+      <div className="kpi-value" style={{ fontWeight: 800, color: "var(--text)", lineHeight: 1.1 }}>{value}</div>
       <div style={{ marginTop: 6 }}>{delta}</div>
     </div>
   );
@@ -1022,7 +1030,7 @@ export default function PanelIndicadores() {
       ) : (
         <>
           {/* KPIs */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 14, marginBottom: 22 }}>
+          <div className="kpi-grid" style={{ marginBottom: 22 }}>
             <div onClick={() => setVentasOpen(true)} style={{ cursor: "pointer" }} title="Ver los documentos que componen la venta del período">
               <KpiCard icon={ShoppingCart} color="#0e7490" label="Ventas Totales" sub={subVentas} value={fmtCLP(m.ventas)} delta={mostrarDelta ? <Delta actual={m.ventas} prev={mPrev.ventas} /> : null} />
             </div>
@@ -1279,9 +1287,9 @@ export default function PanelIndicadores() {
                 <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                   {topClientes.map((c) => (
                     <div key={c.nombre}>
-                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 3, gap: 8 }}>
-                        <span style={{ color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={c.nombre}>{c.nombre}</span>
-                        <strong style={{ color: "var(--text)", whiteSpace: "nowrap" }}>{fmtCLP(c.monto)}</strong>
+                      <div className="rank-row">
+                        <span className="rank-nombre" style={{ color: "var(--text)" }} title={c.nombre}>{c.nombre}</span>
+                        <strong className="rank-monto" style={{ color: "var(--text)" }}>{fmtCLP(c.monto)}</strong>
                       </div>
                       <div style={{ height: 10, borderRadius: 5, background: "var(--bg)", overflow: "hidden" }}>
                         <div style={{ height: "100%", width: `${clamp((c.monto / maxTop) * 100, 2, 100)}%`, background: "#28aeb1", borderRadius: 5 }} />
@@ -1330,7 +1338,7 @@ export default function PanelIndicadores() {
               <div>
                 <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: ".08em", color: "var(--text-muted)", fontWeight: 600 }}>Periodo</div>
                 <div style={{ fontSize: 16, fontWeight: 700, color: "var(--text)" }}>
-                  {new Date(`${periodo}T00:00:00`).toLocaleDateString("es-CL", { month: "long", year: "numeric" })}
+                  {labelMesLargo(periodo)}
                 </div>
               </div>
               {cumplimiento != null ? (
