@@ -150,6 +150,19 @@ export class LicitacionesController {
     return this.licitacionesService.iniciarAnalisisProductosGlobal((req?.user?.email || '').toLowerCase());
   }
 
+  /* (2026-09-16, punto 26) Estado real de nuestras cotizaciones en Mercado
+     Público. El diagnóstico solo mira; aplicar el cambio de estado es una
+     llamada aparte y explícita. */
+  @Post('mercado-publico/diagnostico-estados')
+  diagnosticoMpCotizaciones(@Body() body: { ids?: number[]; limite?: number }) {
+    return this.licitacionesService.diagnosticoMpCotizaciones(body);
+  }
+
+  @Post('mercado-publico/aplicar-estados')
+  aplicarEstadoMp(@Req() req: any, @Body() body: { cambios: Array<{ id: number; estado: string }> }) {
+    return this.licitacionesService.aplicarEstadoMp(body, (req?.user?.email || '').toLowerCase());
+  }
+
   /* (2026-09-16, punto 22) Historial de precios de CUALQUIER producto que
      hayamos cotizado alguna vez, para validar un precio antes de ofertarlo. */
   @Get('productos/historial-precios')
