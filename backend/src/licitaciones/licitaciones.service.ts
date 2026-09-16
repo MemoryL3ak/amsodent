@@ -2480,6 +2480,101 @@ export class LicitacionesService {
     }
   }
 
+  /* ── Historial de precios de un producto (2026-09-16, punto 22) ─────────
+     Busca en TODO lo que hemos cotizado alguna vez (items_licitacion) por
+     nombre o SKU, y devuelve la serie de precios en el tiempo más el
+     resumen que sirve para decidir: mínimo, máximo, promedio, último precio
+     y cuánto se ganó con ese producto.
+
+     Se cruza con la cotización para tener la fecha y saber si se adjudicó:
+     un precio que ganó vale más que uno que solo se ofertó. */
+  async historialPreciosProducto(qRaw: string) {
+    const q = String(qRaw || '').trim();
+    if (q.length < 3) {
+      throw new BadRequestException('Escribe al menos 3 letras para buscar el producto.');
+    }
+    const client = this.supabase.getClient();
+    const patron = `%${q.replace(/[%_]/g, '')}%`;
+
+    const { data: items, error } = await client
+      .from('items_licitacion')
+      .select('id, licitacion_id, producto, sku, formato, cantidad, valor_unitario, costo')
+      .or(`producto.ilike.${patron},sku.ilike.${patron}`)
+      .limit(4000);
+    if (error) throw new BadRequestException(error.message);
+    const filas = (items || []).filter((i: any) => Number(i?.valor_unitario) > 0);
+    if (filas.length === 0) {
+      return { consulta: q, total: 0, productos: [], serie: [], resumen: null };
+    }
+
+    // Fecha y desenlace de cada cotización involucrada.
+    const licIds = [...new Set(filas.map((i: any) => i.licitacion_id).filter(Boolean))];
+    const licMap: Record<number, any> = {};
+    for (let i = 0; i < licIds.length; i += 500) {
+      const { data: lics } = await client
+        .from('licitaciones')
+        .select('id, id_licitacion, nombre_entidad, estado, fecha, fecha_adjudicada, tipo_cliente')
+        .in('id', licIds.slice(i, i + 500));
+      (lics || []).forEach((l: any) => { licMap[l.id] = l; });
+    }
+
+    const serie = filas
+      .map((it: any) => {
+        const lic = licMap[it.licitacion_id] || {};
+        const fecha = String(lic.fecha_adjudicada || lic.fecha || '').slice(0, 10);
+        return {
+          fecha,
+          producto: it.producto,
+          sku: it.sku || null,
+          formato: it.formato || null,
+          cantidad: Number(it.cantidad) || 0,
+          precio: Math.round(Number(it.valor_unitario) || 0),
+          costo: Number(it.costo) > 0 ? Math.round(Number(it.costo)) : null,
+          licitacion_id: it.licitacion_id,
+          numero: lic.id_licitacion || null,
+          cliente: lic.nombre_entidad || null,
+          estado: lic.estado || null,
+          adjudicada: String(lic.estado || '').toLowerCase().includes('adjudicada'),
+        };
+      })
+      .filter((s) => s.fecha)
+      .sort((a, b) => a.fecha.localeCompare(b.fecha));
+
+    const precios = serie.map((s) => s.precio);
+    const adjudicados = serie.filter((s) => s.adjudicada).map((s) => s.precio);
+    const prom = (xs: number[]) => (xs.length ? Math.round(xs.reduce((a, b) => a + b, 0) / xs.length) : null);
+
+    // Variantes encontradas, para cuando la búsqueda calza con varios productos.
+    const porNombre = new Map<string, { nombre: string; sku: string | null; veces: number; ultimo: number }>();
+    for (const s of serie) {
+      const k = `${s.producto}||${s.sku || ''}`;
+      const previo = porNombre.get(k);
+      porNombre.set(k, {
+        nombre: s.producto,
+        sku: s.sku,
+        veces: (previo?.veces || 0) + 1,
+        ultimo: s.precio,
+      });
+    }
+
+    return {
+      consulta: q,
+      total: serie.length,
+      productos: [...porNombre.values()].sort((a, b) => b.veces - a.veces).slice(0, 30),
+      serie,
+      resumen: {
+        cotizaciones: serie.length,
+        adjudicadas: adjudicados.length,
+        precio_min: Math.min(...precios),
+        precio_max: Math.max(...precios),
+        precio_promedio: prom(precios),
+        precio_promedio_adjudicado: prom(adjudicados),
+        ultimo_precio: serie[serie.length - 1]?.precio ?? null,
+        ultima_fecha: serie[serie.length - 1]?.fecha ?? null,
+      },
+    };
+  }
+
   async updateDocumento(docId: number, body: Record<string, any>) {
     const intentar = (payload: Record<string, any>) =>
       this.supabase.getClient()

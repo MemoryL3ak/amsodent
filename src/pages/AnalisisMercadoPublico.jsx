@@ -5,6 +5,7 @@ import {
   ArrowUp, ArrowDown, ArrowUpDown, Download, X, Square, CalendarRange,
   ArrowLeftRight,
 } from "lucide-react";
+import { Link } from "react-router-dom";
 import { api } from "../lib/api";
 import Toast from "../components/Toast";
 import DateFilter from "../components/DateFilter";
@@ -1177,6 +1178,9 @@ export default function AnalisisMercadoPublico() {
         </Panel>
       </div>
 
+      {/* Historial de precios de cualquier producto que hayamos cotizado */}
+      <HistorialPreciosProducto />
+
       {/* ── Análisis GLOBAL de productos: todo Mercado Público, hayamos
           postulado o no (adjudicadas del rubro, últimos 30 días) ── */}
       <div style={{ marginTop: 16, marginBottom: 16 }}>
@@ -2088,6 +2092,243 @@ function Panel({ titulo, sub, extra, children }) {
 
 function Vacio({ texto }) {
   return <div style={{ padding: "26px 0", textAlign: "center", color: "var(--text-muted)", fontSize: 12.5 }}>{texto}</div>;
+}
+
+/* ── Historial de precios de un producto (2026-09-16, punto 22) ────────────
+   Antes solo se podía mirar lo que el análisis de Mercado Público había
+   capturado. Esto busca CUALQUIER producto en todo lo que hemos cotizado
+   alguna vez, para validar un precio antes de ofertarlo: qué cobramos, en
+   qué rango, y cuál es el precio con el que efectivamente ganamos.
+   ───────────────────────────────────────────────────────────────────────── */
+function HistorialPreciosProducto() {
+  const [q, setQ] = useState("");
+  const [datos, setDatos] = useState(null);
+  const [cargando, setCargando] = useState(false);
+  const [error, setError] = useState("");
+  const [variante, setVariante] = useState(""); // "nombre||sku" o "" = todas
+  const [soloAdjudicadas, setSoloAdjudicadas] = useState(false);
+
+  async function buscar(e) {
+    e?.preventDefault?.();
+    const texto = q.trim();
+    if (texto.length < 3) { setError("Escribe al menos 3 letras."); return; }
+    setCargando(true); setError(""); setVariante("");
+    try {
+      setDatos(await api.get(`/licitaciones/productos/historial-precios?q=${encodeURIComponent(texto)}`));
+    } catch (err) {
+      setError(err?.message || "No se pudo buscar el producto.");
+      setDatos(null);
+    } finally {
+      setCargando(false);
+    }
+  }
+
+  // La serie que se grafica: filtrada por variante y por si ganó o no.
+  const serie = useMemo(() => {
+    let s = datos?.serie || [];
+    if (variante) {
+      const [nombre, sku] = variante.split("||");
+      s = s.filter((p) => p.producto === nombre && (p.sku || "") === sku);
+    }
+    if (soloAdjudicadas) s = s.filter((p) => p.adjudicada);
+    return s;
+  }, [datos, variante, soloAdjudicadas]);
+
+  const resumen = useMemo(() => {
+    if (!serie.length) return null;
+    const precios = serie.map((p) => p.precio);
+    const adj = serie.filter((p) => p.adjudicada).map((p) => p.precio);
+    const prom = (xs) => (xs.length ? Math.round(xs.reduce((a, b) => a + b, 0) / xs.length) : null);
+    return {
+      n: serie.length,
+      min: Math.min(...precios),
+      max: Math.max(...precios),
+      promedio: prom(precios),
+      promedioAdj: prom(adj),
+      adjudicadas: adj.length,
+      ultimo: serie[serie.length - 1],
+    };
+  }, [serie]);
+
+  return (
+    <div style={{ marginTop: 16, marginBottom: 16 }}>
+      <Panel
+        titulo="Historial de precios de un producto"
+        sub="Busca cualquier producto en todo lo que hemos cotizado y mira a qué precios se ofertó y con cuáles se ganó"
+        extra={
+          <form onSubmit={buscar} style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            <input
+              className="input"
+              placeholder="Nombre o SKU del producto…"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              style={{ height: 30, fontSize: 12, width: 220 }}
+            />
+            <button className="btn btn-secondary btn-sm" type="submit" disabled={cargando} style={{ fontSize: 11.5 }}>
+              {cargando ? "Buscando…" : "Buscar"}
+            </button>
+          </form>
+        }
+      >
+        {error ? (
+          <div style={{ color: "#b91c1c", fontSize: 12.5, padding: "10px 0" }}>{error}</div>
+        ) : !datos ? (
+          <Vacio texto="Escribe el nombre o el SKU de un producto para ver su historial de precios." />
+        ) : datos.total === 0 ? (
+          <Vacio texto={`No hemos cotizado nunca un producto que calce con «${datos.consulta}».`} />
+        ) : (
+          <>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginBottom: 12 }}>
+              <select
+                className="input"
+                value={variante}
+                onChange={(e) => setVariante(e.target.value)}
+                style={{ height: 30, fontSize: 12, maxWidth: 420 }}
+                title="La búsqueda puede calzar con varios productos; elige uno para ver su curva sola"
+              >
+                <option value="">Todas las coincidencias ({datos.total} cotizaciones)</option>
+                {(datos.productos || []).map((p) => (
+                  <option key={`${p.nombre}||${p.sku || ""}`} value={`${p.nombre}||${p.sku || ""}`}>
+                    {p.nombre}{p.sku ? ` · ${p.sku}` : ""} ({p.veces})
+                  </option>
+                ))}
+              </select>
+              <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, cursor: "pointer" }}>
+                <input type="checkbox" checked={soloAdjudicadas} onChange={(e) => setSoloAdjudicadas(e.target.checked)} />
+                Solo los precios con los que ganamos
+              </label>
+            </div>
+
+            {!resumen ? (
+              <Vacio texto="Sin datos para ese filtro." />
+            ) : (
+              <>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(140px, 100%), 1fr))", gap: 10, marginBottom: 14 }}>
+                  <MiniDato etiqueta="Último precio" valor={fmt$(resumen.ultimo?.precio)} detalle={resumen.ultimo?.fecha} />
+                  <MiniDato etiqueta="Promedio" valor={fmt$(resumen.promedio)} detalle={`${resumen.n} cotizaciones`} />
+                  <MiniDato etiqueta="Promedio ganador" valor={fmt$(resumen.promedioAdj)} detalle={`${resumen.adjudicadas} adjudicadas`} destacado />
+                  <MiniDato etiqueta="Mínimo" valor={fmt$(resumen.min)} detalle="el más bajo ofertado" />
+                  <MiniDato etiqueta="Máximo" valor={fmt$(resumen.max)} detalle="el más alto ofertado" />
+                </div>
+
+                <GraficoPrecios serie={serie} />
+
+                <div style={{ border: "1px solid var(--border)", borderRadius: 8, overflowX: "auto", marginTop: 12 }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, background: "var(--surface)", minWidth: 680 }}>
+                    <thead>
+                      <tr style={{ background: "var(--bg)", color: "var(--text-muted)", textAlign: "left" }}>
+                        <th style={{ padding: "6px 10px" }}>Fecha</th>
+                        <th style={{ padding: "6px 10px" }}>Cotización</th>
+                        <th style={{ padding: "6px 10px" }}>Cliente</th>
+                        <th style={{ padding: "6px 10px", textAlign: "right" }}>Cant.</th>
+                        <th style={{ padding: "6px 10px", textAlign: "right" }}>Precio unit.</th>
+                        <th style={{ padding: "6px 10px" }}>Resultado</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {[...serie].reverse().slice(0, 25).map((p, i) => (
+                        <tr key={`${p.licitacion_id}-${i}`} style={{ borderTop: "1px solid var(--border)" }}>
+                          <td style={{ padding: "5px 10px", whiteSpace: "nowrap" }}>{p.fecha.split("-").reverse().join("-")}</td>
+                          <td style={{ padding: "5px 10px" }}>
+                            <Link to={`/detalle/${p.licitacion_id}`} className="table-link">{p.numero || `#${p.licitacion_id}`}</Link>
+                          </td>
+                          <td style={{ padding: "5px 10px", maxWidth: 220 }}>
+                            <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={p.cliente || ""}>{p.cliente || "—"}</div>
+                          </td>
+                          <td style={{ padding: "5px 10px", textAlign: "right" }}>{p.cantidad}</td>
+                          <td style={{ padding: "5px 10px", textAlign: "right", fontWeight: 700 }}>{fmt$(p.precio)}</td>
+                          <td style={{ padding: "5px 10px", color: p.adjudicada ? "#15803d" : "var(--text-muted)", fontWeight: p.adjudicada ? 700 : 400 }}>
+                            {p.adjudicada ? "Ganada" : p.estado || "—"}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {serie.length > 25 && (
+                  <p style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 8, marginBottom: 0 }}>
+                    Se listan las 25 más recientes; el gráfico y los promedios usan las {serie.length}.
+                  </p>
+                )}
+              </>
+            )}
+          </>
+        )}
+      </Panel>
+    </div>
+  );
+}
+
+function MiniDato({ etiqueta, valor, detalle, destacado }) {
+  return (
+    <div style={{ border: "1px solid var(--border)", borderRadius: 9, padding: "9px 11px", background: destacado ? "#f0fdf4" : "var(--bg)", minWidth: 0 }}>
+      <div style={{ fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".04em", color: "var(--text-muted)" }}>{etiqueta}</div>
+      <div style={{ fontSize: 16, fontWeight: 800, color: destacado ? "#15803d" : "var(--text)", overflowWrap: "anywhere" }}>{valor}</div>
+      <div style={{ fontSize: 10.5, color: "var(--text-muted)" }}>{detalle || ""}</div>
+    </div>
+  );
+}
+
+/* Curva de precios en el tiempo. SVG a mano: son puntos y una línea, no vale
+   la pena cargar una librería de gráficos para esto. Los puntos adjudicados
+   van en verde, que es la información que se busca al validar un precio. */
+function GraficoPrecios({ serie }) {
+  const W = 760, H = 200, PAD_X = 52, PAD_Y = 18;
+  if (!serie.length) return null;
+
+  const t = (f) => new Date(`${f}T00:00:00`).getTime();
+  const tMin = t(serie[0].fecha);
+  const tMax = t(serie[serie.length - 1].fecha);
+  const pMin = Math.min(...serie.map((s) => s.precio));
+  const pMax = Math.max(...serie.map((s) => s.precio));
+  const rangoT = Math.max(1, tMax - tMin);
+  const rangoP = Math.max(1, pMax - pMin);
+
+  const x = (f) => PAD_X + ((t(f) - tMin) / rangoT) * (W - PAD_X - 14);
+  const y = (p) => H - PAD_Y - ((p - pMin) / rangoP) * (H - PAD_Y * 2);
+
+  // Con muchos puntos la línea se vuelve ruido: sobre 200 solo se dibujan
+  // los puntos, que es lo que se lee.
+  const linea = serie.length <= 200
+    ? serie.map((s, i) => `${i === 0 ? "M" : "L"}${x(s.fecha).toFixed(1)},${y(s.precio).toFixed(1)}`).join(" ")
+    : null;
+
+  const nivelesY = [pMin, Math.round((pMin + pMax) / 2), pMax];
+
+  return (
+    <div style={{ border: "1px solid var(--border)", borderRadius: 9, padding: "10px 6px 6px", background: "var(--surface)", overflowX: "auto" }}>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", minWidth: 420, height: "auto", display: "block" }} role="img" aria-label="Historial de precios">
+        {nivelesY.map((v, i) => (
+          <g key={i}>
+            <line x1={PAD_X} x2={W - 14} y1={y(v)} y2={y(v)} stroke="var(--border)" strokeWidth="1" strokeDasharray="3 3" />
+            <text x={PAD_X - 6} y={y(v) + 3.5} textAnchor="end" fontSize="9" fill="var(--text-muted)">
+              ${Math.round(v).toLocaleString("es-CL")}
+            </text>
+          </g>
+        ))}
+        {linea && <path d={linea} fill="none" stroke="#94a3b8" strokeWidth="1.2" />}
+        {serie.map((s, i) => (
+          <circle
+            key={i}
+            cx={x(s.fecha)}
+            cy={y(s.precio)}
+            r={s.adjudicada ? 3.6 : 2.4}
+            fill={s.adjudicada ? "#15803d" : "#cbd5e1"}
+            stroke={s.adjudicada ? "#fff" : "none"}
+            strokeWidth="0.8"
+          >
+            <title>{`${s.fecha} · ${s.producto}\n$${s.precio.toLocaleString("es-CL")} · ${s.adjudicada ? "GANADA" : s.estado || "sin adjudicar"}\n${s.cliente || ""}`}</title>
+          </circle>
+        ))}
+        <text x={PAD_X} y={H - 4} fontSize="9" fill="var(--text-muted)">{serie[0].fecha}</text>
+        <text x={W - 14} y={H - 4} fontSize="9" fill="var(--text-muted)" textAnchor="end">{serie[serie.length - 1].fecha}</text>
+      </svg>
+      <div style={{ display: "flex", gap: 14, fontSize: 10.5, color: "var(--text-muted)", padding: "2px 0 0 52px" }}>
+        <span><span style={{ display: "inline-block", width: 8, height: 8, borderRadius: 4, background: "#15803d", marginRight: 4 }} />Adjudicada</span>
+        <span><span style={{ display: "inline-block", width: 8, height: 8, borderRadius: 4, background: "#cbd5e1", marginRight: 4 }} />Cotizada</span>
+      </div>
+    </div>
+  );
 }
 
 // Cabecera de columna ordenable.
