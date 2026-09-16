@@ -352,6 +352,7 @@ export class StockClientesService {
       throw new BadRequestException('El RUT ingresado no es válido.');
     }
     if (!password) throw new BadRequestException('Debe ingresar su contraseña.');
+    if (!email) throw new BadRequestException('Debe ingresar su correo.');
 
     // El RUT debe existir en el maestro de clientes.
     const cliente = await this.buscarClientePorRut(rutN);
@@ -384,13 +385,16 @@ export class StockClientesService {
       String(cliente.nombre || portal.razon_social || '').trim();
     const ahora = new Date().toISOString();
 
-    /* (2026-09-16) Con correo, la clave se valida contra el usuario del RUT
-       (tabla portal_usuarios); sin correo, contra la cuenta principal de
-       siempre. La habilitación y la vigencia del RUT ya se comprobaron arriba
-       y valen para todos sus usuarios. */
-    if (email) {
-      const usuario = await this.buscarUsuarioPortal(rutN, email);
-      if (!usuario || !verifyPassword(password, usuario.password_hash)) {
+    /* (2026-09-16) El correo identifica a la persona dentro del RUT: si
+       corresponde a un usuario creado (tabla portal_usuarios) la clave se
+       valida contra ese usuario; si no, contra la cuenta principal de
+       siempre — así los clientes que existían antes de los usuarios entran
+       con el mismo RUT y clave, poniendo cualquier correo de contacto.
+       La habilitación y la vigencia del RUT ya se comprobaron arriba y
+       valen para todos sus usuarios. */
+    const usuario = await this.buscarUsuarioPortal(rutN, email);
+    if (usuario) {
+      if (!verifyPassword(password, usuario.password_hash)) {
         throw new UnauthorizedException('RUT, correo o contraseña incorrectos.');
       }
       if (usuario.activo === false) {
@@ -433,12 +437,16 @@ export class StockClientesService {
     }
 
     if (!verifyPassword(password, portal.password_hash)) {
-      throw new UnauthorizedException('RUT o contraseña incorrectos.');
+      throw new UnauthorizedException('RUT, correo o contraseña incorrectos.');
     }
 
+    // La clave principal manda: si el RUT aún no tenía correo registrado,
+    // queda el que usó para entrar (los antiguos se registraron sin correo).
+    const patchPortal: Record<string, any> = { ultimo_acceso: ahora, updated_at: ahora };
+    if (!String(portal.email || '').trim()) patchPortal.email = email;
     await client
       .from('stock_clientes_portal')
-      .update({ ultimo_acceso: ahora, updated_at: ahora })
+      .update(patchPortal)
       .eq('rut', rutN);
 
     const token = this.signToken({ rut: rutN, razon_social: razonSocial, rol: 'admin' });
@@ -450,7 +458,7 @@ export class StockClientesService {
         razon_social: razonSocial,
         debe_cambiar_clave: !!portal.password_temporal,
         requiere_acuerdo: !portal.acepto_acuerdo_en,
-        usuario: { id: null, email: String(portal.email || '').toLowerCase(), nombre: 'Cuenta principal', rol: 'admin' as PortalRol },
+        usuario: { id: null, email: String(portal.email || '').toLowerCase() || email, nombre: 'Cuenta principal', rol: 'admin' as PortalRol },
       },
     };
   }
@@ -999,6 +1007,7 @@ export class StockClientesService {
     const { asunto, html } = plantillaBienvenidaPortal({
       razonSocial: String(opts.razonSocial || '').trim() || formatearRut(rutN),
       rutFmt: formatearRut(rutN),
+      emailAcceso: para,
       passwordTemporal: opts.passwordTemporal,
       vigenciaTexto: vigenciaTexto(opts.vigencia),
       expiraTexto,
