@@ -956,6 +956,53 @@ body {
   .panel-grid-1-2 { grid-template-columns: 1fr; }
 }
 
+/* Grilla de tarjetas KPI de los paneles (2026-09-16).
+   Antes era un `repeat(auto-fit, minmax(190px, 1fr))` inline y en pantallas
+   chicas se desbordaba: un monto como "$ 128.456.789" no tiene dónde cortarse,
+   su ancho mínimo (min-width:auto) mandaba sobre el minmax y la grilla se iba
+   más allá del viewport, dejando la última tarjeta cortada. El `min()` deja
+   que la columna baje del mínimo cuando la pantalla es más angosta, el
+   `min-width: 0` permite encoger a las tarjetas y el `clamp` achica el número
+   lo justo para que quepa sin dejar de ser el dato principal. */
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(190px, 100%), 1fr));
+  gap: 14px;
+}
+.kpi-grid > * { min-width: 0; }
+.kpi-card { min-width: 0; }
+.kpi-value {
+  font-size: clamp(19px, 5.4vw, 24px);
+  overflow-wrap: anywhere;
+}
+/* El encabezado de la tarjeta (ícono + título + subtítulo) también necesita
+   poder encoger, si no el subtítulo largo ensancha la tarjeta entera. */
+.kpi-card-head { min-width: 0; }
+
+/* Ranking con barra (Top 5 clientes): en escritorio el nombre y el monto van
+   en la misma línea; en pantallas angostas el nombre quedaba recortado a
+   media palabra ("SERVICIO DE SALUD METROPOLITANO SUR ORI…"), así que se
+   apila y se le dan dos líneas completas. */
+.rank-row { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; margin-bottom: 3px; }
+.rank-row .rank-nombre {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rank-row .rank-monto { white-space: nowrap; flex-shrink: 0; }
+@media (max-width: 640px) {
+  .rank-row { flex-direction: column; gap: 1px; }
+  .rank-row .rank-nombre {
+    white-space: normal;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    line-height: 1.3;
+  }
+}
+
 /* La grilla base de KPIs (4 columnas) no tenía breakpoints — en pantallas
    chicas las tarjetas quedaban ilegibles. Las variantes stats-5..8 ganan por
    especificidad donde definen los suyos. */

@@ -255,7 +255,7 @@ export default function PanelParticular() {
       ) : (
         <>
           {/* KPIs por etapa */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 14, marginBottom: 22 }}>
+          <div className="kpi-grid" style={{ marginBottom: 22 }}>
             {ETAPAS_EMBUDO.map((et) => (
               <KpiCard
                 key={et.key}
