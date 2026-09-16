@@ -673,6 +673,19 @@ const DOC_TIPOS = {
   nota_credito: "Nota de Crédito",
   cierre_forzado: "Respaldo Cierre Forzado",
 };
+/* (2026-09-16) Estados del envío para cliente particular. Van del armado del
+   pedido a la entrega, más las dos salidas que no son entrega a domicilio
+   (retiro en tienda y devolución). */
+const ESTADOS_ENVIO = [
+  { value: "preparando", label: "Preparando pedido" },
+  { value: "listo", label: "Listo para despacho" },
+  { value: "en_transito", label: "En tránsito" },
+  { value: "en_reparto", label: "En reparto" },
+  { value: "entregado", label: "Entregado" },
+  { value: "retirado", label: "Retirado en tienda" },
+  { value: "devuelto", label: "Devuelto" },
+];
+
 const DOC_BUCKET_BY_TIPO = {
   orden_compra: "orden-compra",
   guia_despacho: "guia-despacho",
@@ -1036,6 +1049,13 @@ export default function EditarLicitacion() {
   // de serlo, el flag no aplica aunque haya quedado marcado antes (el checkbox
   // se oculta, pero su estado sobrevivía y se guardaba igual).
   const fletePorPagarEfectivo = fletePorPagar && esCotizacionParticular;
+  // (2026-09-16) Estado del envío (solo cliente particular). estadoEnvioDB
+  // recuerda lo guardado, para tolerar que la migración 20260916 aún no esté
+  // aplicada (igual que con flete_por_pagar).
+  const [estadoEnvio, setEstadoEnvio] = useState("");
+  const [estadoEnvioDB, setEstadoEnvioDB] = useState("");
+  const [estadoEnvioActualizado, setEstadoEnvioActualizado] = useState("");
+  const estadoEnvioEfectivo = esCotizacionParticular ? estadoEnvio : "";
 
   /* ===============================
      PRODUCTOS / ÍTEMS
@@ -2248,6 +2268,9 @@ export default function EditarLicitacion() {
     setFleteEstimado(lic.flete_estimado || 0);
     setFletePorPagar(Boolean(lic.flete_por_pagar));
     setFletePorPagarDB(Boolean(lic.flete_por_pagar));
+    setEstadoEnvio(lic.estado_envio || "");
+    setEstadoEnvioDB(lic.estado_envio || "");
+    setEstadoEnvioActualizado(lic.estado_envio_actualizado_at || "");
 
     setObservaciones(lic.observaciones || "");
     setMotivoPerdida(lic.motivo_perdida || "");
@@ -3235,6 +3258,14 @@ export default function EditarLicitacion() {
           // Se envía solo si hay algo que decir (true, o volver a false tras
           // haber estado guardado en true): tolera la migración 20260914.
           ...(fletePorPagarEfectivo || fletePorPagarDB ? { flete_por_pagar: fletePorPagarEfectivo } : {}),
+          // Estado del envío: mismo criterio — solo viaja si cambió o si ya
+          // había algo guardado (tolera la migración 20260916 pendiente).
+          ...(estadoEnvioEfectivo !== estadoEnvioDB
+            ? {
+                estado_envio: estadoEnvioEfectivo || null,
+                estado_envio_actualizado_at: estadoEnvioEfectivo ? new Date().toISOString() : null,
+              }
+            : {}),
 
           total_con_iva: totalConIVA,
           total_sin_iva: totalNeto,
@@ -4614,6 +4645,33 @@ export default function EditarLicitacion() {
                 {pesoTotalGeneral.toFixed(2)}
               </div>
             </div>
+
+            {/* (2026-09-16) Estado del envío: solo cliente particular, que es
+                quien está esperando su pedido. No reemplaza el N° de tracking
+                del courier (ese vive en la guía de despacho). */}
+            {esCotizacionParticular && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Estado del envío
+                </label>
+                <select
+                  className={inputClassH10}
+                  value={estadoEnvio}
+                  onChange={(e) => setEstadoEnvio(e.target.value)}
+                  disabled={!esEditable}
+                >
+                  <option value="">Sin estado</option>
+                  {ESTADOS_ENVIO.map((e) => (
+                    <option key={e.value} value={e.value}>{e.label}</option>
+                  ))}
+                </select>
+                {estadoEnvioActualizado && (
+                  <div className="field-hint">
+                    Actualizado el {String(estadoEnvioActualizado).slice(0, 10).split("-").reverse().join("-")}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           <CalculadoraFlete
