@@ -1107,11 +1107,16 @@ function FeatureItem({ icono: Icono, titulo, texto, delay = 0 }) {
    PASO 3 — Declaración de productos + semáforo
    ────────────────────────────────────────────────────────────────────── */
 function PantallaDeclaracion({ cliente, setToast }) {
-  const [tab, setTab] = useState("declaracion"); // "declaracion" | "solicitudes" | "explorador" | "usuarios"
+  const [tab, setTab] = useState("resumen"); // resumen | declaracion | solicitudes | explorador | usuarios
   /* (2026-09-16) Rol del usuario dentro del RUT: admin puede todo (incluido
      aprobar y pagar); asistente, todo lo demás. Las sesiones antiguas no
      traen usuario, y esas son la cuenta principal → admin. */
   const esAdminPortal = (cliente?.usuario?.rol || "admin") === "admin";
+  // Cupo de crédito, para mostrarlo en el resumen comercial (punto 7 y 29).
+  const [creditoCliente, setCreditoCliente] = useState(null);
+  useEffect(() => {
+    apiRequest("/stock-clientes/mi-credito").then(setCreditoCliente).catch(() => setCreditoCliente(null));
+  }, []);
   const [items, setItems] = useState([]);
   // Copia del último estado guardado/cargado, para "Cancelar cambios".
   const [baseline, setBaseline] = useState([]);
@@ -1643,7 +1648,15 @@ function PantallaDeclaracion({ cliente, setToast }) {
         esAdminPortal={esAdminPortal}
       />
 
-      {tab === "usuarios" ? (
+      {tab === "resumen" ? (
+        <DashboardComercial
+          items={items}
+          solicitudes={solicitudes}
+          cotizaciones={cotizacionesHist}
+          credito={creditoCliente}
+          onIrA={setTab}
+        />
+      ) : tab === "usuarios" ? (
         <PanelUsuariosPortal setToast={setToast} />
       ) : tab === "explorador" ? (
         <PanelExploradorPrecios />
@@ -2046,6 +2059,7 @@ function PantallaDeclaracion({ cliente, setToast }) {
 
 function TabNavigator({ tab, onChange, contadorSolicitudes, esAdminPortal }) {
   const opciones = [
+    { id: "resumen", label: "Resumen", icono: Activity },
     { id: "declaracion", label: "Gestión de Stock", icono: Database },
     { id: "solicitudes", label: "Mis cotizaciones", icono: FileSpreadsheet },
     { id: "explorador", label: "Explorador de precios", icono: Search },
@@ -3225,6 +3239,177 @@ const histStyles = {
   td: { padding: "10px 12px", borderBottom: "1px solid #f1f5f9", color: "#334155", verticalAlign: "top" },
   btnPdf: { display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 13px", borderRadius: 9, fontSize: 12.5, fontWeight: 700, cursor: "pointer", border: "1px solid rgba(40,174,177,.35)", background: "#fff", color: "#0f5f61" },
 };
+
+/* ──────────────────────────────────────────────────────────────────────
+   Resumen comercial del cliente (2026-09-16, punto 7)
+   Lo primero que ve al entrar: cuánto vale su inventario declarado, cuántos
+   artículos tiene, qué está en rojo, en qué van sus pedidos y cuánto lleva
+   comprado. Todo se calcula con datos que el portal ya carga.
+   ────────────────────────────────────────────────────────────────────── */
+function DashboardComercial({ items, solicitudes, cotizaciones, credito, onIrA }) {
+  const resumen = useMemo(() => {
+    const conNombre = (items || []).filter((it) => String(it?.nombre || "").trim());
+    let valor = 0;
+    let unidades = 0;
+    let criticos = 0;
+    let bajos = 0;
+    for (const it of conNombre) {
+      const stock = Number(it.stock_actual) || 0;
+      const precio = parsePrecio(it.precio_unitario);
+      valor += stock * precio;
+      unidades += stock;
+      const color = semaforoColor(it.stock_actual, it.stock_minimo, it.stock_bajo);
+      if (color === "rojo") criticos += 1;
+      else if (color === "amarillo") bajos += 1;
+    }
+
+    // Compras: las cotizaciones adjudicadas son las que efectivamente compró.
+    const compras = (cotizaciones || []).filter((c) =>
+      String(c?.estado || "").toLowerCase().includes("adjudicada"),
+    );
+    const totalComprado = compras.reduce((acc, c) => acc + (Number(c.total_con_iva) || 0), 0);
+    const ultimas = [...compras]
+      .sort((a, b) => String(b.fecha_adjudicada || b.fecha || "").localeCompare(String(a.fecha_adjudicada || a.fecha || "")))
+      .slice(0, 5);
+
+    // Compras de los últimos 12 meses, para el mini gráfico.
+    const porMes = new Map();
+    const hoy = new Date();
+    for (let i = 11; i >= 0; i--) {
+      const d = new Date(hoy.getFullYear(), hoy.getMonth() - i, 1);
+      porMes.set(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`, 0);
+    }
+    for (const c of compras) {
+      const k = String(c.fecha_adjudicada || c.fecha || "").slice(0, 7);
+      if (porMes.has(k)) porMes.set(k, porMes.get(k) + (Number(c.total_con_iva) || 0));
+    }
+
+    const pedidosAbiertos = (solicitudes || []).filter(
+      (s) => !["pagado", "cancelado", "rechazado"].includes(String(s.flujo_estado || "")),
+    );
+    const porPagar = (solicitudes || []).filter((s) => String(s.flujo_estado || "") === "validado_plataforma");
+
+    return {
+      productos: conNombre.length,
+      valor,
+      unidades,
+      criticos,
+      bajos,
+      totalComprado,
+      compras: compras.length,
+      ultimas,
+      serie: [...porMes.entries()],
+      pedidosAbiertos: pedidosAbiertos.length,
+      porPagar,
+    };
+  }, [items, solicitudes, cotizaciones]);
+
+  const maxSerie = Math.max(1, ...resumen.serie.map(([, v]) => v));
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14, marginBottom: 18 }}>
+      {/* Lo que requiere acción va primero, no escondido entre los números */}
+      {resumen.porPagar.length > 0 && (
+        <div style={{ border: "1px solid #ddd6fe", background: "#f5f3ff", borderRadius: 12, padding: "12px 16px", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 13, color: "#4c1d95", fontWeight: 700 }}>
+            Tienes {resumen.porPagar.length} pedido{resumen.porPagar.length === 1 ? "" : "s"} listo{resumen.porPagar.length === 1 ? "" : "s"} para pagar
+            {" "}({fmtMoneda(resumen.porPagar.reduce((a, p) => a + (Number(p.monto_total) || 0), 0))}).
+          </span>
+          <button type="button" onClick={() => onIrA?.("solicitudes")} style={styles.btnPrimarioChico}>
+            Ver y pagar
+          </button>
+        </div>
+      )}
+      {resumen.criticos > 0 && (
+        <div style={{ border: "1px solid #fecaca", background: "#fef2f2", borderRadius: 12, padding: "12px 16px", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <AlertTriangle size={16} color="#b91c1c" />
+          <span style={{ fontSize: 13, color: "#991b1b", fontWeight: 600 }}>
+            {resumen.criticos} producto{resumen.criticos === 1 ? "" : "s"} en stock crítico
+            {resumen.bajos > 0 ? ` y ${resumen.bajos} en stock bajo` : ""}.
+          </span>
+          <button type="button" onClick={() => onIrA?.("declaracion")} style={styles.btnSecundarioChico}>
+            Revisar inventario
+          </button>
+        </div>
+      )}
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(190px, 100%), 1fr))", gap: 12 }}>
+        <TarjetaResumen etiqueta="Valor del inventario" valor={fmtMoneda(resumen.valor)} detalle={`${resumen.unidades.toLocaleString("es-CL")} unidades declaradas`} color={TEAL} />
+        <TarjetaResumen etiqueta="Artículos" valor={String(resumen.productos)} detalle={`${resumen.criticos} críticos · ${resumen.bajos} bajos`} color="#b45309" />
+        <TarjetaResumen etiqueta="Total comprado" valor={fmtMoneda(resumen.totalComprado)} detalle={`${resumen.compras} compra${resumen.compras === 1 ? "" : "s"} registradas`} color="#15803d" />
+        <TarjetaResumen etiqueta="Pedidos en curso" valor={String(resumen.pedidosAbiertos)} detalle="esperando aprobación, revisión o pago" color="#6d28d9" />
+        {credito?.habilitado && (
+          <TarjetaResumen
+            etiqueta="Crédito disponible"
+            valor={fmtMoneda(credito.disponible)}
+            detalle={`de ${fmtMoneda(credito.cupo)}${credito.dias ? ` · ${credito.dias} días` : ""}`}
+            color="#0369a1"
+          />
+        )}
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(300px, 100%), 1fr))", gap: 14 }}>
+        {/* Compras por mes: barras simples, sin librería */}
+        <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 14, padding: "14px 16px" }}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: "#0f172a", marginBottom: 12 }}>Compras de los últimos 12 meses</div>
+          {resumen.totalComprado === 0 ? (
+            <div style={{ fontSize: 12.5, color: "#94a3b8" }}>Todavía no hay compras registradas.</div>
+          ) : (
+            <div style={{ display: "flex", alignItems: "flex-end", gap: 5, height: 110 }}>
+              {resumen.serie.map(([k, v]) => (
+                <div key={k} style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }} title={`${k}: ${fmtMoneda(v)}`}>
+                  <div
+                    style={{
+                      width: "100%",
+                      height: `${Math.max(2, (v / maxSerie) * 86)}px`,
+                      background: v > 0 ? TEAL : "#e2e8f0",
+                      borderRadius: "4px 4px 0 0",
+                    }}
+                  />
+                  <span style={{ fontSize: 9, color: "#94a3b8", whiteSpace: "nowrap" }}>{k.slice(5)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Últimas compras */}
+        <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 14, padding: "14px 16px" }}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: "#0f172a", marginBottom: 10 }}>Últimas compras</div>
+          {resumen.ultimas.length === 0 ? (
+            <div style={{ fontSize: 12.5, color: "#94a3b8" }}>Aún no registramos compras a tu nombre.</div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {resumen.ultimas.map((c) => (
+                <div key={c.id} style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 12.5, borderBottom: "1px solid #f1f5f9", paddingBottom: 6 }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontWeight: 700, color: "#0f172a", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {c.id_licitacion || `Cotización ${c.id}`}
+                    </div>
+                    <div style={{ fontSize: 11, color: "#94a3b8" }}>
+                      {String(c.fecha_adjudicada || c.fecha || "").slice(0, 10).split("-").reverse().join("-")}
+                    </div>
+                  </div>
+                  <strong style={{ color: "#0f172a", whiteSpace: "nowrap" }}>{fmtMoneda(c.total_con_iva)}</strong>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TarjetaResumen({ etiqueta, valor, detalle, color }) {
+  return (
+    <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderTop: `3px solid ${color}`, borderRadius: 12, padding: "13px 15px", minWidth: 0 }}>
+      <div style={{ fontSize: 10.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".04em", color: "#94a3b8" }}>{etiqueta}</div>
+      <div style={{ fontSize: "clamp(18px, 5vw, 23px)", fontWeight: 800, color: "#0f172a", lineHeight: 1.15, overflowWrap: "anywhere" }}>{valor}</div>
+      <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>{detalle}</div>
+    </div>
+  );
+}
 
 /* Etapas del pedido tal como las ve el cliente (2026-09-16). */
 const FLUJO_CLIENTE = {
