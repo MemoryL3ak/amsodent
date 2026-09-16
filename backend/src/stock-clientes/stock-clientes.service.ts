@@ -2099,17 +2099,28 @@ export class StockClientesService {
 
   async listarMisSolicitudes(rut: string, limit = 50) {
     const rutN = normalizarRut(rut);
-    const { data, error } = await this.supabase
-      .getClient()
-      .from('stock_solicitudes_cotizacion')
-      .select(
-        'id, items, nota, contacto_nombre, contacto_email, contacto_telefono, estado, respondida_at, created_at, licitacion_id',
-      )
-      .eq('rut', rutN)
-      .order('created_at', { ascending: false })
-      .limit(limit);
-    if (error) throw new BadRequestException(error.message);
-    return await this.enriquecerSolicitudes(data || [], 'cliente');
+    const COLS_BASE =
+      'id, items, nota, contacto_nombre, contacto_email, contacto_telefono, estado, respondida_at, created_at, licitacion_id';
+    // Las columnas del flujo (2026-09-16): sin ellas el cliente no ve la
+    // etapa del pedido ni el botón de aprobar/pagar. Si la migración aún no
+    // corre, se cae a la lista básica de siempre.
+    const COLS_FLUJO =
+      COLS_BASE +
+      ', flujo_estado, disponibilidad, monto_total, sos, pago_estado, pago_medio, pago_at, aprobado_cliente_at, validado_at';
+    const pedir = (cols: string) =>
+      this.supabase
+        .getClient()
+        .from('stock_solicitudes_cotizacion')
+        .select(cols)
+        .eq('rut', rutN)
+        .order('created_at', { ascending: false })
+        .limit(limit);
+    let res: { data: any; error: any } = await pedir(COLS_FLUJO);
+    if (res.error && /column|does not exist|schema cache/i.test(res.error.message)) {
+      res = await pedir(COLS_BASE);
+    }
+    if (res.error) throw new BadRequestException(res.error.message);
+    return await this.enriquecerSolicitudes(res.data || [], 'cliente');
   }
 
   // Historial de cotizaciones del sistema principal a nombre del cliente. Se
