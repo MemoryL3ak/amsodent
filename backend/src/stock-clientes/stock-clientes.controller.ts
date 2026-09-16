@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Delete,
+  ForbiddenException,
   Get,
   Param,
   ParseIntPipe,
@@ -12,7 +13,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
-import { StockClientesService } from './stock-clientes.service';
+import { StockClientesService, rolDeToken } from './stock-clientes.service';
 import { ExploradorService } from './explorador.service';
 import { StockPortalGuard } from './stock-clientes.guard';
 import { AuthGuard } from '../auth/auth.guard';
@@ -38,12 +39,13 @@ export class StockClientesController {
     return await this.stockClientes.verificarRut(body?.rut);
   }
 
-  // Login del cliente con RUT + contraseña.
+  // Login del cliente con RUT + contraseña. El correo es opcional: se usa
+  // cuando el RUT tiene varios usuarios (2026-09-16).
   @Post('login')
   @Throttle({ default: { ttl: 60_000, limit: 10 } })
   async login(
     @Req() req: any,
-    @Body() body: { rut: string; password: string },
+    @Body() body: { rut: string; password: string; email?: string },
   ) {
     const ip =
       req?.headers?.['x-forwarded-for']?.toString().split(',')[0]?.trim() ||
@@ -79,7 +81,46 @@ export class StockClientesController {
     return await this.stockClientes.cambiarClave(
       req.stockPortal.rut,
       body?.password_nueva,
+      req.stockPortal.usuario_id ?? null,
     );
+  }
+
+  /* ── Usuarios del portal del propio cliente (2026-09-16) ────────────────
+     Solo el rol admin del portal administra a los usuarios de su RUT; el
+     asistente no puede crear ni cambiar roles. */
+  @UseGuards(StockPortalGuard)
+  @Get('usuarios')
+  async listarUsuarios(@Req() req: any) {
+    return await this.stockClientes.listarUsuariosPortal(req.stockPortal.rut);
+  }
+
+  @UseGuards(StockPortalGuard)
+  @Post('usuarios')
+  async guardarUsuario(@Req() req: any, @Body() body: any) {
+    this.exigirAdminPortal(req);
+    return await this.stockClientes.guardarUsuarioPortal(
+      req.stockPortal.rut,
+      body,
+      req.stockPortal.usuario_email || 'cuenta principal',
+    );
+  }
+
+  @UseGuards(StockPortalGuard)
+  @Delete('usuarios/:id')
+  async eliminarUsuario(@Req() req: any, @Param('id') id: string) {
+    this.exigirAdminPortal(req);
+    if (Number(id) === Number(req.stockPortal.usuario_id)) {
+      throw new ForbiddenException('No puede eliminar su propio usuario.');
+    }
+    return await this.stockClientes.eliminarUsuarioPortal(req.stockPortal.rut, Number(id));
+  }
+
+  private exigirAdminPortal(req: any) {
+    if (rolDeToken(req.stockPortal) !== 'admin') {
+      throw new ForbiddenException(
+        'Solo el administrador de la cuenta puede administrar usuarios.',
+      );
+    }
   }
 
   // Aceptación del acuerdo de confidencialidad (cliente autenticado).

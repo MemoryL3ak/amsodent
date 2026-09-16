@@ -511,6 +511,7 @@ function BloqueAcuerdo({ icono: Icon, titulo, texto }) {
    ────────────────────────────────────────────────────────────────────── */
 function PantallaLogin({ onLogin, setToast }) {
   const [rut, setRut] = useState("");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [verClave, setVerClave] = useState(false);
   const [enviando, setEnviando] = useState(false);
@@ -535,7 +536,7 @@ function PantallaLogin({ onLogin, setToast }) {
     try {
       const res = await apiRequest("/stock-clientes/login", {
         method: "POST",
-        body: JSON.stringify({ rut: rutLimpio, password }),
+        body: JSON.stringify({ rut: rutLimpio, password, email: email.trim().toLowerCase() || undefined }),
       });
       if (res?.token) {
         onLogin(res.token, res.cliente);
@@ -637,6 +638,22 @@ function PantallaLogin({ onLogin, setToast }) {
                 style={styles.input}
                 disabled={enviando}
                 autoFocus
+              />
+            </label>
+
+            {/* (2026-09-16) Un mismo RUT puede tener varios usuarios. El
+                correo solo hace falta si le crearon uno propio; quien siempre
+                entró solo con RUT y clave lo deja en blanco. */}
+            <label style={styles.label}>
+              Correo <span style={{ fontWeight: 400, opacity: 0.7 }}>(solo si tiene usuario propio)</span>
+              <input
+                type="email"
+                autoComplete="username"
+                placeholder="su.correo@empresa.cl"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                style={styles.input}
+                disabled={enviando}
               />
             </label>
 
@@ -1090,7 +1107,11 @@ function FeatureItem({ icono: Icono, titulo, texto, delay = 0 }) {
    PASO 3 — Declaración de productos + semáforo
    ────────────────────────────────────────────────────────────────────── */
 function PantallaDeclaracion({ cliente, setToast }) {
-  const [tab, setTab] = useState("declaracion"); // "declaracion" | "solicitudes"
+  const [tab, setTab] = useState("declaracion"); // "declaracion" | "solicitudes" | "explorador" | "usuarios"
+  /* (2026-09-16) Rol del usuario dentro del RUT: admin puede todo (incluido
+     aprobar y pagar); asistente, todo lo demás. Las sesiones antiguas no
+     traen usuario, y esas son la cuenta principal → admin. */
+  const esAdminPortal = (cliente?.usuario?.rol || "admin") === "admin";
   const [items, setItems] = useState([]);
   // Copia del último estado guardado/cargado, para "Cancelar cambios".
   const [baseline, setBaseline] = useState([]);
@@ -1580,9 +1601,12 @@ function PantallaDeclaracion({ cliente, setToast }) {
         tab={tab}
         onChange={setTab}
         contadorSolicitudes={solicitudes.length}
+        esAdminPortal={esAdminPortal}
       />
 
-      {tab === "explorador" ? (
+      {tab === "usuarios" ? (
+        <PanelUsuariosPortal setToast={setToast} />
+      ) : tab === "explorador" ? (
         <PanelExploradorPrecios />
       ) : tab === "solicitudes" ? (
         <PanelMisSolicitudes
@@ -1978,11 +2002,13 @@ function PantallaDeclaracion({ cliente, setToast }) {
   );
 }
 
-function TabNavigator({ tab, onChange, contadorSolicitudes }) {
+function TabNavigator({ tab, onChange, contadorSolicitudes, esAdminPortal }) {
   const opciones = [
     { id: "declaracion", label: "Gestión de Stock", icono: Database },
     { id: "solicitudes", label: "Mis cotizaciones", icono: FileSpreadsheet },
     { id: "explorador", label: "Explorador de precios", icono: Search },
+    // Solo el administrador de la cuenta administra a los usuarios del RUT.
+    ...(esAdminPortal ? [{ id: "usuarios", label: "Usuarios", icono: UserCog }] : []),
   ];
   return (
     <div style={tabStyles.contenedor}>
@@ -2066,6 +2092,254 @@ const tabStyles = {
    consulta en vivo las tiendas dentales chilenas con API pública, con
    histórico de capturas (mínimo registrado y variación vs la captura
    anterior). Los precios son referenciales, de sitios externos. */
+/* ──────────────────────────────────────────────────────────────────────
+   Usuarios del portal (2026-09-16) — el administrador de la cuenta agrega a
+   la gente de su clínica con su propio correo y clave. Dos roles:
+     · Administrador → puede todo, incluidas la aprobación y el pago.
+     · Asistente     → puede todo lo demás.
+   ────────────────────────────────────────────────────────────────────── */
+const ROLES_PORTAL = [
+  { value: "admin", label: "Administrador", detalle: "Puede todo, incluidas la aprobación de cotizaciones y el pago." },
+  { value: "asistente", label: "Asistente", detalle: "Puede todo lo demás: armar pedidos, pedir cotizaciones y ver el historial." },
+];
+
+function PanelUsuariosPortal({ setToast }) {
+  const [usuarios, setUsuarios] = useState([]);
+  const [cargando, setCargando] = useState(true);
+  const [error, setError] = useState("");
+  const [modal, setModal] = useState(null); // {} nuevo | { usuario }
+  const [guardando, setGuardando] = useState(false);
+
+  async function cargar() {
+    setCargando(true);
+    setError("");
+    try {
+      const data = await apiRequest("/stock-clientes/usuarios");
+      setUsuarios(Array.isArray(data) ? data : []);
+    } catch (e) {
+      setError(e?.message || "No se pudieron cargar los usuarios.");
+    } finally {
+      setCargando(false);
+    }
+  }
+  useEffect(() => { cargar(); }, []);
+
+  async function guardar(form) {
+    setGuardando(true);
+    try {
+      await apiRequest("/stock-clientes/usuarios", {
+        method: "POST",
+        body: JSON.stringify(form),
+      });
+      setModal(null);
+      setToast({ type: "success", titulo: "Listo", mensaje: form.id ? "Usuario actualizado." : "Usuario creado. Avísele su clave: deberá cambiarla al ingresar." });
+      cargar();
+    } catch (e) {
+      setToast({ type: "error", titulo: "No se pudo guardar", mensaje: e?.message || "Intente nuevamente." });
+    } finally {
+      setGuardando(false);
+    }
+  }
+
+  async function eliminar(u) {
+    if (!window.confirm(`¿Quitar el acceso de ${u.email}? Podrá volver a crearlo cuando quiera.`)) return;
+    try {
+      await apiRequest(`/stock-clientes/usuarios/${u.id}`, { method: "DELETE" });
+      setToast({ type: "success", titulo: "Usuario eliminado", mensaje: `${u.email} ya no puede ingresar.` });
+      cargar();
+    } catch (e) {
+      setToast({ type: "error", titulo: "No se pudo eliminar", mensaje: e?.message || "Intente nuevamente." });
+    }
+  }
+
+  return (
+    <div style={styles.declCard}>
+      <div style={styles.declCardHeader}>
+        <div>
+          <div style={styles.declTitulo}>Usuarios de la cuenta</div>
+          <div style={styles.declSub}>
+            Cada persona de su clínica puede tener su propio acceso con el mismo RUT.
+            El <strong>administrador</strong> puede todo, incluidas la aprobación y el pago;
+            el <strong>asistente</strong>, todo lo demás.
+          </div>
+        </div>
+        <button type="button" onClick={() => setModal({})} style={styles.btnPrimarioChico}>
+          <Plus size={15} /> Agregar usuario
+        </button>
+      </div>
+
+      {cargando ? (
+        <div style={{ padding: 24, color: "#64748b", fontSize: 13 }}>Cargando…</div>
+      ) : error ? (
+        <div style={{ padding: 24, color: "#b91c1c", fontSize: 13 }}>{error}</div>
+      ) : usuarios.length === 0 ? (
+        <div style={{ padding: 24, color: "#64748b", fontSize: 13 }}>
+          Todavía no hay usuarios adicionales: hoy se ingresa solo con el RUT y la clave de la cuenta principal.
+        </div>
+      ) : (
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 620 }}>
+            <thead>
+              <tr style={{ background: "#f8fafc" }}>
+                <th style={thPortal}>Correo</th>
+                <th style={thPortal}>Nombre</th>
+                <th style={thPortal}>Rol</th>
+                <th style={thPortal}>Último ingreso</th>
+                <th style={{ ...thPortal, textAlign: "right" }}>Acciones</th>
+              </tr>
+            </thead>
+            <tbody>
+              {usuarios.map((u) => (
+                <tr key={u.id} style={{ borderTop: "1px solid #f1f5f9", opacity: u.activo === false ? 0.55 : 1 }}>
+                  <td style={tdPortal}>
+                    <span style={{ fontWeight: 700, color: "#0f172a" }}>{u.email}</span>
+                    {u.password_temporal && (
+                      <div style={{ fontSize: 11, color: "#b45309" }}>Clave temporal: debe cambiarla al ingresar</div>
+                    )}
+                    {u.activo === false && (
+                      <div style={{ fontSize: 11, color: "#b91c1c" }}>Desactivado</div>
+                    )}
+                  </td>
+                  <td style={tdPortal}>{u.nombre || "—"}</td>
+                  <td style={tdPortal}>
+                    <span style={{
+                      fontSize: 11, fontWeight: 700, padding: "2px 9px", borderRadius: 999,
+                      background: u.rol === "admin" ? "#e0f2fe" : "#f1f5f9",
+                      color: u.rol === "admin" ? "#0369a1" : "#475569",
+                    }}>
+                      {u.rol === "admin" ? "Administrador" : "Asistente"}
+                    </span>
+                  </td>
+                  <td style={{ ...tdPortal, fontSize: 12, color: "#64748b" }}>
+                    {u.ultimo_acceso ? String(u.ultimo_acceso).slice(0, 10).split("-").reverse().join("-") : "Nunca"}
+                  </td>
+                  <td style={{ ...tdPortal, textAlign: "right", whiteSpace: "nowrap" }}>
+                    <button type="button" onClick={() => setModal({ usuario: u })} title="Editar" style={iconBtnPortal}>
+                      <UserCog size={15} />
+                    </button>
+                    <button type="button" onClick={() => eliminar(u)} title="Quitar acceso" style={{ ...iconBtnPortal, color: "#b91c1c" }}>
+                      <Trash2 size={15} />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {modal && (
+        <ModalUsuarioPortal
+          usuario={modal.usuario || null}
+          guardando={guardando}
+          onCerrar={() => setModal(null)}
+          onGuardar={guardar}
+        />
+      )}
+    </div>
+  );
+}
+
+const thPortal = { textAlign: "left", padding: "9px 12px", fontSize: 10.5, fontWeight: 800, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".04em" };
+const tdPortal = { padding: "10px 12px", color: "#334155", verticalAlign: "top" };
+const iconBtnPortal = { background: "none", border: "none", cursor: "pointer", color: TEAL, padding: 5 };
+
+function ModalUsuarioPortal({ usuario, guardando, onCerrar, onGuardar }) {
+  const [email, setEmail] = useState(usuario?.email || "");
+  const [nombre, setNombre] = useState(usuario?.nombre || "");
+  const [rol, setRol] = useState(usuario?.rol || "asistente");
+  const [activo, setActivo] = useState(usuario ? usuario.activo !== false : true);
+  const [password, setPassword] = useState("");
+
+  const claveOk = !password || claveCumplePolitica(password);
+  const puedeGuardar =
+    /^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(email.trim()) &&
+    claveOk &&
+    (usuario ? true : !!password);
+
+  return createPortal(
+    <div
+      onMouseDown={(e) => { if (e.target === e.currentTarget) onCerrar(); }}
+      style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,.55)", backdropFilter: "blur(4px)", zIndex: 13000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+    >
+      <div style={{ width: 460, maxWidth: "100%", background: "#fff", borderRadius: 16, padding: 22, boxShadow: "0 24px 60px -12px rgba(15,23,42,.30)" }}>
+        <h3 style={{ margin: "0 0 14px", fontSize: 16, fontWeight: 800, color: "#0f172a" }}>
+          {usuario ? `Editar ${usuario.email}` : "Nuevo usuario de la cuenta"}
+        </h3>
+
+        <label style={styles.label}>
+          Correo
+          <input
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="persona@suclinica.cl"
+            style={styles.input}
+          />
+        </label>
+
+        <label style={styles.label}>
+          Nombre <span style={{ fontWeight: 400, opacity: 0.7 }}>(opcional)</span>
+          <input value={nombre} onChange={(e) => setNombre(e.target.value)} placeholder="Nombre y apellido" style={styles.input} />
+        </label>
+
+        <label style={styles.label}>
+          Rol
+          <select value={rol} onChange={(e) => setRol(e.target.value)} style={styles.input}>
+            {ROLES_PORTAL.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
+          </select>
+        </label>
+        <div style={{ fontSize: 11.5, color: "#64748b", marginTop: -6, marginBottom: 10, lineHeight: 1.4 }}>
+          {ROLES_PORTAL.find((r) => r.value === rol)?.detalle}
+        </div>
+
+        <label style={styles.label}>
+          {usuario ? "Nueva contraseña (dejar en blanco para no cambiarla)" : "Contraseña inicial"}
+          <input
+            type="text"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder="Mínimo 8 caracteres, con mayúscula, minúscula y número"
+            style={styles.input}
+          />
+        </label>
+        {password && !claveOk && (
+          <div style={{ fontSize: 11.5, color: "#b91c1c", marginTop: -6, marginBottom: 10 }}>
+            La clave debe tener al menos 8 caracteres, con mayúscula, minúscula y número.
+          </div>
+        )}
+
+        {usuario && (
+          <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "#0f172a", margin: "4px 0 12px", cursor: "pointer" }}>
+            <input type="checkbox" checked={activo} onChange={(e) => setActivo(e.target.checked)} style={{ width: 16, height: 16 }} />
+            Puede ingresar al portal
+          </label>
+        )}
+
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 8 }}>
+          <button type="button" onClick={onCerrar} style={styles.btnSecundarioChico}>Cancelar</button>
+          <button
+            type="button"
+            disabled={!puedeGuardar || guardando}
+            onClick={() => onGuardar({
+              id: usuario?.id,
+              email: email.trim().toLowerCase(),
+              nombre: nombre.trim(),
+              rol,
+              activo,
+              password: password || undefined,
+            })}
+            style={{ ...styles.btnPrimarioChico, opacity: !puedeGuardar || guardando ? 0.6 : 1 }}
+          >
+            {guardando ? "Guardando…" : "Guardar"}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 function PanelExploradorPrecios() {
   const [q, setQ] = useState("");
   const [cargando, setCargando] = useState(false);
@@ -5401,6 +5675,33 @@ const styles = {
     cursor: "pointer",
     width: "100%",
     boxShadow: "0 10px 22px rgba(15,118,110,0.28)",
+  },
+  // Botones compactos del mantenedor de usuarios (2026-09-16).
+  btnPrimarioChico: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 6,
+    background: `linear-gradient(135deg, ${TEAL}, ${TEAL_LIGHT})`,
+    color: "#fff",
+    border: "none",
+    fontSize: 13,
+    fontWeight: 700,
+    padding: "9px 16px",
+    borderRadius: 10,
+    cursor: "pointer",
+  },
+  btnSecundarioChico: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 6,
+    background: "#fff",
+    color: "#334155",
+    border: "1px solid #e2e8f0",
+    fontSize: 13,
+    fontWeight: 600,
+    padding: "9px 16px",
+    borderRadius: 10,
+    cursor: "pointer",
   },
   btnSecundarioOutline: {
     display: "inline-flex",

@@ -62,7 +62,21 @@ export type StockTokenPayload = {
   rut: string;
   razon_social: string;
   exp: number;
+  /* (2026-09-16) Identidad del usuario dentro del RUT. Los tokens antiguos no
+     los traen: sin usuario_id se asume la cuenta principal del RUT, que es
+     admin — así una sesión ya abierta no pierde permisos al desplegar. */
+  usuario_id?: number;
+  usuario_email?: string;
+  usuario_nombre?: string;
+  rol?: PortalRol;
 };
+
+export type PortalRol = 'admin' | 'asistente';
+
+// Rol efectivo de un token: sin rol declarado, es la cuenta principal (admin).
+export function rolDeToken(payload: StockTokenPayload | null | undefined): PortalRol {
+  return payload?.rol === 'asistente' ? 'asistente' : 'admin';
+}
 
 function base64urlEncode(input: string | Buffer): string {
   return Buffer.from(input)
@@ -329,9 +343,10 @@ export class StockClientesService {
   // Login con RUT y contraseña. El acceso debe estar habilitado por el admin
   // y vigente (no expirado). Devuelve el token del portal e indica si el
   // cliente debe cambiar su clave (temporal) o aceptar el acuerdo.
-  async login(opts: { rut: string; password: string; ip?: string | null }) {
+  async login(opts: { rut: string; password: string; email?: string; ip?: string | null }) {
     const rutN = normalizarRut(opts.rut);
     const password = String(opts.password || '');
+    const email = String(opts.email || '').trim().toLowerCase();
     if (!rutN) throw new BadRequestException('Debe ingresar su RUT.');
     if (!esRutValido(rutN)) {
       throw new BadRequestException('El RUT ingresado no es válido.');
@@ -365,19 +380,68 @@ export class StockClientesService {
         'Su acceso al portal expiró. Contáctese con su ejecutivo de Amsodent para renovarlo.',
       );
     }
+    const razonSocial =
+      String(cliente.nombre || portal.razon_social || '').trim();
+    const ahora = new Date().toISOString();
+
+    /* (2026-09-16) Con correo, la clave se valida contra el usuario del RUT
+       (tabla portal_usuarios); sin correo, contra la cuenta principal de
+       siempre. La habilitación y la vigencia del RUT ya se comprobaron arriba
+       y valen para todos sus usuarios. */
+    if (email) {
+      const usuario = await this.buscarUsuarioPortal(rutN, email);
+      if (!usuario || !verifyPassword(password, usuario.password_hash)) {
+        throw new UnauthorizedException('RUT, correo o contraseña incorrectos.');
+      }
+      if (usuario.activo === false) {
+        throw new UnauthorizedException('Este usuario está desactivado. Contacte al administrador de su cuenta.');
+      }
+      await client
+        .from('portal_usuarios')
+        .update({ ultimo_acceso: ahora, updated_at: ahora })
+        .eq('id', usuario.id);
+      await client
+        .from('stock_clientes_portal')
+        .update({ ultimo_acceso: ahora, updated_at: ahora })
+        .eq('rut', rutN);
+
+      const rol: PortalRol = usuario.rol === 'asistente' ? 'asistente' : 'admin';
+      const token = this.signToken({
+        rut: rutN,
+        razon_social: razonSocial,
+        usuario_id: Number(usuario.id),
+        usuario_email: String(usuario.email || '').toLowerCase(),
+        usuario_nombre: String(usuario.nombre || '').trim() || undefined,
+        rol,
+      });
+      return {
+        token,
+        cliente: {
+          rut: rutN,
+          rut_formateado: formatearRut(rutN),
+          razon_social: razonSocial,
+          debe_cambiar_clave: !!usuario.password_temporal,
+          requiere_acuerdo: !portal.acepto_acuerdo_en,
+          usuario: {
+            id: Number(usuario.id),
+            email: String(usuario.email || '').toLowerCase(),
+            nombre: String(usuario.nombre || '').trim(),
+            rol,
+          },
+        },
+      };
+    }
+
     if (!verifyPassword(password, portal.password_hash)) {
       throw new UnauthorizedException('RUT o contraseña incorrectos.');
     }
 
-    const razonSocial =
-      String(cliente.nombre || portal.razon_social || '').trim();
-    const ahora = new Date().toISOString();
     await client
       .from('stock_clientes_portal')
       .update({ ultimo_acceso: ahora, updated_at: ahora })
       .eq('rut', rutN);
 
-    const token = this.signToken({ rut: rutN, razon_social: razonSocial });
+    const token = this.signToken({ rut: rutN, razon_social: razonSocial, rol: 'admin' });
     return {
       token,
       cliente: {
@@ -386,18 +450,174 @@ export class StockClientesService {
         razon_social: razonSocial,
         debe_cambiar_clave: !!portal.password_temporal,
         requiere_acuerdo: !portal.acepto_acuerdo_en,
+        usuario: { id: null, email: String(portal.email || '').toLowerCase(), nombre: 'Cuenta principal', rol: 'admin' as PortalRol },
       },
     };
   }
 
+  /* Usuario del portal dentro de un RUT. Si la tabla aún no está migrada, se
+     comporta como si no hubiera usuarios (se sigue usando la cuenta única). */
+  private async buscarUsuarioPortal(rut: string, email: string) {
+    try {
+      const { data, error } = await this.supabase
+        .getClient()
+        .from('portal_usuarios')
+        .select('*')
+        .eq('rut', rut)
+        .ilike('email', email)
+        .maybeSingle();
+      if (error) throw new Error(error.message);
+      return data || null;
+    } catch (e: any) {
+      if (/does not exist|schema cache/i.test(String(e?.message || e))) {
+        this.logger.warn('portal_usuarios no existe todavía (migración 20260916 pendiente).');
+        return null;
+      }
+      throw new BadRequestException(String(e?.message || e));
+    }
+  }
+
+  /* ── Usuarios del portal por RUT (2026-09-16) ──────────────────────────
+     Los administra el admin de la cuenta del cliente (rol admin del portal)
+     o el equipo de Amsodent desde la plataforma. Nunca se devuelve el hash. */
+
+  private async assertTablaUsuarios() {
+    const { error } = await this.supabase
+      .getClient()
+      .from('portal_usuarios')
+      .select('id')
+      .limit(1);
+    if (error && /does not exist|schema cache/i.test(error.message)) {
+      throw new BadRequestException(
+        'Falta aplicar la migración 20260916_portal_usuarios.sql en Supabase.',
+      );
+    }
+  }
+
+  async listarUsuariosPortal(rut: string) {
+    const rutN = normalizarRut(rut);
+    await this.assertTablaUsuarios();
+    const { data, error } = await this.supabase
+      .getClient()
+      .from('portal_usuarios')
+      .select('id, rut, email, nombre, rol, activo, ultimo_acceso, password_temporal, created_at')
+      .eq('rut', rutN)
+      .order('created_at', { ascending: true });
+    if (error) throw new BadRequestException(error.message);
+    return data || [];
+  }
+
+  async guardarUsuarioPortal(
+    rut: string,
+    body: { id?: number; email?: string; nombre?: string; rol?: string; activo?: boolean; password?: string },
+    creadoPor?: string,
+  ) {
+    const rutN = normalizarRut(rut);
+    if (!rutN) throw new BadRequestException('Falta el RUT del cliente.');
+    await this.assertTablaUsuarios();
+
+    const email = String(body?.email || '').trim().toLowerCase();
+    if (!body?.id && !email) throw new BadRequestException('Debe indicar el correo del usuario.');
+    if (email && !/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(email)) {
+      throw new BadRequestException('El correo no tiene un formato válido.');
+    }
+    const rol: PortalRol = body?.rol === 'admin' ? 'admin' : 'asistente';
+    const ahora = new Date().toISOString();
+    const client = this.supabase.getClient();
+
+    if (body?.id) {
+      const fila: Record<string, any> = {
+        nombre: String(body?.nombre || '').trim() || null,
+        rol,
+        activo: body?.activo !== false,
+        updated_at: ahora,
+      };
+      if (email) fila.email = email;
+      // Cambiar la clave desde el mantenedor la deja temporal: la persona
+      // debe definir la suya al entrar.
+      if (body?.password) {
+        const err = validarPasswordPortal(String(body.password));
+        if (err) throw new BadRequestException(err);
+        fila.password_hash = hashPassword(String(body.password));
+        fila.password_temporal = true;
+        fila.password_actualizada_en = ahora;
+      }
+      const { data, error } = await client
+        .from('portal_usuarios')
+        .update(fila)
+        .eq('id', Number(body.id))
+        .eq('rut', rutN) // un RUT no puede tocar usuarios de otro
+        .select('id, rut, email, nombre, rol, activo, ultimo_acceso, password_temporal, created_at')
+        .single();
+      if (error) throw new BadRequestException(error.message);
+      return data;
+    }
+
+    const password = String(body?.password || '');
+    const errPw = validarPasswordPortal(password);
+    if (errPw) throw new BadRequestException(errPw);
+
+    const { data, error } = await client
+      .from('portal_usuarios')
+      .insert([{
+        rut: rutN,
+        email,
+        nombre: String(body?.nombre || '').trim() || null,
+        rol,
+        activo: body?.activo !== false,
+        password_hash: hashPassword(password),
+        password_temporal: true,
+        password_actualizada_en: ahora,
+        creado_por: creadoPor || null,
+      }])
+      .select('id, rut, email, nombre, rol, activo, ultimo_acceso, password_temporal, created_at')
+      .single();
+    if (error) {
+      if (/duplicate key|unique/i.test(error.message)) {
+        throw new BadRequestException('Ya existe un usuario con ese correo para este RUT.');
+      }
+      throw new BadRequestException(error.message);
+    }
+    return data;
+  }
+
+  async eliminarUsuarioPortal(rut: string, id: number) {
+    const rutN = normalizarRut(rut);
+    await this.assertTablaUsuarios();
+    const { error } = await this.supabase
+      .getClient()
+      .from('portal_usuarios')
+      .delete()
+      .eq('id', Number(id))
+      .eq('rut', rutN);
+    if (error) throw new BadRequestException(error.message);
+    return { deleted: true };
+  }
+
   // Cambio de clave del cliente autenticado (incluye el cambio obligatorio
   // del primer ingreso). Marca la clave como definitiva.
-  async cambiarClave(rut: string, passwordNueva: string) {
+  async cambiarClave(rut: string, passwordNueva: string, usuarioId?: number | null) {
     const rutN = normalizarRut(rut);
     const nueva = String(passwordNueva || '');
     const errPw = validarPasswordPortal(nueva);
     if (errPw) throw new BadRequestException(errPw);
     const ahora = new Date().toISOString();
+    // Quien entró con su propio correo cambia SU clave, no la del RUT.
+    if (usuarioId) {
+      const { error } = await this.supabase
+        .getClient()
+        .from('portal_usuarios')
+        .update({
+          password_hash: hashPassword(nueva),
+          password_temporal: false,
+          password_actualizada_en: ahora,
+          updated_at: ahora,
+        })
+        .eq('id', Number(usuarioId))
+        .eq('rut', rutN);
+      if (error) throw new BadRequestException(error.message);
+      return { ok: true };
+    }
     const { error } = await this.supabase
       .getClient()
       .from('stock_clientes_portal')
