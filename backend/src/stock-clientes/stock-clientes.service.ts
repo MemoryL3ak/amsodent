@@ -534,12 +534,12 @@ export class StockClientesService {
     const client = this.supabase.getClient();
 
     if (body?.id) {
-      const fila: Record<string, any> = {
-        nombre: String(body?.nombre || '').trim() || null,
-        rol,
-        activo: body?.activo !== false,
-        updated_at: ahora,
-      };
+      // Solo se tocan los campos que vienen en el cuerpo: cambiar el rol no
+      // debe borrar el nombre ni reactivar a un usuario desactivado.
+      const fila: Record<string, any> = { updated_at: ahora };
+      if (body?.rol !== undefined) fila.rol = rol;
+      if (body?.nombre !== undefined) fila.nombre = String(body.nombre || '').trim() || null;
+      if (body?.activo !== undefined) fila.activo = body.activo !== false;
       if (email) fila.email = email;
       // Cambiar la clave desde el mantenedor la deja temporal: la persona
       // debe definir la suya al entrar.
