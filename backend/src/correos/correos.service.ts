@@ -38,8 +38,28 @@ type PlantillaPreparada = {
   cc: string[];
 };
 
-// Copia por defecto en los correos transaccionales (agradecimiento y guía).
-const CC_POR_DEFECTO = ['ventas@amsodentmedical.cl', 'admin@amsodentmedical.cl'];
+/* Copia por defecto en los correos transaccionales (2026-09-16).
+   ventas@ es José Santander y admin@ es Ruth Fernández, así que los dos ya
+   iban en copia; lo que faltaba era Lisbeth. Las listas se pueden ajustar sin
+   tocar el código con CC_ADJUDICACION y CC_GUIA_DESPACHO (correos separados
+   por coma). La copia se muestra en el editor antes de enviar, así que el
+   vendedor siempre la ve y puede corregirla. */
+const CC_BASE = ['ventas@amsodentmedical.cl', 'admin@amsodentmedical.cl'];
+const CC_LISBETH = 'lriquelme@amsodentmedical.cl';
+
+function ccDesdeEnv(nombre: string, porDefecto: string[]): string[] {
+  const crudo = String(process.env[nombre] || '').trim();
+  const lista = crudo
+    ? crudo.split(/[,;\s]+/).map((s) => s.trim().toLowerCase()).filter((s) => s.includes('@'))
+    : porDefecto;
+  return Array.from(new Set(lista));
+}
+
+// Adjudicación (se carga la primera OC): copia a ventas, admin y Lisbeth.
+const CC_ADJUDICACION = ccDesdeEnv('CC_ADJUDICACION', [...CC_BASE, CC_LISBETH]);
+// Guía de despacho: los mismos más Ruth (admin@, ya incluido en CC_BASE).
+const CC_GUIA_DESPACHO = ccDesdeEnv('CC_GUIA_DESPACHO', [...CC_BASE, CC_LISBETH]);
+const CC_POR_DEFECTO = CC_BASE;
 
 // Tamaño máximo por adjunto adicional subido por el usuario (10 MB).
 const MAX_ADJUNTO_BYTES = 10 * 1024 * 1024;
@@ -259,6 +279,11 @@ export class CorreosService {
       nombreCliente,
       cc: CC_POR_DEFECTO,
     };
+
+    // La copia depende del tipo: adjudicación y guía llevan a Lisbeth además
+    // de ventas (José) y admin (Ruth).
+    if (tipo === 'oc_agradecimiento') base.cc = CC_ADJUDICACION;
+    else if (tipo === 'guia_despacho_enviar') base.cc = CC_GUIA_DESPACHO;
 
     if (tipo === 'oc_agradecimiento') {
       const { asunto, html } = plantillaAgradecimientoOC({
