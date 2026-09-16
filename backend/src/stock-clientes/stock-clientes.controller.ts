@@ -152,6 +152,25 @@ export class StockClientesController {
     return await this.pedidosFlujo.iniciarPago(id, req.stockPortal.rut, returnUrl, this.webpay);
   }
 
+  // Punto 29: pagar con la línea de crédito, sin pasar por Webpay.
+  @UseGuards(StockPortalGuard)
+  @Post('mis-solicitudes/:id/pagar-credito')
+  async pagarConCredito(@Req() req: any, @Param('id', ParseIntPipe) id: number) {
+    this.exigirAdminPortal(req, 'Solo el administrador de la cuenta puede pagar el pedido.');
+    return await this.pedidosFlujo.pagarConCredito(
+      id,
+      req.stockPortal.rut,
+      req.stockPortal.usuario_email || 'cuenta principal',
+    );
+  }
+
+  // Cupo de crédito del cliente, para mostrarlo en el portal.
+  @UseGuards(StockPortalGuard)
+  @Get('mi-credito')
+  async miCredito(@Req() req: any) {
+    return await this.pedidosFlujo.creditoDisponible(req.stockPortal.rut);
+  }
+
   // Retorno de Webpay. Es público a propósito: quien vuelve del formulario de
   // Transbank no trae el token del portal. La verdad del pago la da Transbank
   // (se confirma contra su API), no quien llama a este endpoint.

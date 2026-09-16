@@ -3239,6 +3239,30 @@ const FLUJO_CLIENTE = {
 function PanelMisSolicitudes({ solicitudes, cotizacionesHist = [], cargando, onSolicitarNueva, esAdminPortal = true, onRecargar, setToast }) {
   const [expandidaId, setExpandidaId] = useState(null);
   const [trabajando, setTrabajando] = useState(null); // id del pedido en curso
+  // Cupo de crédito del cliente (punto 29). Si no tiene, no se muestra nada.
+  const [credito, setCredito] = useState(null);
+  useEffect(() => {
+    apiRequest("/stock-clientes/mi-credito").then(setCredito).catch(() => setCredito(null));
+  }, []);
+
+  async function pagarConCredito(s) {
+    if (!window.confirm(`¿Cerrar el pedido N° ${s.id} por ${fmtMoneda(s.monto_total)} con tu línea de crédito?`)) return;
+    setTrabajando(s.id);
+    try {
+      const r = await apiRequest(`/stock-clientes/mis-solicitudes/${s.id}/pagar-credito`, { method: "POST" });
+      setToast?.({
+        type: "success",
+        titulo: "Pedido cerrado con crédito",
+        mensaje: r?.mensaje || "Tienen un plazo de 48 a 72 hrs para despachar el pedido.",
+      });
+      apiRequest("/stock-clientes/mi-credito").then(setCredito).catch(() => {});
+      onRecargar?.();
+    } catch (e) {
+      setToast?.({ type: "error", titulo: "No se pudo pagar con crédito", mensaje: e?.message || "Intenta nuevamente." });
+    } finally {
+      setTrabajando(null);
+    }
+  }
 
   /* Punto 9: el administrador de la cuenta aprueba el pedido que armó un
      asistente. Punto 15: recién ahí le prometemos 24-48 hrs. */
@@ -3394,8 +3418,10 @@ function PanelMisSolicitudes({ solicitudes, cotizacionesHist = [], cargando, onS
                   pedido={s}
                   esAdminPortal={esAdminPortal}
                   trabajando={trabajando === s.id}
+                  credito={credito}
                   onAprobar={() => aprobar(s)}
                   onPagar={() => pagar(s)}
+                  onPagarCredito={() => pagarConCredito(s)}
                   onSos={() => pedirSos(s)}
                 />
                 {items.length > 0 && (
@@ -3604,7 +3630,7 @@ function HiloMensajesCliente({ solicitudId }) {
 
 /* Bloque del flujo dentro del pedido, en el portal del cliente: en qué etapa
    va, qué falta y el botón de la acción que le toca a él. */
-function BloqueFlujoPedido({ pedido, esAdminPortal, trabajando, onAprobar, onPagar, onSos }) {
+function BloqueFlujoPedido({ pedido, esAdminPortal, trabajando, credito, onAprobar, onPagar, onPagarCredito, onSos }) {
   const estado = String(pedido?.flujo_estado || "");
   // Sin flujo (migración pendiente o pedido antiguo) no se muestra nada.
   if (!estado || !FLUJO_CLIENTE[estado]) return null;
@@ -3675,6 +3701,26 @@ function BloqueFlujoPedido({ pedido, esAdminPortal, trabajando, onAprobar, onPag
         {estado === "validado_plataforma" && esAdminPortal && (
           <button type="button" onClick={onPagar} disabled={trabajando} style={{ ...styles.btnPrimarioChico, opacity: trabajando ? 0.6 : 1 }}>
             {trabajando ? "Abriendo el pago…" : `Pagar ${fmtMoneda(pedido.monto_total)} con Webpay`}
+          </button>
+        )}
+        {/* Crédito (punto 29): solo si el cliente lo tiene habilitado y el
+            cupo disponible alcanza para este pedido. */}
+        {estado === "validado_plataforma" && esAdminPortal && credito?.habilitado && (
+          <button
+            type="button"
+            onClick={onPagarCredito}
+            disabled={trabajando || Number(pedido.monto_total || 0) > Number(credito.disponible || 0)}
+            style={{
+              ...styles.btnSecundarioChico,
+              opacity: trabajando || Number(pedido.monto_total || 0) > Number(credito.disponible || 0) ? 0.55 : 1,
+            }}
+            title={
+              Number(pedido.monto_total || 0) > Number(credito.disponible || 0)
+                ? `Tu crédito disponible (${fmtMoneda(credito.disponible)}) no alcanza para este pedido`
+                : `Crédito disponible: ${fmtMoneda(credito.disponible)}${credito.dias ? ` · ${credito.dias} días de plazo` : ""}`
+            }
+          >
+            Pagar con crédito
           </button>
         )}
         {estado === "validado_plataforma" && !esAdminPortal && (

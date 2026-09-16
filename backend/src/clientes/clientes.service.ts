@@ -183,7 +183,15 @@ export class ClientesService {
     if (error) {
       const msg = [error.message, (error as any).details, (error as any).hint, (error as any).code]
         .filter(Boolean).join(' ').toLowerCase();
-      if (msg.includes('transitorio') || msg.includes('42703')) {
+      // Además de `transitorio`, tolera las columnas de crédito del portal
+      // (migración 20260916) mientras no estén aplicadas.
+      if (msg.includes('credito_habilitado') || msg.includes('credito_monto') || msg.includes('credito_dias')) {
+        const limpio = { ...patch };
+        delete limpio.credito_habilitado;
+        delete limpio.credito_monto;
+        delete limpio.credito_dias;
+        ({ data, error } = await intentar(limpio));
+      } else if (msg.includes('transitorio') || msg.includes('42703')) {
         const limpio = { ...patch };
         delete limpio.transitorio;
         ({ data, error } = await intentar(limpio));

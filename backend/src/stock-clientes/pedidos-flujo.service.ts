@@ -339,6 +339,85 @@ export class PedidosFlujoService {
     return { ok: true, aprobada: true, pedido: actualizado, mensaje: MENSAJE_PAGADO };
   }
 
+  /* Pago con crédito (punto 29): el particular con crédito habilitado puede
+     cerrar el pedido sin pasar por Webpay. El cupo se mide contra el crédito
+     ya comprometido en otros pedidos, para no pasarse del límite. */
+  async pagarConCredito(id: number, rut: string, actorEmail: string) {
+    const pedido = await this.obtener(id);
+    if (String(pedido.rut) !== String(rut)) {
+      throw new ForbiddenException('Este pedido pertenece a otra cuenta.');
+    }
+    if (this.estadoDe(pedido) !== 'validado_plataforma') {
+      throw new BadRequestException('El pedido todavía no está validado por Amsodent.');
+    }
+    const monto = Math.round(Number(pedido.monto_total) || 0);
+    const credito = await this.creditoDisponible(String(pedido.rut));
+    if (!credito.habilitado) {
+      throw new BadRequestException('Tu cuenta no tiene crédito habilitado. Puedes pagar con Webpay.');
+    }
+    if (monto > credito.disponible) {
+      throw new BadRequestException(
+        `El pedido ($${monto.toLocaleString('es-CL')}) supera tu crédito disponible ($${credito.disponible.toLocaleString('es-CL')}).`,
+      );
+    }
+
+    const actualizado = await this.mover(
+      id,
+      ['validado_plataforma'],
+      'pagado',
+      {
+        pago_estado: 'pagado',
+        pago_medio: 'credito',
+        pago_at: new Date().toISOString(),
+        pago_monto: monto,
+      },
+      {
+        tipo: 'pagado', actorTipo: 'cliente', actorEmail,
+        detalle: `Pedido cerrado con crédito (cupo disponible antes: $${credito.disponible.toLocaleString('es-CL')}).`,
+        datos: { monto, medio: 'credito' },
+      },
+    );
+    await this.notificarPagoPlataforma(actualizado);
+    return { ok: true, pedido: actualizado, mensaje: MENSAJE_PAGADO };
+  }
+
+  /* Cupo de crédito del cliente: lo que tiene autorizado menos lo que ya
+     comprometió en pedidos cerrados con crédito y aún no facturados/pagados.
+     Si las columnas no están migradas, se responde "sin crédito". */
+  async creditoDisponible(rut: string) {
+    const vacio = { habilitado: false, cupo: 0, usado: 0, disponible: 0, dias: null as number | null };
+    try {
+      const rutLimpio = String(rut || '').replace(/[^0-9kK]/g, '').toLowerCase();
+      const { data: clientes, error } = await this.client
+        .from('clientes')
+        .select('rut, credito_habilitado, credito_monto, credito_dias');
+      if (error) throw new Error(error.message);
+      const cli = (clientes || []).find(
+        (c: any) => String(c?.rut || '').replace(/[^0-9kK]/g, '').toLowerCase() === rutLimpio,
+      );
+      if (!cli?.credito_habilitado) return vacio;
+      const cupo = Math.round(Number(cli.credito_monto) || 0);
+
+      const { data: usados } = await this.client
+        .from(TABLA)
+        .select('monto_total, pago_medio, flujo_estado')
+        .eq('rut', rut)
+        .eq('pago_medio', 'credito')
+        .eq('flujo_estado', 'pagado');
+      const usado = (usados || []).reduce((acc: number, p: any) => acc + (Number(p.monto_total) || 0), 0);
+      return {
+        habilitado: true,
+        cupo,
+        usado,
+        disponible: Math.max(0, cupo - usado),
+        dias: cli.credito_dias ?? null,
+      };
+    } catch (e: any) {
+      this.logger.warn(`No se pudo calcular el crédito de ${rut}: ${e?.message || e}`);
+      return vacio;
+    }
+  }
+
   private async notificarPagoPlataforma(pedido: any) {
     try {
       const { data: destinatarios } = await this.client
