@@ -3,7 +3,7 @@ import { api } from "../lib/api";
 import { Link } from "react-router-dom";
 import * as XLSX from "xlsx";
 import useAuth from "../hooks/useAuth";
-import { ChevronDown, Download, ChevronRight } from "lucide-react";
+import { ChevronDown, Download, ChevronRight, Trash2, CheckCircle2 } from "lucide-react";
 import Toast from "../components/Toast";
 import ConfirmModal from "../components/ConfirmModal";
 import DateFilter from "../components/DateFilter";
@@ -624,7 +624,7 @@ export default function ListarLicitaciones() {
                     <td>
                       <div
                         title={nombre || "Sin nombre"}
-                        style={{ maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                        style={{ maxWidth: 118, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
                       >
                         {nombre || "Sin nombre"}
                       </div>
@@ -635,22 +635,30 @@ export default function ListarLicitaciones() {
                           <button
                             type="button"
                             className="btn btn-sm btn-primary"
+                            style={{ padding: "5px 7px" }}
+                            title="Aprobar cotización"
+                            aria-label="Aprobar cotización"
                             onClick={() => aprobarCotizacion(l.id)}
                           >
-                            Aprobar
+                            <CheckCircle2 size={14} />
                           </button>
                         )}
                         {esAdmin && (
+                          /* Solo el ícono: el botón rojo con texto ensanchaba
+                             la columna sticky y tapaba el Estado. */
                           <button
                             type="button"
                             className="btn btn-sm btn-danger"
+                            style={{ padding: "5px 7px" }}
+                            title="Eliminar cotización"
+                            aria-label="Eliminar cotización"
                             onClick={() => eliminarCotizacion(l.id)}
                           >
-                            Eliminar
+                            <Trash2 size={14} />
                           </button>
                         )}
-                        <Link to={`/detalle/${l.id}`} className="table-link">
-                          Ver detalle <ChevronRight size={13} />
+                        <Link to={`/detalle/${l.id}`} className="table-link" title="Ver el detalle de la cotización">
+                          Detalle <ChevronRight size={13} />
                         </Link>
                       </div>
                     </td>
