@@ -15,8 +15,13 @@ const PAGE_W = 612;
 const PAGE_H = 792;
 const CONTENT_W = PAGE_W - PAD_X * 2; // 540
 
-const ITEMS_PAGE1 = 12;
-const ITEMS_REST  = 24;
+/* Paginación (2026-09-16): antes se repartían los ítems a mano (12 en la
+   primera página, 24 en las siguientes) asumiendo que cada fila medía una
+   línea. Bastaba una descripción larga —o una observación— para que la fila
+   ocupara dos o tres líneas, la tabla se pasara del margen y el salto de
+   página la cortara por la mitad. Ahora el documento fluye solo: el
+   encabezado y la cabecera de la tabla se repiten con `fixed`, y cada fila
+   va con `wrap={false}` para que nunca quede partida entre dos páginas. */
 
 const s = StyleSheet.create({
   page: {
@@ -171,6 +176,18 @@ const s = StyleSheet.create({
     fontSize: 9.5, marginBottom: 4, letterSpacing: 0.3,
   },
   obsText: { fontSize: 9, color: TEXT, lineHeight: 1.35 },
+
+  /* Pie con numeración: al fluir las páginas solas, el lector necesita saber
+     cuántas son y que no le falta ninguna. */
+  footer: {
+    position: "absolute",
+    bottom: 14,
+    left: PAD_X,
+    right: PAD_X,
+    textAlign: "center",
+    fontSize: 7.5,
+    color: "#8a949b",
+  },
 });
 
 /* Anchos de columna (suman ~CONTENT_W menos bordes) */
@@ -208,9 +225,11 @@ function TD({ w, flex, last, align, italic, bold, children }) {
   );
 }
 
+/* `fixed` repite la cabecera al principio de cada página: sin esto, la
+   segunda página mostraría columnas de números sin título. */
 function TableHeader() {
   return (
-    <View style={s.tHeader}>
+    <View style={s.tHeader} fixed>
       <TH w={C.item} align="center">Ítem</TH>
       <TH w={C.sku}>SKU</TH>
       <TH flex>Descripción</TH>
@@ -222,9 +241,11 @@ function TableHeader() {
   );
 }
 
+/* wrap={false}: el producto y su observación son una unidad; si no cabe
+   entera en lo que queda de página, se baja completa a la siguiente. */
 function ItemRow({ item }) {
   return (
-    <>
+    <View wrap={false}>
       <View style={s.tRow}>
         <TD w={C.item} align="center" bold>{item.n}</TD>
         <TD w={C.sku}>{item.sku}</TD>
@@ -241,7 +262,7 @@ function ItemRow({ item }) {
           <TD flex italic last>Observación: {item.observacion}</TD>
         </View>
       ) : null}
-    </>
+    </View>
   );
 }
 
@@ -264,33 +285,15 @@ function BankRow({ label, value, first }) {
 }
 
 export function CotizacionDocument({ datos, items, logoSrc, marcaAguaSrc }) {
-  // Paginación
-  const pages = [];
-  if (items.length === 0) {
-    pages.push([]);
-  } else if (items.length <= ITEMS_PAGE1) {
-    pages.push(items);
-  } else {
-    pages.push(items.slice(0, ITEMS_PAGE1));
-    let rest = items.slice(ITEMS_PAGE1);
-    while (rest.length > 0) {
-      pages.push(rest.slice(0, ITEMS_REST));
-      rest = rest.slice(ITEMS_REST);
-    }
-  }
-
   return (
     <Document>
-      {pages.map((pageItems, pageIdx) => {
-        const isFirst = pageIdx === 0;
-        const isLast  = pageIdx === pages.length - 1;
+      {/* Una sola Page que fluye: react-pdf decide dónde cortar y ningún
+          bloque queda partido (ver nota de paginación arriba). */}
+      <Page size="LETTER" style={s.page} wrap>
+            {marcaAguaSrc && <Image src={marcaAguaSrc} style={s.watermark} fixed />}
 
-        return (
-          <Page key={pageIdx} size="LETTER" style={s.page}>
-            {marcaAguaSrc && <Image src={marcaAguaSrc} style={s.watermark} />}
-
-            {/* HEADER */}
-            <View style={s.header}>
+            {/* HEADER — se repite en todas las páginas */}
+            <View style={s.header} fixed>
               <View style={s.headerLeft}>
                 {logoSrc
                   ? <Image src={logoSrc} style={s.logo} />
@@ -310,9 +313,8 @@ export function CotizacionDocument({ datos, items, logoSrc, marcaAguaSrc }) {
               </View>
             </View>
 
-            {isFirst && (
-              <>
-                {/* Fechas: creación de la cotización + adjudicación */}
+            {/* Fechas: creación de la cotización + adjudicación */}
+            <View>
                 <Text style={s.sectionTitle}>Fechas</Text>
                 <View style={s.infoRow}>
                   <InfoLine label="Fecha de creación:" value={datos.fecha_creacion || datos.fecha_emision} labelWidth={115} />
@@ -359,20 +361,20 @@ export function CotizacionDocument({ datos, items, logoSrc, marcaAguaSrc }) {
                 </View>
 
                 <Text style={s.sectionTitle}>Detalle de Productos</Text>
-              </>
-            )}
+            </View>
 
-            {/* TABLA ITEMS */}
+            {/* TABLA ITEMS — fluye entre páginas sin cortar filas */}
             <View style={s.table}>
               <TableHeader />
-              {pageItems.map((item, idx) => (
+              {items.map((item, idx) => (
                 <ItemRow key={idx} item={item} />
               ))}
             </View>
 
-            {/* ÚLTIMA PÁGINA: bank + totales + obs */}
-            {isLast && (
-              <View style={s.bottomRow}>
+            {/* Cierre: banco + totales + observaciones. wrap={false} para que
+                el bloque entero se vaya a la página siguiente antes que
+                quedar partido entre dos. */}
+            <View style={s.bottomRow} wrap={false}>
                 <View style={s.bankWrap}>
                   <Text style={s.bankHeader}>DATOS PARA TRANSFERENCIA BANCARIA</Text>
                   <BankRow label="Banco:" value="Banco Santander Chile" first />
@@ -403,11 +405,14 @@ export function CotizacionDocument({ datos, items, logoSrc, marcaAguaSrc }) {
                     <Text style={s.obsText}>{datos.observaciones || ""}</Text>
                   </View>
                 </View>
-              </View>
-            )}
-          </Page>
-        );
-      })}
+            </View>
+
+            <Text
+              style={s.footer}
+              fixed
+              render={({ pageNumber, totalPages }) => `Página ${pageNumber} de ${totalPages}`}
+            />
+      </Page>
     </Document>
   );
 }
