@@ -150,6 +150,13 @@ export class LicitacionesController {
     return this.licitacionesService.iniciarAnalisisProductosGlobal((req?.user?.email || '').toLowerCase());
   }
 
+  /* (2026-09-16, punto 22) Historial de precios de CUALQUIER producto que
+     hayamos cotizado alguna vez, para validar un precio antes de ofertarlo. */
+  @Get('productos/historial-precios')
+  historialPreciosProducto(@Query('q') q: string) {
+    return this.licitacionesService.historialPreciosProducto(q);
+  }
+
   /* Catálogo de palabras clave y búsquedas guardadas del explorador. Van antes
      de 'mercado-publico/:codigo' por la misma razón que 'buscar'. */
   @Get('mercado-publico/keywords')
