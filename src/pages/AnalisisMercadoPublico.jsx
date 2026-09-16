@@ -9,6 +9,7 @@ import { Link } from "react-router-dom";
 import { api } from "../lib/api";
 import Toast from "../components/Toast";
 import DateFilter from "../components/DateFilter";
+import DropdownSelect from "../components/ui/DropdownSelect";
 import { SunflowerIcon } from "../components/DamarIAWidget";
 
 /* ============================================================
@@ -2342,20 +2343,20 @@ function HistorialPreciosProducto() {
         ) : (
           <>
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginBottom: 12 }}>
-              <select
-                className="input"
+              <DropdownSelect
                 value={variante}
-                onChange={(e) => setVariante(e.target.value)}
+                onChange={setVariante}
                 style={{ height: 30, fontSize: 12, maxWidth: 420 }}
                 title="La búsqueda puede calzar con varios productos; elige uno para ver su curva sola"
-              >
-                <option value="">Todas las coincidencias ({datos.total} cotizaciones)</option>
-                {(datos.productos || []).map((p) => (
-                  <option key={`${p.nombre}||${p.sku || ""}`} value={`${p.nombre}||${p.sku || ""}`}>
-                    {p.nombre}{p.sku ? ` · ${p.sku}` : ""} ({p.veces})
-                  </option>
-                ))}
-              </select>
+                minWidth={320}
+                options={[
+                  { value: "", label: `Todas las coincidencias (${datos.total} cotizaciones)` },
+                  ...(datos.productos || []).map((p) => ({
+                    value: `${p.nombre}||${p.sku || ""}`,
+                    label: `${p.nombre}${p.sku ? ` · ${p.sku}` : ""} (${p.veces})`,
+                  })),
+                ]}
+              />
               <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, cursor: "pointer" }}>
                 <input type="checkbox" checked={soloAdjudicadas} onChange={(e) => setSoloAdjudicadas(e.target.checked)} />
                 Solo los precios con los que ganamos

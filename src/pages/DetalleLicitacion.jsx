@@ -14,6 +14,7 @@ import React, { useEffect, useMemo, useRef, useState, useCallback } from "react"
 import { api } from "../lib/api";
 import { useParams, useNavigate, useLocation, Link } from "react-router-dom";
 import Toast from "../components/Toast";
+import DropdownSelect from "../components/ui/DropdownSelect";
 import ConfirmModal from "../components/ConfirmModal";
 import ModalValidarTransitorio from "../components/ModalValidarTransitorio";
 import DateFilter from "../components/DateFilter";
@@ -4663,17 +4664,13 @@ export default function EditarLicitacion() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Estado del envío
                 </label>
-                <select
+                <DropdownSelect
                   className={inputClassH10}
                   value={estadoEnvio}
-                  onChange={(e) => setEstadoEnvio(e.target.value)}
+                  onChange={setEstadoEnvio}
                   disabled={!esEditable}
-                >
-                  <option value="">Sin estado</option>
-                  {ESTADOS_ENVIO.map((e) => (
-                    <option key={e.value} value={e.value}>{e.label}</option>
-                  ))}
-                </select>
+                  options={[{ value: "", label: "Sin estado" }, ...ESTADOS_ENVIO]}
+                />
                 {estadoEnvioActualizado && (
                   <div className="field-hint">
                     Actualizado el {String(estadoEnvioActualizado).slice(0, 10).split("-").reverse().join("-")}

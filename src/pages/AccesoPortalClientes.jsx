@@ -26,6 +26,7 @@ import {
 } from "lucide-react";
 import { api } from "../lib/api";
 import Toast from "../components/Toast";
+import DropdownSelect from "../components/ui/DropdownSelect";
 
 const TEAL = "#28aeb1"; // primary de la plataforma (var --primary)
 const TEAL_DARK = "#1e9295"; // var --primary-dark (acentos/textos sobre fondo claro)
@@ -54,6 +55,11 @@ function claveCumplePolitica(s) {
 }
 const MSG_CLAVE_POLITICA =
   "La contraseña debe tener al menos 8 caracteres, con mayúscula, minúscula y número.";
+
+const ROLES_PORTAL_ADMIN = [
+  { value: "asistente", label: "Asistente", detalle: "Todo salvo aprobar y pagar" },
+  { value: "admin", label: "Admin", detalle: "Incluye aprobar cotizaciones y pagar" },
+];
 
 function fmtFecha(iso) {
   if (!iso) return "—";
@@ -1032,15 +1038,15 @@ function ModalUsuariosPortal({ rut, razonSocial, onCerrar, onOk, onError }) {
                     {u.password_temporal ? " · clave temporal" : ""}
                   </div>
                 </div>
-                <select
+                <DropdownSelect
                   value={u.rol === "admin" ? "admin" : "asistente"}
                   disabled={guardando}
-                  onChange={(e) => actualizar(u, { rol: e.target.value }, "Rol actualizado.")}
-                  style={{ ...s.input, width: 110, height: 32, padding: "0 8px", fontSize: 12.5, marginBottom: 0 }}
-                >
-                  <option value="admin">Admin</option>
-                  <option value="asistente">Asistente</option>
-                </select>
+                  onChange={(v) => actualizar(u, { rol: v }, "Rol actualizado.")}
+                  options={ROLES_PORTAL_ADMIN}
+                  minWidth={230}
+                  className=""
+                  style={{ ...s.input, width: 118, height: 32, padding: "0 8px", fontSize: 12.5, marginBottom: 0 }}
+                />
                 <button
                   style={s.accBtn}
                   disabled={guardando}
@@ -1065,10 +1071,15 @@ function ModalUsuariosPortal({ rut, razonSocial, onCerrar, onOk, onError }) {
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
             <input style={s.input} type="email" placeholder="correo@empresa.cl" value={email} onChange={(e) => setEmail(e.target.value)} disabled={guardando} />
             <input style={s.input} placeholder="Nombre (opcional)" value={nombre} onChange={(e) => setNombre(e.target.value)} disabled={guardando} />
-            <select style={s.input} value={rol} onChange={(e) => setRol(e.target.value)} disabled={guardando}>
-              <option value="asistente">Asistente — todo salvo aprobar y pagar</option>
-              <option value="admin">Admin — incluye aprobar y pagar</option>
-            </select>
+            <DropdownSelect
+              value={rol}
+              onChange={setRol}
+              disabled={guardando}
+              options={ROLES_PORTAL_ADMIN}
+              minWidth={260}
+              className=""
+              style={s.input}
+            />
             <div style={{ display: "flex", gap: 8 }}>
               <input style={{ ...s.input, flex: 1 }} placeholder="Clave temporal" value={clave} onChange={(e) => setClave(e.target.value)} disabled={guardando} />
               <button style={s.accBtn} title="Generar otra clave" onClick={() => setClave(generarClave())} disabled={guardando}>
@@ -1324,10 +1335,17 @@ function ModalTiendaExplorador({ tienda, onCerrar, onHecho, onError }) {
         <input style={s.input} value={baseUrl} onChange={(e) => { setBaseUrl(e.target.value); setPrueba(null); }} placeholder="https://gexachile.cl" maxLength={200} disabled={esPropia} />
 
         <label style={{ ...s.label, marginTop: 12 }}>Tipo de tienda</label>
-        <select style={s.input} value={tipo} onChange={(e) => { setTipo(e.target.value); setPrueba(null); }} disabled={esPropia}>
-          <option value="woo">WooCommerce (WordPress — /wp-json/wc/store)</option>
-          <option value="shopify">Shopify (/search/suggest.json)</option>
-        </select>
+        <DropdownSelect
+          value={tipo}
+          onChange={(v) => { setTipo(v); setPrueba(null); }}
+          disabled={esPropia}
+          options={[
+            { value: "woo", label: "WooCommerce", detalle: "WordPress — /wp-json/wc/store" },
+            { value: "shopify", label: "Shopify", detalle: "/search/suggest.json" },
+          ]}
+          className=""
+          style={s.input}
+        />
 
         <div style={{ display: "flex", gap: 12, marginTop: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
           <div>
