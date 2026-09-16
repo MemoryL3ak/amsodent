@@ -2047,20 +2047,44 @@ export class StockClientesService {
     }
   }
 
+  /* Columnas del flujo de aprobación y pago (2026-09-16). Se piden aparte de
+     la lista base para poder caer a esta última si la migración no corre:
+     sin ellas la etapa, la bitácora del panel y los KPIs de tiempos no
+     tienen de dónde salir. */
+  private static readonly COLS_FLUJO_PEDIDO =
+    ', flujo_estado, disponibilidad, monto_total, sos, sos_motivo, sos_solicitado_at' +
+    ', pago_estado, pago_medio, pago_monto, pago_at' +
+    ', aprobado_cliente_at, aprobado_cliente_por, validado_at, validado_por, creado_por_email';
+
+  private async seleccionarSolicitudes(
+    base: string,
+    armar: (cols: string) => any,
+  ): Promise<{ data: any; error: any }> {
+    let res: { data: any; error: any } = await armar(
+      base + StockClientesService.COLS_FLUJO_PEDIDO,
+    );
+    if (res.error && /column|does not exist|schema cache/i.test(res.error.message)) {
+      res = await armar(base);
+    }
+    return res;
+  }
+
   async listarSolicitudesPorRut(rut: string, limit = 50) {
     const rutN = normalizarRut(rut);
     if (!rutN) return [];
-    const { data, error } = await this.supabase
-      .getClient()
-      .from('stock_solicitudes_cotizacion')
-      .select(
-        'id, items, nota, contacto_nombre, contacto_email, contacto_telefono, estado, respondida_at, created_at, licitacion_id',
-      )
-      .eq('rut', rutN)
-      .order('created_at', { ascending: false })
-      .limit(limit);
-    if (error) throw new BadRequestException(error.message);
-    return await this.enriquecerSolicitudes(data || [], 'equipo');
+    const res = await this.seleccionarSolicitudes(
+      'id, items, nota, contacto_nombre, contacto_email, contacto_telefono, estado, respondida_at, created_at, licitacion_id',
+      (cols) =>
+        this.supabase
+          .getClient()
+          .from('stock_solicitudes_cotizacion')
+          .select(cols)
+          .eq('rut', rutN)
+          .order('created_at', { ascending: false })
+          .limit(limit),
+    );
+    if (res.error) throw new BadRequestException(res.error.message);
+    return await this.enriquecerSolicitudes(res.data || [], 'equipo');
   }
 
   // (2026-09-10) Bandeja del equipo "Pedidos del Portal": TODOS los pedidos y
@@ -2069,15 +2093,17 @@ export class StockClientesService {
   // Stock), con la cotización vinculada, la sucursal y los mensajes sin leer.
   async listarSolicitudesTodas(limit = 400) {
     const client = this.supabase.getClient();
-    const { data, error } = await client
-      .from('stock_solicitudes_cotizacion')
-      .select(
-        'id, rut, razon_social, sucursal_id, items, nota, contacto_nombre, contacto_email, contacto_telefono, estado, respondida_at, created_at, licitacion_id',
-      )
-      .order('created_at', { ascending: false })
-      .limit(limit);
-    if (error) throw new BadRequestException(error.message);
-    const rows: any[] = await this.enriquecerSolicitudes(data || [], 'equipo');
+    const res = await this.seleccionarSolicitudes(
+      'id, rut, razon_social, sucursal_id, items, nota, contacto_nombre, contacto_email, contacto_telefono, estado, respondida_at, created_at, licitacion_id',
+      (cols) =>
+        client
+          .from('stock_solicitudes_cotizacion')
+          .select(cols)
+          .order('created_at', { ascending: false })
+          .limit(limit),
+    );
+    if (res.error) throw new BadRequestException(res.error.message);
+    const rows: any[] = await this.enriquecerSolicitudes(res.data || [], 'equipo');
 
     // Nombre de la sucursal asociada (si la solicitud traía una).
     const sucIds = [...new Set(rows.map((r) => r.sucursal_id).filter(Boolean))];
