@@ -408,29 +408,33 @@ function FilaAcceso({ a, onRegenerar, onReHabilitar, onDeshabilitar, onSucursale
       <td style={s.td}>{VIGENCIA_LABEL[a.acceso_vigencia] || "—"}</td>
       <td style={s.td}>{a.acceso_expira ? fmtFecha(a.acceso_expira) : "Sin término"}</td>
       <td style={s.td}>{a.ultimo_acceso ? fmtFechaHora(a.ultimo_acceso) : "Nunca"}</td>
-      <td style={{ ...s.td, textAlign: "right", whiteSpace: "nowrap" }}>
-        <button style={s.accBtn} onClick={onUsuarios} title="Usuarios del RUT en el portal (roles admin y asistente)">
-          <UserPlus size={14} /> Usuarios
-        </button>
-        <button style={s.accBtn} onClick={onSucursales} title="Habilitar sucursales para el portal">
-          <Building2 size={14} /> Sucursales
-        </button>
-        <button style={s.accBtn} onClick={onRegenerar} title="Regenerar clave">
-          <KeyRound size={14} /> Clave
-        </button>
-        {a.acceso_habilitado ? (
-          <button
-            style={{ ...s.accBtn, color: "#b91c1c" }}
-            onClick={onDeshabilitar}
-            title="Deshabilitar acceso"
-          >
-            <Power size={14} /> Deshabilitar
+      <td style={s.td}>
+        {/* Los botones envuelven en dos filas cuando no caben, en vez de
+            empujar la tabla fuera de la pantalla. */}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, justifyContent: "flex-end" }}>
+          <button style={s.accBtn} onClick={onUsuarios} title="Usuarios del RUT en el portal (roles admin y asistente)">
+            <UserPlus size={14} /> Usuarios
           </button>
-        ) : (
-          <button style={s.accBtn} onClick={onReHabilitar} title="Volver a habilitar">
-            <Power size={14} /> Habilitar
+          <button style={s.accBtn} onClick={onSucursales} title="Habilitar sucursales para el portal">
+            <Building2 size={14} /> Sucursales
           </button>
-        )}
+          <button style={s.accBtn} onClick={onRegenerar} title="Regenerar clave">
+            <KeyRound size={14} /> Clave
+          </button>
+          {a.acceso_habilitado ? (
+            <button
+              style={{ ...s.accBtn, color: "#b91c1c" }}
+              onClick={onDeshabilitar}
+              title="Deshabilitar acceso"
+            >
+              <Power size={14} /> Deshabilitar
+            </button>
+          ) : (
+            <button style={s.accBtn} onClick={onReHabilitar} title="Volver a habilitar">
+              <Power size={14} /> Habilitar
+            </button>
+          )}
+        </div>
       </td>
     </tr>
   );
@@ -1515,7 +1519,7 @@ const s = {
     fontWeight: 600,
     color: "#334155",
     cursor: "pointer",
-    marginLeft: 6,
+    whiteSpace: "nowrap",
   },
   listaRec: { display: "flex", flexDirection: "column", gap: 10, padding: 14 },
   recCard: { border: "1px solid #e2e8f0", borderRadius: 12, padding: 14, background: "#fff" },
