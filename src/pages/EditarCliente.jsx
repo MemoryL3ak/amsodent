@@ -24,6 +24,11 @@ export default function EditarCliente() {
   const [condVenta, setCondVenta] = useState("");
   const [condVentaOriginal, setCondVentaOriginal] = useState("");
   const [vendedorAsignado, setVendedorAsignado] = useState("");
+  /* Crédito del cliente particular (2026-09-16): habilita pagar a crédito en
+     el portal, además de Webpay. Solo lo define un administrador. */
+  const [creditoHabilitado, setCreditoHabilitado] = useState(false);
+  const [creditoMonto, setCreditoMonto] = useState("");
+  const [creditoDias, setCreditoDias] = useState("");
 
   const [esAdmin, setEsAdmin] = useState(false);
   const [esJefeVentasEspecial, setEsJefeVentasEspecial] = useState(false);
@@ -123,6 +128,9 @@ export default function EditarCliente() {
       setCondVenta((data.condiciones_venta || "").toString());
       setCondVentaOriginal((data.condiciones_venta || "").toString());
       setVendedorAsignado((data.vendedor_asignado || "").toString());
+      setCreditoHabilitado(Boolean(data.credito_habilitado));
+      setCreditoMonto(data.credito_monto ?? "");
+      setCreditoDias(data.credito_dias ?? "");
 
       setLoading(false);
 
@@ -181,6 +189,13 @@ export default function EditarCliente() {
         telefono,
         condiciones_venta: condVenta,
       };
+      // El crédito del portal solo lo define un administrador, y solo aplica a
+      // clientes particulares.
+      if (esAdmin && esParticular) {
+        payload.credito_habilitado = creditoHabilitado;
+        payload.credito_monto = creditoHabilitado && creditoMonto !== "" ? Number(creditoMonto) : null;
+        payload.credito_dias = creditoHabilitado && creditoDias !== "" ? Number(creditoDias) : null;
+      }
       // El vendedor asignado solo lo puede reasignar el administrador.
       if (esAdmin) {
         payload.vendedor_asignado = (vendedorAsignado || "").trim() || null;
@@ -328,6 +343,57 @@ export default function EditarCliente() {
                 </p>
               )}
             </div>
+
+            {/* (2026-09-16) Crédito en el portal: solo para particulares y
+                solo lo autoriza un administrador, igual que el "30 días". */}
+            {esParticular && (
+              <>
+                <div className="field">
+                  <label className="field-label">Crédito en el portal</label>
+                  <select
+                    className="input"
+                    value={creditoHabilitado ? "si" : "no"}
+                    onChange={(e) => setCreditoHabilitado(e.target.value === "si")}
+                    disabled={!esAdmin}
+                    title={!esAdmin ? "Solo un administrador puede habilitar el crédito" : ""}
+                  >
+                    <option value="no">Sin crédito (solo pago al contado)</option>
+                    <option value="si">Habilitado</option>
+                  </select>
+                  {!esAdmin && (
+                    <p style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>
+                      El crédito para clientes particulares solo puede autorizarlo el administrador.
+                    </p>
+                  )}
+                </div>
+
+                <div className="field">
+                  <label className="field-label">Cupo de crédito</label>
+                  <input
+                    className="input"
+                    type="number"
+                    min={0}
+                    value={creditoMonto}
+                    onChange={(e) => setCreditoMonto(e.target.value)}
+                    placeholder="Ej: 500000"
+                    disabled={!esAdmin || !creditoHabilitado}
+                  />
+                </div>
+
+                <div className="field">
+                  <label className="field-label">Plazo del crédito (días)</label>
+                  <input
+                    className="input"
+                    type="number"
+                    min={0}
+                    value={creditoDias}
+                    onChange={(e) => setCreditoDias(e.target.value)}
+                    placeholder="Ej: 30"
+                    disabled={!esAdmin || !creditoHabilitado}
+                  />
+                </div>
+              </>
+            )}
 
             <div className="field">
               <label className="field-label">Vendedor Asignado</label>
