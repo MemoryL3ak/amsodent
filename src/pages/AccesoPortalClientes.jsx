@@ -95,6 +95,7 @@ export default function AccesoPortalClientes() {
   const [modalHabilitar, setModalHabilitar] = useState(null); // {cliente?} o {} para nuevo
   const [modalRegenerar, setModalRegenerar] = useState(null); // {rut, razon_social, recuperacion_id?}
   const [modalSucursales, setModalSucursales] = useState(null); // {rut, razon_social}
+  const [modalUsuarios, setModalUsuarios] = useState(null); // {rut, razon_social}
 
   const cargar = useCallback(async () => {
     setCargando(true);
@@ -265,6 +266,9 @@ export default function AccesoPortalClientes() {
                       onSucursales={() =>
                         setModalSucursales({ rut: a.rut, razon_social: a.razon_social })
                       }
+                      onUsuarios={() =>
+                        setModalUsuarios({ rut: a.rut, razon_social: a.razon_social })
+                      }
                     />
                   ))}
                 </tbody>
@@ -340,6 +344,16 @@ export default function AccesoPortalClientes() {
         />
       )}
 
+      {modalUsuarios && (
+        <ModalUsuariosPortal
+          rut={modalUsuarios.rut}
+          razonSocial={modalUsuarios.razon_social}
+          onCerrar={() => setModalUsuarios(null)}
+          onOk={(msg) => setToast({ type: "success", message: msg })}
+          onError={(msg) => setToast({ type: "error", message: msg })}
+        />
+      )}
+
       {modalRegenerar && (
         <ModalRegenerar
           datos={modalRegenerar}
@@ -360,7 +374,7 @@ export default function AccesoPortalClientes() {
   );
 }
 
-function FilaAcceso({ a, onRegenerar, onReHabilitar, onDeshabilitar, onSucursales }) {
+function FilaAcceso({ a, onRegenerar, onReHabilitar, onDeshabilitar, onSucursales, onUsuarios }) {
   let estado;
   if (!a.acceso_habilitado) {
     estado = { txt: "Deshabilitado", bg: "#f1f5f9", color: "#64748b", Icon: ShieldOff };
@@ -395,6 +409,9 @@ function FilaAcceso({ a, onRegenerar, onReHabilitar, onDeshabilitar, onSucursale
       <td style={s.td}>{a.acceso_expira ? fmtFecha(a.acceso_expira) : "Sin término"}</td>
       <td style={s.td}>{a.ultimo_acceso ? fmtFechaHora(a.ultimo_acceso) : "Nunca"}</td>
       <td style={{ ...s.td, textAlign: "right", whiteSpace: "nowrap" }}>
+        <button style={s.accBtn} onClick={onUsuarios} title="Usuarios del RUT en el portal (roles admin y asistente)">
+          <UserPlus size={14} /> Usuarios
+        </button>
         <button style={s.accBtn} onClick={onSucursales} title="Habilitar sucursales para el portal">
           <Building2 size={14} /> Sucursales
         </button>
@@ -871,6 +888,194 @@ function ModalSucursalesHabilitar({ rut, razonSocial, onCerrar, onOk, onError })
             ))}
           </div>
         )}
+      </div>
+      <div style={s.modalFooter}>
+        <button style={s.btnGhost} onClick={onCerrar}>Cerrar</button>
+      </div>
+    </Overlay>
+  );
+}
+
+/* ── Usuarios del portal por RUT (2026-09-16) ───────────────────────────
+   Un RUT puede tener varias personas con su propio correo y clave, con rol
+   admin (aprueba y paga) o asistente (todo lo demás). El admin del cliente
+   también los administra desde el portal; aquí lo hace el equipo Amsodent. */
+function ModalUsuariosPortal({ rut, razonSocial, onCerrar, onOk, onError }) {
+  const [usuarios, setUsuarios] = useState([]);
+  const [cargando, setCargando] = useState(true);
+  const [guardando, setGuardando] = useState(false);
+  const [email, setEmail] = useState("");
+  const [nombre, setNombre] = useState("");
+  const [rol, setRol] = useState("asistente");
+  const [clave, setClave] = useState(() => generarClave());
+  // Última clave generada, para que el equipo se la entregue a la persona
+  // (el sistema no se la envía por correo).
+  const [claveEntregar, setClaveEntregar] = useState(null); // {email, clave}
+
+  async function cargar() {
+    setCargando(true);
+    try {
+      const data = await api.get(`/stock-clientes/accesos/usuarios?rut=${encodeURIComponent(rut)}`);
+      setUsuarios(Array.isArray(data) ? data : []);
+    } catch (e) {
+      onError?.(e?.message || "No se pudieron cargar los usuarios.");
+    } finally {
+      setCargando(false);
+    }
+  }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { cargar(); }, [rut]);
+
+  async function crear() {
+    const mail = email.trim().toLowerCase();
+    if (!mail) return onError?.("Indique el correo del usuario.");
+    if (!claveCumplePolitica(clave.trim())) return onError?.(MSG_CLAVE_POLITICA);
+    setGuardando(true);
+    try {
+      await api.post("/stock-clientes/accesos/usuarios", {
+        rut, email: mail, nombre: nombre.trim(), rol, password: clave.trim(),
+      });
+      setClaveEntregar({ email: mail, clave: clave.trim() });
+      setEmail(""); setNombre(""); setRol("asistente"); setClave(generarClave());
+      onOk?.("Usuario creado. Entréguele su clave: deberá cambiarla al entrar.");
+      cargar();
+    } catch (e) {
+      onError?.(e?.message || "No se pudo crear el usuario.");
+    } finally {
+      setGuardando(false);
+    }
+  }
+
+  async function actualizar(u, patch, msg) {
+    setGuardando(true);
+    try {
+      await api.post("/stock-clientes/accesos/usuarios", { rut, id: u.id, ...patch });
+      if (msg) onOk?.(msg);
+      cargar();
+    } catch (e) {
+      onError?.(e?.message || "No se pudo actualizar el usuario.");
+    } finally {
+      setGuardando(false);
+    }
+  }
+
+  async function regenerarClaveUsuario(u) {
+    const nueva = generarClave();
+    await actualizar(u, { password: nueva }, null);
+    setClaveEntregar({ email: u.email, clave: nueva });
+    onOk?.(`Clave nueva para ${u.email}. Entréguesela: deberá cambiarla al entrar.`);
+  }
+
+  async function eliminar(u) {
+    if (!window.confirm(`¿Quitar el acceso de ${u.email}? Podrá volver a crearlo cuando quiera.`)) return;
+    setGuardando(true);
+    try {
+      await api.delete(`/stock-clientes/accesos/usuarios/${u.id}?rut=${encodeURIComponent(rut)}`);
+      onOk?.("Usuario eliminado.");
+      cargar();
+    } catch (e) {
+      onError?.(e?.message || "No se pudo eliminar el usuario.");
+    } finally {
+      setGuardando(false);
+    }
+  }
+
+  return (
+    <Overlay onCerrar={onCerrar}>
+      <h2 style={s.modalTitle}>
+        <UserPlus size={18} /> Usuarios del portal · {razonSocial || "Cliente"}
+      </h2>
+      <div style={s.modalBody}>
+        <div style={{ fontSize: 12.5, color: "#64748b", marginBottom: 12 }}>
+          Personas que entran al portal con este RUT, cada una con su correo y clave.
+          El rol <strong>Admin</strong> aprueba cotizaciones y paga; el <strong>Asistente</strong> hace
+          todo lo demás. Quien entra solo con RUT y clave sigue siendo la cuenta principal (admin).
+        </div>
+
+        {claveEntregar && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", borderRadius: 10, background: "#ecfeff", border: "1px solid #a5f3fc", marginBottom: 12, fontSize: 13 }}>
+            <KeyRound size={14} style={{ color: TEAL_DARK, flexShrink: 0 }} />
+            <span style={{ minWidth: 0 }}>
+              Clave de <strong>{claveEntregar.email}</strong>:{" "}
+              <code style={{ fontWeight: 800 }}>{claveEntregar.clave}</code>
+            </span>
+            <button
+              style={{ ...s.accBtn, marginLeft: "auto", flexShrink: 0 }}
+              onClick={() => {
+                navigator.clipboard?.writeText(claveEntregar.clave);
+                onOk?.("Clave copiada.");
+              }}
+            >
+              <Copy size={13} /> Copiar
+            </button>
+          </div>
+        )}
+
+        {cargando ? (
+          <div style={{ fontSize: 13, color: "#64748b", padding: "10px 0" }}>Cargando…</div>
+        ) : usuarios.length === 0 ? (
+          <div style={{ fontSize: 13, color: "#94a3b8", padding: "10px 0" }}>
+            Este RUT aún no tiene usuarios propios: se entra con la cuenta principal.
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 4 }}>
+            {usuarios.map((u) => (
+              <div key={u.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", border: "1px solid #e2e8f0", borderRadius: 10, opacity: u.activo === false ? 0.55 : 1 }}>
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div style={{ fontSize: 13.5, fontWeight: 600, color: "#0f172a", overflow: "hidden", textOverflow: "ellipsis" }}>{u.email}</div>
+                  <div style={{ fontSize: 12, color: "#64748b" }}>
+                    {[u.nombre, u.ultimo_acceso ? `último acceso ${fmtFechaHora(u.ultimo_acceso)}` : "nunca ha entrado"].filter(Boolean).join(" · ")}
+                    {u.password_temporal ? " · clave temporal" : ""}
+                  </div>
+                </div>
+                <select
+                  value={u.rol === "admin" ? "admin" : "asistente"}
+                  disabled={guardando}
+                  onChange={(e) => actualizar(u, { rol: e.target.value }, "Rol actualizado.")}
+                  style={{ ...s.input, width: 110, height: 32, padding: "0 8px", fontSize: 12.5, marginBottom: 0 }}
+                >
+                  <option value="admin">Admin</option>
+                  <option value="asistente">Asistente</option>
+                </select>
+                <button
+                  style={s.accBtn}
+                  disabled={guardando}
+                  title={u.activo === false ? "Reactivar usuario" : "Desactivar usuario (no podrá entrar)"}
+                  onClick={() => actualizar(u, { activo: u.activo === false }, u.activo === false ? "Usuario reactivado." : "Usuario desactivado.")}
+                >
+                  <Power size={13} /> {u.activo === false ? "Activar" : "Desactivar"}
+                </button>
+                <button style={s.accBtn} disabled={guardando} title="Generar una clave nueva" onClick={() => regenerarClaveUsuario(u)}>
+                  <KeyRound size={13} /> Clave
+                </button>
+                <button style={{ ...s.accBtn, color: "#b91c1c" }} disabled={guardando} title="Eliminar usuario" onClick={() => eliminar(u)}>
+                  <Trash2 size={13} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div style={{ marginTop: 12, paddingTop: 14, borderTop: "1px solid #e2e8f0" }}>
+          <div style={{ ...s.label, marginBottom: 8 }}>Agregar usuario</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <input style={s.input} type="email" placeholder="correo@empresa.cl" value={email} onChange={(e) => setEmail(e.target.value)} disabled={guardando} />
+            <input style={s.input} placeholder="Nombre (opcional)" value={nombre} onChange={(e) => setNombre(e.target.value)} disabled={guardando} />
+            <select style={s.input} value={rol} onChange={(e) => setRol(e.target.value)} disabled={guardando}>
+              <option value="asistente">Asistente — todo salvo aprobar y pagar</option>
+              <option value="admin">Admin — incluye aprobar y pagar</option>
+            </select>
+            <div style={{ display: "flex", gap: 8 }}>
+              <input style={{ ...s.input, flex: 1 }} placeholder="Clave temporal" value={clave} onChange={(e) => setClave(e.target.value)} disabled={guardando} />
+              <button style={s.accBtn} title="Generar otra clave" onClick={() => setClave(generarClave())} disabled={guardando}>
+                <RefreshCw size={13} />
+              </button>
+            </div>
+          </div>
+          <button style={{ ...s.btnPrimarioSm, marginTop: 10 }} onClick={crear} disabled={guardando}>
+            <UserPlus size={14} /> {guardando ? "Guardando…" : "Crear usuario"}
+          </button>
+        </div>
       </div>
       <div style={s.modalFooter}>
         <button style={s.btnGhost} onClick={onCerrar}>Cerrar</button>

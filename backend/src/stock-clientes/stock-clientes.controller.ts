@@ -670,6 +670,34 @@ export class StockClientesController {
     });
   }
 
+  /* Usuarios del portal de un RUT, administrados desde la plataforma
+     (2026-09-16). El admin del cliente también los administra desde el
+     portal — comparten el mismo mantenedor del servicio. */
+  @UseGuards(AdminGuard)
+  @Get('accesos/usuarios')
+  async listarUsuariosDeAcceso(@Query('rut') rut: string) {
+    return await this.stockClientes.listarUsuariosPortal(rut);
+  }
+
+  @UseGuards(AdminGuard)
+  @Post('accesos/usuarios')
+  async guardarUsuarioDeAcceso(@Req() req: any, @Body() body: any) {
+    return await this.stockClientes.guardarUsuarioPortal(
+      String(body?.rut || ''),
+      body,
+      req?.user?.email || 'plataforma',
+    );
+  }
+
+  @UseGuards(AdminGuard)
+  @Delete('accesos/usuarios/:id')
+  async eliminarUsuarioDeAcceso(
+    @Param('id', ParseIntPipe) id: number,
+    @Query('rut') rut: string,
+  ) {
+    return await this.stockClientes.eliminarUsuarioPortal(rut, id);
+  }
+
   @UseGuards(AdminGuard)
   @Post('accesos/deshabilitar')
   async deshabilitarAcceso(@Body() body: { rut: string }) {
