@@ -707,6 +707,8 @@ function listaPasos(items: string[]): string {
 export type DatosBienvenidaPortal = {
   razonSocial: string;
   rutFmt: string;
+  // Correo con el que la persona entrará al portal (el mismo que recibe esto).
+  emailAcceso?: string;
   passwordTemporal: string;
   // Texto legible del período: "1 mes", "3 meses", "Acceso indefinido".
   vigenciaTexto: string;
@@ -724,9 +726,11 @@ export function plantillaBienvenidaPortal(
   const razonSocial = String(datos.razonSocial || '').trim() || datos.rutFmt;
   const clave = String(datos.passwordTemporal || '').trim();
   const url = String(datos.urlPortal || '').trim();
+  const emailAcceso = String(datos.emailAcceso || '').trim().toLowerCase();
 
   const filasAcceso = [
     filaDato('🪪', 'RUT de acceso', datos.rutFmt),
+    emailAcceso ? filaDato('✉️', 'Correo de acceso', emailAcceso) : '',
     filaDato('🔑', 'Clave temporal', clave),
     filaDato('🗓️', 'Vigencia del acceso', datos.vigenciaTexto),
     datos.expiraTexto
@@ -738,7 +742,7 @@ export function plantillaBienvenidaPortal(
 
   const pasosAcceso = [
     `Ingrese al portal desde el botón de abajo${url ? '' : ' (le compartiremos el enlace)'}.`,
-    `Escriba su <strong>RUT</strong> y la <strong>clave temporal</strong> indicada en este correo.`,
+    `Escriba su <strong>RUT</strong>, su <strong>correo</strong>${emailAcceso ? ` (${escapeHtml(emailAcceso)})` : ''} y la <strong>clave temporal</strong> indicada en este correo.`,
     `Por seguridad, el sistema le pedirá <strong>cambiar la clave</strong> en su primer ingreso.`,
     `Acepte el acuerdo de confidencialidad y comience a declarar su stock y a solicitar cotizaciones.`,
   ];

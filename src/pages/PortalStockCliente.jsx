@@ -617,6 +617,10 @@ function PantallaLogin({ onLogin, setToast }) {
       setError("Debe ingresar su RUT.");
       return;
     }
+    if (!email.trim()) {
+      setError("Debe ingresar su correo.");
+      return;
+    }
     if (!password) {
       setError("Debe ingresar su contraseña.");
       return;
@@ -626,7 +630,7 @@ function PantallaLogin({ onLogin, setToast }) {
     try {
       const res = await apiRequest("/stock-clientes/login", {
         method: "POST",
-        body: JSON.stringify({ rut: rutLimpio, password, email: email.trim().toLowerCase() || undefined }),
+        body: JSON.stringify({ rut: rutLimpio, password, email: email.trim().toLowerCase() }),
       });
       if (res?.token) {
         onLogin(res.token, res.cliente);
@@ -731,11 +735,12 @@ function PantallaLogin({ onLogin, setToast }) {
               />
             </label>
 
-            {/* (2026-09-16) Un mismo RUT puede tener varios usuarios. El
-                correo solo hace falta si le crearon uno propio; quien siempre
-                entró solo con RUT y clave lo deja en blanco. */}
+            {/* (2026-09-16) Un mismo RUT puede tener varios usuarios y el
+                correo dice quién entra. Si no corresponde a un usuario creado,
+                la clave se valida contra la cuenta principal del RUT — así
+                los clientes antiguos entran igual que siempre. */}
             <label style={styles.label}>
-              Correo <span style={{ fontWeight: 400, opacity: 0.7 }}>(solo si tiene usuario propio)</span>
+              Correo
               <input
                 type="email"
                 autoComplete="username"
