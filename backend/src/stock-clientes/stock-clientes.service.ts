@@ -1639,24 +1639,56 @@ export class StockClientesService {
     const contactoTelefono = String(body?.contacto_telefono || '').trim() || null;
     const nota = String(body?.nota || '').trim().slice(0, 1000) || null;
 
+    /* (2026-09-16) Etapa inicial según quién envía: el asistente deja el
+       pedido esperando la aprobación del administrador de la cuenta; el
+       administrador no se aprueba a sí mismo, su pedido sale aprobado y la
+       plataforma se entera al tiro. */
+    const rol = rolDeToken(payload);
+    const yaAprobado = rol === 'admin';
+    const ahoraIso = new Date().toISOString();
+    const camposFlujo = {
+      flujo_estado: yaAprobado ? 'aprobado_cliente' : 'pendiente_aprobacion',
+      creado_por_usuario_id: payload.usuario_id ?? null,
+      creado_por_email: payload.usuario_email ?? null,
+      aprobado_cliente_at: yaAprobado ? ahoraIso : null,
+      aprobado_cliente_por: yaAprobado ? (payload.usuario_email || 'cuenta principal') : null,
+    };
+
     const client = this.supabase.getClient();
-    const { data: solicitud, error } = await client
-      .from('stock_solicitudes_cotizacion')
-      .insert({
-        rut: rutN,
-        sucursal_id: sucursalId,
-        razon_social: razonSocial,
-        contacto_nombre: contactoNombre,
-        contacto_email: contactoEmail,
-        contacto_telefono: contactoTelefono,
-        nota,
-        items,
-        ip_address: meta.ip || null,
-        user_agent: meta.user_agent || null,
-      })
-      .select()
-      .single();
+    const base = {
+      rut: rutN,
+      sucursal_id: sucursalId,
+      razon_social: razonSocial,
+      contacto_nombre: contactoNombre,
+      contacto_email: contactoEmail,
+      contacto_telefono: contactoTelefono,
+      nota,
+      items,
+      ip_address: meta.ip || null,
+      user_agent: meta.user_agent || null,
+    };
+    const insertar = (fila: Record<string, any>) =>
+      client.from('stock_solicitudes_cotizacion').insert(fila).select().single();
+
+    let { data: solicitud, error } = await insertar({ ...base, ...camposFlujo });
+    // Si la migración del flujo aún no está aplicada, el pedido se crea igual
+    // (y se comporta como antes: sin etapa de aprobación).
+    if (error && /flujo_estado|creado_por|aprobado_cliente/.test(error.message)) {
+      ({ data: solicitud, error } = await insertar(base));
+    }
     if (error) throw new BadRequestException(error.message);
+
+    // Mientras espera la aprobación del cliente, la plataforma NO se entera:
+    // avisar de un pedido que su propio administrador todavía no aprobó sería
+    // ruido (punto 10 — la plataforma se entera cuando se aprueba).
+    if (!yaAprobado) {
+      return {
+        ok: true,
+        solicitud: { id: solicitud?.id, items: items.length },
+        flujo_estado: 'pendiente_aprobacion',
+        mensaje: 'Tu pedido quedó esperando la aprobación del administrador de la cuenta.',
+      };
+    }
 
     // Notificaciones (campana + correo) a los destinatarios configurados
     await this.notificarSolicitud({
