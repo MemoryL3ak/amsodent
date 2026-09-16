@@ -1178,6 +1178,9 @@ export default function AnalisisMercadoPublico() {
         </Panel>
       </div>
 
+      {/* Cotizaciones cuyo estado no calza con Mercado Público */}
+      <EstadoMpCotizaciones setToast={setToast} />
+
       {/* Historial de precios de cualquier producto que hayamos cotizado */}
       <HistorialPreciosProducto />
 
@@ -2092,6 +2095,166 @@ function Panel({ titulo, sub, extra, children }) {
 
 function Vacio({ texto }) {
   return <div style={{ padding: "26px 0", textAlign: "center", color: "var(--text-muted)", fontSize: 12.5 }}>{texto}</div>;
+}
+
+/* ── Estado real de nuestras cotizaciones en Mercado Público ───────────────
+   (2026-09-16, punto 26)
+   Una cotización podía quedar "En espera" cuando el proceso ya estaba
+   adjudicado —a nosotros o a otro— y nadie se enteraba hasta que aparecía una
+   OC suelta. Esto consulta MP y muestra las que no calzan, con el estado que
+   correspondería. Aplicar el cambio es un paso aparte y explícito: mirar no
+   debe cambiar datos del negocio.
+   ───────────────────────────────────────────────────────────────────────── */
+function EstadoMpCotizaciones({ setToast }) {
+  const [datos, setDatos] = useState(null);
+  const [cargando, setCargando] = useState(false);
+  const [aplicando, setAplicando] = useState(false);
+  const [error, setError] = useState("");
+  const [elegidas, setElegidas] = useState(() => new Set());
+
+  async function revisar() {
+    setCargando(true); setError(""); setElegidas(new Set());
+    try {
+      const r = await api.post("/licitaciones/mercado-publico/diagnostico-estados", { limite: 40 });
+      setDatos(r);
+      // Las discrepancias vienen marcadas: se preseleccionan para no obligar
+      // a tildarlas una por una, pero se pueden destildar.
+      setElegidas(new Set((r.filas || []).filter((f) => f.discrepancia).map((f) => f.id)));
+    } catch (e) {
+      setError(e?.message || "No se pudo consultar Mercado Público.");
+      setDatos(null);
+    } finally {
+      setCargando(false);
+    }
+  }
+
+  const discrepancias = useMemo(
+    () => (datos?.filas || []).filter((f) => f.discrepancia),
+    [datos],
+  );
+
+  async function aplicar() {
+    const cambios = discrepancias
+      .filter((f) => elegidas.has(f.id))
+      .map((f) => ({ id: f.id, estado: f.sugerencia }));
+    if (!cambios.length) return;
+    if (!window.confirm(`¿Actualizar el estado de ${cambios.length} cotización(es) según Mercado Público?`)) return;
+    setAplicando(true);
+    try {
+      const r = await api.post("/licitaciones/mercado-publico/aplicar-estados", { cambios });
+      setToast?.({ type: "success", message: `${r.aplicados} cotización(es) actualizada(s).` });
+      revisar();
+    } catch (e) {
+      setToast?.({ type: "error", message: e?.message || "No se pudieron aplicar los cambios." });
+    } finally {
+      setAplicando(false);
+    }
+  }
+
+  return (
+    <div style={{ marginTop: 16, marginBottom: 16 }}>
+      <Panel
+        titulo="Estado de nuestras cotizaciones en Mercado Público"
+        sub="Compara el estado guardado con el que publica Mercado Público y muestra las que no calzan"
+        extra={
+          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            {discrepancias.length > 0 && (
+              <button
+                className="btn btn-primary btn-sm"
+                onClick={aplicar}
+                disabled={aplicando || elegidas.size === 0}
+                style={{ fontSize: 11.5 }}
+              >
+                {aplicando ? "Aplicando…" : `Actualizar ${elegidas.size}`}
+              </button>
+            )}
+            <button className="btn btn-secondary btn-sm" onClick={revisar} disabled={cargando} style={{ fontSize: 11.5, display: "inline-flex", alignItems: "center", gap: 5 }}>
+              <RefreshCw size={12} className={cargando ? "girando" : undefined} />
+              {cargando ? "Consultando…" : "Revisar en Mercado Público"}
+            </button>
+          </div>
+        }
+      >
+        {error ? (
+          <div style={{ color: "#b91c1c", fontSize: 12.5, padding: "10px 0" }}>{error}</div>
+        ) : !datos ? (
+          <Vacio texto="Usa «Revisar en Mercado Público» para comparar el estado de las cotizaciones abiertas con lo que publica MP." />
+        ) : (
+          <>
+            <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 10 }}>
+              {datos.revisadas} de {datos.candidatas} cotizaciones abiertas con código de Mercado Público ·{" "}
+              <strong style={{ color: datos.con_discrepancia ? "#b45309" : "#15803d" }}>
+                {datos.con_discrepancia} con el estado desactualizado
+              </strong>
+              {datos.con_error > 0 ? ` · ${datos.con_error} no se pudieron consultar` : ""}
+            </div>
+
+            {datos.filas.length === 0 ? (
+              <Vacio texto="No hay cotizaciones abiertas con código de Mercado Público." />
+            ) : (
+              <div style={{ border: "1px solid var(--border)", borderRadius: 8, overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, background: "var(--surface)", minWidth: 820 }}>
+                  <thead>
+                    <tr style={{ background: "var(--bg)", color: "var(--text-muted)", textAlign: "left" }}>
+                      <th style={{ padding: "6px 10px", width: 34 }} />
+                      <th style={{ padding: "6px 10px" }}>Cotización</th>
+                      <th style={{ padding: "6px 10px" }}>Cliente</th>
+                      <th style={{ padding: "6px 10px" }}>Estado acá</th>
+                      <th style={{ padding: "6px 10px" }}>Mercado Público</th>
+                      <th style={{ padding: "6px 10px" }}>Qué corresponde</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {datos.filas.map((f) => (
+                      <tr key={f.id} style={{ borderTop: "1px solid var(--border)", background: f.discrepancia ? "#fffbeb" : undefined }}>
+                        <td style={{ padding: "5px 10px", textAlign: "center" }}>
+                          {f.discrepancia && (
+                            <input
+                              type="checkbox"
+                              checked={elegidas.has(f.id)}
+                              onChange={() =>
+                                setElegidas((prev) => {
+                                  const s = new Set(prev);
+                                  if (s.has(f.id)) s.delete(f.id); else s.add(f.id);
+                                  return s;
+                                })
+                              }
+                            />
+                          )}
+                        </td>
+                        <td style={{ padding: "5px 10px", whiteSpace: "nowrap" }}>
+                          <Link to={`/detalle/${f.id}`} className="table-link" style={{ fontWeight: 600 }}>{f.id_licitacion}</Link>
+                        </td>
+                        <td style={{ padding: "5px 10px", maxWidth: 220 }}>
+                          <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={f.cliente || ""}>{f.cliente || "—"}</div>
+                        </td>
+                        <td style={{ padding: "5px 10px", whiteSpace: "nowrap" }}>{f.estado_actual}</td>
+                        <td style={{ padding: "5px 10px", whiteSpace: "nowrap" }}>
+                          {f.error ? <span style={{ color: "var(--text-muted)" }} title={f.error}>no se pudo consultar</span> : (f.estado_mp || "—")}
+                          {f.adjudicada_a_nosotros === true && <span style={{ color: "#15803d", fontWeight: 700 }}> · nuestra</span>}
+                          {f.adjudicada_a_nosotros === false && f.adjudicatario && (
+                            <span style={{ color: "var(--text-muted)" }} title={f.adjudicatario}> · de otro</span>
+                          )}
+                        </td>
+                        <td style={{ padding: "5px 10px", color: f.discrepancia ? "#b45309" : "var(--text-muted)" }}>
+                          {f.discrepancia ? <><strong>{f.sugerencia}</strong> — {f.motivo}</> : (f.error ? f.error : "está al día")}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            <p style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 8, marginBottom: 0 }}>
+              Mercado Público solo publica quién ofertó una vez resuelto el proceso, así que mientras esté
+              «Publicada» o «Cerrada» no se puede afirmar nada y no se marca discrepancia. La consulta gasta
+              cuota del ticket diario de ChileCompra.
+            </p>
+          </>
+        )}
+      </Panel>
+    </div>
+  );
 }
 
 /* ── Historial de precios de un producto (2026-09-16, punto 22) ────────────

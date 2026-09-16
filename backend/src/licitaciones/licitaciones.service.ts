@@ -2480,6 +2480,202 @@ export class LicitacionesService {
     }
   }
 
+  /* ── Estado real en Mercado Público de nuestras cotizaciones ───────────
+     (2026-09-16, punto 26)
+
+     Problema que resuelve: una cotización podía quedar "En espera" en la
+     plataforma cuando en Mercado Público el proceso ya estaba adjudicado —a
+     nosotros o a otro— y nadie se enteraba hasta que aparecía una OC suelta.
+     Esto consulta el proceso y devuelve un DIAGNÓSTICO por cotización: qué
+     dice MP, si postulamos y si el estado guardado calza.
+
+     No cambia nada por su cuenta: `aplicar` existe aparte, porque cambiar el
+     estado de una cotización es una decisión comercial, no un efecto
+     secundario de mirar. */
+  async diagnosticoMpCotizaciones(body?: { ids?: number[]; limite?: number }) {
+    const ticket = this.mpTicket();
+    const client = this.supabase.getClient();
+
+    const ids = Array.isArray(body?.ids) ? body!.ids!.map(Number).filter(Number.isFinite) : null;
+    let q = client
+      .from('licitaciones')
+      .select('id, id_licitacion, nombre_entidad, estado, fecha, total_con_iva')
+      .not('id_licitacion', 'is', null)
+      .order('fecha', { ascending: false });
+    if (ids?.length) q = q.in('id', ids);
+    const { data, error } = await q;
+    if (error) throw new BadRequestException(error.message);
+
+    // Solo códigos con forma de proceso de Mercado Público; el resto son
+    // cotizaciones particulares y no tienen nada que consultar.
+    const esCodigoMp = (c: string) => /^\d{3,}-\d{1,6}-[A-Z]{2}\d{2}$/i.test(String(c || '').trim());
+    const candidatas = (data || []).filter((l: any) => {
+      if (!esCodigoMp(l.id_licitacion)) return false;
+      if (ids?.length) return true;
+      // Sin ids explícitos, solo las que aún no están cerradas: las demás ya
+      // tienen desenlace y no hay nada que corregir.
+      const e = String(l.estado || '');
+      return !['Adjudicada', 'Perdida', 'Descartada', 'Cancelada'].includes(e);
+    });
+
+    const limite = Math.max(1, Math.min(120, Number(body?.limite) || 40));
+    const aRevisar = candidatas.slice(0, limite);
+    const rutNuestro = String(process.env.MP_RUT_EMPRESA || '').replace(/[^0-9kK]/g, '').toUpperCase();
+
+    const filas: any[] = [];
+    const CONCURRENCIA = 8;
+    for (let i = 0; i < aRevisar.length; i += CONCURRENCIA) {
+      await Promise.all(aRevisar.slice(i, i + CONCURRENCIA).map(async (lic: any) => {
+        const codigo = String(lic.id_licitacion).trim();
+        const base = {
+          id: lic.id,
+          id_licitacion: codigo,
+          cliente: lic.nombre_entidad,
+          estado_actual: lic.estado,
+          total: lic.total_con_iva,
+        };
+        try {
+          const info = await this.estadoMpDeCodigo(codigo, ticket, rutNuestro);
+          filas.push({ ...base, ...info, ...this.compararEstadoMp(lic.estado, info) });
+        } catch (e: any) {
+          filas.push({ ...base, error: String(e?.message || e).slice(0, 160) });
+        }
+      }));
+    }
+
+    filas.sort((a, b) => (b.discrepancia ? 1 : 0) - (a.discrepancia ? 1 : 0));
+    return {
+      revisadas: filas.length,
+      candidatas: candidatas.length,
+      con_discrepancia: filas.filter((f) => f.discrepancia).length,
+      con_error: filas.filter((f) => f.error).length,
+      filas,
+    };
+  }
+
+  /* Consulta un proceso y resume: estado en MP, si postulamos y a quién se
+     adjudicó. Compra Ágil (API v2) publica los cotizantes; las licitaciones
+     (API v1) solo publican a los adjudicados. */
+  private async estadoMpDeCodigo(codigo: string, ticket: string, rutNuestro: string) {
+    const norm = (r: unknown) => String(r || '').replace(/[^0-9kK]/g, '').toUpperCase();
+
+    if (/-COT\w*$/i.test(codigo)) {
+      const post = await this.consultarPostulacion(codigo, ticket, rutNuestro);
+      return {
+        fuente: 'Compra Ágil',
+        estado_mp: (post as any).estado_mp || null,
+        postulamos: (post as any).postulamos ?? null,
+        adjudicada_a_nosotros: null as boolean | null,
+        adjudicatario: null as string | null,
+        nota: (post as any).nota || null,
+      };
+    }
+
+    const { res, json } = await this.mpFetch(
+      `https://api.mercadopublico.cl/servicios/v1/publico/licitaciones.json?codigo=${encodeURIComponent(codigo)}&ticket=${encodeURIComponent(ticket)}`,
+    );
+    const l: any = json?.Listado?.[0];
+    if (!l) {
+      // La API v1 responde 200 con listado vacío cuando el código no es de un
+      // tipo que publique (tratos directos, convenios), no solo cuando no
+      // existe. Decirlo así evita que parezca una falla del sistema.
+      throw new Error(
+        res.ok
+          ? 'Mercado Público no publica este proceso en su API (puede ser un tipo que no se publica, como trato directo o convenio marco).'
+          : `Mercado Público respondió ${res.status}.`,
+      );
+    }
+    const codigoEstado = Number(l?.CodigoEstado);
+    const estadoMp = { 5: 'Publicada', 6: 'Cerrada', 7: 'Desierta', 8: 'Adjudicada', 18: 'Revocada', 19: 'Suspendida' }[codigoEstado]
+      || String(l?.Estado || 'Sin estado');
+
+    // En las adjudicadas, cada ítem trae a su proveedor ganador.
+    const items: any[] = Array.isArray(l?.Items?.Listado) ? l.Items.Listado : [];
+    const adjudicados = items
+      .map((it) => it?.Adjudicacion)
+      .filter(Boolean);
+    const nuestros = rutNuestro
+      ? adjudicados.filter((a: any) => norm(a?.RutProveedor) === rutNuestro)
+      : [];
+    const adjudicatario = adjudicados.length
+      ? String(adjudicados[0]?.NombreProveedor || '').slice(0, 120) || null
+      : null;
+
+    return {
+      fuente: 'Licitación',
+      estado_mp: estadoMp,
+      // La API v1 solo publica a los adjudicados: si el proceso no está
+      // resuelto, no se puede afirmar nada sobre si postulamos.
+      postulamos: codigoEstado === 8 ? nuestros.length > 0 : null,
+      adjudicada_a_nosotros: codigoEstado === 8 ? nuestros.length > 0 : null,
+      adjudicatario,
+      nota: codigoEstado === 8 ? null : 'Hasta que el proceso se resuelva, Mercado Público no publica quién ofertó.',
+    };
+  }
+
+  /* Compara lo que dice Mercado Público con el estado guardado y propone qué
+     hacer. Solo marca discrepancia cuando MP es concluyente. */
+  private compararEstadoMp(estadoActual: string, info: any) {
+    const actual = String(estadoActual || '');
+    if (info.estado_mp === 'Adjudicada' && info.adjudicada_a_nosotros === true && actual !== 'Adjudicada') {
+      return {
+        discrepancia: true,
+        sugerencia: 'Adjudicada',
+        motivo: `Mercado Público la adjudicó a Amsodent y acá figura como "${actual}".`,
+      };
+    }
+    if (info.estado_mp === 'Adjudicada' && info.adjudicada_a_nosotros === false && !['Perdida', 'Descartada'].includes(actual)) {
+      return {
+        discrepancia: true,
+        sugerencia: 'Perdida',
+        motivo: `Se adjudicó a ${info.adjudicatario || 'otro proveedor'} y acá figura como "${actual}".`,
+      };
+    }
+    if (['Desierta', 'Revocada'].includes(info.estado_mp) && !['Perdida', 'Descartada', 'Cancelada'].includes(actual)) {
+      return {
+        discrepancia: true,
+        sugerencia: 'Descartada',
+        motivo: `El proceso quedó ${String(info.estado_mp).toLowerCase()} en Mercado Público.`,
+      };
+    }
+    return { discrepancia: false, sugerencia: null, motivo: null };
+  }
+
+  /* Aplica el estado sugerido a las cotizaciones elegidas. Va aparte del
+     diagnóstico a propósito: mirar no debe cambiar datos del negocio. */
+  async aplicarEstadoMp(body: { cambios: Array<{ id: number; estado: string }> }, email?: string) {
+    const cambios = (Array.isArray(body?.cambios) ? body.cambios : [])
+      .map((c) => ({ id: Number(c?.id), estado: String(c?.estado || '').trim() }))
+      .filter((c) => Number.isFinite(c.id) && ['Adjudicada', 'Perdida', 'Descartada'].includes(c.estado));
+    if (!cambios.length) throw new BadRequestException('No hay cambios válidos que aplicar.');
+
+    const client = this.supabase.getClient();
+    const aplicados: number[] = [];
+    const errores: string[] = [];
+    for (const c of cambios) {
+      const { error } = await client
+        .from('licitaciones')
+        .update({
+          estado: c.estado,
+          ...(c.estado === 'Adjudicada' ? { fecha_adjudicada: new Date().toISOString().slice(0, 10) } : {}),
+        })
+        .eq('id', c.id);
+      if (error) errores.push(`#${c.id}: ${error.message}`);
+      else {
+        aplicados.push(c.id);
+        try {
+          await client.from('actividades').insert({
+            licitacion_id: c.id,
+            tipo: 'estado',
+            descripcion: `Estado actualizado a "${c.estado}" según Mercado Público.`,
+            usuario_email: email || null,
+          });
+        } catch { /* la bitácora no debe bloquear el cambio */ }
+      }
+    }
+    return { aplicados: aplicados.length, ids: aplicados, errores };
+  }
+
   /* ── Historial de precios de un producto (2026-09-16, punto 22) ─────────
      Busca en TODO lo que hemos cotizado alguna vez (items_licitacion) por
      nombre o SKU, y devuelve la serie de precios en el tiempo más el
