@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   ShieldCheck,
@@ -192,6 +192,96 @@ function AvisoDespachoGratis({ total, compacto = false }) {
       )}
     </div>
   );
+}
+
+/* ── Carrito único del portal (2026-09-16, punto 8) ────────────────────────
+   Antes había dos caminos separados para pedir: el carrito del Explorador de
+   Precios y el botón "Solicitar cotización" de Gestión de Stock. El cliente
+   que quería productos de los dos lados tenía que mandar dos pedidos.
+
+   Ahora hay UN carrito. Vive en localStorage (sobrevive a la recarga) y los
+   dos paneles lo leen y escriben a través de este hook; el evento mantiene
+   sincronizadas las dos vistas sin tener que subir el estado ni pasar props
+   por media pantalla. Cada línea lleva `origen` para saber de dónde salió. */
+const CARRITO_KEY = "portal_carrito";
+const CARRITO_EVENTO = "portal-carrito-cambio";
+const CARRITO_ABRIR = "portal-carrito-abrir";
+
+function leerCarrito() {
+  try {
+    const v = JSON.parse(localStorage.getItem(CARRITO_KEY) || "[]");
+    return Array.isArray(v) ? v : [];
+  } catch {
+    return [];
+  }
+}
+
+function useCarritoPortal() {
+  const [carrito, setEstado] = useState(leerCarrito);
+  useEffect(() => {
+    const alCambiar = (e) => setEstado(Array.isArray(e?.detail) ? e.detail : leerCarrito());
+    window.addEventListener(CARRITO_EVENTO, alCambiar);
+    // `storage` cubre el caso de tener el portal abierto en dos pestañas.
+    const alStorage = (e) => { if (e.key === CARRITO_KEY) setEstado(leerCarrito()); };
+    window.addEventListener("storage", alStorage);
+    return () => {
+      window.removeEventListener(CARRITO_EVENTO, alCambiar);
+      window.removeEventListener("storage", alStorage);
+    };
+  }, []);
+
+  const setCarrito = useCallback((actualizador) => {
+    const previo = leerCarrito();
+    const siguiente = typeof actualizador === "function" ? actualizador(previo) : actualizador;
+    try { localStorage.setItem(CARRITO_KEY, JSON.stringify(siguiente)); } catch { /* */ }
+    window.dispatchEvent(new CustomEvent(CARRITO_EVENTO, { detail: siguiente }));
+  }, []);
+
+  return [carrito, setCarrito];
+}
+
+// Clave de una línea del carrito: el producto del explorador se identifica por
+// su URL; el de Gestión de Stock, por su nombre.
+const claveItem = (it) => it?.url || `stock:${String(it?.nombre || "").trim().toLowerCase()}`;
+
+/* El panel del Explorador (donde vive el cajón del carrito) puede no estar
+   montado cuando se suma desde Gestión de Stock: el evento se perdería. Esta
+   bandera deja la orden anotada para que el panel abra el carrito al montar. */
+let carritoAbrirPendiente = false;
+function tomarOrdenAbrirCarrito() {
+  const v = carritoAbrirPendiente;
+  carritoAbrirPendiente = false;
+  return v;
+}
+
+// Suma productos de Gestión de Stock al carrito único y lo abre.
+function agregarStockAlCarrito(productos, setCarrito) {
+  carritoAbrirPendiente = true;
+  setCarrito((prev) => {
+    const copia = [...prev];
+    for (const p of productos) {
+      const clave = `stock:${String(p.nombre || "").trim().toLowerCase()}`;
+      const idx = copia.findIndex((c) => claveItem(c) === clave);
+      const cantidad = Number(p.cantidad) || 0;
+      if (cantidad <= 0) continue;
+      if (idx >= 0) {
+        copia[idx] = { ...copia[idx], cantidad: Number(copia[idx].cantidad || 0) + cantidad };
+      } else {
+        copia.push({
+          nombre: p.nombre,
+          url: clave,          // clave sintética: no es un enlace real
+          origen: "stock",
+          tienda: "Mi inventario",
+          unidad: p.unidad || "un",
+          precio: 0,
+          cantidad,
+          observacion: p.observacion || "",
+        });
+      }
+    }
+    return copia;
+  });
+  window.dispatchEvent(new CustomEvent(CARRITO_ABRIR));
 }
 
 const SEMAFORO_BADGES = {
@@ -1116,6 +1206,15 @@ function PantallaDeclaracion({ cliente, setToast }) {
   const [creditoCliente, setCreditoCliente] = useState(null);
   useEffect(() => {
     apiRequest("/stock-clientes/mi-credito").then(setCreditoCliente).catch(() => setCreditoCliente(null));
+  }, []);
+
+  /* El carrito vive dentro del panel del Explorador, así que sumar productos
+     desde Gestión de Stock tiene que llevar también a esa pestaña; si no, el
+     cliente agrega al carrito y no ve nada pasar. */
+  useEffect(() => {
+    const irAlCarrito = () => setTab("explorador");
+    window.addEventListener(CARRITO_ABRIR, irAlCarrito);
+    return () => window.removeEventListener(CARRITO_ABRIR, irAlCarrito);
   }, []);
   const [items, setItems] = useState([]);
   // Copia del último estado guardado/cargado, para "Cancelar cambios".
@@ -2406,10 +2505,17 @@ function PanelExploradorPrecios() {
   // (Punto 14 — 2026-09-10) Carrito de pedido: el cliente junta productos del
   // explorador y los envía como solicitud de pedido a Amsodent (llega por el
   // mismo canal que las solicitudes de cotización: campana + correo al equipo).
-  const [carrito, setCarrito] = useState(() => {
-    try { return JSON.parse(localStorage.getItem("portal_carrito") || "[]"); } catch { return []; }
-  });
+  // Carrito único compartido con Gestión de Stock (punto 8).
+  const [carrito, setCarrito] = useCarritoPortal();
   const [carritoAbierto, setCarritoAbierto] = useState(false);
+  // Abrir el carrito al agregar desde Gestión de Stock: por evento si el
+  // panel ya estaba montado, o por la bandera si acaba de montarse.
+  useEffect(() => {
+    const abrir = () => { setPasoCarrito("carrito"); setCarritoAbierto(true); };
+    if (tomarOrdenAbrirCarrito()) abrir();
+    window.addEventListener(CARRITO_ABRIR, abrir);
+    return () => window.removeEventListener(CARRITO_ABRIR, abrir);
+  }, []);
   // Flujo en dos pasos: "carrito" (editar) → "resumen" (revisar y confirmar).
   // El pedido NUNCA se envía directo desde el carrito: siempre pasa por la
   // revisión del detalle completo.
@@ -2419,10 +2525,6 @@ function PanelExploradorPrecios() {
   const [enviandoPedido, setEnviandoPedido] = useState(false);
   const [pedidoEnviado, setPedidoEnviado] = useState(null); // { id }
   const [errorPedido, setErrorPedido] = useState("");
-  useEffect(() => {
-    try { localStorage.setItem("portal_carrito", JSON.stringify(carrito)); } catch { /* */ }
-  }, [carrito]);
-
   const totalUnidades = carrito.reduce((acc, c) => acc + Number(c.cantidad || 0), 0);
   const totalReferencial = carrito.reduce((acc, c) => acc + Number(c.precio || 0) * Number(c.cantidad || 0), 0);
 
@@ -2458,22 +2560,34 @@ function PanelExploradorPrecios() {
     setEnviandoPedido(true);
     setErrorPedido("");
     try {
+      // El carrito puede traer productos de los dos orígenes (punto 8): la
+      // nota lo dice, y cada línea de stock viaja sin tienda ni URL para que
+      // la bandeja interna no la confunda con un hallazgo del explorador.
+      const hayStock = carrito.some((c) => c.origen === "stock");
+      const hayExplorador = carrito.some((c) => c.origen !== "stock");
       const notaFinal = [
-        "Solicitud de PEDIDO generada desde el Explorador de Precios del portal.",
+        hayStock && hayExplorador
+          ? "Solicitud de PEDIDO del portal (Explorador de Precios + Gestión de Stock)."
+          : hayStock
+            ? "Solicitud de PEDIDO generada desde Gestión de Stock del portal."
+            : "Solicitud de PEDIDO generada desde el Explorador de Precios del portal.",
         notaPedido.trim() ? `Nota del cliente: ${notaPedido.trim()}` : null,
       ].filter(Boolean).join(" ");
       const resp = await apiRequest("/stock-clientes/solicitud-cotizacion", {
         method: "POST",
         body: JSON.stringify({
-          items: carrito.map((c) => ({
-            nombre: c.nombre,
-            unidad: "un",
-            cantidad: Number(c.cantidad || 0),
-            precio_referencia: Number(c.precio || 0) || undefined,
-            tienda: c.tienda || undefined,
-            url: c.url || undefined,
-            observacion: String(c.observacion || "").trim() || undefined,
-          })),
+          items: carrito.map((c) => {
+            const deStock = c.origen === "stock";
+            return {
+              nombre: c.nombre,
+              unidad: c.unidad || "un",
+              cantidad: Number(c.cantidad || 0),
+              precio_referencia: deStock ? undefined : Number(c.precio || 0) || undefined,
+              tienda: deStock ? undefined : c.tienda || undefined,
+              url: deStock ? undefined : c.url || undefined,
+              observacion: String(c.observacion || "").trim() || undefined,
+            };
+          }),
           nota: notaFinal,
           contacto_nombre: contactoPedido.nombre.trim() || undefined,
           contacto_email: contactoPedido.email.trim() || undefined,
@@ -4415,6 +4529,9 @@ function ModalSolicitudCotizacion({
   onEnviado,
   setToast,
 }) {
+  // Carrito único del portal (punto 8): este modal puede mandar el pedido por
+  // su cuenta o sumar los productos al carrito compartido.
+  const [, setCarritoUnico] = useCarritoPortal();
   const productosBase = useMemo(() => {
     return (productos || [])
       .filter((p) => String(p.nombre || "").trim().length > 0)
@@ -4821,6 +4938,21 @@ function ModalSolicitudCotizacion({
               disabled={enviando}
             >
               Cancelar
+            </button>
+            {/* Punto 8: en vez de mandar un pedido aparte, se pueden sumar
+                estos productos al carrito único y enviarlos junto con los del
+                Explorador de Precios en una sola solicitud. */}
+            <button
+              type="button"
+              onClick={() => {
+                agregarStockAlCarrito(itemsListos, setCarritoUnico);
+                onCerrar?.();
+              }}
+              disabled={enviando || itemsListos.length === 0}
+              style={modalStyles.btnGhost}
+              title="Súmalos al carrito para enviarlos junto con productos del Explorador de Precios"
+            >
+              <ShoppingCart size={14} /> Sumar al carrito
             </button>
             <button
               type="button"
