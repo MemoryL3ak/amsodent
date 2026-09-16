@@ -8,7 +8,15 @@ import ConfirmModal from "../components/ConfirmModal";
 import { Plus, Search, Pencil, Trash2, Building2, X, Save } from "lucide-react";
 import CreatableSelect from "react-select/creatable";
 
-const VACIO = { razon_social: "", rut: "", correo: "", telefono: "", contacto: "", direccion: "", rubro: "", observaciones: "", marcas: [], palabras_clave: [] };
+const VACIO = { razon_social: "", rut: "", correo: "", telefono: "", contacto: "", direccion: "", rubro: "", observaciones: "", marcas: [], palabras_clave: [], condicion_compra: "", credito_dias: "" };
+
+/* Condiciones de compra acordadas con el proveedor (2026-09-16). */
+const CONDICIONES_COMPRA = [
+  { value: "credito", label: "Crédito" },
+  { value: "contado", label: "Pago al contado" },
+  { value: "tarjeta_credito", label: "Pago con tarjeta de crédito" },
+];
+const labelCondicion = (v) => CONDICIONES_COMPRA.find((c) => c.value === v)?.label || "";
 
 // react-select compacto acorde a los inputs del proyecto.
 const SELECT_STYLES = {
@@ -165,15 +173,16 @@ export default function Proveedores() {
                 <th style={{ textAlign: "left" }}>Correo</th>
                 <th style={{ textAlign: "left" }}>Teléfono</th>
                 <th style={{ textAlign: "left" }}>Rubro</th>
+                <th style={{ textAlign: "left" }}>Condición</th>
                 <th style={{ textAlign: "left" }}>Marcas</th>
                 <th style={{ width: 90 }}></th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={8} style={{ padding: "30px 12px", color: "var(--text-muted)" }}>Cargando…</td></tr>
+                <tr><td colSpan={9} style={{ padding: "30px 12px", color: "var(--text-muted)" }}>Cargando…</td></tr>
               ) : filtrada.length === 0 ? (
-                <tr><td colSpan={8} style={{ padding: "30px 12px", color: "var(--text-muted)", textAlign: "center" }}>Sin proveedores.</td></tr>
+                <tr><td colSpan={9} style={{ padding: "30px 12px", color: "var(--text-muted)", textAlign: "center" }}>Sin proveedores.</td></tr>
               ) : filtrada.map((p) => (
                 <tr key={p.id}>
                   <td style={{ fontWeight: 600 }}>{p.razon_social}</td>
@@ -182,6 +191,14 @@ export default function Proveedores() {
                   <td>{p.correo || "—"}</td>
                   <td>{p.telefono || "—"}</td>
                   <td>{p.rubro || "—"}</td>
+                  <td style={{ whiteSpace: "nowrap" }}>
+                    {p.condicion_compra ? (
+                      <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 9px", borderRadius: 999, background: "var(--bg)", color: "var(--text)" }}>
+                        {labelCondicion(p.condicion_compra)}
+                        {p.condicion_compra === "credito" && p.credito_dias ? ` · ${p.credito_dias} días` : ""}
+                      </span>
+                    ) : "—"}
+                  </td>
                   <td style={{ maxWidth: 200 }}>
                     {Array.isArray(p.marcas) && p.marcas.length ? (
                       <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
@@ -227,6 +244,36 @@ export default function Proveedores() {
                 <div className="field"><label className="field-label">Teléfono</label><input className="input" value={modal.telefono} onChange={(e) => set({ telefono: e.target.value })} placeholder="+56 9 …" /></div>
                 <div className="field"><label className="field-label">Correo</label><input className="input" value={modal.correo} onChange={(e) => set({ correo: e.target.value })} placeholder="correo@proveedor.cl" /></div>
                 <div className="field"><label className="field-label">Dirección</label><input className="input" value={modal.direccion} onChange={(e) => set({ direccion: e.target.value })} placeholder="Dirección" /></div>
+                <div className="field">
+                  <label className="field-label">Condición de compra</label>
+                  <select
+                    className="input"
+                    value={modal.condicion_compra || ""}
+                    onChange={(e) => set({
+                      condicion_compra: e.target.value,
+                      // El plazo solo tiene sentido con crédito.
+                      credito_dias: e.target.value === "credito" ? modal.credito_dias : "",
+                    })}
+                  >
+                    <option value="">Sin definir</option>
+                    {CONDICIONES_COMPRA.map((c) => (
+                      <option key={c.value} value={c.value}>{c.label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="field">
+                  <label className="field-label">Plazo del crédito (días)</label>
+                  <input
+                    className="input"
+                    type="number"
+                    min={0}
+                    value={modal.credito_dias ?? ""}
+                    onChange={(e) => set({ credito_dias: e.target.value })}
+                    placeholder="Ej: 30"
+                    disabled={modal.condicion_compra !== "credito"}
+                    title={modal.condicion_compra !== "credito" ? "Solo aplica cuando la condición es crédito" : ""}
+                  />
+                </div>
               </div>
               <div className="field">
                 <label className="field-label">Marcas que distribuye</label>

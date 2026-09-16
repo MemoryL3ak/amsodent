@@ -193,10 +193,14 @@ export default function DespachosChoferes() {
       setOcLics(adjAbiertas);
       const ids = adjAbiertas.map((l) => l.id);
       if (ids.length > 0) {
+        // Se piden también los 'cierre_forzado': una cotización con cierre
+        // forzado no debe figurar en esta pestaña aunque su ciclo_cerrado
+        // haya quedado en false (pasa si el cierre se interrumpió justo
+        // después de subir el respaldo).
         const docs = await api
           .post("/licitaciones/documentos/filter", {
-            filter: { licitacion_ids: ids, tipo: ["orden_compra", "guia_despacho"] },
-            fields: "id,licitacion_id,tipo,numero,monto,fecha_oc,created_at,deriva_de_id",
+            filter: { licitacion_ids: ids, tipo: ["orden_compra", "guia_despacho", "cierre_forzado"] },
+            fields: "id,licitacion_id,tipo,numero,monto,fecha_oc,created_at,deriva_de_id,observacion_despacho",
           })
           .catch(() => []);
         setOcDocs(Array.isArray(docs) ? docs : []);
@@ -231,7 +235,13 @@ export default function DespachosChoferes() {
   const saldosOc = useMemo(() => {
     const licMap = {};
     ocLics.forEach((l) => { licMap[l.id] = l; });
-    const ocs = ocDocs.filter((d) => d.tipo === "orden_compra");
+    // Cotizaciones con cierre forzado: se descartan de los dos grupos. El
+    // cierre forzado es la decisión explícita de dejar de perseguir esa OC,
+    // así que seguir mostrándola como pendiente ensucia el control.
+    const forzadas = new Set(
+      ocDocs.filter((d) => d.tipo === "cierre_forzado").map((d) => d.licitacion_id),
+    );
+    const ocs = ocDocs.filter((d) => d.tipo === "orden_compra" && !forzadas.has(d.licitacion_id));
     const guias = ocDocs.filter((d) => d.tipo === "guia_despacho");
     const guiasPorOc = {};
     guias.forEach((g) => {
@@ -260,6 +270,29 @@ export default function DespachosChoferes() {
     parciales.sort(porFecha);
     return { pendientesEnvio, parciales };
   }, [ocLics, ocDocs]);
+
+  /* Observación de despacho sobre la OC (2026-09-16). Se guarda en el propio
+     documento de la orden de compra; el estado local se actualiza sin recargar
+     toda la pestaña. Si la columna aún no está migrada, el backend la ignora
+     y avisamos en vez de fingir que se guardó. */
+  const guardarObservacionOc = useCallback(async (docId, texto) => {
+    const limpio = String(texto || "").trim().slice(0, 500);
+    const anterior = ocDocs.find((d) => d.id === docId)?.observacion_despacho || "";
+    if (limpio === String(anterior || "")) return;
+    setOcDocs((prev) => prev.map((d) => (d.id === docId ? { ...d, observacion_despacho: limpio } : d)));
+    try {
+      const actualizado = await api.put(`/licitaciones/documentos/${docId}`, {
+        observacion_despacho: limpio || null,
+      });
+      if (actualizado && actualizado.observacion_despacho === undefined) {
+        throw new Error("Falta aplicar la migración 20260916_documentos_observacion_despacho.sql en Supabase.");
+      }
+      setToast({ type: "success", message: limpio ? "Observación guardada." : "Observación borrada." });
+    } catch (e) {
+      setOcDocs((prev) => prev.map((d) => (d.id === docId ? { ...d, observacion_despacho: anterior } : d)));
+      setToast({ type: "error", message: e?.message || "No se pudo guardar la observación." });
+    }
+  }, [ocDocs]);
 
   const viajesFiltrados = useMemo(() => {
     return viajes.filter((v) => {
@@ -415,7 +448,11 @@ export default function DespachosChoferes() {
           onEditar={(v) => setModalViaje({ viaje: v })}
         />
       ) : tab === "saldos-oc" ? (
-        <SaldosOcTab pendientes={saldosOc.pendientesEnvio} parciales={saldosOc.parciales} />
+        <SaldosOcTab
+          pendientes={saldosOc.pendientesEnvio}
+          parciales={saldosOc.parciales}
+          onGuardarObs={guardarObservacionOc}
+        />
       ) : tab === "estadisticas" ? (
         <EstadisticasTab setToast={setToast} />
       ) : (
@@ -736,7 +773,62 @@ function RecuperacionesTab({ recuperaciones, onRegenerar, onResolver }) {
    Detalle de las órdenes de compra de cotizaciones adjudicadas con ciclo
    abierto, en dos grupos: PENDIENTES DE ENVÍO (sin ninguna guía emitida) y
    CON SALDO POR CONSUMIR (guías parciales: OC − guías > 0). Montos NETOS. */
-function SaldosOcTab({ pendientes, parciales }) {
+/* Antigüedad a partir de la cual una OC sin guía se considera VENCIDA: es el
+   mismo umbral del chip rojo, para que el color y la regla no se contradigan. */
+const DIAS_OC_VENCIDA = 7;
+
+/* Celda de observación: se ve como texto y al hacer clic se edita. Guarda al
+   salir del campo o con Enter; con Escape descarta. */
+function CeldaObservacion({ valor, onGuardar, deshabilitada, motivoDeshabilitada }) {
+  const [editando, setEditando] = useState(false);
+  const [texto, setTexto] = useState(valor || "");
+  useEffect(() => { setTexto(valor || ""); }, [valor]);
+
+  if (deshabilitada) {
+    return (
+      <span style={{ fontSize: 11.5, color: "var(--text-muted)" }} title={motivoDeshabilitada}>
+        —
+      </span>
+    );
+  }
+  if (!editando) {
+    return (
+      <button
+        type="button"
+        onClick={() => setEditando(true)}
+        title="Clic para escribir una observación"
+        style={{
+          background: "none", border: "none", padding: 0, cursor: "text", textAlign: "left",
+          fontSize: 12, lineHeight: 1.35, width: "100%",
+          color: valor ? "var(--text)" : "var(--text-muted)",
+          fontStyle: valor ? "normal" : "italic",
+        }}
+      >
+        {valor || "Agregar observación…"}
+      </button>
+    );
+  }
+  return (
+    <textarea
+      autoFocus
+      value={texto}
+      rows={2}
+      maxLength={500}
+      onChange={(e) => setTexto(e.target.value)}
+      onBlur={() => { setEditando(false); onGuardar(texto); }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); e.currentTarget.blur(); }
+        if (e.key === "Escape") { setTexto(valor || ""); setEditando(false); }
+      }}
+      style={{
+        width: "100%", fontSize: 12, borderRadius: 8, border: "1px solid var(--border)",
+        padding: "5px 7px", resize: "vertical", fontFamily: "inherit",
+      }}
+    />
+  );
+}
+
+function SaldosOcTab({ pendientes, parciales, onGuardarObs }) {
   const fmtCLP = (n) => `$${Math.round(Number(n) || 0).toLocaleString("es-CL")}`;
   const fmtFecha = (iso) => {
     const s = String(iso || "").slice(0, 10);
@@ -768,12 +860,13 @@ function SaldosOcTab({ pendientes, parciales }) {
             <th style={{ textAlign: "right", width: 120 }}>Monto OC</th>
             {mostrarDespachado && <th style={{ textAlign: "right", width: 120 }}>Despachado</th>}
             <th style={{ textAlign: "right", width: 130 }}>{mostrarDespachado ? "Saldo por consumir" : "Por despachar"}</th>
+            <th style={{ textAlign: "left", width: 220 }}>Observación</th>
           </tr>
         </thead>
         <tbody>
           {filas.length === 0 ? (
             <tr>
-              <td colSpan={mostrarDespachado ? 7 : 6} style={{ textAlign: "center", padding: "36px 0", color: "var(--text-muted)" }}>
+              <td colSpan={mostrarDespachado ? 8 : 7} style={{ textAlign: "center", padding: "36px 0", color: "var(--text-muted)" }}>
                 Nada pendiente en este grupo. 🎉
               </td>
             </tr>
@@ -804,6 +897,17 @@ function SaldosOcTab({ pendientes, parciales }) {
                 )}
                 <td style={{ textAlign: "right", fontWeight: 800, fontVariantNumeric: "tabular-nums", color: "#b45309" }}>
                   {fmtCLP(f.saldo)}
+                </td>
+                {/* En "saldo por consumir" la observación está siempre
+                    disponible; en "pendientes de envío" solo para las
+                    vencidas, que son las que hay que justificar. */}
+                <td>
+                  <CeldaObservacion
+                    valor={f.oc.observacion_despacho || ""}
+                    onGuardar={(txt) => onGuardarObs(f.oc.id, txt)}
+                    deshabilitada={!mostrarDespachado && !(f.dias > DIAS_OC_VENCIDA)}
+                    motivoDeshabilitada={`Disponible cuando la OC lleva más de ${DIAS_OC_VENCIDA} días sin guía`}
+                  />
                 </td>
               </tr>
             ))
@@ -847,7 +951,7 @@ function SaldosOcTab({ pendientes, parciales }) {
             OC pendientes de envío
           </h3>
           <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
-            — adjudicadas con orden de compra y ninguna guía de despacho todavía (las más antiguas primero)
+            — adjudicadas con orden de compra y ninguna guía de despacho todavía (las más antiguas primero) · la observación se habilita sobre los {DIAS_OC_VENCIDA} días
           </span>
         </div>
         <Tabla filas={pendientes} mostrarDespachado={false} />
@@ -861,7 +965,7 @@ function SaldosOcTab({ pendientes, parciales }) {
             OC con saldo por consumir
           </h3>
           <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
-            — con despachos parciales: aún queda saldo entre la OC y sus guías
+            — con despachos parciales: aún queda saldo entre la OC y sus guías (sin los cierres forzados)
           </span>
         </div>
         <Tabla filas={parciales} mostrarDespachado={true} />

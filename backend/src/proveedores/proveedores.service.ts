@@ -1,6 +1,9 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
 
+// Condiciones de compra acordadas con el proveedor (2026-09-16).
+const CONDICIONES_COMPRA = ['credito', 'contado', 'tarjeta_credito'];
+
 @Injectable()
 export class ProveedoresService {
   constructor(private supabase: SupabaseService) {}
@@ -53,17 +56,40 @@ export class ProveedoresService {
       observaciones: String(body?.observaciones || '').trim(),
       marcas: lista(body?.marcas),
       palabras_clave: lista(body?.palabras_clave),
+      // Condición de compra (migración 20260916). El plazo solo se guarda
+      // cuando la condición es crédito; en cualquier otro caso queda en null.
+      condicion_compra: CONDICIONES_COMPRA.includes(String(body?.condicion_compra || ''))
+        ? String(body.condicion_compra)
+        : null,
+      credito_dias:
+        String(body?.condicion_compra || '') === 'credito' && Number.isFinite(Number(body?.credito_dias)) && String(body?.credito_dias ?? '') !== ''
+          ? Math.max(0, Math.min(365, Math.round(Number(body.credito_dias))))
+          : null,
     };
+  }
+
+  /* Si la migración de la condición de compra aún no está aplicada, se guarda
+     el resto en vez de fallar (mismo criterio que el resto del proyecto). */
+  private sinCondicion(fila: Record<string, any>) {
+    const { condicion_compra, credito_dias, ...resto } = fila;
+    return resto;
+  }
+  private faltaColumna(error: any) {
+    const msg = [error?.message, error?.details, error?.hint].filter(Boolean).join(' ').toLowerCase();
+    return /condicion_compra|credito_dias/.test(msg) && /column|schema cache/.test(msg);
   }
 
   async create(body: any, creadoPor: string) {
     const fila = this.normalizar(body);
     if (!fila.razon_social) throw new BadRequestException('La razón social es obligatoria.');
-    const { data, error } = await this.supabase.getClient()
-      .from('proveedores')
-      .insert([{ ...fila, creado_por: creadoPor }])
-      .select()
-      .single();
+    const insertar = (f: Record<string, any>) =>
+      this.supabase.getClient()
+        .from('proveedores')
+        .insert([{ ...f, creado_por: creadoPor }])
+        .select()
+        .single();
+    let { data, error } = await insertar(fila);
+    if (error && this.faltaColumna(error)) ({ data, error } = await insertar(this.sinCondicion(fila)));
     if (error) throw new BadRequestException(error.message);
     return data;
   }
@@ -71,12 +97,15 @@ export class ProveedoresService {
   async update(id: number, body: any) {
     const fila = this.normalizar(body);
     if (!fila.razon_social) throw new BadRequestException('La razón social es obligatoria.');
-    const { data, error } = await this.supabase.getClient()
-      .from('proveedores')
-      .update(fila)
-      .eq('id', id)
-      .select()
-      .single();
+    const actualizar = (f: Record<string, any>) =>
+      this.supabase.getClient()
+        .from('proveedores')
+        .update(f)
+        .eq('id', id)
+        .select()
+        .single();
+    let { data, error } = await actualizar(fila);
+    if (error && this.faltaColumna(error)) ({ data, error } = await actualizar(this.sinCondicion(fila)));
     if (error) throw new BadRequestException(error.message);
     return data;
   }

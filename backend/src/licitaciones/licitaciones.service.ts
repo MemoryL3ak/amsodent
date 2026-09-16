@@ -2502,6 +2502,7 @@ export class LicitacionesService {
         'factoring_comision_pct',
         'factoring_vencimiento',
         'banco_pago',
+        'observacion_despacho',
       ];
       const aQuitar = opcionales.filter((c) => msg.includes(c));
       if (aQuitar.length) {
