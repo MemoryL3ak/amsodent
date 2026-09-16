@@ -261,6 +261,7 @@ export class FletesService {
     comuna?: string;
     tipo_cotizacion?: string; // 'particular' | 'publico'
     total_compra?: number; // total bruto de la cotización (para la regla ≥ $70.000)
+    origen?: string; // 'portal' → mínimo de despacho gratis en RM de $150.000
   }) {
     const empresa = String(body?.empresa || '').trim();
     const region = String(body?.region || '').trim();
@@ -269,6 +270,12 @@ export class FletesService {
     const comuna = String(body?.comuna || '').trim();
     const tipoCotizacion = String(body?.tipo_cotizacion || '').trim().toLowerCase();
     const totalCompra = Number(body?.total_compra) || 0;
+    /* (2026-09-16) La cotización que nace de un pedido del portal tiene su
+       propio mínimo de despacho gratis en la RM: $150.000 en vez de $70.000.
+       Es la regla que se le promete al cliente en el portal, así que tiene
+       que ser la misma que aplica el cálculo. */
+    const desdePortal = String(body?.origen || '').trim().toLowerCase() === 'portal';
+    const minimoRM = desdePortal ? 150000 : 70000;
 
     if (!['Starken', 'Blue', 'Interno'].includes(empresa)) {
       throw new BadRequestException('Empresa inválida (Starken, Blue o Interno).');
@@ -296,12 +303,12 @@ export class FletesService {
       regionNorm === 'santiago' ||
       regionNorm.includes('metropolitana') ||
       (comuna ? this.esComunaGratis(comuna) : false);
-    if (totalCompra >= 70000 && esRM) {
+    if (totalCompra >= minimoRM && esRM) {
       return {
         empresa,
         neto: 0,
         gratis: true,
-        detalle: `Despacho gratis: compra ≥ $70.000 (total $${Math.round(totalCompra).toLocaleString('es-CL')}) con destino en la Región Metropolitana`,
+        detalle: `Despacho gratis: compra ≥ $${minimoRM.toLocaleString('es-CL')} (total $${Math.round(totalCompra).toLocaleString('es-CL')}) con destino en la Región Metropolitana${desdePortal ? ' · pedido del portal' : ''}`,
       };
     }
 
