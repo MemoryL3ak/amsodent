@@ -5,6 +5,7 @@ import { api } from "../lib/api";
 import useAuth from "../hooks/useAuth";
 import Toast from "../components/Toast";
 import ConfirmModal from "../components/ConfirmModal";
+import DropdownSelect from "../components/ui/DropdownSelect";
 import { Plus, Search, Pencil, Trash2, Building2, X, Save } from "lucide-react";
 import CreatableSelect from "react-select/creatable";
 
@@ -246,20 +247,15 @@ export default function Proveedores() {
                 <div className="field"><label className="field-label">Dirección</label><input className="input" value={modal.direccion} onChange={(e) => set({ direccion: e.target.value })} placeholder="Dirección" /></div>
                 <div className="field">
                   <label className="field-label">Condición de compra</label>
-                  <select
-                    className="input"
+                  <DropdownSelect
                     value={modal.condicion_compra || ""}
-                    onChange={(e) => set({
-                      condicion_compra: e.target.value,
+                    onChange={(v) => set({
+                      condicion_compra: v,
                       // El plazo solo tiene sentido con crédito.
-                      credito_dias: e.target.value === "credito" ? modal.credito_dias : "",
+                      credito_dias: v === "credito" ? modal.credito_dias : "",
                     })}
-                  >
-                    <option value="">Sin definir</option>
-                    {CONDICIONES_COMPRA.map((c) => (
-                      <option key={c.value} value={c.value}>{c.label}</option>
-                    ))}
-                  </select>
+                    options={[{ value: "", label: "Sin definir" }, ...CONDICIONES_COMPRA]}
+                  />
                 </div>
                 <div className="field">
                   <label className="field-label">Plazo del crédito (días)</label>

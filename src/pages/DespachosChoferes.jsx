@@ -19,14 +19,13 @@ import {
   Pencil,
   ShieldCheck,
   ShieldOff,
-  ChevronDown,
-  Check,
   Package,
   BarChart3,
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { api } from "../lib/api";
 import Toast from "../components/Toast";
+import DropdownSelect from "../components/ui/DropdownSelect";
 import DateFilter from "../components/DateFilter";
 import { cargarGoogleMaps } from "../lib/googleMaps";
 
@@ -70,76 +69,6 @@ function EstadoBadge({ estado }) {
     <span style={{ display: "inline-block", fontSize: 11.5, fontWeight: 700, padding: "2px 10px", borderRadius: 999, color: m.color, background: m.bg }}>
       {estado}
     </span>
-  );
-}
-
-/* ── Dropdown custom (reemplaza los <select> nativos) ───────────────── */
-function DropdownSelect({ value, onChange, options, placeholder = "Selecciona…", minWidth = 200 }) {
-  const [open, setOpen] = useState(false);
-  const [coords, setCoords] = useState(null);
-  const btnRef = useRef(null);
-  const sel = options.find((o) => String(o.value) === String(value));
-
-  function toggle() {
-    if (!open && btnRef.current) {
-      const r = btnRef.current.getBoundingClientRect();
-      setCoords({ left: r.left, top: r.bottom + 4, width: r.width });
-    }
-    setOpen((o) => !o);
-  }
-
-  useEffect(() => {
-    if (!open) return;
-    const close = () => setOpen(false);
-    window.addEventListener("scroll", close, true);
-    window.addEventListener("resize", close);
-    return () => {
-      window.removeEventListener("scroll", close, true);
-      window.removeEventListener("resize", close);
-    };
-  }, [open]);
-
-  return (
-    <>
-      <button
-        type="button"
-        ref={btnRef}
-        onClick={toggle}
-        className="input"
-        style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, cursor: "pointer", textAlign: "left", background: "#fff" }}
-      >
-        <span style={{ display: "flex", alignItems: "center", gap: 8, color: sel ? "#0f172a" : "#94a3b8", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          {sel?.color && <span style={{ width: 9, height: 9, borderRadius: "50%", background: sel.color, flexShrink: 0 }} />}
-          {sel ? sel.label : placeholder}
-        </span>
-        <ChevronDown size={15} style={{ color: "#94a3b8", flexShrink: 0 }} />
-      </button>
-      {open && coords && createPortal(
-        <>
-          <div onMouseDown={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 11000 }} />
-          <div style={{ position: "fixed", left: coords.left, top: coords.top, minWidth: Math.max(minWidth, coords.width), zIndex: 11001, background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 10, boxShadow: "var(--shadow-lg)", padding: 4, maxHeight: 300, overflowY: "auto" }}>
-            {options.map((op) => {
-              const isSel = String(op.value) === String(value);
-              return (
-                <button
-                  key={String(op.value)}
-                  type="button"
-                  onClick={() => { onChange(op.value); setOpen(false); }}
-                  style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", textAlign: "left", padding: "8px 10px", border: "none", background: isSel ? "var(--primary-light)" : "transparent", color: "var(--text)", fontSize: 13, fontWeight: 600, cursor: "pointer", borderRadius: 6 }}
-                  onMouseEnter={(e) => { if (!isSel) e.currentTarget.style.background = "var(--bg)"; }}
-                  onMouseLeave={(e) => { if (!isSel) e.currentTarget.style.background = "transparent"; }}
-                >
-                  {op.color && <span style={{ width: 9, height: 9, borderRadius: "50%", background: op.color, flexShrink: 0 }} />}
-                  <span style={{ flex: 1 }}>{op.label}</span>
-                  {isSel && <Check size={14} style={{ color: "var(--primary)", flexShrink: 0 }} />}
-                </button>
-              );
-            })}
-          </div>
-        </>,
-        document.body,
-      )}
-    </>
   );
 }
 

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
 import Toast from "../components/Toast";
+import DropdownSelect from "../components/ui/DropdownSelect";
 import { Link, useParams } from "react-router-dom";
 import { REGIONES_CHILE } from "../constants/regiones";
 
@@ -350,16 +351,16 @@ export default function EditarCliente() {
               <>
                 <div className="field">
                   <label className="field-label">Crédito en el portal</label>
-                  <select
-                    className="input"
+                  <DropdownSelect
                     value={creditoHabilitado ? "si" : "no"}
-                    onChange={(e) => setCreditoHabilitado(e.target.value === "si")}
+                    onChange={(v) => setCreditoHabilitado(v === "si")}
                     disabled={!esAdmin}
                     title={!esAdmin ? "Solo un administrador puede habilitar el crédito" : ""}
-                  >
-                    <option value="no">Sin crédito (solo pago al contado)</option>
-                    <option value="si">Habilitado</option>
-                  </select>
+                    options={[
+                      { value: "no", label: "Sin crédito (solo pago al contado)" },
+                      { value: "si", label: "Habilitado" },
+                    ]}
+                  />
                   {!esAdmin && (
                     <p style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>
                       El crédito para clientes particulares solo puede autorizarlo el administrador.

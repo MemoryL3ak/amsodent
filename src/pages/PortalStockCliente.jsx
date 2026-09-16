@@ -39,6 +39,7 @@ import {
   Truck,
 } from "lucide-react";
 
+import DropdownSelect from "../components/ui/DropdownSelect";
 import { descargarCSV, descargarReportePDF } from "../lib/reporteStock";
 import { generarPDFcotizacion } from "../utils/generarPDFcotizacion";
 
@@ -2445,9 +2446,14 @@ function ModalUsuarioPortal({ usuario, guardando, onCerrar, onGuardar }) {
 
         <label style={styles.label}>
           Rol
-          <select value={rol} onChange={(e) => setRol(e.target.value)} style={styles.input}>
-            {ROLES_PORTAL.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
-          </select>
+          <DropdownSelect
+            value={rol}
+            onChange={setRol}
+            options={ROLES_PORTAL}
+            minWidth={300}
+            className=""
+            style={styles.input}
+          />
         </label>
         <div style={{ fontSize: 11.5, color: "#64748b", marginTop: -6, marginBottom: 10, lineHeight: 1.4 }}>
           {ROLES_PORTAL.find((r) => r.value === rol)?.detalle}
