@@ -809,10 +809,10 @@ function ModalRegenerar({ datos, onCerrar, onHecho, onError }) {
   );
 }
 
-function Overlay({ children, onCerrar }) {
+function Overlay({ children, onCerrar, ancho }) {
   return (
     <div style={s.overlay} onClick={onCerrar}>
-      <div style={s.modal} onClick={(e) => e.stopPropagation()}>
+      <div style={{ ...s.modal, ...(ancho ? { maxWidth: ancho } : null) }} onClick={(e) => e.stopPropagation()}>
         <button style={s.modalClose} onClick={onCerrar} aria-label="Cerrar">
           <X size={18} />
         </button>
@@ -991,7 +991,7 @@ function ModalUsuariosPortal({ rut, razonSocial, onCerrar, onOk, onError }) {
   }
 
   return (
-    <Overlay onCerrar={onCerrar}>
+    <Overlay onCerrar={onCerrar} ancho={560}>
       <h2 style={s.modalTitle}>
         <UserPlus size={18} /> Usuarios del portal · {razonSocial || "Cliente"}
       </h2>
@@ -1003,11 +1003,11 @@ function ModalUsuariosPortal({ rut, razonSocial, onCerrar, onOk, onError }) {
         </div>
 
         {claveEntregar && (
-          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", borderRadius: 10, background: "#ecfeff", border: "1px solid #a5f3fc", marginBottom: 12, fontSize: 13 }}>
+          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, padding: "10px 12px", borderRadius: 10, background: "#ecfeff", border: "1px solid #a5f3fc", marginBottom: 12, fontSize: 13 }}>
             <KeyRound size={14} style={{ color: TEAL_DARK, flexShrink: 0 }} />
-            <span style={{ minWidth: 0 }}>
+            <span style={{ minWidth: 0, overflowWrap: "anywhere" }}>
               Clave de <strong>{claveEntregar.email}</strong>:{" "}
-              <code style={{ fontWeight: 800 }}>{claveEntregar.clave}</code>
+              <code style={{ fontWeight: 800, whiteSpace: "nowrap" }}>{claveEntregar.clave}</code>
             </span>
             <button
               style={{ ...s.accBtn, marginLeft: "auto", flexShrink: 0 }}
@@ -1030,37 +1030,42 @@ function ModalUsuariosPortal({ rut, razonSocial, onCerrar, onOk, onError }) {
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 4 }}>
             {usuarios.map((u) => (
-              <div key={u.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", border: "1px solid #e2e8f0", borderRadius: 10, opacity: u.activo === false ? 0.55 : 1 }}>
-                <div style={{ minWidth: 0, flex: 1 }}>
-                  <div style={{ fontSize: 13.5, fontWeight: 600, color: "#0f172a", overflow: "hidden", textOverflow: "ellipsis" }}>{u.email}</div>
+              /* El correo ocupa su propia línea y los controles envuelven
+                 debajo: en un modal angosto los anchos fijos de los botones
+                 aplastaban el texto hasta hacerlo ilegible. */
+              <div key={u.id} style={{ display: "flex", flexDirection: "column", gap: 8, padding: "10px 12px", border: "1px solid #e2e8f0", borderRadius: 10, opacity: u.activo === false ? 0.55 : 1 }}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 13.5, fontWeight: 600, color: "#0f172a", overflowWrap: "anywhere" }}>{u.email}</div>
                   <div style={{ fontSize: 12, color: "#64748b" }}>
                     {[u.nombre, u.ultimo_acceso ? `último acceso ${fmtFechaHora(u.ultimo_acceso)}` : "nunca ha entrado"].filter(Boolean).join(" · ")}
                     {u.password_temporal ? " · clave temporal" : ""}
                   </div>
                 </div>
-                <DropdownSelect
-                  value={u.rol === "admin" ? "admin" : "asistente"}
-                  disabled={guardando}
-                  onChange={(v) => actualizar(u, { rol: v }, "Rol actualizado.")}
-                  options={ROLES_PORTAL_ADMIN}
-                  minWidth={230}
-                  className=""
-                  style={{ ...s.input, width: 118, height: 32, padding: "0 8px", fontSize: 12.5, marginBottom: 0 }}
-                />
-                <button
-                  style={s.accBtn}
-                  disabled={guardando}
-                  title={u.activo === false ? "Reactivar usuario" : "Desactivar usuario (no podrá entrar)"}
-                  onClick={() => actualizar(u, { activo: u.activo === false }, u.activo === false ? "Usuario reactivado." : "Usuario desactivado.")}
-                >
-                  <Power size={13} /> {u.activo === false ? "Activar" : "Desactivar"}
-                </button>
-                <button style={s.accBtn} disabled={guardando} title="Generar una clave nueva" onClick={() => regenerarClaveUsuario(u)}>
-                  <KeyRound size={13} /> Clave
-                </button>
-                <button style={{ ...s.accBtn, color: "#b91c1c" }} disabled={guardando} title="Eliminar usuario" onClick={() => eliminar(u)}>
-                  <Trash2 size={13} />
-                </button>
+                <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6 }}>
+                  <DropdownSelect
+                    value={u.rol === "admin" ? "admin" : "asistente"}
+                    disabled={guardando}
+                    onChange={(v) => actualizar(u, { rol: v }, "Rol actualizado.")}
+                    options={ROLES_PORTAL_ADMIN}
+                    minWidth={230}
+                    className=""
+                    style={{ ...s.input, width: 128, height: 30, padding: "0 8px", fontSize: 12.5, marginBottom: 0 }}
+                  />
+                  <button
+                    style={s.accBtn}
+                    disabled={guardando}
+                    title={u.activo === false ? "Reactivar usuario" : "Desactivar usuario (no podrá entrar)"}
+                    onClick={() => actualizar(u, { activo: u.activo === false }, u.activo === false ? "Usuario reactivado." : "Usuario desactivado.")}
+                  >
+                    <Power size={13} /> {u.activo === false ? "Activar" : "Desactivar"}
+                  </button>
+                  <button style={s.accBtn} disabled={guardando} title="Generar una clave nueva" onClick={() => regenerarClaveUsuario(u)}>
+                    <KeyRound size={13} /> Clave
+                  </button>
+                  <button style={{ ...s.accBtn, color: "#b91c1c", marginLeft: "auto" }} disabled={guardando} title="Eliminar usuario" onClick={() => eliminar(u)}>
+                    <Trash2 size={13} />
+                  </button>
+                </div>
               </div>
             ))}
           </div>
@@ -1068,7 +1073,7 @@ function ModalUsuariosPortal({ rut, razonSocial, onCerrar, onOk, onError }) {
 
         <div style={{ marginTop: 12, paddingTop: 14, borderTop: "1px solid #e2e8f0" }}>
           <div style={{ ...s.label, marginBottom: 8 }}>Agregar usuario</div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 10 }}>
             <input style={s.input} type="email" placeholder="correo@empresa.cl" value={email} onChange={(e) => setEmail(e.target.value)} disabled={guardando} />
             <input style={s.input} placeholder="Nombre (opcional)" value={nombre} onChange={(e) => setNombre(e.target.value)} disabled={guardando} />
             <DropdownSelect
