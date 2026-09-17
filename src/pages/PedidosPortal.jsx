@@ -338,10 +338,11 @@ export default function PedidosPortal() {
       s.nota ? `Nota del cliente: ${s.nota}` : null,
     ].filter(Boolean).join("\n");
 
-    if ((s.estado || "pendiente") === "pendiente") {
-      api.put(`/stock-clientes/solicitudes/${s.id}/estado`, { estado: "respondida" }).catch(() => undefined);
-      setPedidos((prev) => prev.map((p) => (p.id === s.id ? { ...p, estado: "respondida" } : p)));
-    }
+    /* OJO: aquí NO se marca "respondida". Abrir el formulario no es responder:
+       el estado lo cambia el guardado de la cotización (vincularLicitacion),
+       que es cuando el cliente de verdad tiene su cotización en el portal.
+       Antes se marcaba al abrir y quedaban pedidos "respondidos" sin
+       cotización si la pestaña se cerraba sin guardar. */
     const draft = {
       rutEntidad: formatearRutVisual(s.rut),
       nombreEntidad: s.razon_social || "",
