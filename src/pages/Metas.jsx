@@ -3,11 +3,7 @@ import { api } from "../lib/api";
 import useAuth from "../hooks/useAuth";
 import MonthCalendarPicker from "../components/MonthCalendarPicker";
 import ModalAvanceMeta from "../components/ModalAvanceMeta";
-
-/* Vendedores que aparecen SIEMPRE en metas aunque su rol no sea de venta
-   (2026-09-17): Diego Cruz es admin pero vende, y antes quedaba fuera del
-   seed hasta tener cotizaciones. */
-const VENDEDORES_SIEMPRE_VISIBLES = ["diego.cruz@bvan.cl"];
+import { VENDEDORES_SIEMPRE_VISIBLES } from "../constants/vendedores";
 
 const CANAL_LABELS = {
   vendedor_terreno: "Vendedor Terreno",

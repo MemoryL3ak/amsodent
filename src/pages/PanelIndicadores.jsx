@@ -5,6 +5,7 @@ import MonthCalendarPicker from "../components/MonthCalendarPicker";
 import DateFilter from "../components/DateFilter";
 import EmbudoComercial from "../components/panel/EmbudoComercial";
 import ModalAvanceMeta from "../components/ModalAvanceMeta";
+import { esVendedorSiempreVisible } from "../constants/vendedores";
 import ModalMargenDesglose from "../components/panel/ModalMargenDesglose";
 import {
   TrendingUp, TrendingDown, Minus, ShoppingCart, Target, FileText,
@@ -69,7 +70,10 @@ function iniciales(nombre) {
 // fuera de la meta, del avance y de las tarjetas. Rol desconocido (perfil aún
 // no cargado) se trata como venta para no ocultar gente real mientras carga.
 const ROLES_VENTA = new Set(["ventas", "ventas_especial", "jefe_ventas", "jefe_ventas_especial"]);
-function esRolVenta(rol) {
+function esRolVenta(rol, email) {
+  // Excepción por correo: un admin que vende (Diego Cruz) cuenta como equipo
+  // comercial en el avance (2026-09-17).
+  if (esVendedorSiempreVisible(email)) return true;
   const r = String(rol || "").trim().toLowerCase();
   return !r || ROLES_VENTA.has(r);
 }
@@ -569,7 +573,7 @@ export default function PanelIndicadores() {
       if (!cuenta) return;
       const email = (l.creado_por || "").trim().toLowerCase();
       // Solo equipo de ventas: lo creado por perfiles admin no mide meta.
-      if (!esRolVenta(rolesVendedores[email])) return;
+      if (!esRolVenta(rolesVendedores[email], email)) return;
       total += d.monto;
       filas.push({
         licId: d.licId,
@@ -591,7 +595,7 @@ export default function PanelIndicadores() {
   // Meta del equipo de ventas (excluye metas asignadas a perfiles admin).
   const metaMonto = useMemo(
     () => Object.entries(metasPorVendedor).reduce(
-      (s, [email, meta]) => (esRolVenta(rolesVendedores[email]) ? s + Number(meta || 0) : s),
+      (s, [email, meta]) => (esRolVenta(rolesVendedores[email], email) ? s + Number(meta || 0) : s),
       0,
     ),
     [metasPorVendedor, rolesVendedores],
@@ -610,7 +614,7 @@ export default function PanelIndicadores() {
     return [...emails]
       // Solo el equipo de ventas: los perfiles admin con meta asignada no se
       // muestran (tampoco suman a la meta global, ver metaMonto).
-      .filter((email) => esRolVenta(rolesVendedores[email]))
+      .filter((email) => esRolVenta(rolesVendedores[email], email))
       .map((email) => {
         const meta = Number(metasPorVendedor[email] || 0);
         const avance = Number(avancePorEmail[email] || 0);
