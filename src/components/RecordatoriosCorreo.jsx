@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Mail, Clock } from "lucide-react";
+import { Mail, Clock, BellOff } from "lucide-react";
 import { api } from "../lib/api";
+import useAuth from "../hooks/useAuth";
 import CorreoComposer from "./CorreoComposer";
 
 // Detector global de correos pendientes (Fase 1 del sistema de correos).
@@ -33,6 +34,8 @@ export default function RecordatoriosCorreo() {
   const [pendientes, setPendientes] = useState([]);
   const [composer, setComposer] = useState(null);
   const descartadasRef = useRef(new Set());
+  const { rol } = useAuth();
+  const esAdmin = ["admin", "administrador"].includes(String(rol || "").trim().toLowerCase());
 
   const fetchPendientes = useCallback(async () => {
     try {
@@ -77,6 +80,19 @@ export default function RecordatoriosCorreo() {
       await api.post(`/notificaciones/${id}/snooze`, { horas: 2 });
     } catch {
       // si falla el snooze, queda descartada solo en memoria
+    }
+  }
+
+  // "No volver a recordar" (solo admin): marca la notificación como leída de
+  // forma permanente — el sondeo solo trae no leídas, así que no reaparece.
+  // El correo puede enviarse igual después desde el detalle de la cotización.
+  async function noRecordar(id) {
+    descartadasRef.current.add(id);
+    setPendientes((prev) => prev.filter((n) => n.id !== id));
+    try {
+      await api.post(`/notificaciones/${id}/leer`, {});
+    } catch {
+      // si falla, al menos queda descartada en esta sesión
     }
   }
 
@@ -201,6 +217,29 @@ export default function RecordatoriosCorreo() {
             background: "var(--bg)",
           }}
         >
+          {esAdmin && (
+            <button
+              type="button"
+              onClick={() => noRecordar(actual.id)}
+              title="Descarta este recordatorio para siempre (el correo se puede enviar igual desde el detalle de la cotización)"
+              style={{
+                marginRight: "auto",
+                padding: "9px 12px",
+                borderRadius: "var(--radius)",
+                border: "none",
+                background: "transparent",
+                color: "var(--text-muted)",
+                fontWeight: 600,
+                fontSize: 13,
+                cursor: "pointer",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+              }}
+            >
+              <BellOff size={14} /> No volver a recordar
+            </button>
+          )}
           <button
             type="button"
             onClick={() => masTarde(actual.id)}
