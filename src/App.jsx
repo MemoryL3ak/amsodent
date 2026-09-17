@@ -44,6 +44,7 @@ import EditarCampana from "./pages/EditarCampana";
 import CotizacionesPorVendedor from "./pages/CotizacionesPorVendedor";
 import PanelIndicadores from "./pages/PanelIndicadores";
 import AnalisisMercadoPublico from "./pages/AnalisisMercadoPublico";
+import Reporteria from "./pages/Reporteria";
 import PanelParticular from "./pages/PanelParticular";
 import Comisiones from "./pages/Comisiones";
 import PanelPublica from "./pages/PanelPublica";
@@ -250,6 +251,15 @@ export default function App() {
             element={
               <RequireRole allow={["admin"]}>
                 <AnalisisMercadoPublico />
+              </RequireRole>
+            }
+          />
+          {/* REPORTERÍA (constructor de reportes + SQL de lectura) — solo admin */}
+          <Route
+            path="reporteria"
+            element={
+              <RequireRole allow={["admin"]}>
+                <Reporteria />
               </RequireRole>
             }
           />

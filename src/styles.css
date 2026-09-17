@@ -3165,3 +3165,68 @@ a.ayuda-ruta-chip:hover { background: var(--primary-mid); }
   .ayuda-hero { padding: 20px 18px; }
   .ayuda-hero h1 { font-size: 21px; }
 }
+
+/* ── Reportería (2026-09-17) ─────────────────────────────────────────── */
+.reporteria-sql-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 14px;
+  align-items: start;
+}
+@media (max-width: 1100px) {
+  .reporteria-sql-grid { grid-template-columns: 1fr; }
+}
+.reporteria-editor {
+  width: 100%;
+  min-height: 180px;
+  resize: vertical;
+  font-family: "Cascadia Code", Consolas, "Courier New", monospace;
+  font-size: 13px;
+  line-height: 1.55;
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  background: var(--surface);
+  color: var(--text);
+  box-sizing: border-box;
+}
+.reporteria-editor:focus { outline: none; border-color: var(--primary); }
+.reporteria-catalogo {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  max-height: 430px;
+  overflow-y: auto;
+}
+.reporteria-catalogo-tabla { border-bottom: 1px solid var(--border); }
+.reporteria-catalogo-tabla:last-child { border-bottom: none; }
+.reporteria-catalogo-cab {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%; text-align: left; border: none; background: none;
+  padding: 9px 12px; cursor: pointer; font-size: 12.5px; font-weight: 600;
+  color: var(--text);
+}
+.reporteria-catalogo-cab:hover { background: var(--bg); }
+.reporteria-catalogo-cols { padding: 2px 12px 10px 32px; display: flex; flex-wrap: wrap; gap: 4px; }
+.reporteria-chip {
+  border: 1px solid var(--border); background: var(--bg);
+  border-radius: 999px; padding: 2px 9px; font-size: 11.5px;
+  font-family: Consolas, monospace; cursor: pointer; color: var(--text);
+}
+.reporteria-chip:hover { border-color: var(--primary); color: var(--primary-dark); }
+.reporteria-chip.activa { background: var(--primary-light); border-color: var(--primary); font-weight: 700; }
+.reporteria-fila-control {
+  display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+}
+.reporteria-resultado-tabla { overflow-x: auto; }
+.reporteria-resultado-tabla table { width: 100%; border-collapse: collapse; font-size: 12.8px; }
+.reporteria-resultado-tabla th {
+  text-align: left; padding: 8px 12px; font-size: 11px; text-transform: uppercase;
+  letter-spacing: .04em; color: var(--text-muted); background: var(--bg);
+  border-bottom: 1px solid var(--border); white-space: nowrap; position: sticky; top: 0;
+}
+.reporteria-resultado-tabla td {
+  padding: 7px 12px; border-bottom: 1px solid var(--border);
+  white-space: nowrap; max-width: 340px; overflow: hidden; text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
