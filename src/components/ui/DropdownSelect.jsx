@@ -22,6 +22,7 @@ export default function DropdownSelect({
   const [open, setOpen] = useState(false);
   const [coords, setCoords] = useState(null);
   const btnRef = useRef(null);
+  const menuRef = useRef(null);
   const sel = options.find((o) => String(o.value) === String(value ?? ""));
 
   function toggle() {
@@ -35,13 +36,20 @@ export default function DropdownSelect({
 
   useEffect(() => {
     if (!open) return;
+    // El scroll de la página cierra el menú (quedaría flotando lejos del
+    // botón), pero el scroll INTERNO de la lista no debe cerrarlo — sin esta
+    // distinción, una lista larga era imposible de recorrer.
+    const porScroll = (e) => {
+      if (menuRef.current && menuRef.current.contains(e.target)) return;
+      setOpen(false);
+    };
     const close = () => setOpen(false);
     const porTecla = (e) => { if (e.key === "Escape") setOpen(false); };
-    window.addEventListener("scroll", close, true);
+    window.addEventListener("scroll", porScroll, true);
     window.addEventListener("resize", close);
     window.addEventListener("keydown", porTecla);
     return () => {
-      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("scroll", porScroll, true);
       window.removeEventListener("resize", close);
       window.removeEventListener("keydown", porTecla);
     };
@@ -76,7 +84,7 @@ export default function DropdownSelect({
       {open && coords && createPortal(
         <>
           <div onMouseDown={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 11000 }} />
-          <div style={{ position: "fixed", left: coords.left, top: coords.top, minWidth: Math.max(minWidth, coords.width), maxWidth: "min(92vw, 520px)", zIndex: 11001, background: "var(--surface, #fff)", border: "1px solid var(--border, #e2e8f0)", borderRadius: 10, boxShadow: "var(--shadow-lg, 0 18px 40px -12px rgba(15,23,42,.25))", padding: 4, maxHeight: 300, overflowY: "auto" }}>
+          <div ref={menuRef} style={{ position: "fixed", left: coords.left, top: coords.top, minWidth: Math.max(minWidth, coords.width), maxWidth: "min(92vw, 520px)", zIndex: 11001, background: "var(--surface, #fff)", border: "1px solid var(--border, #e2e8f0)", borderRadius: 10, boxShadow: "var(--shadow-lg, 0 18px 40px -12px rgba(15,23,42,.25))", padding: 4, maxHeight: 300, overflowY: "auto" }}>
             {options.map((op) => {
               const isSel = String(op.value) === String(value ?? "");
               return (
