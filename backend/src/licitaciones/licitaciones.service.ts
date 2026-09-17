@@ -2497,12 +2497,21 @@ export class LicitacionesService {
     const client = this.supabase.getClient();
 
     const ids = Array.isArray(body?.ids) ? body!.ids!.map(Number).filter(Number.isFinite) : null;
+    // Estados con desenlace propio: no hay nada que corregir en ellos.
+    const CERRADOS = ['Adjudicada', 'Perdida', 'Descartada', 'Cancelada', 'Desierta'];
     let q = client
       .from('licitaciones')
       .select('id, id_licitacion, nombre_entidad, estado, fecha, total_con_iva')
       .not('id_licitacion', 'is', null)
       .order('fecha', { ascending: false });
-    if (ids?.length) q = q.in('id', ids);
+    if (ids?.length) {
+      q = q.in('id', ids);
+    } else {
+      // El filtro de estado va EN la consulta: si se filtrara en memoria, la
+      // ventana de 1.000 filas se gastaría en cotizaciones ya cerradas y las
+      // abiertas antiguas quedarían fuera para siempre.
+      q = q.not('estado', 'in', `(${CERRADOS.map((e) => `"${e}"`).join(',')})`).limit(1000);
+    }
     const { data, error } = await q;
     if (error) throw new BadRequestException(error.message);
 
@@ -2510,14 +2519,7 @@ export class LicitacionesService {
     // cotizaciones particulares y no tienen nada que consultar. El tipo va
     // de 2 a 3 letras: LE/LP/LQ/LR/SE… y COT (Compra Ágil, que es el grueso).
     const esCodigoMp = (c: string) => /^\d{3,}-\d{1,6}-[A-Z]{2,3}\d{2}$/i.test(String(c || '').trim());
-    const candidatas = (data || []).filter((l: any) => {
-      if (!esCodigoMp(l.id_licitacion)) return false;
-      if (ids?.length) return true;
-      // Sin ids explícitos, solo las que aún no están cerradas: las demás ya
-      // tienen desenlace y no hay nada que corregir.
-      const e = String(l.estado || '');
-      return !['Adjudicada', 'Perdida', 'Descartada', 'Cancelada'].includes(e);
-    });
+    const candidatas = (data || []).filter((l: any) => esCodigoMp(l.id_licitacion));
 
     const limite = Math.max(1, Math.min(120, Number(body?.limite) || 40));
     const aRevisar = candidatas.slice(0, limite);
@@ -2635,7 +2637,7 @@ export class LicitacionesService {
         motivo: `Se adjudicó a ${info.adjudicatario || 'otro proveedor'} y acá figura como "${actual}".`,
       };
     }
-    if (['Desierta', 'Revocada'].includes(info.estado_mp) && !['Perdida', 'Descartada', 'Cancelada'].includes(actual)) {
+    if (['Desierta', 'Revocada'].includes(info.estado_mp) && !['Perdida', 'Descartada', 'Cancelada', 'Desierta'].includes(actual)) {
       return {
         discrepancia: true,
         sugerencia: 'Descartada',
