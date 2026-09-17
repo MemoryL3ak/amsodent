@@ -2507,8 +2507,9 @@ export class LicitacionesService {
     if (error) throw new BadRequestException(error.message);
 
     // Solo códigos con forma de proceso de Mercado Público; el resto son
-    // cotizaciones particulares y no tienen nada que consultar.
-    const esCodigoMp = (c: string) => /^\d{3,}-\d{1,6}-[A-Z]{2}\d{2}$/i.test(String(c || '').trim());
+    // cotizaciones particulares y no tienen nada que consultar. El tipo va
+    // de 2 a 3 letras: LE/LP/LQ/LR/SE… y COT (Compra Ágil, que es el grueso).
+    const esCodigoMp = (c: string) => /^\d{3,}-\d{1,6}-[A-Z]{2,3}\d{2}$/i.test(String(c || '').trim());
     const candidatas = (data || []).filter((l: any) => {
       if (!esCodigoMp(l.id_licitacion)) return false;
       if (ids?.length) return true;
@@ -2588,6 +2589,9 @@ export class LicitacionesService {
     const codigoEstado = Number(l?.CodigoEstado);
     const estadoMp = { 5: 'Publicada', 6: 'Cerrada', 7: 'Desierta', 8: 'Adjudicada', 18: 'Revocada', 19: 'Suspendida' }[codigoEstado]
       || String(l?.Estado || 'Sin estado');
+    // La API a veces trae el estado solo como texto (sin CodigoEstado): la
+    // conclusión no puede depender del formato.
+    const esAdjudicada = codigoEstado === 8 || /adjudicada/i.test(estadoMp);
 
     // En las adjudicadas, cada ítem trae a su proveedor ganador.
     const items: any[] = Array.isArray(l?.Items?.Listado) ? l.Items.Listado : [];
@@ -2606,10 +2610,10 @@ export class LicitacionesService {
       estado_mp: estadoMp,
       // La API v1 solo publica a los adjudicados: si el proceso no está
       // resuelto, no se puede afirmar nada sobre si postulamos.
-      postulamos: codigoEstado === 8 ? nuestros.length > 0 : null,
-      adjudicada_a_nosotros: codigoEstado === 8 ? nuestros.length > 0 : null,
+      postulamos: esAdjudicada ? nuestros.length > 0 : null,
+      adjudicada_a_nosotros: esAdjudicada ? nuestros.length > 0 : null,
       adjudicatario,
-      nota: codigoEstado === 8 ? null : 'Hasta que el proceso se resuelva, Mercado Público no publica quién ofertó.',
+      nota: esAdjudicada ? null : 'Hasta que el proceso se resuelva, Mercado Público no publica quién ofertó.',
     };
   }
 
@@ -2663,14 +2667,20 @@ export class LicitacionesService {
       if (error) errores.push(`#${c.id}: ${error.message}`);
       else {
         aplicados.push(c.id);
-        try {
-          await client.from('actividades').insert({
-            licitacion_id: c.id,
-            tipo: 'estado',
-            descripcion: `Estado actualizado a "${c.estado}" según Mercado Público.`,
-            usuario_email: email || null,
-          });
-        } catch { /* la bitácora no debe bloquear el cambio */ }
+        // Queda en el historial de la cotización (que lee actividades_cliente;
+        // la tabla "actividades" a la que se escribía antes no existe).
+        const { error: errAct } = await client.from('actividades_cliente').insert({
+          licitacion_id: c.id,
+          user_email: email || 'sistema',
+          titulo: `Estado actualizado a "${c.estado}" según Mercado Público`,
+          tipo: 'otro',
+          motivo: 'Gestión Administrativa',
+          comentario: 'Cambio aplicado desde el diagnóstico de estados de Análisis Mercado Público.',
+          fecha: new Date().toISOString().slice(0, 10),
+          todo_el_dia: true,
+          estado: 'realizada',
+        });
+        if (errAct) this.logger.warn(`aplicarEstadoMp: sin bitácora para #${c.id}: ${errAct.message}`);
       }
     }
     return { aplicados: aplicados.length, ids: aplicados, errores };
