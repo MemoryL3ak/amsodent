@@ -1964,6 +1964,12 @@ select.input {
   max-width: 100%;
 }
 .segmentado > button {
+  /* inline-flex centrado: sin él, un ícono dentro del botón podía quedar
+     apilado sobre el texto (2026-09-17). */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   padding: 0 16px;
   font-size: 12.5px;
   font-weight: 700;
