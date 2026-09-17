@@ -93,6 +93,34 @@ const CONSULTAS_EJEMPLO = [
   },
 ];
 
+/* Pestañas con subrayado (patrón de Acceso al Portal / Despachos). */
+const est = {
+  tabs: { display: "flex", gap: 4, marginBottom: 16, borderBottom: "1px solid var(--border)", flexWrap: "wrap" },
+  tab: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 7,
+    padding: "10px 16px",
+    background: "transparent",
+    border: "none",
+    borderBottom: "2px solid transparent",
+    color: "var(--text-muted)",
+    fontSize: 13.5,
+    fontWeight: 600,
+    cursor: "pointer",
+    whiteSpace: "nowrap",
+  },
+  tabActiva: { color: "var(--primary)", borderBottomColor: "var(--primary)" },
+  tabBadge: {
+    background: "var(--primary-light)",
+    color: "var(--primary-dark)",
+    fontSize: 11,
+    fontWeight: 800,
+    borderRadius: 999,
+    padding: "1px 8px",
+  },
+};
+
 /* ── Paleta de los gráficos (misma familia del panel) ─────────────────── */
 const PALETA = ["#1e9295", "#0369a1", "#6d28d9", "#b45309", "#be185d", "#15803d", "#c2410c", "#4338ca", "#a21caf", "#0f766e", "#92400e", "#1d4ed8"];
 
@@ -297,10 +325,10 @@ function ResultadoReporte({ resultado, grafico, setGrafico, onGuardar, nombreArc
       <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, padding: "12px 16px", borderBottom: "1px solid var(--border)" }}>
         <div className="segmentado">
           <button type="button" className={vista === "tabla" ? "activo" : ""} onClick={() => setVista("tabla")}>
-            <Table2 size={14} style={{ marginRight: 5, verticalAlign: "-2px" }} />Tabla
+            <Table2 size={14} />Tabla
           </button>
           <button type="button" className={vista === "grafico" ? "activo" : ""} onClick={() => setVista("grafico")}>
-            <BarChart3 size={14} style={{ marginRight: 5, verticalAlign: "-2px" }} />Gráfico
+            <BarChart3 size={14} />Gráfico
           </button>
         </div>
         <span style={{ fontSize: 12.5, color: "var(--text-muted)" }}>
@@ -572,24 +600,28 @@ export default function Reporteria() {
         onCancel={() => setConfirmarBorrar(null)}
       />
 
-      <div className="page-header" style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
+      <div className="page-header">
         <div>
           <h1 className="page-title" style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <FilePieChart size={20} /> Reportería
           </h1>
           <p className="page-subtitle">Reportes a medida sobre los datos vivos de la plataforma: constructor visual, gráficos y SQL de solo lectura.</p>
         </div>
-        <div className="segmentado">
-          <button type="button" className={tab === "guardados" ? "activo" : ""} onClick={() => setTab("guardados")}>
-            <BookMarked size={14} style={{ marginRight: 5, verticalAlign: "-2px" }} />Guardados{guardados.length ? ` (${guardados.length})` : ""}
-          </button>
-          <button type="button" className={tab === "constructor" ? "activo" : ""} onClick={() => setTab("constructor")}>
-            <Table2 size={14} style={{ marginRight: 5, verticalAlign: "-2px" }} />Constructor
-          </button>
-          <button type="button" className={tab === "sql" ? "activo" : ""} onClick={() => setTab("sql")}>
-            <Database size={14} style={{ marginRight: 5, verticalAlign: "-2px" }} />Consulta SQL
-          </button>
-        </div>
+      </div>
+
+      {/* Pestañas con subrayado: el mismo patrón de Acceso al Portal y
+          Despachos, que es la estructura general de la plataforma. */}
+      <div style={est.tabs}>
+        <button type="button" style={{ ...est.tab, ...(tab === "guardados" ? est.tabActiva : {}) }} onClick={() => setTab("guardados")}>
+          <BookMarked size={15} /> Reportes guardados
+          {guardados.length > 0 && <span style={est.tabBadge}>{guardados.length}</span>}
+        </button>
+        <button type="button" style={{ ...est.tab, ...(tab === "constructor" ? est.tabActiva : {}) }} onClick={() => setTab("constructor")}>
+          <Table2 size={15} /> Constructor
+        </button>
+        <button type="button" style={{ ...est.tab, ...(tab === "sql" ? est.tabActiva : {}) }} onClick={() => setTab("sql")}>
+          <Database size={15} /> Consulta SQL
+        </button>
       </div>
 
       {/* ── Guardados ─────────────────────────────────────────────────── */}
