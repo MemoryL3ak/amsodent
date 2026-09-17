@@ -9,6 +9,7 @@ import { ProductosModule } from './productos/productos.module';
 import { CampanasModule } from './campanas/campanas.module';
 import { LicitacionesModule } from './licitaciones/licitaciones.module';
 import { MetasModule } from './metas/metas.module';
+import { ReporteriaModule } from './reporteria/reporteria.module';
 import { UsuariosModule } from './usuarios/usuarios.module';
 import { SorteoModule } from './sorteo/sorteo.module';
 import { FeriadosModule } from './feriados/feriados.module';
@@ -52,6 +53,7 @@ import { BsaleModule } from './bsale/bsale.module';
     CampanasModule,
     LicitacionesModule,
     MetasModule,
+    ReporteriaModule,
     UsuariosModule,
     SorteoModule,
     FeriadosModule,
