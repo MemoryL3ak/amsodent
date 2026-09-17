@@ -640,7 +640,7 @@ export default function Reporteria() {
       {tab === "constructor" && (
         <div className="surface" style={{ padding: 16 }}>
           <div className="reporteria-fila-control" style={{ marginBottom: 14 }}>
-            <div>
+            <div className="reporteria-campo">
               <label className="filter-label">Tabla de origen</label>
               <DropdownSelect
                 value={config.tabla}
@@ -651,14 +651,14 @@ export default function Reporteria() {
                 style={{ width: 280, height: 36 }}
               />
             </div>
-            <div>
+            <div className="reporteria-campo">
               <label className="filter-label">Modo</label>
               <div className="segmentado">
                 <button type="button" className={modo === "detalle" ? "activo" : ""} onClick={() => setModo("detalle")}>Detalle (filas)</button>
                 <button type="button" className={modo === "resumen" ? "activo" : ""} onClick={() => setModo("resumen")}>Resumen (agrupado)</button>
               </div>
             </div>
-            <div>
+            <div className="reporteria-campo">
               <label className="filter-label">Límite de filas</label>
               <input
                 className="input" type="number" min={1} max={5000}
@@ -801,7 +801,7 @@ export default function Reporteria() {
 
           {config.tabla && (
             <div className="reporteria-fila-control" style={{ marginBottom: 16 }}>
-              <div>
+              <div className="reporteria-campo">
                 <label className="filter-label">Ordenar por</label>
                 <DropdownSelect
                   value={config.ordenarPor}
@@ -819,7 +819,7 @@ export default function Reporteria() {
                   style={{ width: 230, height: 34 }}
                 />
               </div>
-              <div>
+              <div className="reporteria-campo">
                 <label className="filter-label">Dirección</label>
                 <div className="segmentado">
                   <button type="button" className={config.ordenDesc ? "activo" : ""} onClick={() => setConfig((c) => ({ ...c, ordenDesc: true }))}>Mayor a menor</button>

@@ -3230,3 +3230,7 @@ a.ayuda-ruta-chip:hover { background: var(--primary-mid); }
   white-space: nowrap; max-width: 340px; overflow: hidden; text-overflow: ellipsis;
   font-variant-numeric: tabular-nums;
 }
+/* Campos del constructor: etiqueta arriba del control, como los filtros de
+   las demás bandejas (antes quedaban al lado y la fila se veía descuadrada). */
+.reporteria-campo { display: flex; flex-direction: column; gap: 5px; }
+.reporteria-campo > .filter-label { display: block; }
