@@ -4,6 +4,11 @@ import useAuth from "../hooks/useAuth";
 import MonthCalendarPicker from "../components/MonthCalendarPicker";
 import ModalAvanceMeta from "../components/ModalAvanceMeta";
 
+/* Vendedores que aparecen SIEMPRE en metas aunque su rol no sea de venta
+   (2026-09-17): Diego Cruz es admin pero vende, y antes quedaba fuera del
+   seed hasta tener cotizaciones. */
+const VENDEDORES_SIEMPRE_VISIBLES = ["diego.cruz@bvan.cl"];
+
 const CANAL_LABELS = {
   vendedor_terreno: "Vendedor Terreno",
   vendedor_tienda_terreno: "Vendedor Tienda/Terreno",
@@ -350,7 +355,12 @@ export default function Metas() {
           nombres[email] = nombre;
           const alt = (p?.email_alterno || "").trim().toLowerCase();
           if (alt) nombres[alt] = nombre;
-          if (["ventas", "ventas_especial", "jefe_ventas"].includes(p?.rol)) {
+          if (
+            ["ventas", "ventas_especial", "jefe_ventas"].includes(p?.rol) ||
+            // Diego Cruz es admin pero vende: siempre visible en metas
+            // (pedido del 2026-09-17; antes estaba descartado del seed).
+            VENDEDORES_SIEMPRE_VISIBLES.includes(email)
+          ) {
             mapa[email] = nombre;
           }
         });
