@@ -333,7 +333,7 @@ function ResultadoReporte({ resultado, grafico, setGrafico, onGuardar, nombreArc
         </div>
         <span style={{ fontSize: 12.5, color: "var(--text-muted)" }}>
           {fmtNum(resultado.total)} filas · {resultado.ms} ms
-          {resultado.truncado && <strong style={{ color: "var(--warning)" }}> · truncado a 5.000</strong>}
+          {resultado.truncado && <strong style={{ color: "var(--warning)" }}> · truncado a 10.000</strong>}
         </span>
         <div style={{ marginLeft: "auto", display: "flex", flexWrap: "wrap", gap: 8 }}>
           <button type="button" className="btn btn-sm btn-secondary" onClick={() => exportar("xlsx")}>
@@ -693,7 +693,7 @@ export default function Reporteria() {
             <div className="reporteria-campo">
               <label className="filter-label">Límite de filas</label>
               <input
-                className="input" type="number" min={1} max={5000}
+                className="input" type="number" min={1} max={10000}
                 style={{ width: 110, height: 36 }}
                 value={config.limite}
                 onChange={(e) => setConfig((c) => ({ ...c, limite: e.target.value }))}
@@ -878,7 +878,7 @@ export default function Reporteria() {
           <div className="surface" style={{ padding: 16 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8, flexWrap: "wrap" }}>
               <strong style={{ fontSize: 13.5 }}>Consulta de solo lectura</strong>
-              <span style={{ fontSize: 11.5, color: "var(--text-muted)" }}>Solo SELECT · tope 5.000 filas · 15 s máx. · Ctrl+Enter ejecuta</span>
+              <span style={{ fontSize: 11.5, color: "var(--text-muted)" }}>Solo SELECT · tope 10.000 filas · 15 s máx. · Ctrl+Enter ejecuta</span>
             </div>
             <textarea
               ref={editorRef}

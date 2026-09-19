@@ -8,7 +8,7 @@ import { SupabaseService } from '../supabase/supabase.service';
    20260917 (SELECT-only, timeout 15 s, tope 5.000 filas), que solo puede
    invocar el service role: el navegador jamás habla directo con la base. */
 
-const LIMITE_FILAS = 5000;
+const LIMITE_FILAS = 10000;
 
 /* Tablas recomendadas del negocio, con descripción para el catálogo. El
    resto de tablas públicas también aparece (vía information_schema), pero
