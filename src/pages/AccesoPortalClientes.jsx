@@ -1218,10 +1218,13 @@ function SeccionTiendasExplorador({ onOk, onError }) {
                       <span style={{ fontWeight: 700, color: esPropia ? TEAL_DARK : "#0f172a" }}>
                         {esPropia ? "★ " : ""}{t.nombre}
                       </span>
-                      {/* La nota explica por qué una tienda quedó inactiva
-                          (ej: Cloudflare bloquea las consultas). */}
+                      {/* La nota puede ser una advertencia (por qué la tienda
+                          quedó inactiva, ej: Cloudflare bloquea las consultas)
+                          o un dato de contexto de una tienda que sí funciona.
+                          Se pinta en ámbar solo en el primer caso: si no, una
+                          tienda sana parece estar fallando. */}
                       {t.nota ? (
-                        <div style={{ fontSize: 11.5, color: "#b45309", marginTop: 3, lineHeight: 1.4, maxWidth: 320 }}>
+                        <div style={{ fontSize: 11.5, color: t.activa ? "#64748b" : "#b45309", marginTop: 3, lineHeight: 1.4, maxWidth: 320 }}>
                           {t.nota}
                         </div>
                       ) : null}
@@ -1384,7 +1387,8 @@ function ModalTiendaExplorador({ tienda, onCerrar, onHecho, onError }) {
           maxLength={400}
         />
         <div style={{ fontSize: 11.5, color: "#94a3b8", marginTop: 4 }}>
-          Queda a la vista en la lista. Sirve para dejar escrito por qué una tienda está inactiva.
+          Queda a la vista en la lista: por qué una tienda está inactiva, o qué ojo hay que tener con
+          una que sí funciona.
         </div>
 
         {/* Probar conexión: consulta real ("resina") contra la API del sitio */}
