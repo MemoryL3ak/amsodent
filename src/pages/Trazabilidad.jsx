@@ -184,6 +184,104 @@ function facturaCubreGuia(f, gId) {
   return f.deriva_de_id === gId || (Array.isArray(f.guias_ids) && f.guias_ids.includes(gId));
 }
 
+// Cliente particular: no usa OC ni guia de despacho, su documento es la
+// factura/boleta.
+function esParticular(lic) {
+  return (
+    (lic?.tipo_cliente || "").toLowerCase().includes("particular") ||
+    (lic?.tipo_compra || "").toLowerCase().includes("particular")
+  );
+}
+
+// Grupo de avance del ciclo documental de una cotizacion, de lo menos completo
+// a lo mas completo. Es el primer nivel de orden de la tabla y tambien la
+// columna "Estado del ciclo" del reporte descargable.
+function tierCicloDe(lic, docs) {
+  const esPart = esParticular(lic);
+  const ocs = docs.filter((d) => d.tipo === "orden_compra");
+  const guias = docs.filter((d) => d.tipo === "guia_despacho");
+  const facturas = docs.filter(
+    (d) => d.tipo === "factura" || d.tipo === "factura_boleta" || d.tipo === "efectivo",
+  );
+  const facturaImpaga = docs.some(
+    (d) => (d.tipo === "factura" || d.tipo === "factura_boleta") && !d.pagada,
+  );
+
+  if (!esPart) {
+    if (ocs.length === 0) return 0;
+    if (guias.length === 0) return 1;
+    if (facturas.length === 0) return 2;
+    // Ciclo documentado a medias: alguna OC sin guia derivada o alguna guia
+    // sin factura asociada. Antes se preguntaba solo "existe alguna guia /
+    // alguna factura", asi que una cotizacion con dos guias y una sola
+    // facturada (y pagada) se ordenaba como completa. Un cierre forzado se da
+    // por terminado, por eso queda fuera de este chequeo.
+    if (!lic.ciclo_cerrado) {
+      if (ocs.some((oc) => !guias.some((g) => g.deriva_de_id === oc.id))) return 1;
+      if (guias.some((g) => !facturas.some((f) => facturaCubreGuia(f, g.id)))) return 2;
+    }
+  } else if (facturas.length === 0) {
+    return 2;
+  }
+  if (facturaImpaga) return 3;
+  // Todo facturado y pagado, pero la OC aun tiene saldo por consumir
+  // (licitaciones grandes con entregas parciales) -> sigue activa.
+  if (!esPart && !lic.ciclo_cerrado) {
+    const sumaOC = ocs.reduce((acc, d) => acc + Number(d.monto || 0), 0);
+    const sumaGuias = guias.reduce((acc, d) => acc + Number(d.monto || 0), 0);
+    if (sumaOC - sumaGuias > 0) return 4;
+  }
+  return 5;
+}
+
+const TIER_NOMBRE = [
+  "Sin orden de compra",
+  "Falta guía de despacho",
+  "Falta factura",
+  "Factura impaga",
+  "Saldo de OC por consumir",
+  "Ciclo completo",
+];
+
+// Etiqueta legible de cada tipo de documento, para el reporte descargable.
+const DOC_TIPO_LABEL = {
+  orden_compra: "Orden de compra",
+  guia_despacho: "Guía de despacho",
+  factura: "Factura",
+  factura_boleta: "Factura / Boleta",
+  comprobante_pago: "Comprobante de pago",
+  efectivo: "Efectivo",
+  webpay: "Webpay",
+  info_despacho: "Info de despacho",
+  nota_credito: "Nota de crédito",
+  cierre_forzado: "Cierre forzado",
+  multa: "Multa",
+  portal_cliente: "Documento del portal",
+};
+
+// Columnas del reporte que se formatean como pesos.
+const COLS_MONEDA = [
+  "Monto Cotizado (bruto)",
+  "OC Neto",
+  "Guías Neto",
+  "Saldo por Consumir",
+  "Neto sin Facturar",
+  "Facturado Neto",
+  "Facturado Bruto",
+  "Base a Cobrar (bruto)",
+  "Notas de Crédito",
+  "Multas",
+  "Pagado (bruto)",
+  "Por Cobrar",
+  "Saldo al Cerrar",
+  "Guía Neto",
+  "Saldo OC tras la Guía",
+  "Factura Neto",
+  "Factura Bruto",
+  "Monto Neto",
+  "Monto Bruto",
+];
+
 const customSelectStyles = {
   control: (base, state) => ({
     ...base,
@@ -844,50 +942,7 @@ export default function Trazabilidad() {
     //   4 = pagada pero con saldo de OC por consumir · 5 = todo completo.
     // Cliente particular no usa OC/guía: parte en "falta factura/boleta".
     // El orden elegido por el usuario aplica dentro de cada grupo.
-    const tierCiclo = (lic) => {
-      const docs = documentosMap[lic.id] || [];
-      const esPart =
-        (lic.tipo_cliente || "").toLowerCase().includes("particular") ||
-        (lic.tipo_compra || "").toLowerCase().includes("particular");
-      const ocs = docs.filter((d) => d.tipo === "orden_compra");
-      const guias = docs.filter((d) => d.tipo === "guia_despacho");
-      const facturas = docs.filter(
-        (d) => d.tipo === "factura" || d.tipo === "factura_boleta" || d.tipo === "efectivo",
-      );
-      const facturaImpaga = docs.some(
-        (d) => (d.tipo === "factura" || d.tipo === "factura_boleta") && !d.pagada,
-      );
-
-      if (!esPart) {
-        if (ocs.length === 0) return 0;
-        if (guias.length === 0) return 1;
-        if (facturas.length === 0) return 2;
-        // Ciclo documentado a medias: alguna OC sin guia derivada o alguna
-        // guia sin factura asociada. Antes se preguntaba solo "existe alguna
-        // guia / alguna factura", asi que una cotizacion con dos guias y una
-        // sola facturada (y pagada) se ordenaba como completa. Un cierre
-        // forzado se da por terminado, por eso queda fuera de este chequeo.
-        if (!lic.ciclo_cerrado) {
-          if (ocs.some((oc) => !guias.some((g) => g.deriva_de_id === oc.id))) return 1;
-          if (guias.some((g) => !facturas.some((f) => facturaCubreGuia(f, g.id)))) return 2;
-        }
-      } else if (facturas.length === 0) {
-        return 2;
-      }
-      if (facturaImpaga) return 3;
-      // Todo facturado y pagado, pero la OC aún tiene saldo por consumir
-      // (licitaciones grandes con entregas parciales) → sigue activa.
-      if (!esPart && !lic.ciclo_cerrado) {
-        const sumaOC = docs
-          .filter((d) => d.tipo === "orden_compra")
-          .reduce((acc, d) => acc + Number(d.monto || 0), 0);
-        const sumaGuias = docs
-          .filter((d) => d.tipo === "guia_despacho")
-          .reduce((acc, d) => acc + Number(d.monto || 0), 0);
-        if (sumaOC - sumaGuias > 0) return 4;
-      }
-      return 5;
-    };
+    const tierCiclo = (lic) => tierCicloDe(lic, documentosMap[lic.id] || []);
 
     rows.sort((a, b) => {
       const pa = tierCiclo(a);
@@ -1111,46 +1166,395 @@ export default function Trazabilidad() {
     };
   }
 
-  /* ── Reporte descargable (Punto 36) ────────────────────────── */
-  function construirFilasReporte() {
+  /* ── Reporte de trazabilidad (Excel multi-hoja) ─────────────── */
+  // Agregados por cotización. Son la base de las hojas "Resumen" y "Por
+  // cotización". Los montos de licitacion_documentos se guardan NETOS (las
+  // notas de crédito y las multas son la excepción: se digitan brutas), así
+  // que el bruto se deriva ×1,19 con la misma aritmética de Seguimiento de
+  // Pagos, para que ambos módulos muestren las mismas cifras.
+  function agregadosCotizacion(lic) {
+    const docs = getDocsForLic(lic.id);
+    const ocs = docs.filter((d) => d.tipo === "orden_compra");
+    const guias = docs.filter((d) => d.tipo === "guia_despacho");
+    const facturas = docs.filter((d) => d.tipo === "factura" || d.tipo === "factura_boleta");
+    const notasCredito = docs.filter((d) => d.tipo === "nota_credito");
+    const multas = docs.filter((d) => d.tipo === "multa");
+    const pagos = docs.filter(
+      (d) => d.tipo === "comprobante_pago" || d.tipo === "webpay" || d.tipo === "efectivo",
+    );
+    const suma = (arr) => arr.reduce((acc, d) => acc + Number(d.monto || 0), 0);
+
+    const ocNeto = suma(ocs);
+    const guiasNeto = suma(guias);
+    const facturadoNeto = suma(facturas);
+    const facturadoBruto = Math.round(facturadoNeto * 1.19);
+    const ncBruto = suma(notasCredito);
+    const multaBruto = suma(multas);
+    const pagadoBruto = Math.round(suma(pagos) * 1.19);
+
+    // Base a cobrar, en bruto: el cliente particular paga contra su
+    // factura/boleta; el sector público paga contra la orden de compra.
+    const esPart = esParticular(lic);
+    const baseCobro = esPart
+      ? facturadoBruto || Number(lic.total_con_iva || 0)
+      : ocNeto > 0
+      ? Math.round(ocNeto * 1.19)
+      : Number(lic.total_con_iva || 0) || Math.round(Number(lic.total_sin_iva || 0) * 1.19);
+
+    const ocsSinGuia = ocs.filter((oc) => !guias.some((g) => g.deriva_de_id === oc.id));
+    const guiasSinFactura = guias.filter(
+      (g) =>
+        !docs.some(
+          (f) =>
+            (f.tipo === "factura" || f.tipo === "factura_boleta" || f.tipo === "efectivo") &&
+            facturaCubreGuia(f, g.id),
+        ),
+    );
+    const fechasFactura = facturas.map((f) => f.fecha_factura || "").filter(Boolean).sort();
+    const atrasos = facturas.map((f) => Number(f.dias_atraso_pago || 0)).filter((n) => n > 0);
+    const factoring = Array.from(
+      new Set(facturas.map((f) => (f.factoring_empresa || "").trim()).filter(Boolean)),
+    );
+
+    return {
+      ocs,
+      guias,
+      facturas,
+      ocNeto,
+      guiasNeto,
+      facturadoNeto,
+      facturadoBruto,
+      ncBruto,
+      multaBruto,
+      pagadoBruto,
+      baseCobro,
+      // El cierre forzado congela el saldo: lo que quedaba pendiente al momento
+      // de cerrar quedó guardado en monto_forzado.
+      saldoPorConsumir: lic.ciclo_cerrado ? 0 : Math.round(ocNeto - guiasNeto),
+      porCobrar: Math.round(baseCobro - ncBruto - multaBruto - pagadoBruto),
+      ocsSinGuia,
+      guiasSinFactura,
+      netoSinFacturar: suma(guiasSinFactura),
+      ultimaFactura: fechasFactura.length ? fechasFactura[fechasFactura.length - 1] : "",
+      diasAtrasoMax: atrasos.length ? Math.max(...atrasos) : "",
+      cierre: getCierreForzado(lic.id),
+      factoring: factoring.join(", "),
+      tier: tierCicloDe(lic, docs),
+    };
+  }
+
+  function nombreVendedor(lic) {
+    const email = (lic.creado_por || "").trim().toLowerCase();
+    return usuariosMap[email] || email || "";
+  }
+
+  // Hoja "Por cotización": una fila por cotización, con el saldo por consumir
+  // y su desglose (OC neto, guías neto, qué falta despachar y qué falta cobrar).
+  function filasPorCotizacion() {
     return dataOrdenada.map((lic) => {
-      const emailCreador = (lic.creado_por || "").trim().toLowerCase();
-      const ocs = getOrdenes(lic.id);
-      const guias = getGuias(lic.id);
-      const facturas = getFacturas(lic.id);
-      const fechasFacturas = facturas
-        .map((f) => f.fecha_documento || f.fecha_emision || f.fecha || "")
-        .filter(Boolean)
-        .sort();
-      // Resumen de estado documentación para esta cotización
-      let estadoDoc;
-      if (ocs.length === 0) estadoDoc = "sin documentos";
-      else if (facturas.length > 0) estadoDoc = "con factura";
-      else if (guias.length > 0) estadoDoc = "falta factura";
-      else estadoDoc = "solo OC";
-      const numerosOC = Array.from(
-        new Set(ocs.map((o) => String(o.numero || "").trim()).filter(Boolean))
-      ).join(", ");
+      const a = agregadosCotizacion(lic);
+      const nums = (arr) =>
+        Array.from(
+          new Set(arr.map((d) => String(d.numero || "").trim()).filter(Boolean)),
+        ).join(", ");
       return {
         "ID Cotización": lic.id_licitacion || lic.id || "",
+        "Cotización": lic.nombre || "",
         "Cliente": lic.nombre_entidad || "",
-        "Vendedor": usuariosMap[emailCreador] || emailCreador || "",
+        "Comuna": lic.comuna || "",
+        "Vendedor": nombreVendedor(lic),
+        "Tipo de Cliente": lic.tipo_cliente || "",
         "Tipo de Compra": lic.tipo_compra || "",
         "Fecha Adjudicación": (lic.fecha_adjudicada || "").toString().slice(0, 10),
-        "Monto Total": Number(lic.total_con_iva ?? lic.total_sin_iva ?? 0),
-        "N° OC": numerosOC,
-        "# OCs": ocs.length,
-        "# Guías": guias.length,
-        "# Facturas": facturas.length,
-        "Última Factura": fechasFacturas.length ? fechasFacturas[fechasFacturas.length - 1] : "",
-        "Estado Documentación": estadoDoc,
+        "Estado del Ciclo": TIER_NOMBRE[a.tier] || "",
+        "Estado de Entrega": lic.estado_entrega || "Preparación",
+        "Monto Cotizado (bruto)": Number(lic.total_con_iva || 0),
+        "N° OC": nums(a.ocs),
+        "# OCs": a.ocs.length,
+        "OC Neto": a.ocNeto,
+        "# Guías": a.guias.length,
+        "Guías Neto": a.guiasNeto,
+        "Saldo por Consumir": a.saldoPorConsumir,
+        "% Despachado": a.ocNeto > 0 ? a.guiasNeto / a.ocNeto : "",
+        "OCs sin Guía": a.ocsSinGuia.length,
+        "Guías sin Facturar": a.guiasSinFactura.length,
+        "Neto sin Facturar": a.netoSinFacturar,
+        "N° Factura": nums(a.facturas),
+        "# Facturas": a.facturas.length,
+        "Facturado Neto": a.facturadoNeto,
+        "Facturado Bruto": a.facturadoBruto,
+        "Última Factura": a.ultimaFactura,
+        "Base a Cobrar (bruto)": a.baseCobro,
+        "Notas de Crédito": a.ncBruto,
+        "Multas": a.multaBruto,
+        "Pagado (bruto)": a.pagadoBruto,
+        "Por Cobrar": a.porCobrar,
+        "Días de Atraso (máx)": a.diasAtrasoMax,
+        "Factoring": a.factoring,
+        "Ciclo Cerrado": lic.ciclo_cerrado ? "Sí" : "No",
+        "Motivo Cierre Forzado": a.cierre ? a.cierre.numero || "" : "",
+        "Saldo al Cerrar": lic.ciclo_cerrado ? Number(lic.monto_forzado || 0) : "",
       };
     });
   }
 
+  // Hoja "Detalle por ciclo": una fila por ciclo OC → guía → factura, las
+  // mismas que arma la tabla. Cuando un documento ocupa varias filas (una
+  // factura que cubre varias guías, una OC con varias guías) su monto va solo
+  // en la primera, igual que las celdas fusionadas en pantalla, para poder
+  // sumar la columna sin duplicar.
+  function filasPorCiclo() {
+    const filas = [];
+    dataOrdenada.forEach((lic) => {
+      const a = agregadosCotizacion(lic);
+      const vendedor = nombreVendedor(lic);
+      // Saldo que le va quedando a cada OC a medida que se le cargan guías.
+      const restanteOC = {};
+      a.ocs.forEach((oc) => {
+        restanteOC[oc.id] = Number(oc.monto || 0);
+      });
+      buildCycles(lic.id).forEach((c) => {
+        const { oc, guia, factura } = c;
+        if (guia && c.firstOfGuia && oc && restanteOC[oc.id] != null) {
+          restanteOC[oc.id] = Math.round(restanteOC[oc.id] - Number(guia.monto || 0));
+        }
+        const netoFactura = factura ? Number(factura.monto || 0) : 0;
+        filas.push({
+          "ID Cotización": lic.id_licitacion || lic.id || "",
+          "Cliente": lic.nombre_entidad || "",
+          "Vendedor": vendedor,
+          "Estado del Ciclo": TIER_NOMBRE[a.tier] || "",
+          "N° OC": oc ? oc.numero || "S/N" : "PENDIENTE",
+          "Fecha OC": oc ? (oc.fecha_oc || "").toString().slice(0, 10) : "",
+          "OC Neto": oc && c.firstOfOc ? Number(oc.monto || 0) : "",
+          "N° Guía": guia ? guia.numero || "S/N" : "PENDIENTE",
+          "Fecha Guía": guia ? (guia.fecha_oc || guia.created_at || "").toString().slice(0, 10) : "",
+          "Guía Neto": guia && c.firstOfGuia ? Number(guia.monto || 0) : "",
+          "Saldo OC tras la Guía": oc ? restanteOC[oc.id] ?? "" : "",
+          "Courier": guia ? guia.empresa_despacho || "" : "",
+          "N° Seguimiento": guia ? guia.n_seguimiento || "" : "",
+          "Observación Despacho": guia ? guia.observacion_despacho || "" : "",
+          "N° Factura": factura ? factura.numero || "S/N" : "PENDIENTE",
+          "Fecha Factura": factura ? (factura.fecha_factura || "").toString().slice(0, 10) : "",
+          "Factura Neto": factura && c.firstOfFactura ? netoFactura : "",
+          "Factura Bruto": factura && c.firstOfFactura ? Math.round(netoFactura * 1.19) : "",
+          "Pagada": factura ? (factura.pagada ? "Sí" : "No") : "",
+          "Banco de Pago": factura ? factura.banco_pago || "" : "",
+          "Días de Atraso":
+            factura && factura.dias_atraso_pago != null ? Number(factura.dias_atraso_pago) : "",
+          "Factoring": factura ? factura.factoring_empresa || "" : "",
+          "Comisión Factoring %":
+            factura && factura.factoring_comision_pct != null
+              ? Number(factura.factoring_comision_pct)
+              : "",
+          "Vencimiento Factoring": factura
+            ? (factura.factoring_vencimiento || "").toString().slice(0, 10)
+            : "",
+        });
+      });
+    });
+    return filas;
+  }
+
+  // Hoja "Documentos": todos los documentos cargados, planos, incluidos los que
+  // no aparecen en el ciclo (comprobantes, notas de crédito, multas, cierres).
+  function filasDocumentos() {
+    const filas = [];
+    dataOrdenada.forEach((lic) => {
+      const vendedor = nombreVendedor(lic);
+      const docs = [...getDocsForLic(lic.id)].sort(
+        (x, y) =>
+          String(x.tipo || "").localeCompare(String(y.tipo || "")) || Number(x.id) - Number(y.id),
+      );
+      docs.forEach((d) => {
+        const monto = Number(d.monto || 0);
+        // Notas de crédito y multas se digitan brutas; el resto va neto.
+        const digitadoBruto = d.tipo === "nota_credito" || d.tipo === "multa";
+        filas.push({
+          "ID Cotización": lic.id_licitacion || lic.id || "",
+          "Cliente": lic.nombre_entidad || "",
+          "Vendedor": vendedor,
+          "Tipo de Documento": DOC_TIPO_LABEL[d.tipo] || d.tipo || "",
+          "N° / Motivo": d.numero || "",
+          "Fecha": (d.fecha_factura || d.fecha_oc || d.created_at || "").toString().slice(0, 10),
+          "Monto Neto": digitadoBruto ? "" : monto,
+          "Monto Bruto": digitadoBruto ? monto : Math.round(monto * 1.19),
+          "Deriva del Documento": d.deriva_de_id ?? "",
+          "Guías Cubiertas": Array.isArray(d.guias_ids) ? d.guias_ids.join(", ") : "",
+          "Pagada": d.pagada == null ? "" : d.pagada ? "Sí" : "No",
+          "Courier": d.empresa_despacho || "",
+          "N° Seguimiento": d.n_seguimiento || "",
+          "Banco de Pago": d.banco_pago || "",
+          "Días de Atraso": d.dias_atraso_pago ?? "",
+          "Factoring": d.factoring_empresa || "",
+          "Comisión Factoring %": d.factoring_comision_pct ?? "",
+          "Vencimiento Factoring": (d.factoring_vencimiento || "").toString().slice(0, 10),
+          "Observación": d.observacion_despacho || d.descripcion || "",
+          "Subido por Cliente": d.subido_por_cliente ? "Sí" : "",
+          "ID Documento": d.id,
+          "Archivo": d.url_pdf || d.url || "",
+        });
+      });
+    });
+    return filas;
+  }
+
+  // Filtros activos en texto, para dejar constancia en el reporte de sobre qué
+  // universo se calcularon los totales.
+  function descripcionFiltros() {
+    const f = [];
+    if (filtroFechaDesde || filtroFechaHasta) {
+      f.push([
+        "Período de adjudicación",
+        `${filtroFechaDesde || "sin inicio"} → ${filtroFechaHasta || "sin término"}`,
+      ]);
+    }
+    if (filtroTipoCotizacion) f.push(["Tipo de cotización", filtroTipoCotizacion]);
+    if (filtroTipoCompra.length > 0) f.push(["Tipo de compra", filtroTipoCompra.join(", ")]);
+    if (filtroEstadoCiclo) f.push(["Estado de ciclo", filtroEstadoCiclo]);
+    if (filtroId) f.push(["ID cotización contiene", filtroId]);
+    if (filtroEntidad) f.push(["Cliente contiene", filtroEntidad]);
+    if (filtroVendedor) f.push(["Vendedor", filtroVendedor]);
+    if (filtroOC) f.push(["N° de OC contiene", filtroOC]);
+    if (filtroFactura) f.push(["N° de factura contiene", filtroFactura]);
+    const flags = [flagOc && "OC", flagGuia && "Guía", flagFactura && "Factura"].filter(Boolean);
+    if (flagSinDocs) f.push(["Documentos", "solo cotizaciones sin documentos"]);
+    else if (flags.length > 0) f.push(["Tiene al menos", flags.join(" + ")]);
+    if (f.length === 0) f.push(["Sin filtros", "todas las cotizaciones adjudicadas visibles"]);
+    return f;
+  }
+
+  // Hoja "Resumen": totales del filtro actual, con el desglose por estado del
+  // ciclo y por vendedor, y la explicación de cómo se calcula cada monto.
+  function hojaResumen(XLSX, porCotizacion) {
+    const total = (col) => porCotizacion.reduce((acc, r) => acc + (Number(r[col]) || 0), 0);
+    const sumaDe = (filas, col) => filas.reduce((acc, r) => acc + (Number(r[col]) || 0), 0);
+
+    const porTier = TIER_NOMBRE.map((nombre) => {
+      const filas = porCotizacion.filter((r) => r["Estado del Ciclo"] === nombre);
+      return [
+        nombre,
+        filas.length,
+        sumaDe(filas, "Saldo por Consumir"),
+        sumaDe(filas, "Por Cobrar"),
+      ];
+    }).filter((fila) => fila[1] > 0);
+
+    const vendedores = Array.from(
+      new Set(porCotizacion.map((r) => r["Vendedor"]).filter(Boolean)),
+    ).sort((a, b) => a.localeCompare(b, "es"));
+    const porVendedor = vendedores.map((v) => {
+      const filas = porCotizacion.filter((r) => r["Vendedor"] === v);
+      return [
+        v,
+        filas.length,
+        sumaDe(filas, "OC Neto"),
+        sumaDe(filas, "Saldo por Consumir"),
+        sumaDe(filas, "Por Cobrar"),
+      ];
+    });
+
+    const aoa = [
+      ["REPORTE DE TRAZABILIDAD"],
+      ["Generado", new Date().toLocaleString("es-CL")],
+      ["Generado por", user?.email || ""],
+      ["Cotizaciones en el reporte", porCotizacion.length],
+      [],
+      ["FILTROS APLICADOS"],
+      ...descripcionFiltros(),
+      [],
+      ["MONTOS (CLP)"],
+      ["Concepto", "Monto", "Cómo se calcula"],
+      ["OC neto cargado", total("OC Neto"), "Suma del monto neto de las órdenes de compra"],
+      ["Guías neto cargado", total("Guías Neto"), "Suma del monto neto de las guías de despacho"],
+      [
+        "SALDO POR CONSUMIR",
+        total("Saldo por Consumir"),
+        "OC neto − guías neto. Un ciclo cerrado a la fuerza queda en $0",
+      ],
+      [
+        "Neto despachado sin facturar",
+        total("Neto sin Facturar"),
+        "Suma de las guías que todavía no tienen factura asociada",
+      ],
+      ["Facturado neto", total("Facturado Neto"), "Suma de facturas y boletas"],
+      ["Facturado bruto", total("Facturado Bruto"), "Facturado neto × 1,19"],
+      [
+        "Base a cobrar (bruto)",
+        total("Base a Cobrar (bruto)"),
+        "Particular: su factura/boleta. Público: la OC. Ambas en bruto",
+      ],
+      [
+        "Notas de crédito",
+        total("Notas de Crédito"),
+        "Descuentan del monto a cobrar (se digitan brutas)",
+      ],
+      ["Multas", total("Multas"), "Descuentan del monto a cobrar (se digitan brutas)"],
+      ["Pagado (bruto)", total("Pagado (bruto)"), "Comprobantes, Webpay y efectivo × 1,19"],
+      [
+        "POR COBRAR",
+        total("Por Cobrar"),
+        "Base a cobrar − notas de crédito − multas − pagado",
+      ],
+      [],
+      ["POR ESTADO DEL CICLO"],
+      ["Estado", "Cotizaciones", "Saldo por consumir", "Por cobrar"],
+      ...porTier,
+      [],
+      ["POR VENDEDOR"],
+      ["Vendedor", "Cotizaciones", "OC neto", "Saldo por consumir", "Por cobrar"],
+      ...porVendedor,
+      [],
+      ["NOTAS"],
+      [
+        "",
+        "Los montos de los documentos se guardan NETOS y el bruto se deriva ×1,19. Las notas de crédito y las multas son la excepción: se digitan brutas.",
+      ],
+      [
+        "",
+        'En "Detalle por ciclo", el monto de una OC, guía o factura que ocupa varias filas aparece solo en la primera, igual que las celdas fusionadas de la tabla, para poder sumar la columna sin duplicar.',
+      ],
+      [
+        "",
+        'El saldo por consumir de un ciclo cerrado a la fuerza queda en $0; lo que quedaba pendiente al cerrarlo está en la columna "Saldo al Cerrar".',
+      ],
+    ];
+
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws["!cols"] = [{ wch: 34 }, { wch: 18 }, { wch: 22 }, { wch: 20 }, { wch: 20 }];
+    for (let r = 0; r < aoa.length; r++) {
+      for (let c = 1; c < (aoa[r] || []).length; c++) {
+        const cell = ws[XLSX.utils.encode_cell({ r, c })];
+        if (cell && cell.t === "n") cell.z = "#,##0";
+      }
+    }
+    return ws;
+  }
+
+  function hojaTabla(XLSX, filas) {
+    const ws = XLSX.utils.json_to_sheet(filas);
+    const cabeceras = Object.keys(filas[0] || {});
+    ws["!cols"] = cabeceras.map((h) => ({ wch: Math.min(34, Math.max(11, h.length + 3)) }));
+    const rango = XLSX.utils.decode_range(ws["!ref"] || "A1");
+    // Filtro automático sobre los títulos, para poder acotar el detalle en Excel.
+    // (Congelar paneles no sirve: la versión community de xlsx no lo escribe.)
+    ws["!autofilter"] = { ref: ws["!ref"] || "A1" };
+    for (let c = rango.s.c; c <= rango.e.c; c++) {
+      const cabecera = cabeceras[c];
+      const esMoneda = COLS_MONEDA.includes(cabecera);
+      const esPorcentaje = cabecera === "% Despachado";
+      if (!esMoneda && !esPorcentaje) continue;
+      for (let r = rango.s.r + 1; r <= rango.e.r; r++) {
+        const cell = ws[XLSX.utils.encode_cell({ r, c })];
+        if (cell && cell.t === "n") cell.z = esMoneda ? "#,##0" : "0.0%";
+      }
+    }
+    return ws;
+  }
+
   async function descargarReporte(formato) {
-    const filas = construirFilasReporte();
-    if (filas.length === 0) {
+    const porCotizacion = filasPorCotizacion();
+    if (porCotizacion.length === 0) {
       setToast({ type: "info", message: "No hay datos en el filtro actual para exportar." });
       return;
     }
@@ -1158,13 +1562,10 @@ export default function Trazabilidad() {
     const nombreArchivo = `trazabilidad_${ts}`;
     try {
       const XLSX = await import("xlsx");
-      const ws = XLSX.utils.json_to_sheet(filas);
-      if (formato === "xlsx") {
-        const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, ws, "Trazabilidad");
-        XLSX.writeFile(wb, `${nombreArchivo}.xlsx`);
-      } else {
-        const csv = XLSX.utils.sheet_to_csv(ws, { FS: ";" });
+
+      if (formato === "csv") {
+        // El CSV no soporta hojas: se exporta el detalle por cotización.
+        const csv = XLSX.utils.sheet_to_csv(XLSX.utils.json_to_sheet(porCotizacion), { FS: ";" });
         // BOM para que Excel detecte UTF-8.
         const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" });
         const link = document.createElement("a");
@@ -1174,8 +1575,26 @@ export default function Trazabilidad() {
         link.click();
         link.remove();
         URL.revokeObjectURL(link.href);
+        setToast({ type: "success", message: "CSV generado con el detalle por cotización." });
+        return;
       }
-      setToast({ type: "success", message: `Reporte ${formato.toUpperCase()} generado.` });
+
+      const porCiclo = filasPorCiclo();
+      const documentos = filasDocumentos();
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, hojaResumen(XLSX, porCotizacion), "Resumen");
+      XLSX.utils.book_append_sheet(wb, hojaTabla(XLSX, porCotizacion), "Por cotización");
+      if (porCiclo.length > 0) {
+        XLSX.utils.book_append_sheet(wb, hojaTabla(XLSX, porCiclo), "Detalle por ciclo");
+      }
+      if (documentos.length > 0) {
+        XLSX.utils.book_append_sheet(wb, hojaTabla(XLSX, documentos), "Documentos");
+      }
+      XLSX.writeFile(wb, `${nombreArchivo}.xlsx`);
+      setToast({
+        type: "success",
+        message: `Reporte generado: ${porCotizacion.length} cotizaciones, ${porCiclo.length} ciclos, ${documentos.length} documentos.`,
+      });
     } catch (err) {
       console.error(err);
       setToast({ type: "error", message: "No se pudo generar el reporte." });
@@ -1518,14 +1937,14 @@ export default function Trazabilidad() {
                 onClick={() => { setOpenDescargar(false); descargarReporte("xlsx"); }}
                 style={{ display: "block", width: "100%", textAlign: "left", padding: "8px 12px", background: "transparent", border: "none", cursor: "pointer", fontSize: 13 }}
               >
-                Excel (.xlsx)
+                Excel · 4 hojas
               </button>
               <button
                 type="button"
                 onClick={() => { setOpenDescargar(false); descargarReporte("csv"); }}
                 style={{ display: "block", width: "100%", textAlign: "left", padding: "8px 12px", background: "transparent", border: "none", cursor: "pointer", fontSize: 13 }}
               >
-                CSV
+                CSV · por cotización
               </button>
             </div>
           )}
