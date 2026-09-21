@@ -31,9 +31,15 @@ const TIENDAS_FALLBACK: Tienda[] = [
   { id: 'denteeth', nombre: 'Denteeth', tipo: 'woo', base: 'https://denteeth.cl' },
 ];
 
+// Seguimos identificándonos (nombre + URL de contacto), pero con la forma de
+// un navegador: los firewalls tipo SiteGround rechazan con 403 cualquier UA
+// que empiece con "Mozilla/5.0 (compatible; …)" que no esté en su lista
+// blanca, y eso dejaba fuera tiendas perfectamente consultables.
 const UA =
-  'Mozilla/5.0 (compatible; AmsodentPortal/1.0; +https://amsodent.cl) AppleWebKit/537.36 Chrome/128.0 Safari/537.36';
-const TIMEOUT_MS = 8000;
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36 AmsodentPortal/1.0 (+https://amsodent.cl)';
+// 12 s: con 8 s quedaban fuera tiendas lentas pero sanas. Las tiendas se
+// consultan en paralelo, así que esto no multiplica el tiempo de búsqueda.
+const TIMEOUT_MS = 12000;
 const MAX_POR_TIENDA = 8;
 const CACHE_MS = 10 * 60 * 1000;
 
@@ -326,8 +332,19 @@ export class ExploradorService {
           .filter(Boolean) as Hallazgo[],
       };
     }
-    // WooCommerce Store API (pública, sin credenciales).
-    const json = await this.fetchJson(`${t.base}/wp-json/wc/store/v1/products?search=${enc}&per_page=${MAX_POR_TIENDA}`);
+    // WooCommerce Store API (pública, sin credenciales). Si el sitio la tiene
+    // rota —hay tiendas donde /products responde 200 con cuerpo vacío por un
+    // conflicto de plugins, aunque el resto de la Store API funcione— se
+    // reintenta con la REST API de WordPress (ver buscarEnWooWp).
+    let json: any;
+    try {
+      json = await this.fetchJson(`${t.base}/wp-json/wc/store/v1/products?search=${enc}&per_page=${MAX_POR_TIENDA}`);
+    } catch (e: any) {
+      // Si la tienda no alcanzó a responder, reintentar solo duplica la espera:
+      // el respaldo se reserva para sitios que contestan rápido pero mal.
+      if (/abort|timeout/i.test(String(e?.name || '') + String(e?.message || ''))) throw e;
+      return this.buscarEnWooWp(t, enc);
+    }
     const productos: any[] = Array.isArray(json) ? json : [];
     return {
       items: productos
@@ -347,6 +364,43 @@ export class ExploradorService {
             oferta: !!p?.on_sale && !!normal && normal > precio,
             imagen: p?.images?.[0]?.thumbnail || p?.images?.[0]?.src || null,
             disponible: p?.is_in_stock !== false,
+          };
+        })
+        .filter(Boolean) as Hallazgo[],
+    };
+  }
+
+  /* Respaldo para tiendas WooCommerce con la Store API rota: la REST API de
+     WordPress expone el tipo `product` y, cuando el sitio tiene instalado
+     Doofinder (muy común en el rubro), también los campos df_price /
+     df_regular_price / df_sale_price / df_image_link. Se piden solo esos
+     campos con `_fields` para no bajar el HTML completo de cada ficha.
+     Si la tienda no publica precio por esta vía, los productos se descartan
+     y la tienda queda como "sin respuesta" — nunca se muestra sin precio. */
+  private async buscarEnWooWp(t: Tienda, enc: string): Promise<{ items: Hallazgo[] }> {
+    const campos = 'title,link,status,df_price,df_regular_price,df_sale_price,df_image_link';
+    const json = await this.fetchJson(
+      `${t.base}/wp-json/wp/v2/product?search=${enc}&per_page=${MAX_POR_TIENDA}&_fields=${campos}`,
+    );
+    const productos: any[] = Array.isArray(json) ? json : [];
+    const num = (v: any): number => Math.round(Number(String(v ?? '').replace(/[^\d.]/g, '')) || 0);
+    return {
+      items: productos
+        .map((p): Hallazgo | null => {
+          const precio = num(p?.df_price);
+          if (!precio || !p?.link) return null;
+          const normal = num(p?.df_regular_price) || null;
+          const enOferta = num(p?.df_sale_price) > 0 && !!normal && normal > precio;
+          return {
+            tienda: t.id,
+            tienda_nombre: t.nombre,
+            nombre: limpiarNombre(p?.title?.rendered ?? p?.title),
+            url: String(p.link).split('?')[0],
+            precio,
+            precio_normal: normal && normal > precio ? normal : null,
+            oferta: enOferta,
+            imagen: p?.df_image_link || null,
+            disponible: true, // esta vía no informa stock; se asume disponible
           };
         })
         .filter(Boolean) as Hallazgo[],
