@@ -1219,13 +1219,14 @@ function SeccionTiendasExplorador({ onOk, onError }) {
                         {esPropia ? "★ " : ""}{t.nombre}
                       </span>
                       {/* La nota puede ser una advertencia (por qué la tienda
-                          quedó inactiva, ej: Cloudflare bloquea las consultas)
-                          o un dato de contexto de una tienda que sí funciona.
-                          Se pinta en ámbar solo en el primer caso: si no, una
-                          tienda sana parece estar fallando. */}
+                          quedó inactiva) o un dato de contexto de una tienda que
+                          sí funciona. El color no basta para distinguirlas —se
+                          leyeron como fallas—, así que cada una lleva su ícono:
+                          ⚠ la que avisa de un problema, ℹ la que solo informa. */}
                       {t.nota ? (
-                        <div style={{ fontSize: 11.5, color: t.activa ? "#64748b" : "#b45309", marginTop: 3, lineHeight: 1.4, maxWidth: 320 }}>
-                          {t.nota}
+                        <div style={{ display: "flex", gap: 5, fontSize: 11.5, color: t.activa ? "#64748b" : "#b45309", marginTop: 3, lineHeight: 1.4, maxWidth: 320 }}>
+                          <span aria-hidden="true" style={{ flexShrink: 0 }}>{t.activa ? "ℹ" : "⚠"}</span>
+                          <span>{t.nota}</span>
                         </div>
                       ) : null}
                     </td>
