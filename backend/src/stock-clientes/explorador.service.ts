@@ -4,7 +4,8 @@ import { SupabaseService } from '../supabase/supabase.service';
 /* ── Explorador de precios dentales del portal de clientes (2026-09-04) ──
    Estilo Knasta/SoloTodo: el cliente busca una palabra clave y el backend
    consulta EN VIVO las tiendas dentales chilenas con API pública de búsqueda
-   (Shopify: /search/suggest.json · WooCommerce: Store API /wc/store/v1),
+   (Shopify: /search/suggest.json · WooCommerce: Store API /wc/store/v1 ·
+   Odoo: microdatos schema.org de /shop),
    normaliza los resultados y guarda una captura diaria por producto en
    `explorador_precios` para construir el histórico (mínimo registrado y
    variación contra la captura anterior).
@@ -13,7 +14,7 @@ import { SupabaseService } from '../supabase/supabase.service';
    8 s, User-Agent identificable y caché en memoria de 10 minutos por
    consulta (búsquedas repetidas no vuelven a golpear los sitios). */
 
-type Tienda = { id: string; nombre: string; tipo: 'shopify' | 'woo'; base: string };
+type Tienda = { id: string; nombre: string; tipo: 'shopify' | 'woo' | 'odoo'; base: string };
 
 // Fallback si la tabla explorador_tiendas aún no existe (migración pendiente)
 // o quedó vacía. Desde el 2026-09-10 la lista viva se administra en el
@@ -39,6 +40,8 @@ const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36 AmsodentPortal/1.0 (+https://amsodent.cl)';
 // 12 s: con 8 s quedaban fuera tiendas lentas pero sanas. Las tiendas se
 // consultan en paralelo, así que esto no multiplica el tiempo de búsqueda.
+const TIPOS_VALIDOS: readonly string[] = ['shopify', 'woo', 'odoo'];
+const TIPOS = '"shopify", "woo" u "odoo"';
 const TIMEOUT_MS = 12000;
 const MAX_POR_TIENDA = 8;
 const CACHE_MS = 10 * 60 * 1000;
@@ -97,7 +100,7 @@ export class ExploradorService {
         .order('orden', { ascending: true });
       if (error) throw new Error(error.message);
       const tiendas: Tienda[] = (data || [])
-        .filter((t: any) => t?.id && t?.base_url && (t?.tipo === 'shopify' || t?.tipo === 'woo'))
+        .filter((t: any) => t?.id && t?.base_url && TIPOS_VALIDOS.includes(t?.tipo))
         .map((t: any) => ({
           id: String(t.id),
           nombre: String(t.nombre || t.id),
@@ -203,8 +206,10 @@ export class ExploradorService {
     const nombre = String(body?.nombre || '').trim().slice(0, 80);
     if (!nombre) throw new BadRequestException('Falta el nombre de la tienda.');
     const tipo = String(body?.tipo || '').trim().toLowerCase();
-    if (tipo !== 'shopify' && tipo !== 'woo') {
-      throw new BadRequestException('El tipo debe ser "shopify" o "woo" (solo se soportan tiendas con esas APIs públicas de búsqueda).');
+    if (!TIPOS_VALIDOS.includes(tipo)) {
+      throw new BadRequestException(
+        `El tipo debe ser ${TIPOS}` + ' (solo se soportan tiendas con esas vitrinas públicas consultables).',
+      );
     }
     let base = String(body?.base_url || '').trim().replace(/\/+$/, '');
     if (!/^https:\/\/[a-z0-9.-]+\.[a-z]{2,}(\/.*)?$/i.test(base)) {
@@ -278,8 +283,8 @@ export class ExploradorService {
   // Shopify ni WooCommerce con Store API pública, la prueba lo dirá.
   async probarTienda(body: { tipo?: string; base_url?: string; q?: string }) {
     const tipo = String(body?.tipo || '').trim().toLowerCase();
-    if (tipo !== 'shopify' && tipo !== 'woo') {
-      throw new BadRequestException('El tipo debe ser "shopify" o "woo".');
+    if (!TIPOS_VALIDOS.includes(tipo)) {
+      throw new BadRequestException(`El tipo debe ser ${TIPOS}.`);
     }
     const base = String(body?.base_url || '').trim().replace(/\/+$/, '');
     if (!/^https:\/\//i.test(base)) throw new BadRequestException('La URL base debe partir con https://');
@@ -332,6 +337,7 @@ export class ExploradorService {
           .filter(Boolean) as Hallazgo[],
       };
     }
+    if (t.tipo === 'odoo') return this.buscarEnOdoo(t, enc);
     // WooCommerce Store API (pública, sin credenciales). Si el sitio la tiene
     // rota —hay tiendas donde /products responde 200 con cuerpo vacío por un
     // conflicto de plugins, aunque el resto de la Store API funcione— se
@@ -367,6 +373,60 @@ export class ExploradorService {
           };
         })
         .filter(Boolean) as Hallazgo[],
+    };
+  }
+
+  private async fetchTexto(url: string): Promise<string> {
+    const res = await fetch(url, {
+      headers: { 'User-Agent': UA, Accept: 'text/html,application/xhtml+xml' },
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.text();
+  }
+
+  /* Odoo eCommerce no publica una API de búsqueda abierta, pero su vitrina
+     /shop marca cada producto con microdatos schema.org (itemtype Product +
+     itemprop price / priceCurrency). Eso es un contrato estandarizado — es lo
+     mismo que lee Google Shopping —, así que leerlo es bastante más estable
+     que colgarse de las clases CSS del tema de turno.
+     `ppg` acota la página al número de productos que necesitamos, para no
+     descargar la grilla completa. */
+  private async buscarEnOdoo(t: Tienda, enc: string): Promise<{ items: Hallazgo[] }> {
+    const html = await this.fetchTexto(`${t.base}/shop?search=${enc}&ppg=${MAX_POR_TIENDA}`);
+    // Cada bloque va desde un itemtype Product hasta el siguiente.
+    const bloques = html.split(/itemtype="https?:\/\/schema\.org\/Product"/i).slice(1);
+    const absoluta = (ruta: string) => (/^https?:\/\//i.test(ruta) ? ruta : `${t.base}${ruta}`);
+    return {
+      items: bloques
+        .map((bruto): Hallazgo | null => {
+          // Un techo por bloque evita que una tarjeta mal cerrada se coma las
+          // siguientes y mezcle el precio de un producto con el nombre de otro.
+          const b = bruto.slice(0, 6000);
+          const precio = Math.round(Number((b.match(/itemprop="price"[^>]*>\s*([\d.]+)/i) || [])[1]) || 0);
+          const href = (b.match(/href="(\/shop\/[^"#]+)"/i) || [])[1];
+          if (!precio || !href) return null;
+          // Odoo repite el nombre del producto en el alt de la imagen.
+          const nombre = limpiarNombre((b.match(/<img[^>]+alt="([^"]{3,})"/i) || [])[1]);
+          if (!nombre) return null;
+          const img = (b.match(/src="(\/web\/image\/product\.template\/[^"]+)"/i) || [])[1];
+          return {
+            tienda: t.id,
+            tienda_nombre: t.nombre,
+            nombre,
+            url: absoluta(href.split('?')[0]),
+            precio,
+            // La vitrina de Odoo no distingue precio normal de precio rebajado
+            // salvo que la tienda active las etiquetas de oferta; sin ese dato
+            // se informa solo el precio vigente en vez de inventar un descuento.
+            precio_normal: null,
+            oferta: false,
+            imagen: img ? absoluta(img) : null,
+            disponible: true, // la grilla no informa stock; se asume disponible
+          };
+        })
+        .filter(Boolean)
+        .slice(0, MAX_POR_TIENDA) as Hallazgo[],
     };
   }
 
