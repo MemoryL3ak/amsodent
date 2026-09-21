@@ -176,6 +176,14 @@ const DOC_TIPOS = {
   factura: "Factura",
 };
 
+// Una factura puede cubrir varias guias: su guia principal (deriva_de_id) y
+// las adicionales de guias_ids. Lo usan tanto buildCycles (para armar las
+// filas) como tierCiclo (para ordenarlas), asi el orden coincide con lo que
+// se ve en pantalla.
+function facturaCubreGuia(f, gId) {
+  return f.deriva_de_id === gId || (Array.isArray(f.guias_ids) && f.guias_ids.includes(gId));
+}
+
 const customSelectStyles = {
   control: (base, state) => ({
     ...base,
@@ -832,7 +840,7 @@ export default function Trazabilidad() {
     // documental — lo menos completo arriba. Así, filtrando por OC aparecen
     // primero las que les falta guía y factura; con OC+Guía, primero las que
     // les falta factura; y así sucesivamente:
-    //   0 = sin OC · 1 = falta guía · 2 = falta factura · 3 = factura impaga
+    //   0 = sin OC · 1 = falta alguna guía · 2 = falta alguna factura · 3 = impaga
     //   4 = pagada pero con saldo de OC por consumir · 5 = todo completo.
     // Cliente particular no usa OC/guía: parte en "falta factura/boleta".
     // El orden elegido por el usuario aplica dentro de cada grupo.
@@ -841,9 +849,9 @@ export default function Trazabilidad() {
       const esPart =
         (lic.tipo_cliente || "").toLowerCase().includes("particular") ||
         (lic.tipo_compra || "").toLowerCase().includes("particular");
-      const tieneOC = docs.some((d) => d.tipo === "orden_compra");
-      const tieneGuia = docs.some((d) => d.tipo === "guia_despacho");
-      const tieneFactura = docs.some(
+      const ocs = docs.filter((d) => d.tipo === "orden_compra");
+      const guias = docs.filter((d) => d.tipo === "guia_despacho");
+      const facturas = docs.filter(
         (d) => d.tipo === "factura" || d.tipo === "factura_boleta" || d.tipo === "efectivo",
       );
       const facturaImpaga = docs.some(
@@ -851,10 +859,21 @@ export default function Trazabilidad() {
       );
 
       if (!esPart) {
-        if (!tieneOC) return 0;
-        if (!tieneGuia) return 1;
+        if (ocs.length === 0) return 0;
+        if (guias.length === 0) return 1;
+        if (facturas.length === 0) return 2;
+        // Ciclo documentado a medias: alguna OC sin guia derivada o alguna
+        // guia sin factura asociada. Antes se preguntaba solo "existe alguna
+        // guia / alguna factura", asi que una cotizacion con dos guias y una
+        // sola facturada (y pagada) se ordenaba como completa. Un cierre
+        // forzado se da por terminado, por eso queda fuera de este chequeo.
+        if (!lic.ciclo_cerrado) {
+          if (ocs.some((oc) => !guias.some((g) => g.deriva_de_id === oc.id))) return 1;
+          if (guias.some((g) => !facturas.some((f) => facturaCubreGuia(f, g.id)))) return 2;
+        }
+      } else if (facturas.length === 0) {
+        return 2;
       }
-      if (!tieneFactura) return 2;
       if (facturaImpaga) return 3;
       // Todo facturado y pagado, pero la OC aún tiene saldo por consumir
       // (licitaciones grandes con entregas parciales) → sigue activa.
@@ -923,11 +942,6 @@ export default function Trazabilidad() {
 
     const cycles = [];
 
-    // Una factura puede estar asociada a varias guías (guias_ids) además de su
-    // guía principal (deriva_de_id). Aparece bajo cada guía vinculada.
-    const facturaEnGuia = (f, gId) =>
-      f.deriva_de_id === gId || (Array.isArray(f.guias_ids) && f.guias_ids.includes(gId));
-
     // Para cada OC (con índice de grupo), busca guías derivadas, y para cada guía las facturas
     ocs.forEach((oc, ocIdx) => {
       const ocGroup = ocIdx; // índice del grupo de OC
@@ -941,7 +955,7 @@ export default function Trazabilidad() {
         }
       } else {
         guiasDeOc.forEach((g) => {
-          const facturasDeGuia = facturas.filter((f) => facturaEnGuia(f, g.id));
+          const facturasDeGuia = facturas.filter((f) => facturaCubreGuia(f, g.id));
           if (facturasDeGuia.length === 0) {
             cycles.push({ oc, guia: g, factura: null, ocGroup });
           } else {
@@ -956,7 +970,7 @@ export default function Trazabilidad() {
     const guiasUsadas = new Set(cycles.map((c) => c.guia?.id).filter(Boolean));
     for (const g of guias) {
       if (guiasUsadas.has(g.id)) continue;
-      const facturasDeGuia = facturas.filter((f) => facturaEnGuia(f, g.id));
+      const facturasDeGuia = facturas.filter((f) => facturaCubreGuia(f, g.id));
       if (facturasDeGuia.length === 0) {
         cycles.push({ oc: null, guia: g, factura: null, ocGroup: huerfanoGroup });
       } else {
