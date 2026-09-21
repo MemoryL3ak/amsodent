@@ -117,9 +117,14 @@ export class ExploradorService {
     return TIENDAS_FALLBACK;
   }
 
+  // Tiendas cuya Store API quedó comprobadamente rota en esta sesión: se
+  // consultan directo por el respaldo, sin gastar la petición que va a fallar.
+  private storeApiRota = new Set<string>();
+
   invalidarTiendas() {
     this.tiendasCache = null;
     this.cache.clear();
+    this.storeApiRota.clear();
   }
 
   async buscar(qRaw: string) {
@@ -338,42 +343,65 @@ export class ExploradorService {
       };
     }
     if (t.tipo === 'odoo') return this.buscarEnOdoo(t, enc);
-    // WooCommerce Store API (pública, sin credenciales). Si el sitio la tiene
-    // rota —hay tiendas donde /products responde 200 con cuerpo vacío por un
-    // conflicto de plugins, aunque el resto de la Store API funcione— se
-    // reintenta con la REST API de WordPress (ver buscarEnWooWp).
-    let json: any;
-    try {
-      json = await this.fetchJson(`${t.base}/wp-json/wc/store/v1/products?search=${enc}&per_page=${MAX_POR_TIENDA}`);
-    } catch (e: any) {
-      // Si la tienda no alcanzó a responder, reintentar solo duplica la espera:
-      // el respaldo se reserva para sitios que contestan rápido pero mal.
-      if (/abort|timeout/i.test(String(e?.name || '') + String(e?.message || ''))) throw e;
-      return this.buscarEnWooWp(t, enc);
+
+    /* WooCommerce Store API (pública, sin credenciales). Hay tiendas donde
+       /products está roto por un conflicto de plugins aunque el resto de la
+       Store API funcione, y falla de dos formas según la consulta: a veces
+       devuelve el cuerpo vacío (revienta al parsear) y a veces un `[]` que no
+       se distingue de "no hay coincidencias". Por eso el respaldo se intenta
+       en los dos casos: al fallar Y al venir sin resultados.
+       Para no gastar una petición de más en cada búsqueda, la primera vez que
+       el respaldo rescata una tienda se anota, y desde ahí se va directo. */
+    if (!this.storeApiRota.has(t.id)) {
+      let json: any;
+      let reventó = false;
+      try {
+        json = await this.fetchJson(`${t.base}/wp-json/wc/store/v1/products?search=${enc}&per_page=${MAX_POR_TIENDA}`);
+      } catch (e: any) {
+        // Si la tienda no alcanzó a responder, reintentar solo duplica la
+        // espera: el respaldo es para sitios que contestan rápido pero mal.
+        if (/abort|timeout/i.test(String(e?.name || '') + String(e?.message || ''))) throw e;
+        reventó = true;
+      }
+      const items = this.mapearWooStore(t, Array.isArray(json) ? json : []);
+      if (items.length) return { items };
+      // Sin resultados: puede ser que la tienda no tenga el producto o que su
+      // Store API esté rota. Lo resuelve el respaldo, que sabe distinguirlo.
+      const respaldo = await this.buscarEnWooWp(t, enc);
+      /* La marca es permanente, así que solo se pone ante una falla dura de la
+         Store API. Un `[]` no basta: los dos buscadores no encuentran lo mismo,
+         y una tienda sana que hoy devuelve vacío para una consulta quedaría
+         atada para siempre al respaldo, que no informa stock ni ofertas. */
+      if (reventó && respaldo.items.length) {
+        this.logger.warn(`Explorador: ${t.id} tiene la Store API rota; uso wp/v2/product de aquí en adelante.`);
+        this.storeApiRota.add(t.id);
+      }
+      return respaldo;
     }
-    const productos: any[] = Array.isArray(json) ? json : [];
-    return {
-      items: productos
-        .map((p): Hallazgo | null => {
-          const pr = p?.prices || {};
-          const div = Math.pow(10, Number(pr.currency_minor_unit || 0));
-          const precio = Math.round(Number(pr.price || 0) / div);
-          if (!precio || !p?.permalink) return null;
-          const normal = Math.round(Number(pr.regular_price || 0) / div) || null;
-          return {
-            tienda: t.id,
-            tienda_nombre: t.nombre,
-            nombre: limpiarNombre(p.name),
-            url: String(p.permalink).split('?')[0],
-            precio,
-            precio_normal: normal && normal > precio ? normal : null,
-            oferta: !!p?.on_sale && !!normal && normal > precio,
-            imagen: p?.images?.[0]?.thumbnail || p?.images?.[0]?.src || null,
-            disponible: p?.is_in_stock !== false,
-          };
-        })
-        .filter(Boolean) as Hallazgo[],
-    };
+    return this.buscarEnWooWp(t, enc);
+  }
+
+  private mapearWooStore(t: Tienda, productos: any[]): Hallazgo[] {
+    return productos
+      .map((p): Hallazgo | null => {
+        const pr = p?.prices || {};
+        const div = Math.pow(10, Number(pr.currency_minor_unit || 0));
+        const precio = Math.round(Number(pr.price || 0) / div);
+        if (!precio || !p?.permalink) return null;
+        const normal = Math.round(Number(pr.regular_price || 0) / div) || null;
+        return {
+          tienda: t.id,
+          tienda_nombre: t.nombre,
+          nombre: limpiarNombre(p.name),
+          url: String(p.permalink).split('?')[0],
+          precio,
+          precio_normal: normal && normal > precio ? normal : null,
+          oferta: !!p?.on_sale && !!normal && normal > precio,
+          imagen: p?.images?.[0]?.thumbnail || p?.images?.[0]?.src || null,
+          disponible: p?.is_in_stock !== false,
+        };
+      })
+      .filter(Boolean) as Hallazgo[];
   }
 
   private async fetchTexto(url: string): Promise<string> {
