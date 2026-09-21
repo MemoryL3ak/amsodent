@@ -56,7 +56,6 @@ import {
   HeartHandshake,
 } from "lucide-react";
 import NotificacionesMenu from "./NotificacionesMenu";
-import { ES_FIESTAS_PATRIAS, MascotaDieciochera, mascotaDelDia, GuirnaldaBanderines, CintaTricolor, BanderaChile, Copihue, SaludoFiestasPatrias } from "./FiestasPatrias";
 import RecordatoriosCorreo from "./RecordatoriosCorreo";
 import RecordatoriosCierre from "./RecordatoriosCierre";
 import GoogleAuthSync from "./GoogleAuthSync";
@@ -419,7 +418,7 @@ export default function SidebarLayout() {
   }
 
   return (
-    <div className={`app-shell ${colapsada ? "is-collapsed" : ""} ${ES_FIESTAS_PATRIAS ? "es-fiestas" : ""}`}>
+    <div className={`app-shell ${colapsada ? "is-collapsed" : ""}`}>
       <SessionTracker />
       <PresenceTracker />
       <GoogleAuthSync />
@@ -442,11 +441,6 @@ export default function SidebarLayout() {
         <ChevronLeft size={16} strokeWidth={2.5} />
       </button>
 
-      {/* Cinta tricolor de Fiestas Patrias en el borde superior + saludo
-          de bienvenida (una vez al día por persona) */}
-      {ES_FIESTAS_PATRIAS && <CintaTricolor />}
-      {ES_FIESTAS_PATRIAS && perfil && <SaludoFiestasPatrias nombre={perfil.nombre} />}
-
       <aside className="sidebar">
         {/* Brand */}
         <div className="brand">
@@ -458,24 +452,6 @@ export default function SidebarLayout() {
             />
           </div>
         </div>
-
-        {/* Fiestas Patrias: guirnalda + saludo bajo el logo. Con el sidebar
-            colapsado no cabe (el texto se apilaba letra a letra): solo la
-            banderita. */}
-        {ES_FIESTAS_PATRIAS && (colapsada ? (
-          <div style={{ textAlign: "center", padding: "0 0 4px" }} title="¡Felices Fiestas Patrias!">
-            <BanderaChile size={13} />
-          </div>
-        ) : (
-          <div style={{ padding: "0 10px 4px" }}>
-            <GuirnaldaBanderines />
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, fontSize: 11, fontWeight: 800, color: "#d52b1e", letterSpacing: ".02em", marginTop: 2, whiteSpace: "nowrap", overflow: "hidden" }}>
-              <Copihue size={12} />
-              <span><BanderaChile size={11} /> ¡Felices Fiestas Patrias!</span>
-              <Copihue size={12} espejo />
-            </div>
-          </div>
-        ))}
 
         {/* Navigation — todos los grupos son colapsables con persistencia */}
         {/* Orden por flujo real del negocio: se VENDE (Comercial), se DESPACHA
@@ -571,37 +547,6 @@ export default function SidebarLayout() {
             storageKey="sidebar_group_admin"
           />
         )}
-
-        {/* Fiestas Patrias: mascota del día en el rincón (rota cada día).
-            Colapsado va sola, centrada y sin texto. */}
-        {ES_FIESTAS_PATRIAS && (() => {
-          const m = mascotaDelDia();
-          return (
-            <div
-              title={m.nombre ? `${m.nombre} · ${m.frase}` : m.frase}
-              style={{
-                display: "flex", alignItems: "center", gap: 9, opacity: 0.95,
-                padding: colapsada ? "10px 0 6px" : "10px 14px 6px",
-                justifyContent: colapsada ? "center" : "flex-start",
-              }}
-            >
-              <MascotaDieciochera size={colapsada ? 28 : 34} />
-              {!colapsada && (
-                <div style={{ fontSize: 10.5, color: "var(--text-muted)", lineHeight: 1.3, minWidth: 0, overflow: "hidden" }}>
-                  {/* Sin nombre de personaje (ej: el volantín): solo el mensaje. */}
-                  {m.nombre ? (
-                    <>
-                      <div style={{ fontWeight: 700, color: "var(--text)", whiteSpace: "nowrap" }}>{m.nombre}</div>
-                      <div style={{ whiteSpace: "nowrap" }}>{m.frase}</div>
-                    </>
-                  ) : (
-                    <div style={{ fontWeight: 700, color: "var(--text)", whiteSpace: "nowrap" }}>{m.frase}</div>
-                  )}
-                </div>
-              )}
-            </div>
-          );
-        })()}
 
         {/* User section */}
         {perfil && (
