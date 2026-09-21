@@ -1104,10 +1104,19 @@ function ModalUsuariosPortal({ rut, razonSocial, onCerrar, onOk, onError }) {
   );
 }
 
+// Un solo lugar donde vive cómo se llama y se pinta cada tipo de tienda:
+// así agregar un cuarto tipo no obliga a cazar ternarios por la pantalla.
+const TIPO_TIENDA = {
+  woo: { label: "WooCommerce", chip: { background: "#f0fdf4", color: "#15803d" } },
+  shopify: { label: "Shopify", chip: { background: "#eef2ff", color: "#4f46e5" } },
+  odoo: { label: "Odoo", chip: { background: "#faf5ff", color: "#7e22ce" } },
+};
+
 /* ── Tiendas del Explorador de Precios (mantenedor, 2026-09-10) ─────────
    Administra las páginas que consulta el buscador del portal cliente.
-   Solo se soportan tiendas Shopify (search/suggest.json) o WooCommerce
-   (Store API pública); el botón "Probar" valida en vivo si el sitio
+   Solo se soportan tiendas con vitrina pública consultable: Shopify
+   (search/suggest.json), WooCommerce (Store API) y Odoo (microdatos
+   schema.org de /shop); el botón "Probar" valida en vivo si el sitio
    responde antes de activarlo. Amsodent está protegida: no se puede
    eliminar ni desactivar y siempre encabeza los resultados. */
 function SeccionTiendasExplorador({ onOk, onError }) {
@@ -1161,9 +1170,9 @@ function SeccionTiendasExplorador({ onOk, onError }) {
         <Globe size={14} style={{ flexShrink: 0, marginTop: 1 }} />
         <span>
           Estas son las páginas que consulta el <strong>Explorador de Precios</strong> del portal cliente.
-          Solo funcionan tiendas <strong>Shopify</strong> o <strong>WooCommerce</strong> con API pública de
-          búsqueda — usa <strong>Probar</strong> antes de activar una nueva. Amsodent siempre va primera y
-          no se puede desactivar.
+          Solo funcionan tiendas <strong>Shopify</strong>, <strong>WooCommerce</strong> u{" "}
+          <strong>Odoo</strong> con vitrina pública consultable — usa <strong>Probar</strong> antes de
+          activar una nueva. Amsodent siempre va primera y no se puede desactivar.
         </span>
       </div>
       <div style={s.cardHead}>
@@ -1223,8 +1232,8 @@ function SeccionTiendasExplorador({ onOk, onError }) {
                       </a>
                     </td>
                     <td style={s.td}>
-                      <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 9px", borderRadius: 999, background: t.tipo === "shopify" ? "#eef2ff" : "#f0fdf4", color: t.tipo === "shopify" ? "#4f46e5" : "#15803d" }}>
-                        {t.tipo === "shopify" ? "Shopify" : "WooCommerce"}
+                      <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 9px", borderRadius: 999, ...TIPO_TIENDA[t.tipo]?.chip }}>
+                        {TIPO_TIENDA[t.tipo]?.label || t.tipo}
                       </span>
                     </td>
                     <td style={s.td}>
@@ -1347,6 +1356,7 @@ function ModalTiendaExplorador({ tienda, onCerrar, onHecho, onError }) {
           options={[
             { value: "woo", label: "WooCommerce", detalle: "WordPress — /wp-json/wc/store" },
             { value: "shopify", label: "Shopify", detalle: "/search/suggest.json" },
+            { value: "odoo", label: "Odoo", detalle: "eCommerce — vitrina /shop" },
           ]}
           className=""
           style={s.input}
@@ -1397,7 +1407,7 @@ function ModalTiendaExplorador({ tienda, onCerrar, onHecho, onError }) {
               ) : prueba.ok ? (
                 <>⚠ El sitio responde pero sin resultados para «{prueba.consulta}» — puede ser el tipo equivocado o un catálogo sin ese término.</>
               ) : (
-                <>✕ No responde como {tipo === "shopify" ? "Shopify" : "WooCommerce"}: {prueba.error || "sin detalle"}. Prueba con el otro tipo o descarta el sitio.</>
+                <>✕ No responde como {TIPO_TIENDA[tipo]?.label || tipo}: {prueba.error || "sin detalle"}. Prueba con otro tipo o descarta el sitio.</>
               )}
             </div>
           )}
