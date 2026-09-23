@@ -2602,7 +2602,11 @@ export class LicitacionesService {
       if (/desierta|cancelad|revocad/i.test(senas)) {
         return {
           fuente: 'Compra Ágil',
-          estado_mp: /revocad/i.test(senas) ? 'Revocada' : 'Desierta',
+          estado_mp: /revocad/i.test(senas)
+            ? 'Revocada'
+            : /cancelad/i.test(senas)
+            ? 'Cancelada'
+            : 'Desierta',
           postulamos: post.postulamos ?? null,
           adjudicada_a_nosotros: null as boolean | null,
           adjudicatario: null as string | null,
@@ -2738,7 +2742,7 @@ export class LicitacionesService {
         motivo: `Se adjudicó a ${info.adjudicatario || 'otro proveedor'} y acá figura como "${actual}".`,
       };
     }
-    if (['Desierta', 'Revocada'].includes(info.estado_mp) && !['Perdida', 'Descartada', 'Cancelada', 'Desierta'].includes(actual)) {
+    if (['Desierta', 'Revocada', 'Cancelada'].includes(info.estado_mp) && !['Perdida', 'Descartada', 'Cancelada', 'Desierta'].includes(actual)) {
       return {
         discrepancia: true,
         sugerencia: 'Descartada',
