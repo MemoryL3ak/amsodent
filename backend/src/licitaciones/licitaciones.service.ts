@@ -2,6 +2,7 @@ import { Injectable, BadRequestException, ForbiddenException, NotFoundException,
 import { SupabaseService } from '../supabase/supabase.service';
 import { MailingsService } from '../mailings/mailings.service';
 import { ChatService } from '../chat/chat.service';
+import { fueSeleccionado } from '../mercadopublico/seleccion';
 
 @Injectable()
 export class LicitacionesService {
@@ -576,21 +577,29 @@ export class LicitacionesService {
     const cotizantes: any[] = Array.isArray(p.proveedores_cotizando) ? p.proveedores_cotizando : [];
     const norm = (r: unknown) => String(r || '').replace(/[^0-9kK]/g, '').toUpperCase();
     const nuestra = cotizantes.find((c) => norm(c?.rut_proveedor) === rutEmpresa) || null;
+    const estadoCodigo = String(p?.estado?.codigo || '').toLowerCase() || null;
     // Sin cotizantes publicados todavía no se puede afirmar que no postulamos:
     // los procesos abiertos suelen no mostrar las ofertas hasta el cierre.
     if (!cotizantes.length) {
       return {
         postulamos: null as boolean | null,
         estado_mp: p?.estado?.glosa || null,
+        estado_codigo: estadoCodigo,
         nota: 'Mercado Público aún no publica las ofertas de este proceso.',
       };
     }
+    const ganadora = cotizantes.find(fueSeleccionado) || null;
     return {
       postulamos: !!nuestra,
       monto: nuestra ? Number(nuestra.monto_total) || null : null,
       ofertas: cotizantes.length,
       estado_mp: p?.estado?.glosa || null,
-      seleccionados: cotizantes.some((c) => c?.seleccion?.proveedor_seleccionado === true),
+      estado_codigo: estadoCodigo,
+      // Desenlace de la Compra Ágil. El flag viene plano en cada cotizante
+      // (ver fueSeleccionado): leerlo anidado dejaba a TODAS sin resolver.
+      hay_seleccionado: !!ganadora,
+      nos_seleccionaron: !!nuestra && fueSeleccionado(nuestra),
+      seleccionado_por: ganadora ? String(ganadora.razon_social || '').slice(0, 120) || null : null,
     };
   }
 
@@ -2492,7 +2501,7 @@ export class LicitacionesService {
      No cambia nada por su cuenta: `aplicar` existe aparte, porque cambiar el
      estado de una cotización es una decisión comercial, no un efecto
      secundario de mirar. */
-  async diagnosticoMpCotizaciones(body?: { ids?: number[]; limite?: number }) {
+  async diagnosticoMpCotizaciones(body?: { ids?: number[]; limite?: number; desde?: number }) {
     const ticket = this.mpTicket();
     const client = this.supabase.getClient();
 
@@ -2521,8 +2530,16 @@ export class LicitacionesService {
     const esCodigoMp = (c: string) => /^\d{3,}-\d{1,6}-[A-Z]{2,3}\d{2}$/i.test(String(c || '').trim());
     const candidatas = (data || []).filter((l: any) => esCodigoMp(l.id_licitacion));
 
-    const limite = Math.max(1, Math.min(120, Number(body?.limite) || 40));
-    const aRevisar = candidatas.slice(0, limite);
+    const limite = Math.max(1, Math.min(500, Number(body?.limite) || 40));
+    /* Ventana ROTATORIA. Antes era `candidatas.slice(0, limite)`: con 800+
+       cotizaciones abiertas con código de Mercado Público, el cron consultaba
+       cada pasada exactamente las 40 más nuevas y las demás no se revisaban
+       nunca, por muy resueltas que estuvieran en ChileCompra. `desde` corre el
+       punto de partida en cada pasada y la lista se recorre en círculo. */
+    const total = candidatas.length;
+    const desde = total ? ((Math.trunc(Number(body?.desde) || 0) % total) + total) % total : 0;
+    const aRevisar = (desde ? [...candidatas.slice(desde), ...candidatas.slice(0, desde)] : candidatas)
+      .slice(0, limite);
     const rutNuestro = String(process.env.MP_RUT_EMPRESA || '').replace(/[^0-9kK]/g, '').toUpperCase();
 
     const filas: any[] = [];
@@ -2550,6 +2567,7 @@ export class LicitacionesService {
     return {
       revisadas: filas.length,
       candidatas: candidatas.length,
+      desde,
       con_discrepancia: filas.filter((f) => f.discrepancia).length,
       con_error: filas.filter((f) => f.error).length,
       filas,
@@ -2563,15 +2581,49 @@ export class LicitacionesService {
     const norm = (r: unknown) => String(r || '').replace(/[^0-9kK]/g, '').toUpperCase();
 
     if (/-COT\w*$/i.test(codigo)) {
-      const post = await this.consultarPostulacion(codigo, ticket, rutNuestro);
+      const post: any = await this.consultarPostulacion(codigo, ticket, rutNuestro);
+      const glosa = post.estado_mp || null;
+      const senas = `${post.estado_codigo || ''} ${glosa || ''}`;
+      /* Una Compra Ágil se resuelve eligiendo cotizante: en cuanto la ficha
+         trae un seleccionado, el proceso está resuelto y se puede concluir.
+         Antes esta rama devolvía `adjudicada_a_nosotros: null` fijo, así que
+         el cambio automático de estado no podía proponer "Adjudicada" para
+         ninguna Compra Ágil — que son el grueso de las cotizaciones. */
+      if (post.hay_seleccionado) {
+        return {
+          fuente: 'Compra Ágil',
+          estado_mp: 'Adjudicada',
+          postulamos: post.postulamos ?? null,
+          adjudicada_a_nosotros: !!post.nos_seleccionaron,
+          adjudicatario: post.nos_seleccionaron ? null : post.seleccionado_por || null,
+          nota: `Mercado Público la marca como "${glosa || 'resuelta'}".`,
+        };
+      }
+      if (/desierta|cancelad|revocad/i.test(senas)) {
+        return {
+          fuente: 'Compra Ágil',
+          estado_mp: /revocad/i.test(senas) ? 'Revocada' : 'Desierta',
+          postulamos: post.postulamos ?? null,
+          adjudicada_a_nosotros: null as boolean | null,
+          adjudicatario: null as string | null,
+          nota: glosa,
+        };
+      }
       return {
         fuente: 'Compra Ágil',
-        estado_mp: (post as any).estado_mp || null,
-        postulamos: (post as any).postulamos ?? null,
+        estado_mp: glosa,
+        postulamos: post.postulamos ?? null,
         adjudicada_a_nosotros: null as boolean | null,
         adjudicatario: null as string | null,
-        nota: (post as any).nota || null,
+        nota: post.nota || 'Todavía no hay proveedor seleccionado.',
       };
+    }
+
+    // Órdenes de compra (-AG##): la API v1 de licitaciones no las conoce y
+    // responde 200 con el listado vacío, lo que se reportaba como "Mercado
+    // Público no publica este proceso" y dejaba la cotización sin tocar.
+    if (/-AG\d{2}$/i.test(codigo)) {
+      return this.estadoMpDeOrdenCompra(codigo, ticket, rutNuestro);
     }
 
     const { res, json } = await this.mpFetch(
@@ -2616,6 +2668,55 @@ export class LicitacionesService {
       adjudicada_a_nosotros: esAdjudicada ? nuestros.length > 0 : null,
       adjudicatario,
       nota: esAdjudicada ? null : 'Hasta que el proceso se resuelva, Mercado Público no publica quién ofertó.',
+    };
+  }
+
+  /* Desenlace de una orden de compra de Mercado Público (códigos -AG##).
+     Va por su propia API: la de licitaciones devuelve listado vacío para
+     estos códigos. Que la OC a nuestro nombre esté aceptada es el desenlace
+     más duro que publica ChileCompra. */
+  private async estadoMpDeOrdenCompra(codigo: string, ticket: string, rutNuestro: string) {
+    const norm = (r: unknown) => String(r || '').replace(/[^0-9kK]/g, '').toUpperCase();
+    const { res, json } = await this.mpFetch(
+      `https://api.mercadopublico.cl/servicios/v1/publico/ordenesdecompra.json?codigo=${encodeURIComponent(codigo)}&ticket=${encodeURIComponent(ticket)}`,
+    );
+    const oc: any = json?.Listado?.[0];
+    if (!oc) {
+      throw new Error(
+        res.ok
+          ? 'Mercado Público no devolvió esta orden de compra.'
+          : `Mercado Público respondió ${res.status}.`,
+      );
+    }
+    const estado = String(oc?.Estado || '').trim();
+    const proveedor = String(oc?.Proveedor?.Nombre || '').slice(0, 120) || null;
+    const esNuestra = !!rutNuestro && norm(oc?.Proveedor?.RutSucursal || oc?.Proveedor?.Rut) === rutNuestro;
+    const base = { fuente: 'Orden de compra', postulamos: true, adjudicatario: null as string | null };
+
+    if (/aceptada/i.test(estado)) {
+      const fecha = String(oc?.Fechas?.FechaAceptacion || '').slice(0, 10);
+      return {
+        ...base,
+        estado_mp: 'Adjudicada',
+        adjudicada_a_nosotros: esNuestra,
+        adjudicatario: esNuestra ? null : proveedor,
+        nota: `Orden de compra aceptada${fecha ? ` el ${fecha}` : ''}.`,
+      };
+    }
+    if (/cancelada|rechazada/i.test(estado)) {
+      return {
+        ...base,
+        estado_mp: 'Revocada',
+        adjudicada_a_nosotros: null as boolean | null,
+        nota: `La orden de compra quedó "${estado}".`,
+      };
+    }
+    // "Enviada a proveedor", "En proceso"… todavía se pueden rechazar.
+    return {
+      ...base,
+      estado_mp: estado || 'Sin estado',
+      adjudicada_a_nosotros: null as boolean | null,
+      nota: `La orden de compra está "${estado}": aún puede cambiar.`,
     };
   }
 

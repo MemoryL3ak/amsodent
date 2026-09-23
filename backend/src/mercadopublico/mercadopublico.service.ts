@@ -1,5 +1,6 @@
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
+import { fueSeleccionado } from './seleccion';
 
 /* ============================================================
    Integración con las APIs oficiales de Mercado Público para
@@ -527,7 +528,7 @@ export class MercadopublicoService {
       nombre: c.razon_social || null,
       es_emt: c.es_emt === true,
       nuestra: esNuestro(c.rut_proveedor, rutEmpresa),
-      seleccionado: c?.seleccion?.proveedor_seleccionado === true,
+      seleccionado: fueSeleccionado(c),
       estado_por_comprador: c.estado_por_comprador ?? c?.estado_cotizacion?.glosa ?? null,
       inadmisible: !!c.justificacion_inadmisibilidad,
       justificacion_inadmisibilidad: c.justificacion_inadmisibilidad || null,
