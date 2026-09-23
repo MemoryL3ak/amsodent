@@ -25,8 +25,12 @@ import { LicitacionesService } from './licitaciones.service';
    Interruptores:
      MP_ESTADOS_AUTO=off   → apagado (ej. backend local de desarrollo)
      MP_ESTADOS_HORAS=9,15 → horas de Chile en que corre
-     MP_ESTADOS_LIMITE=40  → máx. de procesos consultados por pasada (cuida
-                             la cuota diaria del ticket de ChileCompra)
+     MP_ESTADOS_LIMITE=120 → máx. de procesos consultados por pasada (cuida
+                             la cuota diaria del ticket de ChileCompra). La
+                             ventana ROTA: cada pasada arranca donde terminó la
+                             anterior, así que con el tiempo se revisan todas.
+                             Con ~800 abiertas y 2 pasadas al día a 120, el
+                             ciclo completo tarda ~3 días; subirlo lo acorta.
 ============================================================================ */
 
 const ZONA = 'America/Santiago';
@@ -36,7 +40,7 @@ const HORAS = String(process.env.MP_ESTADOS_HORAS || '9,15')
   .map((h) => Number(String(h).trim()))
   .filter((h) => Number.isInteger(h) && h >= 0 && h <= 23);
 
-const LIMITE = Math.max(5, Math.min(120, Number(process.env.MP_ESTADOS_LIMITE) || 40));
+const LIMITE = Math.max(5, Math.min(500, Number(process.env.MP_ESTADOS_LIMITE) || 120));
 
 @Injectable()
 export class MpEstadosCron implements OnModuleInit, OnModuleDestroy {
@@ -100,10 +104,18 @@ export class MpEstadosCron implements OnModuleInit, OnModuleDestroy {
 
   /** Una pasada completa: diagnóstico → aplicar concluyentes → notificar. */
   async correr() {
-    const diag = await this.licitaciones.diagnosticoMpCotizaciones({ limite: LIMITE });
+    /* Punto de partida rotatorio: media jornada = un bloque, y cada bloque
+       corre la ventana un cupo entero. Sin esto se revisaban siempre las
+       mismas primeras y el resto no se consultaba jamás. */
+    const bloque = Math.floor(Date.now() / (12 * 3600_000));
+    const diag = await this.licitaciones.diagnosticoMpCotizaciones({
+      limite: LIMITE,
+      desde: bloque * LIMITE,
+    });
     const aplicables = (diag.filas || []).filter((f: any) => f.discrepancia && f.sugerencia && f.id);
     this.log.log(
-      `Revisadas ${diag.revisadas}/${diag.candidatas} · concluyentes ${aplicables.length} · errores ${diag.con_error}`,
+      `Revisadas ${diag.revisadas}/${diag.candidatas} (desde la ${(diag as any).desde ?? 0}) · ` +
+      `concluyentes ${aplicables.length} · errores ${diag.con_error}`,
     );
     if (!aplicables.length) return;
 
