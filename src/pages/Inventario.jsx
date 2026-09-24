@@ -8,10 +8,11 @@ import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { api } from "../lib/api";
 import Toast from "../components/Toast";
+import CrearProductoModal from "../components/CrearProductoModal";
 import {
   Boxes, Search, Plus, Minus, SlidersHorizontal, History,
   Upload, Download, X, AlertTriangle, ArrowUp, ArrowDown, ArrowUpDown,
-  RefreshCw,
+  RefreshCw, PackagePlus,
 } from "lucide-react";
 
 const fmtCLP = (v) => `$${Math.round(Number(v) || 0).toLocaleString("es-CL")}`;
@@ -72,10 +73,26 @@ export default function Inventario() {
   const [bsale, setBsale] = useState(null);
   const [bsaleSync, setBsaleSync] = useState(false);
   const [bsaleDif, setBsaleDif] = useState(null); // modal: { loading, data }
+  // SKUs que existen en Bsale pero no como producto interno (última corrida).
+  // Se destacan en la grilla principal para que se creen acá.
+  const [huerfanos, setHuerfanos] = useState([]);
+  const [crearDesdeBsale, setCrearDesdeBsale] = useState(null); // { sku, nombre, stock }
 
   useEffect(() => {
     api.get("/bsale/estado").then(setBsale).catch(() => setBsale(null));
   }, []);
+
+  // Cada vez que hay una corrida nueva guardada, se refresca la lista de
+  // huérfanos (viene del mismo detalle que alimenta el panel de diferencias).
+  const bsaleUltimaCorrida = bsale?.ultima?.actualizado_at || null;
+  useEffect(() => {
+    if (!bsaleUltimaCorrida) return;
+    let vivo = true;
+    api.get("/bsale/diferencias")
+      .then((d) => { if (vivo) setHuerfanos(Array.isArray(d?.detalle?.skus_bsale_sin_producto) ? d.detalle.skus_bsale_sin_producto : []); })
+      .catch(() => {});
+    return () => { vivo = false; };
+  }, [bsaleUltimaCorrida]);
 
   // Mientras corre una sincronización (lanzada aquí o en otra pestaña), se
   // sondea el avance cada 2,5 s para la barra de progreso; en la fase final
@@ -209,15 +226,41 @@ export default function Inventario() {
     [filas],
   );
 
+  // Filas sintéticas para los SKUs de Bsale sin producto interno. Se excluye
+  // cualquier SKU que ya exista acá (creado después de la última corrida).
+  const filasHuerfanas = useMemo(() => {
+    if (!huerfanos.length) return [];
+    const internos = new Set(filas.map((p) => String(p.sku || "").trim().toUpperCase()).filter(Boolean));
+    return huerfanos
+      .filter((h) => h?.sku && !internos.has(String(h.sku).trim().toUpperCase()))
+      .map((h) => ({
+        id: `bsale:${h.sku}`,
+        sku: h.sku,
+        nombre: h.descripcion || "",
+        stock: h.stock == null ? null : Number(h.stock) || 0,
+        bsale_huerfano: true,
+      }));
+  }, [huerfanos, filas]);
+
   const filtradas = useMemo(() => {
     const q = busqueda.trim().toLowerCase();
-    const arr = filas.filter((p) => {
-      if (filtroEstado && String(p.estado || "") !== filtroEstado) return false;
-      if (filtroCategoria && String(p.categoria || "").trim() !== filtroCategoria) return false;
-      const al = alertaDe(p);
-      if (filtroAlerta === "con_stock" && !(Number(p.stock) > 0)) return false;
-      if (filtroAlerta === "bajo_minimo" && al !== "bajo_minimo") return false;
-      if (filtroAlerta === "sin_stock" && al !== "sin_stock") return false;
+    // Los huérfanos van primero: son lo que hay que resolver.
+    const arr = [...filasHuerfanas, ...filas].filter((p) => {
+      if (p.bsale_huerfano) {
+        // No tienen estado ni categoría internos; solo entran a los filtros
+        // que tienen sentido para ellos.
+        if (filtroCategoria) return false;
+        if (filtroAlerta === "con_stock" && !(Number(p.stock) > 0)) return false;
+        if (filtroAlerta === "bajo_minimo" || filtroAlerta === "sin_stock") return false;
+      } else {
+        if (filtroAlerta === "sin_producto") return false;
+        if (filtroEstado && String(p.estado || "") !== filtroEstado) return false;
+        if (filtroCategoria && String(p.categoria || "").trim() !== filtroCategoria) return false;
+        const al = alertaDe(p);
+        if (filtroAlerta === "con_stock" && !(Number(p.stock) > 0)) return false;
+        if (filtroAlerta === "bajo_minimo" && al !== "bajo_minimo") return false;
+        if (filtroAlerta === "sin_stock" && al !== "sin_stock") return false;
+      }
       if (!q) return true;
       return (
         String(p.sku || "").toLowerCase().includes(q) ||
@@ -229,7 +272,7 @@ export default function Inventario() {
     const signo = orden.dir === "asc" ? 1 : -1;
     const valorDe = (p) => (orden.campo === "valor" ? (Number(p.stock) || 0) * (Number(p.costo) || 0) : Number(p.stock) || 0);
     return [...arr].sort((a, b) => (valorDe(a) - valorDe(b)) * signo);
-  }, [filas, busqueda, filtroCategoria, filtroAlerta, filtroEstado, orden]);
+  }, [filas, filasHuerfanas, busqueda, filtroCategoria, filtroAlerta, filtroEstado, orden]);
 
   // KPIs sobre el filtro de estado del producto (no sobre los demás filtros:
   // los KPIs describen el inventario, no la búsqueda en curso).
@@ -245,6 +288,7 @@ export default function Inventario() {
     }
     return { total: base.length, conStock, unidades, valor, bajo, sinStock };
   }, [filas, filtroEstado]);
+  const huerfanosConStock = useMemo(() => filasHuerfanas.filter((h) => Number(h.stock) > 0).length, [filasHuerfanas]);
 
   function toggleOrden(campo) {
     setOrden((o) => (o.campo !== campo ? { campo, dir: "desc" } : o.dir === "desc" ? { campo, dir: "asc" } : { campo: null, dir: "desc" }));
@@ -291,12 +335,12 @@ export default function Inventario() {
       Nombre: p.nombre || "",
       Marca: p.marca || "",
       "Categoría": p.categoria || "",
-      Estado: p.estado || "",
+      Estado: p.bsale_huerfano ? "NO CREADO EN EL SISTEMA (existe en Bsale)" : (p.estado || ""),
       Stock: Number(p.stock) || 0,
       "Stock mínimo": Number(p.stock_minimo) || 0,
       Costo: Number(p.costo) || 0,
       "Valorización (stock × costo)": (Number(p.stock) || 0) * (Number(p.costo) || 0),
-      Alerta: alertaDe(p) === "sin_stock" ? "Sin stock" : alertaDe(p) === "bajo_minimo" ? "Bajo mínimo" : "",
+      Alerta: p.bsale_huerfano ? "No creado" : alertaDe(p) === "sin_stock" ? "Sin stock" : alertaDe(p) === "bajo_minimo" ? "Bajo mínimo" : "",
     })));
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Inventario");
@@ -348,7 +392,7 @@ export default function Inventario() {
       </div>
 
       {/* KPIs */}
-      <div className="stats-row stats-5">
+      <div className={`stats-row ${bsale ? "stats-6" : "stats-5"}`}>
         <div className="stat-card">
           <div className="stat-label">SKUs con stock</div>
           <div className="stat-value">{fmtNum(stats.conStock)}</div>
@@ -374,6 +418,13 @@ export default function Inventario() {
           <div className="stat-value" style={{ color: "var(--danger)" }}>{fmtNum(stats.sinStock)}</div>
           <div className="stat-sub">stock en 0</div>
         </div>
+        {bsale && (
+          <div className="stat-card" onClick={() => { setVista("stock"); setFiltroAlerta("sin_producto"); }} style={{ cursor: "pointer" }} title="Ver solo los SKUs que existen en Bsale pero no están creados en el sistema">
+            <div className="stat-label">No creados en el sistema</div>
+            <div className="stat-value" style={{ color: "#c2410c" }}>{fmtNum(filasHuerfanas.length)}</div>
+            <div className="stat-sub">{bsale.ultima?.resumen ? `en Bsale · ${fmtNum(huerfanosConStock)} con stock` : "requiere una sincronización"}</div>
+          </div>
+        )}
       </div>
 
       {/* Integración Bsale: el stock disponible de Bsale (donde se factura)
@@ -507,6 +558,7 @@ export default function Inventario() {
                 <option value="con_stock">Con stock</option>
                 <option value="bajo_minimo">Bajo mínimo</option>
                 <option value="sin_stock">Sin stock</option>
+                {bsale && <option value="sin_producto">No creados en el sistema (Bsale)</option>}
               </select>
             </div>
             <div className="filter-field">
@@ -545,6 +597,37 @@ export default function Inventario() {
                 </thead>
                 <tbody>
                   {filtradas.map((p) => {
+                    if (p.bsale_huerfano) {
+                      return (
+                        <tr key={p.id} style={{ background: "#fff7ed", boxShadow: "inset 3px 0 0 #f97316" }} title="Este SKU existe en Bsale pero no está creado en el sistema">
+                          <td style={{ fontWeight: 700, whiteSpace: "nowrap", color: "#c2410c" }}>{p.sku}</td>
+                          <td style={{ whiteSpace: "normal", wordBreak: "break-word" }}>
+                            {p.nombre || <span style={{ color: "var(--text-muted)" }}>Sin descripción en Bsale</span>}
+                            <div style={{ fontSize: 11, color: "#c2410c", fontWeight: 600 }}>Existe en Bsale · no creado en el sistema</div>
+                          </td>
+                          <td style={{ fontSize: 12.5, color: "var(--text-muted)" }}>—</td>
+                          <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                            <div style={{ fontWeight: 700, color: p.stock > 0 ? "#c2410c" : "var(--text-muted)" }}>{p.stock == null ? "—" : fmtNum(p.stock)}</div>
+                            <div style={{ fontSize: 10.5, color: "var(--text-muted)" }}>en Bsale</div>
+                          </td>
+                          <td style={{ textAlign: "right", color: "var(--text-muted)" }}>—</td>
+                          <td style={{ textAlign: "right", color: "var(--text-muted)" }}>—</td>
+                          <td style={{ textAlign: "right", color: "var(--text-muted)" }}>—</td>
+                          <td>
+                            <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 999, background: "#ffedd5", color: "#c2410c", whiteSpace: "nowrap" }}>
+                              <AlertTriangle size={11} /> No creado
+                            </span>
+                          </td>
+                          <td>
+                            <button className="btn btn-sm btn-primary" onClick={() => setCrearDesdeBsale({ sku: p.sku, nombre: p.nombre, stock: p.stock })}
+                              title="Crear el producto en el sistema con este SKU; el stock de Bsale queda como ajuste en el libro"
+                              style={{ display: "inline-flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" }}>
+                              <PackagePlus size={14} /> Crear producto
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    }
                     const al = alertaDe(p);
                     const stock = Number(p.stock) || 0;
                     return (
@@ -721,6 +804,35 @@ export default function Inventario() {
           </div>
         </div>,
         document.body
+      )}
+
+      {crearDesdeBsale && (
+        <CrearProductoModal
+          inicial={{ sku: crearDesdeBsale.sku, nombre: crearDesdeBsale.nombre }}
+          onClose={() => setCrearDesdeBsale(null)}
+          onCreado={async (creado, estadoFinal) => {
+            const { sku, stock } = crearDesdeBsale;
+            setCrearDesdeBsale(null);
+            // El stock de Bsale entra como ajuste en el libro, igual que lo
+            // haría la próxima sincronización, pero sin esperarla.
+            let msgStock = "";
+            if (creado?.id && Number(stock) > 0) {
+              try {
+                await api.post("/inventario/movimientos", { productoId: creado.id, tipo: "ajuste", nuevoStock: Number(stock), motivo: "Stock inicial desde Bsale", referencia: "bsale" });
+                msgStock = ` Stock inicial: ${fmtNum(stock)} unidades (desde Bsale).`;
+              } catch (e) {
+                msgStock = ` No se pudo registrar el stock inicial: ${e?.message || "error"}. Corre «Sincronizar ahora» para traerlo.`;
+              }
+            }
+            setHuerfanos((h) => h.filter((x) => String(x.sku).toUpperCase() !== String(sku).toUpperCase()));
+            setToast({
+              type: estadoFinal === "Pendiente Aprobación" ? "info" : "success",
+              message: `Producto ${sku} creado${estadoFinal === "Pendiente Aprobación" ? " (queda pendiente de aprobación)" : ""}.${msgStock}`,
+            });
+            cargar();
+            setLibro(null);
+          }}
+        />
       )}
 
       {movModal && (

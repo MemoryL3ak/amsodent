@@ -230,7 +230,9 @@ function MoneyInput({ value, onChange, readOnly = false, placeholder = "" }) {
   );
 }
 
-export default function CrearProductoModal({ onClose, onCreado }) {
+// `inicial` (opcional): valores con que parte el formulario, p. ej. { sku, nombre }
+// cuando se crea un producto a partir de un SKU que ya existe en Bsale.
+export default function CrearProductoModal({ onClose, onCreado, inicial = null }) {
   // ====================== PERFIL ======================
   const [rol, setRol] = useState(null);
   const [rolLoading, setRolLoading] = useState(true);
@@ -255,8 +257,8 @@ export default function CrearProductoModal({ onClose, onCreado }) {
   }, []);
 
   // ====================== ESTADO DEL FORM ======================
-  const [sku, setSku] = useState("");
-  const [nombre, setNombre] = useState("");
+  const [sku, setSku] = useState(String(inicial?.sku || "").toUpperCase());
+  const [nombre, setNombre] = useState(String(inicial?.nombre || ""));
   const [marca, setMarca] = useState("");
   const [categoria, setCategoria] = useState("");
   const [formato, setFormato] = useState("");
