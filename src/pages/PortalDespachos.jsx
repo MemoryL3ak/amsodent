@@ -8,6 +8,7 @@ import {
 import { supabase } from "../lib/supabase";
 import { api } from "../lib/api";
 import Toast from "../components/Toast";
+import BotonLimpiarFiltros from "../components/BotonLimpiarFiltros";
 
 /* ─────────────────────────────────────────────────────────────────
    Portal de Trazabilidad de Despachos Internos
@@ -346,6 +347,11 @@ function ListaDespachos({ onAbrir, setToast }) {
               </button>
             );
           })}
+          <BotonLimpiarFiltros
+            hay={Boolean(filtroEstado || busqueda)}
+            onLimpiar={() => { setFiltroEstado(""); setBusqueda(""); }}
+            variante="texto"
+          />
         </div>
       </div>
 

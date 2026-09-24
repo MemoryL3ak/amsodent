@@ -450,6 +450,14 @@ export default function PanelPublica() {
     );
   }
 
+
+  /* (2026-09-24) Volver a ver todo sin ir borrando filtro por filtro. */
+  const hayFiltros = filtroMotivo !== "" || filtroVendedorEq !== "";
+  function limpiarFiltros() {
+    setFiltroMotivo("");
+    setFiltroVendedorEq("");
+  }
+
   return (
     <div className="page">
       <div className="page-header" style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
@@ -652,6 +660,7 @@ export default function PanelPublica() {
                   <Download size={13} /> Exportar
                 </button>
               </div>
+              <BotonLimpiarFiltros hay={hayFiltros} onLimpiar={limpiarFiltros} />
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 14, marginBottom: 16 }}>
               <KpiCard icon={FileText} color="#0e7490" label="Con posibilidad" sub="Cotizaciones madre con equivalencias" value={fmtNum(equivalencias.conPosibilidad)} />

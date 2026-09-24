@@ -14,6 +14,7 @@ import { api } from "../lib/api";
 import { Truck, Upload, Search, X, FileSpreadsheet, CircleDollarSign, Link2, Trash2, Lock, Unlock, BarChart3, AlertTriangle, Eye, ExternalLink } from "lucide-react";
 import TarifasFlete from "../components/TarifasFlete";
 import useAuth from "../hooks/useAuth";
+import BotonLimpiarFiltros from "../components/BotonLimpiarFiltros";
 
 const fmtCLP = (v) => `$${Math.round(Number(v || 0)).toLocaleString("es-CL")}`;
 const fmtFecha = (v) => {
@@ -298,6 +299,13 @@ export default function CosteoFletes() {
     ...(esAdmin ? [{ key: "tarifas", label: "Tarifas", icon: CircleDollarSign }] : []),
   ];
 
+
+  /* (2026-09-24) Volver a ver todo sin ir borrando filtro por filtro. */
+  const hayFiltros = filtroCruce !== "todos";
+  function limpiarFiltros() {
+    setFiltroCruce("todos");
+  }
+
   return (
     <div className="page">
       <div className="page-header" style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
@@ -417,6 +425,7 @@ export default function CosteoFletes() {
               ))}
             </div>
           </div>
+          <BotonLimpiarFiltros hay={hayFiltros} onLimpiar={limpiarFiltros} />
         </div>
       )}
 

@@ -9,6 +9,7 @@ import { createPortal } from "react-dom";
 import { api } from "../lib/api";
 import Toast from "../components/Toast";
 import CrearProductoModal from "../components/CrearProductoModal";
+import BotonLimpiarFiltros from "../components/BotonLimpiarFiltros";
 import {
   Boxes, Search, Plus, Minus, SlidersHorizontal, History,
   Upload, Download, X, AlertTriangle, ArrowUp, ArrowDown, ArrowUpDown,
@@ -375,6 +376,16 @@ export default function Inventario() {
       : orden.dir === "asc" ? <ArrowUp size={12} /> : <ArrowDown size={12} />
   );
 
+
+  /* (2026-09-24) Volver a ver todo sin ir borrando filtro por filtro. */
+  const hayFiltros = filtroCategoria !== "" || filtroAlerta !== "" || filtroEstado !== "Activo" || filtroTipoMov !== "";
+  function limpiarFiltros() {
+    setFiltroCategoria("");
+    setFiltroAlerta("");
+    setFiltroEstado("Activo");
+    setFiltroTipoMov("");
+  }
+
   return (
     <div className="page">
       {toast && <Toast type={toast.type} message={toast.message} onClose={() => setToast(null)} />}
@@ -578,6 +589,7 @@ export default function Inventario() {
                 <option value="">Todos</option>
               </select>
             </div>
+            <BotonLimpiarFiltros hay={hayFiltros} onLimpiar={limpiarFiltros} />
           </div>
 
           {filasHuerfanas.length > 0 && filtroAlerta !== "sin_producto" && !busqueda.trim() && (

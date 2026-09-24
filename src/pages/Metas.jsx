@@ -1002,6 +1002,13 @@ export default function Metas() {
     );
   }
 
+
+  /* (2026-09-24) Volver a ver todo sin ir borrando filtro por filtro. */
+  const hayFiltros = filtroVendedor !== "";
+  function limpiarFiltros() {
+    setFiltroVendedor("");
+  }
+
   return (
     <div className="page">
       {/* PAGE HEADER */}
@@ -1060,6 +1067,7 @@ export default function Metas() {
               >
                 {guardandoMetas ? "Guardando…" : puedeEditarMetas ? "Guardar metas" : "Solo lectura"}
               </button>
+              <BotonLimpiarFiltros hay={hayFiltros} onLimpiar={limpiarFiltros} />
             </div>
           </div>
 

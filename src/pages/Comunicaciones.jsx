@@ -3,6 +3,7 @@ import { Send, Mail, MailOpen, AlertTriangle, Trash2, Image as ImageIcon, FileUp
 import { api } from "../lib/api";
 import Toast from "../components/Toast";
 import { pdfPageToPngBlob, pdfPageToInteractive, blobToDataUrl } from "../utils/pdfToImage";
+import BotonLimpiarFiltros from "../components/BotonLimpiarFiltros";
 
 const EMAIL_RX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const MAX_FLYER_BYTES = 4 * 1024 * 1024; // 4MB después de convertir a PNG
@@ -1209,6 +1210,11 @@ function DetalleEnvio({ envioId, onVolver }) {
               {opt.label} <span style={{ opacity: 0.6 }}>· {opt.count}</span>
             </button>
           ))}
+          <BotonLimpiarFiltros
+            hay={Boolean(filtro || busqueda)}
+            onLimpiar={() => { setFiltro(""); setBusqueda(""); }}
+            variante="texto"
+          />
           <input
             type="text"
             placeholder="Buscar correo…"

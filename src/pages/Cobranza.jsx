@@ -5,6 +5,7 @@ import { api } from "../lib/api";
 import { supabase } from "../lib/supabase";
 import useAuth from "../hooks/useAuth";
 import Toast from "../components/Toast";
+import BotonLimpiarFiltros from "../components/BotonLimpiarFiltros";
 import {
   Phone,
   Mail,
@@ -642,6 +643,19 @@ export default function Cobranza() {
     );
   }
 
+
+  /* (2026-09-24) Volver a ver todo sin ir borrando filtro por filtro. */
+  const hayFiltros = filtroEntidad !== "" || filtroNumero !== "" || filtroOC !== "" || filtroCotId !== "" || filtroTipoCotizacion !== "" || filtroEstado !== "" || filtroRangoDias !== "";
+  function limpiarFiltros() {
+    setFiltroEntidad("");
+    setFiltroNumero("");
+    setFiltroOC("");
+    setFiltroCotId("");
+    setFiltroTipoCotizacion("");
+    setFiltroEstado("");
+    setFiltroRangoDias("");
+  }
+
   return (
     <div className="page">
       {toast && <Toast type={toast.type} message={toast.message} onClose={() => setToast(null)} />}
@@ -795,6 +809,7 @@ export default function Cobranza() {
             <option value="+120">Más de 120 días</option>
           </select>
         </div>
+        <BotonLimpiarFiltros hay={hayFiltros} onLimpiar={limpiarFiltros} />
       </div>
 
       {/* Tabla */}

@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { api } from "../lib/api";
 import Toast from "../components/Toast";
 import { descargarReportePDF } from "../lib/reporteStock";
+import BotonLimpiarFiltros from "../components/BotonLimpiarFiltros";
 import {
   Inbox,
   ShoppingCart,
@@ -420,6 +421,16 @@ export default function PedidosPortal() {
     );
   }
 
+
+  /* (2026-09-24) Volver a ver todo sin ir borrando filtro por filtro. */
+  const hayFiltros = fTexto !== "" || fEstado !== "" || fOrigen !== "";
+  function limpiarFiltros() {
+    setFTexto("");
+    setFEstado("");
+    setFOrigen("");
+    setPagina(1);
+  }
+
   return (
     <div className="page">
       {toast && <Toast type={toast.type} message={toast.message} onClose={() => setToast(null)} />}
@@ -531,6 +542,7 @@ export default function PedidosPortal() {
             <option value="stock">Gestión de Stock</option>
           </select>
         </div>
+        <BotonLimpiarFiltros hay={hayFiltros} onLimpiar={limpiarFiltros} />
       </div>
 
       {/* Tabla compacta: una fila por pedido, detalle expandible */}

@@ -159,6 +159,17 @@ function fmtFechaLarga(d) {
 }
 
 export default function BitacoraActividades() {
+  /* (2026-09-24) Volver a ver todo sin ir borrando filtro por filtro. */
+  const hayFiltros = filtroTipo !== "" || filtroCliente !== "" || filtroTipoCliente !== "" || filtroUsuario !== "" || filtroMotivo !== "" || filtroTipoCli !== "";
+  function limpiarFiltros() {
+    setFiltroTipo("");
+    setFiltroCliente("");
+    setFiltroTipoCliente("");
+    setFiltroUsuario("");
+    setFiltroMotivo("");
+    setFiltroTipoCli("");
+  }
+
   const { user, rol } = useAuth();
   const rolNorm = (rol || "").toString().trim().toLowerCase();
   const esAdmin = rolNorm === "admin" || rolNorm === "administrador";
@@ -665,6 +676,7 @@ export default function BitacoraActividades() {
           <span><strong style={{ color: "#b45309" }}>{kpis.pendientes}</strong> pendientes</span>
           <span><strong style={{ color: "#16a34a" }}>{kpis.realizadas}</strong> realizadas</span>
         </div>
+        <BotonLimpiarFiltros hay={hayFiltros} onLimpiar={limpiarFiltros} />
       </div>
 
       {/* Leyenda de tipos + usuarios (admin) */}
@@ -1258,6 +1270,7 @@ function ModalActividad({ inicial, clienteOptions, cotizacionOptions, perfiles, 
     setGuardando(false);
     if (res?._meet_generado && res?.meet_url) setMeetCreado(res.meet_url);
   }
+
 
   return (
     <div

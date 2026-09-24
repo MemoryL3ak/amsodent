@@ -199,6 +199,13 @@ export default function SorteoRegistros() {
     XLSX.writeFile(wb, `sorteo-participantes-${new Date().toISOString().slice(0, 10)}.xlsx`);
   }
 
+
+  /* (2026-09-24) Volver a ver todo sin ir borrando filtro por filtro. */
+  const hayFiltros = filtro !== "";
+  function limpiarFiltros() {
+    setFiltro("");
+  }
+
   return (
     <div className="page">
       {toast && <Toast type={toast.type} message={toast.message} onClose={() => setToast(null)} />}
@@ -330,6 +337,7 @@ export default function SorteoRegistros() {
             <Crown size={14} />
             {soloGanador ? "Mostrando ganador" : "Solo ganador"}
           </button>
+          <BotonLimpiarFiltros hay={hayFiltros} onLimpiar={limpiarFiltros} />
         </div>
 
       </div>

@@ -7,6 +7,7 @@ import { api } from "../lib/api";
 import useAuth from "../hooks/useAuth";
 import { Plus, Search, FileDown, Trash2, FileText } from "lucide-react";
 import { generarPDFOrdenCompra } from "../components/OrdenCompraDocument";
+import BotonLimpiarFiltros from "../components/BotonLimpiarFiltros";
 
 const fmtCLP = (v) => `$${Number(v || 0).toLocaleString("es-CL")}`;
 function fmtFecha(v) {
@@ -83,6 +84,14 @@ export default function OrdenesCompra() {
     );
   }
 
+
+  /* (2026-09-24) Volver a ver todo sin ir borrando filtro por filtro. */
+  const hayFiltros = filtroNum !== "" || filtroProv !== "";
+  function limpiarFiltros() {
+    setFiltroNum("");
+    setFiltroProv("");
+  }
+
   return (
     <div className="page">
       <div className="page-header" style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
@@ -127,6 +136,7 @@ export default function OrdenesCompra() {
             </button>
           </div>
         )}
+        <BotonLimpiarFiltros hay={hayFiltros} onLimpiar={limpiarFiltros} />
       </div>
 
       <div className="surface" style={{ marginTop: 14, overflowX: "auto" }}>

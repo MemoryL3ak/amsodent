@@ -5,6 +5,7 @@ import useAuth from "../hooks/useAuth";
 import Toast from "../components/Toast";
 import DateFilter from "../components/DateFilter";
 import { Eye, AlertTriangle, Save, Lock } from "lucide-react";
+import BotonLimpiarFiltros from "../components/BotonLimpiarFiltros";
 
 function fmtCLP(value) {
   return `$${Number(value || 0).toLocaleString("es-CL")}`;
@@ -237,6 +238,15 @@ export default function Factoring() {
     );
   }
 
+
+  /* (2026-09-24) Volver a ver todo sin ir borrando filtro por filtro. */
+  const hayFiltros = filtroEmpresa !== "" || filtroEntidad !== "" || filtroPlazo !== "todas";
+  function limpiarFiltros() {
+    setFiltroEmpresa("");
+    setFiltroEntidad("");
+    setFiltroPlazo("todas");
+  }
+
   return (
     <div className="page">
       {toast && <Toast type={toast.type} message={toast.message} onClose={() => setToast(null)} />}
@@ -306,6 +316,7 @@ export default function Factoring() {
             <option value="sin_plazo">Sin plazo</option>
           </select>
         </div>
+        <BotonLimpiarFiltros hay={hayFiltros} onLimpiar={limpiarFiltros} />
       </div>
 
       {/* Tabla */}

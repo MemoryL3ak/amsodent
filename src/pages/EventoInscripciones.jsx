@@ -4,6 +4,7 @@ import * as XLSX from "xlsx";
 import QRCode from "qrcode";
 import Toast from "../components/Toast";
 import DateFilter from "../components/DateFilter";
+import BotonLimpiarFiltros from "../components/BotonLimpiarFiltros";
 import {
   CalendarCheck,
   Users,
@@ -296,6 +297,14 @@ export default function EventoInscripciones() {
     a.click();
   }
 
+
+  /* (2026-09-24) Volver a ver todo sin ir borrando filtro por filtro. */
+  const hayFiltros = filtro !== "" || filtroEvento !== "";
+  function limpiarFiltros() {
+    setFiltro("");
+    setFiltroEvento("");
+  }
+
   return (
     <div className="page">
       {toast && <Toast type={toast.type} message={toast.message} onClose={() => setToast(null)} />}
@@ -396,6 +405,7 @@ export default function EventoInscripciones() {
             Solo asistencia confirmada
           </label>
         </div>
+        <BotonLimpiarFiltros hay={hayFiltros} onLimpiar={limpiarFiltros} />
       </div>
 
       {/* Tabla */}

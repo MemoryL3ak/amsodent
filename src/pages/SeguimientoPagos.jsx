@@ -7,6 +7,7 @@ import Toast from "../components/Toast";
 import ConfirmModal from "../components/ConfirmModal";
 import DateFilter from "../components/DateFilter";
 import { Eye, CheckCircle2, Circle, AlertTriangle, ArrowUpDown, ArrowUp, ArrowDown, Download, ChevronDown, Upload, FileMinus, Mail, Copy, ExternalLink, X } from "lucide-react";
+import BotonLimpiarFiltros from "../components/BotonLimpiarFiltros";
 
 // Normaliza el nombre de archivo para el storage (sin acentos ni símbolos).
 function normalizarNombreArchivo(nombre) {
@@ -1226,6 +1227,24 @@ export default function SeguimientoPagos() {
     );
   }
 
+
+  /* (2026-09-24) Volver a ver todo sin ir borrando filtro por filtro. */
+  const hayFiltros = filtroEstado !== "todas" || filtroCierreForzado !== "todas" || filtroEntidad !== "" || filtroCotizacion !== "" || filtroRut !== "" || filtroNumero !== "" || filtroTipoCotizacion !== "" || filtroTipoCompra !== "" || filtroFormaPago.length > 0 || filtroDesde !== "" || filtroHasta !== "" || filtroEmpresaDespacho !== "";
+  function limpiarFiltros() {
+    setFiltroEstado("todas");
+    setFiltroCierreForzado("todas");
+    setFiltroEntidad("");
+    setFiltroCotizacion("");
+    setFiltroRut("");
+    setFiltroNumero("");
+    setFiltroTipoCotizacion("");
+    setFiltroTipoCompra("");
+    setFiltroFormaPago([]);
+    setFiltroDesde("");
+    setFiltroHasta("");
+    setFiltroEmpresaDespacho("");
+  }
+
   return (
     <div className="page vista-compacta">
       {toast && <Toast type={toast.type} message={toast.message} onClose={() => setToast(null)} />}
@@ -1502,6 +1521,7 @@ export default function SeguimientoPagos() {
             </select>
           </div>
         )}
+        <BotonLimpiarFiltros hay={hayFiltros} onLimpiar={limpiarFiltros} />
       </div>
 
       {/* Tabla */}

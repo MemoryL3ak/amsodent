@@ -8,6 +8,7 @@ import Toast from "../components/Toast";
 import ConfirmModal from "../components/ConfirmModal";
 import DateFilter from "../components/DateFilter";
 import { useStickyState } from "../lib/useStickyState";
+import BotonLimpiarFiltros from "../components/BotonLimpiarFiltros";
 
 export default function ListarLicitaciones() {
   const { user, rol, cargando } = useAuth();
@@ -328,6 +329,13 @@ export default function ListarLicitaciones() {
   }
 
   // ── Render ────────────────────────────────────────────────────
+
+  /* (2026-09-24) Volver a ver todo sin ir borrando filtro por filtro. */
+  const hayFiltros = filtroIdLicitacion !== "";
+  function limpiarFiltros() {
+    setFiltroIdLicitacion("");
+  }
+
   return (
     <div className="page">
       {toast && (
@@ -553,6 +561,7 @@ export default function ListarLicitaciones() {
             <option value="sin">Sin guía subida</option>
           </select>
         </div>
+        <BotonLimpiarFiltros hay={hayFiltros} onLimpiar={limpiarFiltros} />
       </div>
 
       {/* Table */}
