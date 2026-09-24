@@ -133,6 +133,33 @@ export class StockClientesController {
     );
   }
 
+  /* (2026-09-24) El cliente, sobre la cotizacion que ya recibio: darla por
+     buena o pedir cambios. Las dos son del administrador de la cuenta, igual
+     que aprobar y pagar. */
+
+  @UseGuards(StockPortalGuard)
+  @Post('mis-solicitudes/:id/validar-cotizacion')
+  async validarCotizacionCliente(@Req() req: any, @Param('id', ParseIntPipe) id: number) {
+    this.exigirAdminPortal(req, 'Solo el administrador de la cuenta puede validar la cotizacion.');
+    return await this.pedidosFlujo.validarComoCliente(
+      id,
+      req.stockPortal.usuario_email || 'cuenta principal',
+      req.stockPortal.rut,
+    );
+  }
+
+  @UseGuards(StockPortalGuard)
+  @Post('mis-solicitudes/:id/modificar')
+  async modificarPedidoCliente(@Req() req: any, @Param('id', ParseIntPipe) id: number, @Body() body: any) {
+    this.exigirAdminPortal(req, 'Solo el administrador de la cuenta puede modificar el pedido.');
+    return await this.pedidosFlujo.pedirModificacion(
+      id,
+      body || {},
+      req.stockPortal.usuario_email || 'cuenta principal',
+      req.stockPortal.rut,
+    );
+  }
+
   @UseGuards(StockPortalGuard)
   @Get('mis-solicitudes/:id/eventos')
   async eventosPedidoCliente(@Req() req: any, @Param('id', ParseIntPipe) id: number) {
