@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Clona la base de PRODUCCIÓN de Supabase a la rama/proyecto de PRUEBAS.
 
@@ -41,7 +41,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 function Paso($t) { Write-Host ""; Write-Host ("== " + $t) -ForegroundColor Cyan }
-function Ok($t)   { Write-Host ("   ✔ " + $t) -ForegroundColor Green }
+function Ok($t)   { Write-Host ("   OK " + $t) -ForegroundColor Green }
 function Aviso($t){ Write-Host ("   ! " + $t) -ForegroundColor Yellow }
 
 # ── Herramientas ─────────────────────────────────────────────────────────
