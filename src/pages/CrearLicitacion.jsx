@@ -751,6 +751,10 @@ export default function CrearLicitacion() {
   const [idLicitacionInput, setIdLicitacionInput] = useState("");
   const [nombre, setNombre] = useState("");
   const [fechaHoraCierre, setFechaHoraCierre] = useState("");
+  /* (2026-09-24) Fecha y hora de la cotizacion, fijadas a mano. Antes quedaba
+     siempre la del momento de guardar, lo que obligaba a corregir a mano las
+     cotizaciones que se cargaban con dias de atraso. Vacio = la del guardado. */
+  const [fechaHoraCotizacion, setFechaHoraCotizacion] = useState("");
   const [fechaPublicacionResultados, setFechaPublicacionResultados] = useState("");
   const [monto, setMonto] = useState(""); // string formateado "1.234.567"
   const [listado, setListado] = useState("2"); // derivado de tipoCompra: "Compra ágil" → lista 2
@@ -2154,6 +2158,9 @@ export default function CrearLicitacion() {
             id_licitacion: idLicitacionParaInsert,
             nombre,
             fecha_hora_cierre: esClienteParticular ? null : (fechaHoraCierre || null),
+            ...(fechaHoraCotizacion
+              ? { fecha_hora: new Date(fechaHoraCotizacion).toISOString(), fecha: fechaHoraCotizacion.slice(0, 10) }
+              : {}),
             fecha_publicacion_resultados: fechaPublicacionResultados || null,
             monto: parseMontoCL(monto),
             lista_precios: Number(listado),
@@ -2721,6 +2728,25 @@ export default function CrearLicitacion() {
               value={nombre}
               onChange={(e) => setNombre(e.target.value)}
             />
+          </div>
+
+          {/* (2026-09-24) Fecha y hora de la COTIZACION, editable. Antes quedaba
+              siempre la del momento de guardar, y una cotizacion cargada con
+              dias de atraso nacia con la fecha equivocada. En blanco se
+              comporta como antes. */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Fecha y Hora de la Cotizacion
+            </label>
+            <input
+              type="datetime-local"
+              className="w-full rounded-md border border-gray-300 px-3 py-2"
+              value={fechaHoraCotizacion}
+              onChange={(e) => setFechaHoraCotizacion(e.target.value)}
+            />
+            <p className="text-xs text-gray-500 mt-1">
+              Dejala en blanco para usar la fecha y hora en que se guarde.
+            </p>
           </div>
 
           {!(tipoCliente.toLowerCase() === "cliente particular" || tipoCompra === "Cliente particular") && (

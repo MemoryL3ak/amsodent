@@ -56,6 +56,9 @@ type Hallazgo = {
   oferta: boolean;
   imagen: string | null;
   disponible: boolean;
+  // SKU del catálogo de Amsodent, cuando el hallazgo es nuestro y se pudo
+  // reconocer el producto. La tienda no lo publica: se calza por nombre.
+  sku?: string | null;
   historico?: {
     capturas: number;
     precio_min: number;
@@ -149,6 +152,7 @@ export class ExploradorService {
     const tiendasCaidas = tiendas.filter((_, i) => (porTienda[i] as any).error).map((t) => t.nombre);
 
     await this.adjuntarHistoricoYGuardar(q, items);
+    await this.adjuntarSkuAmsodent(items);
     // Amsodent siempre encabeza; dentro de cada grupo, del más barato al más caro.
     items.sort((a, b) => {
       const propiaA = a.tienda === 'amsodent' ? 0 : 1;
@@ -493,6 +497,67 @@ export class ExploradorService {
         })
         .filter(Boolean) as Hallazgo[],
     };
+  }
+
+  /* SKU de nuestro catálogo para los hallazgos de la tienda de Amsodent
+     (2026-09-24). La tienda no publica el SKU por la vía que usamos para
+     buscar, así que se calza por nombre normalizado contra `productos`:
+     primero por igualdad y, si no, por contención de uno en el otro. El
+     índice del catálogo se arma una vez y se guarda en memoria, porque son
+     miles de filas y la búsqueda del portal es frecuente. */
+  private catalogo: { ts: number; porNombre: Map<string, string>; lista: Array<{ n: string; sku: string }> } | null = null;
+
+  private static normNombre(s: unknown) {
+    return String(s || '')
+      .normalize('NFD')
+      .replace(/[̀-ͯ]/g, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9 ]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  private async indiceCatalogo() {
+    if (this.catalogo && Date.now() - this.catalogo.ts < CACHE_MS) return this.catalogo;
+    const { data, error } = await this.supabase.getClient()
+      .from('productos')
+      .select('sku, nombre')
+      .not('sku', 'is', null)
+      .range(0, 20000);
+    if (error) {
+      this.logger.warn(`Explorador: no se pudo leer el catálogo para el SKU: ${error.message}`);
+      return null;
+    }
+    const porNombre = new Map<string, string>();
+    const lista: Array<{ n: string; sku: string }> = [];
+    for (const p of data || []) {
+      const n = ExploradorService.normNombre((p as any).nombre);
+      const sku = String((p as any).sku || '').trim();
+      if (!n || !sku) continue;
+      if (!porNombre.has(n)) porNombre.set(n, sku);
+      lista.push({ n, sku });
+    }
+    this.catalogo = { ts: Date.now(), porNombre, lista };
+    return this.catalogo;
+  }
+
+  private async adjuntarSkuAmsodent(items: Hallazgo[]) {
+    const nuestros = items.filter((i) => i.tienda === 'amsodent');
+    if (!nuestros.length) return;
+    const idx = await this.indiceCatalogo();
+    if (!idx) return;
+    for (const it of nuestros) {
+      const n = ExploradorService.normNombre(it.nombre);
+      if (!n) continue;
+      let sku = idx.porNombre.get(n) || null;
+      if (!sku) {
+        // Contención: la tienda suele agregarle formato o presentación al
+        // nombre. Se exige un mínimo de largo para no calzar por casualidad.
+        const candidato = idx.lista.find((c) => c.n.length >= 8 && (n.includes(c.n) || c.n.includes(n)));
+        sku = candidato?.sku || null;
+      }
+      it.sku = sku;
+    }
   }
 
   /* Histórico estilo Knasta: para cada URL encontrada se leen las capturas

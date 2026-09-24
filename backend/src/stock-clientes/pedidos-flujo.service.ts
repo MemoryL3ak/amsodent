@@ -165,6 +165,175 @@ export class PedidosFlujoService {
     return { ok: true, pedido: data, mensaje: MENSAJE_APROBADO_CLIENTE };
   }
 
+  /* ── El cliente revisa la cotización que recibió (2026-09-24) ────────────
+     Hasta ahora, cuando Amsodent validaba el pedido y mandaba el link de pago,
+     el cliente solo podía pagar: no tenía forma de decir "está bien" sin pagar
+     todavía, ni de pedir cambios sin llamar por teléfono. */
+
+  /** Da por buena la cotización recibida. No cobra ni mueve la etapa: deja
+      constancia de que el cliente la revisó y la acepta. */
+  async validarComoCliente(id: number, actorEmail: string, rut: string) {
+    const pedido = await this.obtener(id);
+    if (String(pedido.rut) !== String(rut)) {
+      throw new ForbiddenException('Este pedido pertenece a otra cuenta.');
+    }
+    if (this.estadoDe(pedido) !== 'validado_plataforma') {
+      throw new BadRequestException('Solo se puede validar una cotización que Amsodent ya envió.');
+    }
+    if (pedido.validado_cliente_at) {
+      return { ok: true, pedido, mensaje: 'Esta cotización ya estaba validada.' };
+    }
+
+    const ahora = new Date().toISOString();
+    const { data, error } = await this.client
+      .from(TABLA)
+      .update({ validado_cliente_at: ahora, validado_cliente_por: actorEmail, updated_at: ahora })
+      .eq('id', Number(id))
+      .select()
+      .single();
+    if (error) this.traducirError(error);
+
+    await this.registrarEvento({
+      solicitudId: Number(id),
+      tipo: 'cotizacion_validada_cliente',
+      actorTipo: 'cliente',
+      actorEmail,
+      detalle: 'El cliente revisó la cotización y la dio por buena.',
+    });
+    return { ok: true, pedido: data, mensaje: 'Gracias, registramos tu conformidad con la cotización.' };
+  }
+
+  /** El cliente pide cambios sobre la cotización recibida. Llega la lista
+      completa desde su carrito — los productos que mantiene MÁS los nuevos —
+      así que reemplaza a los `items` y guarda la lista anterior para poder
+      comparar. Vuelve a "aprobado_cliente" porque Amsodent tiene que
+      revalidar existencias y precios antes de volver a cobrar. */
+  async pedirModificacion(
+    id: number,
+    body: {
+      items?: Array<{ nombre?: string; sku?: string; cantidad?: number | string; unidad?: string; precio_referencia?: number | string; observacion?: string }>;
+      nota?: string;
+    },
+    actorEmail: string,
+    rut: string,
+  ) {
+    const pedido = await this.obtener(id);
+    if (String(pedido.rut) !== String(rut)) {
+      throw new ForbiddenException('Este pedido pertenece a otra cuenta.');
+    }
+    const actual = this.estadoDe(pedido);
+    if (actual === 'pagado') {
+      throw new BadRequestException('Este pedido ya está pagado: para agregar productos hay que hacer uno nuevo.');
+    }
+    if (actual === 'cancelado' || actual === 'rechazado') {
+      throw new BadRequestException('Este pedido está cerrado.');
+    }
+
+    const nuevos = (Array.isArray(body?.items) ? body.items : [])
+      .map((it) => ({
+        nombre: String(it?.nombre || '').trim().slice(0, 200),
+        sku: String(it?.sku || '').trim().slice(0, 80) || undefined,
+        unidad: String(it?.unidad || '').trim().slice(0, 50) || null,
+        cantidad: Number(it?.cantidad) || 0,
+        ...(Number(it?.precio_referencia) > 0 ? { precio_referencia: Number(it.precio_referencia) } : {}),
+        ...(String(it?.observacion || '').trim() ? { observacion: String(it.observacion).trim().slice(0, 300) } : {}),
+      }))
+      .filter((it) => it.nombre && it.cantidad > 0);
+    if (!nuevos.length) {
+      throw new BadRequestException('La modificación llegó sin productos.');
+    }
+
+    const anteriores: any[] = Array.isArray(pedido.items) ? pedido.items : [];
+    const clave = (it: any) => `${String(it?.sku || '').trim().toLowerCase()}|${String(it?.nombre || '').trim().toLowerCase()}`;
+    const antesPorClave = new Map(anteriores.map((it) => [clave(it), it]));
+    const ahoraPorClave = new Map(nuevos.map((it) => [clave(it), it]));
+
+    // Qué pasó con cada producto, para que la bandeja no tenga que deducirlo.
+    const detalle = [
+      ...nuevos.map((it) => {
+        const antes = antesPorClave.get(clave(it));
+        return {
+          nombre: it.nombre,
+          sku: it.sku ?? null,
+          cantidad: it.cantidad,
+          cantidad_anterior: antes ? Number(antes.cantidad) || 0 : null,
+          accion: !antes ? 'agrega' : Number(antes.cantidad) !== it.cantidad ? 'cambia' : 'mantiene',
+        };
+      }),
+      ...anteriores
+        .filter((it) => !ahoraPorClave.has(clave(it)))
+        .map((it) => ({
+          nombre: String(it?.nombre || ''),
+          sku: it?.sku ?? null,
+          cantidad: 0,
+          cantidad_anterior: Number(it?.cantidad) || 0,
+          accion: 'quita',
+        })),
+    ];
+
+    const ahora = new Date().toISOString();
+    const parche: Record<string, any> = {
+      items: nuevos,
+      modificacion_pedida_at: ahora,
+      modificacion_pedida_por: actorEmail,
+      modificacion_detalle: detalle,
+      // Amsodent tiene que volver a confirmar existencias y precio, así que la
+      // disponibilidad y el monto anteriores dejan de valer.
+      disponibilidad: null,
+      monto_total: null,
+      pago_link: null,
+      validado_cliente_at: null,
+      validado_cliente_por: null,
+      updated_at: ahora,
+    };
+    if (String(body?.nota || '').trim()) {
+      const previa = pedido.nota ? `${pedido.nota} · ` : '';
+      parche.nota = `${previa}Modificación pedida por el cliente: ${String(body.nota).trim().slice(0, 500)}`;
+    }
+
+    let { data, error } = await this.client
+      .from(TABLA)
+      .update({ ...parche, flujo_estado: 'aprobado_cliente' })
+      .eq('id', Number(id))
+      .select()
+      .single();
+    // Migración 20260924 sin aplicar: se guarda igual lo esencial (los
+    // productos nuevos) en vez de dejar al cliente sin poder modificar.
+    if (error && /modificacion_pedida|modificacion_detalle|validado_cliente/.test(error.message)) {
+      ({ data, error } = await this.client
+        .from(TABLA)
+        .update({
+          items: nuevos,
+          disponibilidad: null,
+          monto_total: null,
+          pago_link: null,
+          updated_at: ahora,
+          flujo_estado: 'aprobado_cliente',
+        })
+        .eq('id', Number(id))
+        .select()
+        .single());
+    }
+    if (error) this.traducirError(error);
+
+    const cuenta = (a: string) => detalle.filter((d) => d.accion === a).length;
+    await this.registrarEvento({
+      solicitudId: Number(id),
+      tipo: 'modificacion_pedida',
+      estadoDesde: actual,
+      estadoHasta: 'aprobado_cliente',
+      actorTipo: 'cliente',
+      actorEmail,
+      detalle: `El cliente modificó el pedido: ${cuenta('agrega')} agregado(s), ${cuenta('cambia')} con otra cantidad, ${cuenta('quita')} quitado(s).`,
+      datos: { detalle },
+    });
+    await this.notificarPlataforma(data);
+    return {
+      ok: true,
+      pedido: data,
+      mensaje: 'Recibimos tus cambios. Vamos a revisar existencias y te enviamos la cotización corregida.',
+    };
+  }
   /* ── Paso 2: Amsodent valida existencias y emite el link de pago ─────── */
   async validarDesdePlataforma(
     id: number,

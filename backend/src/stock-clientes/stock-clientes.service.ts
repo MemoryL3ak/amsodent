@@ -1583,6 +1583,7 @@ export class StockClientesService {
         precio_referencia?: number | string;
         tienda?: string;
         url?: string;
+        sku?: string;
       }>;
       nota?: string;
       // 'stock' | 'explorador' | 'showroom': de qué sección del portal salió.
@@ -1625,10 +1626,14 @@ export class StockClientesService {
         const url = String((it as any)?.url || '').trim().slice(0, 500);
         // Observación del cliente por producto (opcional, 2026-09-10).
         const observacion = String((it as any)?.observacion || '').trim().slice(0, 300);
+        // SKU del catálogo cuando el producto se reconoció (2026-09-24): con
+        // él la bandeja no tiene que adivinar qué producto es.
+        const sku = String((it as any)?.sku || '').trim().slice(0, 80);
         return {
           nombre,
           unidad,
           cantidad,
+          ...(sku ? { sku } : {}),
           ...(precioRef > 0 ? { precio_referencia: precioRef } : {}),
           ...(tienda ? { tienda } : {}),
           ...(url ? { url } : {}),

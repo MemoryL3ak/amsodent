@@ -150,6 +150,27 @@ export default function PedidosPortal() {
   }
   useEffect(() => { cargar(); }, []);
 
+  /* (2026-09-24) Refresco al volver a la bandeja. "Crear cotizacion" abre /crear
+     en una pestana nueva; al guardarla alla, el pedido pasa a "Respondida" y
+     queda vinculado, pero esta pantalla seguia mostrando el estado viejo hasta
+     que alguien recargaba. Ahora se recarga sola al volver el foco, que es
+     justo cuando el usuario vuelve de crear la cotizacion. */
+  useEffect(() => {
+    const alVolver = () => {
+      if (document.visibilityState === "visible") {
+        cargar();
+        cargarKpis();
+      }
+    };
+    window.addEventListener("focus", alVolver);
+    document.addEventListener("visibilitychange", alVolver);
+    return () => {
+      window.removeEventListener("focus", alVolver);
+      document.removeEventListener("visibilitychange", alVolver);
+    };
+    // cargar/cargarKpis se redefinen en cada render pero hacen siempre lo mismo.
+  }, []);
+
   // Cambiar cualquier filtro vuelve a la página 1 y colapsa el detalle.
   useEffect(() => {
     setPagina(1);
@@ -323,20 +344,11 @@ export default function PedidosPortal() {
   // Se abre en una PESTAÑA NUEVA: el borrador viaja por localStorage (la
   // misma clave que hidrata /crear), así la bandeja queda abierta.
   function crearCotizacion(s) {
-    const items = Array.isArray(s.items) ? s.items : [];
-    const lineas = items.map((i) => {
-      const ref = [
-        i?.tienda ? `ref. ${i.tienda}` : null,
-        i?.precio_referencia ? fmtCLP(i.precio_referencia) : null,
-      ].filter(Boolean).join(" ");
-      const obs = i?.observacion ? ` — Obs: ${i.observacion}` : "";
-      return `  • ${i?.nombre || "?"} — ${i?.cantidad || 0}${i?.unidad ? ` ${i.unidad}` : ""}${ref ? ` (${ref})` : ""}${obs}`;
-    });
-    const obs = [
-      `Pedido del portal N° ${s.id} (${origenDe(s) === "explorador" ? "Explorador de Precios" : "Gestión de Stock"}) del ${fmtFechaHora(s.created_at)}:`,
-      ...lineas,
-      s.nota ? `Nota del cliente: ${s.nota}` : null,
-    ].filter(Boolean).join("\n");
+    /* (2026-09-24) La cotizacion ya no nace con el bloque de observaciones
+       generales. Se volcaba ahi el pedido entero -- cabecera, una linea por
+       producto y la nota del cliente -- y eso terminaba impreso en el PDF que
+       ve el cliente, repitiendo lo que el detalle de la cotizacion ya dice.
+       El pedido sigue accesible por `solicitud_stock_id` y en la bandeja. */
 
     /* OJO: aquí NO se marca "respondida". Abrir el formulario no es responder:
        el estado lo cambia el guardado de la cotización (vincularLicitacion),
@@ -352,7 +364,6 @@ export default function PedidosPortal() {
       contacto: s.contacto_nombre || "",
       email: s.contacto_email || "",
       telefono: s.contacto_telefono || "",
-      observaciones: obs,
       solicitud_stock_id: s.id,
     };
     try {
@@ -822,6 +833,48 @@ function PanelFlujoPedido({ pedido, onValidar, onRevertir, onSos }) {
           );
         })}
       </div>
+
+      {/* (2026-09-24) El cliente pidio cambios desde su carrito. Los productos
+          del pedido YA estan reemplazados por los nuevos; esto muestra que
+          cambio respecto de lo cotizado, para no tener que compararlo a mano
+          antes de revalidar. */}
+      {pedido.modificacion_pedida_at && (
+        <div style={{ border: "1px solid #fed7aa", background: "#fff7ed", borderRadius: 10, padding: "10px 12px" }}>
+          <div style={{ fontSize: 12.5, fontWeight: 800, color: "#9a3412", marginBottom: 6 }}>
+            El cliente modifico este pedido
+            <span style={{ fontWeight: 500, color: "#9a3412" }}>
+              {" · "}{fmtFechaHora(pedido.modificacion_pedida_at)}
+              {pedido.modificacion_pedida_por ? ` · ${String(pedido.modificacion_pedida_por).split("@")[0]}` : ""}
+            </span>
+          </div>
+          {Array.isArray(pedido.modificacion_detalle) && pedido.modificacion_detalle.length > 0 ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+              {pedido.modificacion_detalle
+                .filter((d) => d.accion !== "mantiene")
+                .map((d, i) => {
+                  const tono = d.accion === "agrega" ? "#15803d" : d.accion === "quita" ? "#b91c1c" : "#b45309";
+                  const etiqueta = d.accion === "agrega" ? "Agrego" : d.accion === "quita" ? "Quito" : "Cambio";
+                  return (
+                    <div key={i} style={{ fontSize: 12, color: "#475569" }}>
+                      <strong style={{ color: tono }}>{etiqueta}:</strong> {d.nombre}
+                      {d.sku ? ` (${d.sku})` : ""}
+                      {d.accion === "cambia" ? ` · ${d.cantidad_anterior} → ${d.cantidad}` : ""}
+                      {d.accion === "agrega" ? ` · ${d.cantidad}` : ""}
+                      {d.accion === "quita" ? ` · eran ${d.cantidad_anterior}` : ""}
+                    </div>
+                  );
+                })}
+              {pedido.modificacion_detalle.every((d) => d.accion === "mantiene") && (
+                <div style={{ fontSize: 12, color: "#475569" }}>Reenvio los mismos productos, sin cambios.</div>
+              )}
+            </div>
+          ) : (
+            <div style={{ fontSize: 12, color: "#475569" }}>
+              Revisa los productos del pedido: son los que el cliente dejo en su carrito.
+            </div>
+          )}
+        </div>
+      )}
 
       {Array.isArray(pedido.disponibilidad) && pedido.disponibilidad.length > 0 && (
         <div style={{ fontSize: 12, color: "#475569" }}>

@@ -227,6 +227,50 @@ const CARRITO_ABRIR = "portal-carrito-abrir";
    El carrito vive lejos del panel en el árbol, así que avisa por evento. */
 const PEDIDO_ENVIADO = "portal-pedido-enviado";
 
+/* (2026-09-24) Modificar un pedido ya cotizado se hace con el MISMO carrito:
+   se cargan en el los productos que el pedido ya tiene -- los transitorios se
+   mantienen tal cual -- y el cliente agrega, saca o cambia cantidades. Esta
+   clave marca que el carrito no va a crear un pedido nuevo, sino a reemplazar
+   los productos del pedido que dice `id`. */
+const MODIFICANDO_KEY = "portal_carrito_modificando";
+
+function leerModificando() {
+  try {
+    const v = JSON.parse(localStorage.getItem(MODIFICANDO_KEY) || "null");
+    return v && v.id ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+function marcarModificando(info) {
+  try {
+    if (info) localStorage.setItem(MODIFICANDO_KEY, JSON.stringify(info));
+    else localStorage.removeItem(MODIFICANDO_KEY);
+  } catch { /* modo privado */ }
+}
+
+/* Carga en el carrito los productos de un pedido para modificarlo. */
+function cargarPedidoEnCarrito(pedido, setCarrito) {
+  const items = Array.isArray(pedido?.items) ? pedido.items : [];
+  marcarModificando({ id: pedido.id, numero: pedido.id });
+  carritoAbrirPendiente = true;
+  setCarrito(items.map((it, i) => ({
+    nombre: String(it?.nombre || "").trim(),
+    sku: it?.sku || null,
+    // Clave estable para que editar cantidades siga funcionando igual que con
+    // los productos que vienen del explorador (que se identifican por url).
+    url: it?.url || `pedido:${pedido.id}:${i}`,
+    tienda: it?.tienda || null,
+    origen: it?.tienda || it?.url ? "explorador" : "stock",
+    precio: Number(it?.precio_referencia || 0) || 0,
+    cantidad: Number(it?.cantidad || 0) || 1,
+    unidad: it?.unidad || "un",
+    observacion: it?.observacion || "",
+    imagen: null,
+  })).filter((it) => it.nombre));
+}
+
 function leerCarrito() {
   try {
     const v = JSON.parse(localStorage.getItem(CARRITO_KEY) || "[]");
@@ -1340,7 +1384,6 @@ function PantallaDeclaracion({ cliente, setToast }) {
     window.addEventListener(PEDIDO_ENVIADO, alEnviar);
     return () => window.removeEventListener(PEDIDO_ENVIADO, alEnviar);
     // cargarSolicitudes se redefine en cada render pero siempre hace lo mismo.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function cargarSolicitudes() {
@@ -1807,6 +1850,7 @@ function PantallaDeclaracion({ cliente, setToast }) {
           esAdminPortal={esAdminPortal}
           onRecargar={cargarSolicitudes}
           setToast={setToast}
+          onIrAExplorador={() => setTab("explorador")}
         />
       ) : (
       /* Listado de productos */
@@ -2585,6 +2629,7 @@ function PanelExploradorPrecios() {
         nombre: it.nombre,
         url: it.url,
         tienda: it.tienda_nombre,
+        sku: it.sku || null,
         esAmsodent: it.tienda === "amsodent",
         precio: Number(it.precio || 0),
         imagen: it.imagen || null,
@@ -2604,6 +2649,36 @@ function PanelExploradorPrecios() {
     setEnviandoPedido(true);
     setErrorPedido("");
     try {
+      /* Modificacion de un pedido ya cotizado: el carrito no crea uno nuevo,
+         reemplaza los productos del pedido. Se manda la lista COMPLETA (lo
+         que se mantiene mas lo que se agrego) y el backend compara contra la
+         anterior para dejar dicho que cambio. */
+      const modificando = leerModificando();
+      if (modificando?.id) {
+        const r = await apiRequest(`/stock-clientes/mis-solicitudes/${modificando.id}/modificar`, {
+          method: "POST",
+          body: JSON.stringify({
+            items: carrito.map((c) => ({
+              nombre: c.nombre,
+              sku: c.sku || undefined,
+              unidad: c.unidad || "un",
+              cantidad: Number(c.cantidad || 0),
+              precio_referencia: Number(c.precio || 0) || undefined,
+              observacion: String(c.observacion || "").trim() || undefined,
+            })),
+            nota: notaPedido.trim() || undefined,
+          }),
+        });
+        marcarModificando(null);
+        setPedidoEnviado({ id: modificando.id, modificado: true, mensaje: r?.mensaje });
+        window.dispatchEvent(new CustomEvent(PEDIDO_ENVIADO, { detail: { id: modificando.id } }));
+        setCarrito([]);
+        setNotaPedido("");
+        setPasoCarrito("carrito");
+        setCarritoAbierto(false);
+        return;
+      }
+
       // El carrito puede traer productos de los dos orígenes (punto 8): la
       // nota lo dice, y cada línea de stock viaja sin tienda ni URL para que
       // la bandeja interna no la confunda con un hallazgo del explorador.
@@ -2627,6 +2702,7 @@ function PanelExploradorPrecios() {
               unidad: c.unidad || "un",
               cantidad: Number(c.cantidad || 0),
               precio_referencia: deStock ? undefined : Number(c.precio || 0) || undefined,
+              sku: c.sku || undefined,
               tienda: deStock ? undefined : c.tienda || undefined,
               url: deStock ? undefined : c.url || undefined,
               observacion: String(c.observacion || "").trim() || undefined,
@@ -2821,6 +2897,13 @@ function PanelExploradorPrecios() {
                     </div>
                   )}
                   <div style={ex.prodNombre} title={it.nombre}>{it.nombre}</div>
+                  {/* SKU del catálogo de Amsodent: sirve para pedirlo por código
+                      y para que el pedido llegue identificado a la bandeja. */}
+                  {it.sku && (
+                    <div style={{ fontSize: 11, color: "#64748b", fontFamily: "ui-monospace, monospace" }}>
+                      SKU {it.sku}
+                    </div>
+                  )}
                   <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
                     <span style={ex.precio}>{fmtMoneda(it.precio)}</span>
                     {it.precio_normal && (
@@ -3591,8 +3674,10 @@ const FLUJO_CLIENTE = {
   cancelado: { label: "Cancelado", color: "#475569", bg: "#f1f5f9" },
 };
 
-function PanelMisSolicitudes({ solicitudes, cotizacionesHist = [], cargando, onSolicitarNueva, esAdminPortal = true, onRecargar, setToast }) {
+function PanelMisSolicitudes({ solicitudes, cotizacionesHist = [], cargando, onSolicitarNueva, esAdminPortal = true, onRecargar, setToast, onIrAExplorador }) {
   const [expandidaId, setExpandidaId] = useState(null);
+  // Mismo carrito que el Explorador: modificar un pedido lo carga ahi.
+  const [, escribirCarrito] = useCarritoPortal();
   const [trabajando, setTrabajando] = useState(null); // id del pedido en curso
   // Cupo de crédito del cliente (punto 29). Si no tiene, no se muestra nada.
   const [credito, setCredito] = useState(null);
@@ -3617,6 +3702,36 @@ function PanelMisSolicitudes({ solicitudes, cotizacionesHist = [], cargando, onS
     } finally {
       setTrabajando(null);
     }
+  }
+
+  /* (2026-09-24) Sobre la cotizacion recibida: darla por buena, o pedir
+     cambios. Lo segundo pasa por el carrito, cargado con los productos que el
+     pedido ya tiene, para que el cliente agregue o saque como en una compra. */
+  async function validarCotizacion(s) {
+    setTrabajando(s.id);
+    try {
+      const r = await apiRequest(`/stock-clientes/mis-solicitudes/${s.id}/validar-cotizacion`, { method: "POST" });
+      setToast?.({
+        type: "success",
+        titulo: "Cotizacion validada",
+        mensaje: r?.mensaje || "Registramos tu conformidad con la cotizacion.",
+      });
+      onRecargar?.();
+    } catch (e) {
+      setToast?.({ type: "error", titulo: "No se pudo validar", mensaje: e?.message || "Intenta nuevamente." });
+    } finally {
+      setTrabajando(null);
+    }
+  }
+
+  function modificarCotizacion(s) {
+    cargarPedidoEnCarrito(s, escribirCarrito);
+    onIrAExplorador?.();
+    setToast?.({
+      type: "info",
+      titulo: `Modificando el pedido N° ${s.id}`,
+      mensaje: "Tus productos estan en el carrito. Agrega o saca lo que necesites y confirma para enviarnos los cambios.",
+    });
   }
 
   /* Punto 9: el administrador de la cuenta aprueba el pedido que armó un
@@ -3775,6 +3890,8 @@ function PanelMisSolicitudes({ solicitudes, cotizacionesHist = [], cargando, onS
                   trabajando={trabajando === s.id}
                   credito={credito}
                   onAprobar={() => aprobar(s)}
+                  onValidarCotizacion={() => validarCotizacion(s)}
+                  onModificar={() => modificarCotizacion(s)}
                   onPagar={() => pagar(s)}
                   onPagarCredito={() => pagarConCredito(s)}
                   onSos={() => pedirSos(s)}
@@ -3985,7 +4102,7 @@ function HiloMensajesCliente({ solicitudId }) {
 
 /* Bloque del flujo dentro del pedido, en el portal del cliente: en qué etapa
    va, qué falta y el botón de la acción que le toca a él. */
-function BloqueFlujoPedido({ pedido, esAdminPortal, trabajando, credito, onAprobar, onPagar, onPagarCredito, onSos }) {
+function BloqueFlujoPedido({ pedido, esAdminPortal, trabajando, credito, onAprobar, onValidarCotizacion, onModificar, onPagar, onPagarCredito, onSos }) {
   const estado = String(pedido?.flujo_estado || "");
   // Sin flujo (migración pendiente o pedido antiguo) no se muestra nada.
   if (!estado || !FLUJO_CLIENTE[estado]) return null;
@@ -4056,6 +4173,25 @@ function BloqueFlujoPedido({ pedido, esAdminPortal, trabajando, credito, onAprob
         {estado === "validado_plataforma" && esAdminPortal && (
           <button type="button" onClick={onPagar} disabled={trabajando} style={{ ...styles.btnPrimarioChico, opacity: trabajando ? 0.6 : 1 }}>
             {trabajando ? "Abriendo el pago…" : `Pagar ${fmtMoneda(pedido.monto_total)} con Webpay`}
+          </button>
+        )}
+        {/* (2026-09-24) Antes, con la cotizacion en la mano, lo unico que se
+            podia hacer era pagar. Ahora se puede dejar constancia de que esta
+            conforme, o pedir cambios sin tener que llamar por telefono. */}
+        {estado === "validado_plataforma" && esAdminPortal && !pedido.validado_cliente_at && (
+          <button type="button" onClick={onValidarCotizacion} disabled={trabajando} style={{ ...styles.btnSecundarioChico, opacity: trabajando ? 0.6 : 1 }} title="Confirmar que la cotizacion esta correcta">
+            Validar cotizacion
+          </button>
+        )}
+        {estado === "validado_plataforma" && pedido.validado_cliente_at && (
+          <span style={{ fontSize: 12, fontWeight: 700, color: "#15803d" }}>
+            ✓ Cotizacion validada
+            {pedido.validado_cliente_por ? ` por ${String(pedido.validado_cliente_por).split("@")[0]}` : ""}
+          </span>
+        )}
+        {["validado_plataforma", "aprobado_cliente", "pendiente_aprobacion"].includes(estado) && esAdminPortal && (
+          <button type="button" onClick={onModificar} disabled={trabajando} style={styles.btnSecundarioChico} title="Cambiar los productos de este pedido desde el carrito">
+            Modificar pedido
           </button>
         )}
         {/* Crédito (punto 29): solo si el cliente lo tiene habilitado y el

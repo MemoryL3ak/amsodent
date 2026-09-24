@@ -68,7 +68,7 @@ export default function ListarLicitaciones() {
       // Solo los campos que usa el listado: evita traer columnas pesadas
       // (ítems de la cotización, etc.) que disparan el tamaño del payload.
       const licitaciones = await api.get(
-        "/licitaciones/with-fields?fields=id,id_licitacion,fecha,comuna,rut_entidad,total_con_iva,tipo_compra,estado,creado_por"
+        "/licitaciones/with-fields?fields=id,id_licitacion,fecha,fecha_hora,comuna,rut_entidad,total_con_iva,tipo_compra,estado,creado_por"
       );
 
       let rows = licitaciones || [];
@@ -190,7 +190,8 @@ export default function ListarLicitaciones() {
   // ── Filtrado ──────────────────────────────────────────────────
   const dataFiltrada = data.filter((l) => {
     const email  = (l.creado_por || "").trim().toLowerCase();
-    const fecha  = l.fecha ? l.fecha.slice(0, 10) : "";
+    // `fecha_hora` manda cuando la cotizacion trae fecha fijada a mano.
+    const fecha  = (l.fecha_hora || l.fecha || "").slice(0, 10);
     const idLic  = (l.id_licitacion || "").toString().trim().toLowerCase();
     const comuna = (l.comuna || "").toString().trim().toLowerCase();
     const numeroCot = String(l.id ?? "");
