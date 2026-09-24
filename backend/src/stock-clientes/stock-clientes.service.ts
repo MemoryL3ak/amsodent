@@ -2558,4 +2558,75 @@ export class StockClientesService {
       }
     }
   }
+
+  /* ── Showroom del portal (2026-09-24) ─────────────────────────────────
+     Vitrina de venta al publico: productos de "Prevencion e Higiene" que el
+     cliente le revende a su paciente. Muestra tres numeros que solo tienen
+     sentido juntos: lo que le cuesta comprarnos (su lista), lo que le
+     sugerimos cobrar, y lo que gana con cada uno.
+
+     `productos.showroom` manda cuando esta definido (true/false); si esta en
+     null decide la categoria, para no tener que marcar 426 filas a mano. */
+  private static readonly CATEGORIA_SHOWROOM = 'Prevención e Higiene';
+
+  async catalogoShowroom(filtros?: { q?: string; marca?: string }) {
+    const q = String(filtros?.q || '').trim().slice(0, 60);
+    const marca = String(filtros?.marca || '').trim().slice(0, 80);
+
+    let consulta = this.supabase.getClient()
+      .from('productos')
+      .select('id, sku, nombre, marca, categoria, formato, imagen_url, costo, lista1, lista2, lista3, precio_sugerido, showroom, stock, estado')
+      .or(`categoria.eq.${StockClientesService.CATEGORIA_SHOWROOM},showroom.is.true`)
+      .range(0, 2000);
+    if (marca) consulta = consulta.eq('marca', marca);
+    if (q) consulta = consulta.ilike('nombre', `%${q}%`);
+
+    let { data, error }: { data: any[] | null; error: any } = await consulta;
+    // Migracion 20260924 sin aplicar: `showroom` todavia no existe, asi que
+    // se cae al criterio de categoria, que es el que manda igual.
+    if (error && /showroom|precio_sugerido/.test(error.message)) {
+      let alterna = this.supabase.getClient()
+        .from('productos')
+        .select('id, sku, nombre, marca, categoria, formato, imagen_url, costo, lista1, lista2, lista3, stock, estado')
+        .eq('categoria', StockClientesService.CATEGORIA_SHOWROOM)
+        .range(0, 2000);
+      if (marca) alterna = alterna.eq('marca', marca);
+      if (q) alterna = alterna.ilike('nombre', `%${q}%`);
+      ({ data, error } = await alterna);
+    }
+    if (error) throw new BadRequestException(error.message);
+
+    const items = (data || [])
+      // Un producto marcado explicitamente como fuera del showroom no entra,
+      // aunque su categoria lo incluiria.
+      .filter((p: any) => p.showroom !== false)
+      .filter((p: any) => String(p.estado || '').toLowerCase() !== 'inactivo')
+      .map((p: any) => {
+        // Precio del cliente del portal = lista 2 (la misma con la que se
+        // arma la cotizacion que nace de un pedido del portal).
+        const precioCliente = Number(p.lista2) || Number(p.lista1) || 0;
+        const sugerido = Number(p.precio_sugerido) || 0;
+        const margen = sugerido > 0 && precioCliente > 0 ? sugerido - precioCliente : null;
+        return {
+          id: p.id,
+          sku: p.sku,
+          nombre: p.nombre,
+          marca: p.marca,
+          formato: p.formato,
+          imagen: p.imagen_url || null,
+          precio_cliente: precioCliente,
+          precio_sugerido: sugerido || null,
+          margen,
+          margen_pct: margen != null && sugerido > 0 ? Math.round((margen / sugerido) * 1000) / 10 : null,
+          stock: Number(p.stock) || 0,
+        };
+      })
+      .filter((p: any) => p.nombre && p.precio_cliente > 0);
+
+    items.sort((a: any, b: any) => String(a.nombre).localeCompare(String(b.nombre), 'es'));
+    const marcas = [...new Set(items.map((p: any) => p.marca).filter(Boolean))].sort((a: any, b: any) =>
+      String(a).localeCompare(String(b), 'es'),
+    );
+    return { total: items.length, marcas, items };
+  }
 }

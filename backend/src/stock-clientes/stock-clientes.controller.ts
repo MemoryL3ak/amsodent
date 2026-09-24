@@ -431,6 +431,15 @@ export class StockClientesController {
   // las tiendas dentales chilenas con API pública y devuelve precios en vivo
   // + histórico de capturas (estilo Knasta/SoloTodo).
   @UseGuards(StockPortalGuard)
+  /* ── Showroom (2026-09-24) ──────────────────────────────────────────────
+     Catalogo de venta al publico para el cliente del portal: lo que le
+     cuesta a el, lo que le sugerimos cobrar y cuanto gana con cada producto. */
+  @UseGuards(StockPortalGuard)
+  @Get('showroom')
+  async showroom(@Query('q') q?: string, @Query('marca') marca?: string) {
+    return await this.stockClientes.catalogoShowroom({ q, marca });
+  }
+
   @Get('explorador')
   async explorarPrecios(@Query('q') q: string) {
     return await this.explorador.buscar(q);

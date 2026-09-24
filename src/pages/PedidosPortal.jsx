@@ -100,27 +100,50 @@ function fmtFechaHora(iso) {
 // precio / url en los ítems (y lo dice la nota); lo demás viene de la
 // gestión de stock del portal.
 function origenDe(s) {
+  // (2026-09-24) Desde el Showroom el pedido viaja diciendo de donde salio;
+  // los anteriores siguen deduciendose como antes.
+  const declarado = String(s?.origen_seccion || "").trim();
+  if (declarado === "showroom" || declarado === "explorador" || declarado === "stock") return declarado;
   const items = Array.isArray(s.items) ? s.items : [];
   const conRef = items.some((i) => i?.tienda || i?.precio_referencia || i?.url);
   if (conRef || /explorador/i.test(String(s.nota || ""))) return "explorador";
   return "stock";
 }
 
+/* Cuanto vale un pedido: el monto que Amsodent valido si ya lo hay, o la suma
+   de los precios de referencia mientras tanto. Es lo que alimenta el KPI de
+   Showroom, que mide venta, no cantidad de pedidos. */
+function montoDe(s) {
+  const validado = Number(s?.monto_total) || 0;
+  if (validado > 0) return validado;
+  return (Array.isArray(s?.items) ? s.items : []).reduce(
+    (acc, i) => acc + (Number(i?.precio_referencia) || 0) * (Number(i?.cantidad) || 0),
+    0,
+  );
+}
+
+const TONO_ORIGEN = {
+  showroom: { bg: "#fdf2f8", color: "#be185d", borde: "#fbcfe8", corto: "Showroom", largo: "Showroom" },
+  explorador: { bg: "#f0fdfa", color: TEAL, borde: "#ccfbf1", corto: "Explorador", largo: "Explorador de Precios" },
+  stock: { bg: "#f1f5f9", color: "#475569", borde: "#e2e8f0", corto: "Stock", largo: "Gestión de Stock" },
+};
+
 function BadgeOrigen({ origen, compacto = false }) {
-  const esExp = origen === "explorador";
+  const t = TONO_ORIGEN[origen] || TONO_ORIGEN.stock;
+  const Icono = origen === "stock" ? Package : ShoppingCart;
   return (
     <span
       style={{
         display: "inline-flex", alignItems: "center", gap: 5, fontSize: 10.5, fontWeight: 800,
         textTransform: "uppercase", letterSpacing: ".03em", padding: "3px 9px", borderRadius: 999,
-        background: esExp ? "#f0fdfa" : "#f1f5f9",
-        color: esExp ? TEAL : "#475569",
-        border: `1px solid ${esExp ? "#ccfbf1" : "#e2e8f0"}`,
+        background: t.bg,
+        color: t.color,
+        border: `1px solid ${t.borde}`,
         whiteSpace: "nowrap",
       }}
     >
-      {esExp ? <ShoppingCart size={11} /> : <Package size={11} />}
-      {compacto ? (esExp ? "Explorador" : "Stock") : esExp ? "Explorador de Precios" : "Gestión de Stock"}
+      <Icono size={11} />
+      {compacto ? t.corto : t.largo}
     </span>
   );
 }
@@ -204,12 +227,25 @@ export default function PedidosPortal() {
     const total = pedidos.length;
     const porEstado = { pendiente: 0, respondida: 0, cancelada: 0 };
     let explorador = 0;
+    // KPI del Showroom (2026-09-24): no cuantos pedidos, sino CUANTO se vende
+    // por ahi. `vendido` cuenta solo lo pagado, que es la venta de verdad;
+    // `enCurso` es lo que todavia esta en el flujo.
+    let showroom = 0;
+    let showroomVendido = 0;
+    let showroomEnCurso = 0;
     pedidos.forEach((s) => {
       const e = s.estado || "pendiente";
       porEstado[e] = (porEstado[e] || 0) + 1;
-      if (origenDe(s) === "explorador") explorador++;
+      const origen = origenDe(s);
+      if (origen === "explorador") explorador++;
+      if (origen === "showroom") {
+        showroom++;
+        const monto = montoDe(s);
+        if (String(s.flujo_estado || "") === "pagado") showroomVendido += monto;
+        else if (!["cancelado", "rechazado"].includes(String(s.flujo_estado || ""))) showroomEnCurso += monto;
+      }
     });
-    return { total, ...porEstado, explorador };
+    return { total, ...porEstado, explorador, showroom, showroomVendido, showroomEnCurso };
   }, [pedidos]);
 
   /* ── Acciones del flujo (2026-09-16) ───────────────────────────────── */
@@ -403,7 +439,7 @@ export default function PedidosPortal() {
       </div>
 
       {/* KPIs — una sola fila (5 columnas) */}
-      <div className="stats-row stats-5" style={{ marginTop: 8 }}>
+      <div className="stats-row stats-6" style={{ marginTop: 8 }}>
         <div
           className="stat-card"
           onClick={() => { setFEstado(""); setFOrigen(""); }}
@@ -428,6 +464,16 @@ export default function PedidosPortal() {
         <div className="stat-card" onClick={() => setFOrigen(fOrigen === "explorador" ? "" : "explorador")} style={{ cursor: "pointer", outline: fOrigen === "explorador" ? `2px solid ${TEAL}` : "none" }}>
           <div className="stat-label">Del explorador</div>
           <div className="stat-value" style={{ color: TEAL }}>{stats.explorador}</div>
+        </div>
+        {/* Showroom: lo que interesa es cuanto se vende por ahi, no cuantos
+            pedidos entraron. Clic para filtrar solo los del Showroom. */}
+        <div className="stat-card" onClick={() => setFOrigen(fOrigen === "showroom" ? "" : "showroom")} style={{ cursor: "pointer", outline: fOrigen === "showroom" ? "2px solid #be185d" : "none" }}>
+          <div className="stat-label">Vendido por Showroom</div>
+          <div className="stat-value" style={{ color: "#be185d" }}>{fmtCLP(stats.showroomVendido)}</div>
+          <div className="stat-sub">
+            {stats.showroom} pedido{stats.showroom === 1 ? "" : "s"}
+            {stats.showroomEnCurso > 0 ? ` · ${fmtCLP(stats.showroomEnCurso)} en curso` : ""}
+          </div>
         </div>
       </div>
 

@@ -80,6 +80,7 @@ const NOMBRES_COLUMNAS = {
   lista1: "Precio Lista 1",
   lista2: "Precio Lista 2",
   lista3: "Precio Lista 3",
+  precio_sugerido: "Precio sugerido de venta",
   estado: "Estado",
   imagen_url: "Imagen",
 };
@@ -198,7 +199,7 @@ function inferirSeccion(col) {
   const general = ["sku", "nombre", "marca", "categoria", "formato", "imagen_url", "estado"];
   const detalle = ["presentacion", "descripcion", "composicion", "uso_indicaciones", "beneficios", "modo_uso", "almacenamiento", "datos_clave"];
   const dims = ["peso", "alto", "largo", "ancho"];
-  const precios = ["costo", "lista1", "lista2", "lista3", "lista4"];
+  const precios = ["costo", "lista1", "lista2", "lista3", "lista4", "precio_sugerido"];
   if (general.includes(col)) return "general";
   if (detalle.includes(col)) return "detalle";
   if (dims.includes(col)) return "dimensiones";
@@ -278,7 +279,7 @@ export default function CrearProductoModal({ onClose, onCreado, inicial = null }
   const [ancho, setAncho] = useState("");
   const [imagenFile, setImagenFile] = useState(null);
   const [imagenPreview, setImagenPreview] = useState("");
-  const [precios, setPrecios] = useState({ lista1: "", lista2: "" });
+  const [precios, setPrecios] = useState({ lista1: "", lista2: "", precio_sugerido: "" });
   const [guardando, setGuardando] = useState(false);
   // error = { titulo: string, detalle: string } | null
   const [error, setError] = useState(null);
@@ -485,6 +486,8 @@ export default function CrearProductoModal({ onClose, onCreado, inicial = null }
         lista2: numFromCL(precios.lista2),
         lista3: 0,
         lista4: 0,
+        // Venta sugerida al publico (Showroom del portal); 0 = sin definir.
+        precio_sugerido: numFromCL(precios.precio_sugerido) || null,
         creado_por: userEmail || null,
       };
       if (puedeVerCosto) payload.costo = numFromCL(costo);
@@ -1076,6 +1079,16 @@ export default function CrearProductoModal({ onClose, onCreado, inicial = null }
                     readOnly
                     margen={mostrarMargen ? margenLista3 : null}
                     hint={`Calculado: Lista 2 × ${FACTOR_LISTA_3}. Usado en Licitación 9 a 24 meses.`}
+                  />
+                  {/* (2026-09-24) Precio al que le sugerimos al cliente del
+                      portal revender el producto a su paciente. Es lo que el
+                      Showroom muestra junto a su precio y su margen; sin esto
+                      la vitrina no puede decirle cuanto gana. */}
+                  <ListaPreciosFila
+                    label="Venta sugerida al publico"
+                    value={precios.precio_sugerido || ""}
+                    onChange={(v) => actualizarPrecio("precio_sugerido", v)}
+                    hint="Lo que el cliente del portal le cobra a su paciente. Se ve en el Showroom."
                   />
                 </div>
               )}
