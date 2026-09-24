@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { BsaleService } from './bsale.service';
 import { BsaleCron } from './bsale.cron';
 import { AdminGuard } from '../auth/admin.guard';
@@ -43,6 +43,13 @@ export class BsaleController {
   @Get('despacho')
   despacho(@Query('oc') oc: string, @Query('desde') desde: string) {
     return this.bsale.despachoPorOc(String(oc || ''), String(desde || ''));
+  }
+
+  // Pendiente por producto para el reporte de Trazabilidad: ítems cotizados
+  // vs líneas de las guías en Bsale, para un lote de cotizaciones.
+  @Post('pendiente-productos')
+  pendienteProductos(@Body() body: { licitacion_ids: number[] }) {
+    return this.bsale.pendientePorProducto(Array.isArray(body?.licitacion_ids) ? body.licitacion_ids : []);
   }
 
   // Sincronización manual (además de la automática del cron). Responde al

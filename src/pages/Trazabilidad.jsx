@@ -289,6 +289,8 @@ const COLS_MONEDA = [
   "Saldo por Consumir de la Cotización",
   "Valor Unitario Neto",
   "Total Neto",
+  "Pendiente Neto",
+  "Despachado Neto",
   "Costo Unitario",
   "Costo Total",
 ];
@@ -1522,44 +1524,88 @@ export default function Trazabilidad() {
     return filas.sort((x, y) => Number(y["Saldo por Consumir"]) - Number(x["Saldo por Consumir"]));
   }
 
-  // Hoja "Pendiente por producto": qué productos componen las cotizaciones
-  // con saldo por consumir. Los ítems vienen de la cotización (SKU, cantidad,
-  // valor unitario neto) en UNA sola consulta; el despacho producto a
-  // producto sigue viéndose en pantalla contra Bsale, que es consulta por OC.
+  // Hoja "Pendiente por producto": el DETALLE del saldo por consumir, producto
+  // a producto (pedido 2026-09-24). Para cada cotización abierta con saldo:
+  // cantidad cotizada vs despachada según las líneas de sus guías en Bsale
+  // (endpoint /bsale/pendiente-productos, una consulta para todo el lote) y
+  // lo que falta por despachar valorizado al precio cotizado. Si Bsale no
+  // está disponible para este usuario (no es admin) o falla, la hoja igual
+  // sale con los ítems cotizados y la columna de despacho vacía.
   async function filasPendientePorProducto() {
     const abiertas = dataOrdenada
       .map((lic) => ({ lic, a: agregadosCotizacion(lic) }))
       .filter(({ lic, a }) => !lic.ciclo_cerrado && a.saldoPorConsumir !== 0);
-    if (abiertas.length === 0) return [];
-    let items = [];
+    if (abiertas.length === 0) return { filas: [], meta: null };
+    const ids = abiertas.map(({ lic }) => Number(lic.id));
+
+    let cruce = null;
     try {
-      items = await api.post("/licitaciones/items/filter", {
-        licitacion_ids: abiertas.map(({ lic }) => Number(lic.id)),
-        fields: "licitacion_id,sku,producto,formato,cantidad,valor_unitario,costo",
-      });
+      cruce = await api.post("/bsale/pendiente-productos", { licitacion_ids: ids });
+      if (!cruce?.disponible) cruce = null;
     } catch {
-      return [];
+      cruce = null;
+    }
+    let filasBase = cruce?.filas || null;
+    if (!filasBase) {
+      // Sin Bsale: solo lo cotizado.
+      try {
+        const items = await api.post("/licitaciones/items/filter", {
+          licitacion_ids: ids,
+          fields: "licitacion_id,sku,producto,formato,cantidad,valor_unitario,costo",
+        });
+        filasBase = (Array.isArray(items) ? items : []).map((it) => ({
+          licitacion_id: Number(it.licitacion_id),
+          sku: it.sku || "",
+          producto: it.producto || "",
+          formato: it.formato || "",
+          cotizada: Number(it.cantidad || 0),
+          despachada: null,
+          pendiente: null,
+          sobre_despacho: null,
+          valor_unitario: Number(it.valor_unitario || 0),
+          costo: Number(it.costo || 0),
+          en_cotizacion: true,
+          guias: "",
+        }));
+      } catch {
+        return { filas: [], meta: null };
+      }
     }
     const porLic = new Map();
-    (Array.isArray(items) ? items : []).forEach((it) => {
-      const k = Number(it.licitacion_id);
+    filasBase.forEach((f) => {
+      const k = Number(f.licitacion_id);
       if (!porLic.has(k)) porLic.set(k, []);
-      porLic.get(k).push(it);
+      porLic.get(k).push(f);
     });
     const nums = (arr) =>
       Array.from(new Set(arr.map((d) => String(d.numero || "").trim()).filter(Boolean))).join(", ");
+    const conBsale = !!cruce;
     const filas = [];
     abiertas.forEach(({ lic, a }) => {
-      const its = porLic.get(Number(lic.id)) || [];
+      const its = (porLic.get(Number(lic.id)) || []).slice().sort((x, y) => {
+        const px = (x.pendiente ?? x.cotizada) * Number(x.valor_unitario || 0);
+        const py = (y.pendiente ?? y.cotizada) * Number(y.valor_unitario || 0);
+        return py - px;
+      });
       const vendedor = nombreVendedor(lic);
       const totalCot = its.reduce(
-        (acc, it) => acc + Number(it.cantidad || 0) * Number(it.valor_unitario || 0),
+        (acc, it) => acc + (it.en_cotizacion ? Number(it.cotizada || 0) * Number(it.valor_unitario || 0) : 0),
         0,
       );
       its.forEach((it) => {
-        const cant = Number(it.cantidad || 0);
         const vu = Number(it.valor_unitario || 0);
         const costo = Number(it.costo || 0);
+        const cot = Number(it.cotizada || 0);
+        const desp = it.despachada == null ? "" : Number(it.despachada || 0);
+        const pend = it.pendiente == null ? "" : Number(it.pendiente || 0);
+        let situacion = "";
+        if (conBsale) {
+          if (!it.en_cotizacion) situacion = "Despachado sin estar en la cotización";
+          else if (Number(it.sobre_despacho || 0) > 0) situacion = "Despachado sobre lo cotizado";
+          else if (pend === 0) situacion = "Despachado completo";
+          else if (desp > 0) situacion = "Despacho parcial";
+          else situacion = "Sin despachar";
+        }
         filas.push({
           "ID Cotización": lic.id_licitacion || lic.id || "",
           "Cliente": lic.nombre_entidad || "",
@@ -1570,20 +1616,34 @@ export default function Trazabilidad() {
           "OC Neto": a.ocNeto,
           "Guías Neto": a.guiasNeto,
           "Saldo por Consumir de la Cotización": a.saldoPorConsumir,
-          "% Despachado": a.ocNeto > 0 ? a.guiasNeto / a.ocNeto : "",
           "SKU": it.sku || "",
           "Producto": it.producto || "",
           "Formato": it.formato || "",
-          "Cantidad Cotizada": cant,
+          "Cantidad Cotizada": it.en_cotizacion ? cot : 0,
+          "Cantidad Despachada": desp,
+          "Cantidad Pendiente": pend,
           "Valor Unitario Neto": vu,
-          "Total Neto": Math.round(cant * vu),
-          "% del Total Cotizado": totalCot > 0 ? (cant * vu) / totalCot : "",
+          "Total Neto": Math.round(cot * vu),
+          "Despachado Neto": desp === "" ? "" : Math.round(desp * vu),
+          "Pendiente Neto": pend === "" ? "" : Math.round(pend * vu),
+          "% del Total Cotizado": totalCot > 0 && it.en_cotizacion ? (cot * vu) / totalCot : "",
+          "Situación": situacion,
+          "Guías (Bsale)": it.guias || "",
           "Costo Unitario": costo,
-          "Costo Total": Math.round(cant * costo),
+          "Costo Total": Math.round(cot * costo),
         });
       });
     });
-    return filas;
+    return {
+      filas,
+      meta: {
+        conBsale,
+        cotizaciones: abiertas.length,
+        guiasConsultadas: cruce?.guias_consultadas ?? 0,
+        guiasNoEncontradas: cruce?.guias_no_encontradas || [],
+        guiasOmitidas: cruce?.guias_omitidas ?? 0,
+      },
+    };
   }
 
   // Hoja "Documentos": todos los documentos cargados, planos, incluidos los que
@@ -1656,7 +1716,7 @@ export default function Trazabilidad() {
 
   // Hoja "Resumen": totales del filtro actual, con el desglose por estado del
   // ciclo y por vendedor, y la explicación de cómo se calcula cada monto.
-  function hojaResumen(XLSX, porCotizacion, porOC = []) {
+  function hojaResumen(XLSX, porCotizacion, porOC = [], porProducto = [], metaProd = null) {
     const total = (col) => porCotizacion.reduce((acc, r) => acc + (Number(r[col]) || 0), 0);
     const sumaDe = (filas, col) => filas.reduce((acc, r) => acc + (Number(r[col]) || 0), 0);
 
@@ -1756,6 +1816,20 @@ export default function Trazabilidad() {
       ["OC sin ningún despacho", ocConSaldo.filter((r) => r["Situación"] === "Sin despachos").length, "OC cargadas que aún no tienen guía"],
       ["Despachado sobre la OC", -sumaDe(sobreOC, "Saldo por Consumir"), `${sobreOC.length} OC o guías sin OC con más despacho que orden`],
       [],
+      ["PENDIENTE POR PRODUCTO (según guías en Bsale)"],
+      ...(metaProd && metaProd.conBsale
+        ? [
+            ["Cotizaciones cruzadas", metaProd.cotizaciones, "Abiertas y con saldo por consumir"],
+            ["Guías leídas en Bsale", metaProd.guiasConsultadas, "Se usan sus líneas para el despachado por producto"],
+            ["Guías no encontradas en Bsale", metaProd.guiasNoEncontradas.length, metaProd.guiasNoEncontradas.slice(0, 20).join(", ")],
+            ...(metaProd.guiasOmitidas > 0 ? [["Guías no consultadas (tope)", metaProd.guiasOmitidas, "Acota el filtro para cruzar todas"]] : []),
+            ["Productos con pendiente", porProducto.filter((r) => Number(r["Cantidad Pendiente"]) > 0).length, "Filas con cantidad pendiente > 0"],
+            ["Unidades pendientes", porProducto.reduce((acc, r) => acc + (Number(r["Cantidad Pendiente"]) || 0), 0), "Suma de cantidad cotizada − despachada"],
+            ["Pendiente neto valorizado", sumaDe(porProducto, "Pendiente Neto"), "Cantidad pendiente × valor unitario cotizado"],
+            ["Despachado sin estar en la cotización", porProducto.filter((r) => r["Situación"] === "Despachado sin estar en la cotización").length, "Productos que salieron en guías y no estaban cotizados"],
+          ]
+        : [["", "", metaProd ? "No se pudo consultar Bsale (solo administración): la hoja trae lo cotizado sin el despachado." : "Sin cotizaciones abiertas con saldo."]]),
+      [],
       ["SALDO POR CONSUMIR POR ANTIGÜEDAD DE LA OC"],
       ["Tramo", "OC", "Saldo neto", "Saldo bruto"],
       ...porAntiguedad,
@@ -1791,7 +1865,7 @@ export default function Trazabilidad() {
       ],
       [
         "",
-        'La hoja "Pendiente por producto" lista los ítems cotizados (SKU, cantidad, valor unitario neto) de cada cotización con saldo por consumir, para saber qué productos componen lo pendiente. El despachado producto a producto según Bsale se consulta en pantalla, OC por OC.',
+        'La hoja "Pendiente por producto" es el detalle del saldo: por cada cotización abierta con saldo, cada producto con su cantidad cotizada, la despachada según las líneas de sus guías en Bsale, la pendiente y su valor neto. Las guías se leen por número desde Bsale; una guía anulada o no encontrada no aporta despacho.',
       ],
     ];
 
@@ -1855,11 +1929,12 @@ export default function Trazabilidad() {
       }
 
       const porOC = filasSaldoPorOC();
-      const porProducto = await filasPendientePorProducto();
+      setToast({ type: "info", message: "Generando el reporte: leyendo las guías en Bsale para el pendiente por producto…" });
+      const { filas: porProducto, meta: metaProd } = await filasPendientePorProducto();
       const porCiclo = filasPorCiclo();
       const documentos = filasDocumentos();
       const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, hojaResumen(XLSX, porCotizacion, porOC), "Resumen");
+      XLSX.utils.book_append_sheet(wb, hojaResumen(XLSX, porCotizacion, porOC, porProducto, metaProd), "Resumen");
       XLSX.utils.book_append_sheet(wb, hojaTabla(XLSX, porCotizacion), "Por cotización");
       if (porOC.length > 0) {
         XLSX.utils.book_append_sheet(wb, hojaTabla(XLSX, porOC), "Saldo por consumir");
@@ -1876,7 +1951,7 @@ export default function Trazabilidad() {
       XLSX.writeFile(wb, `${nombreArchivo}.xlsx`);
       setToast({
         type: "success",
-        message: `Reporte generado: ${porCotizacion.length} cotizaciones, ${porOC.length} OC con saldo, ${porProducto.length} ítems pendientes, ${porCiclo.length} ciclos, ${documentos.length} documentos.`,
+        message: `Reporte generado: ${porCotizacion.length} cotizaciones, ${porOC.length} OC con saldo, ${porProducto.length} productos en el detalle del saldo${metaProd?.conBsale ? ` (${metaProd.guiasConsultadas} guías leídas en Bsale)` : ""}, ${porCiclo.length} ciclos, ${documentos.length} documentos.`,
       });
     } catch (err) {
       console.error(err);
