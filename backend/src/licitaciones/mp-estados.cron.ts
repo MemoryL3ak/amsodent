@@ -25,12 +25,13 @@ import { LicitacionesService } from './licitaciones.service';
    Interruptores:
      MP_ESTADOS_AUTO=off   → apagado (ej. backend local de desarrollo)
      MP_ESTADOS_HORAS=9,15 → horas de Chile en que corre
-     MP_ESTADOS_LIMITE=120 → máx. de procesos consultados por pasada (cuida
-                             la cuota diaria del ticket de ChileCompra). La
-                             ventana ROTA: cada pasada arranca donde terminó la
-                             anterior, así que con el tiempo se revisan todas.
-                             Con ~800 abiertas y 2 pasadas al día a 120, el
-                             ciclo completo tarda ~3 días; subirlo lo acorta.
+     MP_ESTADOS_LOTE=120   → cuántas se consultan por tanda
+     MP_ESTADOS_MAX=0      → tope de cotizaciones por pasada; 0 = todas
+
+   Cada pasada recorre TODAS las cotizaciones abiertas con código de Mercado
+   Público, en tandas, y al final reintenta las que la API dejó sin responder
+   —la v2 de Compra Ágil devuelve 504 con frecuencia—. Si se agota la cuota
+   diaria del ticket, corta y sigue en la pasada siguiente.
 ============================================================================ */
 
 const ZONA = 'America/Santiago';
@@ -40,7 +41,15 @@ const HORAS = String(process.env.MP_ESTADOS_HORAS || '9,15')
   .map((h) => Number(String(h).trim()))
   .filter((h) => Number.isInteger(h) && h >= 0 && h <= 23);
 
-const LIMITE = Math.max(5, Math.min(500, Number(process.env.MP_ESTADOS_LIMITE) || 120));
+/* Tamano de cada tanda de consultas. No es un tope: la pasada recorre TODAS
+   las candidatas en tandas de este tamano. */
+const LOTE = Math.max(5, Math.min(500, Number(process.env.MP_ESTADOS_LOTE || process.env.MP_ESTADOS_LIMITE) || 120));
+
+/* Tope de cotizaciones por pasada. 0 = sin tope, que es lo correcto: si una
+   cotizacion sigue abierta hay que preguntar por ella. Existe solo por si la
+   cuota del ticket resulta mas chica de lo que aguanta esto y hay que frenarlo
+   en caliente desde Railway, sin desplegar. */
+const MAX_POR_PASADA = Math.max(0, Math.trunc(Number(process.env.MP_ESTADOS_MAX) || 0));
 
 @Injectable()
 export class MpEstadosCron implements OnModuleInit, OnModuleDestroy {
@@ -64,7 +73,9 @@ export class MpEstadosCron implements OnModuleInit, OnModuleDestroy {
       return;
     }
     this.log.log(
-      `Cambio automático de estados MP activo: ${HORAS.map((h) => `${String(h).padStart(2, '0')}:00`).join(' y ')} (${ZONA}), hasta ${LIMITE} procesos por pasada.`,
+      `Cambio automático de estados MP activo: ${HORAS.map((h) => `${String(h).padStart(2, '0')}:00`).join(' y ')} (${ZONA}), 
+` +
+      `tandas de ${LOTE}, ${MAX_POR_PASADA ? `tope ${MAX_POR_PASADA} por pasada` : 'sin tope (todas las abiertas)'}.`,
     );
     this.timer = setInterval(() => void this.revisar(), 60_000);
     this.timer.unref?.();
@@ -102,28 +113,80 @@ export class MpEstadosCron implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  /** Una pasada completa: diagnóstico → aplicar concluyentes → notificar. */
+  /** Una pasada: recorre TODAS las candidatas en tandas, aplica lo concluyente
+      de cada tanda y al final reintenta las que la API dejó sin responder. */
   async correr() {
-    /* Punto de partida rotatorio: media jornada = un bloque, y cada bloque
-       corre la ventana un cupo entero. Sin esto se revisaban siempre las
-       mismas primeras y el resto no se consultaba jamás. */
-    const bloque = Math.floor(Date.now() / (12 * 3600_000));
-    const diag = await this.licitaciones.diagnosticoMpCotizaciones({
-      limite: LIMITE,
-      desde: bloque * LIMITE,
-    });
-    const aplicables = (diag.filas || []).filter((f: any) => f.discrepancia && f.sugerencia && f.id);
+    /* Primero la lista de candidatas (sin gastar consultas a Mercado Público) y
+       después se recorren ESOS ids. Paginar por posición no sirve: cada
+       cotización que se cierra durante la pasada sale del filtro de "abiertas"
+       y corre la lista, con lo que se saltarían filas. */
+    const lista = await this.licitaciones.diagnosticoMpCotizaciones({ soloCandidatas: true });
+    const todas: number[] = ((lista as any).ids || []).slice();
+    const objetivo = MAX_POR_PASADA ? todas.slice(0, MAX_POR_PASADA) : todas;
+    if (!objetivo.length) {
+      this.log.log('No hay cotizaciones abiertas con código de Mercado Público.');
+      return { revisadas: 0, candidatas: 0, aplicados: 0, con_error: 0, cuota_agotada: false };
+    }
+    this.log.log(`Pasada iniciada: ${objetivo.length} candidatas en tandas de ${LOTE}.`);
+
+    let revisadas = 0;
+    let aplicados = 0;
+    let conError = 0;
+    let sinCuota = false;
+    const fallidas: number[] = [];
+
+    for (let i = 0; i < objetivo.length; i += LOTE) {
+      const ids = objetivo.slice(i, i + LOTE);
+      const diag = await this.licitaciones.diagnosticoMpCotizaciones({ ids, limite: ids.length });
+      revisadas += diag.revisadas;
+      conError += diag.con_error;
+      for (const f of (diag.filas || []) as any[]) {
+        if (f.error && f.id) fallidas.push(f.id);
+      }
+      aplicados += await this.aplicarYNotificar(diag.filas || []);
+      // Sin cuota del ticket no sirve seguir: solo gastaría llamadas en vano.
+      if ((diag.filas || []).some((f: any) => /cuota/i.test(String(f.error || '')))) {
+        sinCuota = true;
+        break;
+      }
+    }
+
+    /* Segunda vuelta para las que fallaron por culpa de la API (504, timeouts:
+       la v2 de Compra Ágil los da a menudo). Sin esto, una cotización ya
+       resuelta en ChileCompra se quedaba sin actualizar hasta la pasada
+       siguiente por un error ajeno. */
+    if (!sinCuota && fallidas.length) {
+      let rescatados = 0;
+      let siguenFallando = 0;
+      for (let i = 0; i < fallidas.length; i += LOTE) {
+        const ids = fallidas.slice(i, i + LOTE);
+        const reintento = await this.licitaciones.diagnosticoMpCotizaciones({ ids, limite: ids.length });
+        siguenFallando += reintento.con_error;
+        rescatados += await this.aplicarYNotificar(reintento.filas || []);
+      }
+      aplicados += rescatados;
+      this.log.log(
+        `Reintento de ${fallidas.length} sin respuesta: ${siguenFallando} volvieron a fallar · ${rescatados} cambio(s) rescatado(s).`,
+      );
+    }
+
     this.log.log(
-      `Revisadas ${diag.revisadas}/${diag.candidatas} (desde la ${(diag as any).desde ?? 0}) · ` +
-      `concluyentes ${aplicables.length} · errores ${diag.con_error}`,
+      `Pasada completa: ${revisadas} de ${objetivo.length} candidatas · ${aplicados} cambio(s) de estado · ` +
+      `${conError} sin respuesta de Mercado Público${sinCuota ? ' · CUOTA DIARIA AGOTADA' : ''}.`,
     );
-    if (!aplicables.length) return;
+    return { revisadas, candidatas: objetivo.length, aplicados, con_error: conError, cuota_agotada: sinCuota };
+  }
+
+  /** Aplica los desenlaces concluyentes de un lote y avisa a cada vendedor. */
+  private async aplicarYNotificar(filas: any[]): Promise<number> {
+    const aplicables = (filas || []).filter((f: any) => f.discrepancia && f.sugerencia && f.id);
+    if (!aplicables.length) return 0;
 
     const r = await this.licitaciones.aplicarEstadoMp(
       { cambios: aplicables.map((f: any) => ({ id: f.id, estado: f.sugerencia })) },
       'automático (Mercado Público)',
     );
-    this.log.log(`Aplicados ${r.aplicados} cambio(s) de estado.${r.errores.length ? ` Errores: ${r.errores.join(' · ')}` : ''}`);
+    if (r.errores.length) this.log.warn(`Errores al aplicar: ${r.errores.join(' · ')}`);
 
     // Notificación en la campanita al dueño de cada cotización cambiada.
     const client = this.supabase.getClient();
@@ -145,5 +208,6 @@ export class MpEstadosCron implements OnModuleInit, OnModuleDestroy {
       }]);
       if (error) this.log.warn(`Sin notificación para #${f.id}: ${error.message}`);
     }
+    return r.aplicados;
   }
 }
