@@ -2501,7 +2501,7 @@ export class LicitacionesService {
      No cambia nada por su cuenta: `aplicar` existe aparte, porque cambiar el
      estado de una cotización es una decisión comercial, no un efecto
      secundario de mirar. */
-  async diagnosticoMpCotizaciones(body?: { ids?: number[]; limite?: number; desde?: number }) {
+  async diagnosticoMpCotizaciones(body?: { ids?: number[]; limite?: number; desde?: number; soloCandidatas?: boolean }) {
     const ticket = this.mpTicket();
     const client = this.supabase.getClient();
 
@@ -2519,7 +2519,9 @@ export class LicitacionesService {
       // El filtro de estado va EN la consulta: si se filtrara en memoria, la
       // ventana de 1.000 filas se gastaría en cotizaciones ya cerradas y las
       // abiertas antiguas quedarían fuera para siempre.
-      q = q.not('estado', 'in', `(${CERRADOS.map((e) => `"${e}"`).join(',')})`).limit(1000);
+      // 5.000 y no 1.000: las abiertas con código de Mercado Público ya pasan de
+      // 800 y al tocar el tope se perderían candidatas en silencio.
+      q = q.not('estado', 'in', `(${CERRADOS.map((e) => `"${e}"`).join(',')})`).limit(5000);
     }
     const { data, error } = await q;
     if (error) throw new BadRequestException(error.message);
@@ -2530,12 +2532,27 @@ export class LicitacionesService {
     const esCodigoMp = (c: string) => /^\d{3,}-\d{1,6}-[A-Z]{2,3}\d{2}$/i.test(String(c || '').trim());
     const candidatas = (data || []).filter((l: any) => esCodigoMp(l.id_licitacion));
 
+    /* Solo la lista de candidatas, sin gastar una sola consulta a Mercado
+       Público. El cron la pide primero y después recorre ESOS ids en tandas:
+       si paginara por posición, cada cotización que se cierra durante la
+       pasada correría la lista y se saltaría filas. */
+    if (body?.soloCandidatas) {
+      return {
+        revisadas: 0,
+        candidatas: candidatas.length,
+        ids: candidatas.map((l: any) => l.id),
+        con_discrepancia: 0,
+        con_error: 0,
+        filas: [] as any[],
+      };
+    }
+
     const limite = Math.max(1, Math.min(500, Number(body?.limite) || 40));
-    /* Ventana ROTATORIA. Antes era `candidatas.slice(0, limite)`: con 800+
-       cotizaciones abiertas con código de Mercado Público, el cron consultaba
-       cada pasada exactamente las 40 más nuevas y las demás no se revisaban
-       nunca, por muy resueltas que estuvieran en ChileCompra. `desde` corre el
-       punto de partida en cada pasada y la lista se recorre en círculo. */
+    /* `desde` corre el punto de partida (la lista se recorre en círculo). Antes
+       esto era `candidatas.slice(0, limite)` fijo: con 800+ cotizaciones
+       abiertas con código de Mercado Público se consultaban siempre las mismas
+       40 más nuevas y las demás no se revisaban nunca, por muy resueltas que
+       estuvieran en ChileCompra. */
     const total = candidatas.length;
     const desde = total ? ((Math.trunc(Number(body?.desde) || 0) % total) + total) % total : 0;
     const aRevisar = (desde ? [...candidatas.slice(desde), ...candidatas.slice(0, desde)] : candidatas)
