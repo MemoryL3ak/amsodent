@@ -113,6 +113,137 @@ export class PedidosFlujoService {
     return data || [];
   }
 
+  /* ── Historial de actividad de una cuenta del portal (2026-09-24) ────────
+     Hasta ahora la traza existía solo por pedido: para saber qué había pasado
+     en la cuenta había que abrir uno por uno. Esto junta, en orden, los
+     eventos de TODOS los pedidos del RUT y los completa con lo que se anota
+     en `portal_actividades` (ingresos, documentos subidos, avisos de
+     despacho), que no cuelga de ningún pedido.
+
+     Lo leen los dos lados: el cliente en su portal y Amsodent en la bandeja
+     de pedidos, con la misma forma, para que ambos vean lo mismo. */
+  async historialDeCuenta(rut: string, limite = 120) {
+    const tope = Math.max(1, Math.min(300, Number(limite) || 120));
+
+    // Pedidos de la cuenta: sus ids son el puente hacia los eventos.
+    const { data: pedidos } = await this.client
+      .from(TABLA)
+      .select('id, created_at, items, flujo_estado, origen_seccion')
+      .eq('rut', rut)
+      .order('id', { ascending: false })
+      .limit(tope);
+    const ids = (pedidos || []).map((p: any) => Number(p.id));
+    const porId = new Map<number, any>((pedidos || []).map((p: any) => [Number(p.id), p]));
+
+    const filas: Array<{
+      fecha: string;
+      tipo: string;
+      titulo: string;
+      detalle: string | null;
+      actor: string | null;
+      origen: 'cliente' | 'plataforma' | 'sistema';
+      solicitud_id: number | null;
+    }> = [];
+
+    if (ids.length) {
+      const { data: eventos } = await this.client
+        .from(TABLA_EVENTOS)
+        .select('solicitud_id, tipo, estado_desde, estado_hasta, actor_tipo, actor_email, detalle, created_at')
+        .in('solicitud_id', ids)
+        .order('created_at', { ascending: false })
+        .limit(tope * 4);
+      for (const e of eventos || []) {
+        const pedido = porId.get(Number((e as any).solicitud_id));
+        const cuantos = Array.isArray(pedido?.items) ? pedido.items.length : 0;
+        filas.push({
+          fecha: (e as any).created_at,
+          tipo: String((e as any).tipo || 'evento'),
+          titulo: `Pedido N° ${(e as any).solicitud_id}${cuantos ? ` · ${cuantos} producto${cuantos === 1 ? '' : 's'}` : ''}`,
+          detalle: (e as any).detalle || null,
+          actor: (e as any).actor_email || null,
+          origen: ((e as any).actor_tipo || 'sistema') as any,
+          solicitud_id: Number((e as any).solicitud_id),
+        });
+      }
+    }
+
+    // Actividades que no cuelgan de un pedido. Si la tabla aún no está
+    // migrada, el historial se arma igual con los eventos.
+    const { data: sueltas } = await this.client
+      .from('portal_actividades')
+      .select('tipo, descripcion, actor_email, actor_nombre, origen, solicitud_id, created_at')
+      .eq('cliente_rut', rut)
+      .order('created_at', { ascending: false })
+      .limit(tope);
+    for (const a of sueltas || []) {
+      filas.push({
+        fecha: (a as any).created_at,
+        tipo: String((a as any).tipo || 'actividad'),
+        titulo: String((a as any).descripcion || '').slice(0, 200),
+        detalle: null,
+        actor: (a as any).actor_nombre || (a as any).actor_email || null,
+        origen: (a as any).origen === 'amsodent' ? 'plataforma' : 'cliente',
+        solicitud_id: (a as any).solicitud_id ?? null,
+      });
+    }
+
+    filas.sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)));
+    return filas.slice(0, tope);
+  }
+
+  /** Anota una actividad del portal que no cuelga de un pedido. Best-effort:
+      nunca hace fallar la acción que la origina. */
+  async anotarActividad(args: {
+    rut: string;
+    tipo: string;
+    descripcion: string;
+    actorEmail?: string | null;
+    actorNombre?: string | null;
+    origen?: 'portal' | 'amsodent';
+    solicitudId?: number | null;
+    licitacionId?: number | null;
+    metadata?: Record<string, any> | null;
+  }) {
+    try {
+      await this.client.from('portal_actividades').insert({
+        cliente_rut: args.rut,
+        tipo: args.tipo,
+        descripcion: args.descripcion.slice(0, 400),
+        actor_email: args.actorEmail ?? null,
+        actor_nombre: args.actorNombre ?? null,
+        origen: args.origen ?? 'portal',
+        solicitud_id: args.solicitudId ?? null,
+        licitacion_id: args.licitacionId ?? null,
+        metadata: args.metadata ?? null,
+      });
+    } catch (e: any) {
+      this.logger.warn(`No se pudo anotar la actividad del portal (${args.tipo}): ${e?.message || e}`);
+    }
+  }
+
+  /** Avisos del portal que el cliente todavía no ha visto (la campana). */
+  async avisosSinLeer(rut: string) {
+    const { data, error } = await this.client
+      .from('portal_actividades')
+      .select('id, tipo, descripcion, solicitud_id, created_at')
+      .eq('cliente_rut', rut)
+      .is('leido_at', null)
+      .order('created_at', { ascending: false })
+      .limit(20);
+    if (error) return [];
+    return data || [];
+  }
+
+  async marcarAvisosLeidos(rut: string) {
+    try {
+      await this.client
+        .from('portal_actividades')
+        .update({ leido_at: new Date().toISOString() })
+        .eq('cliente_rut', rut)
+        .is('leido_at', null);
+    } catch { /* tabla sin migrar */ }
+    return { ok: true };
+  }
   private async mover(
     id: number,
     desde: FlujoEstado[],

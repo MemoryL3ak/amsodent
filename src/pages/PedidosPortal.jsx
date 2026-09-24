@@ -215,6 +215,8 @@ export default function PedidosPortal() {
   /* ── Acciones del flujo (2026-09-16) ───────────────────────────────── */
 
   const [modalValidar, setModalValidar] = useState(null); // pedido a validar
+  // { rut, razon } de la cuenta cuyo historial del portal se esta viendo.
+  const [historialCliente, setHistorialCliente] = useState(null);
   const [kpis, setKpis] = useState(null);
   const [accionando, setAccionando] = useState(false);
 
@@ -688,6 +690,7 @@ export default function PedidosPortal() {
                                 onValidar={() => setModalValidar(s)}
                                 onRevertir={() => revertirPedido(s)}
                                 onSos={() => alternarSos(s)}
+                                onVerHistorial={() => setHistorialCliente({ rut: s.rut, razon: s.razon_social })}
                               />
 
                               <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
@@ -760,6 +763,72 @@ export default function PedidosPortal() {
           onConfirmar={(payload) => validarPedido(modalValidar, payload)}
         />
       )}
+
+      {historialCliente && (
+        <ModalHistorialCliente
+          rut={historialCliente.rut}
+          razon={historialCliente.razon}
+          onCerrar={() => setHistorialCliente(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+/* Historial de actividad de la cuenta del cliente en el portal (2026-09-24).
+   Es la MISMA informacion que el cliente ve en su pestana "Actividad": sirve
+   para entender que hizo sin tener que preguntarselo. */
+function ModalHistorialCliente({ rut, razon, onCerrar }) {
+  const [filas, setFilas] = useState(null);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let vivo = true;
+    api.get(`/stock-clientes/historial?rut=${encodeURIComponent(rut)}`)
+      .then((r) => { if (vivo) setFilas(Array.isArray(r) ? r : []); })
+      .catch((e) => { if (vivo) { setError(e?.message || "No se pudo cargar la actividad."); setFilas([]); } });
+    return () => { vivo = false; };
+  }, [rut]);
+
+  return (
+    <div
+      style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,.45)", zIndex: 90, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+      onMouseDown={(e) => { if (e.target === e.currentTarget) onCerrar(); }}
+    >
+      <div style={{ background: "var(--surface, #fff)", borderRadius: 12, width: "min(620px, 96vw)", maxHeight: "82vh", display: "flex", flexDirection: "column", boxShadow: "0 18px 48px rgba(15,23,42,.28)" }}>
+        <div style={{ padding: "14px 18px", borderBottom: "1px solid var(--border, #e2e8f0)", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 800 }}>Actividad en el portal</div>
+            <div style={{ fontSize: 12, color: "var(--text-muted)" }}>{razon || rut}</div>
+          </div>
+          <button type="button" onClick={onCerrar} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)" }}>
+            <X size={18} />
+          </button>
+        </div>
+        <div style={{ padding: "12px 18px 18px", overflowY: "auto" }}>
+          {filas == null ? (
+            <div style={{ fontSize: 13, color: "var(--text-muted)" }}>Cargando...</div>
+          ) : error ? (
+            <div style={{ fontSize: 13, color: "#b91c1c" }}>{error}</div>
+          ) : filas.length === 0 ? (
+            <div style={{ fontSize: 13, color: "var(--text-muted)" }}>Sin actividad registrada para esta cuenta.</div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {filas.map((f, i) => (
+                <div key={`${f.fecha}-${i}`} style={{ borderLeft: `3px solid ${f.origen === "plataforma" ? "#7c3aed" : "#0f766e"}`, paddingLeft: 10 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700 }}>{f.titulo}</div>
+                  {f.detalle && <div style={{ fontSize: 12.5, color: "var(--text-muted)", lineHeight: 1.45 }}>{f.detalle}</div>}
+                  <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>
+                    {fmtFechaHora(f.fecha)}
+                    {f.actor ? ` · ${String(f.actor).split("@")[0]}` : ""}
+                    {f.origen === "plataforma" ? " · Amsodent" : f.origen === "cliente" ? " · cliente" : ""}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -786,7 +855,7 @@ function KpiTiempo({ label, horas, detalle, objetivo }) {
 }
 
 /* ── Panel del flujo dentro del detalle del pedido ─────────────────────── */
-function PanelFlujoPedido({ pedido, onValidar, onRevertir, onSos }) {
+function PanelFlujoPedido({ pedido, onValidar, onRevertir, onSos, onVerHistorial }) {
   const estado = flujoDe(pedido);
   const m = flujoMeta(estado);
   const pasos = [
@@ -907,6 +976,11 @@ function PanelFlujoPedido({ pedido, onValidar, onRevertir, onSos }) {
           title="SOS: despacho comprometido en 24 hrs"
         >
           {pedido.sos ? "Quitar SOS" : "Marcar SOS (24 h)"}
+        </button>
+        {/* (2026-09-24) Mismo historial que ve el cliente en su portal: sirve
+            para entender el pedido sin tener que preguntarle que hizo. */}
+        <button type="button" className="btn btn-secondary btn-sm" onClick={onVerHistorial} title="Actividad de la cuenta en el portal">
+          Ver actividad del cliente
         </button>
       </div>
     </div>
