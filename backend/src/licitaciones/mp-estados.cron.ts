@@ -57,6 +57,13 @@ export class MpEstadosCron implements OnModuleInit, OnModuleDestroy {
   private timer: NodeJS.Timeout | null = null;
   private corriendo = false;
   private ultima = '';
+  /* Desde dónde arranca la próxima pasada. Solo importa cuando una pasada se
+     corta a la mitad porque se agotó la cuota del ticket: sin esto la
+     siguiente volvería a empezar por las mismas y las del final no se
+     revisarían nunca — que es exactamente el defecto que este cron tenía. El
+     valor inicial depende del día para que un reinicio del servidor tampoco
+     deje siempre fuera a las mismas. */
+  private cursor = Math.floor(Date.now() / (12 * 3600_000));
 
   constructor(
     private readonly supabase: SupabaseService,
@@ -127,7 +134,12 @@ export class MpEstadosCron implements OnModuleInit, OnModuleDestroy {
       this.log.log('No hay cotizaciones abiertas con código de Mercado Público.');
       return { revisadas: 0, candidatas: 0, aplicados: 0, con_error: 0, cuota_agotada: false };
     }
-    this.log.log(`Pasada iniciada: ${objetivo.length} candidatas en tandas de ${LOTE}.`);
+    // Se recorre en círculo desde donde quedó la pasada anterior.
+    const inicio = this.cursor % objetivo.length;
+    const orden = inicio ? [...objetivo.slice(inicio), ...objetivo.slice(0, inicio)] : objetivo;
+    this.log.log(
+      `Pasada iniciada: ${orden.length} candidatas en tandas de ${LOTE}, desde la posición ${inicio}.`,
+    );
 
     let revisadas = 0;
     let aplicados = 0;
@@ -135,8 +147,8 @@ export class MpEstadosCron implements OnModuleInit, OnModuleDestroy {
     let sinCuota = false;
     const fallidas: number[] = [];
 
-    for (let i = 0; i < objetivo.length; i += LOTE) {
-      const ids = objetivo.slice(i, i + LOTE);
+    for (let i = 0; i < orden.length; i += LOTE) {
+      const ids = orden.slice(i, i + LOTE);
       const diag = await this.licitaciones.diagnosticoMpCotizaciones({ ids, limite: ids.length });
       revisadas += diag.revisadas;
       conError += diag.con_error;
@@ -145,11 +157,14 @@ export class MpEstadosCron implements OnModuleInit, OnModuleDestroy {
       }
       aplicados += await this.aplicarYNotificar(diag.filas || []);
       // Sin cuota del ticket no sirve seguir: solo gastaría llamadas en vano.
+      // Sin cuota se corta, y la próxima pasada sigue justo desde acá.
       if ((diag.filas || []).some((f: any) => /cuota/i.test(String(f.error || '')))) {
         sinCuota = true;
+        this.cursor = (inicio + i + ids.length) % objetivo.length;
         break;
       }
     }
+    if (!sinCuota) this.cursor = inicio;
 
     /* Segunda vuelta para las que fallaron por culpa de la API (504, timeouts:
        la v2 de Compra Ágil los da a menudo). Sin esto, una cotización ya
@@ -171,8 +186,9 @@ export class MpEstadosCron implements OnModuleInit, OnModuleDestroy {
     }
 
     this.log.log(
-      `Pasada completa: ${revisadas} de ${objetivo.length} candidatas · ${aplicados} cambio(s) de estado · ` +
-      `${conError} sin respuesta de Mercado Público${sinCuota ? ' · CUOTA DIARIA AGOTADA' : ''}.`,
+      `Pasada ${sinCuota ? 'CORTADA' : 'completa'}: ${revisadas} de ${objetivo.length} candidatas · ` +
+      `${aplicados} cambio(s) de estado · ${conError} sin respuesta de Mercado Público` +
+      `${sinCuota ? ` · CUOTA DIARIA AGOTADA, la próxima sigue desde la ${this.cursor}` : ''}.`,
     );
     return { revisadas, candidatas: objetivo.length, aplicados, con_error: conError, cuota_agotada: sinCuota };
   }
