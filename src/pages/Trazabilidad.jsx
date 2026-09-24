@@ -997,9 +997,13 @@ export default function Trazabilidad() {
         case "monto":
           return (montoPorConsumir(a).porConsumir - montoPorConsumir(b).porConsumir) * dir;
         case "factura": {
-          const fa = getFacturas(a.id).length;
-          const fb = getFacturas(b.id).length;
-          return (fa - fb) * dir;
+          // Orden definido para la columna Factura (pedido 2026-09-24): el
+          // avance del ciclo — sin OC, falta guía, falta factura, impaga,
+          // saldo por consumir, completo. Ascendente = lo pendiente arriba.
+          const ta = tierCiclo(a);
+          const tb = tierCiclo(b);
+          if (ta !== tb) return (ta - tb) * dir;
+          return (b.id - a.id); // desempate: cotización más nueva primero
         }
         default:
           return 0;
@@ -2597,8 +2601,14 @@ export default function Trazabilidad() {
                     <th style={{ width: "14%", textAlign: "left" }}>Guía Despacho</th>
                   </>
                 )}
-                <th style={{ width: esSoloClienteParticular ? "18%" : "14%", textAlign: "left" }}>
-                  {esSoloClienteParticular ? "Factura / Boleta" : "Factura"}
+                <th
+                  onClick={() => toggleSort("factura")}
+                  style={{ width: esSoloClienteParticular ? "18%" : "14%", textAlign: "left", cursor: "pointer", userSelect: "none" }}
+                  title="Ordenar por avance del ciclo: sin factura y pago pendiente primero, pagadas al final"
+                >
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                    {esSoloClienteParticular ? "Factura / Boleta" : "Factura"} <SortIcon col="factura" />
+                  </span>
                 </th>
                 {esSoloClienteParticular && (
                   <th style={{ width: "18%", textAlign: "left" }}>Comprobante</th>
