@@ -29,6 +29,7 @@ import Toast from "../components/Toast";
 import DropdownSelect from "../components/ui/DropdownSelect";
 import DateFilter from "../components/DateFilter";
 import { cargarGoogleMaps } from "../lib/googleMaps";
+import BotonLimpiarFiltros from "../components/BotonLimpiarFiltros";
 
 /* ── Catálogos ──────────────────────────────────────────────────────── */
 const ESTADOS_VIAJE = [
@@ -278,6 +279,7 @@ export default function DespachosChoferes() {
     { id: "estadisticas", label: "Estadísticas", icon: BarChart3, count: 0 },
     { id: "recuperaciones", label: "Recuperaciones de clave", icon: Inbox, count: pendientes },
   ];
+
 
   return (
     <div className="page">
@@ -577,6 +579,7 @@ function DespachosTab({ viajes, porDespachar, choferes, fChofer, setFChofer, fEs
             <button className="btn btn-secondary btn-sm" onClick={limpiar}><X size={13} /> Limpiar</button>
           </div>
         )}
+        <BotonLimpiarFiltros hay={hayFiltros} onLimpiar={limpiar} />
       </div>
 
       <div className="table-wrap" style={{ marginTop: 12 }}>

@@ -228,6 +228,16 @@ export default function MonitoreoMarcajes() {
     );
   }
 
+
+  /* (2026-09-24) Volver a ver todo sin ir borrando filtro por filtro. */
+  const hayFiltros = filtroDesde !== hace7DiasISO() || filtroHasta !== hoyISO() || filtroEmail !== "" || filtroTipo !== "";
+  function limpiarFiltros() {
+    setFiltroDesde(hace7DiasISO());
+    setFiltroHasta(hoyISO());
+    setFiltroEmail("");
+    setFiltroTipo("");
+  }
+
   return (
     <div className="page" style={{ padding: "16px 20px 32px" }}>
       <style>{ESTILOS_MM}</style>
@@ -453,6 +463,7 @@ export default function MonitoreoMarcajes() {
         <button type="button" onClick={cargar} className="mm-btn-pri" disabled={cargandoData}>
           <Filter size={14} /> {cargandoData ? "Cargando…" : "Aplicar filtros"}
         </button>
+        <BotonLimpiarFiltros hay={hayFiltros} onLimpiar={limpiarFiltros} />
       </div>
 
       {/* Tabla de marcajes */}

@@ -3,6 +3,7 @@ import { api } from "../lib/api";
 import { Link, useNavigate } from "react-router-dom";
 import ConfirmModal from "../components/ConfirmModal";
 import useAuth from "../hooks/useAuth";
+import BotonLimpiarFiltros from "../components/BotonLimpiarFiltros";
 
 export default function Clientes() {
   const navigate = useNavigate();
@@ -134,6 +135,16 @@ export default function Clientes() {
   /* ============================================================
      UI
   ============================================================ */
+
+  /* (2026-09-24) Volver a ver todo sin ir borrando filtro por filtro. */
+  const hayFiltros = filtroRut !== "" || filtroNombre !== "" || filtroRegion !== "" || filtroTipo !== "";
+  function limpiarFiltros() {
+    setFiltroRut("");
+    setFiltroNombre("");
+    setFiltroRegion("");
+    setFiltroTipo("");
+  }
+
   return (
     <div className="page">
       {/* HEADER */}
@@ -199,6 +210,7 @@ export default function Clientes() {
             <option value="__sin_designar__">Sin designar</option>
           </select>
         </div>
+        <BotonLimpiarFiltros hay={hayFiltros} onLimpiar={limpiarFiltros} />
       </div>
 
       {/* TABLA */}

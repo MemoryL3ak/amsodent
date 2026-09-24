@@ -11,6 +11,7 @@ import Toast from "../components/Toast";
 import DateFilter from "../components/DateFilter";
 import DropdownSelect from "../components/ui/DropdownSelect";
 import { SunflowerIcon } from "../components/DamarIAWidget";
+import BotonLimpiarFiltros from "../components/BotonLimpiarFiltros";
 
 /* ============================================================
    Análisis Mercado Público — nuestras postulaciones vs la oferta
@@ -767,6 +768,14 @@ export default function AnalisisMercadoPublico() {
     }));
   }
 
+
+  /* (2026-09-24) Volver a ver todo sin ir borrando filtro por filtro. */
+  const hayFiltros = filtroClase !== "" || filtroTipo !== "";
+  function limpiarFiltros() {
+    setFiltroClase("");
+    setFiltroTipo("");
+  }
+
   return (
     <div className="page">
       {toast && <Toast type={toast.type} message={toast.message} onClose={() => setToast(null)} />}
@@ -1046,6 +1055,7 @@ export default function AnalisisMercadoPublico() {
             adjudicación que competía con el de arriba y daba cifras distintas
             para el mismo mes. Ahora hay un solo período, arriba, y esa lectura
             por adjudicación es una de sus opciones. */}
+        <BotonLimpiarFiltros hay={hayFiltros} onLimpiar={limpiarFiltros} />
       </div>
 
       {/* ── Tabla ── */}

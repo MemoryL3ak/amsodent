@@ -323,6 +323,16 @@ export default function MonitoreoStockClientes() {
     }
   }
 
+
+  /* (2026-09-24) Volver a ver todo sin ir borrando filtro por filtro. */
+  const hayFiltros = filtroDesde !== hace7DiasISO() || filtroHasta !== hoyISO() || filtroRut !== "" || filtroCliente !== "";
+  function limpiarFiltros() {
+    setFiltroDesde(hace7DiasISO());
+    setFiltroHasta(hoyISO());
+    setFiltroRut("");
+    setFiltroCliente("");
+  }
+
   return (
     <div style={styles.page}>
       <style>{`
@@ -440,6 +450,7 @@ export default function MonitoreoStockClientes() {
             <Filter size={14} /> Filtrar
           </button>
         </div>
+        <BotonLimpiarFiltros hay={hayFiltros} onLimpiar={limpiarFiltros} />
       </div>
 
       {/* Tabla declaraciones */}

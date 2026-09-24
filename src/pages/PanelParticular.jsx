@@ -226,6 +226,13 @@ export default function PanelParticular() {
     );
   }
 
+
+  /* (2026-09-24) Volver a ver todo sin ir borrando filtro por filtro. */
+  const hayFiltros = filtroMotivo !== "";
+  function limpiarFiltros() {
+    setFiltroMotivo("");
+  }
+
   return (
     <div className="page">
       <div className="page-header" style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
@@ -367,6 +374,7 @@ export default function PanelParticular() {
                   </select>
                   <span style={{ fontSize: 11, color: "var(--text-muted)" }}>{filasPerdidas.length} cotización{filasPerdidas.length === 1 ? "" : "es"}</span>
                 </div>
+                <BotonLimpiarFiltros hay={hayFiltros} onLimpiar={limpiarFiltros} />
               </div>
               <div style={{ overflowY: "auto", maxHeight: 300 }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, tableLayout: "fixed" }}>

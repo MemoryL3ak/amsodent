@@ -4,6 +4,7 @@ import * as XLSX from "xlsx";
 import QRCode from "qrcode";
 import Toast from "../components/Toast";
 import ConfirmModal from "../components/ConfirmModal";
+import BotonLimpiarFiltros from "../components/BotonLimpiarFiltros";
 import {
   HeartHandshake,
   QrCode,
@@ -162,6 +163,15 @@ export default function ComunidadRegistros() {
     XLSX.writeFile(wb, "Comunidad_Amsodent.xlsx");
   }
 
+
+  /* (2026-09-24) Volver a ver todo sin ir borrando filtro por filtro. */
+  const hayFiltros = fPerfil !== "" || fDesde !== "" || fHasta !== "";
+  function limpiarFiltros() {
+    setFPerfil("");
+    setFDesde("");
+    setFHasta("");
+  }
+
   return (
     <div className="page vista-compacta">
       {toast && <Toast type={toast.type} message={toast.message} onClose={() => setToast(null)} />}
@@ -280,6 +290,7 @@ export default function ComunidadRegistros() {
             {filtrados.length} de {registros.length}
           </div>
         </div>
+        <BotonLimpiarFiltros hay={hayFiltros} onLimpiar={limpiarFiltros} />
       </div>
 
       <div className="table-wrap">

@@ -12,6 +12,7 @@ import useAuth from "../hooks/useAuth";
 import DateFilter from "../components/DateFilter";
 import ConfirmModal from "../components/ConfirmModal";
 import { Upload, Search, FileSpreadsheet, Trash2, X, ClipboardList, Check, RotateCcw, Ban, FilePlus2, ExternalLink, FileDown, ArrowUp, ArrowDown, ArrowUpDown } from "lucide-react";
+import BotonLimpiarFiltros from "../components/BotonLimpiarFiltros";
 
 function fmtFecha(v) {
   if (!v) return "";
@@ -1101,6 +1102,18 @@ export default function LicitacionesDisponibles({ embedded = false }) {
     }
   }
 
+  /* (2026-09-24) Volver a ver todo sin ir borrando filtro por filtro. Ojo:
+     el estado de partida de esta pantalla no es "todo", son las pendientes
+     vigentes, asi que limpiar devuelve a ESO y no a una lista vacia. */
+  const hayFiltros =
+    filtro !== "pendientes" || filtroTipo !== "" || dispon !== "vigentes" || busqueda !== "";
+  function limpiarFiltros() {
+    setFiltro("pendientes");
+    setFiltroTipo("");
+    setDispon("vigentes");
+    setBusqueda("");
+  }
+
   return (
     <div className={embedded ? "" : "page"}>
       <div className="page-header" style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
@@ -1281,6 +1294,7 @@ export default function LicitacionesDisponibles({ embedded = false }) {
           <label className="filter-label">Cargado hasta</label>
           <DateFilter value={fechaHasta} onChange={setFechaHasta} placeholder="Hasta…" minDate={fechaDesde ? new Date(`${fechaDesde}T00:00:00`) : undefined} />
         </div>
+        <BotonLimpiarFiltros hay={hayFiltros} onLimpiar={limpiarFiltros} />
       </div>
 
       {/* Tabla */}

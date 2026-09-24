@@ -329,6 +329,13 @@ export default function ComisionesCalculo({ perfiles }) {
 
   const configLista = CANALES.some((c) => (perfiles?.[c]?.venta?.length || 0) > 0);
 
+
+  /* (2026-09-24) Volver a ver todo sin ir borrando filtro por filtro. */
+  const hayFiltros = filtroTipo !== "";
+  function limpiarFiltros() {
+    setFiltroTipo("");
+  }
+
   return (
     <div>
       {/* Filtros */}
@@ -345,6 +352,7 @@ export default function ComisionesCalculo({ perfiles }) {
             <option value="particular">Cliente Particular</option>
           </select>
         </div>
+        <BotonLimpiarFiltros hay={hayFiltros} onLimpiar={limpiarFiltros} />
       </div>
 
       {/* Cómo se derivan las métricas */}

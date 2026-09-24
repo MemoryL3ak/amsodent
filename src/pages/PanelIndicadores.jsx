@@ -977,6 +977,14 @@ export default function PanelIndicadores() {
     return { tomadas, noAplica, vencidas, total: disponibles.length };
   }, [disponibles]);
 
+
+  /* (2026-09-24) Volver a ver todo sin ir borrando filtro por filtro. */
+  const hayFiltros = filtroTipo !== "" || filtroRegionPanel !== "";
+  function limpiarFiltros() {
+    setFiltroTipo("");
+    setFiltroRegionPanel("");
+  }
+
   return (
     <div className="page">
       <div className="page-header" style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
@@ -1402,6 +1410,7 @@ export default function PanelIndicadores() {
                   {resumenRegionFiltrado.length} región(es)
                 </span>
               </div>
+              <BotonLimpiarFiltros hay={hayFiltros} onLimpiar={limpiarFiltros} />
             </div>
             <div className="table-wrap" style={{ boxShadow: "none", border: "none", borderRadius: 0 }}>
               <div className="table-scroll" style={{ maxHeight: 380 }}>

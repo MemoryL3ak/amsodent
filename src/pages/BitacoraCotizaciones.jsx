@@ -6,6 +6,7 @@ import Toast from "../components/Toast";
 import ConfirmModal from "../components/ConfirmModal";
 import ChatEquipo from "../components/ChatEquipo";
 import { Plus, Pencil, Trash2, X, Search, MessageSquare, ClipboardList } from "lucide-react";
+import BotonLimpiarFiltros from "../components/BotonLimpiarFiltros";
 
 const ESTADOS = ["Pendiente", "Ingresada"];
 
@@ -157,6 +158,15 @@ export default function BitacoraCotizaciones() {
     }
   }
 
+
+  /* (2026-09-24) Volver a ver todo sin ir borrando filtro por filtro. */
+  const hayFiltros = filtroId !== "" || filtroEstado !== "" || filtroUsuario !== "";
+  function limpiarFiltros() {
+    setFiltroId("");
+    setFiltroEstado("");
+    setFiltroUsuario("");
+  }
+
   return (
     <div className="page">
       {toast && <Toast type={toast.type} message={toast.message} onClose={() => setToast(null)} />}
@@ -263,6 +273,7 @@ export default function BitacoraCotizaciones() {
             placeholder="Nombre o email…"
           />
         </div>
+        <BotonLimpiarFiltros hay={hayFiltros} onLimpiar={limpiarFiltros} />
       </div>
 
       {/* Tabla */}

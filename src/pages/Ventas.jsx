@@ -582,6 +582,16 @@ export default function Ventas({ embedded = false }) {
   const desdeMostrado = fechaDesde || "-";
   const hastaMostrado = fechaHasta || "-";
 
+
+  /* (2026-09-24) Volver a ver todo sin ir borrando filtro por filtro. */
+  const hayFiltros = filtroVendedor !== "" || filtroTipoCliente !== "" || filtroTipoCompra !== "" || filtroRegionResumen !== "";
+  function limpiarFiltros() {
+    setFiltroVendedor("");
+    setFiltroTipoCliente("");
+    setFiltroTipoCompra("");
+    setFiltroRegionResumen("");
+  }
+
   return (
     <div className={embedded ? "" : "page"}>
 
@@ -672,6 +682,7 @@ export default function Ventas({ embedded = false }) {
                   ))}
                 </select>
               </div>
+              <BotonLimpiarFiltros hay={hayFiltros} onLimpiar={limpiarFiltros} />
             </div>
           </div>
 

@@ -22,6 +22,7 @@ import Toast from "../components/Toast";
 import { descargarFichaTecnica } from "../utils/generarFichaTecnica";
 import { calcularLista3 } from "../lib/listas";
 import { useStickyState } from "../lib/useStickyState";
+import BotonLimpiarFiltros from "../components/BotonLimpiarFiltros";
 
 /* ============================================================
    HELPERS FILTRO PRODUCTO (TOKENS + NORMALIZACIÓN)
@@ -629,6 +630,20 @@ export default function Productos() {
     return <div className="page"><p style={{color:"var(--text-muted)"}}>Cargando…</p></div>;
   }
 
+
+  /* (2026-09-24) Volver a ver todo sin ir borrando filtro por filtro. */
+  const hayFiltros = filtroSKU !== "" || filtroProducto !== "" || filtroCategoria !== "" || filtroMarcas.length > 0 || filtroEstado !== "" || filtroSkuAsignado !== "" || filtroPeso !== "" || filtroMedidas !== "";
+  function limpiarFiltros() {
+    setFiltroSKU("");
+    setFiltroProducto("");
+    setFiltroCategoria("");
+    setFiltroMarcas([]);
+    setFiltroEstado("");
+    setFiltroSkuAsignado("");
+    setFiltroPeso("");
+    setFiltroMedidas("");
+  }
+
   return (
     <div className="page">
       {toast && (
@@ -792,6 +807,7 @@ export default function Productos() {
             <option value="sin">Sin medidas</option>
           </select>
         </div>
+        <BotonLimpiarFiltros hay={hayFiltros} onLimpiar={limpiarFiltros} />
       </div>
 
       {/* Contador de resultados: cuántos matchean el filtro y sobre qué total. */}

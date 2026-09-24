@@ -280,6 +280,26 @@ const COLS_MONEDA = [
   "Factura Bruto",
   "Monto Neto",
   "Monto Bruto",
+  // Hoja "Saldo por consumir" (por OC)
+  "OC Bruto",
+  "Guías de la OC Neto",
+  "Saldo por Consumir (bruto)",
+  // Hoja "Pendiente por producto"
+  "Saldo por Consumir de la Cotización",
+  "Valor Unitario Neto",
+  "Total Neto",
+  "Costo Unitario",
+  "Costo Total",
+];
+
+// Tramos de antigüedad del saldo por consumir (días desde la fecha de la OC).
+const TRAMOS_ANTIGUEDAD = [
+  ["0 a 30 días", 0, 30],
+  ["31 a 60 días", 31, 60],
+  ["61 a 90 días", 61, 90],
+  ["91 a 180 días", 91, 180],
+  ["Más de 180 días", 181, Infinity],
+  ["Sin fecha de OC", null, null],
 ];
 
 const customSelectStyles = {
@@ -1407,6 +1427,160 @@ export default function Trazabilidad() {
     return filas;
   }
 
+  // Hoja "Saldo por consumir": el detalle de lo pendiente, ORDEN DE COMPRA
+  // por orden de compra (pedido 2026-09-24). Cada fila es una OC de un ciclo
+  // abierto con saldo distinto de cero: monto de la OC, las guías que se le
+  // cargaron y lo que falta por despachar, con la antigüedad desde la OC.
+  // Las guías cargadas sin OC asociada van en una fila propia por cotización
+  // (saldo negativo) para que la suma de la hoja calce con el saldo por
+  // cotización. Ordenada por saldo descendente.
+  function filasSaldoPorOC() {
+    const hoy = new Date();
+    const dias = (fecha) => {
+      const f = fecha ? new Date(String(fecha).slice(0, 10) + "T00:00:00") : null;
+      if (!f || Number.isNaN(f.getTime())) return "";
+      return Math.max(0, Math.round((hoy - f) / 86400000));
+    };
+    const nums = (arr) =>
+      Array.from(new Set(arr.map((d) => String(d.numero || "").trim()).filter(Boolean))).join(", ");
+    const filas = [];
+    dataOrdenada.forEach((lic) => {
+      if (lic.ciclo_cerrado) return;
+      const a = agregadosCotizacion(lic);
+      const vendedor = nombreVendedor(lic);
+      const base = {
+        "ID Cotización": lic.id_licitacion || lic.id || "",
+        "Cotización": lic.nombre || "",
+        "Cliente": lic.nombre_entidad || "",
+        "Comuna": lic.comuna || "",
+        "Vendedor": vendedor,
+        "Tipo de Cliente": lic.tipo_cliente || "",
+        "Tipo de Compra": lic.tipo_compra || "",
+        "Estado del Ciclo": TIER_NOMBRE[a.tier] || "",
+        "Estado de Entrega": lic.estado_entrega || "Preparación",
+      };
+      a.ocs.forEach((oc) => {
+        const guiasOc = a.guias.filter((g) => g.deriva_de_id === oc.id);
+        const ocNeto = Number(oc.monto || 0);
+        const guiasNeto = guiasOc.reduce((acc, g) => acc + Number(g.monto || 0), 0);
+        const saldo = Math.round(ocNeto - guiasNeto);
+        if (saldo === 0) return;
+        const fechasGuia = guiasOc
+          .map((g) => (g.fecha_oc || g.created_at || "").toString().slice(0, 10))
+          .filter(Boolean)
+          .sort();
+        const fechaOc = (oc.fecha_oc || oc.created_at || "").toString().slice(0, 10);
+        filas.push({
+          ...base,
+          "N° OC": oc.numero || "S/N",
+          "Fecha OC": fechaOc,
+          "Días desde la OC": dias(fechaOc),
+          "OC Neto": ocNeto,
+          "OC Bruto": Math.round(ocNeto * 1.19),
+          "# Guías de la OC": guiasOc.length,
+          "N° Guías": nums(guiasOc),
+          "Guías de la OC Neto": guiasNeto,
+          "Última Guía": fechasGuia.length ? fechasGuia[fechasGuia.length - 1] : "",
+          "Días sin Despachar": dias(fechasGuia.length ? fechasGuia[fechasGuia.length - 1] : fechaOc),
+          "Saldo por Consumir": saldo,
+          "Saldo por Consumir (bruto)": Math.round(saldo * 1.19),
+          "% Despachado": ocNeto > 0 ? guiasNeto / ocNeto : "",
+          "Situación": saldo < 0 ? "Despachado sobre la OC" : guiasOc.length === 0 ? "Sin despachos" : "Despacho parcial",
+          "Observación OC": oc.descripcion || oc.observacion_despacho || "",
+        });
+      });
+      const huerfanas = a.guias.filter((g) => !g.deriva_de_id || !a.ocs.some((oc) => oc.id === g.deriva_de_id));
+      if (huerfanas.length > 0) {
+        const neto = huerfanas.reduce((acc, g) => acc + Number(g.monto || 0), 0);
+        if (Math.round(neto) !== 0) {
+          filas.push({
+            ...base,
+            "N° OC": "SIN OC ASOCIADA",
+            "Fecha OC": "",
+            "Días desde la OC": "",
+            "OC Neto": 0,
+            "OC Bruto": 0,
+            "# Guías de la OC": huerfanas.length,
+            "N° Guías": nums(huerfanas),
+            "Guías de la OC Neto": neto,
+            "Última Guía": "",
+            "Días sin Despachar": "",
+            "Saldo por Consumir": -Math.round(neto),
+            "Saldo por Consumir (bruto)": -Math.round(neto * 1.19),
+            "% Despachado": "",
+            "Situación": "Guías cargadas sin OC",
+            "Observación OC": "",
+          });
+        }
+      }
+    });
+    return filas.sort((x, y) => Number(y["Saldo por Consumir"]) - Number(x["Saldo por Consumir"]));
+  }
+
+  // Hoja "Pendiente por producto": qué productos componen las cotizaciones
+  // con saldo por consumir. Los ítems vienen de la cotización (SKU, cantidad,
+  // valor unitario neto) en UNA sola consulta; el despacho producto a
+  // producto sigue viéndose en pantalla contra Bsale, que es consulta por OC.
+  async function filasPendientePorProducto() {
+    const abiertas = dataOrdenada
+      .map((lic) => ({ lic, a: agregadosCotizacion(lic) }))
+      .filter(({ lic, a }) => !lic.ciclo_cerrado && a.saldoPorConsumir !== 0);
+    if (abiertas.length === 0) return [];
+    let items = [];
+    try {
+      items = await api.post("/licitaciones/items/filter", {
+        licitacion_ids: abiertas.map(({ lic }) => Number(lic.id)),
+        fields: "licitacion_id,sku,producto,formato,cantidad,valor_unitario,costo",
+      });
+    } catch {
+      return [];
+    }
+    const porLic = new Map();
+    (Array.isArray(items) ? items : []).forEach((it) => {
+      const k = Number(it.licitacion_id);
+      if (!porLic.has(k)) porLic.set(k, []);
+      porLic.get(k).push(it);
+    });
+    const nums = (arr) =>
+      Array.from(new Set(arr.map((d) => String(d.numero || "").trim()).filter(Boolean))).join(", ");
+    const filas = [];
+    abiertas.forEach(({ lic, a }) => {
+      const its = porLic.get(Number(lic.id)) || [];
+      const vendedor = nombreVendedor(lic);
+      const totalCot = its.reduce(
+        (acc, it) => acc + Number(it.cantidad || 0) * Number(it.valor_unitario || 0),
+        0,
+      );
+      its.forEach((it) => {
+        const cant = Number(it.cantidad || 0);
+        const vu = Number(it.valor_unitario || 0);
+        const costo = Number(it.costo || 0);
+        filas.push({
+          "ID Cotización": lic.id_licitacion || lic.id || "",
+          "Cliente": lic.nombre_entidad || "",
+          "Vendedor": vendedor,
+          "Estado del Ciclo": TIER_NOMBRE[a.tier] || "",
+          "Estado de Entrega": lic.estado_entrega || "Preparación",
+          "N° OC": nums(a.ocs) || "PENDIENTE",
+          "OC Neto": a.ocNeto,
+          "Guías Neto": a.guiasNeto,
+          "Saldo por Consumir de la Cotización": a.saldoPorConsumir,
+          "% Despachado": a.ocNeto > 0 ? a.guiasNeto / a.ocNeto : "",
+          "SKU": it.sku || "",
+          "Producto": it.producto || "",
+          "Formato": it.formato || "",
+          "Cantidad Cotizada": cant,
+          "Valor Unitario Neto": vu,
+          "Total Neto": Math.round(cant * vu),
+          "% del Total Cotizado": totalCot > 0 ? (cant * vu) / totalCot : "",
+          "Costo Unitario": costo,
+          "Costo Total": Math.round(cant * costo),
+        });
+      });
+    });
+    return filas;
+  }
+
   // Hoja "Documentos": todos los documentos cargados, planos, incluidos los que
   // no aparecen en el ciclo (comprobantes, notas de crédito, multas, cierres).
   function filasDocumentos() {
@@ -1477,9 +1651,31 @@ export default function Trazabilidad() {
 
   // Hoja "Resumen": totales del filtro actual, con el desglose por estado del
   // ciclo y por vendedor, y la explicación de cómo se calcula cada monto.
-  function hojaResumen(XLSX, porCotizacion) {
+  function hojaResumen(XLSX, porCotizacion, porOC = []) {
     const total = (col) => porCotizacion.reduce((acc, r) => acc + (Number(r[col]) || 0), 0);
     const sumaDe = (filas, col) => filas.reduce((acc, r) => acc + (Number(r[col]) || 0), 0);
+
+    // Saldo por consumir por antigüedad de la OC (solo saldos positivos: lo
+    // que falta despachar; lo despachado sobre la OC va aparte).
+    const ocConSaldo = porOC.filter((r) => Number(r["Saldo por Consumir"]) > 0);
+    const porAntiguedad = TRAMOS_ANTIGUEDAD.map(([nombre, desde, hasta]) => {
+      const filas = ocConSaldo.filter((r) => {
+        const d = r["Días desde la OC"];
+        if (desde == null) return d === "";
+        return d !== "" && Number(d) >= desde && Number(d) <= hasta;
+      });
+      return [nombre, filas.length, sumaDe(filas, "Saldo por Consumir"), sumaDe(filas, "Saldo por Consumir (bruto)")];
+    }).filter((fila) => fila[1] > 0);
+    const sobreOC = porOC.filter((r) => Number(r["Saldo por Consumir"]) < 0);
+
+    const clientes = Array.from(new Set(ocConSaldo.map((r) => r["Cliente"]).filter(Boolean)));
+    const topClientes = clientes
+      .map((c) => {
+        const filas = ocConSaldo.filter((r) => r["Cliente"] === c);
+        return [c, new Set(filas.map((r) => r["ID Cotización"])).size, filas.length, sumaDe(filas, "Saldo por Consumir")];
+      })
+      .sort((x, y) => y[3] - x[3])
+      .slice(0, 15);
 
     const porTier = TIER_NOMBRE.map((nombre) => {
       const filas = porCotizacion.filter((r) => r["Estado del Ciclo"] === nombre);
@@ -1548,6 +1744,21 @@ export default function Trazabilidad() {
         "Base a cobrar − notas de crédito − multas − pagado",
       ],
       [],
+      ["SALDO POR CONSUMIR · DETALLE"],
+      ["Órdenes de compra con saldo", ocConSaldo.length, 'Una fila por OC en la hoja "Saldo por consumir"'],
+      ["Saldo por consumir (neto)", sumaDe(ocConSaldo, "Saldo por Consumir"), "Suma de las OC con saldo positivo"],
+      ["Saldo por consumir (bruto)", sumaDe(ocConSaldo, "Saldo por Consumir (bruto)"), "Neto × 1,19"],
+      ["OC sin ningún despacho", ocConSaldo.filter((r) => r["Situación"] === "Sin despachos").length, "OC cargadas que aún no tienen guía"],
+      ["Despachado sobre la OC", -sumaDe(sobreOC, "Saldo por Consumir"), `${sobreOC.length} OC o guías sin OC con más despacho que orden`],
+      [],
+      ["SALDO POR CONSUMIR POR ANTIGÜEDAD DE LA OC"],
+      ["Tramo", "OC", "Saldo neto", "Saldo bruto"],
+      ...porAntiguedad,
+      [],
+      ["CLIENTES CON MÁS SALDO POR CONSUMIR (top 15)"],
+      ["Cliente", "Cotizaciones", "OC", "Saldo neto"],
+      ...topClientes,
+      [],
       ["POR ESTADO DEL CICLO"],
       ["Estado", "Cotizaciones", "Saldo por consumir", "Por cobrar"],
       ...porTier,
@@ -1568,6 +1779,14 @@ export default function Trazabilidad() {
       [
         "",
         'El saldo por consumir de un ciclo cerrado a la fuerza queda en $0; lo que quedaba pendiente al cerrarlo está en la columna "Saldo al Cerrar".',
+      ],
+      [
+        "",
+        'La hoja "Saldo por consumir" desglosa el saldo OC por OC (ciclos abiertos, saldo distinto de $0): monto de la OC, guías cargadas, días desde la OC y desde la última guía. Las guías cargadas sin OC van en una fila "SIN OC ASOCIADA" con saldo negativo.',
+      ],
+      [
+        "",
+        'La hoja "Pendiente por producto" lista los ítems cotizados (SKU, cantidad, valor unitario neto) de cada cotización con saldo por consumir, para saber qué productos componen lo pendiente. El despachado producto a producto según Bsale se consulta en pantalla, OC por OC.',
       ],
     ];
 
@@ -1593,7 +1812,7 @@ export default function Trazabilidad() {
     for (let c = rango.s.c; c <= rango.e.c; c++) {
       const cabecera = cabeceras[c];
       const esMoneda = COLS_MONEDA.includes(cabecera);
-      const esPorcentaje = cabecera === "% Despachado";
+      const esPorcentaje = cabecera === "% Despachado" || cabecera === "% del Total Cotizado";
       if (!esMoneda && !esPorcentaje) continue;
       for (let r = rango.s.r + 1; r <= rango.e.r; r++) {
         const cell = ws[XLSX.utils.encode_cell({ r, c })];
@@ -1630,11 +1849,19 @@ export default function Trazabilidad() {
         return;
       }
 
+      const porOC = filasSaldoPorOC();
+      const porProducto = await filasPendientePorProducto();
       const porCiclo = filasPorCiclo();
       const documentos = filasDocumentos();
       const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, hojaResumen(XLSX, porCotizacion), "Resumen");
+      XLSX.utils.book_append_sheet(wb, hojaResumen(XLSX, porCotizacion, porOC), "Resumen");
       XLSX.utils.book_append_sheet(wb, hojaTabla(XLSX, porCotizacion), "Por cotización");
+      if (porOC.length > 0) {
+        XLSX.utils.book_append_sheet(wb, hojaTabla(XLSX, porOC), "Saldo por consumir");
+      }
+      if (porProducto.length > 0) {
+        XLSX.utils.book_append_sheet(wb, hojaTabla(XLSX, porProducto), "Pendiente por producto");
+      }
       if (porCiclo.length > 0) {
         XLSX.utils.book_append_sheet(wb, hojaTabla(XLSX, porCiclo), "Detalle por ciclo");
       }
@@ -1644,7 +1871,7 @@ export default function Trazabilidad() {
       XLSX.writeFile(wb, `${nombreArchivo}.xlsx`);
       setToast({
         type: "success",
-        message: `Reporte generado: ${porCotizacion.length} cotizaciones, ${porCiclo.length} ciclos, ${documentos.length} documentos.`,
+        message: `Reporte generado: ${porCotizacion.length} cotizaciones, ${porOC.length} OC con saldo, ${porProducto.length} ítems pendientes, ${porCiclo.length} ciclos, ${documentos.length} documentos.`,
       });
     } catch (err) {
       console.error(err);
@@ -2004,7 +2231,7 @@ export default function Trazabilidad() {
                 onClick={() => { setOpenDescargar(false); descargarReporte("xlsx"); }}
                 style={{ display: "block", width: "100%", textAlign: "left", padding: "8px 12px", background: "transparent", border: "none", cursor: "pointer", fontSize: 13 }}
               >
-                Excel · 4 hojas
+                Excel · 6 hojas
               </button>
               <button
                 type="button"

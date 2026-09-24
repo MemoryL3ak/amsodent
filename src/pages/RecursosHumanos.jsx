@@ -439,6 +439,13 @@ const EMPLEADO_VACIO = {
 function TabTrabajadores({ empleados, setToast, recargar }) {
   const [busqueda, setBusqueda] = useState("");
   const [filtroEstado, setFiltroEstado] = useState("");
+  /* (2026-09-24) Volver a ver todo sin ir borrando filtro por filtro. */
+  const hayFiltros = busqueda !== "" || filtroEstado !== "";
+  function limpiarFiltros() {
+    setBusqueda("");
+    setFiltroEstado("");
+  }
+
   const [editando, setEditando] = useState(null); // objeto empleado o EMPLEADO_VACIO
   const [guardando, setGuardando] = useState(false);
   const [detalle, setDetalle] = useState(null); // ficha completa
@@ -521,6 +528,7 @@ function TabTrabajadores({ empleados, setToast, recargar }) {
             <Plus size={15} /> Nuevo trabajador
           </button>
         </div>
+        <BotonLimpiarFiltros hay={hayFiltros} onLimpiar={limpiarFiltros} />
       </div>
 
       <div className="rrhh-tabla-wrap" style={{ marginTop: 12 }}>
@@ -1953,6 +1961,7 @@ function TabSolicitudes({ empleados, empleadosPorId, setToast }) {
       setToast({ type: "error", message: e?.message || "No se pudo registrar." });
     } finally { setGuardando(false); }
   }
+
 
   return (
     <>

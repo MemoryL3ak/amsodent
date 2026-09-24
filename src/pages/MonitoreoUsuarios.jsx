@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import Select from "react-select";
 import { api } from "../lib/api";
 import DateFilter from "../components/DateFilter";
+import BotonLimpiarFiltros from "../components/BotonLimpiarFiltros";
 
 const ACTIVE_GRACE_MS = 60 * 1000;
 // Para “online real” (evita sesiones zombie en UI)
@@ -551,6 +552,10 @@ export default function MonitoreoUsuarios() {
               menuPortalTarget={document.body}
             />
           </div>
+          <BotonLimpiarFiltros
+            hay={filtroVendedor.length > 0}
+            onLimpiar={() => setFiltroVendedor([])}
+          />
         </div>
       </div>
 
