@@ -1273,7 +1273,52 @@ export class ChoferesService {
     if (choferId && lat != null && lng != null) {
       await this.registrarPosicion(choferId, { lat, lng, viaje_id: viaje.id });
     }
+
+    // (2026-09-24) Aviso al cliente cuando su despacho sale a la calle. El
+    // viaje no conoce al cliente: se llega por la guía → cotización → RUT.
+    if (nuevo === 'En ruta') {
+      await this.avisarDespachoEnCurso(viaje);
+    }
     return { ok: true };
+  }
+
+  /* Deja el aviso de "despacho en curso" en el historial del portal del
+     cliente, que es donde lo ve al entrar. Best-effort: un problema acá nunca
+     puede impedir que el chofer marque el viaje en ruta. */
+  private async avisarDespachoEnCurso(viaje: any) {
+    try {
+      const docId = Number(viaje?.licitacion_documento_id);
+      if (!Number.isFinite(docId)) return;
+      const { data: doc } = await this.client
+        .from('licitacion_documentos')
+        .select('id, numero, licitacion_id')
+        .eq('id', docId)
+        .maybeSingle();
+      if (!doc?.licitacion_id) return;
+      const { data: lic } = await this.client
+        .from('licitaciones')
+        .select('id, rut_entidad, id_licitacion')
+        .eq('id', doc.licitacion_id)
+        .maybeSingle();
+      const rut = String(lic?.rut_entidad || '').trim();
+      if (!rut) return;
+
+      await this.client.from('portal_actividades').insert({
+        cliente_rut: rut,
+        licitacion_id: lic?.id ?? null,
+        tipo: 'despacho_en_curso',
+        origen: 'amsodent',
+        actor_nombre: 'Amsodent',
+        descripcion: `Tu despacho va en camino${doc.numero ? ` (guía ${doc.numero})` : ''}.`,
+        metadata: {
+          viaje_id: viaje.id,
+          documento_id: doc.id,
+          cotizacion: lic?.id_licitacion || null,
+        },
+      });
+    } catch (e: any) {
+      this.logger.warn(`Sin aviso de despacho en curso para el viaje ${viaje?.id}: ${e?.message || e}`);
+    }
   }
 
   async registrarPosicion(

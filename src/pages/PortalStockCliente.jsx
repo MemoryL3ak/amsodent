@@ -1829,6 +1829,10 @@ function PantallaDeclaracion({ cliente, setToast }) {
         esAdminPortal={esAdminPortal}
       />
 
+      {/* Avisos sin leer (despacho en curso). Van arriba de todo porque es lo
+          primero que el cliente tiene que ver al entrar. */}
+      <AvisosPortal onVerHistorial={() => setTab("actividad")} />
+
       {tab === "resumen" ? (
         <DashboardComercial
           items={items}
@@ -1839,6 +1843,8 @@ function PantallaDeclaracion({ cliente, setToast }) {
         />
       ) : tab === "usuarios" ? (
         <PanelUsuariosPortal setToast={setToast} />
+      ) : tab === "actividad" ? (
+        <PanelHistorialPortal />
       ) : tab === "explorador" ? (
         <PanelExploradorPrecios />
       ) : tab === "solicitudes" ? (
@@ -2239,12 +2245,139 @@ function PantallaDeclaracion({ cliente, setToast }) {
   );
 }
 
+/* ── Historial de actividad de la cuenta (2026-09-24) ─────────────────────
+   Antes la traza existía solo dentro de cada pedido: para saber qué había
+   pasado en la cuenta había que abrirlos uno por uno. Acá se ve todo junto y
+   en orden, y es exactamente lo mismo que ve Amsodent de su lado. */
+
+const ICONO_ACTIVIDAD = {
+  despacho_en_curso: { icono: Truck, color: "#0369a1", bg: "#e0f2fe" },
+  modificacion_pedida: { icono: ShoppingCart, color: "#b45309", bg: "#fef3c7" },
+  cotizacion_validada_cliente: { icono: CheckCircle2, color: "#15803d", bg: "#dcfce7" },
+  validado_plataforma: { icono: FileSpreadsheet, color: "#7c3aed", bg: "#f3e8ff" },
+  aprobado_cliente: { icono: CheckCircle2, color: "#15803d", bg: "#dcfce7" },
+  pagado: { icono: CheckCircle2, color: "#15803d", bg: "#dcfce7" },
+};
+
+function PanelHistorialPortal() {
+  const [filas, setFilas] = useState(null);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let vivo = true;
+    apiRequest("/stock-clientes/mi-historial")
+      .then((r) => { if (vivo) setFilas(Array.isArray(r) ? r : []); })
+      .catch((e) => { if (vivo) { setError(e?.message || "No se pudo cargar el historial."); setFilas([]); } });
+    // Al abrirlo, los avisos dejan de estar pendientes.
+    apiRequest("/stock-clientes/mis-avisos/leidos", { method: "POST" }).catch(() => {});
+    return () => { vivo = false; };
+  }, []);
+
+  if (filas == null) {
+    return <div style={{ padding: 24, color: "#64748b", fontSize: 14 }}>Cargando actividad…</div>;
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      <div>
+        <h2 style={{ fontSize: 17, fontWeight: 800, color: "#0f172a", margin: 0 }}>Actividad de la cuenta</h2>
+        <p style={{ fontSize: 13, color: "#64748b", margin: "4px 0 0" }}>
+          Todo lo que ha pasado con tus pedidos y despachos, de lo más reciente a lo más antiguo.
+        </p>
+      </div>
+
+      {error && <div style={{ fontSize: 13, color: "#b91c1c" }}>{error}</div>}
+
+      {filas.length === 0 && !error ? (
+        <div style={{ border: "1px dashed #cbd5e1", borderRadius: 12, padding: 24, textAlign: "center", color: "#64748b", fontSize: 13.5 }}>
+          Todavía no hay actividad registrada en esta cuenta.
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+          {filas.map((f, i) => {
+            const meta = ICONO_ACTIVIDAD[f.tipo] || { icono: Activity, color: "#475569", bg: "#f1f5f9" };
+            const Icono = meta.icono;
+            const ultima = i === filas.length - 1;
+            return (
+              <div key={`${f.fecha}-${i}`} style={{ display: "flex", gap: 12 }}>
+                {/* Línea de tiempo */}
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", width: 30 }}>
+                  <div style={{ width: 30, height: 30, borderRadius: 999, background: meta.bg, color: meta.color, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                    <Icono size={15} />
+                  </div>
+                  {!ultima && <div style={{ width: 2, flex: 1, background: "#e2e8f0", minHeight: 14 }} />}
+                </div>
+                <div style={{ paddingBottom: ultima ? 0 : 16, flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13.5, fontWeight: 700, color: "#0f172a" }}>{f.titulo}</div>
+                  {f.detalle && (
+                    <div style={{ fontSize: 12.5, color: "#475569", lineHeight: 1.45, marginTop: 2 }}>{f.detalle}</div>
+                  )}
+                  <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 3 }}>
+                    {fmtFechaHora(f.fecha)}
+                    {f.actor ? ` · ${String(f.actor).split("@")[0]}` : ""}
+                    {f.origen === "plataforma" ? " · Amsodent" : f.origen === "cliente" ? " · tu equipo" : ""}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* Aviso de despacho en curso (y cualquier otro aviso sin leer) arriba del
+   portal: el cliente se entera al entrar, sin depender del correo. */
+function AvisosPortal({ onVerHistorial }) {
+  const [avisos, setAvisos] = useState([]);
+
+  useEffect(() => {
+    let vivo = true;
+    apiRequest("/stock-clientes/mis-avisos")
+      .then((r) => { if (vivo) setAvisos(Array.isArray(r) ? r : []); })
+      .catch(() => {});
+    return () => { vivo = false; };
+  }, []);
+
+  if (!avisos.length) return null;
+
+  async function descartar() {
+    setAvisos([]);
+    apiRequest("/stock-clientes/mis-avisos/leidos", { method: "POST" }).catch(() => {});
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 }}>
+      {avisos.map((a) => (
+        <div
+          key={a.id}
+          style={{
+            display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
+            border: "1px solid #bae6fd", background: "#f0f9ff", borderRadius: 12, padding: "10px 14px",
+          }}
+        >
+          <Truck size={16} style={{ color: "#0369a1", flexShrink: 0 }} />
+          <span style={{ fontSize: 13.5, color: "#0c4a6e", flex: 1, minWidth: 180 }}>{a.descripcion}</span>
+          <span style={{ fontSize: 11.5, color: "#0369a1" }}>{fmtFechaHora(a.created_at)}</span>
+          <button type="button" onClick={onVerHistorial} style={{ ...styles.btnSecundarioChico, whiteSpace: "nowrap" }}>
+            Ver actividad
+          </button>
+          <button type="button" onClick={descartar} title="Descartar" style={{ background: "none", border: "none", cursor: "pointer", color: "#0369a1", padding: 2 }}>
+            <X size={16} />
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
 function TabNavigator({ tab, onChange, contadorSolicitudes, esAdminPortal }) {
   const opciones = [
     { id: "resumen", label: "Resumen", icono: Activity },
     { id: "declaracion", label: "Gestión de Stock", icono: Database },
     { id: "solicitudes", label: "Mis cotizaciones", icono: FileSpreadsheet },
     { id: "explorador", label: "Explorador de precios", icono: Search },
+    { id: "actividad", label: "Actividad", icono: Activity },
     // Solo el administrador de la cuenta administra a los usuarios del RUT.
     ...(esAdminPortal ? [{ id: "usuarios", label: "Usuarios", icono: UserCog }] : []),
   ];

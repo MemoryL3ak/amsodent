@@ -160,6 +160,34 @@ export class StockClientesController {
     );
   }
 
+  /* ── Historial de actividad de la cuenta (2026-09-24) ──────────────────
+     La misma informacion para los dos lados: el cliente lo ve en su portal y
+     Amsodent en la bandeja de pedidos. */
+
+  @UseGuards(StockPortalGuard)
+  @Get('mi-historial')
+  async miHistorial(@Req() req: any, @Query('limite') limite?: string) {
+    return await this.pedidosFlujo.historialDeCuenta(req.stockPortal.rut, Number(limite) || 120);
+  }
+
+  @UseGuards(StockPortalGuard)
+  @Get('mis-avisos')
+  async misAvisos(@Req() req: any) {
+    return await this.pedidosFlujo.avisosSinLeer(req.stockPortal.rut);
+  }
+
+  @UseGuards(StockPortalGuard)
+  @Post('mis-avisos/leidos')
+  async marcarAvisosLeidos(@Req() req: any) {
+    return await this.pedidosFlujo.marcarAvisosLeidos(req.stockPortal.rut);
+  }
+
+  /** Lado Amsodent: historial de la cuenta de un cliente, por RUT. */
+  @Get('historial')
+  async historialCliente(@Query('rut') rut: string, @Query('limite') limite?: string) {
+    return await this.pedidosFlujo.historialDeCuenta(String(rut || '').trim(), Number(limite) || 120);
+  }
+
   @UseGuards(StockPortalGuard)
   @Get('mis-solicitudes/:id/eventos')
   async eventosPedidoCliente(@Req() req: any, @Param('id', ParseIntPipe) id: number) {
