@@ -244,8 +244,14 @@ export default function Inventario() {
 
   const filtradas = useMemo(() => {
     const q = busqueda.trim().toLowerCase();
-    // Los huérfanos van primero: son lo que hay que resolver.
-    const arr = [...filasHuerfanas, ...filas].filter((p) => {
+    // Los huérfanos de Bsale NO se mezclan con el inventario normal (son
+    // cientos y taparían la grilla): entran solo con el filtro «No creados»
+    // o cuando la búsqueda escrita los alcanza (ej. buscar un SKU nuevo).
+    const soloHuerfanos = filtroAlerta === "sin_producto";
+    const huerfanosVisibles = soloHuerfanos || q
+      ? [...filasHuerfanas].sort((a, b) => (Number(b.stock) || 0) - (Number(a.stock) || 0) || String(a.sku).localeCompare(String(b.sku)))
+      : [];
+    const arr = [...huerfanosVisibles, ...filas].filter((p) => {
       if (p.bsale_huerfano) {
         // No tienen estado ni categoría internos; solo entran a los filtros
         // que tienen sentido para ellos.
@@ -289,6 +295,9 @@ export default function Inventario() {
     return { total: base.length, conStock, unidades, valor, bajo, sinStock };
   }, [filas, filtroEstado]);
   const huerfanosConStock = useMemo(() => filasHuerfanas.filter((h) => Number(h.stock) > 0).length, [filasHuerfanas]);
+  // La corrida guardada puede ser anterior a que la sincronización guardara
+  // el stock de los huérfanos: en ese caso todos vienen en null.
+  const huerfanosSinDato = filasHuerfanas.length > 0 && filasHuerfanas.every((h) => h.stock == null);
 
   function toggleOrden(campo) {
     setOrden((o) => (o.campo !== campo ? { campo, dir: "desc" } : o.dir === "desc" ? { campo, dir: "asc" } : { campo: null, dir: "desc" }));
@@ -422,7 +431,7 @@ export default function Inventario() {
           <div className="stat-card" onClick={() => { setVista("stock"); setFiltroAlerta("sin_producto"); }} style={{ cursor: "pointer" }} title="Ver solo los SKUs que existen en Bsale pero no están creados en el sistema">
             <div className="stat-label">No creados en el sistema</div>
             <div className="stat-value" style={{ color: "#c2410c" }}>{fmtNum(filasHuerfanas.length)}</div>
-            <div className="stat-sub">{bsale.ultima?.resumen ? `en Bsale · ${fmtNum(huerfanosConStock)} con stock` : "requiere una sincronización"}</div>
+            <div className="stat-sub">{!bsale.ultima?.resumen ? "requiere una sincronización" : huerfanosSinDato ? "en Bsale · sincroniza para ver su stock" : `en Bsale · ${fmtNum(huerfanosConStock)} con stock`}</div>
           </div>
         )}
       </div>
@@ -571,11 +580,27 @@ export default function Inventario() {
             </div>
           </div>
 
+          {filasHuerfanas.length > 0 && filtroAlerta !== "sin_producto" && !busqueda.trim() && (
+            <div style={{ marginTop: 14, padding: "10px 14px", borderRadius: 10, background: "#fff7ed", border: "1px solid #fed7aa", boxShadow: "inset 3px 0 0 #f97316", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <AlertTriangle size={15} style={{ color: "#c2410c", flexShrink: 0 }} />
+              <div style={{ flex: 1, minWidth: 220, fontSize: 12.5 }}>
+                <strong style={{ color: "#c2410c" }}>{fmtNum(filasHuerfanas.length)} SKUs existen en Bsale y no están creados en el sistema</strong>
+                {huerfanosSinDato ? " · corre «Sincronizar ahora» para ver su stock" : huerfanosConStock > 0 ? ` · ${fmtNum(huerfanosConStock)} con stock en Bsale` : " · ninguno con stock"}
+                . No aparecen en esta grilla hasta que se creen acá; también puedes buscarlos por SKU.
+              </div>
+              <button className="btn btn-sm btn-secondary" onClick={() => setFiltroAlerta("sin_producto")} style={{ whiteSpace: "nowrap" }}>
+                Ver los no creados
+              </button>
+            </div>
+          )}
+
           <div className="surface" style={{ marginTop: 14, overflowX: "auto" }}>
             {loading ? (
               <div style={{ padding: "36px 24px", color: "var(--text-muted)" }}>Cargando inventario…</div>
             ) : filtradas.length === 0 ? (
-              <div style={{ padding: "36px 24px", color: "var(--text-muted)" }}>Sin productos para el filtro.</div>
+              <div style={{ padding: "36px 24px", color: "var(--text-muted)" }}>
+                {filtroAlerta === "sin_producto" ? "Todos los SKUs de Bsale están creados en el sistema." : "Sin productos para el filtro."}
+              </div>
             ) : (
               <table className="data-table" style={{ width: "100%", minWidth: 1080 }}>
                 <thead>
