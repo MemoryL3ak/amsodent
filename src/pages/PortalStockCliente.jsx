@@ -1843,6 +1843,8 @@ function PantallaDeclaracion({ cliente, setToast }) {
         />
       ) : tab === "usuarios" ? (
         <PanelUsuariosPortal setToast={setToast} />
+      ) : tab === "showroom" ? (
+        <PanelShowroom />
       ) : tab === "actividad" ? (
         <PanelHistorialPortal />
       ) : tab === "explorador" ? (
@@ -2371,11 +2373,300 @@ function AvisosPortal({ onVerHistorial }) {
     </div>
   );
 }
+/* ── Showroom (2026-09-24) ────────────────────────────────────────────────
+   Vitrina de venta al público para el cliente del portal: productos de
+   Prevención e Higiene que él le revende a su paciente. Muestra tres números
+   que solo tienen sentido juntos — lo que le cuesta comprarnos, lo que le
+   sugerimos cobrar y lo que gana — y permite marcar VARIOS de una vez y
+   mandarlos juntos al mismo carrito de siempre.
+
+   Las líneas viajan con `origen: "showroom"`, que es lo que después separa
+   estos pedidos en la bandeja de Amsodent y alimenta su KPI. */
+function PanelShowroom() {
+  const [datos, setDatos] = useState(null);
+  const [error, setError] = useState("");
+  const [q, setQ] = useState("");
+  const [marca, setMarca] = useState("");
+  // Selección múltiple: sku → cantidad. Se manda todo junto al carrito.
+  const [marcados, setMarcados] = useState({});
+  const [, escribirCarrito] = useCarritoPortal();
+
+  useEffect(() => {
+    let vivo = true;
+    apiRequest("/stock-clientes/showroom")
+      .then((r) => { if (vivo) setDatos(r); })
+      .catch((e) => { if (vivo) { setError(e?.message || "No se pudo cargar el Showroom."); setDatos({ items: [], marcas: [] }); } });
+    return () => { vivo = false; };
+  }, []);
+
+  const items = useMemo(() => {
+    const todos = datos?.items || [];
+    const termino = q.trim().toLowerCase();
+    return todos.filter((p) => {
+      if (marca && p.marca !== marca) return false;
+      if (!termino) return true;
+      return `${p.nombre} ${p.sku || ""} ${p.marca || ""}`.toLowerCase().includes(termino);
+    });
+  }, [datos, q, marca]);
+
+  const seleccionados = Object.entries(marcados).filter(([, c]) => Number(c) > 0);
+  const totalSeleccion = seleccionados.reduce((acc, [sku, cant]) => {
+    const p = (datos?.items || []).find((x) => x.sku === sku);
+    return acc + (p ? Number(p.precio_cliente) * Number(cant) : 0);
+  }, 0);
+
+  function alternar(p) {
+    setMarcados((prev) => {
+      const copia = { ...prev };
+      if (copia[p.sku]) delete copia[p.sku];
+      else copia[p.sku] = 1;
+      return copia;
+    });
+  }
+
+  function cambiarCantidad(sku, delta) {
+    setMarcados((prev) => {
+      const actual = Number(prev[sku] || 0) + delta;
+      const copia = { ...prev };
+      if (actual <= 0) delete copia[sku];
+      else copia[sku] = actual;
+      return copia;
+    });
+  }
+
+  function agregarSeleccionAlCarrito() {
+    const lineas = seleccionados
+      .map(([sku, cantidad]) => {
+        const p = (datos?.items || []).find((x) => x.sku === sku);
+        if (!p) return null;
+        return {
+          nombre: p.nombre,
+          sku: p.sku,
+          // Clave estable del carrito (los del explorador usan su URL).
+          url: `showroom:${p.sku}`,
+          tienda: "Showroom Amsodent",
+          origen: "showroom",
+          precio: Number(p.precio_cliente) || 0,
+          imagen: p.imagen || null,
+          cantidad: Number(cantidad) || 1,
+          unidad: "un",
+        };
+      })
+      .filter(Boolean);
+    if (!lineas.length) return;
+    carritoAbrirPendiente = true;
+    escribirCarrito((prev) => {
+      const copia = [...prev];
+      for (const l of lineas) {
+        const i = copia.findIndex((c) => c.url === l.url);
+        if (i >= 0) copia[i] = { ...copia[i], cantidad: Number(copia[i].cantidad || 0) + l.cantidad };
+        else copia.push(l);
+      }
+      return copia;
+    });
+    setMarcados({});
+    window.dispatchEvent(new CustomEvent(CARRITO_ABRIR));
+  }
+
+  if (datos == null) {
+    return <div style={{ padding: 24, color: "#64748b", fontSize: 14 }}>Cargando el Showroom…</div>;
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      <div>
+        <h2 style={{ fontSize: 17, fontWeight: 800, color: "#0f172a", margin: 0 }}>Showroom</h2>
+        <p style={{ fontSize: 13, color: "#64748b", margin: "4px 0 0" }}>
+          Productos de prevención e higiene para revender en tu consulta. Marca los que
+          quieras y mándalos todos juntos al carrito.
+        </p>
+      </div>
+
+      {error && <div style={{ fontSize: 13, color: "#b91c1c" }}>{error}</div>}
+
+      {/* Filtros */}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        <div style={{ position: "relative", flex: "1 1 220px", minWidth: 180 }}>
+          <Search size={15} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "#94a3b8" }} />
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Buscar por nombre, SKU o marca…"
+            style={{ width: "100%", padding: "9px 12px 9px 32px", borderRadius: 10, border: "1px solid #e2e8f0", fontSize: 13.5, fontFamily: "inherit" }}
+          />
+        </div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          <button
+            type="button"
+            onClick={() => setMarca("")}
+            style={{ ...chipShowroom, ...(marca === "" ? chipShowroomActivo : {}) }}
+          >
+            Todas
+          </button>
+          {(datos.marcas || []).slice(0, 12).map((m) => (
+            <button
+              key={m}
+              type="button"
+              onClick={() => setMarca(marca === m ? "" : m)}
+              style={{ ...chipShowroom, ...(marca === m ? chipShowroomActivo : {}) }}
+            >
+              {m}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Grilla de productos */}
+      {items.length === 0 ? (
+        <div style={{ border: "1px dashed #cbd5e1", borderRadius: 12, padding: 28, textAlign: "center", color: "#64748b", fontSize: 13.5 }}>
+          {datos.items?.length ? "Ningún producto calza con la búsqueda." : "Todavía no hay productos publicados en el Showroom."}
+        </div>
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(215px, 1fr))", gap: 12 }}>
+          {items.map((p) => {
+            const cant = Number(marcados[p.sku] || 0);
+            const elegido = cant > 0;
+            return (
+              <div
+                key={p.sku || p.id}
+                style={{
+                  border: `1.5px solid ${elegido ? TEAL : "#e2e8f0"}`,
+                  background: elegido ? "#f0fdfa" : "#fff",
+                  borderRadius: 14,
+                  overflow: "hidden",
+                  display: "flex",
+                  flexDirection: "column",
+                  transition: "border-color .15s, background .15s",
+                }}
+              >
+                {/* Imagen + casilla de selección */}
+                <button
+                  type="button"
+                  onClick={() => alternar(p)}
+                  title={elegido ? "Quitar de la selección" : "Agregar a la selección"}
+                  style={{ position: "relative", border: "none", padding: 0, background: "#f8fafc", cursor: "pointer", height: 132, display: "flex", alignItems: "center", justifyContent: "center" }}
+                >
+                  {p.imagen ? (
+                    <img src={p.imagen} alt={p.nombre} style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }} loading="lazy" />
+                  ) : (
+                    <Database size={26} style={{ color: "#cbd5e1" }} />
+                  )}
+                  <span
+                    style={{
+                      position: "absolute", top: 8, left: 8, width: 21, height: 21, borderRadius: 6,
+                      border: `1.5px solid ${elegido ? TEAL : "#cbd5e1"}`,
+                      background: elegido ? TEAL : "rgba(255,255,255,.9)",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                    }}
+                  >
+                    {elegido && <CheckCircle2 size={14} style={{ color: "#fff" }} />}
+                  </span>
+                </button>
+
+                <div style={{ padding: "9px 11px 11px", display: "flex", flexDirection: "column", gap: 5, flex: 1 }}>
+                  <div style={{ fontSize: 12.5, fontWeight: 700, color: "#0f172a", lineHeight: 1.3 }}>{p.nombre}</div>
+                  <div style={{ fontSize: 10.5, color: "#94a3b8", fontFamily: "ui-monospace, monospace" }}>
+                    {p.sku}{p.marca ? ` · ${p.marca}` : ""}
+                  </div>
+
+                  {/* Los tres números: cuánto te cuesta, cuánto cobrar, cuánto ganas. */}
+                  <div style={{ display: "flex", flexDirection: "column", gap: 2, marginTop: "auto", paddingTop: 6 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}>
+                      <span style={{ color: "#64748b" }}>Tu precio</span>
+                      <strong style={{ color: "#0f172a" }}>{fmtMoneda(p.precio_cliente)}</strong>
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}>
+                      <span style={{ color: "#64748b" }}>Venta sugerida</span>
+                      <strong style={{ color: p.precio_sugerido ? "#0f172a" : "#94a3b8" }}>
+                        {p.precio_sugerido ? fmtMoneda(p.precio_sugerido) : "sin definir"}
+                      </strong>
+                    </div>
+                    {p.margen != null && (
+                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}>
+                        <span style={{ color: "#15803d" }}>Ganas</span>
+                        <strong style={{ color: "#15803d" }}>
+                          {fmtMoneda(p.margen)}{p.margen_pct != null ? ` · ${p.margen_pct}%` : ""}
+                        </strong>
+                      </div>
+                    )}
+                  </div>
+
+                  {elegido && (
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginTop: 6, borderTop: "1px solid #ccfbf1", paddingTop: 7 }}>
+                      <button type="button" onClick={() => cambiarCantidad(p.sku, -1)} style={botonCantidad} title="Quitar una unidad">
+                        <Minus size={13} />
+                      </button>
+                      <span style={{ fontSize: 13, fontWeight: 800, color: TEAL }}>{cant}</span>
+                      <button type="button" onClick={() => cambiarCantidad(p.sku, 1)} style={botonCantidad} title="Agregar una unidad">
+                        <Plus size={13} />
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Barra de selección: sale del borde inferior cuando hay algo marcado. */}
+      {seleccionados.length > 0 && (
+        <div
+          style={{
+            position: "sticky", bottom: 12, zIndex: 20,
+            display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap",
+            background: "#0f172a", color: "#fff", borderRadius: 14, padding: "11px 16px",
+            boxShadow: "0 12px 28px rgba(15,23,42,.28)",
+          }}
+        >
+          <span style={{ fontSize: 13.5, fontWeight: 700 }}>
+            {seleccionados.length} producto{seleccionados.length === 1 ? "" : "s"} seleccionado
+            {seleccionados.length === 1 ? "" : "s"}
+          </span>
+          <span style={{ fontSize: 13, opacity: 0.85 }}>{fmtMoneda(totalSeleccion)}</span>
+          <div style={{ flex: 1 }} />
+          <button type="button" onClick={() => setMarcados({})} style={{ background: "none", border: "1px solid rgba(255,255,255,.35)", color: "#fff", borderRadius: 9, padding: "7px 12px", fontSize: 12.5, cursor: "pointer", fontFamily: "inherit" }}>
+            Limpiar
+          </button>
+          <button type="button" onClick={agregarSeleccionAlCarrito} style={{ background: TEAL_LIGHT, border: "none", color: "#04252b", borderRadius: 9, padding: "7px 14px", fontSize: 12.5, fontWeight: 800, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6, fontFamily: "inherit" }}>
+            <ShoppingCart size={14} /> Agregar al carrito
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const chipShowroom = {
+  border: "1px solid #e2e8f0",
+  background: "#fff",
+  color: "#475569",
+  borderRadius: 999,
+  padding: "6px 12px",
+  fontSize: 12,
+  cursor: "pointer",
+  fontFamily: "inherit",
+  whiteSpace: "nowrap",
+};
+const chipShowroomActivo = { background: TEAL, borderColor: TEAL, color: "#fff", fontWeight: 700 };
+const botonCantidad = {
+  width: 26,
+  height: 26,
+  borderRadius: 7,
+  border: "1px solid #ccfbf1",
+  background: "#fff",
+  color: TEAL,
+  cursor: "pointer",
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+};
 function TabNavigator({ tab, onChange, contadorSolicitudes, esAdminPortal }) {
   const opciones = [
     { id: "resumen", label: "Resumen", icono: Activity },
     { id: "declaracion", label: "Gestión de Stock", icono: Database },
     { id: "solicitudes", label: "Mis cotizaciones", icono: FileSpreadsheet },
+    { id: "showroom", label: "Showroom", icono: ShoppingCart },
     { id: "explorador", label: "Explorador de precios", icono: Search },
     { id: "actividad", label: "Actividad", icono: Activity },
     // Solo el administrador de la cuenta administra a los usuarios del RUT.
