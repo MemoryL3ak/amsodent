@@ -251,7 +251,7 @@ export default function SidebarLayout() {
       ],
     },
     esAdmin && { to: "/analisis-mercado-publico", icon: Scale, label: "Análisis Mercado Público" },
-    esAdmin && { to: "/reporteria", icon: FilePieChart, label: "Reportería" },
+    puede("reporteria") && { to: "/reporteria", icon: FilePieChart, label: "Reportería" },
     (puede("cotizaciones_vendedor") || puede("resumen_comercial")) && { to: "/cotizaciones-vendedor", icon: BarChart3, label: "Panel de Ejecutivos" },
   ].filter(Boolean);
 

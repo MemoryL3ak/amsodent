@@ -34,6 +34,9 @@ export const MODULOS: string[] = [
   'usuarios',
   'monitoreo_usuarios',
   'monitoreo_asistencia',
+  // Reportería (2026-09-24): reportes a medida sin SQL sobre vistas de
+  // negocio. Asignable por perfil; no va en ningún ROLE_DEFAULTS.
+  'reporteria',
 ];
 
 // Módulos visibles para todos los roles autenticados (base comercial + comunicación).

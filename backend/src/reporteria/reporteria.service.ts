@@ -1,5 +1,7 @@
-import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, Logger } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
+import { esRolAdmin } from '../auth/permisos';
+import { VISTAS, VISTAS_POR_ID, columnasVisibles, puedeVerCostos } from './vistas';
 
 /* ── Reportería (2026-09-17) ──────────────────────────────────────────────
    Motor del módulo /reporteria: catálogo de tablas, constructor visual
@@ -120,8 +122,23 @@ export class ReporteriaService {
     return Array.isArray(data) ? data : [];
   }
 
-  /* ── Catálogo de tablas y columnas ──────────────────────────────────── */
-  async catalogo() {
+  /* ── Catálogo: vistas de negocio (según rol) + tablas crudas (admin) ── */
+  async catalogo(rol?: string) {
+    const admin = esRolAdmin(rol);
+    const vistas = VISTAS.map((v) => ({
+      id: v.id,
+      nombre: v.nombre,
+      descripcion: v.descripcion,
+      grano: v.grano,
+      columnas: columnasVisibles(v, rol),
+    }));
+    const base = { vistas, puedeSQL: admin, puedeTablas: admin, veCostos: puedeVerCostos(rol) };
+    if (!admin) return { ...base, tablas: [], recomendadas: [] };
+    const crudo = await this.catalogoTablas();
+    return { ...base, ...crudo };
+  }
+
+  private async catalogoTablas() {
     // Cache de 5 minutos: el esquema no cambia a cada rato.
     if (this.catalogoCache && Date.now() - this.catalogoCache.en < 5 * 60_000) {
       return this.catalogoCache.data;
@@ -151,8 +168,23 @@ export class ReporteriaService {
   }
 
   /* ── Constructor visual → SQL ───────────────────────────────────────── */
-  private async validarContraCatalogo(tabla: string, campos: string[]) {
-    const cat = await this.catalogo();
+  private async validarContraCatalogo(tabla: string, campos: string[], rol?: string) {
+    const vista = VISTAS_POR_ID[tabla];
+    if (vista) {
+      const nombres = new Set(columnasVisibles(vista, rol).map((c) => c.nombre));
+      for (const c of campos) {
+        if (!nombres.has(c)) {
+          const existe = vista.columnas.some((x) => x.nombre === c);
+          if (existe) throw new ForbiddenException(`La columna "${c}" (costo/margen) no está disponible para tu perfil.`);
+          throw new BadRequestException(`La columna "${c}" no existe en "${vista.nombre}".`);
+        }
+      }
+      return;
+    }
+    if (!esRolAdmin(rol)) {
+      throw new ForbiddenException('Las tablas crudas son solo para administración: elige una vista de negocio.');
+    }
+    const cat = await this.catalogoTablas();
     const t = (cat.tablas as any[]).find((x) => x.tabla === tabla);
     if (!t) throw new BadRequestException(`La tabla "${tabla}" no existe en el catálogo.`);
     const nombres = new Set(t.columnas.map((c: any) => c.nombre));
@@ -164,7 +196,10 @@ export class ReporteriaService {
   }
 
   construirSQL(config: ConfigConstructor): string {
-    const tabla = ident(config.tabla);
+    // Origen: una vista de negocio (subconsulta definida en vistas.ts) o una
+    // tabla cruda. En ambos casos el resto del SQL se arma igual.
+    const vista = VISTAS_POR_ID[String(config.tabla || '')];
+    const tabla = vista ? `(${vista.sql.trim()}) ${ident(vista.id)}` : ident(config.tabla);
     const agrupar = (config.agrupar || []).filter(Boolean);
     const agregaciones = (config.agregaciones || []).filter((a) => a?.funcion && a?.campo);
     const columnas = (config.columnas || []).filter(Boolean);
@@ -214,17 +249,25 @@ export class ReporteriaService {
     return sql;
   }
 
-  async ejecutarConstructor(config: ConfigConstructor) {
-    if (!config?.tabla) throw new BadRequestException('Elige una tabla para el reporte.');
+  async ejecutarConstructor(config: ConfigConstructor, rol?: string) {
+    if (!config?.tabla) throw new BadRequestException('Elige un origen para el reporte.');
     const campos = [
       ...(config.columnas || []),
       ...(config.filtros || []).map((f) => f.campo),
       ...(config.agrupar || []),
       ...(config.agregaciones || []).map((a) => a.campo).filter((c) => c !== '*'),
     ].filter(Boolean);
-    await this.validarContraCatalogo(config.tabla, campos);
-    const sql = this.construirSQL(config);
-    return await this.ejecutarSQL(sql, { incluirSQL: true });
+    await this.validarContraCatalogo(config.tabla, campos, rol);
+    // En una vista, "todas las columnas" = las visibles para el rol (así el
+    // `select *` nunca filtra costo/margen a quien no puede verlos).
+    const vista = VISTAS_POR_ID[config.tabla];
+    const cfg = { ...config };
+    const agrupado = (cfg.agrupar || []).length > 0 || (cfg.agregaciones || []).length > 0;
+    if (vista && !agrupado && !(cfg.columnas || []).length) {
+      cfg.columnas = columnasVisibles(vista, rol).map((c) => c.nombre);
+    }
+    const sql = this.construirSQL(cfg);
+    return await this.ejecutarSQL(sql, { incluirSQL: esRolAdmin(rol) });
   }
 
   /* ── SQL libre (solo lectura; candados en rpcSql y en la función) ────── */

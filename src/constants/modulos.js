@@ -23,6 +23,10 @@ export const MODULOS = [
   { key: "panel_indicadores", label: "Panel de Indicadores", grupo: "Reportes" },
   { key: "resumen_comercial", label: "Resumen Comercial (incluido en Panel de Ejecutivos)", grupo: "Reportes" },
   { key: "cotizaciones_vendedor", label: "Panel de Ejecutivos", grupo: "Reportes" },
+  // Reportería (2026-09-24): reportes a medida sin SQL sobre vistas de
+  // negocio. Costo y margen solo los ven admin y jefaturas de ventas; las
+  // tablas crudas y el SQL libre siguen siendo solo admin.
+  { key: "reporteria", label: "Reportería (reportes a medida)", grupo: "Reportes" },
   // "Análisis Mercado Público" NO es asignable por perfil: es solo admin
   // (RequireRole en la ruta + AdminGuard en el backend).
   { key: "sorteo", label: "Sorteo", grupo: "Herramientas" },
