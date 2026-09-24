@@ -1585,6 +1585,8 @@ export class StockClientesService {
         url?: string;
       }>;
       nota?: string;
+      // 'stock' | 'explorador' | 'showroom': de qué sección del portal salió.
+      origen_seccion?: string;
       contacto_nombre?: string;
       contacto_email?: string;
       contacto_telefono?: string;
@@ -1655,7 +1657,13 @@ export class StockClientesService {
     const rol = rolDeToken(payload);
     const yaAprobado = rol === 'admin';
     const ahoraIso = new Date().toISOString();
+    const SECCIONES = ['stock', 'explorador', 'showroom'];
+    const origenSeccion = SECCIONES.includes(String(body?.origen_seccion || ''))
+      ? String(body.origen_seccion)
+      : null;
+
     const camposFlujo = {
+      origen_seccion: origenSeccion,
       flujo_estado: yaAprobado ? 'aprobado_cliente' : 'pendiente_aprobacion',
       creado_por_usuario_id: payload.usuario_id ?? null,
       creado_por_email: payload.usuario_email ?? null,
@@ -1682,7 +1690,7 @@ export class StockClientesService {
     let { data: solicitud, error } = await insertar({ ...base, ...camposFlujo });
     // Si la migración del flujo aún no está aplicada, el pedido se crea igual
     // (y se comporta como antes: sin etapa de aprobación).
-    if (error && /flujo_estado|creado_por|aprobado_cliente/.test(error.message)) {
+    if (error && /flujo_estado|creado_por|aprobado_cliente|origen_seccion/.test(error.message)) {
       ({ data: solicitud, error } = await insertar(base));
     }
     if (error) throw new BadRequestException(error.message);

@@ -2905,7 +2905,19 @@ export class LicitacionesService {
     };
   }
 
-  async updateDocumento(docId: number, body: Record<string, any>) {
+  async updateDocumento(docId: number, body: Record<string, any>, email?: string) {
+    /* (2026-09-24) La observación de la OC se pisaba sin dejar rastro: no se
+       sabía de cuándo era ni quién la escribió. Ahora cada edición estampa
+       fecha y autor en el propio documento y deja una fila en el histórico. */
+    const tocaObservacion = Object.prototype.hasOwnProperty.call(body, 'observacion_despacho');
+    if (tocaObservacion) {
+      body = {
+        ...body,
+        observacion_actualizada_at: new Date().toISOString(),
+        observacion_actualizada_por: email || 'sistema',
+      };
+    }
+
     const intentar = (payload: Record<string, any>) =>
       this.supabase.getClient()
         .from('licitacion_documentos')
@@ -2928,6 +2940,8 @@ export class LicitacionesService {
         'factoring_vencimiento',
         'banco_pago',
         'observacion_despacho',
+        'observacion_actualizada_at',
+        'observacion_actualizada_por',
       ];
       const aQuitar = opcionales.filter((c) => msg.includes(c));
       if (aQuitar.length) {
@@ -2938,7 +2952,37 @@ export class LicitacionesService {
     }
 
     if (error) throw new BadRequestException(error.message);
+
+    /* Histórico: una fila por edición, para poder leer cómo fue cambiando la
+       observación. Si la tabla aún no está migrada no se hace fallar el
+       guardado — lo importante es que la observación quedó escrita. */
+    if (tocaObservacion) {
+      const { error: errHist } = await this.supabase.getClient()
+        .from('documento_observaciones')
+        .insert({
+          documento_id: docId,
+          observacion: body.observacion_despacho || null,
+          usuario_email: email || 'sistema',
+        });
+      if (errHist) {
+        this.logger.warn(`Sin histórico de observación para el documento ${docId}: ${errHist.message}`);
+      }
+    }
+
     return data;
+  }
+
+  /** Histórico de observaciones de un documento, de la más nueva a la más vieja. */
+  async observacionesDocumento(docId: number) {
+    const { data, error } = await this.supabase.getClient()
+      .from('documento_observaciones')
+      .select('id, observacion, usuario_email, created_at')
+      .eq('documento_id', docId)
+      .order('created_at', { ascending: false })
+      .limit(50);
+    // Tabla sin migrar todavía: se devuelve vacío en vez de romper la pantalla.
+    if (error) return [];
+    return data || [];
   }
 
   async deleteDocumento(docId: number) {

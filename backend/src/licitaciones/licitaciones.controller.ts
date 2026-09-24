@@ -299,8 +299,15 @@ export class LicitacionesController {
   }
 
   @Put('documentos/:docId')
-  updateDocumento(@Param('docId', ParseIntPipe) docId: number, @Body() body: any) {
-    return this.licitacionesService.updateDocumento(docId, body);
+  updateDocumento(@Param('docId', ParseIntPipe) docId: number, @Body() body: any, @Req() req: any) {
+    // El correo va aparte del body: la observación del documento deja
+    // histórico con autor y no puede depender de lo que mande el cliente.
+    return this.licitacionesService.updateDocumento(docId, body, (req?.user?.email || '').toLowerCase());
+  }
+
+  @Get('documentos/:docId/observaciones')
+  observacionesDocumento(@Param('docId', ParseIntPipe) docId: number) {
+    return this.licitacionesService.observacionesDocumento(docId);
   }
 
   @Delete('documentos/:docId')

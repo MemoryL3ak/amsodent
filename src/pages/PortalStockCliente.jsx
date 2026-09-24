@@ -153,15 +153,27 @@ function fmtPrecioInput(v) {
   return n ? n.toLocaleString("es-CL") : "";
 }
 
-/* Flete del portal (2026-09-16): el pedido que nace en el portal tiene su
-   propia regla, distinta de la del particular en plataforma ($70.000):
-   sobre $150.000 en Región Metropolitana el despacho es gratuito; bajo ese
-   monto (o fuera de la RM) lo cotiza el vendedor y viaja como ítem aparte. */
-const PORTAL_FLETE_GRATIS_RM = 150000;
+/* Flete del portal (2026-09-24): el pedido que nace en el portal se rige por
+   las MISMAS dos reglas que el resto de las cotizaciones, no por un mínimo
+   propio de $150.000 como hasta ahora:
+     · destino San Bernardo → gratis siempre, sin mínimo de compra;
+     · resto de la Región Metropolitana → gratis sobre $70.000 brutos.
+   Fuera de la RM lo cotiza el vendedor y viaja como ítem aparte. Quien decide
+   de verdad es el backend (fletes.service.ts); acá solo se anuncia. */
+const PORTAL_FLETE_GRATIS_RM = 70000;
+
+const esSanBernardo = (comuna) =>
+  String(comuna || "")
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .trim()
+    .toLowerCase() === "san bernardo";
 
 // Aviso del umbral: si falta poco, dice cuánto; si ya lo superó, lo celebra.
-function AvisoDespachoGratis({ total, compacto = false }) {
-  const alcanza = Number(total || 0) >= PORTAL_FLETE_GRATIS_RM;
+// En San Bernardo no hay umbral que mostrar: siempre es gratis.
+function AvisoDespachoGratis({ total, compacto = false, comuna = "" }) {
+  const siempreGratis = esSanBernardo(comuna);
+  const alcanza = siempreGratis || Number(total || 0) >= PORTAL_FLETE_GRATIS_RM;
   const falta = Math.max(0, PORTAL_FLETE_GRATIS_RM - Number(total || 0));
   const pct = Math.min(100, (Number(total || 0) / PORTAL_FLETE_GRATIS_RM) * 100);
   return (
@@ -178,11 +190,13 @@ function AvisoDespachoGratis({ total, compacto = false }) {
     >
       <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 11.5, lineHeight: 1.4, color: alcanza ? "#15803d" : "#475569" }}>
         <Truck size={14} style={{ flexShrink: 0 }} />
-        {alcanza ? (
-          <span><strong>¡Despacho gratuito!</strong> Tu pedido supera los $150.000 en Región Metropolitana.</span>
+        {siempreGratis ? (
+          <span><strong>¡Despacho gratuito!</strong> Despachamos sin costo a San Bernardo, sin monto mínimo.</span>
+        ) : alcanza ? (
+          <span><strong>¡Despacho gratuito!</strong> Tu pedido supera los $70.000 en Región Metropolitana.</span>
         ) : (
           <span>
-            <strong>Sobre $150.000 en RM despacho gratuito.</strong> Te faltan {fmtMoneda(falta)}.
+            <strong>Sobre $70.000 en RM despacho gratuito.</strong> Te faltan {fmtMoneda(falta)}.
           </span>
         )}
       </div>
@@ -207,6 +221,11 @@ function AvisoDespachoGratis({ total, compacto = false }) {
 const CARRITO_KEY = "portal_carrito";
 const CARRITO_EVENTO = "portal-carrito-cambio";
 const CARRITO_ABRIR = "portal-carrito-abrir";
+/* (2026-09-24) Al enviar un pedido, "Mis cotizaciones" quedaba desactualizada
+   hasta que el cliente recargaba la página: el pedido recién enviado no
+   aparecía por ninguna parte y daba la sensación de que no se había mandado.
+   El carrito vive lejos del panel en el árbol, así que avisa por evento. */
+const PEDIDO_ENVIADO = "portal-pedido-enviado";
 
 function leerCarrito() {
   try {
@@ -1307,6 +1326,20 @@ function PantallaDeclaracion({ cliente, setToast }) {
       }
     })();
     // Solo al montar: el retorno de Transbank ocurre una vez.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /* Refresco automático al enviar un pedido: el carrito avisa por evento y acá
+     se recarga la lista y se salta a "Mis cotizaciones", donde el cliente ve
+     inmediatamente lo que acaba de mandar. */
+  useEffect(() => {
+    const alEnviar = () => {
+      cargarSolicitudes();
+      setTab("solicitudes");
+    };
+    window.addEventListener(PEDIDO_ENVIADO, alEnviar);
+    return () => window.removeEventListener(PEDIDO_ENVIADO, alEnviar);
+    // cargarSolicitudes se redefine en cada render pero siempre hace lo mismo.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -2600,12 +2633,21 @@ function PanelExploradorPrecios() {
             };
           }),
           nota: notaFinal,
+          // De qué sección del portal salió: la bandeja de Amsodent separa el
+          // Showroom del resto y el KPI de Showroom se calcula sobre esto.
+          origen_seccion: carrito.some((c) => c.origen === "showroom")
+            ? "showroom"
+            : hayStock && !hayExplorador
+              ? "stock"
+              : "explorador",
           contacto_nombre: contactoPedido.nombre.trim() || undefined,
           contacto_email: contactoPedido.email.trim() || undefined,
           contacto_telefono: contactoPedido.telefono.trim() || undefined,
         }),
       });
       setPedidoEnviado({ id: resp?.solicitud?.id });
+      // Que la lista de cotizaciones se refresque sola, sin recargar la página.
+      window.dispatchEvent(new CustomEvent(PEDIDO_ENVIADO, { detail: { id: resp?.solicitud?.id } }));
       setCarrito([]);
       setNotaPedido("");
       setPasoCarrito("carrito");
@@ -2916,6 +2958,9 @@ function PanelExploradorPrecios() {
         const clientePortal = (() => {
           try { return JSON.parse(localStorage.getItem(CLIENTE_KEY) || "null"); } catch { return null; }
         })();
+        // Comuna de despacho: define si el flete es gratis sin mínimo.
+        const comunaDespacho =
+          clientePortal?.comuna || clientePortal?.sucursal?.comuna || clientePortal?.direccion_comuna || "";
         const enResumen = pasoCarrito === "resumen";
         const hoy = new Date();
         const fechaHoy = `${String(hoy.getDate()).padStart(2, "0")}-${String(hoy.getMonth() + 1).padStart(2, "0")}-${hoy.getFullYear()}`;
@@ -3015,7 +3060,7 @@ function PanelExploradorPrecios() {
                     <span>Total referencial*</span>
                     <strong style={{ color: "#0f172a" }}>{fmtMoneda(totalReferencial)}</strong>
                   </div>
-                  <AvisoDespachoGratis total={totalReferencial} compacto />
+                  <AvisoDespachoGratis total={totalReferencial} compacto comuna={comunaDespacho} />
                   <textarea
                     value={notaPedido}
                     onChange={(e) => setNotaPedido(e.target.value)}
@@ -3097,7 +3142,7 @@ function PanelExploradorPrecios() {
                     </table>
                   </div>
 
-                  <AvisoDespachoGratis total={totalReferencial} />
+                  <AvisoDespachoGratis total={totalReferencial} comuna={comunaDespacho} />
 
                   {/* Nota */}
                   {notaPedido.trim() && (
