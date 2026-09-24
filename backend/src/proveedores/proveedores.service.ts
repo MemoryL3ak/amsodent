@@ -45,6 +45,10 @@ export class ProveedoresService {
       }
       return out;
     };
+
+    const condiciones = ProveedoresService.condicionesDe(body);
+    const preferida = condiciones.find((c) => c.preferida) || condiciones[0] || null;
+
     return {
       razon_social: String(body?.razon_social || '').trim(),
       rut: String(body?.rut || '').trim(),
@@ -56,22 +60,57 @@ export class ProveedoresService {
       observaciones: String(body?.observaciones || '').trim(),
       marcas: lista(body?.marcas),
       palabras_clave: lista(body?.palabras_clave),
-      // Condición de compra (migración 20260916). El plazo solo se guarda
-      // cuando la condición es crédito; en cualquier otro caso queda en null.
-      condicion_compra: CONDICIONES_COMPRA.includes(String(body?.condicion_compra || ''))
-        ? String(body.condicion_compra)
-        : null,
-      credito_dias:
-        String(body?.condicion_compra || '') === 'credito' && Number.isFinite(Number(body?.credito_dias)) && String(body?.credito_dias ?? '') !== ''
-          ? Math.max(0, Math.min(365, Math.round(Number(body.credito_dias))))
-          : null,
+      // Condiciones de compra. Un proveedor puede ofrecer varias (crédito a
+      // 30 días O contado con descuento, por ejemplo), así que se guardan como
+      // lista; `condicion_compra` / `credito_dias` conservan la PREFERIDA para
+      // que siga sirviendo todo lo que ya las lee.
+      condiciones_compra: condiciones,
+      condicion_compra: preferida?.condicion ?? null,
+      credito_dias: preferida?.credito_dias ?? null,
     };
+  }
+
+  /* Normaliza la lista de condiciones de compra. Acepta tanto el formato nuevo
+     (`condiciones_compra`) como el antiguo de un solo campo, para que un
+     cliente sin actualizar siga guardando bien. */
+  private static condicionesDe(body: any) {
+    const crudas = Array.isArray(body?.condiciones_compra)
+      ? body.condiciones_compra
+      : body?.condicion_compra
+      ? [{ condicion: body.condicion_compra, credito_dias: body.credito_dias, preferida: true }]
+      : [];
+
+    const vistas = new Set<string>();
+    const out: Array<{ condicion: string; credito_dias: number | null; nota: string; preferida: boolean }> = [];
+    for (const c of crudas) {
+      const condicion = String(c?.condicion || '').trim();
+      if (!CONDICIONES_COMPRA.includes(condicion)) continue;
+      const dias =
+        condicion === 'credito' && String(c?.credito_dias ?? '') !== '' && Number.isFinite(Number(c?.credito_dias))
+          ? Math.max(0, Math.min(365, Math.round(Number(c.credito_dias))))
+          : null;
+      // La misma condición con el mismo plazo no se repite; con otro plazo sí
+      // (crédito a 30 y a 60 días son dos opciones distintas).
+      const clave = `${condicion}|${dias ?? ''}`;
+      if (vistas.has(clave)) continue;
+      vistas.add(clave);
+      out.push({ condicion, credito_dias: dias, nota: String(c?.nota || '').trim().slice(0, 120), preferida: !!c?.preferida });
+      if (out.length >= 10) break;
+    }
+    // Siempre hay exactamente una preferida mientras haya alguna opción.
+    if (out.length && !out.some((c) => c.preferida)) out[0].preferida = true;
+    let yaHay = false;
+    for (const c of out) {
+      if (c.preferida && yaHay) c.preferida = false;
+      if (c.preferida) yaHay = true;
+    }
+    return out;
   }
 
   /* Si la migración de la condición de compra aún no está aplicada, se guarda
      el resto en vez de fallar (mismo criterio que el resto del proyecto). */
   private sinCondicion(fila: Record<string, any>) {
-    const { condicion_compra, credito_dias, ...resto } = fila;
+    const { condicion_compra, credito_dias, condiciones_compra, ...resto } = fila;
     return resto;
   }
   private faltaColumna(error: any) {

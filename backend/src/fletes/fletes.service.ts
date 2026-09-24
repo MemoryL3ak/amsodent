@@ -270,12 +270,13 @@ export class FletesService {
     const comuna = String(body?.comuna || '').trim();
     const tipoCotizacion = String(body?.tipo_cotizacion || '').trim().toLowerCase();
     const totalCompra = Number(body?.total_compra) || 0;
-    /* (2026-09-16) La cotización que nace de un pedido del portal tiene su
-       propio mínimo de despacho gratis en la RM: $150.000 en vez de $70.000.
-       Es la regla que se le promete al cliente en el portal, así que tiene
-       que ser la misma que aplica el cálculo. */
+    /* (2026-09-24) El pedido nacido del portal tenía su propio mínimo de
+       despacho gratis en la RM ($150.000). Se unificó: rigen las mismas dos
+       reglas para todos — San Bernardo siempre gratis y RM ≥ $70.000 —, que
+       es lo que el portal le promete al cliente. `origen` se sigue leyendo
+       solo para dejarlo dicho en el detalle. */
     const desdePortal = String(body?.origen || '').trim().toLowerCase() === 'portal';
-    const minimoRM = desdePortal ? 150000 : 70000;
+    const minimoRM = 70000;
 
     if (!['Starken', 'Blue', 'Interno'].includes(empresa)) {
       throw new BadRequestException('Empresa inválida (Starken, Blue o Interno).');

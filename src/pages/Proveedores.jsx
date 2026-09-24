@@ -6,10 +6,10 @@ import useAuth from "../hooks/useAuth";
 import Toast from "../components/Toast";
 import ConfirmModal from "../components/ConfirmModal";
 import DropdownSelect from "../components/ui/DropdownSelect";
-import { Plus, Search, Pencil, Trash2, Building2, X, Save } from "lucide-react";
+import { Plus, Search, Pencil, Trash2, Building2, X, Save, Star } from "lucide-react";
 import CreatableSelect from "react-select/creatable";
 
-const VACIO = { razon_social: "", rut: "", correo: "", telefono: "", contacto: "", direccion: "", rubro: "", observaciones: "", marcas: [], palabras_clave: [], condicion_compra: "", credito_dias: "" };
+const VACIO = { razon_social: "", rut: "", correo: "", telefono: "", contacto: "", direccion: "", rubro: "", observaciones: "", marcas: [], palabras_clave: [], condiciones_compra: [] };
 
 /* Condiciones de compra acordadas con el proveedor (2026-09-16). */
 const CONDICIONES_COMPRA = [
@@ -19,12 +19,130 @@ const CONDICIONES_COMPRA = [
 ];
 const labelCondicion = (v) => CONDICIONES_COMPRA.find((c) => c.value === v)?.label || "";
 
+/* Texto corto de una opción de compra: "Crédito · 30 días". */
+const textoCondicion = (c) =>
+  [labelCondicion(c?.condicion), c?.condicion === "credito" && c?.credito_dias ? `${c.credito_dias} días` : null]
+    .filter(Boolean)
+    .join(" · ");
+
+/* Un proveedor guardado antes de la migración 20260924 solo tiene la condición
+   única; se lee como una lista de un elemento para que la pantalla sea una sola. */
+function condicionesDe(p) {
+  if (Array.isArray(p?.condiciones_compra) && p.condiciones_compra.length) return p.condiciones_compra;
+  if (p?.condicion_compra) {
+    return [{ condicion: p.condicion_compra, credito_dias: p.credito_dias ?? "", nota: "", preferida: true }];
+  }
+  return [];
+}
+
 // react-select compacto acorde a los inputs del proyecto.
 const SELECT_STYLES = {
   control: (base) => ({ ...base, minHeight: 36, borderColor: "var(--border)", fontSize: 13 }),
   menu: (base) => ({ ...base, zIndex: 12000, fontSize: 13 }),
   multiValue: (base) => ({ ...base, background: "var(--primary-light)" }),
 };
+
+/* Editor de las opciones de compra del proveedor. Hasta 2026-09-24 era una
+   sola condición con su plazo; ahora son varias, porque en la práctica un
+   proveedor ofrece crédito Y contado, y el comprador elige según el caso. */
+function EditorCondiciones({ valor, onChange }) {
+  const filas = Array.isArray(valor) ? valor : [];
+
+  const cambiar = (i, parche) =>
+    onChange(filas.map((f, k) => (k === i ? { ...f, ...parche } : f)));
+
+  const agregar = () =>
+    onChange([...filas, { condicion: "contado", credito_dias: "", nota: "", preferida: filas.length === 0 }]);
+
+  const quitar = (i) => {
+    const resto = filas.filter((_, k) => k !== i);
+    // Si se borró la preferida, la primera que queda toma su lugar.
+    if (resto.length && !resto.some((f) => f.preferida)) resto[0] = { ...resto[0], preferida: true };
+    onChange(resto);
+  };
+
+  const marcarPreferida = (i) =>
+    onChange(filas.map((f, k) => ({ ...f, preferida: k === i })));
+
+  return (
+    <div className="field">
+      <label className="field-label">Opciones de compra</label>
+      {filas.length === 0 && (
+        <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 6 }}>
+          Sin definir. Agrega una o más formas acordadas con el proveedor.
+        </div>
+      )}
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {filas.map((f, i) => (
+          <div
+            key={i}
+            style={{
+              display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end",
+              border: "1px solid var(--border)", borderRadius: 10, padding: "8px 10px",
+              background: f.preferida ? "var(--primary-light)" : "transparent",
+            }}
+          >
+            <div style={{ flex: "1 1 180px", minWidth: 150 }}>
+              <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 3 }}>Condición</div>
+              <DropdownSelect
+                value={f.condicion || ""}
+                onChange={(v) => cambiar(i, { condicion: v, credito_dias: v === "credito" ? f.credito_dias : "" })}
+                options={CONDICIONES_COMPRA}
+              />
+            </div>
+            <div style={{ flex: "0 1 120px", minWidth: 100 }}>
+              <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 3 }}>Plazo (días)</div>
+              <input
+                className="input"
+                type="number"
+                min={0}
+                value={f.credito_dias ?? ""}
+                onChange={(e) => cambiar(i, { credito_dias: e.target.value })}
+                placeholder="Ej: 30"
+                disabled={f.condicion !== "credito"}
+                title={f.condicion !== "credito" ? "Solo aplica cuando la condición es crédito" : ""}
+              />
+            </div>
+            <div style={{ flex: "2 1 200px", minWidth: 160 }}>
+              <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 3 }}>Nota</div>
+              <input
+                className="input"
+                value={f.nota || ""}
+                maxLength={120}
+                onChange={(e) => cambiar(i, { nota: e.target.value })}
+                placeholder="Ej: 5% de descuento"
+              />
+            </div>
+            <div style={{ display: "flex", gap: 6, alignItems: "center", paddingBottom: 2 }}>
+              <button
+                type="button"
+                onClick={() => marcarPreferida(i)}
+                title={f.preferida ? "Es la opción preferida" : "Marcar como preferida"}
+                style={{
+                  background: "none", border: "none", cursor: "pointer", padding: 4,
+                  color: f.preferida ? "var(--primary)" : "var(--text-muted)",
+                }}
+              >
+                <Star size={16} fill={f.preferida ? "currentColor" : "none"} />
+              </button>
+              <button
+                type="button"
+                onClick={() => quitar(i)}
+                title="Quitar esta opción"
+                style={{ background: "none", border: "none", cursor: "pointer", padding: 4, color: "#ef4444" }}
+              >
+                <Trash2 size={16} />
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+      <button type="button" className="btn btn-secondary" onClick={agregar} style={{ marginTop: 8 }}>
+        <Plus size={14} /> Agregar opción
+      </button>
+    </div>
+  );
+}
 
 export default function Proveedores() {
   const { rol, cargando } = useAuth();
@@ -192,13 +310,29 @@ export default function Proveedores() {
                   <td>{p.correo || "—"}</td>
                   <td>{p.telefono || "—"}</td>
                   <td>{p.rubro || "—"}</td>
-                  <td style={{ whiteSpace: "nowrap" }}>
-                    {p.condicion_compra ? (
-                      <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 9px", borderRadius: 999, background: "var(--bg)", color: "var(--text)" }}>
-                        {labelCondicion(p.condicion_compra)}
-                        {p.condicion_compra === "credito" && p.credito_dias ? ` · ${p.credito_dias} días` : ""}
-                      </span>
-                    ) : "—"}
+                  <td>
+                    {(() => {
+                      const cs = condicionesDe(p);
+                      if (!cs.length) return "—";
+                      return (
+                        <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                          {cs.map((c, i) => (
+                            <span
+                              key={`${c.condicion}-${c.credito_dias ?? ""}-${i}`}
+                              title={c.nota || (c.preferida ? "Opción preferida" : "")}
+                              style={{
+                                fontSize: 11, fontWeight: 700, padding: "2px 9px", borderRadius: 999,
+                                background: c.preferida ? "var(--primary-light)" : "var(--bg)",
+                                color: c.preferida ? "var(--primary)" : "var(--text)",
+                                whiteSpace: "nowrap",
+                              }}
+                            >
+                              {c.preferida ? "★ " : ""}{textoCondicion(c)}
+                            </span>
+                          ))}
+                        </div>
+                      );
+                    })()}
                   </td>
                   <td style={{ maxWidth: 200 }}>
                     {Array.isArray(p.marcas) && p.marcas.length ? (
@@ -214,7 +348,7 @@ export default function Proveedores() {
                   </td>
                   <td>
                     <div style={{ display: "flex", gap: 4, justifyContent: "flex-end" }}>
-                      <button className="btn btn-sm btn-ghost" title="Editar" onClick={() => setModal({ ...VACIO, ...p, marcas: Array.isArray(p.marcas) ? p.marcas : [], palabras_clave: Array.isArray(p.palabras_clave) ? p.palabras_clave : [] })} style={{ padding: 6 }}><Pencil size={14} /></button>
+                      <button className="btn btn-sm btn-ghost" title="Editar" onClick={() => setModal({ ...VACIO, ...p, marcas: Array.isArray(p.marcas) ? p.marcas : [], palabras_clave: Array.isArray(p.palabras_clave) ? p.palabras_clave : [], condiciones_compra: condicionesDe(p) })} style={{ padding: 6 }}><Pencil size={14} /></button>
                       <button className="btn btn-sm btn-ghost" title="Eliminar" onClick={() => setConfirmDel(p)} style={{ padding: 6, color: "var(--danger)" }}><Trash2 size={14} /></button>
                     </div>
                   </td>
@@ -245,32 +379,15 @@ export default function Proveedores() {
                 <div className="field"><label className="field-label">Teléfono</label><input className="input" value={modal.telefono} onChange={(e) => set({ telefono: e.target.value })} placeholder="+56 9 …" /></div>
                 <div className="field"><label className="field-label">Correo</label><input className="input" value={modal.correo} onChange={(e) => set({ correo: e.target.value })} placeholder="correo@proveedor.cl" /></div>
                 <div className="field"><label className="field-label">Dirección</label><input className="input" value={modal.direccion} onChange={(e) => set({ direccion: e.target.value })} placeholder="Dirección" /></div>
-                <div className="field">
-                  <label className="field-label">Condición de compra</label>
-                  <DropdownSelect
-                    value={modal.condicion_compra || ""}
-                    onChange={(v) => set({
-                      condicion_compra: v,
-                      // El plazo solo tiene sentido con crédito.
-                      credito_dias: v === "credito" ? modal.credito_dias : "",
-                    })}
-                    options={[{ value: "", label: "Sin definir" }, ...CONDICIONES_COMPRA]}
-                  />
-                </div>
-                <div className="field">
-                  <label className="field-label">Plazo del crédito (días)</label>
-                  <input
-                    className="input"
-                    type="number"
-                    min={0}
-                    value={modal.credito_dias ?? ""}
-                    onChange={(e) => set({ credito_dias: e.target.value })}
-                    placeholder="Ej: 30"
-                    disabled={modal.condicion_compra !== "credito"}
-                    title={modal.condicion_compra !== "credito" ? "Solo aplica cuando la condición es crédito" : ""}
-                  />
-                </div>
               </div>
+
+              {/* Opciones de compra: un proveedor puede ofrecer varias (crédito
+                  a 30 días O contado con descuento). La marcada con la estrella
+                  es la preferida y es la que se usa por omisión. */}
+              <EditorCondiciones
+                valor={modal.condiciones_compra || []}
+                onChange={(v) => set({ condiciones_compra: v })}
+              />
               <div className="field">
                 <label className="field-label">Marcas que distribuye</label>
                 <CreatableSelect

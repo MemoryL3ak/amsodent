@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import useAuth from "../hooks/useAuth";
 import {
   Truck,
   UserPlus,
@@ -74,6 +75,7 @@ function EstadoBadge({ estado }) {
 
 /* ── Página ─────────────────────────────────────────────────────────── */
 export default function DespachosChoferes() {
+  const { user } = useAuth();
   const [tab, setTab] = useState("choferes");
   const [toast, setToast] = useState(null);
 
@@ -129,7 +131,7 @@ export default function DespachosChoferes() {
         const docs = await api
           .post("/licitaciones/documentos/filter", {
             filter: { licitacion_ids: ids, tipo: ["orden_compra", "guia_despacho", "cierre_forzado"] },
-            fields: "id,licitacion_id,tipo,numero,monto,fecha_oc,created_at,deriva_de_id,observacion_despacho",
+            fields: "id,licitacion_id,tipo,numero,monto,fecha_oc,created_at,deriva_de_id,observacion_despacho,observacion_actualizada_at,observacion_actualizada_por",
           })
           .catch(() => []);
         setOcDocs(Array.isArray(docs) ? docs : []);
@@ -208,7 +210,10 @@ export default function DespachosChoferes() {
     const limpio = String(texto || "").trim().slice(0, 500);
     const anterior = ocDocs.find((d) => d.id === docId)?.observacion_despacho || "";
     if (limpio === String(anterior || "")) return;
-    setOcDocs((prev) => prev.map((d) => (d.id === docId ? { ...d, observacion_despacho: limpio } : d)));
+    const ahora = new Date().toISOString();
+    setOcDocs((prev) => prev.map((d) => (d.id === docId
+      ? { ...d, observacion_despacho: limpio, observacion_actualizada_at: ahora, observacion_actualizada_por: user?.email || "" }
+      : d)));
     try {
       const actualizado = await api.put(`/licitaciones/documentos/${docId}`, {
         observacion_despacho: limpio || null,
@@ -221,7 +226,7 @@ export default function DespachosChoferes() {
       setOcDocs((prev) => prev.map((d) => (d.id === docId ? { ...d, observacion_despacho: anterior } : d)));
       setToast({ type: "error", message: e?.message || "No se pudo guardar la observación." });
     }
-  }, [ocDocs]);
+  }, [ocDocs, user?.email]);
 
   const viajesFiltrados = useMemo(() => {
     return viajes.filter((v) => {
@@ -708,10 +713,22 @@ const DIAS_OC_VENCIDA = 7;
 
 /* Celda de observación: se ve como texto y al hacer clic se edita. Guarda al
    salir del campo o con Enter; con Escape descarta. */
-function CeldaObservacion({ valor, onGuardar, deshabilitada, motivoDeshabilitada }) {
+function CeldaObservacion({ valor, onGuardar, deshabilitada, motivoDeshabilitada, actualizadaAt, actualizadaPor, onVerHistorial }) {
   const [editando, setEditando] = useState(false);
   const [texto, setTexto] = useState(valor || "");
   useEffect(() => { setTexto(valor || ""); }, [valor]);
+
+  // Cuándo se escribió y quién: sin esto una observación vieja parecía
+  // recién puesta y no se sabía a quién preguntarle.
+  const pie = (() => {
+    if (!valor) return null;
+    const cuando = actualizadaAt
+      ? new Date(actualizadaAt).toLocaleString("es-CL", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })
+      : null;
+    const quien = String(actualizadaPor || "").split("@")[0];
+    if (!cuando && !quien) return null;
+    return [cuando, quien].filter(Boolean).join(" · ");
+  })();
 
   if (deshabilitada) {
     return (
@@ -722,19 +739,36 @@ function CeldaObservacion({ valor, onGuardar, deshabilitada, motivoDeshabilitada
   }
   if (!editando) {
     return (
-      <button
-        type="button"
-        onClick={() => setEditando(true)}
-        title="Clic para escribir una observación"
-        style={{
-          background: "none", border: "none", padding: 0, cursor: "text", textAlign: "left",
-          fontSize: 12, lineHeight: 1.35, width: "100%",
-          color: valor ? "var(--text)" : "var(--text-muted)",
-          fontStyle: valor ? "normal" : "italic",
-        }}
-      >
-        {valor || "Agregar observación…"}
-      </button>
+      <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+        <button
+          type="button"
+          onClick={() => setEditando(true)}
+          title="Clic para escribir una observación"
+          style={{
+            background: "none", border: "none", padding: 0, cursor: "text", textAlign: "left",
+            fontSize: 12, lineHeight: 1.35, width: "100%",
+            color: valor ? "var(--text)" : "var(--text-muted)",
+            fontStyle: valor ? "normal" : "italic",
+          }}
+        >
+          {valor || "Agregar observación…"}
+        </button>
+        {pie && (
+          <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 10.5, color: "var(--text-muted)" }}>{pie}</span>
+            {onVerHistorial && (
+              <button
+                type="button"
+                onClick={onVerHistorial}
+                title="Ver todas las observaciones anteriores"
+                style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: "var(--primary)", fontSize: 10.5, textDecoration: "underline" }}
+              >
+                historial
+              </button>
+            )}
+          </div>
+        )}
+      </div>
     );
   }
   return (
@@ -757,7 +791,69 @@ function CeldaObservacion({ valor, onGuardar, deshabilitada, motivoDeshabilitada
   );
 }
 
+/* Histórico de observaciones de una OC. Cada edición deja una fila con autor
+   y hora; antes la observación se pisaba y no quedaba nada de la anterior. */
+function ModalHistorialObservaciones({ docId, numero, onCerrar }) {
+  const [filas, setFilas] = useState(null);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let vivo = true;
+    api.get(`/licitaciones/documentos/${docId}/observaciones`)
+      .then((r) => { if (vivo) setFilas(Array.isArray(r) ? r : []); })
+      .catch((e) => { if (vivo) { setError(e?.message || "No se pudo cargar el historial."); setFilas([]); } });
+    return () => { vivo = false; };
+  }, [docId]);
+
+  return createPortal(
+    <div
+      style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,.45)", zIndex: 90, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+      onMouseDown={(e) => { if (e.target === e.currentTarget) onCerrar(); }}
+    >
+      <div style={{ background: "var(--surface, #fff)", borderRadius: 12, width: "min(560px, 96vw)", maxHeight: "80vh", display: "flex", flexDirection: "column", boxShadow: "0 18px 48px rgba(15,23,42,.28)" }}>
+        <div style={{ padding: "14px 18px", borderBottom: "1px solid var(--border, #e2e8f0)", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 800 }}>Historial de observaciones</div>
+            <div style={{ fontSize: 12, color: "var(--text-muted)" }}>OC {numero || `#${docId}`}</div>
+          </div>
+          <button type="button" onClick={onCerrar} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)" }}>
+            <X size={18} />
+          </button>
+        </div>
+        <div style={{ padding: "12px 18px 18px", overflowY: "auto" }}>
+          {filas == null ? (
+            <div style={{ fontSize: 13, color: "var(--text-muted)" }}>Cargando…</div>
+          ) : error ? (
+            <div style={{ fontSize: 13, color: "#b91c1c" }}>{error}</div>
+          ) : filas.length === 0 ? (
+            <div style={{ fontSize: 13, color: "var(--text-muted)" }}>
+              Todavía no hay ediciones registradas. El histórico empieza a guardarse desde la migración 20260924.
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {filas.map((f) => (
+                <div key={f.id} style={{ borderLeft: "3px solid var(--primary)", paddingLeft: 10 }}>
+                  <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
+                    {new Date(f.created_at).toLocaleString("es-CL", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+                    {f.usuario_email ? ` · ${String(f.usuario_email).split("@")[0]}` : ""}
+                  </div>
+                  <div style={{ fontSize: 13, lineHeight: 1.4, fontStyle: f.observacion ? "normal" : "italic", color: f.observacion ? "var(--text)" : "var(--text-muted)" }}>
+                    {f.observacion || "(se borró la observación)"}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 function SaldosOcTab({ pendientes, parciales, onGuardarObs }) {
+  // { docId, numero } de la OC cuyo histórico de observaciones se está viendo.
+  const [historialObs, setHistorialObs] = useState(null);
   const fmtCLP = (n) => `$${Math.round(Number(n) || 0).toLocaleString("es-CL")}`;
   const fmtFecha = (iso) => {
     const s = String(iso || "").slice(0, 10);
@@ -833,6 +929,9 @@ function SaldosOcTab({ pendientes, parciales, onGuardarObs }) {
                 <td>
                   <CeldaObservacion
                     valor={f.oc.observacion_despacho || ""}
+                    actualizadaAt={f.oc.observacion_actualizada_at}
+                    actualizadaPor={f.oc.observacion_actualizada_por}
+                    onVerHistorial={() => setHistorialObs({ docId: f.oc.id, numero: f.oc.numero })}
                     onGuardar={(txt) => onGuardarObs(f.oc.id, txt)}
                     deshabilitada={!mostrarDespachado && !(f.dias > DIAS_OC_VENCIDA)}
                     motivoDeshabilitada={`Disponible cuando la OC lleva más de ${DIAS_OC_VENCIDA} días sin guía`}
@@ -899,6 +998,15 @@ function SaldosOcTab({ pendientes, parciales, onGuardarObs }) {
         </div>
         <Tabla filas={parciales} mostrarDespachado={true} />
       </div>
+
+
+      {historialObs && (
+        <ModalHistorialObservaciones
+          docId={historialObs.docId}
+          numero={historialObs.numero}
+          onCerrar={() => setHistorialObs(null)}
+        />
+      )}
     </div>
   );
 }
