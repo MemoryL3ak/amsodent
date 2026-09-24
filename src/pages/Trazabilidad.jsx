@@ -1043,6 +1043,49 @@ export default function Trazabilidad() {
 
     if (cycles.length === 0) cycles.push({ oc: null, guia: null, factura: null, ocGroup: 0 });
 
+    // Orden dentro de la cotización (pedido 2026-09-24): lo pendiente arriba.
+    // Mismo espíritu que el orden entre cotizaciones: 0 = sin factura (falta
+    // facturar) · 1 = factura con pago pendiente · 2 = pagada (o efectivo).
+    // Se ordena por niveles (OC → guía → factura) para que las celdas
+    // fusionadas por rowSpan sigan siendo contiguas: cada OC hereda el mejor
+    // rango de sus ciclos, cada guía el de los suyos, y dentro de una guía
+    // van primero las facturas pendientes. El orden original desempata.
+    const rangoCiclo = (c) => {
+      const f = c.factura;
+      if (!f) return 0;
+      if (f.tipo === "efectivo" || f.pagada) return 2;
+      return 1;
+    };
+    const mejorPorClave = (clave) => {
+      const m = new Map();
+      cycles.forEach((c) => {
+        const k = clave(c);
+        const r = rangoCiclo(c);
+        if (!m.has(k) || r < m.get(k)) m.set(k, r);
+      });
+      return m;
+    };
+    const rangoOc = mejorPorClave((c) => c.ocGroup);
+    const rangoGuia = mejorPorClave((c) => `${c.ocGroup}|${c.guia?.id ?? "-"}`);
+    const posGuia = new Map();
+    cycles.forEach((c, i) => {
+      const k = `${c.ocGroup}|${c.guia?.id ?? "-"}`;
+      if (!posGuia.has(k)) posGuia.set(k, i);
+    });
+    cycles.forEach((c, i) => { c._orden = i; });
+    cycles.sort((a, b) => {
+      const ra = rangoOc.get(a.ocGroup), rb = rangoOc.get(b.ocGroup);
+      if (ra !== rb) return ra - rb;
+      if (a.ocGroup !== b.ocGroup) return a.ocGroup - b.ocGroup;
+      const ka = `${a.ocGroup}|${a.guia?.id ?? "-"}`, kb = `${b.ocGroup}|${b.guia?.id ?? "-"}`;
+      const ga = rangoGuia.get(ka), gb = rangoGuia.get(kb);
+      if (ga !== gb) return ga - gb;
+      if (ka !== kb) return posGuia.get(ka) - posGuia.get(kb);
+      const fa = rangoCiclo(a), fb = rangoCiclo(b);
+      if (fa !== fb) return fa - fb;
+      return a._orden - b._orden;
+    });
+
     // Marcar metadata + rowSpan para fusionar celdas (OC, Guía y Factura). Una
     // misma factura (mismo id) puede aparecer en varias filas (cuando cubre
     // varias guías): se fusiona en una sola celda igual que la OC. Las facturas
