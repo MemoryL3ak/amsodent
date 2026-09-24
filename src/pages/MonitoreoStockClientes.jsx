@@ -4,6 +4,7 @@ import { api } from "../lib/api";
 import { supabase } from "../lib/supabase";
 import useAuth from "../hooks/useAuth";
 import Toast from "../components/Toast";
+import BotonLimpiarFiltros from "../components/BotonLimpiarFiltros";
 import { descargarCSV, descargarReportePDF } from "../lib/reporteStock";
 import { generarPDFSolicitud } from "../components/SolicitudCotizacionDocument.jsx";
 import DateFilter from "../components/DateFilter";

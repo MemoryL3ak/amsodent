@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
 import useAuth from "../hooks/useAuth";
 import MonthCalendarPicker from "../components/MonthCalendarPicker";
+import BotonLimpiarFiltros from "../components/BotonLimpiarFiltros";
 import {
   FileText, ClipboardCheck, Target, Trophy, Banknote, PieChart, GitBranch, Download, TrendingUp,
 } from "lucide-react";

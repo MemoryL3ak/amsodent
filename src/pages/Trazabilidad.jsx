@@ -5,6 +5,7 @@ import { api } from "../lib/api";
 import { Link } from "react-router-dom";
 import useAuth from "../hooks/useAuth";
 import Toast from "../components/Toast";
+import BotonLimpiarFiltros from "../components/BotonLimpiarFiltros";
 import ConfirmModal from "../components/ConfirmModal";
 import Select from "react-select";
 import DateFilter from "../components/DateFilter";

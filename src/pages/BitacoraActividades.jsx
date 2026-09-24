@@ -7,6 +7,7 @@ import { api } from "../lib/api";
 import { supabase } from "../lib/supabase";
 import useAuth from "../hooks/useAuth";
 import Toast from "../components/Toast";
+import BotonLimpiarFiltros from "../components/BotonLimpiarFiltros";
 import ConfirmModal from "../components/ConfirmModal";
 import {
   ChevronLeft, ChevronRight, Plus, X, Trash2, Clock, User, Filter,
@@ -159,17 +160,6 @@ function fmtFechaLarga(d) {
 }
 
 export default function BitacoraActividades() {
-  /* (2026-09-24) Volver a ver todo sin ir borrando filtro por filtro. */
-  const hayFiltros = filtroTipo !== "" || filtroCliente !== "" || filtroTipoCliente !== "" || filtroUsuario !== "" || filtroMotivo !== "" || filtroTipoCli !== "";
-  function limpiarFiltros() {
-    setFiltroTipo("");
-    setFiltroCliente("");
-    setFiltroTipoCliente("");
-    setFiltroUsuario("");
-    setFiltroMotivo("");
-    setFiltroTipoCli("");
-  }
-
   const { user, rol } = useAuth();
   const rolNorm = (rol || "").toString().trim().toLowerCase();
   const esAdmin = rolNorm === "admin" || rolNorm === "administrador";
@@ -193,6 +183,17 @@ export default function BitacoraActividades() {
   const [filtroTipoCliente, setFiltroTipoCliente] = useState(""); // filtra el selector de clientes por tipo
   const [filtroUsuario, setFiltroUsuario] = useState("");
   const [filtroMotivo, setFiltroMotivo] = useState("");
+  /* (2026-09-24) Volver a ver todo sin ir borrando filtro por filtro. Va
+     DESPUÉS de los useState: declarado antes tiraba "Cannot access before
+     initialization" al renderizar. */
+  const hayFiltros = filtroTipo !== "" || filtroCliente !== "" || filtroTipoCliente !== "" || filtroUsuario !== "" || filtroMotivo !== "";
+  function limpiarFiltros() {
+    setFiltroTipo("");
+    setFiltroCliente("");
+    setFiltroTipoCliente("");
+    setFiltroUsuario("");
+    setFiltroMotivo("");
+  }
 
   // Modal de actividad
   const [modal, setModal] = useState(null); // { ...actividad } o { fecha } para nueva

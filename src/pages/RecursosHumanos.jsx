@@ -6,6 +6,7 @@ import {
   FileDown, Settings2, CalendarDays, ShieldCheck,
 } from "lucide-react";
 import PrevencionSST from "../components/PrevencionSST";
+import BotonLimpiarFiltros from "../components/BotonLimpiarFiltros";
 import { api } from "../lib/api";
 import Toast from "../components/Toast";
 import FirmaDigital from "../components/FirmaDigital";

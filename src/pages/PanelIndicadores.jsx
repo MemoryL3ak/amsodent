@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
 import useAuth from "../hooks/useAuth";
 import MonthCalendarPicker from "../components/MonthCalendarPicker";
+import BotonLimpiarFiltros from "../components/BotonLimpiarFiltros";
 import DateFilter from "../components/DateFilter";
 import EmbudoComercial from "../components/panel/EmbudoComercial";
 import ModalAvanceMeta from "../components/ModalAvanceMeta";
