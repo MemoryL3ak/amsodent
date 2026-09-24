@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
 import useAuth from "../hooks/useAuth";
 import MonthCalendarPicker from "../components/MonthCalendarPicker";
+import BotonLimpiarFiltros from "../components/BotonLimpiarFiltros";
 import { Users, PhoneCall, FileText, ShoppingCart, TrendingUp, Banknote } from "lucide-react";
 import {
   fmtCLP, fmtNum, fmtPct, inicioMesISO, mesDe, toDateISO, addMesKey, labelMesCorto, labelMesLargo, clamp,

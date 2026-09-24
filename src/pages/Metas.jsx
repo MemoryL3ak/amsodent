@@ -2,6 +2,7 @@
 import { api } from "../lib/api";
 import useAuth from "../hooks/useAuth";
 import MonthCalendarPicker from "../components/MonthCalendarPicker";
+import BotonLimpiarFiltros from "../components/BotonLimpiarFiltros";
 import ModalAvanceMeta from "../components/ModalAvanceMeta";
 import { VENDEDORES_SIEMPRE_VISIBLES } from "../constants/vendedores";
 

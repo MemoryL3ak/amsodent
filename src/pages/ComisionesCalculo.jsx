@@ -13,6 +13,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
 import MonthCalendarPicker from "../components/MonthCalendarPicker";
+import BotonLimpiarFiltros from "../components/BotonLimpiarFiltros";
 import { DollarSign, Percent, Users } from "lucide-react";
 import { CANALES, CANAL_LABELS, normalizeCanal } from "../lib/canales";
 

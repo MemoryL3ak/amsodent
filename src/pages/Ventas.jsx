@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
 import useAuth from "../hooks/useAuth";
 import DateFilter from "../components/DateFilter";
+import BotonLimpiarFiltros from "../components/BotonLimpiarFiltros";
 import { FileText, Trophy, TrendingUp, CircleDollarSign, Truck } from "lucide-react";
 
 const ESTADOS_ORDEN = [

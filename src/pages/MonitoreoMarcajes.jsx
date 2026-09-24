@@ -3,6 +3,7 @@ import Select from "react-select";
 import { api } from "../lib/api";
 import useAuth from "../hooks/useAuth";
 import Toast from "../components/Toast";
+import BotonLimpiarFiltros from "../components/BotonLimpiarFiltros";
 import {
   Users,
   MapPin,

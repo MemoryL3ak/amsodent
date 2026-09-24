@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../lib/api";
 import * as XLSX from "xlsx";
 import Toast from "../components/Toast";
+import BotonLimpiarFiltros from "../components/BotonLimpiarFiltros";
 import DateFilter from "../components/DateFilter";
 import useAuth from "../hooks/useAuth";
 import {
