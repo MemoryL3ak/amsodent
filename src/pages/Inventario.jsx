@@ -159,7 +159,7 @@ export default function Inventario() {
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(
         wb,
-        XLSX.utils.json_to_sheet((det.skus_bsale_sin_producto || []).map((r) => ({ "SKU Bsale": r.sku, "Descripción": r.descripcion || "" }))),
+        XLSX.utils.json_to_sheet((det.skus_bsale_sin_producto || []).map((r) => ({ "SKU Bsale": r.sku, "Descripción": r.descripcion || "", "Stock Bsale": r.stock == null ? "" : r.stock }))),
         "En Bsale sin producto",
       );
       XLSX.utils.book_append_sheet(
@@ -410,7 +410,7 @@ export default function Inventario() {
                   Última corrida {fmtFechaHora(bsale.ultima.actualizado_at)}: {fmtNum(bsale.ultima.resumen.matcheados)} SKUs matcheados,{" "}
                   {fmtNum(bsale.ultima.resumen.actualizados)} stocks actualizados ·{" "}
                   <button type="button" onClick={abrirDiferenciasBsale} className="table-link" style={{ background: "none", border: "none", padding: 0, cursor: "pointer", fontSize: 12 }}>
-                    {fmtNum(bsale.ultima.resumen.skus_bsale_sin_producto)} SKUs de Bsale sin producto interno · {fmtNum(bsale.ultima.resumen.productos_sin_bsale)} internos sin Bsale
+                    {fmtNum(bsale.ultima.resumen.skus_bsale_sin_producto)} SKUs de Bsale sin producto interno{bsale.ultima.resumen.skus_bsale_sin_producto_con_stock != null ? ` (${fmtNum(bsale.ultima.resumen.skus_bsale_sin_producto_con_stock)} con stock)` : ""} · {fmtNum(bsale.ultima.resumen.productos_sin_bsale)} internos sin Bsale
                   </button>
                 </>
               ) : (
@@ -681,8 +681,8 @@ export default function Inventario() {
             ) : (
               <div style={{ overflowY: "auto", display: "flex", flexDirection: "column", gap: 16 }}>
                 {[
-                  { titulo: `En Bsale, sin producto interno (${(bsaleDif.data.detalle.skus_bsale_sin_producto || []).length})`, filas: bsaleDif.data.detalle.skus_bsale_sin_producto || [], col: "Descripción en Bsale", campo: "descripcion" },
-                  { titulo: `Internos, sin SKU en Bsale (${(bsaleDif.data.detalle.productos_sin_bsale || []).length})`, filas: bsaleDif.data.detalle.productos_sin_bsale || [], col: "Producto interno", campo: "nombre" },
+                  { titulo: `En Bsale, sin producto interno (${(bsaleDif.data.detalle.skus_bsale_sin_producto || []).length})`, filas: bsaleDif.data.detalle.skus_bsale_sin_producto || [], col: "Descripción en Bsale", campo: "descripcion", conStock: true },
+                  { titulo: `Internos, sin SKU en Bsale (${(bsaleDif.data.detalle.productos_sin_bsale || []).length})`, filas: bsaleDif.data.detalle.productos_sin_bsale || [], col: "Producto interno", campo: "nombre", conStock: false },
                 ].map((sec) => (
                   <div key={sec.titulo}>
                     <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 6 }}>{sec.titulo}</div>
@@ -692,13 +692,22 @@ export default function Inventario() {
                       <div style={{ border: "1px solid var(--border)", borderRadius: 8, maxHeight: 240, overflowY: "auto" }}>
                         <table className="data-table" style={{ width: "100%" }}>
                           <thead style={{ position: "sticky", top: 0, background: "var(--surface)" }}>
-                            <tr><th style={{ textAlign: "left" }}>SKU</th><th style={{ textAlign: "left" }}>{sec.col}</th></tr>
+                            <tr>
+                              <th style={{ textAlign: "left" }}>SKU</th>
+                              <th style={{ textAlign: "left" }}>{sec.col}</th>
+                              {sec.conStock && <th style={{ textAlign: "right", whiteSpace: "nowrap" }} title="Stock disponible en Bsale (suma de sucursales) en la última sincronización">Stock Bsale</th>}
+                            </tr>
                           </thead>
                           <tbody>
                             {sec.filas.map((r, i) => (
                               <tr key={`${r.sku}-${i}`}>
                                 <td style={{ fontWeight: 600, whiteSpace: "nowrap" }}>{r.sku}</td>
                                 <td style={{ color: "var(--text-muted)" }}>{r[sec.campo] || "—"}</td>
+                                {sec.conStock && (
+                                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: r.stock > 0 ? 700 : 400, color: r.stock > 0 ? "var(--text)" : "var(--text-muted)" }}>
+                                    {r.stock == null ? "—" : fmtNum(r.stock)}
+                                  </td>
+                                )}
                               </tr>
                             ))}
                           </tbody>

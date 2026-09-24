@@ -384,6 +384,11 @@ export class BsaleService {
       //      profundo): consultar solo las variantes matcheadas.
       const stockPorSku = new Map<string, number>();
       for (const { sku } of variantesMatcheadas) if (!stockPorSku.has(sku)) stockPorSku.set(sku, 0);
+      // Stock de los SKUs de Bsale que NO tienen producto interno. Solo se
+      // conoce cuando se pagina /stocks.json completo (ya viene en las mismas
+      // filas, no cuesta llamadas extra); en la estrategia por variante queda
+      // en null porque consultarlo sería una llamada por SKU huérfano.
+      let stockSinProducto: Map<string, number> | null = null;
       const primeraStocks = await this.apiGet(`/stocks.json?limit=${LIMITE_PAGINA}&offset=0`);
       const paginasStock = Math.max(1, Math.ceil(Number(primeraStocks?.count || 0) / LIMITE_PAGINA));
 
@@ -392,12 +397,15 @@ export class BsaleService {
         const filas = await this.paginado('/stocks.json', '', (h, t) => {
           this.progreso = { fase: 'stocks', hechas: h, total: t, actualizados: 0 };
         });
+        stockSinProducto = new Map<string, number>();
         for (const s of filas) {
           const vid = Number(s?.variant?.id);
           const sku = vid ? skuPorVariante.get(vid) : undefined;
-          if (!sku || !stockPorSku.has(sku)) continue;
+          if (!sku) continue;
           const disp = Number(s?.quantityAvailable);
-          if (Number.isFinite(disp)) stockPorSku.set(sku, (stockPorSku.get(sku) || 0) + disp);
+          if (!Number.isFinite(disp)) continue;
+          if (stockPorSku.has(sku)) stockPorSku.set(sku, (stockPorSku.get(sku) || 0) + disp);
+          else stockSinProducto.set(sku, (stockSinProducto.get(sku) || 0) + disp);
         }
       } else {
         this.progreso = { fase: 'stocks', hechas: 0, total: variantesMatcheadas.length, actualizados: 0 };
@@ -442,15 +450,20 @@ export class BsaleService {
         const nuevo = Math.max(0, Number(stockPorSku.get(sku) || 0));
         if (nuevo !== actual) cambios.push({ id: Number(p.id), sku, actual, nuevo });
       }
-      const skusBsaleSinProducto: Array<{ sku: string; descripcion: string }> = [];
+      // SKUs de Bsale sin producto interno, con su stock disponible (null si
+      // no se conoce). Van primero los que tienen stock: son los que de verdad
+      // importa crear en el catálogo interno.
+      const huerfanos: Array<{ sku: string; descripcion: string; stock: number | null }> = [];
       for (const sku of skusBsale) {
         if (skusInternos.has(sku)) continue;
-        if (skusBsaleSinProducto.length < MAX_DETALLE) {
-          skusBsaleSinProducto.push({ sku, descripcion: descPorSku.get(sku) || '' });
-        }
+        const stock = stockSinProducto ? (stockSinProducto.get(sku) ?? 0) : null;
+        huerfanos.push({ sku, descripcion: descPorSku.get(sku) || '', stock });
       }
-      let totalSkusBsaleSinProducto = 0;
-      for (const sku of skusBsale) if (!skusInternos.has(sku)) totalSkusBsaleSinProducto += 1;
+      huerfanos.sort((a, b) => (b.stock ?? -1) - (a.stock ?? -1) || a.sku.localeCompare(b.sku));
+      const totalSkusBsaleSinProducto = huerfanos.length;
+      let skusBsaleSinProductoConStock = 0;
+      for (const h of huerfanos) if ((h.stock ?? 0) > 0) skusBsaleSinProductoConStock += 1;
+      const skusBsaleSinProducto = huerfanos.slice(0, MAX_DETALLE);
       let totalProductosSinBsale = 0;
       for (const p of productos || []) {
         const sku = normSku(p?.sku);
@@ -505,6 +518,7 @@ export class BsaleService {
         actualizados,
         sin_cambio: matcheados - cambios.length,
         skus_bsale_sin_producto: totalSkusBsaleSinProducto,
+        skus_bsale_sin_producto_con_stock: stockSinProducto ? skusBsaleSinProductoConStock : null,
         productos_sin_bsale: totalProductosSinBsale,
         errores: errores.slice(0, 20),
       };
