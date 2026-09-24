@@ -223,6 +223,141 @@ export class BsaleService {
     };
   }
 
+  /* ── Pendiente por producto para el reporte de Trazabilidad (2026-09-24) ──
+     Para un lote de cotizaciones: ítems cotizados (items_licitacion) vs
+     cantidades despachadas según las líneas de las guías registradas en el
+     sistema, leídas de Bsale (una llamada por guía, con caché en memoria:
+     una guía emitida no cambia). Devuelve una fila por producto con lo
+     cotizado, lo despachado y lo pendiente, más los productos despachados
+     que no estaban en la cotización. */
+  private cacheGuias = new Map<string, { ts: number; data: any }>();
+  private static readonly CACHE_GUIA_MS = 15 * 60 * 1000;
+  private static readonly MAX_GUIAS_POR_LOTE = 400;
+
+  private async guiaCacheada(numero: string) {
+    const num = String(numero || '').replace(/\D/g, '');
+    if (!num) return null;
+    const hit = this.cacheGuias.get(num);
+    if (hit && Date.now() - hit.ts < BsaleService.CACHE_GUIA_MS) return hit.data;
+    const data = await this.guiaDespacho(num);
+    this.cacheGuias.set(num, { ts: Date.now(), data });
+    return data;
+  }
+
+  async pendientePorProducto(licitacionIds: number[]) {
+    if (!this.token) return { disponible: false, motivo: 'Falta BSALE_ACCESS_TOKEN en el backend.', filas: [] };
+    const ids = Array.from(new Set((licitacionIds || []).map((n) => Number(n)).filter((n) => Number.isInteger(n) && n > 0)));
+    if (!ids.length) return { disponible: true, filas: [], guias_consultadas: 0, guias_no_encontradas: [], guias_omitidas: 0 };
+    const client = this.supabase.getClient();
+
+    // 1. Ítems cotizados y guías registradas, por cotización (en tandas).
+    const items: any[] = [];
+    const guias: any[] = [];
+    for (let i = 0; i < ids.length; i += 150) {
+      const tanda = ids.slice(i, i + 150);
+      const [ri, rg] = await Promise.all([
+        client.from('items_licitacion')
+          .select('licitacion_id, sku, producto, formato, cantidad, valor_unitario, costo')
+          .in('licitacion_id', tanda).range(0, 50000),
+        client.from('licitacion_documentos')
+          .select('licitacion_id, numero')
+          .eq('tipo', 'guia_despacho')
+          .in('licitacion_id', tanda).range(0, 50000),
+      ]);
+      if (ri.error) throw new BadRequestException(ri.error.message);
+      if (rg.error) throw new BadRequestException(rg.error.message);
+      items.push(...(ri.data || []));
+      guias.push(...(rg.data || []));
+    }
+
+    // 2. Líneas de cada guía desde Bsale (tope defensivo + concurrencia suave).
+    const numeros = Array.from(new Set(guias.map((g) => String(g.numero || '').replace(/\D/g, '')).filter(Boolean)));
+    const aConsultar = numeros.slice(0, BsaleService.MAX_GUIAS_POR_LOTE);
+    const guiasOmitidas = numeros.length - aConsultar.length;
+    const lineasPorGuia = new Map<string, any>();
+    const noEncontradas: string[] = [];
+    const CONC = 3;
+    for (let i = 0; i < aConsultar.length; i += CONC) {
+      const tanda = aConsultar.slice(i, i + CONC);
+      await Promise.all(tanda.map(async (num) => {
+        try {
+          const g = await this.guiaCacheada(num);
+          if (!g?.encontrado || g?.anulada) { noEncontradas.push(num); return; }
+          lineasPorGuia.set(num, g);
+        } catch (e: any) {
+          this.logger.warn(`Guía ${num}: ${e?.message || e}`);
+          noEncontradas.push(num);
+        }
+      }));
+    }
+
+    // 3. Cruce por cotización y producto (clave: SKU; sin SKU, nombre).
+    const clave = (sku: any, nombre: any) =>
+      String(sku || '').trim().toUpperCase() || String(nombre || '').trim().toLowerCase();
+    type Fila = {
+      licitacion_id: number; sku: string; producto: string; formato: string;
+      cotizada: number; despachada: number; valor_unitario: number; costo: number;
+      en_cotizacion: boolean; guias: Set<string>;
+    };
+    const porLic = new Map<number, Map<string, Fila>>();
+    const fila = (lic: number, k: string, base: Partial<Fila>) => {
+      if (!porLic.has(lic)) porLic.set(lic, new Map());
+      const m = porLic.get(lic)!;
+      if (!m.has(k)) {
+        m.set(k, {
+          licitacion_id: lic, sku: '', producto: '', formato: '', cotizada: 0, despachada: 0,
+          valor_unitario: 0, costo: 0, en_cotizacion: false, guias: new Set(), ...base,
+        });
+      }
+      return m.get(k)!;
+    };
+    for (const it of items) {
+      const k = clave(it.sku, it.producto);
+      if (!k) continue;
+      const f = fila(Number(it.licitacion_id), k, {
+        sku: String(it.sku || '').trim(), producto: String(it.producto || ''), formato: String(it.formato || ''),
+        valor_unitario: Number(it.valor_unitario || 0), costo: Number(it.costo || 0), en_cotizacion: true,
+      });
+      f.cotizada += Number(it.cantidad || 0);
+      f.en_cotizacion = true;
+      if (!f.producto) f.producto = String(it.producto || '');
+      if (!f.valor_unitario) f.valor_unitario = Number(it.valor_unitario || 0);
+    }
+    for (const g of guias) {
+      const num = String(g.numero || '').replace(/\D/g, '');
+      const det = lineasPorGuia.get(num);
+      if (!det) continue;
+      for (const l of det.items || []) {
+        const k = clave(l.sku, l.producto);
+        if (!k) continue;
+        const f = fila(Number(g.licitacion_id), k, { sku: String(l.sku || ''), producto: String(l.producto || '') });
+        f.despachada += Number(l.cantidad || 0);
+        if (!f.producto) f.producto = String(l.producto || '');
+        if (!f.valor_unitario && !f.en_cotizacion) f.valor_unitario = Number(l.precio_neto || 0);
+        f.guias.add(String(det.numero ?? num));
+      }
+    }
+
+    const filas: any[] = [];
+    for (const m of porLic.values()) {
+      for (const f of m.values()) {
+        filas.push({
+          ...f,
+          guias: Array.from(f.guias).join(', '),
+          pendiente: Math.max(0, f.cotizada - f.despachada),
+          sobre_despacho: Math.max(0, f.despachada - f.cotizada),
+        });
+      }
+    }
+    return {
+      disponible: true,
+      filas,
+      guias_consultadas: lineasPorGuia.size,
+      guias_no_encontradas: noEncontradas,
+      guias_omitidas: guiasOmitidas,
+    };
+  }
+
   /* Despacho según Bsale para UNA orden de compra (pedido 2026-09-04): busca
      TODAS las guías electrónicas (SII 52) emitidas desde la fecha de la OC
      cuyas referencias apuntan a ese N° de OC — incluidas las que nadie
