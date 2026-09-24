@@ -813,7 +813,9 @@ export default function Trazabilidad() {
       setSortDir((d) => (d === "asc" ? "desc" : "asc"));
     } else {
       setSortCol(col);
-      setSortDir("asc");
+      // Montos: el primer clic muestra los saldos más altos primero (lo que
+      // se busca al ordenar por plata); el texto parte alfabético.
+      setSortDir(col === "monto" ? "desc" : "asc");
     }
   }
 
@@ -941,13 +943,19 @@ export default function Trazabilidad() {
     //   0 = sin OC · 1 = falta alguna guía · 2 = falta alguna factura · 3 = impaga
     //   4 = pagada pero con saldo de OC por consumir · 5 = todo completo.
     // Cliente particular no usa OC/guía: parte en "falta factura/boleta".
-    // El orden elegido por el usuario aplica dentro de cada grupo.
+    // Ese nivel rige SOLO en el orden por defecto (por cotización). Si el
+    // usuario elige una columna (saldo por consumir, cliente), esa columna
+    // manda de punta a punta (pedido 2026-09-24: ordenar por saldo no traía
+    // los saldos más altos primero porque el avance del ciclo se imponía).
     const tierCiclo = (lic) => tierCicloDe(lic, documentosMap[lic.id] || []);
+    const agruparPorAvance = sortCol === "id";
 
     rows.sort((a, b) => {
-      const pa = tierCiclo(a);
-      const pb = tierCiclo(b);
-      if (pa !== pb) return pa - pb;
+      if (agruparPorAvance) {
+        const pa = tierCiclo(a);
+        const pb = tierCiclo(b);
+        if (pa !== pb) return pa - pb;
+      }
 
       let va, vb;
       switch (sortCol) {
@@ -1936,6 +1944,22 @@ export default function Trazabilidad() {
     );
   }
 
+
+  /* (2026-09-24) Volver a ver todo sin ir borrando filtro por filtro. */
+  const hayFiltros = filtroId !== "" || filtroEntidad !== "" || filtroVendedor !== "" || filtroOC !== "" || filtroFactura !== "" || filtroFechaDesde !== "" || filtroFechaHasta !== "" || filtroTipoCotizacion !== "" || filtroTipoCompra.length > 0 || filtroEstadoCiclo !== "";
+  function limpiarFiltros() {
+    setFiltroId("");
+    setFiltroEntidad("");
+    setFiltroVendedor("");
+    setFiltroOC("");
+    setFiltroFactura("");
+    setFiltroFechaDesde("");
+    setFiltroFechaHasta("");
+    setFiltroTipoCotizacion("");
+    setFiltroTipoCompra([]);
+    setFiltroEstadoCiclo("");
+  }
+
   return (
     <div className="page vista-compacta">
       {toast && <Toast type={toast.type} message={toast.message} onClose={() => setToast(null)} />}
@@ -2306,6 +2330,7 @@ export default function Trazabilidad() {
               <div style={{ height: 36 }} />
             )}
           </div>
+          <BotonLimpiarFiltros hay={hayFiltros} onLimpiar={limpiarFiltros} />
         </div>
       </div>
 
