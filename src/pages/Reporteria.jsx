@@ -1,10 +1,13 @@
-// Reportería (2026-09-17) — solo admin. Tres modos sobre el mismo motor de
-// solo lectura del backend (/reporteria):
+// Reportería (2026-09-17; abierta por perfil el 2026-09-24). Tres modos
+// sobre el mismo motor de solo lectura del backend (/reporteria):
 //   · Reportes guardados: la biblioteca del equipo, listos para re-ejecutar.
-//   · Constructor: reportes sin SQL — tabla, columnas, filtros, agrupación.
-//   · Consulta SQL: SELECT libre con el catálogo de tablas al lado.
+//   · Constructor: reportes SIN SQL sobre VISTAS DE NEGOCIO (columnas con
+//     nombre en español, filtros, agrupación) — para cualquier usuario con
+//     el módulo. Trae plantillas listas para usar. Admin además ve las
+//     tablas crudas.
+//   · Consulta SQL: SELECT libre con el catálogo de tablas (solo admin).
 // Todo resultado se ve como tabla o como gráfico (SVG propio) y se exporta
-// a Excel/CSV. El navegador nunca toca la base: siempre vía backend.
+// a Excel/CSV con los nombres legibles. El navegador nunca toca la base.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../lib/api";
 import useAuth from "../hooks/useAuth";
@@ -90,6 +93,95 @@ const CONSULTAS_EJEMPLO = [
   {
     nombre: "Facturas con saldo pendiente",
     sql: `select l.id_licitacion, l.nombre_entidad, d.numero as factura,\n       d.monto as neto, round(d.monto * 1.19) as bruto, d.fecha\nfrom licitacion_documentos d\njoin licitaciones l on l.id = d.licitacion_id\nwhere d.tipo in ('factura', 'factura_boleta') and coalesce(d.pagada, false) = false\norder by d.fecha asc\nlimit 200`,
+  },
+];
+
+/* Plantillas listas para usar (constructor sobre vistas de negocio). Cada
+   una es una config del constructor; las columnas que el perfil no puede
+   ver (costo/margen) se descartan al aplicarla. */
+const PLANTILLAS = [
+  {
+    id: "cotizaciones_con_oc_productos",
+    nombre: "Cotizaciones con orden de compra · detalle por producto",
+    descripcion: "Una fila por producto de cada cotización que tiene OC: cliente, producto, cantidad, precios, costo y margen, N° de OC, vendedor, despacho, flete, estado, si es licitación y términos.",
+    config: {
+      tabla: "vista_cotizaciones_lineas",
+      columnas: [
+        "n_cotizacion", "fecha_creacion", "cliente", "producto", "sku", "cantidad",
+        "precio_unitario_neto", "precio_total_neto", "costo_unitario", "costo_total", "margen_neto", "margen_pct",
+        "n_orden_compra", "fecha_orden_compra", "vendedor", "tipo_despacho", "flete",
+        "estado_cotizacion", "estado_entrega", "es_licitacion", "codigo_licitacion", "terminos",
+      ],
+      filtros: [{ campo: "tiene_orden_compra", operador: "igual", valor: "Sí" }],
+      agrupar: [], agregaciones: [], ordenarPor: "fecha_creacion", ordenDesc: true, limite: 2000,
+    },
+  },
+  {
+    id: "cotizaciones_con_oc_resumen",
+    nombre: "Cotizaciones con orden de compra · resumen",
+    descripcion: "Una fila por cotización con OC: totales, N° de OC, guías, saldo por consumir, facturas y pagos pendientes.",
+    config: {
+      tabla: "vista_cotizaciones_resumen",
+      columnas: [
+        "n_cotizacion", "fecha_creacion", "cliente", "vendedor", "es_licitacion", "n_orden_compra", "fecha_orden_compra",
+        "orden_compra_neto", "n_guia_despacho", "guias_neto", "saldo_por_consumir", "n_factura", "facturado_neto",
+        "facturas_pago_pendiente", "estado_cotizacion", "estado_entrega", "tipo_despacho", "flete", "terminos",
+      ],
+      filtros: [{ campo: "tiene_orden_compra", operador: "igual", valor: "Sí" }],
+      agrupar: [], agregaciones: [], ordenarPor: "fecha_orden_compra", ordenDesc: true, limite: 2000,
+    },
+  },
+  {
+    id: "venta_y_margen_por_vendedor",
+    nombre: "Venta y margen por vendedor (con OC)",
+    descripcion: "Suma de lo vendido y del margen por vendedor, solo cotizaciones con orden de compra.",
+    config: {
+      tabla: "vista_cotizaciones_lineas",
+      columnas: [],
+      filtros: [{ campo: "tiene_orden_compra", operador: "igual", valor: "Sí" }],
+      agrupar: ["vendedor"],
+      agregaciones: [
+        { funcion: "conteo", campo: "*" },
+        { funcion: "suma", campo: "precio_total_neto" },
+        { funcion: "suma", campo: "margen_neto" },
+      ],
+      ordenarPor: "suma_precio_total_neto", ordenDesc: true, limite: 500,
+    },
+  },
+  {
+    id: "productos_mas_vendidos",
+    nombre: "Productos más vendidos (con OC)",
+    descripcion: "Cantidad y monto por producto, solo cotizaciones con orden de compra.",
+    config: {
+      tabla: "vista_cotizaciones_lineas",
+      columnas: [],
+      filtros: [{ campo: "tiene_orden_compra", operador: "igual", valor: "Sí" }],
+      agrupar: ["sku", "producto"],
+      agregaciones: [
+        { funcion: "suma", campo: "cantidad" },
+        { funcion: "suma", campo: "precio_total_neto" },
+      ],
+      ordenarPor: "suma_precio_total_neto", ordenDesc: true, limite: 500,
+    },
+  },
+  {
+    id: "saldo_por_consumir_por_cliente",
+    nombre: "Saldo por consumir por cliente",
+    descripcion: "Cuánto queda por despachar de las órdenes de compra, sumado por cliente.",
+    config: {
+      tabla: "vista_cotizaciones_resumen",
+      columnas: [],
+      filtros: [
+        { campo: "tiene_orden_compra", operador: "igual", valor: "Sí" },
+        { campo: "saldo_por_consumir", operador: "mayor", valor: "0" },
+      ],
+      agrupar: ["cliente"],
+      agregaciones: [
+        { funcion: "conteo", campo: "*" },
+        { funcion: "suma", campo: "saldo_por_consumir" },
+      ],
+      ordenarPor: "suma_saldo_por_consumir", ordenDesc: true, limite: 500,
+    },
   },
 ];
 
@@ -281,7 +373,8 @@ function GraficoReporte({ tipo, datos, etiquetaDim, etiquetaMed }) {
 }
 
 /* ── Resultado: tabla + gráfico + exportar + guardar ──────────────────── */
-function ResultadoReporte({ resultado, grafico, setGrafico, onGuardar, nombreArchivo }) {
+function ResultadoReporte({ resultado, grafico, setGrafico, onGuardar, nombreArchivo, etiquetas = {} }) {
+  const et = (c) => etiquetas[c] || c;
   // El padre remonta este componente (key) con cada resultado nuevo, así la
   // página y la vista parten limpias sin efectos.
   const [vista, setVista] = useState("tabla");
@@ -309,7 +402,13 @@ function ResultadoReporte({ resultado, grafico, setGrafico, onGuardar, nombreArc
   }, [resultado, dim, med]);
 
   function exportar(formato) {
-    const hoja = XLSX.utils.json_to_sheet(resultado.filas);
+    // Las columnas salen con su nombre legible (el de la vista), no el técnico.
+    const filasExport = resultado.filas.map((f) => {
+      const o = {};
+      resultado.columnas.forEach((c) => { o[et(c)] = f[c]; });
+      return o;
+    });
+    const hoja = XLSX.utils.json_to_sheet(filasExport);
     const libro = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(libro, hoja, "Reporte");
     const base = (nombreArchivo || "reporte").replace(/[^\w-]+/g, "_").slice(0, 60);
@@ -357,7 +456,7 @@ function ResultadoReporte({ resultado, grafico, setGrafico, onGuardar, nombreArc
             <DropdownSelect
               value={dim || ""}
               onChange={(v) => setGrafico((g) => ({ ...g, dimension: v }))}
-              options={resultado.columnas.map((c) => ({ value: c, label: c }))}
+              options={resultado.columnas.map((c) => ({ value: c, label: et(c) }))}
               placeholder="Categoría (eje X)"
               minWidth={190}
               style={{ width: 190, height: 34 }}
@@ -365,7 +464,7 @@ function ResultadoReporte({ resultado, grafico, setGrafico, onGuardar, nombreArc
             <DropdownSelect
               value={med || ""}
               onChange={(v) => setGrafico((g) => ({ ...g, medida: v }))}
-              options={numericas.map((c) => ({ value: c, label: c }))}
+              options={numericas.map((c) => ({ value: c, label: et(c) }))}
               placeholder="Valor (numérico)"
               minWidth={190}
               style={{ width: 190, height: 34 }}
@@ -376,7 +475,7 @@ function ResultadoReporte({ resultado, grafico, setGrafico, onGuardar, nombreArc
               El resultado no tiene columnas numéricas para graficar. Agrega una agregación (suma, conteo…) o consulta un campo numérico.
             </div>
           ) : (
-            <GraficoReporte tipo={grafico.tipo} datos={datosGrafico} etiquetaDim={dim} etiquetaMed={med} />
+            <GraficoReporte tipo={grafico.tipo} datos={datosGrafico} etiquetaDim={et(dim)} etiquetaMed={et(med)} />
           )}
         </div>
       )}
@@ -386,7 +485,7 @@ function ResultadoReporte({ resultado, grafico, setGrafico, onGuardar, nombreArc
           <div className="reporteria-resultado-tabla" style={{ maxHeight: 480, overflowY: "auto" }}>
             <table>
               <thead>
-                <tr>{resultado.columnas.map((c) => <th key={c}>{c}</th>)}</tr>
+                <tr>{resultado.columnas.map((c) => <th key={c} title={c}>{et(c)}</th>)}</tr>
               </thead>
               <tbody>
                 {filasPagina.map((f, i) => (
@@ -419,11 +518,13 @@ function ResultadoReporte({ resultado, grafico, setGrafico, onGuardar, nombreArc
 
 /* ── Página ───────────────────────────────────────────────────────────── */
 const CONFIG_VACIA = { tabla: "", columnas: [], filtros: [], agrupar: [], agregaciones: [], ordenarPor: "", ordenDesc: true, limite: 500 };
+const NOMBRE_AGG = { conteo: "Conteo", suma: "Suma", promedio: "Promedio", minimo: "Mínimo", maximo: "Máximo" };
 const GRAFICO_DEFECTO = { tipo: "barras", dimension: "", medida: "" };
 
 export default function Reporteria() {
-  const { rol, cargando: cargandoAuth } = useAuth();
-  const esAdmin = ["admin", "administrador"].includes(String(rol || "").trim().toLowerCase());
+  const { cargando: cargandoAuth } = useAuth();
+  // Lo que puede hacer este usuario lo dice el catálogo del backend (según
+  // rol): SQL libre y tablas crudas solo admin; costo/margen según perfil.
 
   const [tab, setTab] = useState("guardados");
   const [toast, setToast] = useState(null);
@@ -450,12 +551,12 @@ export default function Reporteria() {
   const [reporteAbierto, setReporteAbierto] = useState(null);
 
   useEffect(() => {
-    if (cargandoAuth || !esAdmin) return;
+    if (cargandoAuth) return;
     api.get("/reporteria/catalogo")
       .then(setCatalogo)
-      .catch((e) => setToast({ type: "error", message: e?.message || "No se pudo cargar el catálogo de tablas." }));
+      .catch((e) => setToast({ type: "error", message: e?.message || "No se pudo cargar el catálogo de datos." }));
     cargarGuardados();
-  }, [cargandoAuth, esAdmin]);
+  }, [cargandoAuth]);
 
   async function cargarGuardados() {
     setCargandoGuardados(true);
@@ -470,22 +571,67 @@ export default function Reporteria() {
   }
 
   const tablas = useMemo(() => catalogo?.tablas || [], [catalogo]);
+  const vistas = useMemo(() => catalogo?.vistas || [], [catalogo]);
+  const puedeSQL = !!catalogo?.puedeSQL;
+  // Origen del constructor: una vista de negocio (nombres en español) o,
+  // para admin, una tabla cruda. Ambas se normalizan a { nombre, etiqueta, tipo }.
+  const vistaActual = vistas.find((v) => v.id === config.tabla);
   const tablaActual = tablas.find((t) => t.tabla === config.tabla);
-  const columnasTabla = tablaActual?.columnas || [];
-  const opcionesTabla = useMemo(() => tablas.map((t) => ({
-    value: t.tabla,
-    label: t.tabla,
-    ...(t.descripcion ? { detalle: t.descripcion } : {}),
-  })), [tablas]);
-  const opcionesColumna = columnasTabla.map((c) => ({ value: c.nombre, label: c.nombre, detalle: c.tipo }));
+  const origenNombre = vistaActual?.nombre || tablaActual?.tabla || config.tabla;
+  const columnasTabla = useMemo(() => {
+    if (vistaActual) return vistaActual.columnas;
+    return (tablaActual?.columnas || []).map((c) => ({ nombre: c.nombre, etiqueta: c.nombre, tipo: c.tipo }));
+  }, [vistaActual, tablaActual]);
+  const opcionesTabla = useMemo(() => [
+    ...vistas.map((v) => ({ value: v.id, label: v.nombre, detalle: v.descripcion })),
+    ...tablas.map((t) => ({
+      value: t.tabla,
+      label: `Tabla: ${t.tabla}`,
+      ...(t.descripcion ? { detalle: t.descripcion } : {}),
+    })),
+  ], [vistas, tablas]);
+  const opcionesColumna = columnasTabla.map((c) => ({ value: c.nombre, label: c.etiqueta || c.nombre, detalle: c.descripcion || c.tipo }));
+  // Nombre legible de cada columna del resultado (incluye los alias de las
+  // agregaciones: suma_precio_total_neto → "Suma de Precio total (neto)").
+  const etiquetas = useMemo(() => {
+    const m = {};
+    columnasTabla.forEach((c) => { m[c.nombre] = c.etiqueta || c.nombre; });
+    (config.agregaciones || []).forEach((a) => {
+      const alias = `${a.funcion}_${a.campo === "*" ? "filas" : a.campo}`;
+      m[alias] = a.campo === "*" ? "Conteo de filas" : `${NOMBRE_AGG[a.funcion] || a.funcion} de ${m[a.campo] || a.campo}`;
+    });
+    return m;
+  }, [columnasTabla, config.agregaciones]);
+  const nombreVista = (id) => vistas.find((v) => v.id === id)?.nombre || id;
+
+  // Aplica una plantilla: descarta columnas que este perfil no puede ver
+  // (costo/margen) y ejecuta de inmediato.
+  function usarPlantilla(p) {
+    const vista = vistas.find((v) => v.id === p.config.tabla);
+    if (!vista) { setToast({ type: "error", message: "Esta plantilla no está disponible para tu perfil." }); return; }
+    const disponibles = new Set(vista.columnas.map((c) => c.nombre));
+    const cfg = {
+      ...CONFIG_VACIA,
+      ...p.config,
+      columnas: (p.config.columnas || []).filter((c) => disponibles.has(c)),
+      agregaciones: (p.config.agregaciones || []).filter((a) => a.campo === "*" || disponibles.has(a.campo)),
+    };
+    if (cfg.ordenarPor && !disponibles.has(cfg.ordenarPor) && !cfg.agregaciones.some((a) => `${a.funcion}_${a.campo === "*" ? "filas" : a.campo}` === cfg.ordenarPor)) cfg.ordenarPor = "";
+    setReporteAbierto({ nombre: p.nombre, descripcion: p.descripcion, tipo: "constructor" });
+    setConfig(cfg);
+    const m = (cfg.agrupar.length || cfg.agregaciones.length) ? "resumen" : "detalle";
+    setModo(m);
+    setResultado(null);
+    setTimeout(() => ejecutarConstructor(cfg, null, m), 0);
+  }
 
   /* ── Ejecutar ───────────────────────────────────────────────────────── */
-  async function ejecutarConstructor(cfg = config, graficoGuardado = null) {
-    if (!cfg.tabla) { setToast({ type: "error", message: "Elige una tabla para el reporte." }); return; }
+  async function ejecutarConstructor(cfg = config, graficoGuardado = null, modoForzado = null) {
+    if (!cfg.tabla) { setToast({ type: "error", message: "Elige un origen de datos para el reporte." }); return; }
     setEjecutando(true);
     try {
       const cuerpo = { ...cfg };
-      if (modo === "detalle") { cuerpo.agrupar = []; cuerpo.agregaciones = []; }
+      if ((modoForzado || modo) === "detalle") { cuerpo.agrupar = []; cuerpo.agregaciones = []; }
       const r = await api.post("/reporteria/consulta", cuerpo);
       setResultado(r);
       if (graficoGuardado) setGrafico({ ...GRAFICO_DEFECTO, ...graficoGuardado });
@@ -542,10 +688,11 @@ export default function Reporteria() {
       const c = { ...CONFIG_VACIA, ...(r.config || {}) };
       delete c.grafico; delete c.modo;
       setConfig(c);
-      setModo(r.config?.modo || ((r.config?.agrupar?.length || r.config?.agregaciones?.length) ? "resumen" : "detalle"));
+      const m = r.config?.modo || ((r.config?.agrupar?.length || r.config?.agregaciones?.length) ? "resumen" : "detalle");
+      setModo(m);
       setTab("constructor");
       // Ejecuta con la config recién cargada (no la del estado anterior).
-      setTimeout(() => ejecutarConstructor({ ...CONFIG_VACIA, ...(r.config || {}) }, r.config?.grafico), 0);
+      setTimeout(() => ejecutarConstructor({ ...CONFIG_VACIA, ...(r.config || {}) }, r.config?.grafico, m), 0);
     }
   }
 
@@ -574,16 +721,6 @@ export default function Reporteria() {
     });
   }
 
-  if (!cargandoAuth && !esAdmin) {
-    return (
-      <div className="page">
-        <div className="surface"><div className="surface-body" style={{ color: "var(--danger)" }}>
-          Acceso restringido: la Reportería consulta todas las tablas del negocio y es solo para administración.
-        </div></div>
-      </div>
-    );
-  }
-
   const tablasFiltradas = tablas.filter((t) => !busquedaCat || t.tabla.includes(busquedaCat.toLowerCase()));
 
   return (
@@ -605,7 +742,7 @@ export default function Reporteria() {
           <h1 className="page-title" style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <FilePieChart size={20} /> Reportería
           </h1>
-          <p className="page-subtitle">Reportes a medida sobre los datos vivos de la plataforma: constructor visual, gráficos y SQL de solo lectura.</p>
+          <p className="page-subtitle">Arma tus propios reportes sin SQL: elige un origen de datos, las columnas, filtros y agrupaciones; guárdalos para el equipo y expórtalos a Excel.</p>
         </div>
       </div>
 
@@ -619,9 +756,11 @@ export default function Reporteria() {
         <button type="button" style={{ ...est.tab, ...(tab === "constructor" ? est.tabActiva : {}) }} onClick={() => setTab("constructor")}>
           <Table2 size={15} /> Constructor
         </button>
-        <button type="button" style={{ ...est.tab, ...(tab === "sql" ? est.tabActiva : {}) }} onClick={() => setTab("sql")}>
-          <Database size={15} /> Consulta SQL
-        </button>
+        {puedeSQL && (
+          <button type="button" style={{ ...est.tab, ...(tab === "sql" ? est.tabActiva : {}) }} onClick={() => setTab("sql")}>
+            <Database size={15} /> Consulta SQL
+          </button>
+        )}
       </div>
 
       {/* ── Guardados ─────────────────────────────────────────────────── */}
@@ -637,7 +776,7 @@ export default function Reporteria() {
             <div style={{ padding: 30, color: "var(--text-muted)" }}>Cargando…</div>
           ) : !guardados.length ? (
             <div style={{ padding: "34px 24px", textAlign: "center", color: "var(--text-muted)", fontSize: 13.5 }}>
-              Aún no hay reportes guardados. Arma uno en el <b>Constructor</b> o en <b>Consulta SQL</b> y guárdalo aquí para todo el equipo.
+              Aún no hay reportes guardados. Arma uno en el <b>Constructor</b> (o parte de una plantilla) y guárdalo aquí para todo el equipo.
               <div style={{ marginTop: 6, fontSize: 12.5 }}>(Si acabas de instalar el módulo, recuerda aplicar la migración <code>20260917_reporteria.sql</code> para poder guardar.)</div>
             </div>
           ) : (
@@ -650,7 +789,7 @@ export default function Reporteria() {
                   </div>
                   {r.descripcion && <div style={{ fontSize: 12.5, color: "var(--text-muted)", lineHeight: 1.4 }}>{r.descripcion}</div>}
                   <div style={{ fontSize: 11.5, color: "var(--text-muted)" }}>
-                    {r.tipo === "sql" ? "Consulta SQL" : `Constructor · ${r.config?.tabla || "—"}`}
+                    {r.tipo === "sql" ? "Consulta SQL" : `Constructor · ${nombreVista(r.config?.tabla) || "—"}`}
                     {r.creado_por ? ` · ${r.creado_por}` : ""}
                   </div>
                   <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
@@ -671,16 +810,36 @@ export default function Reporteria() {
       {/* ── Constructor ───────────────────────────────────────────────── */}
       {tab === "constructor" && (
         <div className="surface" style={{ padding: 16 }}>
+          {/* Plantillas: reportes listos que también sirven de punto de partida. */}
+          <div style={{ marginBottom: 16 }}>
+            <label className="filter-label">Reportes listos para usar</label>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 4 }}>
+              {PLANTILLAS.filter((p) => vistas.some((v) => v.id === p.config.tabla)).map((p) => (
+                <button
+                  key={p.id} type="button"
+                  className={`reporteria-chip${reporteAbierto?.nombre === p.nombre ? " activa" : ""}`}
+                  title={p.descripcion}
+                  onClick={() => usarPlantilla(p)}
+                >
+                  <Play size={11} style={{ marginRight: 4 }} />{p.nombre}
+                </button>
+              ))}
+            </div>
+            <div style={{ fontSize: 11.5, color: "var(--text-muted)", marginTop: 4 }}>
+              Al elegir una, se ejecuta y queda cargada abajo para que la ajustes (columnas, filtros) y la guardes con tu nombre.
+            </div>
+          </div>
+
           <div className="reporteria-fila-control" style={{ marginBottom: 14 }}>
             <div className="reporteria-campo">
-              <label className="filter-label">Tabla de origen</label>
+              <label className="filter-label">Origen de datos</label>
               <DropdownSelect
                 value={config.tabla}
-                onChange={(v) => { setConfig({ ...CONFIG_VACIA, tabla: v, limite: config.limite }); setResultado(null); }}
+                onChange={(v) => { setConfig({ ...CONFIG_VACIA, tabla: v, limite: config.limite }); setResultado(null); setReporteAbierto(null); }}
                 options={opcionesTabla}
-                placeholder="Elige una tabla…"
-                minWidth={340}
-                style={{ width: 280, height: 36 }}
+                placeholder="Elige un origen…"
+                minWidth={360}
+                style={{ width: 320, height: 36 }}
               />
             </div>
             <div className="reporteria-campo">
@@ -701,9 +860,10 @@ export default function Reporteria() {
             </div>
           </div>
 
-          {tablaActual?.descripcion && (
+          {(vistaActual?.descripcion || tablaActual?.descripcion) && (
             <div style={{ fontSize: 12.5, color: "var(--primary-dark)", background: "var(--primary-light)", borderRadius: 8, padding: "8px 12px", marginBottom: 14 }}>
-              {tablaActual.descripcion}
+              {vistaActual?.descripcion || tablaActual?.descripcion}
+              {vistaActual?.grano && <span style={{ opacity: .8 }}> · Cada fila es un(a) {vistaActual.grano}.</span>}
             </div>
           )}
 
@@ -717,13 +877,13 @@ export default function Reporteria() {
                     <button
                       key={c.nombre} type="button"
                       className={`reporteria-chip${activa ? " activa" : ""}`}
-                      title={c.tipo}
+                      title={c.descripcion || c.tipo}
                       onClick={() => setConfig((cfg) => ({
                         ...cfg,
                         columnas: activa ? cfg.columnas.filter((x) => x !== c.nombre) : [...cfg.columnas, c.nombre],
                       }))}
                     >
-                      {c.nombre}
+                      {c.etiqueta || c.nombre}
                     </button>
                   );
                 })}
@@ -742,13 +902,13 @@ export default function Reporteria() {
                       <button
                         key={c.nombre} type="button"
                         className={`reporteria-chip${activa ? " activa" : ""}`}
-                        title={c.tipo}
+                        title={c.descripcion || c.tipo}
                         onClick={() => setConfig((cfg) => ({
                           ...cfg,
                           agrupar: activa ? cfg.agrupar.filter((x) => x !== c.nombre) : [...cfg.agrupar, c.nombre],
                         }))}
                       >
-                        {c.nombre}
+                        {c.etiqueta || c.nombre}
                       </button>
                     );
                   })}
@@ -842,8 +1002,8 @@ export default function Reporteria() {
                     { value: "", label: "Sin orden" },
                     ...(modo === "resumen"
                       ? [
-                          ...config.agrupar.map((c) => ({ value: c, label: c })),
-                          ...config.agregaciones.map((a) => ({ value: `${a.funcion}_${a.campo === "*" ? "filas" : a.campo}`, label: `${a.funcion} de ${a.campo === "*" ? "filas" : a.campo}` })),
+                          ...config.agrupar.map((c) => ({ value: c, label: etiquetas[c] || c })),
+                          ...config.agregaciones.map((a) => { const alias = `${a.funcion}_${a.campo === "*" ? "filas" : a.campo}`; return { value: alias, label: etiquetas[alias] || alias }; }),
                         ]
                       : opcionesColumna),
                   ]}
@@ -861,7 +1021,7 @@ export default function Reporteria() {
             </div>
           )}
 
-          <button type="button" className="btn btn-primary" disabled={ejecutando || !config.tabla} onClick={() => ejecutarConstructor()}>
+          <button type="button" className="btn btn-primary" disabled={ejecutando || !config.tabla} onClick={() => { setReporteAbierto((r) => (r && !r.id ? null : r)); ejecutarConstructor(); }}>
             <Play size={14} style={{ marginRight: 5 }} />{ejecutando ? "Ejecutando…" : "Ejecutar reporte"}
           </button>
           {resultado?.sql && (
@@ -947,7 +1107,8 @@ export default function Reporteria() {
           resultado={resultado}
           grafico={grafico}
           setGrafico={setGrafico}
-          nombreArchivo={reporteAbierto?.nombre || (tab === "sql" ? "consulta_sql" : config.tabla)}
+          nombreArchivo={reporteAbierto?.nombre || (tab === "sql" ? "consulta_sql" : origenNombre)}
+          etiquetas={tab === "sql" ? {} : etiquetas}
           onGuardar={() => setModalGuardar({
             tipo: tab === "sql" ? "sql" : "constructor",
             id: reporteAbierto?.tipo === (tab === "sql" ? "sql" : "constructor") ? reporteAbierto?.id : undefined,

@@ -254,13 +254,14 @@ export default function App() {
               </RequireRole>
             }
           />
-          {/* REPORTERÍA (constructor de reportes + SQL de lectura) — solo admin */}
+          {/* REPORTERÍA (reportes a medida sin SQL) — por perfil de permisos;
+              las tablas crudas y el SQL libre siguen siendo solo admin (backend). */}
           <Route
             path="reporteria"
             element={
-              <RequireRole allow={["admin"]}>
+              <RequireModulo modulo="reporteria">
                 <Reporteria />
-              </RequireRole>
+              </RequireModulo>
             }
           />
           {/* MONITOREO DEL SISTEMA (logs técnicos) — solo admin */}
