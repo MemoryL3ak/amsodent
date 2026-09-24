@@ -334,12 +334,17 @@ export class BsaleService {
       });
       const skuPorVariante = new Map<number, string>();
       const descPorSku = new Map<string, string>();
+      const productoPorSku = new Map<string, number>(); // id del producto Bsale dueño de la variante
       for (const v of variantes) {
         const sku = normSku(v?.code);
         const id = Number(v?.id);
         if (!id || !sku) continue;
         skuPorVariante.set(id, sku);
-        if (!descPorSku.has(sku)) descPorSku.set(sku, String(v?.description || '').trim());
+        if (!descPorSku.has(sku)) {
+          descPorSku.set(sku, String(v?.description || '').trim());
+          const pid = Number(v?.product?.id);
+          if (pid) productoPorSku.set(sku, pid);
+        }
       }
 
       // 2. Catálogo interno primero, para consultarle a Bsale solo lo que existe acá.
@@ -453,11 +458,34 @@ export class BsaleService {
       // SKUs de Bsale sin producto interno, con su stock disponible (null si
       // no se conoce). Van primero los que tienen stock: son los que de verdad
       // importa crear en el catálogo interno.
+      // En Bsale el nombre vive en el PRODUCTO; la variante suele traer
+      // `description` vacía (productos de una sola variante). Para que los
+      // huérfanos se entiendan, se baja el nombre de sus productos.
+      const huerfanosSku: string[] = [];
+      for (const sku of skusBsale) if (!skusInternos.has(sku)) huerfanosSku.push(sku);
+      const nombrePorProducto = new Map<number, string>();
+      if (huerfanosSku.some((sku) => productoPorSku.has(sku))) {
+        try {
+          const productosBsale = await this.paginado('/products.json', '');
+          for (const pr of productosBsale) {
+            const pid = Number(pr?.id);
+            if (pid) nombrePorProducto.set(pid, String(pr?.name || '').trim());
+          }
+        } catch (e: any) {
+          this.logger.warn(`No se pudo bajar el nombre de los productos de Bsale: ${e?.message || e}`);
+        }
+      }
+      const nombreHuerfano = (sku: string) => {
+        const variante = descPorSku.get(sku) || '';
+        const pid = productoPorSku.get(sku);
+        const producto = pid ? nombrePorProducto.get(pid) || '' : '';
+        if (producto && variante && variante.toLowerCase() !== producto.toLowerCase()) return `${producto} — ${variante}`;
+        return producto || variante;
+      };
       const huerfanos: Array<{ sku: string; descripcion: string; stock: number | null }> = [];
-      for (const sku of skusBsale) {
-        if (skusInternos.has(sku)) continue;
+      for (const sku of huerfanosSku) {
         const stock = stockSinProducto ? (stockSinProducto.get(sku) ?? 0) : null;
-        huerfanos.push({ sku, descripcion: descPorSku.get(sku) || '', stock });
+        huerfanos.push({ sku, descripcion: nombreHuerfano(sku), stock });
       }
       huerfanos.sort((a, b) => (b.stock ?? -1) - (a.stock ?? -1) || a.sku.localeCompare(b.sku));
       const totalSkusBsaleSinProducto = huerfanos.length;
