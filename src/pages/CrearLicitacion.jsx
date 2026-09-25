@@ -829,6 +829,10 @@ export default function CrearLicitacion() {
   const [productos, setProductos] = useState([]);
   const [toast, setToast] = useState(null);
   const [campaignPrices, setCampaignPrices] = useState({});
+  const [campanasListas, setCampanasListas] = useState(false);
+  // Productos que llegan en el borrador solo por SKU + cantidad (pedido del
+  // portal): se resuelven contra el catálogo cuando este ya cargó.
+  const [itemsPendientesPorSku, setItemsPendientesPorSku] = useState(null);
   const [items, setItems] = useState([crearItemVacio()]);
   // Índice del ítem para el que está abierto el buscador de productos (popup).
   const [pickerIndex, setPickerIndex] = useState(null);
@@ -1121,12 +1125,73 @@ export default function CrearLicitacion() {
           }))
         );
       }
+      // Pedido del portal: productos por SKU, a resolver cuando cargue el catálogo.
+      if (Array.isArray(data.itemsPorSku) && data.itemsPorSku.length > 0) {
+        setItemsPendientesPorSku({ lista: data.itemsPorSku, sinSku: Number(data.itemsSinSku || 0) });
+      }
     } catch (e) {
       console.error("Error cargando borrador de licitación", e);
     } finally {
       setHydrated(true);
     }
   }, []);
+
+  /* (2026-09-25) Productos del pedido del portal → líneas de la cotización.
+     Llegan como { sku, nombre, cantidad, observacion }; acá se cruzan con el
+     catálogo (ya cargado) y se arman igual que al elegir un producto en el
+     picker: precio según lista y campañas vigentes, costo, formato y
+     categoría del catálogo, cantidad del pedido. Un SKU que no exista en el
+     catálogo (producto dado de baja) se avisa y queda fuera. */
+  useEffect(() => {
+    if (!hydrated || !itemsPendientesPorSku || productos.length === 0 || !campanasListas) return;
+    const { lista, sinSku } = itemsPendientesPorSku;
+    setItemsPendientesPorSku(null);
+    const porSku = new Map(productos.map((p) => [String(p.sku || "").trim().toUpperCase(), p]));
+    const nuevos = [];
+    const noEncontrados = [];
+    for (const it of lista) {
+      const prod = porSku.get(String(it.sku || "").trim().toUpperCase());
+      if (!prod) { noEncontrados.push(it.nombre || it.sku); continue; }
+      const cantidad = Math.max(1, Number(it.cantidad || 1));
+      const precio = getPrecioBaseParaSKU(prod, listado, campaignPrices);
+      nuevos.push({
+        ...crearItemVacio(),
+        sku: String(prod.sku || "").trim(),
+        producto: prod.nombre || "",
+        categoria: prod.categoria || "",
+        formato: prod.formato || "",
+        cantidad,
+        precio,
+        costo: Number(prod.costo ?? 0),
+        total: redondear(cantidad * (Number(precio || 0) + Number(fletePorUnidad || 0))),
+        observacion: it.observacion || "",
+        mostrarObs: Boolean(it.observacion),
+      });
+    }
+    if (nuevos.length > 0) {
+      setItems((prev) => {
+        const utiles = prev.filter((p) => String(p?.sku || "").trim() || String(p?.producto || "").trim());
+        const siguiente = [...utiles, ...nuevos];
+        persistirDraftItems(siguiente);
+        return siguiente;
+      });
+    }
+    // El borrador guardado ya no debe traer la lista por SKU (si no, se
+    // volvería a agregar en cada recarga de la pestaña).
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) {
+        const d = JSON.parse(raw);
+        delete d.itemsPorSku; delete d.itemsSinSku;
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(d));
+      }
+    } catch { /* */ }
+    const partes = [];
+    if (nuevos.length > 0) partes.push(`${nuevos.length} producto(s) del pedido cargados con precio de lista.`);
+    if (noEncontrados.length > 0) partes.push(`No están en el catálogo: ${noEncontrados.slice(0, 4).join(", ")}${noEncontrados.length > 4 ? "…" : ""}.`);
+    if (sinSku > 0) partes.push(`${sinSku} ítem(s) del Explorador de Precios quedaron fuera (no son productos Amsodent).`);
+    if (partes.length) setToast({ type: noEncontrados.length || sinSku ? "warning" : "success", message: partes.join(" ") });
+  }, [hydrated, itemsPendientesPorSku, productos, campanasListas]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* GUARDAR BORRADOR (debounced — evita JSON.stringify enorme en cada tecla) */
   useEffect(() => {
@@ -1347,6 +1412,8 @@ export default function CrearLicitacion() {
       } catch (err) {
         console.error("Error cargando campañas vigentes:", err);
         if (alive) setCampaignPrices({});
+      } finally {
+        if (alive) setCampanasListas(true);
       }
     }
 
