@@ -411,19 +411,30 @@ export default function PedidosPortal() {
        Antes se marcaba al abrir y quedaban pedidos "respondidos" sin
        cotización si la pestaña se cerraba sin guardar. */
     /* (2026-09-25) El borrador viaja con los PRODUCTOS del pedido que son de
-       Amsodent (los que traen SKU: Gestión de Stock y Showroom). /crear los
-       resuelve contra el catálogo al cargar (precio de la lista, costo,
-       formato) con la cantidad pedida. Los hallazgos del Explorador de
-       Precios (sin SKU, con tienda/URL) no son productos nuestros: quedan
-       fuera y se avisa cuántos fueron. */
+       Amsodent: los del Showroom (traen SKU), los de Gestión de Stock (sin
+       tienda; son lo que el cliente nos pide) y los hallazgos del Explorador
+       cuya tienda es la web de Amsodent (amsodentmedical.cl). /crear los
+       calza contra el catálogo por SKU o por nombre y les pone precio de
+       lista; el que no calce (la web tiene productos que el catálogo interno
+       no tiene) entra igual como línea libre con el precio web en neto, para
+       que el vendedor lo complete. Los hallazgos de OTRAS tiendas no son
+       productos nuestros: quedan fuera y se avisa cuántos fueron. */
     const items = Array.isArray(s.items) ? s.items : [];
+    const esNuestro = (i) => {
+      if (String(i?.sku || "").trim()) return true;
+      const tienda = String(i?.tienda || "").trim().toLowerCase();
+      if (!tienda && !i?.url) return true; // Gestión de Stock
+      return tienda.includes("amsodent") || /amsodentmedical\.cl/i.test(String(i?.url || ""));
+    };
     const itemsPorSku = items
-      .filter((i) => String(i?.sku || "").trim())
+      .filter(esNuestro)
       .map((i) => ({
-        sku: String(i.sku).trim(),
+        sku: String(i?.sku || "").trim(),
         nombre: i?.nombre || "",
         cantidad: Math.max(1, Number(i?.cantidad || 1)),
         observacion: String(i?.observacion || "").trim(),
+        precio_referencia: Number(i?.precio_referencia || 0) || 0,
+        tienda: String(i?.tienda || "").trim(),
       }));
     const sinSku = items.length - itemsPorSku.length;
     const draft = {
@@ -447,7 +458,7 @@ export default function PedidosPortal() {
     if (sinSku > 0) {
       setToast({
         type: "info",
-        message: `Se llevan ${itemsPorSku.length} producto(s) Amsodent al borrador; ${sinSku} ítem(s) del Explorador de Precios no son del catálogo y quedaron fuera.`,
+        message: `Se llevan ${itemsPorSku.length} producto(s) Amsodent al borrador; ${sinSku} ítem(s) son de otras tiendas del Explorador y quedaron fuera.`,
       });
     }
   }

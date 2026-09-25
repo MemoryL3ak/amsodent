@@ -1137,35 +1137,81 @@ export default function CrearLicitacion() {
   }, []);
 
   /* (2026-09-25) Productos del pedido del portal → líneas de la cotización.
-     Llegan como { sku, nombre, cantidad, observacion }; acá se cruzan con el
-     catálogo (ya cargado) y se arman igual que al elegir un producto en el
+     Llegan como { sku?, nombre, cantidad, observacion, precio_referencia,
+     tienda }. Se calzan con el catálogo (ya cargado) por SKU y, si no traen
+     SKU, por nombre normalizado (igual y luego contención, como hace el
+     Explorador); el que calza se arma igual que al elegir un producto en el
      picker: precio según lista y campañas vigentes, costo, formato y
-     categoría del catálogo, cantidad del pedido. Un SKU que no exista en el
-     catálogo (producto dado de baja) se avisa y queda fuera. */
+     categoría. El que NO calza entra como línea libre: nombre y cantidad
+     del pedido y, si venía de la tienda web, el precio web pasado a neto
+     como precio manual, con una observación que lo dice. Así el vendedor
+     parte con todo el pedido a la vista y solo completa lo que falte. */
   useEffect(() => {
     if (!hydrated || !itemsPendientesPorSku || productos.length === 0 || !campanasListas) return;
     const { lista, sinSku } = itemsPendientesPorSku;
     setItemsPendientesPorSku(null);
+    const normNombre = (s) => String(s || "")
+      .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase().replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
     const porSku = new Map(productos.map((p) => [String(p.sku || "").trim().toUpperCase(), p]));
+    const porNombre = new Map();
+    const listaNombres = [];
+    for (const p of productos) {
+      const n = normNombre(p.nombre);
+      if (!n) continue;
+      if (!porNombre.has(n)) porNombre.set(n, p);
+      listaNombres.push({ n, p });
+    }
+    const buscarProducto = (it) => {
+      const sku = String(it.sku || "").trim().toUpperCase();
+      if (sku && porSku.has(sku)) return porSku.get(sku);
+      const n = normNombre(it.nombre);
+      if (!n) return null;
+      if (porNombre.has(n)) return porNombre.get(n);
+      const cand = listaNombres.find((c) => c.n.length >= 8 && n.length >= 8 && (n.includes(c.n) || c.n.includes(n)));
+      return cand?.p || null;
+    };
     const nuevos = [];
-    const noEncontrados = [];
+    const libres = [];
     for (const it of lista) {
-      const prod = porSku.get(String(it.sku || "").trim().toUpperCase());
-      if (!prod) { noEncontrados.push(it.nombre || it.sku); continue; }
       const cantidad = Math.max(1, Number(it.cantidad || 1));
-      const precio = getPrecioBaseParaSKU(prod, listado, campaignPrices);
+      const prod = buscarProducto(it);
+      if (prod) {
+        const precio = getPrecioBaseParaSKU(prod, listado, campaignPrices);
+        nuevos.push({
+          ...crearItemVacio(),
+          sku: String(prod.sku || "").trim(),
+          producto: prod.nombre || "",
+          categoria: prod.categoria || "",
+          formato: prod.formato || "",
+          cantidad,
+          precio,
+          costo: Number(prod.costo ?? 0),
+          total: redondear(cantidad * (Number(precio || 0) + Number(fletePorUnidad || 0))),
+          observacion: it.observacion || "",
+          mostrarObs: Boolean(it.observacion),
+        });
+        continue;
+      }
+      // Línea libre: no está en el catálogo interno.
+      const webBruto = Number(it.precio_referencia || 0);
+      const precioNeto = webBruto > 0 ? Math.round(webBruto / 1.19) : 0;
+      const nota = [
+        it.observacion || "",
+        webBruto > 0 ? `Precio web referencial: ${webBruto.toLocaleString("es-CL")} bruto (${it.tienda || "tienda Amsodent"}). No está en el catálogo interno: revisar SKU y precio.` : "No está en el catálogo interno: revisar SKU y precio.",
+      ].filter(Boolean).join(" · ");
+      libres.push(it.nombre);
       nuevos.push({
         ...crearItemVacio(),
-        sku: String(prod.sku || "").trim(),
-        producto: prod.nombre || "",
-        categoria: prod.categoria || "",
-        formato: prod.formato || "",
+        sku: "",
+        producto: it.nombre || "",
         cantidad,
-        precio,
-        costo: Number(prod.costo ?? 0),
-        total: redondear(cantidad * (Number(precio || 0) + Number(fletePorUnidad || 0))),
-        observacion: it.observacion || "",
-        mostrarObs: Boolean(it.observacion),
+        precio: precioNeto,
+        precioManual: precioNeto > 0,
+        precioUnitarioStr: precioNeto > 0 ? formatearCLDesdeString(String(precioNeto)) : "",
+        total: redondear(cantidad * (precioNeto + Number(fletePorUnidad || 0))),
+        observacion: nota,
+        mostrarObs: true,
       });
     }
     if (nuevos.length > 0) {
@@ -1187,10 +1233,11 @@ export default function CrearLicitacion() {
       }
     } catch { /* */ }
     const partes = [];
-    if (nuevos.length > 0) partes.push(`${nuevos.length} producto(s) del pedido cargados con precio de lista.`);
-    if (noEncontrados.length > 0) partes.push(`No están en el catálogo: ${noEncontrados.slice(0, 4).join(", ")}${noEncontrados.length > 4 ? "…" : ""}.`);
-    if (sinSku > 0) partes.push(`${sinSku} ítem(s) del Explorador de Precios quedaron fuera (no son productos Amsodent).`);
-    if (partes.length) setToast({ type: noEncontrados.length || sinSku ? "warning" : "success", message: partes.join(" ") });
+    const conCatalogo = nuevos.length - libres.length;
+    if (conCatalogo > 0) partes.push(`${conCatalogo} producto(s) del pedido cargados con precio de lista.`);
+    if (libres.length > 0) partes.push(`${libres.length} no están en el catálogo interno y quedaron como línea libre con el precio web (revisar SKU y precio): ${libres.slice(0, 3).join(", ")}${libres.length > 3 ? "…" : ""}.`);
+    if (sinSku > 0) partes.push(`${sinSku} ítem(s) de otras tiendas quedaron fuera.`);
+    if (partes.length) setToast({ type: libres.length || sinSku ? "warning" : "success", message: partes.join(" ") });
   }, [hydrated, itemsPendientesPorSku, productos, campanasListas]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* GUARDAR BORRADOR (debounced — evita JSON.stringify enorme en cada tecla) */
