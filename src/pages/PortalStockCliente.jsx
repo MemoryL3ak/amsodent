@@ -4334,7 +4334,6 @@ function PanelMisSolicitudes({ solicitudes, cotizacionesHist = [], cargando, onS
                   trabajando={trabajando === s.id}
                   credito={credito}
                   onAprobar={() => aprobar(s)}
-                  onValidarCotizacion={() => validarCotizacion(s)}
                   onModificar={() => modificarCotizacion(s)}
                   onPagar={() => pagar(s)}
                   onPagarCredito={() => pagarConCredito(s)}
@@ -4404,7 +4403,15 @@ function PanelMisSolicitudes({ solicitudes, cotizacionesHist = [], cargando, onS
                   </div>
                 )}
 
-                {s.cotizacion && <CotizacionGenerada solicitud={s} />}
+                {s.cotizacion && (
+                  <CotizacionGenerada
+                    solicitud={s}
+                    esAdminPortal={esAdminPortal}
+                    trabajando={trabajando === s.id}
+                    onValidar={() => validarCotizacion(s)}
+                    onModificar={() => modificarCotizacion(s)}
+                  />
+                )}
 
                 <HiloMensajesCliente solicitudId={s.id} />
               </div>
@@ -4416,8 +4423,13 @@ function PanelMisSolicitudes({ solicitudes, cotizacionesHist = [], cargando, onS
   );
 }
 
-/* Bloque "cotización generada" + descarga de PDF en el portal del cliente. */
-function CotizacionGenerada({ solicitud }) {
+/* Bloque "cotización generada" + descarga de PDF en el portal del cliente.
+   (2026-09-24, corregido) Acá también van "Validar" y "Modificar": este es el
+   momento en que el cliente RECIBE la cotización — la ve con su número y se
+   baja el PDF —, y pasa mientras el pedido sigue "en revisión de Amsodent".
+   Antes esos botones colgaban de la etapa del pago, así que no aparecían justo
+   cuando tenían sentido. */
+function CotizacionGenerada({ solicitud, esAdminPortal = true, trabajando = false, onValidar, onModificar }) {
   const [descargando, setDescargando] = useState(false);
   const [error, setError] = useState("");
   const cot = solicitud.cotizacion || {};
@@ -4468,6 +4480,40 @@ function CotizacionGenerada({ solicitud }) {
           <FileDown size={14} /> {descargando ? "Generando…" : "Descargar PDF"}
         </button>
       </div>
+
+      {esAdminPortal && (
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginTop: 10, paddingTop: 10, borderTop: "1px solid #a7f3d0" }}>
+          {solicitud.validado_cliente_at ? (
+            <span style={{ fontSize: 12, fontWeight: 700, color: "#065f46" }}>
+              ✓ Cotización validada
+              {solicitud.validado_cliente_por ? ` por ${String(solicitud.validado_cliente_por).split("@")[0]}` : ""}
+            </span>
+          ) : (
+            <>
+              <span style={{ fontSize: 12, color: "#047857" }}>¿Está todo correcto?</span>
+              <button
+                type="button"
+                onClick={onValidar}
+                disabled={trabajando}
+                title="Confirmar que la cotización está correcta"
+                style={{ padding: "6px 13px", background: "#047857", color: "#fff", border: "none", borderRadius: 999, fontSize: 12, fontWeight: 700, cursor: trabajando ? "wait" : "pointer", opacity: trabajando ? 0.6 : 1 }}
+              >
+                Validar cotización
+              </button>
+              <button
+                type="button"
+                onClick={onModificar}
+                disabled={trabajando}
+                title="Cambiar los productos de este pedido desde el carrito"
+                style={{ padding: "6px 13px", background: "#fff", color: "#047857", border: "1px solid #a7f3d0", borderRadius: 999, fontSize: 12, fontWeight: 700, cursor: trabajando ? "wait" : "pointer" }}
+              >
+                Necesito modificarla
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
       {error && <div style={{ fontSize: 11.5, color: "#b91c1c", marginTop: 6 }}>{error}</div>}
     </div>
   );
@@ -4546,7 +4592,7 @@ function HiloMensajesCliente({ solicitudId }) {
 
 /* Bloque del flujo dentro del pedido, en el portal del cliente: en qué etapa
    va, qué falta y el botón de la acción que le toca a él. */
-function BloqueFlujoPedido({ pedido, esAdminPortal, trabajando, credito, onAprobar, onValidarCotizacion, onModificar, onPagar, onPagarCredito, onSos }) {
+function BloqueFlujoPedido({ pedido, esAdminPortal, trabajando, credito, onAprobar, onModificar, onPagar, onPagarCredito, onSos }) {
   const estado = String(pedido?.flujo_estado || "");
   // Sin flujo (migración pendiente o pedido antiguo) no se muestra nada.
   if (!estado || !FLUJO_CLIENTE[estado]) return null;
@@ -4619,15 +4665,9 @@ function BloqueFlujoPedido({ pedido, esAdminPortal, trabajando, credito, onAprob
             {trabajando ? "Abriendo el pago…" : `Pagar ${fmtMoneda(pedido.monto_total)} con Webpay`}
           </button>
         )}
-        {/* (2026-09-24) Antes, con la cotizacion en la mano, lo unico que se
-            podia hacer era pagar. Ahora se puede dejar constancia de que esta
-            conforme, o pedir cambios sin tener que llamar por telefono. */}
-        {estado === "validado_plataforma" && esAdminPortal && !pedido.validado_cliente_at && (
-          <button type="button" onClick={onValidarCotizacion} disabled={trabajando} style={{ ...styles.btnSecundarioChico, opacity: trabajando ? 0.6 : 1 }} title="Confirmar que la cotizacion esta correcta">
-            Validar cotizacion
-          </button>
-        )}
-        {estado === "validado_plataforma" && pedido.validado_cliente_at && (
+        {/* Validar y modificar viven en el bloque de la cotizacion generada,
+            que es donde el cliente la recibe. Aca solo se refleja el estado. */}
+        {pedido.validado_cliente_at && (
           <span style={{ fontSize: 12, fontWeight: 700, color: "#15803d" }}>
             ✓ Cotizacion validada
             {pedido.validado_cliente_por ? ` por ${String(pedido.validado_cliente_por).split("@")[0]}` : ""}

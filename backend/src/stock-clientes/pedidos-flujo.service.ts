@@ -308,8 +308,17 @@ export class PedidosFlujoService {
     if (String(pedido.rut) !== String(rut)) {
       throw new ForbiddenException('Este pedido pertenece a otra cuenta.');
     }
-    if (this.estadoDe(pedido) !== 'validado_plataforma') {
-      throw new BadRequestException('Solo se puede validar una cotización que Amsodent ya envió.');
+    /* (2026-09-24, corregido) Lo que habilita validar es TENER la cotizacion,
+       no la etapa del pago. El cliente la recibe en cuanto se le vincula una
+       (la ve con su numero y su PDF en el portal), y eso pasa mientras el
+       pedido sigue "en revision de Amsodent": exigir `validado_plataforma`
+       dejaba el boton invisible justo cuando tenia sentido apretarlo. */
+    if (!pedido.licitacion_id) {
+      throw new BadRequestException('Todavia no hay una cotizacion que validar para este pedido.');
+    }
+    const etapa = this.estadoDe(pedido);
+    if (['pagado', 'cancelado', 'rechazado'].includes(etapa)) {
+      throw new BadRequestException('Este pedido ya esta cerrado.');
     }
     if (pedido.validado_cliente_at) {
       return { ok: true, pedido, mensaje: 'Esta cotización ya estaba validada.' };
@@ -322,6 +331,14 @@ export class PedidosFlujoService {
       .eq('id', Number(id))
       .select()
       .single();
+    // La migracion 20260924 puede no estar aplicada todavia: sin esas columnas
+    // no hay donde dejar constancia, y decirlo es mejor que mostrar el error
+    // crudo de Postgres o fingir que se guardo.
+    if (error && /validado_cliente/.test(error.message)) {
+      throw new BadRequestException(
+        'Falta aplicar la migracion 20260924_lote_portal_showroom.sql en Supabase para poder validar la cotizacion.',
+      );
+    }
     if (error) this.traducirError(error);
 
     await this.registrarEvento({
