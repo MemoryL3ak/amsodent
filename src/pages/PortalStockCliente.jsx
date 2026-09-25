@@ -153,14 +153,26 @@ function fmtPrecioInput(v) {
   return n ? n.toLocaleString("es-CL") : "";
 }
 
-/* Flete del portal (2026-09-24): el pedido que nace en el portal se rige por
-   las MISMAS dos reglas que el resto de las cotizaciones, no por un mínimo
-   propio de $150.000 como hasta ahora:
+/* Flete del pedido del portal. Tres reglas, en este orden:
      · destino San Bernardo → gratis siempre, sin mínimo de compra;
-     · resto de la Región Metropolitana → gratis sobre $70.000 brutos.
+     · el carrito trae productos de OTRA casa dental (salidos del Explorador
+       de Precios) → gratis en la RM sobre $150.000, porque hay que ir a
+       comprarlos afuera y el despacho sale mucho más caro;
+     · solo productos nuestros → gratis en la RM sobre $70.000, igual que
+       cualquier otra cotización.
    Fuera de la RM lo cotiza el vendedor y viaja como ítem aparte. Quien decide
    de verdad es el backend (fletes.service.ts); acá solo se anuncia. */
 const PORTAL_FLETE_GRATIS_RM = 70000;
+const PORTAL_FLETE_GRATIS_OTRA_CASA = 150000;
+
+/* ¿Hay en el carrito algo de una casa dental que no seamos nosotros? Las
+   líneas del Explorador guardan la tienda de donde salieron; las de Gestión de
+   Stock y las del Showroom son nuestras. */
+const carritoConOtraCasa = (carrito) =>
+  (Array.isArray(carrito) ? carrito : []).some((c) => {
+    const tienda = String(c?.tienda || "").trim();
+    return tienda !== "" && !/amsodent/i.test(tienda);
+  });
 
 const esSanBernardo = (comuna) =>
   String(comuna || "")
@@ -171,11 +183,12 @@ const esSanBernardo = (comuna) =>
 
 // Aviso del umbral: si falta poco, dice cuánto; si ya lo superó, lo celebra.
 // En San Bernardo no hay umbral que mostrar: siempre es gratis.
-function AvisoDespachoGratis({ total, compacto = false, comuna = "" }) {
+function AvisoDespachoGratis({ total, compacto = false, comuna = "", otraCasa = false }) {
   const siempreGratis = esSanBernardo(comuna);
-  const alcanza = siempreGratis || Number(total || 0) >= PORTAL_FLETE_GRATIS_RM;
-  const falta = Math.max(0, PORTAL_FLETE_GRATIS_RM - Number(total || 0));
-  const pct = Math.min(100, (Number(total || 0) / PORTAL_FLETE_GRATIS_RM) * 100);
+  const minimo = otraCasa ? PORTAL_FLETE_GRATIS_OTRA_CASA : PORTAL_FLETE_GRATIS_RM;
+  const alcanza = siempreGratis || Number(total || 0) >= minimo;
+  const falta = Math.max(0, minimo - Number(total || 0));
+  const pct = Math.min(100, (Number(total || 0) / minimo) * 100);
   return (
     <div
       style={{
@@ -193,10 +206,17 @@ function AvisoDespachoGratis({ total, compacto = false, comuna = "" }) {
         {siempreGratis ? (
           <span><strong>¡Despacho gratuito!</strong> Despachamos sin costo a San Bernardo, sin monto mínimo.</span>
         ) : alcanza ? (
-          <span><strong>¡Despacho gratuito!</strong> Tu pedido supera los $70.000 en Región Metropolitana.</span>
+          <span>
+            <strong>¡Despacho gratuito!</strong> Tu pedido supera los {fmtMoneda(minimo)} en Región Metropolitana.
+          </span>
         ) : (
           <span>
-            <strong>Sobre $70.000 en RM despacho gratuito.</strong> Te faltan {fmtMoneda(falta)}.
+            <strong>Sobre {fmtMoneda(minimo)} en RM despacho gratuito.</strong> Te faltan {fmtMoneda(falta)}.
+            {otraCasa && (
+              <span style={{ display: "block", marginTop: 2, fontSize: 11, opacity: 0.85 }}>
+                Tu pedido incluye productos de otra casa dental, que tienen un mínimo más alto.
+              </span>
+            )}
           </span>
         )}
       </div>
@@ -3567,7 +3587,7 @@ function PanelExploradorPrecios() {
                     <span>Total referencial*</span>
                     <strong style={{ color: "#0f172a" }}>{fmtMoneda(totalReferencial)}</strong>
                   </div>
-                  <AvisoDespachoGratis total={totalReferencial} compacto comuna={comunaDespacho} />
+                  <AvisoDespachoGratis total={totalReferencial} compacto comuna={comunaDespacho} otraCasa={carritoConOtraCasa(carrito)} />
                   <textarea
                     value={notaPedido}
                     onChange={(e) => setNotaPedido(e.target.value)}
@@ -3649,7 +3669,7 @@ function PanelExploradorPrecios() {
                     </table>
                   </div>
 
-                  <AvisoDespachoGratis total={totalReferencial} comuna={comunaDespacho} />
+                  <AvisoDespachoGratis total={totalReferencial} comuna={comunaDespacho} otraCasa={carritoConOtraCasa(carrito)} />
 
                   {/* Nota */}
                   {notaPedido.trim() && (
