@@ -54,6 +54,7 @@ import {
   UserCircle2,
   LifeBuoy,
   HeartHandshake,
+  Store,
 } from "lucide-react";
 import NotificacionesMenu from "./NotificacionesMenu";
 import RecordatoriosCorreo from "./RecordatoriosCorreo";
@@ -251,6 +252,8 @@ export default function SidebarLayout() {
       ],
     },
     esAdmin && { to: "/analisis-mercado-publico", icon: Scale, label: "Análisis Mercado Público" },
+    // (2026-09-24) El explorador del portal del cliente, ahora tambien acá.
+    esAdmin && { to: "/explorador-precios", icon: Store, label: "Explorador de Precios" },
     puede("reporteria") && { to: "/reporteria", icon: FilePieChart, label: "Reportería" },
     (puede("cotizaciones_vendedor") || puede("resumen_comercial")) && { to: "/cotizaciones-vendedor", icon: BarChart3, label: "Panel de Ejecutivos" },
   ].filter(Boolean);
