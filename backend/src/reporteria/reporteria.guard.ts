@@ -31,15 +31,32 @@ export class ReporteriaGuard implements CanActivate {
     } = await client.auth.getUser(token);
     if (error || !user) throw new UnauthorizedException('Token inválido o expirado');
 
+    /* Los permisos NO viven en `profiles`: la tabla solo guarda el rol y el
+       `permission_profile_id`, y la lista de modulos esta en el perfil
+       apuntado (permission_profiles.permisos). Pedirle `permisos` a profiles
+       hacia fallar la consulta con "column profiles.permisos does not exist",
+       y como un error aca se traduce en 401, la Reporteria quedaba cerrada
+       para todos, admin incluido. Se resuelve igual que en auth.service. */
     const { data: perfil, error: errPerfil } = await client
       .from('profiles')
-      .select('rol, permisos')
+      .select('rol, permission_profile_id')
       .eq('id', user.id)
       .maybeSingle();
     if (errPerfil) throw new UnauthorizedException('No se pudo verificar el perfil del usuario');
 
     const rol = String(perfil?.rol || '').trim().toLowerCase();
-    const permisos = permisosEfectivos(rol, perfil?.permisos);
+
+    let permisosPerfil: any = null;
+    if (perfil?.permission_profile_id) {
+      // Si la tabla de perfiles aun no existe, se cae a los permisos del rol.
+      const { data: asignado } = await client
+        .from('permission_profiles')
+        .select('permisos')
+        .eq('id', perfil.permission_profile_id)
+        .maybeSingle();
+      permisosPerfil = asignado?.permisos ?? null;
+    }
+    const permisos = permisosEfectivos(rol, permisosPerfil);
     if (!esRolAdmin(rol) && !permisos.includes('reporteria')) {
       throw new ForbiddenException('No tienes acceso al módulo de Reportería. Pídele a administración que lo agregue a tu perfil.');
     }
