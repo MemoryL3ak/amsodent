@@ -85,6 +85,7 @@ import MonitoreoMarcajes from "./pages/MonitoreoMarcajes";
 import PortalStockCliente from "./pages/PortalStockCliente";
 import MonitoreoStockClientes from "./pages/MonitoreoStockClientes";
 import PedidosPortal from "./pages/PedidosPortal";
+import ExploradorPrecios from "./pages/ExploradorPrecios";
 import AccesoPortalClientes from "./pages/AccesoPortalClientes";
 // DESPACHOS INTERNOS / CHOFERES
 import DespachosChoferes from "./pages/DespachosChoferes";
@@ -403,6 +404,20 @@ export default function App() {
               <RequireModulo modulo="monitoreo_stock">
                 <PedidosPortal />
               </RequireModulo>
+            }
+          />
+
+          {/* EXPLORADOR DE PRECIOS — solo admin (2026-09-24). Es el mismo
+              buscador del portal del cliente, traído a la plataforma. Va con
+              RequireRole y no con RequireModulo porque no es un permiso que se
+              reparta por perfil: consume cuota de scraping y expone lo que
+              cobra la competencia. */}
+          <Route
+            path="explorador-precios"
+            element={
+              <RequireRole allow={["admin"]}>
+                <ExploradorPrecios />
+              </RequireRole>
             }
           />
 

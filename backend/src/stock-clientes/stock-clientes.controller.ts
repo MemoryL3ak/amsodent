@@ -445,6 +445,17 @@ export class StockClientesController {
     return await this.explorador.buscar(q);
   }
 
+  /* (2026-09-24) El mismo explorador, pero desde la plataforma interna. Va por
+     su propia ruta con AdminGuard en vez de reutilizar la de arriba: esa la
+     consume el portal del cliente y no exige sesion de la plataforma, asi que
+     colgar de ella una pantalla de admin dejaria el control de acceso solo en
+     el frontend. El motor de busqueda es el mismo. */
+  @UseGuards(AdminGuard)
+  @Get('explorador/interno')
+  async explorarPreciosInterno(@Query('q') q: string) {
+    return await this.explorador.buscar(q);
+  }
+
   // Mantenedor de tiendas del explorador (2026-09-10, solo admin): permite
   // customizar las páginas que consulta el buscador de precios.
   @UseGuards(AdminGuard)
