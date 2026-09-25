@@ -3675,8 +3675,9 @@ export default function CrearLicitacion() {
           </div>
 
           {/* `origen="portal"` cuando la cotización nace de un pedido del
-              portal: ahí el mínimo de despacho gratis en la RM es $150.000,
-              no los $70.000 del resto. */}
+              portal. El id del pedido va aparte: con el, el backend revisa si
+              trae productos de otra casa dental y en ese caso el mínimo de
+              despacho gratis en la RM sube de $70.000 a $150.000. */}
           <CalculadoraFlete
             pesoTotal={pesoTotalGeneral}
             volumenTotal={metroCubicoGeneral}
@@ -3686,6 +3687,7 @@ export default function CrearLicitacion() {
             tipoCotizacion={esParticular || tipoCompra === "Cliente particular" ? "particular" : "publico"}
             totalCompra={totalConIVA}
             origen={solicitudStockId ? "portal" : ""}
+            solicitudStockId={solicitudStockId || null}
             deshabilitado={fletePorPagar}
             onAplicar={(neto) => {
               setFleteEstimado(neto);

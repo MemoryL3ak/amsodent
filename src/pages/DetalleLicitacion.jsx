@@ -1057,6 +1057,11 @@ export default function EditarLicitacion() {
      cosas: el mínimo de despacho gratis en la RM ($150.000) y que el flete
      vaya como ítem aparte en el PDF. */
   const [vieneDelPortal, setVieneDelPortal] = useState(false);
+  /* Id del pedido del portal que origino la cotizacion. Lo necesita la
+     calculadora de flete: con el, el backend revisa si el pedido trae
+     productos de otra casa dental y sube el minimo de despacho gratis en la
+     RM de $70.000 a $150.000. */
+  const [solicitudStockId, setSolicitudStockId] = useState(null);
   const [estadoEnvio, setEstadoEnvio] = useState("");
   const [estadoEnvioDB, setEstadoEnvioDB] = useState("");
   const [estadoEnvioActualizado, setEstadoEnvioActualizado] = useState("");
@@ -2274,6 +2279,7 @@ export default function EditarLicitacion() {
     setFletePorPagar(Boolean(lic.flete_por_pagar));
     setFletePorPagarDB(Boolean(lic.flete_por_pagar));
     setVieneDelPortal(lic.solicitud_stock_id != null);
+    setSolicitudStockId(lic.solicitud_stock_id ?? null);
     setEstadoEnvio(lic.estado_envio || "");
     setEstadoEnvioDB(lic.estado_envio || "");
     setEstadoEnvioActualizado(lic.estado_envio_actualizado_at || "");
@@ -4689,6 +4695,7 @@ export default function EditarLicitacion() {
             tipoCotizacion={esCotizacionParticular ? "particular" : "publico"}
             totalCompra={totalConIVA}
             origen={vieneDelPortal ? "portal" : ""}
+            solicitudStockId={solicitudStockId}
             deshabilitado={!esEditable || fletePorPagar}
             onAplicar={(neto) => setFleteEstimado(neto)}
           />

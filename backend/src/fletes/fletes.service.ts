@@ -172,6 +172,34 @@ export class FletesService {
       .toLowerCase();
   }
 
+  /* ¿El pedido del portal trae productos de otra casa dental?
+     Las líneas que salieron del Explorador de Precios guardan la `tienda` de
+     donde vienen; las de Gestión de Stock y las del Showroom no traen tienda
+     ajena. Si aparece una que no es Amsodent, el pedido obliga a comprar
+     afuera y el mínimo de despacho gratis sube a $150.000.
+
+     Ante la duda se responde `false`: pedido sin id, tabla que no responde o
+     ítems mal formados dejan el mínimo general de $70.000, que es el que más
+     favorece al cliente. */
+  private async pedidoTieneOtraCasaDental(solicitudId: unknown): Promise<boolean> {
+    const id = Number(solicitudId);
+    if (!Number.isFinite(id) || id <= 0) return false;
+    try {
+      const { data, error } = await this.supabase.getClient()
+        .from('stock_solicitudes_cotizacion')
+        .select('items')
+        .eq('id', id)
+        .maybeSingle();
+      if (error || !data) return false;
+      const items: any[] = Array.isArray((data as any).items) ? (data as any).items : [];
+      return items.some((it) => {
+        const tienda = String(it?.tienda || '').trim();
+        return tienda !== '' && !/amsodent/i.test(tienda);
+      });
+    } catch {
+      return false;
+    }
+  }
   private esComunaGratis(comuna: any): boolean {
     return FletesService.COMUNAS_GRATIS_SANTIAGO.has(FletesService.normComuna(comuna));
   }
@@ -261,7 +289,10 @@ export class FletesService {
     comuna?: string;
     tipo_cotizacion?: string; // 'particular' | 'publico'
     total_compra?: number; // total bruto de la cotización (para la regla ≥ $70.000)
-    origen?: string; // 'portal' → mínimo de despacho gratis en RM de $150.000
+    origen?: string; // 'portal' cuando la cotizacion nace de un pedido del portal
+    // Pedido del portal del que nace la cotizacion: de ahi sale si trae
+    // productos de otra casa dental, que suben el minimo a $150.000.
+    solicitud_stock_id?: number | string | null;
   }) {
     const empresa = String(body?.empresa || '').trim();
     const region = String(body?.region || '').trim();
@@ -270,13 +301,17 @@ export class FletesService {
     const comuna = String(body?.comuna || '').trim();
     const tipoCotizacion = String(body?.tipo_cotizacion || '').trim().toLowerCase();
     const totalCompra = Number(body?.total_compra) || 0;
-    /* (2026-09-24) El pedido nacido del portal tenía su propio mínimo de
-       despacho gratis en la RM ($150.000). Se unificó: rigen las mismas dos
-       reglas para todos — San Bernardo siempre gratis y RM ≥ $70.000 —, que
-       es lo que el portal le promete al cliente. `origen` se sigue leyendo
-       solo para dejarlo dicho en el detalle. */
+    /* Mínimo de despacho gratis en la RM.
+         · $70.000 en general.
+         · $150.000 cuando el pedido del portal incluye productos de OTRA casa
+           dental, no de Amsodent: esos hay que ir a comprarlos afuera, y el
+           despacho sale mucho más caro que sacar algo de bodega.
+       Quién decide es el backend y no el formulario: la mezcla de tiendas está
+       en los ítems del pedido, y dejarla viajar desde el cliente permitiría
+       cambiar el umbral a mano. */
     const desdePortal = String(body?.origen || '').trim().toLowerCase() === 'portal';
-    const minimoRM = 70000;
+    const conOtraCasa = await this.pedidoTieneOtraCasaDental(body?.solicitud_stock_id);
+    const minimoRM = conOtraCasa ? 150000 : 70000;
 
     if (!['Starken', 'Blue', 'Interno'].includes(empresa)) {
       throw new BadRequestException('Empresa inválida (Starken, Blue o Interno).');
@@ -309,7 +344,10 @@ export class FletesService {
         empresa,
         neto: 0,
         gratis: true,
-        detalle: `Despacho gratis: compra ≥ $${minimoRM.toLocaleString('es-CL')} (total $${Math.round(totalCompra).toLocaleString('es-CL')}) con destino en la Región Metropolitana${desdePortal ? ' · pedido del portal' : ''}`,
+        detalle:
+          `Despacho gratis: compra ≥ $${minimoRM.toLocaleString('es-CL')} ` +
+          `(total $${Math.round(totalCompra).toLocaleString('es-CL')}) con destino en la Región Metropolitana` +
+          `${conOtraCasa ? ' · pedido del portal con productos de otra casa dental' : desdePortal ? ' · pedido del portal' : ''}`,
       };
     }
 

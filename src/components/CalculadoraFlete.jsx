@@ -15,7 +15,9 @@ import { api } from "../lib/api";
    ─ Reglas de despacho GRATIS (las resuelve el backend):
      · destino San Bernardo → $0 SIEMPRE, sin mínimo de compra;
      · compra ≥ $70.000 (bruto) Y destino en la Región Metropolitana → $0
-       (cualquier tipo de cotización y courier, incluido el pedido del portal).
+       (cualquier tipo de cotización y courier);
+     · ese mínimo sube a $150.000 cuando la cotización nace de un pedido del
+       portal que incluye productos de otra casa dental.
    ─ Cliente particular puede además marcar "Flete por pagar": no se cobra
      flete en la cotización (el cliente lo paga al courier) y esta
      calculadora queda deshabilitada.
@@ -60,10 +62,13 @@ export default function CalculadoraFlete({
   direccionCliente = "",
   tipoCotizacion = "", // "particular" | "publico" (para las reglas de despacho gratis)
   totalCompra = 0, // total BRUTO de la cotización (regla gratis ≥ $70.000 en RM)
-  // Origen de la cotización. Desde 2026-09-24 ya no cambia el mínimo (el
-  // portal rige por las mismas reglas); solo queda dicho en el detalle que
-  // devuelve el backend.
+  // Origen de la cotización: "portal" cuando nace de un pedido del portal.
   origen = "",
+  /* Id de ese pedido. El backend lo usa para ver si el pedido trae productos
+     de OTRA casa dental: en ese caso el mínimo de despacho gratis en la RM
+     sube a $150.000, porque hay que ir a comprarlos afuera. La decision se
+     toma alla y no aca a proposito: el dato son los items del pedido. */
+  solicitudStockId = null,
 }) {
   const [empresa, setEmpresa] = useState("");
   const [regiones, setRegiones] = useState([]);
@@ -181,6 +186,7 @@ export default function CalculadoraFlete({
         tipo_cotizacion: tipoCotizacion || undefined,
         total_compra: Number(totalCompra) || 0,
         origen: origen || undefined,
+        solicitud_stock_id: solicitudStockId || undefined,
       });
       setResultado(res);
       onAplicar?.(Number(res?.neto) || 0, res);
