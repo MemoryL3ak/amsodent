@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState, useRef } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../lib/api";
 import Toast from "../components/Toast";
@@ -178,13 +178,29 @@ export default function PedidosPortal() {
      en una pestana nueva; al guardarla alla, el pedido pasa a "Respondida" y
      queda vinculado, pero esta pantalla seguia mostrando el estado viejo hasta
      que alguien recargaba. Ahora se recarga sola al volver el foco, que es
-     justo cuando el usuario vuelve de crear la cotizacion. */
+     justo cuando el usuario vuelve de crear la cotizacion.
+     (2026-09-25) El refresco es SILENCIOSO: antes pasaba por `cargar()`, que
+     pone `loading` y reemplaza toda la pantalla por "Cargando pedidos…" —
+     se veia como si la pagina se recargara sola cada vez que se apretaba
+     "Crear" y se perdia el detalle abierto y el scroll. Ahora se piden los
+     datos por detras y se reemplazan en su lugar, como maximo una vez cada
+     5 s (el foco y visibilitychange suelen disparar juntos). */
+  const ultimoRefrescoRef = useRef(0);
+  async function refrescarSilencioso() {
+    const ahora = Date.now();
+    if (ahora - ultimoRefrescoRef.current < 5000) return;
+    ultimoRefrescoRef.current = ahora;
+    try {
+      const data = await api.get("/stock-clientes/solicitudes");
+      if (Array.isArray(data)) setPedidos(data);
+      cargarKpis();
+    } catch {
+      /* sin ruido: si falla, la bandeja queda como estaba */
+    }
+  }
   useEffect(() => {
     const alVolver = () => {
-      if (document.visibilityState === "visible") {
-        cargar();
-        cargarKpis();
-      }
+      if (document.visibilityState === "visible") refrescarSilencioso();
     };
     window.addEventListener("focus", alVolver);
     document.addEventListener("visibilitychange", alVolver);
@@ -192,8 +208,8 @@ export default function PedidosPortal() {
       window.removeEventListener("focus", alVolver);
       document.removeEventListener("visibilitychange", alVolver);
     };
-    // cargar/cargarKpis se redefinen en cada render pero hacen siempre lo mismo.
-  }, []);
+    // refrescarSilencioso se redefine en cada render pero hace siempre lo mismo.
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Cambiar cualquier filtro vuelve a la página 1 y colapsa el detalle.
   useEffect(() => {
@@ -394,6 +410,22 @@ export default function PedidosPortal() {
        que es cuando el cliente de verdad tiene su cotización en el portal.
        Antes se marcaba al abrir y quedaban pedidos "respondidos" sin
        cotización si la pestaña se cerraba sin guardar. */
+    /* (2026-09-25) El borrador viaja con los PRODUCTOS del pedido que son de
+       Amsodent (los que traen SKU: Gestión de Stock y Showroom). /crear los
+       resuelve contra el catálogo al cargar (precio de la lista, costo,
+       formato) con la cantidad pedida. Los hallazgos del Explorador de
+       Precios (sin SKU, con tienda/URL) no son productos nuestros: quedan
+       fuera y se avisa cuántos fueron. */
+    const items = Array.isArray(s.items) ? s.items : [];
+    const itemsPorSku = items
+      .filter((i) => String(i?.sku || "").trim())
+      .map((i) => ({
+        sku: String(i.sku).trim(),
+        nombre: i?.nombre || "",
+        cantidad: Math.max(1, Number(i?.cantidad || 1)),
+        observacion: String(i?.observacion || "").trim(),
+      }));
+    const sinSku = items.length - itemsPorSku.length;
     const draft = {
       rutEntidad: formatearRutVisual(s.rut),
       nombreEntidad: s.razon_social || "",
@@ -404,12 +436,20 @@ export default function PedidosPortal() {
       email: s.contacto_email || "",
       telefono: s.contacto_telefono || "",
       solicitud_stock_id: s.id,
+      itemsPorSku,
+      itemsSinSku: sinSku,
     };
     try {
       // Misma clave que hidrata CrearLicitacion al montar.
       localStorage.setItem("crear_licitacion_draft", JSON.stringify(draft));
     } catch { /* */ }
     window.open("/crear", "_blank", "noopener");
+    if (sinSku > 0) {
+      setToast({
+        type: "info",
+        message: `Se llevan ${itemsPorSku.length} producto(s) Amsodent al borrador; ${sinSku} ítem(s) del Explorador de Precios no son del catálogo y quedaron fuera.`,
+      });
+    }
   }
 
   if (loading) {
