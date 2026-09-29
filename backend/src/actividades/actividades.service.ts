@@ -572,19 +572,37 @@ export class ActividadesService {
     this.ultimaImportacion.set(email, Date.now());
     if (!candidatos.length) return 0;
 
+    /* (2026-09-24) La actividad se guarda a nombre del USUARIO DE LA
+       PLATAFORMA, no de la direccion de Google. Casi siempre son la misma,
+       pero no tienen por que serlo: Jeremias entra como jer.consorcio@gmail.com
+       y su calendario conectado es jer.alarcon@amsodentmedical.cl. Como la
+       bitacora filtra por `user_email` contra el correo con el que cada uno
+       inicio sesion, sus reuniones se importaban bien pero quedaban archivadas
+       a nombre de otro y el no las veia nunca. `correo_cuentas.user_id` es
+       justamente el vinculo entre las dos identidades. */
+    let duenoEmail = email;
+    let nombre = email;
+    try {
+      const { data: perfil } = await client
+        .from('profiles')
+        .select('email, nombre')
+        .eq('id', c.user_id)
+        .maybeSingle();
+      if (perfil?.email) duenoEmail = String(perfil.email).trim().toLowerCase();
+      if (perfil?.nombre) nombre = String(perfil.nombre).trim();
+    } catch { /* si el perfil no responde, queda el correo de Google */ }
+
+    /* El dedupe mira los DOS correos a proposito: los eventos que se
+       importaron antes de este arreglo quedaron guardados con el de Google, y
+       si solo se buscara por el del dueno volverian a entrar duplicados. */
     const ids = candidatos.map((ev: any) => String(ev.id));
+    const correosPosibles = [...new Set([duenoEmail, email])];
     const { data: existentes } = await client
       .from('actividades_cliente')
       .select('evento_google_id')
-      .eq('user_email', email)
+      .in('user_email', correosPosibles)
       .in('evento_google_id', ids);
     const yaImportados = new Set((existentes || []).map((r: any) => String(r.evento_google_id)));
-
-    let nombre = email;
-    try {
-      const { data: perfil } = await client.from('profiles').select('nombre').eq('id', c.user_id).maybeSingle();
-      if (perfil?.nombre) nombre = String(perfil.nombre).trim();
-    } catch { /* nombre best-effort */ }
 
     const filas: any[] = [];
     for (const ev of candidatos) {
@@ -611,7 +629,7 @@ export class ActividadesService {
         participantes: asistentes,
         meet_url: ev.hangoutLink || null,
         evento_google_id: String(ev.id),
-        user_email: email,
+        user_email: duenoEmail,
         user_nombre: nombre,
       });
     }
