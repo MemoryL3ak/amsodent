@@ -39,6 +39,9 @@ export default function ConfiguracionUsuarios() {
   const [modalCrear, setModalCrear]   = useState(false);
   const [modalEditar, setModalEditar] = useState(null);
   const [modalResetClave, setModalResetClave] = useState(null);
+  // Bloqueo de usuarios: el modal pide el motivo, que queda registrado.
+  const [modalBloquear, setModalBloquear] = useState(null);
+  const [trabajandoId, setTrabajandoId] = useState(null);
   const [confirmEliminar, setConfirmEliminar] = useState(null);
 
   // Perfiles de permisos.
@@ -96,6 +99,36 @@ export default function ConfiguracionUsuarios() {
 
   function eliminarUsuario(u) {
     setConfirmEliminar(u);
+  }
+
+  /* Bloquear corta la sesion abierta (el guard lo rechaza en su siguiente
+     peticion) y ademas lo banea en Supabase Auth para que no pueda volver a
+     entrar aunque le pasen la clave nueva. */
+  async function bloquearUsuario(u, motivo) {
+    setTrabajandoId(u.id);
+    try {
+      const r = await api.post(`/usuarios/profiles/${u.id}/bloquear`, { motivo });
+      setToast({ type: r?.ban_auth === false ? "info" : "success", message: r?.mensaje || "Usuario bloqueado." });
+      setModalBloquear(null);
+      loadUsers();
+    } catch (e) {
+      setToast({ type: "error", message: e?.message || "No se pudo bloquear al usuario." });
+    } finally {
+      setTrabajandoId(null);
+    }
+  }
+
+  async function desbloquearUsuario(u) {
+    setTrabajandoId(u.id);
+    try {
+      const r = await api.post(`/usuarios/profiles/${u.id}/desbloquear`, {});
+      setToast({ type: "success", message: r?.mensaje || "Usuario desbloqueado." });
+      loadUsers();
+    } catch (e) {
+      setToast({ type: "error", message: e?.message || "No se pudo desbloquear al usuario." });
+    } finally {
+      setTrabajandoId(null);
+    }
   }
 
   async function confirmarEliminarUsuario() {
@@ -182,7 +215,20 @@ export default function ConfiguracionUsuarios() {
 
                 {!loading && usuarios.map((u) => (
                   <tr key={u.id}>
-                    <td style={{ fontWeight: 500 }}>{u.nombre || <span style={{ color: "var(--text-muted)" }}>(Sin nombre)</span>}</td>
+                    <td style={{ fontWeight: 500 }}>
+                      {u.nombre || <span style={{ color: "var(--text-muted)" }}>(Sin nombre)</span>}
+                      {u.bloqueado && (
+                        <span
+                          title={[
+                            u.bloqueado_motivo,
+                            u.bloqueado_por ? `Bloqueado por ${String(u.bloqueado_por).split("@")[0]}` : null,
+                          ].filter(Boolean).join(" · ") || "Cuenta bloqueada"}
+                          style={{ marginLeft: 8, fontSize: 10.5, fontWeight: 800, padding: "2px 8px", borderRadius: 999, background: "#fee2e2", color: "#b91c1c", whiteSpace: "nowrap" }}
+                        >
+                          BLOQUEADO
+                        </span>
+                      )}
+                    </td>
                     <td style={{ color: "var(--text-muted)" }}>{u.email}</td>
                     <td><RolBadge rol={u.rol} /></td>
                     <td style={{ color: u.permission_profile_id ? "var(--text)" : "var(--text-muted)", fontSize: 13 }}>
@@ -202,6 +248,20 @@ export default function ConfiguracionUsuarios() {
                           onClick={() => setModalEditar(u)}
                         >
                           Editar
+                        </button>
+                        {/* (2026-09-29) Bloquear saca al usuario de verdad:
+                            cambiarle la clave no lo hace, porque Supabase no
+                            revoca los tokens que ya emitio. */}
+                        <button
+                          className="btn btn-sm btn-ghost"
+                          onClick={() => (u.bloqueado ? desbloquearUsuario(u) : setModalBloquear(u))}
+                          disabled={trabajandoId === u.id}
+                          title={u.bloqueado
+                            ? "Devolverle el acceso a este usuario"
+                            : "Cierra su sesion y le impide volver a entrar"}
+                          style={{ color: u.bloqueado ? "#15803d" : "#b45309" }}
+                        >
+                          {trabajandoId === u.id ? "…" : u.bloqueado ? "Desbloquear" : "Bloquear"}
                         </button>
                         <button
                           className="btn btn-sm btn-outline-danger"
@@ -297,6 +357,15 @@ export default function ConfiguracionUsuarios() {
           onToast={setToast}
         />
       )}
+
+      {modalBloquear && (
+        <ModalBloquearUsuario
+          usuario={modalBloquear}
+          trabajando={trabajandoId === modalBloquear.id}
+          onCerrar={() => setModalBloquear(null)}
+          onConfirmar={(motivo) => bloquearUsuario(modalBloquear, motivo)}
+        />
+      )}
     </div>
   );
 }
@@ -375,5 +444,53 @@ function ModalPerfil({ perfil, onCerrar, onGuardado, onError }) {
       </form>
     </div>,
     document.body,
+  );
+}
+
+/* Bloqueo de un usuario (2026-09-29). Pide el motivo porque queda registrado
+   con quien lo hizo: sacar a alguien del sistema es una decision que despues
+   hay que poder explicar. */
+function ModalBloquearUsuario({ usuario, trabajando, onCerrar, onConfirmar }) {
+  const [motivo, setMotivo] = useState("");
+  return (
+    <div
+      style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,.45)", zIndex: 90, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+      onMouseDown={(e) => { if (e.target === e.currentTarget && !trabajando) onCerrar(); }}
+    >
+      <div style={{ background: "var(--surface, #fff)", borderRadius: 12, width: "min(460px, 96vw)", boxShadow: "0 18px 48px rgba(15,23,42,.28)" }}>
+        <div style={{ padding: "16px 18px 10px" }}>
+          <div style={{ fontSize: 16, fontWeight: 800 }}>Bloquear a {usuario.nombre || usuario.email}</div>
+          <p style={{ fontSize: 13, color: "var(--text-muted)", lineHeight: 1.5, margin: "8px 0 0" }}>
+            Su sesion deja de funcionar en el acto y no va a poder volver a entrar,
+            aunque tenga la contrasena. Se puede revertir cuando quieras.
+          </p>
+        </div>
+        <div style={{ padding: "0 18px 14px" }}>
+          <label className="field-label">Motivo (queda registrado)</label>
+          <textarea
+            className="input"
+            rows={3}
+            maxLength={300}
+            autoFocus
+            value={motivo}
+            onChange={(e) => setMotivo(e.target.value)}
+            placeholder="Ej: desvinculacion, uso indebido de la cuenta..."
+          />
+        </div>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, padding: "0 18px 16px" }}>
+          <button type="button" className="btn btn-secondary btn-sm" onClick={onCerrar} disabled={trabajando}>
+            Cancelar
+          </button>
+          <button
+            type="button"
+            className="btn btn-sm btn-outline-danger"
+            onClick={() => onConfirmar(motivo.trim())}
+            disabled={trabajando}
+          >
+            {trabajando ? "Bloqueando..." : "Bloquear usuario"}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }

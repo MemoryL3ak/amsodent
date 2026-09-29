@@ -1,11 +1,13 @@
 import {
   CanActivate,
   ExecutionContext,
+  ForbiddenException,
   Injectable,
   Logger,
   UnauthorizedException,
 } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
+import { estaBloqueado } from './bloqueados';
 
 @Injectable()
 export class AuthGuard implements CanActivate {
@@ -47,6 +49,13 @@ export class AuthGuard implements CanActivate {
           `errStatus=${error?.status ?? '-'} · errMsg=${error?.message || '(getUser sin user)'}`,
       );
       throw new UnauthorizedException('Token inválido o expirado');
+    }
+
+    /* (2026-09-29) Cuenta bloqueada: se rechaza aunque el token siga siendo
+       valido. Es lo que corta la sesion YA abierta -- el ban de Supabase solo
+       impide entrar de nuevo, no expulsa al que ya esta dentro. */
+    if (await estaBloqueado(this.supabase.getClient(), user.id)) {
+      throw new ForbiddenException('Tu cuenta esta bloqueada. Contacta a administracion.');
     }
 
     request.user = user;

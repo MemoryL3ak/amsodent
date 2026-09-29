@@ -1,5 +1,6 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
+import { olvidarBloqueados } from '../auth/bloqueados';
 
 @Injectable()
 export class UsuariosService {
@@ -258,6 +259,107 @@ export class UsuariosService {
     });
     if (error) throw new BadRequestException(error.message);
     return { ok: true };
+  }
+
+  /* ── Bloqueo de usuarios (2026-09-29) ────────────────────────────────────
+     Cambiarle la contraseña a alguien NO lo saca del sistema: la Admin API de
+     Supabase no revoca los tokens ya emitidos, así que la sesión abierta sigue
+     viva. Para sacar a alguien de verdad hacen falta las dos cosas:
+
+       · el ban en Supabase Auth  -> no puede volver a entrar ni renovar el
+         token, aunque le pasen la contraseña nueva;
+       · la marca `bloqueado`     -> el AuthGuard lo rechaza en su siguiente
+         petición, sin esperar a que caduque el token que ya tiene.
+
+     El ban se pide por 100 años, que es la forma que tiene Supabase de decir
+     "indefinido"; desbloquear lo deja en 'none'. */
+  private static readonly BAN_INDEFINIDO = '876000h';
+
+  async bloquearUsuario(
+    userId: string,
+    body: { motivo?: string },
+    adminEmail?: string,
+  ) {
+    const id = String(userId || '').trim();
+    if (!id) throw new BadRequestException('Falta el usuario.');
+
+    const client = this.supabase.getClient();
+
+    // No dejar que un admin se bloquee a sí mismo y quede fuera del sistema.
+    const { data: objetivo } = await client
+      .from('profiles')
+      .select('email, nombre, rol')
+      .eq('id', id)
+      .maybeSingle();
+    if (
+      adminEmail &&
+      String(objetivo?.email || '').trim().toLowerCase() === String(adminEmail).trim().toLowerCase()
+    ) {
+      throw new BadRequestException('No puedes bloquear tu propia cuenta.');
+    }
+
+    const motivo = String(body?.motivo || '').trim().slice(0, 300) || null;
+    const ahora = new Date().toISOString();
+
+    const { error: errPerfil } = await client
+      .from('profiles')
+      .update({
+        bloqueado: true,
+        bloqueado_at: ahora,
+        bloqueado_por: adminEmail || 'sistema',
+        bloqueado_motivo: motivo,
+      })
+      .eq('id', id);
+    if (errPerfil) {
+      if (/bloqueado/.test(errPerfil.message)) {
+        throw new BadRequestException(
+          'Falta aplicar la migración 20260929_usuarios_bloqueo.sql en Supabase.',
+        );
+      }
+      throw new BadRequestException(errPerfil.message);
+    }
+
+    // Ban en Auth. Si esto falla, el usuario igual queda fuera por la marca,
+    // así que se avisa pero no se deshace lo anterior.
+    let banOk = true;
+    try {
+      const { error } = await client.auth.admin.updateUserById(id, {
+        ban_duration: UsuariosService.BAN_INDEFINIDO,
+      } as any);
+      if (error) banOk = false;
+    } catch {
+      banOk = false;
+    }
+
+    olvidarBloqueados();
+    return {
+      ok: true,
+      bloqueado: true,
+      ban_auth: banOk,
+      usuario: objetivo?.email || id,
+      mensaje: banOk
+        ? 'Usuario bloqueado: su sesión deja de funcionar y no puede volver a entrar.'
+        : 'Usuario bloqueado en la plataforma, pero no se pudo aplicar el bloqueo en Supabase Auth. Revisa el log.',
+    };
+  }
+
+  async desbloquearUsuario(userId: string, adminEmail?: string) {
+    const id = String(userId || '').trim();
+    if (!id) throw new BadRequestException('Falta el usuario.');
+    const client = this.supabase.getClient();
+
+    const { error: errPerfil } = await client
+      .from('profiles')
+      .update({ bloqueado: false, bloqueado_at: null, bloqueado_por: null, bloqueado_motivo: null })
+      .eq('id', id);
+    if (errPerfil) throw new BadRequestException(errPerfil.message);
+
+    try {
+      await client.auth.admin.updateUserById(id, { ban_duration: 'none' } as any);
+    } catch { /* si Auth no responde, la marca ya quedó levantada */ }
+
+    olvidarBloqueados();
+    return { ok: true, bloqueado: false, mensaje: 'Usuario desbloqueado.' };
   }
 
   // Sessions
