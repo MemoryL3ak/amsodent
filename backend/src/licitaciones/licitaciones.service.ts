@@ -2771,9 +2771,19 @@ export class LicitacionesService {
 
   /* Aplica el estado sugerido a las cotizaciones elegidas. Va aparte del
      diagnóstico a propósito: mirar no debe cambiar datos del negocio. */
-  async aplicarEstadoMp(body: { cambios: Array<{ id: number; estado: string }> }, email?: string) {
+  async aplicarEstadoMp(
+    body: { cambios: Array<{ id: number; estado: string; fecha?: string | null }> },
+    email?: string,
+  ) {
     const cambios = (Array.isArray(body?.cambios) ? body.cambios : [])
-      .map((c) => ({ id: Number(c?.id), estado: String(c?.estado || '').trim() }))
+      .map((c) => ({
+        id: Number(c?.id),
+        estado: String(c?.estado || '').trim(),
+        // Fecha de adjudicación explicita. Sin ella se usa hoy, que es lo
+        // correcto cuando el desenlace lo acabamos de descubrir; con ella se
+        // respeta la fecha real (por ejemplo, la de la orden de compra).
+        fecha: /^\d{4}-\d{2}-\d{2}$/.test(String(c?.fecha || '')) ? String(c.fecha) : null,
+      }))
       .filter((c) => Number.isFinite(c.id) && ['Adjudicada', 'Perdida', 'Descartada'].includes(c.estado));
     if (!cambios.length) throw new BadRequestException('No hay cambios válidos que aplicar.');
 
@@ -2785,7 +2795,9 @@ export class LicitacionesService {
         .from('licitaciones')
         .update({
           estado: c.estado,
-          ...(c.estado === 'Adjudicada' ? { fecha_adjudicada: new Date().toISOString().slice(0, 10) } : {}),
+          ...(c.estado === 'Adjudicada'
+            ? { fecha_adjudicada: c.fecha || new Date().toISOString().slice(0, 10) }
+            : {}),
         })
         .eq('id', c.id);
       if (error) errores.push(`#${c.id}: ${error.message}`);

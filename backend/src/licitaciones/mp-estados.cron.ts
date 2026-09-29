@@ -134,15 +134,27 @@ export class MpEstadosCron implements OnModuleInit, OnModuleDestroy {
       this.log.log('No hay cotizaciones abiertas con código de Mercado Público.');
       return { revisadas: 0, candidatas: 0, aplicados: 0, con_error: 0, cuota_agotada: false };
     }
+    /* Primero lo que se resuelve con evidencia propia: una cotización con
+       orden de compra cargada ya está ganada, sin preguntarle a nadie. Lo que
+       se cierra acá no se consulta después. */
+    const porOc = await this.adjudicarPorOrdenDeCompra(objetivo);
+    const resueltosPorOc = new Set(porOc.ids);
+    const pendientes = objetivo.filter((id) => !resueltosPorOc.has(id));
+    if (!pendientes.length) {
+      this.log.log(`Pasada completa: ${porOc.aplicados} adjudicada(s) por OC cargada, nada que consultar.`);
+      return { revisadas: 0, candidatas: objetivo.length, aplicados: porOc.aplicados, con_error: 0, cuota_agotada: false };
+    }
+
     // Se recorre en círculo desde donde quedó la pasada anterior.
-    const inicio = this.cursor % objetivo.length;
-    const orden = inicio ? [...objetivo.slice(inicio), ...objetivo.slice(0, inicio)] : objetivo;
+    const inicio = this.cursor % pendientes.length;
+    const orden = inicio ? [...pendientes.slice(inicio), ...pendientes.slice(0, inicio)] : pendientes;
     this.log.log(
-      `Pasada iniciada: ${orden.length} candidatas en tandas de ${LOTE}, desde la posición ${inicio}.`,
+      `Pasada iniciada: ${orden.length} candidatas en tandas de ${LOTE}, desde la posición ${inicio}` +
+      `${porOc.aplicados ? ` (${porOc.aplicados} ya adjudicada(s) por OC cargada)` : ''}.`,
     );
 
     let revisadas = 0;
-    let aplicados = 0;
+    let aplicados = porOc.aplicados;
     let conError = 0;
     let sinCuota = false;
     const fallidas: number[] = [];
@@ -160,7 +172,7 @@ export class MpEstadosCron implements OnModuleInit, OnModuleDestroy {
       // Sin cuota se corta, y la próxima pasada sigue justo desde acá.
       if ((diag.filas || []).some((f: any) => /cuota/i.test(String(f.error || '')))) {
         sinCuota = true;
-        this.cursor = (inicio + i + ids.length) % objetivo.length;
+        this.cursor = (inicio + i + ids.length) % pendientes.length;
         break;
       }
     }
@@ -186,13 +198,81 @@ export class MpEstadosCron implements OnModuleInit, OnModuleDestroy {
     }
 
     this.log.log(
-      `Pasada ${sinCuota ? 'CORTADA' : 'completa'}: ${revisadas} de ${objetivo.length} candidatas · ` +
+      `Pasada ${sinCuota ? 'CORTADA' : 'completa'}: ${revisadas} de ${pendientes.length} consultadas · ` +
       `${aplicados} cambio(s) de estado · ${conError} sin respuesta de Mercado Público` +
       `${sinCuota ? ` · CUOTA DIARIA AGOTADA, la próxima sigue desde la ${this.cursor}` : ''}.`,
     );
     return { revisadas, candidatas: objetivo.length, aplicados, con_error: conError, cuota_agotada: sinCuota };
   }
 
+  /* ── Adjudicadas por evidencia propia (2026-09-25) ───────────────────────
+     Si a una cotización ya se le cargó una orden de compra, la ganamos. Es un
+     hecho nuestro, no una opinión de ChileCompra: la OC está en la mano, con
+     su número y su monto.
+
+     Hasta ahora el cron solo sabía preguntarle a Mercado Público, y la API v2
+     de Compra Ágil se cae seguido: 1463-326-COT26 devolvió 504 en seis
+     intentos seguidos mientras su OC 1463-386-AG26 llevaba días cargada en
+     Trazabilidad. Esperar a que conteste una API para reconocer algo que ya
+     sabemos no tiene sentido.
+
+     Corre ANTES del barrido y descuenta lo que resuelve, así además ahorra
+     consultas. La fecha de adjudicación es la de la OC, no la de hoy: importa
+     para las metas y para los reportes por período. */
+  private async adjudicarPorOrdenDeCompra(candidatos: number[]): Promise<{ aplicados: number; ids: number[] }> {
+    if (!candidatos.length) return { aplicados: 0, ids: [] };
+    const client = this.supabase.getClient();
+
+    // Primera OC de cada cotización, en tandas para no armar un IN gigante.
+    const primeraOc = new Map<number, { numero: string; fecha: string | null }>();
+    for (let i = 0; i < candidatos.length; i += 300) {
+      const trozo = candidatos.slice(i, i + 300);
+      const { data, error } = await client
+        .from('licitacion_documentos')
+        .select('licitacion_id, numero, fecha_oc, created_at')
+        .eq('tipo', 'orden_compra')
+        .in('licitacion_id', trozo)
+        .order('id', { ascending: true });
+      if (error) {
+        this.log.warn(`No se pudieron leer las OC para adjudicar: ${error.message}`);
+        return { aplicados: 0, ids: [] };
+      }
+      for (const d of data || []) {
+        const lic = Number((d as any).licitacion_id);
+        if (primeraOc.has(lic)) continue;
+        const fecha = String((d as any).fecha_oc || (d as any).created_at || '').slice(0, 10);
+        primeraOc.set(lic, {
+          numero: String((d as any).numero || '').trim(),
+          fecha: /^\d{4}-\d{2}-\d{2}$/.test(fecha) ? fecha : null,
+        });
+      }
+    }
+    if (!primeraOc.size) return { aplicados: 0, ids: [] };
+
+    const cambios = [...primeraOc.entries()].map(([id, oc]) => ({
+      id,
+      estado: 'Adjudicada',
+      fecha: oc.fecha,
+    }));
+    const r = await this.licitaciones.aplicarEstadoMp(
+      { cambios },
+      'automático (orden de compra cargada)',
+    );
+    if (r.errores.length) this.log.warn(`Errores al adjudicar por OC: ${r.errores.join(' · ')}`);
+
+    // Mismo aviso que el resto de los cambios automáticos.
+    await this.avisarCambios(
+      r.ids.map((id) => ({
+        id,
+        sugerencia: 'Adjudicada',
+        motivo: `Tiene cargada la orden de compra ${primeraOc.get(id)?.numero || ''}.`.trim(),
+      })),
+      r.ids,
+    );
+
+    this.log.log(`Adjudicadas por OC cargada: ${r.aplicados} de ${primeraOc.size} candidatas con orden de compra.`);
+    return { aplicados: r.aplicados, ids: r.ids };
+  }
   /** Aplica los desenlaces concluyentes de un lote y avisa a cada vendedor. */
   private async aplicarYNotificar(filas: any[]): Promise<number> {
     const aplicables = (filas || []).filter((f: any) => f.discrepancia && f.sugerencia && f.id);
@@ -203,27 +283,31 @@ export class MpEstadosCron implements OnModuleInit, OnModuleDestroy {
       'automático (Mercado Público)',
     );
     if (r.errores.length) this.log.warn(`Errores al aplicar: ${r.errores.join(' · ')}`);
+    await this.avisarCambios(aplicables, r.ids);
+    return r.aplicados;
+  }
 
-    // Notificación en la campanita al dueño de cada cotización cambiada.
+  /** Notificación en la campanita al dueño de cada cotización cambiada. */
+  private async avisarCambios(aplicables: any[], idsAplicados: number[]) {
+    if (!idsAplicados.length) return;
     const client = this.supabase.getClient();
     const { data: duenos } = await client
       .from('licitaciones')
       .select('id, id_licitacion, nombre_entidad, vendedor_correo, creado_por')
-      .in('id', r.ids);
+      .in('id', idsAplicados);
     for (const f of aplicables) {
-      if (!r.ids.includes(f.id)) continue;
+      if (!idsAplicados.includes(f.id)) continue;
       const lic = (duenos || []).find((l: any) => l.id === f.id);
       const destinatario = String(lic?.vendedor_correo || lic?.creado_por || '').trim().toLowerCase();
       if (!destinatario) continue;
       const { error } = await client.from('notificaciones').insert([{
         user_email: destinatario,
         tipo: 'mp_estado_auto',
-        mensaje: `Mercado Público resolvió la ${lic?.id_licitacion || `#${f.id}`} (${lic?.nombre_entidad || 'cliente'}): estado actualizado automáticamente a "${f.sugerencia}". ${String(f.motivo || '').trim()}`,
+        mensaje: `${lic?.id_licitacion || `#${f.id}`} (${lic?.nombre_entidad || 'cliente'}): estado actualizado automáticamente a "${f.sugerencia}". ${String(f.motivo || '').trim()}`,
         link: `/detalle/${f.id}`,
         metadata: { licitacion_id: f.id, estado: f.sugerencia, origen: 'mp_estados_cron' },
       }]);
       if (error) this.log.warn(`Sin notificación para #${f.id}: ${error.message}`);
     }
-    return r.aplicados;
   }
 }
