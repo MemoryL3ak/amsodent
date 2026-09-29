@@ -1,7 +1,7 @@
 import {
   Controller, Get, Post, Put, Delete,
   Body, Param, Query, UseGuards,
-  UseInterceptors, UploadedFile,
+  UseInterceptors, UploadedFile, Req,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { UsuariosService } from './usuarios.service';
@@ -94,6 +94,20 @@ export class UsuariosController {
     @Body() body: { password: string },
   ) {
     return this.usuariosService.setPasswordAdmin(id, body?.password);
+  }
+
+  /* Bloqueo de usuarios (2026-09-29). Cambiarle la contrasena a alguien NO lo
+     saca: Supabase no revoca los tokens ya emitidos. Esto si lo saca. */
+  @Post('profiles/:id/bloquear')
+  @UseGuards(AdminGuard)
+  bloquearUsuario(@Param('id') id: string, @Body() body: { motivo?: string }, @Req() req: any) {
+    return this.usuariosService.bloquearUsuario(id, body || {}, (req?.user?.email || '').toLowerCase());
+  }
+
+  @Post('profiles/:id/desbloquear')
+  @UseGuards(AdminGuard)
+  desbloquearUsuario(@Param('id') id: string, @Req() req: any) {
+    return this.usuariosService.desbloquearUsuario(id, (req?.user?.email || '').toLowerCase());
   }
 
   // Sessions
