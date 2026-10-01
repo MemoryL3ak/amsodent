@@ -4,6 +4,7 @@ import { api } from "../lib/api";
 import Toast from "../components/Toast";
 import { descargarReportePDF } from "../lib/reporteStock";
 import BotonLimpiarFiltros from "../components/BotonLimpiarFiltros";
+import DropdownSelect from "../components/ui/DropdownSelect";
 import {
   Inbox,
   ShoppingCart,
@@ -104,7 +105,7 @@ function origenDe(s) {
   // (2026-09-24) Desde el Showroom el pedido viaja diciendo de donde salio;
   // los anteriores siguen deduciendose como antes.
   const declarado = String(s?.origen_seccion || "").trim();
-  if (declarado === "showroom" || declarado === "explorador" || declarado === "stock") return declarado;
+  if (["showroom", "ofertas", "explorador", "stock"].includes(declarado)) return declarado;
   const items = Array.isArray(s.items) ? s.items : [];
   const conRef = items.some((i) => i?.tienda || i?.precio_referencia || i?.url);
   if (conRef || /explorador/i.test(String(s.nota || ""))) return "explorador";
@@ -125,6 +126,8 @@ function montoDe(s) {
 
 const TONO_ORIGEN = {
   showroom: { bg: "#fdf2f8", color: "#be185d", borde: "#fbcfe8", corto: "Showroom", largo: "Showroom" },
+  // (2026-10-02) Pedidos que salen de la pestaña Ofertas especiales del portal.
+  ofertas: { bg: "#fff7ed", color: "#c2410c", borde: "#fed7aa", corto: "Ofertas", largo: "Ofertas especiales" },
   explorador: { bg: "#f0fdfa", color: TEAL, borde: "#ccfbf1", corto: "Explorador", largo: "Explorador de Precios" },
   stock: { bg: "#f1f5f9", color: "#475569", borde: "#e2e8f0", corto: "Stock", largo: "Gestión de Stock" },
 };
@@ -435,6 +438,12 @@ export default function PedidosPortal() {
         observacion: String(i?.observacion || "").trim(),
         precio_referencia: Number(i?.precio_referencia || 0) || 0,
         tienda: String(i?.tienda || "").trim(),
+        // (2026-10-02) Oferta especial del portal: el precio que se le mostró
+        // al cliente (validado por el servidor al recibir el pedido) es el
+        // que debe quedar en la cotización, no el de lista.
+        precio_oferta: i?.oferta ? Number(i?.precio_referencia || 0) || 0 : 0,
+        oferta_nombre: i?.oferta?.nombre || "",
+        oferta_pct: Number(i?.oferta?.descuento_pct || 0) || 0,
       }));
     const sinSku = items.length - itemsPorSku.length;
     const draft = {
@@ -580,18 +589,27 @@ export default function PedidosPortal() {
         </div>
         <div className="filter-field">
           <label className="filter-label">Estado</label>
-          <select className="input" value={fEstado} onChange={(e) => setFEstado(e.target.value)}>
-            <option value="">Todos</option>
-            {ESTADOS.map((e) => <option key={e.value} value={e.value}>{e.label}</option>)}
-          </select>
+          <DropdownSelect
+            value={fEstado}
+            onChange={setFEstado}
+            minWidth={190}
+            options={[{ value: "", label: "Todos" }, ...ESTADOS.map((e) => ({ value: e.value, label: e.label }))]}
+          />
         </div>
         <div className="filter-field">
           <label className="filter-label">Origen</label>
-          <select className="input" value={fOrigen} onChange={(e) => setFOrigen(e.target.value)}>
-            <option value="">Todos</option>
-            <option value="explorador">Explorador de Precios</option>
-            <option value="stock">Gestión de Stock</option>
-          </select>
+          <DropdownSelect
+            value={fOrigen}
+            onChange={setFOrigen}
+            minWidth={200}
+            options={[
+              { value: "", label: "Todos" },
+              { value: "ofertas", label: "Ofertas especiales" },
+              { value: "showroom", label: "Showroom" },
+              { value: "explorador", label: "Explorador de Precios" },
+              { value: "stock", label: "Gestión de Stock" },
+            ]}
+          />
         </div>
         <BotonLimpiarFiltros hay={hayFiltros} onLimpiar={limpiarFiltros} />
       </div>
@@ -768,9 +786,16 @@ export default function PedidosPortal() {
                                           <td style={{ fontSize: 12, color: "var(--text-muted)" }}>
                                             {i?.tienda || i?.precio_referencia || i?.url ? (
                                               <>
-                                                {i?.tienda || "—"}
+                                                {i?.oferta ? (
+                                                  <span style={{ color: "#c2410c", fontWeight: 700 }} title={`Oferta especial «${i.oferta.nombre}»`}>
+                                                    Oferta −{Number(i.oferta.descuento_pct).toLocaleString("es-CL")}% · {i.oferta.nombre}
+                                                  </span>
+                                                ) : (i?.tienda || "—")}
                                                 {i?.precio_referencia ? ` · ${fmtCLP(i.precio_referencia)} c/u` : ""}
-                                                {i?.url && (
+                                                {i?.oferta && i?.precio_normal ? (
+                                                  <span style={{ textDecoration: "line-through", marginLeft: 6 }}>{fmtCLP(i.precio_normal)}</span>
+                                                ) : null}
+                                                {/^https?:\/\//i.test(String(i?.url || "")) && (
                                                   <a href={i.url} target="_blank" rel="noopener noreferrer" style={{ color: TEAL, marginLeft: 6, fontWeight: 600 }}>
                                                     ver <ExternalLink size={11} style={{ verticalAlign: "-1px" }} />
                                                   </a>

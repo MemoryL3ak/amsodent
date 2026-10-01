@@ -1182,11 +1182,25 @@ export default function CrearLicitacion() {
     };
     const nuevos = [];
     const libres = [];
+    let conPrecioDeOferta = 0;
     for (const it of lista) {
       const cantidad = Math.max(1, Number(it.cantidad || 1));
       const prod = buscarProducto(it);
       if (prod) {
-        const precio = getPrecioBaseParaSKU(prod, listado, campaignPrices, campanasMargen);
+        const precioLista = getPrecioBaseParaSKU(prod, listado, campaignPrices, campanasMargen);
+        /* (2026-10-02) Línea de una oferta especial del portal: se respeta el
+           precio de oferta que vio el cliente (lo validó el servidor al
+           recibir el pedido). Entra como precio manual para que ni las
+           campañas ni un cambio de lista lo pisen, y con una observación que
+           dice de dónde sale. */
+        const precioOferta = Number(it.precio_oferta || 0);
+        const conOferta = precioOferta > 0;
+        const precio = conOferta ? precioOferta : precioLista;
+        const notaOferta = conOferta
+          ? `Oferta especial${it.oferta_nombre ? ` «${it.oferta_nombre}»` : ""}${it.oferta_pct ? ` (−${Number(it.oferta_pct).toLocaleString("es-CL")}%)` : ""}`
+          : "";
+        if (conOferta) conPrecioDeOferta += 1;
+        const observacion = [it.observacion || "", notaOferta].filter(Boolean).join(" · ");
         nuevos.push({
           ...crearItemVacio(),
           sku: String(prod.sku || "").trim(),
@@ -1195,10 +1209,11 @@ export default function CrearLicitacion() {
           formato: prod.formato || "",
           cantidad,
           precio,
+          ...(conOferta ? { precioManual: true, precioUnitarioStr: formatearCLDesdeString(String(precio)) } : {}),
           costo: Number(prod.costo ?? 0),
           total: redondear(cantidad * (Number(precio || 0) + Number(fletePorUnidad || 0))),
-          observacion: it.observacion || "",
-          mostrarObs: Boolean(it.observacion),
+          observacion,
+          mostrarObs: Boolean(observacion),
         });
         continue;
       }
@@ -1243,7 +1258,8 @@ export default function CrearLicitacion() {
     } catch { /* */ }
     const partes = [];
     const conCatalogo = nuevos.length - libres.length;
-    if (conCatalogo > 0) partes.push(`${conCatalogo} producto(s) del pedido cargados con precio de lista.`);
+    if (conCatalogo - conPrecioDeOferta > 0) partes.push(`${conCatalogo - conPrecioDeOferta} producto(s) del pedido cargados con precio de lista.`);
+    if (conPrecioDeOferta > 0) partes.push(`${conPrecioDeOferta} con el precio de la oferta especial del portal.`);
     if (libres.length > 0) partes.push(`${libres.length} no están en el catálogo interno y quedaron como línea libre con el precio web (revisar SKU y precio): ${libres.slice(0, 3).join(", ")}${libres.length > 3 ? "…" : ""}.`);
     if (sinSku > 0) partes.push(`${sinSku} ítem(s) de otras tiendas quedaron fuera.`);
     if (partes.length) setToast({ type: libres.length || sinSku ? "warning" : "success", message: partes.join(" ") });

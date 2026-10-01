@@ -302,6 +302,22 @@ flete al cotizar.
 Vista interna del stock que declaran los clientes en su portal, con umbrales
 Bajo y Crítico (semáforo) y correos de alerta por cliente.
 
+### Ofertas del Portal (/ofertas-portal)
+Las OFERTAS ESPECIALES que el cliente ve en la pestaña "Ofertas" de su portal.
+Una oferta es un descuento en % por PRODUCTO, CATEGORÍA o MARCA, con fecha de
+inicio y de término. El descuento se aplica sobre el precio del cliente del
+portal (lista 2); el cliente ve el precio normal tachado, el precio de oferta,
+cuánto ahorra y hasta cuándo rige, y agrega los productos al carrito de
+siempre. Al crear la oferta se muestra una simulación: cuántos productos
+entran y cuántos quedan bajo el costo o bajo 20 % de margen (en ese caso la
+cotización puede quedar "Pendiente Aprobación"). Si dos ofertas alcanzan al
+mismo producto, el cliente ve la de mayor descuento. Se pueden pausar y
+reanudar. El precio de oferta lo valida el servidor al recibir el pedido (si
+la oferta ya venció, la línea vuelve al precio normal), se ve en Pedidos del
+Portal con la marca "Oferta", y al crear la cotización desde el pedido el ítem
+nace con ese precio y la observación "Oferta especial". Verlas: quien ve
+Pedidos del Portal. Crear, editar, pausar y eliminar: solo admin.
+
 ### Acceso Portal Clientes (/portal-accesos)
 Credenciales del portal de stock: crear, renovar, revocar; y pestaña de
 recuperaciones de contraseña.

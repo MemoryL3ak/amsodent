@@ -523,8 +523,31 @@ export const GRUPOS_MANUAL = [
         funciones: [
           "Reúne los pedidos del carrito del Explorador de Precios y las solicitudes de cotización de Gestión de Stock, cada uno con su badge de origen.",
           "Ficha completa por pedido: cliente y RUT, sucursal, contacto (nombre/correo/teléfono), ítems con cantidad y su referencia (tienda, precio y link), total referencial, nota del cliente y mensajes sin leer.",
-          "KPIs clickeables (pendientes, respondidas, canceladas, del explorador) + filtros por texto, estado y origen.",
+          "KPIs clickeables (pendientes, respondidas, canceladas, del explorador) + filtros por texto, estado y origen (Ofertas especiales, Showroom, Explorador, Gestión de Stock).",
+          "Las líneas que vienen de una oferta especial se muestran con la marca «Oferta», su descuento y el precio normal tachado.",
           "Cambiar el estado del pedido en la misma tarjeta, abrir la cotización vinculada o crear una nueva con el cliente y el detalle precargados (queda vinculada y el pedido pasa a Respondida).",
+        ],
+      },
+      {
+        id: "ofertas-portal",
+        titulo: "Ofertas del Portal",
+        icono: "ShoppingCart",
+        ruta: "/ofertas-portal",
+        acceso: { tipo: "modulo", key: "monitoreo_stock" },
+        quien: "Ventas especial y administración (crear y cambiar: admin)",
+        resumen: "Las ofertas especiales que el cliente ve en su portal: un descuento por producto, categoría o marca, por un período.",
+        queEs: [
+          "El cliente las ve en la pestaña «Ofertas» de su portal, con el precio normal tachado, el precio de oferta, cuánto ahorra y hasta cuándo rige.",
+        ],
+        funciones: [
+          "Oferta = nombre + descripción + a qué aplica (productos, categorías o marcas) + descuento % + fechas. El descuento va sobre el precio del cliente del portal (lista 2).",
+          "Simulación antes de guardar: cuántos productos entran y cuántos quedan bajo el costo o bajo 20% de margen.",
+          "Si dos ofertas alcanzan al mismo producto, el cliente ve la de mayor descuento. Se pueden pausar y reanudar sin borrar.",
+          "El precio de oferta lo valida el servidor al recibir el pedido, se ve en Pedidos del Portal con la marca «Oferta», y la cotización que se crea desde el pedido nace con ese precio.",
+        ],
+        tips: [
+          "Con menos de 20% de margen la cotización puede quedar «Pendiente Aprobación».",
+          "Los productos sin SKU o sin precio no entran a una oferta.",
         ],
       },
       {

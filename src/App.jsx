@@ -41,6 +41,7 @@ import ConfiguracionUsuarios from "./pages/ConfiguracionUsuarios";
 // CAMPAÑAS
 import CampanasProductos from "./pages/CampanasProductos";
 import CampanasMargen from "./pages/CampanasMargen";
+import OfertasPortal from "./pages/OfertasPortal";
 import CrearCampana from "./pages/CrearCampana";
 import EditarCampana from "./pages/EditarCampana";
 import CotizacionesPorVendedor from "./pages/CotizacionesPorVendedor";
@@ -424,6 +425,18 @@ export default function App() {
             element={
               <RequireModulo modulo="monitoreo_stock">
                 <PedidosPortal />
+              </RequireModulo>
+            }
+          />
+
+          {/* OFERTAS DEL PORTAL (2026-10-02): las ofertas especiales que ve el
+              cliente en su portal. La ven quienes ven los pedidos del portal;
+              crear y cambiar es solo admin (lo valida el backend). */}
+          <Route
+            path="ofertas-portal"
+            element={
+              <RequireModulo modulo="monitoreo_stock">
+                <OfertasPortal />
               </RequireModulo>
             }
           />

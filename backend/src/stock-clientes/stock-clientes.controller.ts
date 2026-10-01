@@ -17,6 +17,7 @@ import { StockClientesService, rolDeToken } from './stock-clientes.service';
 import { ExploradorService } from './explorador.service';
 import { PedidosFlujoService } from './pedidos-flujo.service';
 import { WebpayService } from './webpay.service';
+import { OfertasPortalService } from './ofertas-portal.service';
 import { StockPortalGuard } from './stock-clientes.guard';
 import { AuthGuard } from '../auth/auth.guard';
 import { AdminGuard } from '../auth/admin.guard';
@@ -28,6 +29,7 @@ export class StockClientesController {
     private explorador: ExploradorService,
     private pedidosFlujo: PedidosFlujoService,
     private webpay: WebpayService,
+    private ofertas: OfertasPortalService,
   ) {}
 
   // ============================================================
@@ -449,6 +451,15 @@ export class StockClientesController {
   @Get('showroom')
   async showroom(@Query('q') q?: string, @Query('marca') marca?: string) {
     return await this.stockClientes.catalogoShowroom({ q, marca });
+  }
+
+  /* ── Ofertas especiales (2026-10-02) ────────────────────────────────────
+     Lo que ve el cliente en la pestaña Ofertas: las ofertas vigentes y los
+     productos en oferta con su precio normal y su precio rebajado. */
+  @UseGuards(StockPortalGuard)
+  @Get('ofertas')
+  async ofertasVigentes() {
+    return await this.ofertas.vitrina();
   }
 
   // El explorador del PORTAL DEL CLIENTE: solo ve las tiendas de ambito

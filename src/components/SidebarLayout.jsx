@@ -21,6 +21,7 @@ import {
   Activity,
   UserCog,
   UserCheck,
+  Tag,
   LogOut,
   CreditCard,
   Gift,
@@ -283,6 +284,8 @@ export default function SidebarLayout() {
   const portalClienteNav = [
     puede("monitoreo_stock") && { to: "/monitoreo-stock", icon: PackageSearch, label: "Monitoreo Stock Clientes" },
     puede("monitoreo_stock") && { to: "/pedidos-portal", icon: ShoppingCart, label: "Pedidos del Portal" },
+    // (2026-10-02) Ofertas especiales que ve el cliente en su portal.
+    puede("monitoreo_stock") && { to: "/ofertas-portal", icon: Tag, label: "Ofertas del Portal" },
     puede("portal_accesos") && { to: "/portal-accesos", icon: KeyRound, label: "Acceso Portal Clientes" },
   ].filter(Boolean);
 

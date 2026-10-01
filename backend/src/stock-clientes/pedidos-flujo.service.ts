@@ -1,6 +1,7 @@
 import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
 import { MailingsService } from '../mailings/mailings.service';
+import { OfertasPortalService } from './ofertas-portal.service';
 
 /* ── Flujo de aprobación y pago de los pedidos del portal (2026-09-16) ────
    Un pedido recorre estas etapas, cada una con responsable y hora:
@@ -45,6 +46,7 @@ export class PedidosFlujoService {
   constructor(
     private supabase: SupabaseService,
     private mailings: MailingsService,
+    private ofertas: OfertasPortalService,
   ) {}
 
   private get client() {
@@ -359,7 +361,7 @@ export class PedidosFlujoService {
   async pedirModificacion(
     id: number,
     body: {
-      items?: Array<{ nombre?: string; sku?: string; cantidad?: number | string; unidad?: string; precio_referencia?: number | string; observacion?: string }>;
+      items?: Array<{ nombre?: string; sku?: string; cantidad?: number | string; unidad?: string; precio_referencia?: number | string; observacion?: string; oferta_id?: number | string }>;
       nota?: string;
     },
     actorEmail: string,
@@ -377,7 +379,7 @@ export class PedidosFlujoService {
       throw new BadRequestException('Este pedido está cerrado.');
     }
 
-    const nuevos = (Array.isArray(body?.items) ? body.items : [])
+    const limpios = (Array.isArray(body?.items) ? body.items : [])
       .map((it) => ({
         nombre: String(it?.nombre || '').trim().slice(0, 200),
         sku: String(it?.sku || '').trim().slice(0, 80) || undefined,
@@ -385,8 +387,13 @@ export class PedidosFlujoService {
         cantidad: Number(it?.cantidad) || 0,
         ...(Number(it?.precio_referencia) > 0 ? { precio_referencia: Number(it.precio_referencia) } : {}),
         ...(String(it?.observacion || '').trim() ? { observacion: String(it.observacion).trim().slice(0, 300) } : {}),
+        // Línea de una oferta especial: se revalida abajo, igual que al crear el pedido.
+        ...(Number(it?.oferta_id) > 0 && String(it?.sku || '').trim() ? { oferta_id: Number(it.oferta_id) } : {}),
       }))
       .filter((it) => it.nombre && it.cantidad > 0);
+    // El precio de las líneas de oferta lo pone el servidor (si la oferta ya
+    // no rige, vuelven al precio normal).
+    const nuevos: any[] = await this.ofertas.aplicarAItems(limpios as any[]);
     if (!nuevos.length) {
       throw new BadRequestException('La modificación llegó sin productos.');
     }
