@@ -1841,7 +1841,8 @@ export default function EditarLicitacion() {
       const docOrigen = documentos.find(
         (d) => String(d.id) === String(docDerivaDeId)
       );
-      if (!docOrigen || docOrigen.tipo !== "factura_boleta") {
+      // Los mismos tipos que ofrece la lista de "Boleta / Factura asociada".
+      if (!docOrigen || !["factura_boleta", "factura"].includes(docOrigen.tipo)) {
         setToast({
           type: "error",
           message: "El comprobante debe vincularse a una boleta o factura válida.",
