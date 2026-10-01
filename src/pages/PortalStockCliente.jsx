@@ -2317,6 +2317,7 @@ function PantallaDeclaracion({ cliente, setToast }) {
 
 const ICONO_ACTIVIDAD = {
   despacho_en_curso: { icono: Truck, color: "#0369a1", bg: "#e0f2fe" },
+  cotizacion_aprobada: { icono: CheckCircle2, color: "#15803d", bg: "#dcfce7" },
   modificacion_pedida: { icono: ShoppingCart, color: "#b45309", bg: "#fef3c7" },
   cotizacion_validada_cliente: { icono: CheckCircle2, color: "#15803d", bg: "#dcfce7" },
   validado_plataforma: { icono: FileSpreadsheet, color: "#7c3aed", bg: "#f3e8ff" },
@@ -2426,7 +2427,9 @@ function AvisosPortal({ onVerHistorial }) {
             border: "1px solid #bae6fd", background: "#f0f9ff", borderRadius: 12, padding: "10px 14px",
           }}
         >
-          <Truck size={16} style={{ color: "#0369a1", flexShrink: 0 }} />
+          {a.tipo === "cotizacion_aprobada"
+            ? <CheckCircle2 size={16} style={{ color: "#15803d", flexShrink: 0 }} />
+            : <Truck size={16} style={{ color: "#0369a1", flexShrink: 0 }} />}
           <span style={{ fontSize: 13.5, color: "#0c4a6e", flex: 1, minWidth: 180 }}>{a.descripcion}</span>
           <span style={{ fontSize: 11.5, color: "#0369a1" }}>{fmtFechaHora(a.created_at)}</span>
           <button type="button" onClick={onVerHistorial} style={{ ...styles.btnSecundarioChico, whiteSpace: "nowrap" }}>

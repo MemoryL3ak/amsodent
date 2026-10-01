@@ -1892,15 +1892,24 @@ export class LicitacionesService {
 
     // Punto 18: si un usuario distinto a Jeremías aprueba (la cotización deja de
     // estar "Pendiente Aprobación"), se le notifica por correo con el detalle.
-    try {
-      const aprobada =
-        (estadoPrevio === 'Pendiente Aprobación' ||
-          estadoPrevio === 'Pendiente Aprobación Peso') &&
-        body?.estado &&
-        !String(body.estado).startsWith('Pendiente Aprobación');
-      if (aprobada) await this.notificarAprobacion(data, aprobadorEmail);
-    } catch (e: any) {
-      this.logger.warn(`no se pudo notificar aprobación: ${e?.message || e}`);
+    // Salir de "Pendiente Aprobación" no siempre es aprobar: desde ahí también
+    // se descarta o se cancela, y eso no puede anunciarse como "aprobada".
+    const aprobada =
+      esPendiente(estadoPrevio) &&
+      !!body?.estado &&
+      !esPendiente(body.estado) &&
+      !['Descartada', 'Cancelada', 'Desierta', 'Perdida'].includes(String(body.estado));
+    if (aprobada) {
+      try {
+        await this.notificarAprobacion(data, aprobadorEmail);
+      } catch (e: any) {
+        this.logger.warn(`no se pudo notificar aprobación: ${e?.message || e}`);
+      }
+      // Correo automático al vendedor y al cliente del portal. No se espera:
+      // el SMTP puede tardar y quien aprueba no tiene por qué quedarse mirando.
+      this.avisarCotizacionAprobada(data, aprobadorEmail).catch((e: any) =>
+        this.logger.warn(`no se pudo avisar la aprobación de ${id}: ${e?.message || e}`),
+      );
     }
 
     // Punto 11: si la cotización proviene de una solicitud del cliente y se
@@ -1953,6 +1962,151 @@ export class LicitacionesService {
           `<p>Saludos,<br/>Equipo Amsodent</p>`,
       });
     }
+  }
+
+  /* (2026-10-01) Correo automático al aprobarse una cotización.
+     Hasta ahora el único que se enteraba era Jeremías, y solo cuando aprobaba
+     otro. El vendedor que la dejó esperando tenía que entrar a mirar si ya
+     estaba aprobada, y el cliente que la pidió desde su portal, lo mismo.
+
+     Dos avisos independientes, cada uno best-effort:
+       · al VENDEDOR de la cotización: campana + correo, salvo que la haya
+         aprobado él mismo (o que sea Jeremías, que ya tiene el suyo);
+       · al CLIENTE, solo si la cotización nació de un pedido de su portal:
+         aviso en el portal + correo al contacto del pedido, porque desde ese
+         momento puede validarla o pedir una modificación.
+     Se apagan por separado con APROBACION_CORREO_VENDEDOR=off y
+     APROBACION_CORREO_CLIENTE=off. */
+  async avisarCotizacionAprobada(lic: any, aprobadorEmail?: string) {
+    const client = this.supabase.getClient();
+    const apagado = (v?: string) =>
+      ['off', '0', 'false', 'no'].includes(String(v || '').trim().toLowerCase());
+    const esCorreo = (v: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
+    const aprob = String(aprobadorEmail || '').trim().toLowerCase();
+    const resultado = { vendedor: null as string | null, cliente: null as string | null };
+
+    const nombreCot = lic.nombre || lic.nombre_entidad || `#${lic.id}`;
+    const idCot = lic.id_licitacion || lic.id;
+    const monto = Number(lic.total_con_iva || lic.monto || 0);
+    const montoTxt = `$${Math.round(monto).toLocaleString('es-CL')}`;
+    const base = String(
+      process.env.APP_PUBLIC_URL || process.env.PUBLIC_APP_URL || process.env.FRONTEND_URL || '',
+    )
+      .trim()
+      .replace(/\/+$/, '');
+
+    // ── Vendedor ────────────────────────────────────────────────────────
+    const vendedor = String(lic.vendedor_correo || lic.creado_por || '').trim().toLowerCase();
+    if (
+      !apagado(process.env.APROBACION_CORREO_VENDEDOR) &&
+      esCorreo(vendedor) &&
+      vendedor !== aprob &&
+      vendedor !== LicitacionesService.JEREMIAS
+    ) {
+      let aprobadorNombre = '';
+      if (aprob) {
+        try {
+          const { data } = await client
+            .from('profiles')
+            .select('nombre')
+            .ilike('email', aprob)
+            .maybeSingle();
+          aprobadorNombre = String(data?.nombre || '').trim();
+        } catch { /* sin nombre */ }
+      }
+      const quien = aprobadorNombre || aprobadorEmail || '';
+      const mensaje =
+        `Tu cotización "${nombreCot}" (ID ${idCot}) fue aprobada${quien ? ` por ${quien}` : ''}. ` +
+        `Ya puedes enviársela al cliente.`;
+      try {
+        await client.from('notificaciones').insert([
+          {
+            user_email: vendedor,
+            tipo: 'cotizacion_aprobada',
+            mensaje,
+            link: `/detalle/${lic.id}`,
+            metadata: { licitacion_id: lic.id, aprobador_email: aprobadorEmail || null },
+          },
+        ]);
+      } catch (e: any) {
+        this.logger.warn(`aprobación: sin campana para ${vendedor}: ${e?.message || e}`);
+      }
+      try {
+        await this.mailings.enviarUno({
+          para: vendedor,
+          asunto: `✅ Cotización aprobada: ${nombreCot}`,
+          cuerpoHtml:
+            `<p>Tu cotización <strong>${nombreCot}</strong> (ID ${idCot}) fue <strong>aprobada</strong>` +
+            `${quien ? ` por <strong>${quien}</strong>` : ''} y quedó en estado ` +
+            `<strong>${lic.estado || 'En espera'}</strong>.</p>` +
+            `<ul>` +
+            `<li>Entidad / cliente: ${lic.nombre_entidad || '—'}</li>` +
+            `<li>Monto total (con IVA): ${montoTxt}</li>` +
+            `</ul>` +
+            `<p>Ya puedes generar el PDF y enviársela al cliente.</p>` +
+            (base ? `<p><a href="${base}/detalle/${lic.id}">Abrir la cotización</a></p>` : ''),
+        });
+        resultado.vendedor = vendedor;
+      } catch (e: any) {
+        this.logger.warn(`aprobación: sin correo para ${vendedor}: ${e?.message || e}`);
+      }
+    }
+
+    // ── Cliente del portal ──────────────────────────────────────────────
+    if (apagado(process.env.APROBACION_CORREO_CLIENTE)) return resultado;
+    let sol: any = null;
+    try {
+      const { data } = await client
+        .from('stock_solicitudes_cotizacion')
+        .select('id, rut, razon_social, contacto_nombre, contacto_email')
+        .eq('licitacion_id', lic.id)
+        .order('id', { ascending: false })
+        .limit(1);
+      sol = (data || [])[0] || null;
+    } catch { /* sin pedido del portal */ }
+    if (!sol) return resultado; // la cotización no nació en el portal
+
+    const texto =
+      `Tu cotización del pedido N° ${sol.id} ya está aprobada. ` +
+      `Revísala en "Mis cotizaciones" y valídala, o pide una modificación.`;
+    try {
+      await client.from('portal_actividades').insert({
+        cliente_rut: sol.rut,
+        solicitud_id: sol.id,
+        licitacion_id: lic.id,
+        tipo: 'cotizacion_aprobada',
+        origen: 'amsodent',
+        actor_nombre: 'Amsodent',
+        descripcion: texto,
+        metadata: { cotizacion: lic.id_licitacion || null },
+      });
+    } catch (e: any) {
+      this.logger.warn(`aprobación: sin aviso en el portal (pedido ${sol.id}): ${e?.message || e}`);
+    }
+
+    const para = String(sol.contacto_email || '').trim().toLowerCase();
+    if (esCorreo(para)) {
+      const sitio =
+        base || String(process.env.PORTAL_URL || 'https://amsodent.vercel.app').replace(/\/+$/, '');
+      try {
+        await this.mailings.enviarUno({
+          para,
+          asunto: `Tu cotización del pedido N° ${sol.id} está lista`,
+          cuerpoHtml:
+            `<p>Hola${sol.contacto_nombre ? ` ${sol.contacto_nombre}` : ''},</p>` +
+            `<p>La cotización de tu pedido <strong>N° ${sol.id}</strong> ya está aprobada` +
+            `${monto > 0 ? ` por un total de <strong>${montoTxt}</strong> (IVA incluido)` : ''}.</p>` +
+            `<p>Entra a tu portal, revísala en <strong>Mis cotizaciones</strong> y valídala para que ` +
+            `sigamos con tu pedido. Si necesitas cambiar algo, desde ahí mismo puedes pedir una modificación.</p>` +
+            `<p><a href="${sitio}/portal-cliente">Ir a mi portal</a></p>` +
+            `<p>Amsodent Medical Spa</p>`,
+        });
+        resultado.cliente = para;
+      } catch (e: any) {
+        this.logger.warn(`aprobación: sin correo al cliente ${para}: ${e?.message || e}`);
+      }
+    }
+    return resultado;
   }
 
   private async notificarAprobacion(lic: any, aprobadorEmail?: string) {
