@@ -342,6 +342,14 @@ export class StockClientesController {
   }
 
   @UseGuards(StockPortalGuard)
+  /* Ejecutivo asignado al cliente, para escribirle por WhatsApp desde el
+     detalle de un pedido. */
+  @UseGuards(StockPortalGuard)
+  @Get('mi-ejecutivo')
+  async miEjecutivo(@Req() req: any) {
+    return await this.stockClientes.ejecutivoDeCliente(req.stockPortal.rut);
+  }
+
   @Get('mis-solicitudes')
   async misSolicitudes(@Req() req: any) {
     return await this.stockClientes.listarMisSolicitudes(req.stockPortal.rut);
@@ -440,9 +448,11 @@ export class StockClientesController {
     return await this.stockClientes.catalogoShowroom({ q, marca });
   }
 
+  // El explorador del PORTAL DEL CLIENTE: solo ve las tiendas de ambito
+  // 'cliente' o 'ambos'.
   @Get('explorador')
   async explorarPrecios(@Query('q') q: string) {
-    return await this.explorador.buscar(q);
+    return await this.explorador.buscar(q, 'cliente');
   }
 
   /* (2026-09-24) El mismo explorador, pero desde la plataforma interna. Va por
@@ -453,7 +463,7 @@ export class StockClientesController {
   @UseGuards(AdminGuard)
   @Get('explorador/interno')
   async explorarPreciosInterno(@Query('q') q: string) {
-    return await this.explorador.buscar(q);
+    return await this.explorador.buscar(q, 'plataforma');
   }
 
   // Mantenedor de tiendas del explorador (2026-09-10, solo admin): permite

@@ -1106,6 +1106,14 @@ function ModalUsuariosPortal({ rut, razonSocial, onCerrar, onOk, onError }) {
 
 // Un solo lugar donde vive cómo se llama y se pinta cada tipo de tienda:
 // así agregar un cuarto tipo no obliga a cazar ternarios por la pantalla.
+/* (2026-10-01) En que explorador se ve cada tienda. 'ambos' es el valor por
+   omision y es el comportamiento que habia hasta ahora. */
+const AMBITOS_TIENDA = [
+  { value: "ambos", label: "Los dos" },
+  { value: "cliente", label: "Portal cliente" },
+  { value: "plataforma", label: "Plataforma" },
+];
+
 const TIPO_TIENDA = {
   woo: { label: "WooCommerce", chip: { background: "#f0fdf4", color: "#15803d" } },
   shopify: { label: "Shopify", chip: { background: "#eef2ff", color: "#4f46e5" } },
@@ -1139,6 +1147,23 @@ function SeccionTiendasExplorador({ onOk, onError }) {
     }
   }
   useEffect(() => { cargarTiendas(); }, []);
+
+  /* (2026-10-01) En que explorador se ve esta tienda. */
+  async function cambiarAmbito(t, ambito) {
+    if ((t.ambito || "ambos") === ambito) return;
+    setGuardandoId(t.id);
+    const previo = t.ambito || "ambos";
+    setTiendas((prev) => prev.map((x) => (x.id === t.id ? { ...x, ambito } : x)));
+    try {
+      await api.post("/stock-clientes/explorador/tiendas", { ...t, ambito });
+      onOk?.(`${t.nombre}: ${AMBITOS_TIENDA.find((a) => a.value === ambito)?.label || ambito}.`);
+    } catch (e) {
+      setTiendas((prev) => prev.map((x) => (x.id === t.id ? { ...x, ambito: previo } : x)));
+      onError?.(e?.message || "No se pudo cambiar el ámbito de la tienda.");
+    } finally {
+      setGuardandoId(null);
+    }
+  }
 
   async function toggleActiva(t) {
     setGuardandoId(t.id);
@@ -1204,6 +1229,7 @@ function SeccionTiendasExplorador({ onOk, onError }) {
                 <th style={s.th}>Tienda</th>
                 <th style={s.th}>URL</th>
                 <th style={{ ...s.th, width: 100 }}>Tipo</th>
+                <th style={{ ...s.th, width: 130 }}>Se ve en</th>
                 <th style={{ ...s.th, width: 110 }}>Estado</th>
                 <th style={{ ...s.th, textAlign: "right", width: 150 }}>Acciones</th>
               </tr>
@@ -1239,6 +1265,18 @@ function SeccionTiendasExplorador({ onOk, onError }) {
                       <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 9px", borderRadius: 999, ...TIPO_TIENDA[t.tipo]?.chip }}>
                         {TIPO_TIENDA[t.tipo]?.label || t.tipo}
                       </span>
+                    </td>
+                    {/* (2026-10-01) Ambito: el explorador vive en dos lugares
+                        con publicos distintos -- el portal del cliente y la
+                        plataforma interna -- y no siempre conviene mostrarle
+                        al cliente las mismas tiendas que miramos nosotros. */}
+                    <td style={s.td}>
+                      <DropdownSelect
+                        value={t.ambito || "ambos"}
+                        onChange={(v) => cambiarAmbito(t, v)}
+                        disabled={guardandoId === t.id}
+                        options={AMBITOS_TIENDA}
+                      />
                     </td>
                     <td style={s.td}>
                       <button

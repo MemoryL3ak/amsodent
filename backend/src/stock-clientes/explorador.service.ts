@@ -90,19 +90,31 @@ export class ExploradorService {
 
   constructor(private supabase: SupabaseService) {}
 
-  private async tiendasActivas(): Promise<Tienda[]> {
-    if (this.tiendasCache && Date.now() - this.tiendasCache.ts < 5 * 60 * 1000) {
-      return this.tiendasCache.tiendas;
+  /* (2026-10-01) El explorador vive en dos lugares con publicos distintos: el
+     del cliente, en su portal, y el interno de la plataforma. No siempre
+     conviene mostrarle al cliente las mismas tiendas que miramos nosotros, asi
+     que cada tienda declara su ambito. 'ambos' es el valor por omision y
+     mantiene el comportamiento de antes. */
+  private async tiendasActivas(ambito: 'cliente' | 'plataforma' = 'cliente'): Promise<Tienda[]> {
+    const cache = this.tiendasCache as any;
+    if (cache && cache.ambito === ambito && Date.now() - cache.ts < 5 * 60 * 1000) {
+      return cache.tiendas;
     }
     try {
       const { data, error } = await this.supabase
         .getClient()
         .from('explorador_tiendas')
-        .select('id, nombre, tipo, base_url, activa, orden')
+        .select('*')
         .eq('activa', true)
         .order('orden', { ascending: true });
       if (error) throw new Error(error.message);
       const tiendas: Tienda[] = (data || [])
+        // Sin la columna (migracion pendiente) `ambito` llega undefined y la
+        // tienda entra en los dos exploradores, como hasta ahora.
+        .filter((t: any) => {
+          const a = String(t?.ambito || 'ambos');
+          return a === 'ambos' || a === ambito;
+        })
         .filter((t: any) => t?.id && t?.base_url && TIPOS_VALIDOS.includes(t?.tipo))
         .map((t: any) => ({
           id: String(t.id),
@@ -111,7 +123,7 @@ export class ExploradorService {
           base: String(t.base_url).replace(/\/+$/, ''),
         }));
       if (tiendas.length) {
-        this.tiendasCache = { ts: Date.now(), tiendas };
+        this.tiendasCache = { ts: Date.now(), tiendas, ambito } as any;
         return tiendas;
       }
     } catch (e: any) {
@@ -130,15 +142,15 @@ export class ExploradorService {
     this.storeApiRota.clear();
   }
 
-  async buscar(qRaw: string) {
+  async buscar(qRaw: string, ambito: 'cliente' | 'plataforma' = 'cliente') {
     const q = String(qRaw || '').trim().slice(0, 60);
     if (q.length < 3) throw new BadRequestException('Escribe al menos 3 letras para buscar.');
 
-    const key = q.toLowerCase();
+    const key = `${ambito}|${q.toLowerCase()}`;
     const enCache = this.cache.get(key);
     if (enCache && Date.now() - enCache.ts < CACHE_MS) return enCache.data;
 
-    const tiendas = await this.tiendasActivas();
+    const tiendas = await this.tiendasActivas(ambito);
     const porTienda = await Promise.all(
       tiendas.map((t) =>
         this.buscarEnTienda(t, q).catch((e) => {
@@ -211,6 +223,7 @@ export class ExploradorService {
     activa?: boolean;
     orden?: number | string;
     nota?: string;
+    ambito?: string;
   }) {
     const nombre = String(body?.nombre || '').trim().slice(0, 80);
     if (!nombre) throw new BadRequestException('Falta el nombre de la tienda.');
@@ -240,6 +253,9 @@ export class ExploradorService {
     const orden = Number.isFinite(Number(body?.orden)) ? Number(body?.orden) : 100;
     const nota = String(body?.nota ?? '').trim().slice(0, 400) || null;
 
+    const AMBITOS = ['ambos', 'cliente', 'plataforma'];
+    const ambito = AMBITOS.includes(String(body?.ambito || '')) ? String(body.ambito) : 'ambos';
+
     const fila: Record<string, any> = {
       id, nombre, tipo, base_url: base, activa, orden,
       updated_at: new Date().toISOString(),
@@ -247,12 +263,12 @@ export class ExploradorService {
     let { data, error } = await this.supabase
       .getClient()
       .from('explorador_tiendas')
-      .upsert([{ ...fila, nota }], { onConflict: 'id' })
+      .upsert([{ ...fila, nota, ambito }], { onConflict: 'id' })
       .select()
       .single();
-    // La columna `nota` llegó con la migración 20260916; si aún no está
-    // aplicada, se guarda igual el resto en vez de fallar.
-    if (error && /nota/i.test(error.message) && /column|schema cache/i.test(error.message)) {
+    // `nota` llegó con la migración 20260916 y `ambito` con la 20261001; si
+    // alguna no está aplicada, se guarda igual el resto en vez de fallar.
+    if (error && /nota|ambito/i.test(error.message) && /column|schema cache/i.test(error.message)) {
       ({ data, error } = await this.supabase
         .getClient()
         .from('explorador_tiendas')

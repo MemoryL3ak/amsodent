@@ -37,6 +37,7 @@ import {
   ShoppingCart,
   Minus,
   Truck,
+  RefreshCw,
 } from "lucide-react";
 
 import DropdownSelect from "../components/ui/DropdownSelect";
@@ -246,6 +247,9 @@ const CARRITO_ABRIR = "portal-carrito-abrir";
    aparecía por ninguna parte y daba la sensación de que no se había mandado.
    El carrito vive lejos del panel en el árbol, así que avisa por evento. */
 const PEDIDO_ENVIADO = "portal-pedido-enviado";
+/* Lo dispara el botón Actualizar: cada panel que carga datos por su cuenta lo
+   escucha y vuelve a pedirlos. */
+const PORTAL_REFRESCAR = "portal-refrescar";
 
 /* (2026-09-24) Modificar un pedido ya cotizado se hace con el MISMO carrito:
    se cargan en el los productos que el pedido ya tiene -- los transitorios se
@@ -1287,6 +1291,23 @@ function FeatureItem({ icono: Icono, titulo, texto, delay = 0 }) {
    ────────────────────────────────────────────────────────────────────── */
 function PantallaDeclaracion({ cliente, setToast }) {
   const [tab, setTab] = useState("resumen"); // resumen | declaracion | solicitudes | explorador | usuarios
+  const [refrescando, setRefrescando] = useState(false);
+
+  /* Recarga los datos del portal sin recargar la página: así no se pierde el
+     carrito ni la pestaña en la que estaba. El evento lo escuchan los paneles
+     que cargan lo suyo por su cuenta (stock, showroom, actividad). */
+  async function refrescarTodo() {
+    if (refrescando) return;
+    setRefrescando(true);
+    try {
+      await cargarSolicitudes();
+      window.dispatchEvent(new CustomEvent(PORTAL_REFRESCAR));
+    } finally {
+      // Un respiro para que el giro del ícono se note; sin esto parece que no
+      // hizo nada cuando la respuesta vuelve al instante.
+      setTimeout(() => setRefrescando(false), 350);
+    }
+  }
   /* (2026-09-16) Rol del usuario dentro del RUT: admin puede todo (incluido
      aprobar y pagar); asistente, todo lo demás. Las sesiones antiguas no
      traen usuario, y esas son la cuenta principal → admin. */
@@ -1853,6 +1874,28 @@ function PantallaDeclaracion({ cliente, setToast }) {
           primero que el cliente tiene que ver al entrar. */}
       <AvisosPortal onVerHistorial={() => setTab("actividad")} />
 
+      {/* (2026-10-01) Refrescar. El portal carga sus datos al entrar y despues
+          se queda quieto: si Amsodent valida un pedido o despacha mientras el
+          cliente lo tiene abierto, no se entera. Esto recarga sin recargar la
+          página, que es lo que vacía el carrito y obliga a reubicarse. */}
+      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 10 }}>
+        <button
+          type="button"
+          onClick={refrescarTodo}
+          disabled={refrescando}
+          title="Volver a cargar tus datos"
+          style={{
+            display: "inline-flex", alignItems: "center", gap: 6,
+            border: "1px solid #e2e8f0", background: "#fff", color: "#475569",
+            borderRadius: 999, padding: "6px 13px", fontSize: 12.5, fontFamily: "inherit",
+            cursor: refrescando ? "wait" : "pointer", opacity: refrescando ? 0.6 : 1,
+          }}
+        >
+          <RefreshCw size={13} style={refrescando ? { animation: "girar 1s linear infinite" } : undefined} />
+          {refrescando ? "Actualizando…" : "Actualizar"}
+        </button>
+      </div>
+
       {tab === "resumen" ? (
         <DashboardComercial
           items={items}
@@ -2287,12 +2330,16 @@ function PanelHistorialPortal() {
 
   useEffect(() => {
     let vivo = true;
-    apiRequest("/stock-clientes/mi-historial")
-      .then((r) => { if (vivo) setFilas(Array.isArray(r) ? r : []); })
-      .catch((e) => { if (vivo) { setError(e?.message || "No se pudo cargar el historial."); setFilas([]); } });
+    const cargar = () => {
+      apiRequest("/stock-clientes/mi-historial")
+        .then((r) => { if (vivo) setFilas(Array.isArray(r) ? r : []); })
+        .catch((e) => { if (vivo) { setError(e?.message || "No se pudo cargar el historial."); setFilas([]); } });
+    };
+    cargar();
     // Al abrirlo, los avisos dejan de estar pendientes.
     apiRequest("/stock-clientes/mis-avisos/leidos", { method: "POST" }).catch(() => {});
-    return () => { vivo = false; };
+    window.addEventListener(PORTAL_REFRESCAR, cargar);
+    return () => { vivo = false; window.removeEventListener(PORTAL_REFRESCAR, cargar); };
   }, []);
 
   if (filas == null) {
@@ -2413,10 +2460,14 @@ function PanelShowroom() {
 
   useEffect(() => {
     let vivo = true;
-    apiRequest("/stock-clientes/showroom")
-      .then((r) => { if (vivo) setDatos(r); })
-      .catch((e) => { if (vivo) { setError(e?.message || "No se pudo cargar el Showroom."); setDatos({ items: [], marcas: [] }); } });
-    return () => { vivo = false; };
+    const cargar = () => {
+      apiRequest("/stock-clientes/showroom")
+        .then((r) => { if (vivo) setDatos(r); })
+        .catch((e) => { if (vivo) { setError(e?.message || "No se pudo cargar el Showroom."); setDatos({ items: [], marcas: [] }); } });
+    };
+    cargar();
+    window.addEventListener(PORTAL_REFRESCAR, cargar);
+    return () => { vivo = false; window.removeEventListener(PORTAL_REFRESCAR, cargar); };
   }, []);
 
   const items = useMemo(() => {
@@ -4122,6 +4173,13 @@ function PanelMisSolicitudes({ solicitudes, cotizacionesHist = [], cargando, onS
   const [expandidaId, setExpandidaId] = useState(null);
   // Mismo carrito que el Explorador: modificar un pedido lo carga ahi.
   const [, escribirCarrito] = useCarritoPortal();
+  /* (2026-10-01) Ejecutivo asignado al cliente. Se pide una vez: es el mismo
+     para todos sus pedidos. Si no tiene vendedor asignado o el vendedor no
+     tiene celular cargado, viene null y no se muestra nada. */
+  const [ejecutivo, setEjecutivo] = useState(null);
+  useEffect(() => {
+    apiRequest("/stock-clientes/mi-ejecutivo").then(setEjecutivo).catch(() => setEjecutivo(null));
+  }, []);
   const [trabajando, setTrabajando] = useState(null); // id del pedido en curso
   // Cupo de crédito del cliente (punto 29). Si no tiene, no se muestra nada.
   const [credito, setCredito] = useState(null);
@@ -4328,6 +4386,9 @@ function PanelMisSolicitudes({ solicitudes, cotizacionesHist = [], cargando, onS
 
             {expandida && (
               <div style={solStyles.cardBody}>
+                {ejecutivo?.whatsapp && (
+                  <ContactoEjecutivo ejecutivo={ejecutivo} pedidoId={s.id} />
+                )}
                 <BloqueFlujoPedido
                   pedido={s}
                   esAdminPortal={esAdminPortal}
@@ -4445,6 +4506,9 @@ function CotizacionGenerada({ solicitud, esAdminPortal = true, trabajando = fals
     Cancelada: "Cancelada",
   };
   const estadoTxt = ESTADO_LABEL[cot.estado] || cot.estado || "En proceso";
+  /* "Aprobada" = ya salio de los estados de revision interna. Mientras siga
+     ahí, el precio puede cambiar de nuestro lado. */
+  const aprobada = !String(cot.estado || "").startsWith("Pendiente Aprobación");
 
   async function descargar() {
     setDescargando(true);
@@ -4481,7 +4545,18 @@ function CotizacionGenerada({ solicitud, esAdminPortal = true, trabajando = fals
         </button>
       </div>
 
-      {esAdminPortal && (
+      {/* (2026-10-01) Validar y modificar aparecen cuando la cotización ya
+          está APROBADA internamente. Mientras sigue "Pendiente Aprobación" el
+          precio todavía puede cambiar de nuestro lado, así que pedirle al
+          cliente que la valide sería pedirle que apruebe algo que no está
+          firme. Se le dice en qué va, eso sí. */}
+      {esAdminPortal && !aprobada && (
+        <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid #a7f3d0", fontSize: 12, color: "#047857" }}>
+          Estamos revisándola internamente. Apenas quede lista vas a poder validarla
+          o pedirnos cambios desde acá.
+        </div>
+      )}
+      {esAdminPortal && aprobada && (
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginTop: 10, paddingTop: 10, borderTop: "1px solid #a7f3d0" }}>
           {solicitud.validado_cliente_at ? (
             <span style={{ fontSize: 12, fontWeight: 700, color: "#065f46" }}>
@@ -4592,6 +4667,39 @@ function HiloMensajesCliente({ solicitudId }) {
 
 /* Bloque del flujo dentro del pedido, en el portal del cliente: en qué etapa
    va, qué falta y el botón de la acción que le toca a él. */
+/* Contacto directo con el ejecutivo asignado (2026-10-01). Antes, para una
+   duda sobre un pedido, el cliente tenia que buscar el telefono por fuera del
+   portal. El mensaje va prellenado con el numero de pedido para que del otro
+   lado no haya que preguntar de cual se trata. */
+function ContactoEjecutivo({ ejecutivo, pedidoId }) {
+  const texto = encodeURIComponent(
+    `Hola ${String(ejecutivo.nombre || "").split(" ")[0]}, te escribo por el pedido N° ${pedidoId} del portal.`,
+  );
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", border: "1px solid #e2e8f0", borderRadius: 12, padding: "10px 13px", marginBottom: 12, background: "#f8fafc" }}>
+      {ejecutivo.avatar_url ? (
+        <img src={ejecutivo.avatar_url} alt="" style={{ width: 34, height: 34, borderRadius: 999, objectFit: "cover" }} />
+      ) : (
+        <div style={{ width: 34, height: 34, borderRadius: 999, background: TEAL, color: "#fff", display: "grid", placeItems: "center", fontWeight: 800, fontSize: 13 }}>
+          {String(ejecutivo.nombre || "?").trim().charAt(0).toUpperCase()}
+        </div>
+      )}
+      <div style={{ flex: 1, minWidth: 140 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: "#0f172a" }}>{ejecutivo.nombre}</div>
+        <div style={{ fontSize: 11.5, color: "#64748b" }}>{ejecutivo.cargo || "Tu ejecutivo de cuenta"}</div>
+      </div>
+      <a
+        href={`https://wa.me/${ejecutivo.whatsapp}?text=${texto}`}
+        target="_blank"
+        rel="noopener noreferrer"
+        style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "#25D366", color: "#fff", borderRadius: 999, padding: "7px 14px", fontSize: 12.5, fontWeight: 700, textDecoration: "none", whiteSpace: "nowrap" }}
+      >
+        <MessageCircle size={14} /> Escribir por WhatsApp
+      </a>
+    </div>
+  );
+}
+
 function BloqueFlujoPedido({ pedido, esAdminPortal, trabajando, credito, onAprobar, onModificar, onPagar, onPagarCredito, onSos }) {
   const estado = String(pedido?.flujo_estado || "");
   // Sin flujo (migración pendiente o pedido antiguo) no se muestra nada.
