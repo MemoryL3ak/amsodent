@@ -49,6 +49,115 @@ export class ClientesService {
     return data;
   }
 
+  /* ── Cartera de clientes (2026-10-01) ──────────────────────────────────
+     El vendedor de un cliente se cambiaba de a uno, entrando a editar cada
+     ficha. Con 779 de 878 clientes sin vendedor, así no se ordena nunca.
+     Esto alimenta la pantalla de asignación en masa.
+
+     Además de los datos del cliente devuelve QUIÉN LE COTIZA: los vendedores
+     que le han hecho cotizaciones, del que más al que menos. Es la pista que
+     permite repartir con criterio ("todos los que atiende Sandy → a Sandy")
+     en vez de asignar a ciegas. Las cotizaciones se cruzan por RUT. */
+  async cartera() {
+    const client = this.supabase.getClient();
+    const todo = async (tabla: string, cols: string) => {
+      const filas: any[] = [];
+      for (let desde = 0; ; desde += 1000) {
+        const { data, error } = await client
+          .from(tabla)
+          .select(cols)
+          .order('id', { ascending: true })
+          .range(desde, desde + 999);
+        if (error) throw new BadRequestException(error.message);
+        filas.push(...(data || []));
+        if (!data || data.length < 1000) break;
+      }
+      return filas;
+    };
+    const rutPlano = (v: any) => String(v || '').replace(/[.\-\s]/g, '').toUpperCase();
+
+    const [clientes, cotizaciones] = await Promise.all([
+      todo('clientes', 'id, rut, nombre, tipo_cliente, region, comuna, vendedor_asignado, transitorio'),
+      todo('licitaciones', 'id, rut_entidad, creado_por, created_at'),
+    ]);
+
+    // rut → vendedor → { n, ultima }
+    const porRut = new Map<string, Map<string, { n: number; ultima: string }>>();
+    for (const l of cotizaciones) {
+      const rut = rutPlano(l.rut_entidad);
+      const vend = String(l.creado_por || '').trim().toLowerCase();
+      if (!rut || !vend) continue;
+      if (!porRut.has(rut)) porRut.set(rut, new Map());
+      const m = porRut.get(rut)!;
+      const prev = m.get(vend) || { n: 0, ultima: '' };
+      const fecha = String(l.created_at || '');
+      m.set(vend, { n: prev.n + 1, ultima: fecha > prev.ultima ? fecha : prev.ultima });
+    }
+
+    return clientes.map((cli: any) => {
+      const m = porRut.get(rutPlano(cli.rut));
+      const cotiza = m
+        ? [...m.entries()]
+            .map(([email, v]) => ({ email, n: v.n, ultima: v.ultima || null }))
+            // El que más le ha cotizado; a igual cantidad, el más reciente.
+            .sort((a, b) => b.n - a.n || String(b.ultima).localeCompare(String(a.ultima)))
+        : [];
+      return {
+        id: cli.id,
+        rut: String(cli.rut || '').trim(),
+        nombre: String(cli.nombre || '').trim(),
+        tipo_cliente: cli.tipo_cliente || null,
+        region: String(cli.region || '').trim(),
+        comuna: String(cli.comuna || '').trim(),
+        transitorio: cli.transitorio === true,
+        vendedor_asignado: String(cli.vendedor_asignado || '').trim().toLowerCase() || null,
+        cotizaciones: cotiza.reduce((acc, x) => acc + x.n, 0),
+        cotiza: cotiza.slice(0, 3),
+      };
+    });
+  }
+
+  /* Asigna (o quita, con vendedor = null) el vendedor de VARIOS clientes de
+     una vez. El vendedor tiene que ser un usuario real y no bloqueado: un
+     correo mal escrito dejaría a esos clientes en la cartera de nadie, sin
+     que se note, porque "Mis clientes" compara por correo exacto. */
+  async asignarCartera(idsCrudos: any, vendedorCrudo: any) {
+    const client = this.supabase.getClient();
+    const ids = [...new Set((Array.isArray(idsCrudos) ? idsCrudos : []).map((x) => String(x || '').trim()).filter(Boolean))];
+    if (ids.length === 0) throw new BadRequestException('No hay clientes seleccionados.');
+    if (ids.length > 5000) throw new BadRequestException('Demasiados clientes en una sola asignación.');
+
+    const vendedor = String(vendedorCrudo || '').trim().toLowerCase() || null;
+    let nombre: string | null = null;
+    if (vendedor) {
+      const { data: perfil, error } = await client
+        .from('profiles')
+        .select('*')
+        .ilike('email', vendedor.replace(/[%_]/g, '\\$&'))
+        .limit(1);
+      if (error) throw new BadRequestException(error.message);
+      const p = (perfil || [])[0];
+      if (!p) throw new BadRequestException(`No existe un usuario con el correo ${vendedor}.`);
+      if (p.bloqueado === true) {
+        throw new BadRequestException(`${p.nombre || vendedor} está bloqueado: no se le puede asignar cartera.`);
+      }
+      nombre = String(p.nombre || '').trim() || vendedor;
+    }
+
+    let actualizados = 0;
+    for (let i = 0; i < ids.length; i += 200) {
+      const lote = ids.slice(i, i + 200);
+      const { data, error } = await client
+        .from('clientes')
+        .update({ vendedor_asignado: vendedor })
+        .in('id', lote)
+        .select('id');
+      if (error) throw new BadRequestException(error.message);
+      actualizados += (data || []).length;
+    }
+    return { ok: true, actualizados, vendedor, vendedor_nombre: nombre };
+  }
+
   async findOne(id: string | number) {
     const { data, error } = await this.supabase
       .getClient()

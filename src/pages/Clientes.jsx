@@ -154,6 +154,11 @@ export default function Clientes() {
           <p className="page-subtitle">{clientesFiltrados.length} resultado{clientesFiltrados.length !== 1 ? "s" : ""}</p>
         </div>
         <div className="page-actions">
+          {esAdmin && (
+            <Link to="/asignacion-cartera" className="btn btn-secondary">
+              Asignar cartera
+            </Link>
+          )}
           <Link to="/clientes/nuevo" className="btn btn-primary">
             + Crear Cliente
           </Link>
@@ -284,7 +289,7 @@ export default function Clientes() {
                   <td style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={c.contacto}>{c.contacto}</td>
                   {esAdmin && (
                     <td style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                      {esClienteParticular(c) ? (
+                      {esClienteParticular(c) || c.vendedor_asignado ? (
                         <span title={c.vendedor_asignado || ""}>{nombreVendedor(c.vendedor_asignado)}</span>
                       ) : (
                         <span style={{ color: "var(--text-muted)" }}>—</span>

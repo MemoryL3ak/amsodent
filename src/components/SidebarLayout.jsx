@@ -209,6 +209,9 @@ export default function SidebarLayout() {
     puede("chat") && { to: "/licitaciones-disponibles", icon: Inbox, label: "Mercado Público" },
     puede("clientes") && { to: "/clientes",    icon: Users,         label: "Clientes" },
     puede("mis_clientes") && { to: "/mis-clientes", icon: UserCheck,    label: "Mis clientes" },
+    // (2026-10-01) Reparto de clientes entre vendedores, en masa. Solo admin,
+    // igual que reasignar el vendedor desde la ficha.
+    esAdmin && { to: "/asignacion-cartera", icon: Briefcase, label: "Asignación de cartera" },
     puede("bitacora") && { to: "/bitacora-actividades", icon: CalendarDays, label: "Bitácora actividades" },
     puede("productos") && { to: "/productos",   icon: Package,       label: "Productos" },
     puede("campanas") && { to: "/campanas",    icon: Megaphone,     label: "Campañas" },
