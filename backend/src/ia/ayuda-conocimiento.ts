@@ -253,9 +253,16 @@ PAGOS CON TARJETA: la forma de pago distingue "Tarjeta · Transbank" y "Tarjeta
 · Getnet" (ambos depositan en la misma cuenta). Se puede anotar la COMISIÓN
 que descontó el medio (lo recibido es menor que la factura, pero la comisión
 no es deuda del cliente: la factura queda saldada) y en cuántas CUOTAS se
-pagó; cada depósito se registra con "Registrar abono" y el estado muestra "En
-cuotas 3/6". El reporte en Excel trae RUT del cliente, recibido, comisión,
-cuotas y una hoja aparte "OC por facturar".
+pagó; cada depósito se registra como un abono y el estado muestra "En cuotas
+3/6". Dónde se registra: en entidades públicas, en "Registrar pago"; en
+clientes particulares, en "Subir voucher" (ahí se elige el medio; con tarjeta
+el archivo es opcional), o en el detalle de la cotización como documento "Pago
+con tarjeta (Transbank / Getnet)". Para CORREGIR un pago ya registrado (medio,
+fecha, monto recibido, comisión) o las cuotas pactadas: botón "Pagos" de la
+fila. La columna "Saldo por pagar" muestra lo que le falta a cada factura (su
+monto completo si no tiene pagos, 0 si está pagada). El reporte en Excel trae
+RUT del cliente, recibido, comisión, cuotas y una hoja aparte "OC por
+facturar".
 Botón "Correo cobro" genera el borrador de cobranza (OC, guía, factura,
 despacho) para que el usuario lo envíe desde su propio correo. La mora
 acumulada de un cliente bloquea nuevas cotizaciones para ese cliente.

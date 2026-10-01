@@ -6,7 +6,8 @@ import useAuth from "../hooks/useAuth";
 import Toast from "../components/Toast";
 import ConfirmModal from "../components/ConfirmModal";
 import DateFilter from "../components/DateFilter";
-import { Eye, CheckCircle2, Circle, AlertTriangle, ArrowUpDown, ArrowUp, ArrowDown, Download, ChevronDown, Upload, FileMinus, Mail, Copy, ExternalLink, X } from "lucide-react";
+import DropdownSelect from "../components/ui/DropdownSelect";
+import { Eye, CheckCircle2, Circle, AlertTriangle, ArrowUpDown, ArrowUp, ArrowDown, Download, ChevronDown, Upload, FileMinus, Mail, Copy, ExternalLink, X, Pencil } from "lucide-react";
 import BotonLimpiarFiltros from "../components/BotonLimpiarFiltros";
 
 // Normaliza el nombre de archivo para el storage (sin acentos ni símbolos).
@@ -47,6 +48,40 @@ const FORMAS_PAGO = [
 
 // Medios que depositan con comisión descontada y pueden ir en cuotas.
 const esPagoTarjeta = (forma) => forma === "transbank" || forma === "getnet";
+
+// Medios con que se registra un pago ya recibido (factoring no es un pago del
+// cliente: se marca en la factura).
+const MEDIOS_DE_PAGO = FORMAS_PAGO.filter((x) => x.value !== "factoring");
+const BANCOS = [
+  { value: "", label: "Banco…" },
+  { value: "Itaú", label: "Itaú" },
+  { value: "Santander", label: "Santander" },
+];
+
+const soloDigitos = (v) => Math.round(Number(String(v ?? "").replace(/[^\d]/g, "")) || 0);
+
+/* (2026-10-02) Un pago ya registrado ↔ lo que se ve en el formulario.
+   En pantalla todo va en BRUTO (lo que muestra el banco); guardado, el monto
+   va NETO (÷ 1,19, la convención de la app) y la comisión en bruto. */
+function pagoAFormulario(doc) {
+  return {
+    fecha: String(doc?.fecha_oc || doc?.created_at || "").slice(0, 10),
+    medio:
+      doc?.forma_pago ||
+      (doc?.tipo === "webpay" ? "transbank" : doc?.tipo === "efectivo" ? "efectivo" : "transferencia"),
+    recibido: String(Math.round(Number(doc?.monto || 0) * 1.19) || ""),
+    comision: Number(doc?.comision_pago) > 0 ? String(Math.round(Number(doc.comision_pago))) : "",
+  };
+}
+function pagoAPayload({ fecha, medio, recibido, comision }) {
+  const com = esPagoTarjeta(medio) ? soloDigitos(comision) : 0;
+  return {
+    monto: Math.round(soloDigitos(recibido) / 1.19),
+    fecha_oc: fecha || null,
+    forma_pago: medio || null,
+    comision_pago: com > 0 ? com : null,
+  };
+}
 
 function diasEntre(fechaIso) {
   if (!fechaIso) return null;
@@ -322,6 +357,13 @@ export default function SeguimientoPagos() {
   const [vMonto, setVMonto] = useState("");
   const [vFecha, setVFecha] = useState("");
   const [vNumero, setVNumero] = useState("");
+  // (2026-10-02) El comprobante que sube un cliente particular también lleva
+  // su medio de pago; con tarjeta, la comisión del medio y las cuotas.
+  const [vMedio, setVMedio] = useState("transferencia");
+  const [vComision, setVComision] = useState("");
+  const [vCuotas, setVCuotas] = useState("1");
+  // Factura cuyos pagos se están revisando / corrigiendo.
+  const [pagosDe, setPagosDe] = useState(null);
   const [subiendoVoucher, setSubiendoVoucher] = useState(false);
 
   // Filtros
@@ -624,6 +666,13 @@ export default function SeguimientoPagos() {
     () => calcularCuentas({ facturas, licMap, montoOcMap, pagosMap, notasCreditoMap, multasMap }),
     [facturas, licMap, montoOcMap, pagosMap, notasCreditoMap, multasMap],
   );
+  // Ids de las facturas de cada cotización (para saber si un pago está
+  // vinculado a alguna de ellas).
+  const facturasPorLic = useMemo(() => {
+    const m = {};
+    for (const f of facturas) (m[f.licitacion_id] = m[f.licitacion_id] || new Set()).add(f.id);
+    return m;
+  }, [facturas]);
   const CUENTA_VACIA = { base: 0, recibido: 0, comision: 0, pagado: 0, nc: 0, multas: 0, abonos: 0, medio: null, cargas: 0, saldo: 0 };
   // Medio de pago de la factura: el que se registró en ella o, si no, el de
   // sus comprobantes (así se sabe si un particular pagó por Transbank o Getnet).
@@ -631,6 +680,21 @@ export default function SeguimientoPagos() {
   const etiquetaMedio = (valor) => FORMAS_PAGO.find((x) => x.value === valor)?.label || valor || "";
   function cuentaDe(f) {
     return cuentas.porFactura[f?.id] || CUENTA_VACIA;
+  }
+  // Pagos de una factura: los vinculados a ella y los que no están vinculados
+  // a ninguna factura de la cotización (esos se reparten en cascada). Del más
+  // reciente al más antiguo.
+  function pagosDeFactura(f) {
+    const idsFacturas = facturasPorLic[f.licitacion_id] || new Set();
+    return (pagosMap[f.licitacion_id] || [])
+      .filter((d) => d.deriva_de_id === f.id || d.deriva_de_id == null || !idsFacturas.has(d.deriva_de_id))
+      .sort((a, b) => String(b.fecha_oc || b.created_at || "").localeCompare(String(a.fecha_oc || a.created_at || "")));
+  }
+  // En cuotas: se pactó en más de una y todavía falta que el medio deposite.
+  // No depende de que la factura esté marcada pagada — un particular no se
+  // marca hasta que se valida el pago completo.
+  function enCuotasDe(f) {
+    return Number(f?.cuotas_total) > 1 && descalceMontos(f);
   }
   function montoBaseFactura(f) {
     return cuentaDe(f).base;
@@ -668,6 +732,12 @@ export default function SeguimientoPagos() {
   // multas − los pagos imputados a ella (lo recibido más la comisión del medio).
   function saldoFactura(f) {
     return cuentaDe(f).saldo;
+  }
+  // El saldo que se MUESTRA (tabla y reporte): una factura marcada pagada sin
+  // montos cargados está en 0; el resto, lo que le falta.
+  function saldoMostrado(f) {
+    const cu = cuentaDe(f);
+    return f?.pagada && cu.cargas <= 0 ? 0 : cu.saldo;
   }
   // Punto 17: si los montos cargados (comprobantes/transferencias + notas de
   // crédito) no cuadran con el total a cobrar (saldo ≠ 0), la factura no puede
@@ -766,8 +836,11 @@ export default function SeguimientoPagos() {
       const pagadaEf = estaPagada(f, lic);
       if (filtroEstado === "pagadas" && !pagadaEf) return false;
       if (filtroEstado === "pendientes" && pagadaEf) return false;
-      if (filtroEstado === "vencidas" && (pagadaEf || diasRestantes == null || diasRestantes >= 0)) return false;
-      if (filtroEstado === "por_vencer" && (pagadaEf || diasRestantes == null || diasRestantes < 0 || diasRestantes > 5)) return false;
+      // En cuotas: el cliente ya pagó con tarjeta y falta que el medio deposite.
+      // No es vencida ni por vencer, igual que en los KPI.
+      const cuotasPend = enCuotasDe(f);
+      if (filtroEstado === "vencidas" && (pagadaEf || cuotasPend || diasRestantes == null || diasRestantes >= 0)) return false;
+      if (filtroEstado === "por_vencer" && (pagadaEf || cuotasPend || diasRestantes == null || diasRestantes < 0 || diasRestantes > 5)) return false;
       return true;
     });
   }, [facturasFiltradasBase, licMap, filtroEstado, cuentas, montoOcMap]);
@@ -840,7 +913,7 @@ export default function SeguimientoPagos() {
       const cuotasTotal = Number(f.cuotas_total) || 0;
       const abonos = cuentaDe(f).abonos;
       let estado;
-      if (descalce && f.pagada && cuotasTotal > 1) estado = `En cuotas ${Math.min(abonos, cuotasTotal)}/${cuotasTotal}`;
+      if (descalce && cuotasTotal > 1) estado = `En cuotas ${Math.min(abonos, cuotasTotal)}/${cuotasTotal}`;
       else if (descalce) estado = "Pendiente de pago";
       else if (estaPagada(f, lic)) estado = "Pagada";
       else if (restantes == null) estado = "Sin fecha";
@@ -849,10 +922,13 @@ export default function SeguimientoPagos() {
       else estado = "En plazo";
       const nc = notasCreditoDe(f);
       const multas = multasDe(f);
-      // Saldo por cobrar: lo mostramos cuando hay montos cargados (notas de
-      // crédito, multas o comprobantes); si no se ha cargado nada, queda en blanco.
+      // Saldo de ESTA factura. Marcada pagada sin montos cargados (el flujo
+      // simple de "marcar pagada") = 0; en cualquier otro caso, lo que falta:
+      // su bruto menos notas de crédito, multas y pagos. Una factura impaga y
+      // sin pagos lleva su monto completo — antes quedaba en blanco, y sumar
+      // la columna no daba lo que realmente hay por cobrar.
       const cuenta = cuentaDe(f);
-      const saldoPorPagar = cuenta.cargas > 0 ? cuenta.saldo : "";
+      const saldoPorPagar = saldoMostrado(f);
       return {
         "ID Cotización": lic.id_licitacion || lic.id || "",
         "Cliente": lic.nombre_entidad || "",
@@ -984,7 +1060,7 @@ export default function SeguimientoPagos() {
       pendientes++;
       // Pagada con tarjeta en cuotas: el cliente ya pagó y solo falta que el
       // medio deposite. No es vencida ni por vencer aunque pase el plazo.
-      if (f.pagada && Number(f.cuotas_total) > 1) {
+      if (enCuotasDe(f)) {
         montoEnPlazo += monto;
         const etiqueta = `En cuotas ${Math.min(cuentaDe(f).abonos, Number(f.cuotas_total))}/${Number(f.cuotas_total)}`;
         det.total.push({ f, lic, monto, estadoLabel: etiqueta });
@@ -1115,7 +1191,11 @@ export default function SeguimientoPagos() {
     // que en el caso normal es el total a cobrar. Editable o se puede dejar en
     // blanco si no se quiere registrar el valor del pago.
     const saldo = saldoFactura(f);
-    setMontoPago(saldo > TOLERANCIA_SALDO ? String(saldo) : "");
+    // Con cuotas pactadas, el abono parte del valor de una cuota (sin pasarse
+    // de lo que falta); si no, del saldo completo.
+    const cuotasPactadas = Number(f.cuotas_total) > 1 ? Number(f.cuotas_total) : 1;
+    const sugerido = cuotasPactadas > 1 ? Math.min(saldo, Math.round(montoBaseFactura(f) / cuotasPactadas)) : saldo;
+    setMontoPago(saldo > TOLERANCIA_SALDO ? String(sugerido) : "");
     setComisionPago("");
     setCuotasPago(String(Number(f.cuotas_total) > 1 ? Number(f.cuotas_total) : 1));
   }
@@ -1322,6 +1402,12 @@ export default function SeguimientoPagos() {
     setVMonto("");
     setVFecha(new Date().toISOString().slice(0, 10));
     setVNumero("");
+    // Si la factura ya viene pagándose con tarjeta, el siguiente abono parte
+    // con el mismo medio y las mismas cuotas.
+    const medioPrevio = medioDe(f);
+    setVMedio(esPagoTarjeta(medioPrevio) ? medioPrevio : "transferencia");
+    setVComision("");
+    setVCuotas(String(Number(f.cuotas_total) > 1 ? Number(f.cuotas_total) : 1));
   }
   function abrirNotaCredito(f) {
     setVoucherTipo("nota_credito");
@@ -1354,8 +1440,13 @@ export default function SeguimientoPagos() {
     const esMulta = voucherTipo === "multa";
     const esDescuento = esNC || esMulta; // ambos restan del monto a cobrar, en bruto
     const etiqueta = esNC ? "nota de crédito" : esMulta ? "multa" : "comprobante";
-    // El comprobante requiere archivo; la nota de crédito y la multa lo aceptan opcional.
-    if (!esDescuento && !vFile) { setToast({ type: "error", message: "Selecciona el archivo del comprobante." }); return; }
+    // El comprobante de transferencia requiere archivo; la nota de crédito, la
+    // multa y el pago con tarjeta (que no siempre deja un voucher) lo aceptan
+    // opcional.
+    const conTarjeta = !esDescuento && esPagoTarjeta(vMedio);
+    if (!esDescuento && !conTarjeta && !vFile) { setToast({ type: "error", message: "Selecciona el archivo del comprobante." }); return; }
+    const comisionNum = conTarjeta ? soloDigitos(vComision) : 0;
+    const cuotasNum = conTarjeta ? Math.max(1, Math.min(48, soloDigitos(vCuotas) || 1)) : 1;
     const montoNum = Math.round(Number(String(vMonto).replace(/[^\d]/g, "")) || 0);
     if (montoNum <= 0) { setToast({ type: "error", message: `Ingresa el monto de la ${etiqueta}.` }); return; }
     if (!vFecha) { setToast({ type: "error", message: `Ingresa la fecha de la ${etiqueta}.` }); return; }
@@ -1388,14 +1479,22 @@ export default function SeguimientoPagos() {
           file_name: vFile ? vFile.name : null,
           mime_type: vFile ? (vFile.type || "application/pdf") : null,
           size_bytes: vFile ? Number(vFile.size || 0) : null,
+          // Medio del pago y, con tarjeta, lo que descontó el medio.
+          ...(!esDescuento ? { forma_pago: vMedio } : {}),
+          ...(comisionNum > 0 ? { comision_pago: comisionNum } : {}),
         });
+        // Las cuotas son de la factura, no del comprobante.
+        if (conTarjeta && cuotasNum !== (Number(voucherFor.cuotas_total) || 1)) {
+          await api.put(`/licitaciones/documentos/${voucherFor.id}`, { cuotas_total: cuotasNum });
+          actualizarFacturaLocal(voucherFor.id, { cuotas_total: cuotasNum });
+        }
       } catch (insErr) {
         if (storagePath) {
           try { await api.delete(`/licitaciones/storage/file?bucket=${bucket}&path=${encodeURIComponent(storagePath)}`); } catch { /* */ }
         }
         throw insErr;
       }
-      setToast({ type: "success", message: esNC ? "Nota de crédito cargada." : esMulta ? "Multa registrada." : "Comprobante de transferencia cargado." });
+      setToast({ type: "success", message: esNC ? "Nota de crédito cargada." : esMulta ? "Multa registrada." : "Pago registrado." });
       // (Punto 3) reflejar el documento en memoria, sin recargar la página
       registrarDocLocal({
         id: nuevoDoc?.id,
@@ -1409,6 +1508,8 @@ export default function SeguimientoPagos() {
         bucket: storagePath ? bucket : null,
         storage_path: storagePath,
         file_name: vFile ? vFile.name : null,
+        ...(!esDescuento ? { forma_pago: vMedio } : {}),
+        ...(comisionNum > 0 ? { comision_pago: comisionNum } : {}),
       });
       cerrarVoucher();
     } catch (err) {
@@ -1417,6 +1518,29 @@ export default function SeguimientoPagos() {
     } finally {
       setSubiendoVoucher(false);
     }
+  }
+
+  /* (2026-10-02) Corregir un pago ya registrado: medio, fecha, monto recibido
+     y comisión. Hace falta porque los pagos con tarjeta anteriores quedaron
+     como transferencia y por el total de la boleta (el formulario no dejaba
+     registrar otra cosa), y porque la comisión recién se conoce cuando el
+     medio deposita. */
+  async function guardarPagoEditado(doc, valores) {
+    const cambios = pagoAPayload(valores);
+    await api.put(`/licitaciones/documentos/${doc.id}`, cambios);
+    const nuevo = { ...doc, ...cambios };
+    setPagosMap((prev) => ({
+      ...prev,
+      [doc.licitacion_id]: (prev[doc.licitacion_id] || []).map((d) => (d.id === doc.id ? nuevo : d)),
+    }));
+    setComprobantesMap((prev) =>
+      prev[doc.licitacion_id]?.id === doc.id ? { ...prev, [doc.licitacion_id]: nuevo } : prev,
+    );
+  }
+  async function guardarCuotas(f, cuotas) {
+    const n = Math.max(1, Math.min(48, soloDigitos(cuotas) || 1));
+    await api.put(`/licitaciones/documentos/${f.id}`, { cuotas_total: n });
+    actualizarFacturaLocal(f.id, { cuotas_total: n });
   }
 
   async function confirmarDesmarcarPago() {
@@ -1844,7 +1968,7 @@ export default function SeguimientoPagos() {
                      "pendiente de pago" — nadie tiene que cobrarle nada —, así
                      que lleva su propio estado con el avance de los abonos. */
                   const cuotasTotal = Number(f.cuotas_total) || 0;
-                  const enCuotas = descalce && Boolean(f.pagada) && cuotasTotal > 1;
+                  const enCuotas = descalce && cuotasTotal > 1;
                   const sem = enCuotas
                     ? { color: "#1d4ed8", bg: "#dbeafe", label: `En cuotas ${Math.min(cuentaDe(f).abonos, cuotasTotal)}/${cuotasTotal}` }
                     : descalce
@@ -1859,9 +1983,14 @@ export default function SeguimientoPagos() {
                     ? (comprobante?.fecha_oc ? String(comprobante.fecha_oc).slice(0, 10) : f.fecha_pago)
                     : f.fecha_pago;
                   // Monto del pago mostrado: el comprobante se guarda neto → ×1,19.
-                  const montoParticular = comprobante?.monto != null
-                    ? Math.round(Number(comprobante.monto) * 1.19)
-                    : montoFacturaBruto(f);
+                  const cuentaFila = cuentaDe(f);
+                  // Con pagos imputados a ESTA factura se muestra lo pagado de ella
+                  // (todos sus abonos, también los de tarjeta); si no, lo de antes.
+                  const montoParticular = cuentaFila.abonos > 0
+                    ? cuentaFila.pagado
+                    : comprobante?.monto != null
+                      ? Math.round(Number(comprobante.monto) * 1.19)
+                      : montoFacturaBruto(f);
 
                   return (
                     <tr key={f.id}>
@@ -2000,24 +2129,14 @@ export default function SeguimientoPagos() {
                       </td>
                       <td style={{ verticalAlign: "middle", textAlign: "right" }}>
                         {(() => {
-                          // Saldo por pagar: base − notas de crédito − comprobantes.
-                          // Lo mostramos cuando hay montos cargados (comprobantes
-                          // o notas de crédito); aplica a cualquier tipo de cliente.
+                          // Saldo por pagar de ESTA factura: su bruto − notas de crédito
+                          // − multas − sus pagos. Aplica a cualquier tipo de cliente.
                           const cuenta = cuentaDe(f);
                           const pagado = cuenta.pagado;
                           const porFacturar = cuentas.porLic[lic.id]?.porFacturar || 0;
-                          if (cuenta.cargas <= 0) {
-                            // Sin pagos cargados no hay saldo que mostrar, pero el
-                            // saldo de la OC por facturar se informa igual.
-                            return porFacturar > 0 ? (
-                              <div style={{ fontSize: 11, color: "var(--text-muted)", whiteSpace: "nowrap" }} title="Monto de la orden de compra que todavía no se factura. No es deuda de esta factura.">
-                                OC por facturar {fmtCLP(porFacturar)}
-                              </div>
-                            ) : (
-                              <span style={{ color: "var(--text-muted)" }}>—</span>
-                            );
-                          }
-                          const saldo = cuenta.saldo;
+                          // Lo que le falta a ESTA factura: su monto completo si no
+                          // tiene pagos, 0 si está marcada pagada sin montos cargados.
+                          const saldo = saldoMostrado(f);
                           const color = saldo > TOLERANCIA_SALDO ? "#b45309" : saldo < -TOLERANCIA_SALDO ? "#dc2626" : "#16a34a";
                           return (
                             <div>
@@ -2079,15 +2198,21 @@ export default function SeguimientoPagos() {
                             <div style={{ color: "var(--text-muted)", fontSize: "11px" }}>
                               {montoParticular != null ? fmtCLP(montoParticular) : "—"}
                             </div>
+                            {cuentaFila.abonos > 0 && (
+                              <div style={{ color: "var(--text-muted)", fontSize: "11px" }}>
+                                {etiquetaMedio(medioDe(f))}
+                                {cuentaFila.comision > 0 ? ` · comisión ${fmtCLP(cuentaFila.comision)}` : ""}
+                              </div>
+                            )}
                             <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap" }}>
                               <button
                                 type="button"
                                 onClick={() => abrirVoucher(f)}
                                 className="btn btn-secondary btn-sm"
                                 style={{ display: "inline-flex", alignItems: "center", gap: 4 }}
-                                title="Subir comprobante de transferencia"
+                                title="Registrar un pago: transferencia o tarjeta (Transbank / Getnet), con su comprobante"
                               >
-                                <Upload size={12} /> Subir voucher
+                                <Upload size={12} /> {enCuotas ? "Registrar abono" : "Subir voucher"}
                               </button>
                               {comprobante?.bucket && comprobante?.storage_path && (
                                 <button
@@ -2126,28 +2251,22 @@ export default function SeguimientoPagos() {
                               placeholder="Fecha pago"
                               disabled={guardando}
                             />
-                            <select
-                              className="input"
+                            <DropdownSelect
                               value={formaPago}
-                              onChange={(e) => setFormaPago(e.target.value)}
+                              onChange={setFormaPago}
+                              options={FORMAS_PAGO}
                               disabled={guardando}
-                            >
-                              {FORMAS_PAGO.map((fp) => (
-                                <option key={fp.value} value={fp.value}>{fp.label}</option>
-                              ))}
-                            </select>
+                              minWidth={190}
+                            />
                             {/* (Punto 6) Banco receptor — todas las formas salvo efectivo */}
                             {formaPago !== "efectivo" && (
-                              <select
-                                className="input"
+                              <DropdownSelect
                                 value={bancoPago}
-                                onChange={(e) => setBancoPago(e.target.value)}
+                                onChange={setBancoPago}
+                                options={BANCOS}
                                 disabled={guardando}
-                              >
-                                <option value="">Banco…</option>
-                                <option value="Itaú">Itaú</option>
-                                <option value="Santander">Santander</option>
-                              </select>
+                                minWidth={150}
+                              />
                             )}
                             <input
                               className="input"
@@ -2239,6 +2358,17 @@ export default function SeguimientoPagos() {
                         )}
                         {!editando && (
                           <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 6, flexWrap: "wrap" }}>
+                            {(cuentaFila.abonos > 0 || Number(f.cuotas_total) > 1) && (
+                              <button
+                                type="button"
+                                onClick={() => setPagosDe(f)}
+                                className="btn btn-secondary btn-sm"
+                                style={{ display: "inline-flex", alignItems: "center", gap: 4 }}
+                                title="Ver y corregir los pagos de esta factura: medio (Transbank / Getnet), monto recibido, comisión y cuotas"
+                              >
+                                <Pencil size={12} /> Pagos ({cuentaFila.abonos})
+                              </button>
+                            )}
                             {(notasCreditoMap[lic.id]?.length || 0) > 0 && (
                               <span style={{ fontSize: 11, color: "#7c3aed", whiteSpace: "nowrap" }}>
                                 {notasCreditoMap[lic.id].length} N.C.
@@ -2475,6 +2605,21 @@ export default function SeguimientoPagos() {
         document.body
       )}
 
+      {pagosDe && (
+        <ModalPagosFactura
+          key={pagosDe.id}
+          factura={facturas.find((x) => x.id === pagosDe.id) || pagosDe}
+          cliente={licMap[pagosDe.licitacion_id]?.nombre_entidad || ""}
+          pagos={pagosDeFactura(pagosDe)}
+          cuenta={cuentaDe(pagosDe)}
+          onCerrar={() => setPagosDe(null)}
+          onGuardarPago={guardarPagoEditado}
+          onGuardarCuotas={guardarCuotas}
+          onVerArchivo={abrirDocumento}
+          avisar={setToast}
+        />
+      )}
+
       {voucherFor && createPortal(
         <div
           onClick={cerrarVoucher}
@@ -2487,7 +2632,7 @@ export default function SeguimientoPagos() {
           >
             <div style={{ padding: "16px 20px", borderBottom: "1px solid var(--border)" }}>
               <strong style={{ fontSize: 15 }}>
-                {voucherTipo === "nota_credito" ? "Agregar nota de crédito" : voucherTipo === "multa" ? "Registrar multa" : "Subir comprobante de transferencia"}
+                {voucherTipo === "nota_credito" ? "Agregar nota de crédito" : voucherTipo === "multa" ? "Registrar multa" : "Registrar pago"}
               </strong>
               <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 2 }}>
                 Factura {voucherFor.numero || "S/N"} · {licMap[voucherFor.licitacion_id]?.nombre_entidad || ""}
@@ -2499,8 +2644,16 @@ export default function SeguimientoPagos() {
               )}
             </div>
             <div style={{ padding: "16px 20px", display: "flex", flexDirection: "column", gap: 12 }}>
+              {voucherTipo === "comprobante" && (
+                <div style={{ fontSize: 13, fontWeight: 600 }}>
+                  Medio de pago
+                  <div style={{ marginTop: 4 }}>
+                    <DropdownSelect value={vMedio} onChange={setVMedio} options={MEDIOS_DE_PAGO} minWidth={220} style={{ width: "100%" }} />
+                  </div>
+                </div>
+              )}
               <div style={{ fontSize: 13, fontWeight: 600 }}>
-                Archivo{voucherTipo === "nota_credito" || voucherTipo === "multa" ? " (opcional)" : ""}
+                {voucherTipo === "comprobante" ? "Comprobante" : "Archivo"}{voucherTipo === "nota_credito" || voucherTipo === "multa" || esPagoTarjeta(vMedio) ? " (opcional)" : ""}
                 <div style={{ marginTop: 6, display: "flex", alignItems: "center", gap: 10 }}>
                   <label className="btn btn-secondary btn-sm" style={{ cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
                     <Upload size={13} /> Seleccionar archivo
@@ -2520,9 +2673,28 @@ export default function SeguimientoPagos() {
                 </div>
               </div>
               <label style={{ fontSize: 13, fontWeight: 600 }}>
-                {voucherTipo === "nota_credito" ? "Monto" : voucherTipo === "multa" ? "Monto de la multa (bruto)" : "Monto bruto (lo transferido)"}
-                <input type="text" inputMode="numeric" className="input" value={vMonto} onChange={(e) => setVMonto(e.target.value.replace(/[^\d]/g, ""))} placeholder="0" style={{ marginTop: 4 }} />
+                {voucherTipo === "nota_credito" ? "Monto" : voucherTipo === "multa" ? "Monto de la multa (bruto)" : esPagoTarjeta(vMedio) ? "Monto bruto (lo que depositó el medio)" : "Monto bruto (lo transferido)"}
+                <input type="text" inputMode="numeric" className="input" value={vMonto ? Number(vMonto).toLocaleString("es-CL") : ""} onChange={(e) => setVMonto(e.target.value.replace(/[^\d]/g, ""))} placeholder="0" style={{ marginTop: 4 }} />
               </label>
+              {voucherTipo === "comprobante" && esPagoTarjeta(vMedio) && (
+                <>
+                  <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                    <label style={{ fontSize: 13, fontWeight: 600, flex: "2 1 160px", minWidth: 0 }}>
+                      Comisión del medio (opcional)
+                      <input type="text" inputMode="numeric" className="input" value={vComision ? Number(vComision).toLocaleString("es-CL") : ""} onChange={(e) => setVComision(e.target.value.replace(/[^\d]/g, ""))} placeholder="0" style={{ marginTop: 4 }} />
+                    </label>
+                    <label style={{ fontSize: 13, fontWeight: 600, flex: "1 1 90px", minWidth: 0 }}>
+                      Cuotas
+                      <input type="text" inputMode="numeric" className="input" value={vCuotas} onChange={(e) => setVCuotas(e.target.value.replace(/[^\d]/g, "").slice(0, 2))} placeholder="1" style={{ marginTop: 4 }} />
+                    </label>
+                  </div>
+                  <div style={{ fontSize: 11.5, color: "var(--text-muted)", lineHeight: 1.4 }}>
+                    La comisión es lo que Transbank / Getnet descontó antes de depositar: no se recibió, pero no es deuda
+                    del cliente, así que también salda la factura. Con más de 1 cuota, registra cada depósito como un
+                    abono; la factura queda «En cuotas» hasta completar.
+                  </div>
+                </>
+              )}
               <label style={{ fontSize: 13, fontWeight: 600 }}>
                 {voucherTipo === "nota_credito" ? "Fecha de la nota de crédito" : voucherTipo === "multa" ? "Fecha de la multa" : "Fecha del comprobante"}
                 <div style={{ marginTop: 4 }}>
@@ -2537,7 +2709,7 @@ export default function SeguimientoPagos() {
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, padding: "14px 20px", borderTop: "1px solid var(--border)", background: "var(--bg)" }}>
               <button type="button" onClick={cerrarVoucher} disabled={subiendoVoucher} className="btn btn-secondary">Cancelar</button>
               <button type="submit" disabled={subiendoVoucher} className="btn btn-primary">
-                {subiendoVoucher ? "Guardando…" : voucherTipo === "nota_credito" ? "Agregar nota de crédito" : voucherTipo === "multa" ? "Registrar multa" : "Subir comprobante"}
+                {subiendoVoucher ? "Guardando…" : voucherTipo === "nota_credito" ? "Agregar nota de crédito" : voucherTipo === "multa" ? "Registrar multa" : "Registrar pago"}
               </button>
             </div>
           </form>
@@ -2545,5 +2717,159 @@ export default function SeguimientoPagos() {
         document.body
       )}
     </div>
+  );
+}
+
+/* ── Pagos de una factura (2026-10-02) ─────────────────────────────────────
+   Ver y corregir lo ya registrado: con qué medio se pagó (transferencia,
+   Transbank, Getnet…), cuánto entró de verdad, cuánto se quedó el medio como
+   comisión y en cuántas cuotas se pactó. Cada pago se guarda por separado. */
+function ModalPagosFactura({ factura, cliente, pagos, cuenta, onCerrar, onGuardarPago, onGuardarCuotas, onVerArchivo, avisar }) {
+  const [filas, setFilas] = useState(() => Object.fromEntries(pagos.map((d) => [d.id, pagoAFormulario(d)])));
+  const [guardandoId, setGuardandoId] = useState(null);
+  const cuotasGuardadas = String(Number(factura.cuotas_total) > 1 ? Number(factura.cuotas_total) : 1);
+  const [cuotas, setCuotas] = useState(cuotasGuardadas);
+  const [guardandoCuotas, setGuardandoCuotas] = useState(false);
+
+  const cambiar = (id, campo) => (valor) =>
+    setFilas((prev) => ({ ...prev, [id]: { ...(prev[id] || {}), [campo]: valor } }));
+
+  async function guardar(doc) {
+    const v = filas[doc.id];
+    if (!v?.fecha) { avisar({ type: "error", message: "El pago necesita una fecha." }); return; }
+    if (!(soloDigitos(v.recibido) > 0) && !(soloDigitos(v.comision) > 0)) {
+      avisar({ type: "error", message: "Indica el monto recibido." });
+      return;
+    }
+    setGuardandoId(doc.id);
+    try {
+      await onGuardarPago(doc, v);
+      avisar({ type: "success", message: "Pago actualizado." });
+    } catch (e) {
+      console.error(e);
+      avisar({ type: "error", message: e?.message || "No se pudo actualizar el pago." });
+    } finally {
+      setGuardandoId(null);
+    }
+  }
+
+  async function guardarLasCuotas() {
+    setGuardandoCuotas(true);
+    try {
+      await onGuardarCuotas(factura, cuotas);
+      avisar({ type: "success", message: "Cuotas actualizadas." });
+    } catch (e) {
+      console.error(e);
+      avisar({ type: "error", message: e?.message || "No se pudieron guardar las cuotas." });
+    } finally {
+      setGuardandoCuotas(false);
+    }
+  }
+
+  const etiqueta = { fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px", color: "var(--text-muted)", display: "block", marginBottom: 3 };
+  const cuotasNum = soloDigitos(cuotas) || 1;
+
+  return createPortal(
+    <div
+      onClick={(e) => { if (e.target === e.currentTarget) onCerrar(); }}
+      style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,.55)", zIndex: 11000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+    >
+      <div style={{ width: 640, maxWidth: "100%", maxHeight: "88vh", overflow: "auto", background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", boxShadow: "var(--shadow-lg)" }}>
+        <div style={{ padding: "14px 20px", borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, position: "sticky", top: 0, background: "var(--surface)", zIndex: 1 }}>
+          <div style={{ minWidth: 0 }}>
+            <strong style={{ fontSize: 15 }}>Pagos de la factura {factura.numero || "S/N"}</strong>
+            <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 2, overflowWrap: "anywhere" }}>{cliente}</div>
+          </div>
+          <button type="button" onClick={onCerrar} className="btn btn-ghost" style={{ padding: 6, flexShrink: 0 }} aria-label="Cerrar"><X size={18} /></button>
+        </div>
+
+        <div style={{ padding: "14px 20px", display: "flex", flexDirection: "column", gap: 14 }}>
+          {/* Resumen de la cuenta de esta factura */}
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 18px", fontSize: 13, background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 10, padding: "10px 12px" }}>
+            <span>Factura <strong>{fmtCLP(cuenta.base)}</strong></span>
+            <span>Recibido <strong>{fmtCLP(cuenta.recibido)}</strong></span>
+            {cuenta.comision > 0 && <span>Comisión <strong>{fmtCLP(cuenta.comision)}</strong></span>}
+            {cuenta.nc > 0 && <span>N. crédito <strong>{fmtCLP(cuenta.nc)}</strong></span>}
+            {cuenta.multas > 0 && <span>Multas <strong>{fmtCLP(cuenta.multas)}</strong></span>}
+            <span style={{ color: cuenta.saldo > TOLERANCIA_SALDO ? "#b45309" : cuenta.saldo < -TOLERANCIA_SALDO ? "#dc2626" : "#15803d" }}>
+              Saldo por pagar <strong>{fmtCLP(cuenta.saldo)}</strong>
+            </span>
+          </div>
+
+          {/* Cuotas pactadas */}
+          <div style={{ display: "flex", alignItems: "flex-end", gap: 10, flexWrap: "wrap" }}>
+            <label style={{ flex: "0 0 110px" }}>
+              <span style={etiqueta}>Cuotas pactadas</span>
+              <input className="input" inputMode="numeric" value={cuotas} onChange={(e) => setCuotas(e.target.value.replace(/[^\d]/g, "").slice(0, 2))} />
+            </label>
+            <button type="button" className="btn btn-secondary btn-sm" onClick={guardarLasCuotas} disabled={guardandoCuotas || String(cuotasNum) === cuotasGuardadas} style={{ marginBottom: 2 }}>
+              {guardandoCuotas ? "Guardando…" : "Guardar cuotas"}
+            </button>
+            <span style={{ flex: "1 1 220px", fontSize: 11.5, color: "var(--text-muted)", lineHeight: 1.4 }}>
+              1 = pago de una vez. Con más de 1, la factura muestra «En cuotas {Math.min(cuenta.abonos, cuotasNum)}/{cuotasNum}» hasta que el medio termine de depositar; cada depósito es un pago de esta lista.
+            </span>
+          </div>
+
+          {pagos.length === 0 && (
+            <div style={{ fontSize: 13, color: "var(--text-muted)", border: "1px dashed var(--border)", borderRadius: 8, padding: "14px 12px", textAlign: "center" }}>
+              Esta factura todavía no tiene pagos registrados.
+            </div>
+          )}
+
+          {pagos.map((doc) => {
+            const v = filas[doc.id] || pagoAFormulario(doc);
+            const original = pagoAFormulario(doc);
+            const cambio = ["fecha", "medio", "recibido", "comision"].some((k) => String(v[k] ?? "") !== String(original[k] ?? ""));
+            const tarjeta = esPagoTarjeta(v.medio);
+            return (
+              <div key={doc.id} style={{ border: `1px solid ${cambio ? "var(--primary)" : "var(--border)"}`, borderRadius: 10, padding: 12, display: "flex", flexDirection: "column", gap: 10 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", fontSize: 12, color: "var(--text-muted)" }}>
+                  <strong style={{ color: "var(--text)" }}>{doc.numero ? `N° ${doc.numero}` : "Pago"}</strong>
+                  {doc.deriva_de_id !== factura.id && <span title="Este pago no está vinculado a una factura en particular: se reparte entre las facturas de la cotización, de la más antigua a la más nueva.">· sin vincular a una factura</span>}
+                  {doc.bucket && doc.storage_path && (
+                    <button type="button" onClick={() => onVerArchivo(doc)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--primary)", padding: 0, display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12 }}>
+                      <Eye size={12} /> Ver comprobante
+                    </button>
+                  )}
+                </div>
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
+                  <div style={{ flex: "1 1 130px", minWidth: 0 }}>
+                    <span style={etiqueta}>Fecha</span>
+                    <DateFilter value={v.fecha} onChange={cambiar(doc.id, "fecha")} placeholder="Fecha" />
+                  </div>
+                  <div style={{ flex: "1 1 170px", minWidth: 0 }}>
+                    <span style={etiqueta}>Medio de pago</span>
+                    <DropdownSelect value={v.medio} onChange={cambiar(doc.id, "medio")} options={MEDIOS_DE_PAGO} minWidth={200} style={{ width: "100%" }} />
+                  </div>
+                  <label style={{ flex: "1 1 120px", minWidth: 0 }}>
+                    <span style={etiqueta} title="Lo que efectivamente entró a la cuenta, con IVA">Recibido</span>
+                    <input className="input" inputMode="numeric" value={v.recibido ? `$${soloDigitos(v.recibido).toLocaleString("es-CL")}` : ""} onChange={(e) => cambiar(doc.id, "recibido")(e.target.value.replace(/[^\d]/g, ""))} placeholder="$0" />
+                  </label>
+                  {tarjeta && (
+                    <label style={{ flex: "1 1 110px", minWidth: 0 }}>
+                      <span style={etiqueta} title="Lo que Transbank / Getnet descontó antes de depositar">Comisión</span>
+                      <input className="input" inputMode="numeric" value={v.comision ? `$${soloDigitos(v.comision).toLocaleString("es-CL")}` : ""} onChange={(e) => cambiar(doc.id, "comision")(e.target.value.replace(/[^\d]/g, ""))} placeholder="$0" />
+                    </label>
+                  )}
+                  <button type="button" className="btn btn-primary btn-sm" onClick={() => guardar(doc)} disabled={!cambio || guardandoId === doc.id} style={{ marginBottom: 2 }}>
+                    {guardandoId === doc.id ? "Guardando…" : "Guardar"}
+                  </button>
+                </div>
+                {tarjeta && (
+                  <div style={{ fontSize: 11.5, color: "var(--text-muted)" }}>
+                    Recibido + comisión = lo que pagó el cliente: {fmtCLP(soloDigitos(v.recibido) + soloDigitos(v.comision))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        <div style={{ display: "flex", justifyContent: "flex-end", padding: "12px 20px", borderTop: "1px solid var(--border)", background: "var(--bg)", position: "sticky", bottom: 0 }}>
+          <button type="button" onClick={onCerrar} className="btn btn-secondary">Cerrar</button>
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }
