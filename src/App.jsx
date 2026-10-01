@@ -40,6 +40,7 @@ import ConfiguracionUsuarios from "./pages/ConfiguracionUsuarios";
 
 // CAMPAÑAS
 import CampanasProductos from "./pages/CampanasProductos";
+import CampanasMargen from "./pages/CampanasMargen";
 import CrearCampana from "./pages/CrearCampana";
 import EditarCampana from "./pages/EditarCampana";
 import CotizacionesPorVendedor from "./pages/CotizacionesPorVendedor";
@@ -191,6 +192,16 @@ export default function App() {
             }
           />
           <Route path="campanas/editar/:id" element={<EditarCampana />} />
+          {/* Campañas de margen por marca/categoría (2026-10-01). La ven quienes
+              ven Campañas; crear y cambiar es solo admin (lo valida el backend). */}
+          <Route
+            path="campanas-margen"
+            element={
+              <RequireModulo modulo="campanas">
+                <CampanasMargen />
+              </RequireModulo>
+            }
+          />
           <Route
             path="trazabilidad"
             element={

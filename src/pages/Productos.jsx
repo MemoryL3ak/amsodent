@@ -21,6 +21,7 @@ import {
 import Toast from "../components/Toast";
 import { descargarFichaTecnica } from "../utils/generarFichaTecnica";
 import { calcularLista3 } from "../lib/listas";
+import { precioCampanaMargen } from "../lib/campanasMargen";
 import { useStickyState } from "../lib/useStickyState";
 import BotonLimpiarFiltros from "../components/BotonLimpiarFiltros";
 
@@ -310,6 +311,8 @@ export default function Productos() {
 
   // ✅ precios de campaña vigentes por SKU (cache)
   const [campaignPriceBySku, setCampaignPriceBySku] = useState(new Map());
+  // (2026-10-01) Campañas de margen vigentes (por marca / categoría).
+  const [campanasMargen, setCampanasMargen] = useState([]);
 
   // ✅ PERFIL / ROL
   const [perfilLoading, setPerfilLoading] = useState(true);
@@ -415,6 +418,10 @@ export default function Productos() {
     }
 
     cargarCampaniasVigentes();
+    api
+      .get("/campanas-margen/vigentes")
+      .then((r) => setCampanasMargen(Array.isArray(r) ? r : []))
+      .catch(() => setCampanasMargen([]));
   }, []);
 
   /* ============================================================
@@ -919,6 +926,10 @@ export default function Productos() {
               {productosFiltrados.map((p) => {
                 const precioNormal = getPrecioPorLista(p, listaPrecio);
                 const precioCampania = campaignPriceBySku.get(p.sku);
+                // La campaña por producto manda; si no hay, la de margen que
+                // alcance a su marca/categoría en la lista que se está mirando.
+                const porMargen =
+                  precioCampania == null ? precioCampanaMargen(p, listaPrecio, campanasMargen) : null;
                 const fichaCompleta = fichaTecnicaCompleta(p);
 
                 return (
@@ -937,6 +948,12 @@ export default function Productos() {
                           <div style={{fontSize: 12, color: "#15803d"}}>
                             ${Number(precioCampania).toLocaleString("es-CL")}{" "}
                             <span style={{fontSize: 11, fontWeight: 500}}>(Campaña)</span>
+                          </div>
+                        )}
+                        {porMargen && (
+                          <div style={{fontSize: 12, color: "#15803d"}} title={`Campaña de margen «${porMargen.campana.nombre}»`}>
+                            ${porMargen.precio.toLocaleString("es-CL")}{" "}
+                            <span style={{fontSize: 11, fontWeight: 500}}>(Margen {Number(porMargen.campana.margen_pct).toLocaleString("es-CL")}%)</span>
                           </div>
                         )}
                         {p.precio_actualizado_at && (
@@ -959,6 +976,12 @@ export default function Productos() {
                           <div style={{fontSize: 12, color: "#15803d"}}>
                             ${Math.round(Number(precioCampania) * 1.19).toLocaleString("es-CL")}{" "}
                             <span style={{fontSize: 11, fontWeight: 500}}>(Campaña)</span>
+                          </div>
+                        )}
+                        {porMargen && (
+                          <div style={{fontSize: 12, color: "#15803d"}}>
+                            ${Math.round(porMargen.precio * 1.19).toLocaleString("es-CL")}{" "}
+                            <span style={{fontSize: 11, fontWeight: 500}}>(Margen)</span>
                           </div>
                         )}
                       </div>

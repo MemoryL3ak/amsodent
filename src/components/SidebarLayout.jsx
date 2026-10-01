@@ -215,6 +215,8 @@ export default function SidebarLayout() {
     puede("bitacora") && { to: "/bitacora-actividades", icon: CalendarDays, label: "Bitácora actividades" },
     puede("productos") && { to: "/productos",   icon: Package,       label: "Productos" },
     puede("campanas") && { to: "/campanas",    icon: Megaphone,     label: "Campañas" },
+    // (2026-10-01) Margen por marca / categoría sobre una lista, con vigencia.
+    puede("campanas") && { to: "/campanas-margen", icon: Percent, label: "Campañas de margen" },
   ].filter(Boolean);
 
   // Abastecimiento (solo admin): el lado de la COMPRA — a quién le compramos,
