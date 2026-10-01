@@ -11,6 +11,8 @@ import { SupabaseService } from '../supabase/supabase.service';
 import { MailingsService } from '../mailings/mailings.service';
 import { CorreosService } from '../correos/correos.service';
 import { LicitacionesService } from '../licitaciones/licitaciones.service';
+import { OfertasPortalService } from './ofertas-portal.service';
+import { firmarImagenesProductos } from './imagenes-productos';
 import {
   plantillaAlertaStock,
   plantillaSolicitudCotizacion,
@@ -220,6 +222,7 @@ export class StockClientesService {
     private mailings: MailingsService,
     private correos: CorreosService,
     private licitaciones: LicitacionesService,
+    private ofertas: OfertasPortalService,
   ) {}
 
   private get secret(): string {
@@ -1586,7 +1589,7 @@ export class StockClientesService {
         sku?: string;
       }>;
       nota?: string;
-      // 'stock' | 'explorador' | 'showroom': de qué sección del portal salió.
+      // 'stock' | 'explorador' | 'showroom' | 'ofertas': de qué sección del portal salió.
       origen_seccion?: string;
       contacto_nombre?: string;
       contacto_email?: string;
@@ -1615,7 +1618,7 @@ export class StockClientesService {
     }
 
     const itemsRaw = Array.isArray(body?.items) ? body.items : [];
-    const items = itemsRaw
+    const itemsLimpios = itemsRaw
       .map((it) => {
         const nombre = String(it?.nombre || '').trim().slice(0, 200);
         const unidad = String(it?.unidad || '').trim().slice(0, 50) || null;
@@ -1629,6 +1632,9 @@ export class StockClientesService {
         // SKU del catálogo cuando el producto se reconoció (2026-09-24): con
         // él la bandeja no tiene que adivinar qué producto es.
         const sku = String((it as any)?.sku || '').trim().slice(0, 80);
+        // (2026-10-02) Línea que viene de la pestaña Ofertas. Solo se anota de
+        // qué oferta dice venir: el precio lo pone el servidor más abajo.
+        const ofertaId = Number((it as any)?.oferta_id) || 0;
         return {
           nombre,
           unidad,
@@ -1638,9 +1644,15 @@ export class StockClientesService {
           ...(tienda ? { tienda } : {}),
           ...(url ? { url } : {}),
           ...(observacion ? { observacion } : {}),
+          ...(ofertaId > 0 && sku ? { oferta_id: ofertaId } : {}),
         };
       })
       .filter((it) => it.nombre.length > 0 && it.cantidad > 0);
+    /* Las líneas de oferta se vuelven a validar y a preciar acá: si la oferta
+       sigue vigente y alcanza a ese producto, quedan con el precio de oferta
+       calculado por el servidor; si no, con el precio normal. El precio que
+       mandó el navegador no se usa. */
+    const items = await this.ofertas.aplicarAItems(itemsLimpios);
 
     if (items.length === 0) {
       throw new BadRequestException(
@@ -1662,7 +1674,7 @@ export class StockClientesService {
     const rol = rolDeToken(payload);
     const yaAprobado = rol === 'admin';
     const ahoraIso = new Date().toISOString();
-    const SECCIONES = ['stock', 'explorador', 'showroom'];
+    const SECCIONES = ['stock', 'explorador', 'showroom', 'ofertas'];
     const origenSeccion = SECCIONES.includes(String(body?.origen_seccion || ''))
       ? String(body.origen_seccion)
       : null;
@@ -2671,6 +2683,11 @@ export class StockClientesService {
         };
       })
       .filter((p: any) => p.nombre && p.precio_cliente > 0);
+
+    // `imagen_url` es la ruta dentro de un bucket privado: el navegador no la
+    // puede abrir. Se cambia por una URL firmada (antes llegaba rota).
+    const urls = await firmarImagenesProductos(this.supabase.getClient(), items.map((p: any) => p.imagen));
+    for (const p of items as any[]) p.imagen = p.imagen ? urls.get(String(p.imagen).trim()) || null : null;
 
     items.sort((a: any, b: any) => String(a.nombre).localeCompare(String(b.nombre), 'es'));
     const marcas = [...new Set(items.map((p: any) => p.marca).filter(Boolean))].sort((a: any, b: any) =>

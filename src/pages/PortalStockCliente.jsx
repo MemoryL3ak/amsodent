@@ -38,6 +38,7 @@ import {
   Minus,
   Truck,
   RefreshCw,
+  Tag,
 } from "lucide-react";
 
 import DropdownSelect from "../components/ui/DropdownSelect";
@@ -286,7 +287,9 @@ function cargarPedidoEnCarrito(pedido, setCarrito) {
     // los productos que vienen del explorador (que se identifican por url).
     url: it?.url || `pedido:${pedido.id}:${i}`,
     tienda: it?.tienda || null,
-    origen: it?.tienda || it?.url ? "explorador" : "stock",
+    origen: it?.oferta ? "oferta" : it?.tienda || it?.url ? "explorador" : "stock",
+    oferta_id: it?.oferta?.id || undefined,
+    precio_normal: Number(it?.precio_normal || 0) || undefined,
     precio: Number(it?.precio_referencia || 0) || 0,
     cantidad: Number(it?.cantidad || 0) || 1,
     unidad: it?.unidad || "un",
@@ -1317,6 +1320,21 @@ function PantallaDeclaracion({ cliente, setToast }) {
   useEffect(() => {
     apiRequest("/stock-clientes/mi-credito").then(setCreditoCliente).catch(() => setCreditoCliente(null));
   }, []);
+  /* (2026-10-02) Ofertas especiales vigentes. Se cargan acá y no dentro de su
+     pestaña porque la pestaña dice cuántas hay aunque no esté abierta. */
+  const [ofertasPortal, setOfertasPortal] = useState(null);
+  useEffect(() => {
+    let vivo = true;
+    const vacio = { ofertas: [], items: [], total: 0 };
+    const cargar = () => {
+      apiRequest("/stock-clientes/ofertas")
+        .then((r) => { if (vivo) setOfertasPortal(r && Array.isArray(r.items) ? r : vacio); })
+        .catch(() => { if (vivo) setOfertasPortal(vacio); });
+    };
+    cargar();
+    window.addEventListener(PORTAL_REFRESCAR, cargar);
+    return () => { vivo = false; window.removeEventListener(PORTAL_REFRESCAR, cargar); };
+  }, []);
 
   /* El carrito vive dentro del panel del Explorador, así que sumar productos
      desde Gestión de Stock tiene que llevar también a esa pestaña; si no, el
@@ -1867,6 +1885,7 @@ function PantallaDeclaracion({ cliente, setToast }) {
         tab={tab}
         onChange={setTab}
         contadorSolicitudes={solicitudes.length}
+        contadorOfertas={ofertasPortal?.total || 0}
         esAdminPortal={esAdminPortal}
       />
 
@@ -1906,6 +1925,8 @@ function PantallaDeclaracion({ cliente, setToast }) {
         />
       ) : tab === "usuarios" ? (
         <PanelUsuariosPortal setToast={setToast} />
+      ) : tab === "ofertas" ? (
+        <PanelOfertas datos={ofertasPortal} />
       ) : tab === "showroom" ? (
         <PanelShowroom />
       ) : tab === "actividad" ? (
@@ -2711,6 +2732,305 @@ function PanelShowroom() {
   );
 }
 
+/* ── Ofertas especiales (2026-10-02) ──────────────────────────────────────
+   Productos con descuento por tiempo limitado, definidos por Amsodent (por
+   producto, categoría o marca). Cada tarjeta muestra el precio normal tachado,
+   el de oferta y hasta cuándo rige; se marcan varios y van juntos al mismo
+   carrito de siempre.
+
+   Las líneas viajan con `origen: "oferta"` y el id de la oferta. El precio que
+   se ve acá es informativo: al enviar el pedido el servidor vuelve a validar
+   la oferta y pone el precio él. */
+const OFERTAS_POR_PAGINA = 48;
+
+function fechaCortaOferta(iso) {
+  const m = String(iso || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? `${m[3]}-${m[2]}` : "";
+}
+
+function PanelOfertas({ datos }) {
+  const [q, setQ] = useState("");
+  const [ofertaId, setOfertaId] = useState(null);
+  const [visibles, setVisibles] = useState(OFERTAS_POR_PAGINA);
+  // Selección múltiple: sku → cantidad. Se manda todo junto al carrito.
+  const [marcados, setMarcados] = useState({});
+  const [, escribirCarrito] = useCarritoPortal();
+
+  const todos = useMemo(() => datos?.items || [], [datos]);
+  const items = useMemo(() => {
+    const termino = q.trim().toLowerCase();
+    return todos.filter((p) => {
+      if (ofertaId && p.oferta_id !== ofertaId) return false;
+      if (!termino) return true;
+      return `${p.nombre} ${p.sku || ""} ${p.marca || ""}`.toLowerCase().includes(termino);
+    });
+  }, [todos, q, ofertaId]);
+
+  const seleccionados = Object.entries(marcados).filter(([, cant]) => Number(cant) > 0);
+  const totalSeleccion = seleccionados.reduce((acc, [sku, cant]) => {
+    const p = todos.find((x) => x.sku === sku);
+    return acc + (p ? Number(p.precio_oferta) * Number(cant) : 0);
+  }, 0);
+  const ahorroSeleccion = seleccionados.reduce((acc, [sku, cant]) => {
+    const p = todos.find((x) => x.sku === sku);
+    return acc + (p ? Number(p.ahorro) * Number(cant) : 0);
+  }, 0);
+
+  function alternar(p) {
+    setMarcados((prev) => {
+      const copia = { ...prev };
+      if (copia[p.sku]) delete copia[p.sku];
+      else copia[p.sku] = 1;
+      return copia;
+    });
+  }
+  function cambiarCantidad(sku, delta) {
+    setMarcados((prev) => {
+      const actual = Number(prev[sku] || 0) + delta;
+      const copia = { ...prev };
+      if (actual <= 0) delete copia[sku];
+      else copia[sku] = actual;
+      return copia;
+    });
+  }
+  const filtrar = (fn) => (valor) => { fn(valor); setVisibles(OFERTAS_POR_PAGINA); };
+
+  function agregarSeleccionAlCarrito() {
+    const lineas = seleccionados
+      .map(([sku, cantidad]) => {
+        const p = todos.find((x) => x.sku === sku);
+        if (!p) return null;
+        return {
+          nombre: p.nombre,
+          sku: p.sku,
+          // Clave estable del carrito (los del explorador usan su URL).
+          url: `oferta:${p.sku}`,
+          tienda: `Oferta −${p.descuento_pct}%`,
+          origen: "oferta",
+          oferta_id: p.oferta_id,
+          precio: Number(p.precio_oferta) || 0,
+          precio_normal: Number(p.precio_normal) || 0,
+          imagen: p.imagen || null,
+          cantidad: Number(cantidad) || 1,
+          unidad: "un",
+        };
+      })
+      .filter(Boolean);
+    if (!lineas.length) return;
+    carritoAbrirPendiente = true;
+    escribirCarrito((prev) => {
+      const copia = [...prev];
+      for (const l of lineas) {
+        const i = copia.findIndex((x) => x.url === l.url);
+        if (i >= 0) copia[i] = { ...copia[i], ...l, cantidad: Number(copia[i].cantidad || 0) + l.cantidad };
+        else copia.push(l);
+      }
+      return copia;
+    });
+    setMarcados({});
+    window.dispatchEvent(new CustomEvent(CARRITO_ABRIR));
+  }
+
+  if (datos == null) {
+    return <div style={{ padding: 24, color: "#64748b", fontSize: 14 }}>Cargando las ofertas…</div>;
+  }
+
+  const ofertas = datos.ofertas || [];
+  const ofertaActiva = ofertas.find((o) => o.id === ofertaId) || null;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      <div>
+        <h2 style={{ fontSize: 17, fontWeight: 800, color: "#0f172a", margin: 0 }}>Ofertas especiales</h2>
+        <p style={{ fontSize: 13, color: "#64748b", margin: "4px 0 0" }}>
+          Productos con descuento por tiempo limitado. Marca los que quieras y mándalos todos juntos al carrito.
+        </p>
+      </div>
+
+      {todos.length === 0 ? (
+        <div style={{ border: "1px dashed #cbd5e1", borderRadius: 12, padding: 28, textAlign: "center", color: "#64748b", fontSize: 13.5 }}>
+          Por ahora no hay ofertas vigentes. Cuando publiquemos una, la vas a ver acá.
+        </div>
+      ) : (
+        <>
+          {/* Las ofertas vigentes: sirven de filtro y dicen hasta cuándo rigen. */}
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {ofertas.length > 1 && (
+              <button type="button" onClick={() => filtrar(setOfertaId)(null)} style={{ ...chipOferta, ...(ofertaId === null ? chipOfertaActivo : {}) }}>
+                Todas · {todos.length}
+              </button>
+            )}
+            {ofertas.map((o) => {
+              const activa = ofertaId === o.id || ofertas.length === 1;
+              return (
+                <button
+                  key={o.id}
+                  type="button"
+                  onClick={() => filtrar(setOfertaId)(ofertaId === o.id ? null : o.id)}
+                  title={o.descripcion || o.nombre}
+                  style={{ ...chipOferta, ...(activa ? chipOfertaActivo : {}) }}
+                >
+                  <strong>−{o.descuento_pct}%</strong>
+                  <span className="truncar" style={{ maxWidth: 220 }}>{o.nombre}</span>
+                  <span style={{ opacity: 0.75, whiteSpace: "nowrap" }}>hasta el {fechaCortaOferta(o.hasta)}</span>
+                </button>
+              );
+            })}
+          </div>
+          {(ofertaActiva || ofertas.length === 1) && (ofertaActiva || ofertas[0]).descripcion && (
+            <div style={{ fontSize: 13, color: "#9a3412", background: "#fff7ed", border: "1px solid #fed7aa", borderRadius: 10, padding: "8px 12px" }}>
+              {(ofertaActiva || ofertas[0]).descripcion}
+            </div>
+          )}
+
+          <div style={{ position: "relative", maxWidth: 420 }}>
+            <Search size={15} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "#94a3b8" }} />
+            <input
+              value={q}
+              onChange={(e) => filtrar(setQ)(e.target.value)}
+              placeholder="Buscar por nombre, SKU o marca…"
+              style={{ width: "100%", padding: "9px 12px 9px 32px", borderRadius: 10, border: "1px solid #e2e8f0", fontSize: 13.5, fontFamily: "inherit" }}
+            />
+          </div>
+
+          {items.length === 0 ? (
+            <div style={{ border: "1px dashed #cbd5e1", borderRadius: 12, padding: 28, textAlign: "center", color: "#64748b", fontSize: 13.5 }}>
+              Ningún producto en oferta calza con la búsqueda.
+            </div>
+          ) : (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(215px, 1fr))", gap: 12 }}>
+              {items.slice(0, visibles).map((p) => {
+                const cant = Number(marcados[p.sku] || 0);
+                const elegido = cant > 0;
+                return (
+                  <div
+                    key={p.sku}
+                    style={{
+                      border: `1.5px solid ${elegido ? TEAL : "#e2e8f0"}`,
+                      background: elegido ? "#f0fdfa" : "#fff",
+                      borderRadius: 14, overflow: "hidden", display: "flex", flexDirection: "column",
+                      transition: "border-color .15s, background .15s",
+                    }}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => alternar(p)}
+                      title={elegido ? "Quitar de la selección" : "Agregar a la selección"}
+                      style={{ position: "relative", border: "none", padding: 0, background: "#f8fafc", cursor: "pointer", height: 132, display: "flex", alignItems: "center", justifyContent: "center" }}
+                    >
+                      {p.imagen ? (
+                        <img src={p.imagen} alt={p.nombre} style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }} loading="lazy" />
+                      ) : (
+                        <Tag size={26} style={{ color: "#cbd5e1" }} />
+                      )}
+                      <span
+                        style={{
+                          position: "absolute", top: 8, left: 8, width: 21, height: 21, borderRadius: 6,
+                          border: `1.5px solid ${elegido ? TEAL : "#cbd5e1"}`,
+                          background: elegido ? TEAL : "rgba(255,255,255,.9)",
+                          display: "flex", alignItems: "center", justifyContent: "center",
+                        }}
+                      >
+                        {elegido && <CheckCircle2 size={14} style={{ color: "#fff" }} />}
+                      </span>
+                      <span style={{ position: "absolute", top: 8, right: 8, background: "#ea580c", color: "#fff", fontSize: 12, fontWeight: 800, borderRadius: 999, padding: "2px 9px" }}>
+                        −{p.descuento_pct}%
+                      </span>
+                    </button>
+
+                    <div style={{ padding: "9px 11px 11px", display: "flex", flexDirection: "column", gap: 5, flex: 1 }}>
+                      <div style={{ fontSize: 12.5, fontWeight: 700, color: "#0f172a", lineHeight: 1.3 }}>{p.nombre}</div>
+                      <div style={{ fontSize: 10.5, color: "#94a3b8", fontFamily: "ui-monospace, monospace" }}>
+                        {p.sku}{p.marca ? ` · ${p.marca}` : ""}
+                      </div>
+
+                      <div style={{ display: "flex", flexDirection: "column", gap: 2, marginTop: "auto", paddingTop: 6 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}>
+                          <span style={{ color: "#64748b" }}>Precio normal</span>
+                          <span style={{ color: "#94a3b8", textDecoration: "line-through" }}>{fmtMoneda(p.precio_normal)}</span>
+                        </div>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", fontSize: 12 }}>
+                          <span style={{ color: "#9a3412", fontWeight: 700 }}>Oferta</span>
+                          <strong style={{ color: "#c2410c", fontSize: 15 }}>{fmtMoneda(p.precio_oferta)}</strong>
+                        </div>
+                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11.5 }}>
+                          <span style={{ color: "#15803d" }}>Ahorras {fmtMoneda(p.ahorro)}</span>
+                          <span style={{ color: "#94a3b8" }}>hasta el {fechaCortaOferta(p.hasta)}</span>
+                        </div>
+                      </div>
+
+                      {elegido && (
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginTop: 6, borderTop: "1px solid #ccfbf1", paddingTop: 7 }}>
+                          <button type="button" onClick={() => cambiarCantidad(p.sku, -1)} style={botonCantidad} title="Quitar una unidad">
+                            <Minus size={13} />
+                          </button>
+                          <span style={{ fontSize: 13, fontWeight: 800, color: TEAL }}>{cant}</span>
+                          <button type="button" onClick={() => cambiarCantidad(p.sku, 1)} style={botonCantidad} title="Agregar una unidad">
+                            <Plus size={13} />
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {items.length > visibles && (
+            <div style={{ display: "flex", justifyContent: "center" }}>
+              <button type="button" onClick={() => setVisibles((n) => n + OFERTAS_POR_PAGINA)} style={{ ...chipOferta, padding: "8px 18px" }}>
+                Ver más ({items.length - visibles} productos más)
+              </button>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* Barra de selección: sale del borde inferior cuando hay algo marcado. */}
+      {seleccionados.length > 0 && (
+        <div
+          style={{
+            position: "sticky", bottom: 12, zIndex: 20,
+            display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap",
+            background: "#0f172a", color: "#fff", borderRadius: 14, padding: "11px 16px",
+            boxShadow: "0 12px 28px rgba(15,23,42,.28)",
+          }}
+        >
+          <span style={{ fontSize: 13.5, fontWeight: 700 }}>
+            {seleccionados.length} producto{seleccionados.length === 1 ? "" : "s"} seleccionado{seleccionados.length === 1 ? "" : "s"}
+          </span>
+          <span style={{ fontSize: 13, opacity: 0.85 }}>{fmtMoneda(totalSeleccion)}</span>
+          <span style={{ fontSize: 12.5, color: "#86efac" }}>ahorras {fmtMoneda(ahorroSeleccion)}</span>
+          <div style={{ flex: 1 }} />
+          <button type="button" onClick={() => setMarcados({})} style={{ background: "none", border: "1px solid rgba(255,255,255,.35)", color: "#fff", borderRadius: 9, padding: "7px 12px", fontSize: 12.5, cursor: "pointer", fontFamily: "inherit" }}>
+            Limpiar
+          </button>
+          <button type="button" onClick={agregarSeleccionAlCarrito} style={{ background: TEAL_LIGHT, border: "none", color: "#04252b", borderRadius: 9, padding: "7px 14px", fontSize: 12.5, fontWeight: 800, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6, fontFamily: "inherit" }}>
+            <ShoppingCart size={14} /> Agregar al carrito
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const chipOferta = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 7,
+  border: "1px solid #fed7aa",
+  background: "#fff",
+  color: "#9a3412",
+  borderRadius: 999,
+  padding: "6px 13px",
+  fontSize: 12.5,
+  cursor: "pointer",
+  fontFamily: "inherit",
+  maxWidth: "100%",
+};
+const chipOfertaActivo = { background: "#ea580c", borderColor: "#ea580c", color: "#fff" };
+
 const chipShowroom = {
   border: "1px solid #e2e8f0",
   background: "#fff",
@@ -2735,11 +3055,12 @@ const botonCantidad = {
   alignItems: "center",
   justifyContent: "center",
 };
-function TabNavigator({ tab, onChange, contadorSolicitudes, esAdminPortal }) {
+function TabNavigator({ tab, onChange, contadorSolicitudes, contadorOfertas = 0, esAdminPortal }) {
   const opciones = [
     { id: "resumen", label: "Resumen", icono: Activity },
     { id: "declaracion", label: "Gestión de Stock", icono: Database },
     { id: "solicitudes", label: "Mis cotizaciones", icono: FileSpreadsheet },
+    { id: "ofertas", label: "Ofertas", icono: Tag },
     { id: "showroom", label: "Showroom", icono: ShoppingCart },
     { id: "explorador", label: "Explorador de precios", icono: Search },
     { id: "actividad", label: "Actividad", icono: Activity },
@@ -2751,7 +3072,8 @@ function TabNavigator({ tab, onChange, contadorSolicitudes, esAdminPortal }) {
       {opciones.map((o) => {
         const activa = tab === o.id;
         const Icono = o.icono;
-        const mostrarBadge = o.id === "solicitudes" && contadorSolicitudes > 0;
+        const contador = o.id === "solicitudes" ? contadorSolicitudes : o.id === "ofertas" ? contadorOfertas : 0;
+        const mostrarBadge = contador > 0;
         return (
           <button
             key={o.id}
@@ -2772,7 +3094,7 @@ function TabNavigator({ tab, onChange, contadorSolicitudes, esAdminPortal }) {
                   color: activa ? TEAL : "#fff",
                 }}
               >
-                {contadorSolicitudes}
+                {contador}
               </span>
             )}
           </button>
@@ -2792,10 +3114,16 @@ const tabStyles = {
     boxShadow: "0 2px 8px rgba(15,23,42,0.04)",
     gap: 2,
     alignSelf: "flex-start",
+    // (2026-10-02) Con nueve pestañas la barra ya no cabe en una línea bajo
+    // ~1.250 px, y como la página no tiene scroll lateral las últimas quedaban
+    // cortadas e inalcanzables. Ahora bajan a una segunda línea.
+    flexWrap: "wrap",
+    maxWidth: "100%",
   },
   boton: {
     display: "inline-flex",
     alignItems: "center",
+    whiteSpace: "nowrap",
     gap: 8,
     padding: "9px 16px",
     background: "transparent",
@@ -3163,6 +3491,7 @@ function PanelExploradorPrecios() {
               cantidad: Number(c.cantidad || 0),
               precio_referencia: Number(c.precio || 0) || undefined,
               observacion: String(c.observacion || "").trim() || undefined,
+              oferta_id: c.oferta_id || undefined,
             })),
             nota: notaPedido.trim() || undefined,
           }),
@@ -3187,7 +3516,11 @@ function PanelExploradorPrecios() {
           ? "Solicitud de PEDIDO del portal (Explorador de Precios + Gestión de Stock)."
           : hayStock
             ? "Solicitud de PEDIDO generada desde Gestión de Stock del portal."
-            : "Solicitud de PEDIDO generada desde el Explorador de Precios del portal.",
+            : carrito.every((c) => c.origen === "oferta")
+              ? "Solicitud de PEDIDO generada desde las Ofertas especiales del portal."
+              : carrito.every((c) => c.origen === "showroom")
+                ? "Solicitud de PEDIDO generada desde el Showroom del portal."
+                : "Solicitud de PEDIDO generada desde el Explorador de Precios del portal.",
         notaPedido.trim() ? `Nota del cliente: ${notaPedido.trim()}` : null,
       ].filter(Boolean).join(" ");
       const resp = await apiRequest("/stock-clientes/solicitud-cotizacion", {
@@ -3204,6 +3537,9 @@ function PanelExploradorPrecios() {
               tienda: deStock ? undefined : c.tienda || undefined,
               url: deStock ? undefined : c.url || undefined,
               observacion: String(c.observacion || "").trim() || undefined,
+              // Oferta especial: el servidor vuelve a validar la oferta y a
+              // poner el precio; acá solo se dice de cuál viene.
+              oferta_id: c.oferta_id || undefined,
             };
           }),
           nota: notaFinal,
@@ -3211,6 +3547,8 @@ function PanelExploradorPrecios() {
           // Showroom del resto y el KPI de Showroom se calcula sobre esto.
           origen_seccion: carrito.some((c) => c.origen === "showroom")
             ? "showroom"
+            : carrito.some((c) => c.origen === "oferta")
+              ? "ofertas"
             : hayStock && !hayExplorador
               ? "stock"
               : "explorador",
