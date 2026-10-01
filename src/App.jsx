@@ -29,6 +29,7 @@ import CrearCliente from "./pages/CrearCliente";
 import EditarCliente from "./pages/EditarCliente";
 import DetalleCliente from "./pages/DetalleCliente";
 import MisClientes from "./pages/MisClientes";
+import AsignacionCartera from "./pages/AsignacionCartera";
 
 // MONITOREO
 import MonitoreoUsuarios from "./pages/MonitoreoUsuarios";
@@ -159,6 +160,15 @@ export default function App() {
           {/* CLIENTES */}
           <Route path="clientes" element={<Clientes />} />
           <Route path="mis-clientes" element={<MisClientes />} />
+          {/* Asignación de cartera en masa (2026-10-01) — solo admin. */}
+          <Route
+            path="asignacion-cartera"
+            element={
+              <RequireRole allow={["admin"]}>
+                <AsignacionCartera />
+              </RequireRole>
+            }
+          />
           <Route path="bitacora-actividades" element={<BitacoraActividades />} />
           <Route path="clientes/nuevo" element={<CrearCliente />} />
           <Route path="clientes/editar/:id" element={<EditarCliente />} />

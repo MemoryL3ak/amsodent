@@ -30,6 +30,21 @@ export class ClientesController {
     return this.clientesService.findAll(rut, nombre);
   }
 
+  // ── Cartera (2026-10-01): asignación de vendedores en masa. Solo admin,
+  //    igual que reasignar el vendedor desde la ficha del cliente. Van antes
+  //    de ':id' para que "cartera" no se lea como un id. ──
+  @Get('cartera')
+  @UseGuards(AdminGuard)
+  cartera() {
+    return this.clientesService.cartera();
+  }
+
+  @Put('cartera')
+  @UseGuards(AdminGuard)
+  asignarCartera(@Body() body: { ids?: string[]; vendedor?: string | null }) {
+    return this.clientesService.asignarCartera(body?.ids, body?.vendedor ?? null);
+  }
+
   // ── Contactos clave (rutas literales antes de ':id' para evitar colisiones) ──
   @Put('contactos/:contactoId')
   actualizarContacto(@Param('contactoId') contactoId: string, @Body() body: any) {
