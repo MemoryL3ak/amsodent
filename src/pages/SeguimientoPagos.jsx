@@ -737,7 +737,7 @@ export default function SeguimientoPagos() {
   // montos cargados está en 0; el resto, lo que le falta.
   function saldoMostrado(f) {
     const cu = cuentaDe(f);
-    return f?.pagada && cu.cargas <= 0 ? 0 : cu.saldo;
+    return f?.pagada && cu.abonos <= 0 ? 0 : cu.saldo;
   }
   // Punto 17: si los montos cargados (comprobantes/transferencias + notas de
   // crédito) no cuadran con el total a cobrar (saldo ≠ 0), la factura no puede
@@ -747,6 +747,13 @@ export default function SeguimientoPagos() {
   function descalceMontos(f) {
     const c = cuentaDe(f);
     if (c.cargas <= 0) return false; // nada cargado aún
+    /* (2026-10-02) Marcada pagada SIN montos de pago (el flujo simple): una
+       multa o una nota de crédito cargada después no es un pago que falte.
+       Contaba como "monto cargado" y la factura volvía a "Pendiente de pago"
+       por casi todo su valor — la 397 de Valdivia, pagada en junio, quedó
+       pendiente por $6,2 millones al registrarle una multa en septiembre. El
+       cuadre solo se exige cuando hay pagos con monto. */
+    if (f?.pagada && c.abonos <= 0) return false;
     return c.saldo > TOLERANCIA_SALDO;
   }
   // Pagada "efectiva": respeta el flag salvo que los montos cargados no calcen.
