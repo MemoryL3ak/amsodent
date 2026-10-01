@@ -182,7 +182,10 @@ export class StockClientesController {
     return await this.pedidosFlujo.marcarAvisosLeidos(req.stockPortal.rut);
   }
 
-  /** Lado Amsodent: historial de la cuenta de un cliente, por RUT. */
+  /** Lado Amsodent: historial de la cuenta de un cliente, por RUT. Exige
+      sesion de la plataforma: sin guard, cualquiera podia leer la actividad
+      de un cliente con solo saber su RUT. */
+  @UseGuards(AuthGuard)
   @Get('historial')
   async historialCliente(@Query('rut') rut: string, @Query('limite') limite?: string) {
     return await this.pedidosFlujo.historialDeCuenta(String(rut || '').trim(), Number(limite) || 120);
@@ -341,7 +344,6 @@ export class StockClientesController {
     return await this.stockClientes.eliminarUbicacion(req.stockPortal.rut, id);
   }
 
-  @UseGuards(StockPortalGuard)
   /* Ejecutivo asignado al cliente, para escribirle por WhatsApp desde el
      detalle de un pedido. */
   @UseGuards(StockPortalGuard)
@@ -350,6 +352,7 @@ export class StockClientesController {
     return await this.stockClientes.ejecutivoDeCliente(req.stockPortal.rut);
   }
 
+  @UseGuards(StockPortalGuard)
   @Get('mis-solicitudes')
   async misSolicitudes(@Req() req: any) {
     return await this.stockClientes.listarMisSolicitudes(req.stockPortal.rut);
@@ -437,8 +440,8 @@ export class StockClientesController {
 
   // Explorador de precios dentales (2026-09-04): busca la palabra clave en
   // las tiendas dentales chilenas con API pública y devuelve precios en vivo
-  // + histórico de capturas (estilo Knasta/SoloTodo).
-  @UseGuards(StockPortalGuard)
+  // + histórico de capturas (estilo Knasta/SoloTodo). (El endpoint está más
+  // abajo, después del Showroom.)
   /* ── Showroom (2026-09-24) ──────────────────────────────────────────────
      Catalogo de venta al publico para el cliente del portal: lo que le
      cuesta a el, lo que le sugerimos cobrar y cuanto gana con cada producto. */
@@ -449,7 +452,9 @@ export class StockClientesController {
   }
 
   // El explorador del PORTAL DEL CLIENTE: solo ve las tiendas de ambito
-  // 'cliente' o 'ambos'.
+  // 'cliente' o 'ambos'. Exige sesion del portal: cada busqueda consulta en
+  // vivo todas las tiendas.
+  @UseGuards(StockPortalGuard)
   @Get('explorador')
   async explorarPrecios(@Query('q') q: string) {
     return await this.explorador.buscar(q, 'cliente');
