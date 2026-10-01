@@ -210,6 +210,7 @@ export const GRUPOS_MANUAL = [
         funciones: [
           "Ficha con 6 pestañas: resumen (KPIs del cliente), cotizaciones, documentos, actividades, productos y sucursales.",
           "Crear cliente (también al vuelo desde la Bitácora), editar y mantener sucursales.",
+          "Asignación de cartera (solo admin, botón «Asignar cartera»): filtra por nombre/RUT, tipo, región, vendedor asignado y «le cotiza» (el vendedor que más le ha cotizado a ese cliente), marca varios clientes —o todos los del filtro— y asígnalos de una vez a un vendedor. Arriba se ve cuántos clientes tiene cada uno.",
         ],
       },
       {
@@ -227,6 +228,7 @@ export const GRUPOS_MANUAL = [
           "Crear actividad: título, acción, estado, cotización asociada, participantes, fecha u horario.",
           "Reuniones con enlace de Google Meet integrado (copiar y abrir).",
           "Crear un cliente nuevo al vuelo desde el formulario.",
+          "Campos propios (solo admin, botón «Campos del formulario»): agrega campos al formulario de actividad —texto, número, fecha, lista de opciones o sí/no—, márcalos como obligatorios, ordénalos o desactívalos. Aparecen para todos en el formulario y en el detalle de la actividad.",
           "Refleja también las actividades automáticas de otros módulos (correos de cobranza, calendario de cobranza), amarradas al cliente por RUT para verlas en su ficha 360°.",
           "Sincronización con Google Calendar (con la cuenta conectada en «Mi Correo»): toda actividad con fecha se espeja como evento en tu calendario; al abrir la bitácora se importan al instante las reuniones de tu calendario que tengan invitados (los recordatorios personales sin invitados no entran), con un respaldo automático cada 5 minutos.",
         ],
@@ -309,6 +311,29 @@ export const GRUPOS_MANUAL = [
         ],
       },
       {
+        id: "campanas-margen",
+        titulo: "Campañas de margen",
+        icono: "Megaphone",
+        ruta: "/campanas-margen",
+        acceso: { tipo: "modulo", key: "campanas" },
+        quien: "Todo el equipo comercial (crear y cambiar: admin)",
+        resumen: "Un margen para marcas o categorías completas, sobre una lista de precios y por un período.",
+        queEs: [
+          "En vez de fijar un precio por SKU, la campaña fija un margen: mientras está vigente, el precio de esos productos en esa lista es costo / (1 - margen), con el margen medido sobre el precio de venta, igual que en la cotización.",
+          "No reescribe el catálogo: al terminar la vigencia vuelve solo el precio de lista.",
+        ],
+        funciones: [
+          "Campaña = nombre + lista de precios (1, 2 o 3) + margen % + fechas + marcas y/o categorías (vacío = todas; con ambas, el producto debe cumplir las dos).",
+          "Simulación antes de guardar: a cuántos productos alcanza, cuántos suben o bajan respecto de su lista y los que más cambian.",
+          "Al cotizar manda primero la campaña por producto (SKU), después la campaña de margen y al final el precio de lista. Entre dos campañas de margen que alcancen al mismo producto manda la más nueva.",
+          "Pausar y reanudar sin borrar; en Productos el precio de campaña se muestra bajo el de lista.",
+        ],
+        tips: [
+          "Con un margen bajo 20% las cotizaciones quedan «Pendiente Aprobación».",
+          "Los productos sin costo quedan fuera: sin costo no hay cómo calcular un precio por margen.",
+        ],
+      },
+      {
         id: "ordenes-compra",
         titulo: "Órdenes de Compra a proveedores",
         icono: "FileText",
@@ -365,6 +390,9 @@ export const GRUPOS_MANUAL = [
           "8 KPIs clickeables que abren el detalle de sus filas: total, pagadas, en plazo, por vencer, vencidas, factoring, notas de crédito y cierre forzado.",
           "Registrar pago: se digita el monto BRUTO y el sistema guarda el neto; quedan la forma de pago (incluye factoring), el banco receptor (Itaú o Santander — no aplica a efectivo) y los días de atraso. El cambio se refleja al instante, sin recargar la página.",
           "Notas de crédito: restan del saldo de la factura.",
+          "Cada factura lleva su propia cuenta: saldo por pagar = bruto de esa factura - sus notas de crédito - sus multas - sus pagos. Lo que la orden de compra tiene todavía sin facturar se muestra aparte, como «OC por facturar», y no deja pendiente a una factura ya pagada.",
+          "Pagos con tarjeta: la forma de pago distingue Transbank y Getnet. Se puede anotar la comisión que descontó el medio (la factura queda saldada igual) y las cuotas: cada depósito se registra con «Registrar abono» y el estado muestra «En cuotas 3/6».",
+          "El reporte en Excel incluye RUT del cliente, recibido, comisión, cuotas y una hoja aparte «OC por facturar».",
           "Botón \"Correo cobro\": genera el borrador con N° de OC, guías, factura y despacho (empresa + seguimiento) para copiar o abrir en tu correo — la plataforma nunca lo envía sola.",
           "Calendario de cobranza automático (08:00, en días HÁBILES respecto del vencimiento): 3 días antes → correo; al vencer → correo; +5 → correo; +7 → llamada; +10 → correo; +15 → visita. Cada hito alerta en la campana a los jefe_ventas_especial y agenda la gestión como actividad pendiente en su Bitácora — el correo siempre lo envía la persona.",
         ],

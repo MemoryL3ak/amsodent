@@ -48,6 +48,10 @@ Comunicaciones (correo masivo), Monitoreo del Sistema, widget DamarIA de datos.
    margen para siempre). El margen por línea de ítem es visible para todos.
    Estado inicial: "En espera"; si el margen general es menor a 20% queda
    "Pendiente Aprobación" (sin PDF) hasta que un admin/jefe apruebe.
+   AL APROBARSE sale un aviso automático: al vendedor de la cotización (campana
+   + correo, con quién la aprobó) y, si la cotización nació de un pedido del
+   portal del cliente, también al cliente (aviso en su portal + correo) para
+   que la valide o pida una modificación.
    El sistema bloquea cotizar a clientes con facturas en mora.
 4. RESULTADO — En el Detalle de la cotización se cambia el estado: Adjudicada,
    Perdida (con motivo), Desierta, Descartada (con motivo) o Cancelada. Al
@@ -140,6 +144,13 @@ Cartera de clientes con RUT, tipo, región/comuna, vendedor asignado. El detalle
 del cliente tiene 6 pestañas: resumen (KPIs), cotizaciones, documentos,
 actividades, productos y sucursales. "Mis clientes" es la vista reducida con la
 cartera propia del ejecutivo.
+ASIGNACIÓN DE CARTERA (/asignacion-cartera, solo admin; también con el botón
+"Asignar cartera" de Clientes): para repartir clientes entre vendedores EN
+MASA. Se filtra por nombre/RUT, tipo, región, vendedor asignado y "le cotiza"
+(el vendedor que más cotizaciones le ha hecho a ese cliente), se marcan filas
+sueltas, la página o todos los del filtro, se elige el vendedor y se asignan
+de una vez (o se les quita el vendedor). Arriba se ve cuántos clientes tiene
+cada vendedor. No se puede asignar a un usuario bloqueado.
 
 ### Bitácora actividades (/bitacora-actividades)
 Agenda comercial: visitas, llamadas, reuniones (con enlace de Google Meet
@@ -159,6 +170,12 @@ tengan AL MENOS OTRO INVITADO (reuniones reales; los recordatorios personales
 sin invitados no se importan), sin duplicar y sin re-importar los eventos que
 creó el propio sistema. Las importadas llegan como tipo Reunión con la nota
 "Importada desde Google Calendar".
+CAMPOS PROPIOS DEL FORMULARIO: un administrador puede agregar campos al
+formulario de actividad con el botón "Campos del formulario" (texto corto o
+largo, número, fecha, lista de opciones, sí/no), marcarlos como obligatorios,
+ordenarlos y desactivarlos. Aparecen para todos los usuarios en el formulario
+y en el detalle de la actividad. Desactivar un campo lo oculta sin perder lo
+ya llenado; eliminarlo borra solo la definición.
 
 ### Productos (/productos)
 Catálogo maestro: SKU, marca, categoría, formato, 3 listas de precios (Lista 3
@@ -194,6 +211,20 @@ precios al cotizar y se destacan en Productos. Al crear una campaña se elige la
 LISTA DE PRECIOS asociada (1, 2 o 3): el precio unitario de referencia de cada
 SKU sale de esa lista. Crear campañas es solo admin.
 
+### Campañas de margen (/campanas-margen)
+Campaña por MARCA y/o CATEGORÍA, sobre una lista de precios (1, 2 o 3) y con
+vigencia. En vez de fijar un precio por SKU, fija un MARGEN: mientras está
+vigente, el precio de esos productos en esa lista es costo / (1 − margen)
+(margen sobre el precio de venta, el mismo que mide la cotización). No
+reescribe el catálogo: al terminar la vigencia vuelve solo el precio de lista.
+Al crearla se ve una simulación: a cuántos productos alcanza, cuántos suben o
+bajan y los que más cambian. Marcas o categorías vacías = todas; con ambas, el
+producto debe cumplir las dos. Productos sin costo quedan fuera. Orden al
+cotizar: campaña por producto (SKU) → campaña de margen → precio de lista; si
+dos campañas de margen alcanzan al mismo producto manda la más nueva. Con
+margen bajo 20% las cotizaciones quedan "Pendiente Aprobación". Se puede
+pausar y reanudar. La ve quien ve Campañas; crear y cambiar es solo admin.
+
 ## MÓDULOS — GRUPO POST-VENTA
 
 ### Trazabilidad (/trazabilidad)
@@ -214,6 +245,17 @@ El semáforo de cobro: 8 KPIs clickeables (total, pagadas, en plazo, por vencer,
 vencidas, factoring, notas de crédito, cierre forzado) que abren el detalle de
 sus filas. Vencimiento = fecha factura + plazo de la condición de venta.
 Registrar pago (monto bruto → guarda neto), forma de pago, días de atraso.
+CADA FACTURA LLEVA SU PROPIA CUENTA: saldo por pagar = bruto de esa factura −
+sus notas de crédito − sus multas − los pagos de esa factura. Lo que una orden
+de compra todavía tiene SIN FACTURAR es otra cifra, aparte: se muestra como
+"OC por facturar" y no deja pendiente a ninguna factura ya pagada.
+PAGOS CON TARJETA: la forma de pago distingue "Tarjeta · Transbank" y "Tarjeta
+· Getnet" (ambos depositan en la misma cuenta). Se puede anotar la COMISIÓN
+que descontó el medio (lo recibido es menor que la factura, pero la comisión
+no es deuda del cliente: la factura queda saldada) y en cuántas CUOTAS se
+pagó; cada depósito se registra con "Registrar abono" y el estado muestra "En
+cuotas 3/6". El reporte en Excel trae RUT del cliente, recibido, comisión,
+cuotas y una hoja aparte "OC por facturar".
 Botón "Correo cobro" genera el borrador de cobranza (OC, guía, factura,
 despacho) para que el usuario lo envíe desde su propio correo. La mora
 acumulada de un cliente bloquea nuevas cotizaciones para ese cliente.
