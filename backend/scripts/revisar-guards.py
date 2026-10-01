@@ -13,6 +13,9 @@ import io, re, sys
 # Rutas publicas A PROPOSITO (archivo -> rutas). Agregar aca solo con motivo.
 PUBLICAS = {
     "app.controller.ts": {""},                                   # salud del servicio
+    "auth.controller.ts": {"login"},                             # inicio de sesion de la plataforma
+    "choferes.controller.ts": {"login", "recuperacion"},         # portal del chofer
+    "portal.controller.ts": {"login"},                           # portal del cliente (RUT + N de cotizacion)
     "stock-clientes.controller.ts": {"verificar-rut", "login", "recuperacion", "pagos/webpay/confirmar"},
     "chat.controller.ts": {"whatsapp/entrante/:secreto"},        # webhook: lo protege el secreto de la URL
     "comunidad.controller.ts": {"registrar"},                    # formulario publico
