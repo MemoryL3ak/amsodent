@@ -185,7 +185,7 @@ function fmtCLP(value) {
    diferencia legítima más chica que se ha visto, ronda los $100. */
 const TOLERANCIA_SALDO = 5;
 
-function calcularCuentas({ facturas, licMap, montoOcMap, pagosMap, notasCreditoMap, multasMap }) {
+function calcularCuentas({ facturas, licMap, montoOcMap, pagosMap, notasCreditoMap, multasMap, guiasMap }) {
   const porFactura = {};
   const porLic = {};
 
@@ -285,7 +285,13 @@ function calcularCuentas({ facturas, licMap, montoOcMap, pagosMap, notasCreditoM
         abonos: c.abonos,
         medio: c.medio,
         cargas: pagado + c.nc + c.multas,
-        saldo: Math.round(c.base - c.nc - c.multas - pagado),
+        /* Cierre forzado: el saldo que se contabiliza es 0. Un pago anotado por
+           el total de la orden (así lo sugería el formulario antes) dejaba la
+           factura con saldo NEGATIVO por lo que la orden nunca facturó; en una
+           orden cerrada eso no es un pago en exceso, es saldo que ya no cuenta. */
+        saldo: lic.ciclo_cerrado
+          ? Math.max(0, Math.round(c.base - c.nc - c.multas - pagado))
+          : Math.round(c.base - c.nc - c.multas - pagado),
       };
     }
 
@@ -297,7 +303,18 @@ function calcularCuentas({ facturas, licMap, montoOcMap, pagosMap, notasCreditoM
       const dif = ocBruto - sumaFacturado;
       if (dif > ordenadas.length + 1) porFacturar = dif;
     }
-    porLic[lid] = { ocBruto, facturado: sumaFacturado, porFacturar, facturas: ordenadas.length };
+    /* Con cuánto saldo se cerró una orden con cierre forzado (neto, OC − guías,
+       igual que en Trazabilidad). No se contabiliza —el saldo de una orden
+       cerrada es 0— pero no se pierde: se informa. Sale de `monto_forzado`; si
+       el cierre es antiguo y no lo guardó, se calcula de los documentos. */
+    let saldoAlCerrar = null;
+    if (lic.ciclo_cerrado) {
+      const guardado = Number(lic.monto_forzado || 0);
+      const guiasNeto = (guiasMap?.[lid] || []).reduce((acc, g) => acc + Number(g?.monto || 0), 0);
+      const calculado = Math.max(0, Math.round(Number(montoOcMap?.[lid] || 0) - guiasNeto));
+      saldoAlCerrar = guardado > 0 ? guardado : calculado;
+    }
+    porLic[lid] = { ocBruto, facturado: sumaFacturado, porFacturar, facturas: ordenadas.length, saldoAlCerrar };
   }
   return { porFactura, porLic };
 }
@@ -663,8 +680,8 @@ export default function SeguimientoPagos() {
      era la orden de compra entera, y por eso una factura pagada de una OC con
      saldo sin facturar aparecía "pendiente de pago" (ver calcularCuentas). */
   const cuentas = useMemo(
-    () => calcularCuentas({ facturas, licMap, montoOcMap, pagosMap, notasCreditoMap, multasMap }),
-    [facturas, licMap, montoOcMap, pagosMap, notasCreditoMap, multasMap],
+    () => calcularCuentas({ facturas, licMap, montoOcMap, pagosMap, notasCreditoMap, multasMap, guiasMap: guiasLicMap }),
+    [facturas, licMap, montoOcMap, pagosMap, notasCreditoMap, multasMap, guiasLicMap],
   );
   // Ids de las facturas de cada cotización (para saber si un pago está
   // vinculado a alguna de ellas).
@@ -962,6 +979,10 @@ export default function SeguimientoPagos() {
         "Fecha Pago": fmtFecha(f.fecha_pago),
         "Forma Pago": etiquetaMedio(medioDe(f)),
         "Banco": f.banco_pago || "",
+        // Cierre forzado: el saldo de la orden se contabiliza en 0; acá queda
+        // el registro de con cuánto se cerró (neto, OC − guías).
+        "Cierre forzado": lic.ciclo_cerrado ? "Sí" : "",
+        "Saldo al cerrar (neto)": lic.ciclo_cerrado ? Number(cuentas.porLic[f.licitacion_id]?.saldoAlCerrar || 0) : "",
       };
     });
   }
@@ -1108,12 +1129,12 @@ export default function SeguimientoPagos() {
       });
       if (lic?.ciclo_cerrado) {
         forzadoCount++;
-        forzadoMonto += Number(lic.monto_forzado || 0);
+        forzadoMonto += Number(cuentas.porLic[lid]?.saldoAlCerrar || 0);
         const docCierre = cierreForzadoMap[lid] || null;
         det.forzado.push({
           f: docCierre,
           lic,
-          monto: Number(lic.monto_forzado || 0),
+          monto: Number(cuentas.porLic[lid]?.saldoAlCerrar || 0),
           estadoLabel: "Ciclo cerrado",
           // El motivo del cierre vive en el `numero` del documento cierre_forzado.
           motivo: (docCierre?.numero || "").toString().trim() || "",
@@ -2166,6 +2187,11 @@ export default function SeguimientoPagos() {
                               {porFacturar > 0 && (
                                 <div style={{ fontSize: 11, color: "var(--text-muted)", whiteSpace: "nowrap" }} title="Monto de la orden de compra que todavía no se factura. No es deuda de esta factura.">
                                   OC por facturar {fmtCLP(porFacturar)}
+                                </div>
+                              )}
+                              {lic.ciclo_cerrado && (
+                                <div style={{ fontSize: 11, color: "#b91c1c", whiteSpace: "nowrap" }} title="Cierre forzado: el saldo de la orden se contabiliza en $0. Este es el saldo neto (OC − guías) que tenía al cerrarse; queda guardado solo como registro.">
+                                  Se cerró con {fmtCLP(cuentas.porLic[lic.id]?.saldoAlCerrar || 0)} neto
                                 </div>
                               )}
                             </div>
