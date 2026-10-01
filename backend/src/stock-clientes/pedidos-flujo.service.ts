@@ -361,7 +361,7 @@ export class PedidosFlujoService {
   async pedirModificacion(
     id: number,
     body: {
-      items?: Array<{ nombre?: string; sku?: string; cantidad?: number | string; unidad?: string; precio_referencia?: number | string; observacion?: string; oferta_id?: number | string }>;
+      items?: Array<{ nombre?: string; sku?: string; cantidad?: number | string; unidad?: string; precio_referencia?: number | string; observacion?: string; oferta_id?: number | string; tienda?: string; url?: string }>;
       nota?: string;
     },
     actorEmail: string,
@@ -387,13 +387,19 @@ export class PedidosFlujoService {
         cantidad: Number(it?.cantidad) || 0,
         ...(Number(it?.precio_referencia) > 0 ? { precio_referencia: Number(it.precio_referencia) } : {}),
         ...(String(it?.observacion || '').trim() ? { observacion: String(it.observacion).trim().slice(0, 300) } : {}),
+        // De qué tienda salió y su enlace: sin esto, tras una modificación la
+        // bandeja ya no sabía si la línea era de Amsodent o de otra tienda.
+        ...(String(it?.tienda || '').trim() ? { tienda: String(it.tienda).trim().slice(0, 80) } : {}),
+        ...(String(it?.url || '').trim() ? { url: String(it.url).trim().slice(0, 500) } : {}),
         // Línea de una oferta especial: se revalida abajo, igual que al crear el pedido.
         ...(Number(it?.oferta_id) > 0 && String(it?.sku || '').trim() ? { oferta_id: Number(it.oferta_id) } : {}),
       }))
       .filter((it) => it.nombre && it.cantidad > 0);
     // El precio de las líneas de oferta lo pone el servidor (si la oferta ya
     // no rige, vuelven al precio normal).
-    const nuevos: any[] = await this.ofertas.aplicarAItems(limpios as any[]);
+    const nuevos: any[] = await this.ofertas.depurarSkusDeInventario(
+      await this.ofertas.aplicarAItems(limpios as any[]),
+    );
     if (!nuevos.length) {
       throw new BadRequestException('La modificación llegó sin productos.');
     }

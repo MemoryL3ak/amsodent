@@ -56,9 +56,16 @@ type Hallazgo = {
   oferta: boolean;
   imagen: string | null;
   disponible: boolean;
-  // SKU del catálogo de Amsodent, cuando el hallazgo es nuestro y se pudo
-  // reconocer el producto. La tienda no lo publica: se calza por nombre.
+  // SKU del producto cuando el hallazgo es de la tienda de Amsodent. Sale de
+  // la propia web (que lo publica); solo si no viene se calza por nombre.
   sku?: string | null;
+  /* Producto con variantes (forma, tamaño, color…): cada variante tiene su
+     propio SKU y precio, así que hay que saber cuál quiere el cliente. Solo
+     se llena para la tienda de Amsodent. */
+  variantes?: Array<{ id: number; sku: string | null; etiqueta: string; precio: number }>;
+  // Datos de la web que solo usa este servicio para resolver las variantes.
+  web_id?: number;
+  variable?: boolean;
   historico?: {
     capturas: number;
     precio_min: number;
@@ -164,6 +171,7 @@ export class ExploradorService {
     const tiendasCaidas = tiendas.filter((_, i) => (porTienda[i] as any).error).map((t) => t.nombre);
 
     await this.adjuntarHistoricoYGuardar(q, items);
+    await this.adjuntarVariantesAmsodent(items, tiendas);
     await this.adjuntarSkuAmsodent(items);
     // Amsodent siempre encabeza; dentro de cada grupo, del más barato al más caro.
     items.sort((a, b) => {
@@ -419,9 +427,65 @@ export class ExploradorService {
           oferta: !!p?.on_sale && !!normal && normal > precio,
           imagen: p?.images?.[0]?.thumbnail || p?.images?.[0]?.src || null,
           disponible: p?.is_in_stock !== false,
+          // (2026-10-02) El SKU viene en la respuesta de la tienda. Se estaba
+          // ignorando y se intentaba adivinar por el nombre, que casi nunca
+          // calza: los pedidos llegaban sin SKU.
+          sku: String(p?.sku || '').trim() || null,
+          web_id: Number(p?.id) || undefined,
+          variable: p?.type === 'variable',
         };
       })
       .filter(Boolean) as Hallazgo[];
+  }
+
+  /* Variantes de los productos de la tienda de Amsodent. Un producto
+     "variable" (ej. un kit que viene en forma de disco o de llama) tiene un
+     código de familia que no se vende; el SKU real es el de cada variante. Se
+     piden a la tienda —una consulta por producto, en paralelo— y se guardan
+     en memoria, porque cambian poco y la búsqueda del portal es frecuente. */
+  private variantesCache = new Map<number, { ts: number; lista: NonNullable<Hallazgo['variantes']> }>();
+
+  private async adjuntarVariantesAmsodent(items: Hallazgo[], tiendas: Tienda[]) {
+    const base = tiendas.find((t) => t.id === 'amsodent')?.base;
+    const variables = items.filter((i) => i.tienda === 'amsodent' && i.variable && i.web_id);
+    if (!base || !variables.length) return;
+    await Promise.all(
+      variables.map(async (it) => {
+        const id = Number(it.web_id);
+        let guardadas = this.variantesCache.get(id);
+        if (!guardadas || Date.now() - guardadas.ts > 6 * 3600 * 1000) {
+          try {
+            const json = await this.fetchJson(`${base}/wp-json/wc/store/v1/products?type=variation&parent=${id}&per_page=50`);
+            const lista = (Array.isArray(json) ? json : [])
+              .map((v: any) => {
+                const pr = v?.prices || {};
+                const div = Math.pow(10, Number(pr.currency_minor_unit || 0));
+                return {
+                  id: Number(v?.id),
+                  sku: String(v?.sku || '').trim() || null,
+                  etiqueta: limpiarNombre(v?.variation || '') || `Variante ${v?.id}`,
+                  precio: Math.round(Number(pr.price || 0) / div) || it.precio,
+                };
+              })
+              .filter((v: any) => Number.isFinite(v.id))
+              .sort((a: any, b: any) => String(a.etiqueta).localeCompare(String(b.etiqueta), 'es'));
+            guardadas = { ts: Date.now(), lista };
+            this.variantesCache.set(id, guardadas);
+          } catch (e: any) {
+            this.logger.warn(`Explorador: sin variantes para ${it.url}: ${String(e?.message || e).slice(0, 100)}`);
+            return;
+          }
+        }
+        if (guardadas.lista.length === 1) {
+          // Una sola variante: no hay nada que elegir, ese es el producto.
+          it.sku = guardadas.lista[0].sku;
+        } else if (guardadas.lista.length > 1) {
+          it.variantes = guardadas.lista;
+          // El código de la familia no identifica nada vendible.
+          it.sku = null;
+        }
+      }),
+    );
   }
 
   private async fetchTexto(url: string): Promise<string> {
@@ -515,12 +579,12 @@ export class ExploradorService {
     };
   }
 
-  /* SKU de nuestro catálogo para los hallazgos de la tienda de Amsodent
-     (2026-09-24). La tienda no publica el SKU por la vía que usamos para
-     buscar, así que se calza por nombre normalizado contra `productos`:
-     primero por igualdad y, si no, por contención de uno en el otro. El
-     índice del catálogo se arma una vez y se guarda en memoria, porque son
-     miles de filas y la búsqueda del portal es frecuente. */
+  /* SKU para los hallazgos de la tienda de Amsodent que llegan SIN él. Lo
+     normal es que la tienda lo publique (ver mapearWooStore); esto queda para
+     la vía de respaldo (wp/v2/product), que no lo trae. Ahí se calza por
+     nombre normalizado contra `productos`: primero por igualdad y, si no, por
+     contención de uno en el otro. El índice del catálogo se arma una vez y se
+     guarda en memoria, porque son miles de filas y la búsqueda es frecuente. */
   private catalogo: { ts: number; porNombre: Map<string, string>; lista: Array<{ n: string; sku: string }> } | null = null;
 
   private static normNombre(s: unknown) {
@@ -558,7 +622,8 @@ export class ExploradorService {
   }
 
   private async adjuntarSkuAmsodent(items: Hallazgo[]) {
-    const nuestros = items.filter((i) => i.tienda === 'amsodent');
+    // Los que ya traen el SKU de la web, o tienen variantes por elegir, no se tocan.
+    const nuestros = items.filter((i) => i.tienda === 'amsodent' && !i.sku && !i.variantes?.length);
     if (!nuestros.length) return;
     const idx = await this.indiceCatalogo();
     if (!idx) return;

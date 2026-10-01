@@ -360,6 +360,7 @@ function agregarStockAlCarrito(productos, setCarrito) {
       } else {
         copia.push({
           nombre: p.nombre,
+          sku: p.sku || null,
           url: clave,          // clave sintética: no es un enlace real
           origen: "stock",
           tienda: "Mi inventario",
@@ -3442,22 +3443,27 @@ function PanelExploradorPrecios() {
   const totalUnidades = carrito.reduce((acc, c) => acc + Number(c.cantidad || 0), 0);
   const totalReferencial = carrito.reduce((acc, c) => acc + Number(c.precio || 0) * Number(c.cantidad || 0), 0);
 
-  function agregarAlCarrito(it) {
+  /* `variante` (opcional): cuando el producto viene en varias presentaciones
+     (forma, tamaño…), cada una tiene su propio SKU y precio. La línea del
+     carrito es la variante elegida, no el producto genérico — si no, el
+     pedido llega sin poder saberse qué se pidió. */
+  function agregarAlCarrito(it, variante = null) {
     setPedidoEnviado(null);
+    const url = variante ? `${it.url}#v${variante.id}` : it.url;
     setCarrito((prev) => {
-      const idx = prev.findIndex((p) => p.url === it.url);
+      const idx = prev.findIndex((p) => p.url === url);
       if (idx >= 0) {
         const copia = [...prev];
         copia[idx] = { ...copia[idx], cantidad: Number(copia[idx].cantidad || 0) + 1 };
         return copia;
       }
       return [...prev, {
-        nombre: it.nombre,
-        url: it.url,
+        nombre: variante ? `${it.nombre} — ${variante.etiqueta}` : it.nombre,
+        url,
         tienda: it.tienda_nombre,
-        sku: it.sku || null,
+        sku: (variante ? variante.sku : it.sku) || null,
         esAmsodent: it.tienda === "amsodent",
-        precio: Number(it.precio || 0),
+        precio: Number((variante ? variante.precio : it.precio) || 0),
         imagen: it.imagen || null,
         cantidad: 1,
       }];
@@ -3492,6 +3498,10 @@ function PanelExploradorPrecios() {
               precio_referencia: Number(c.precio || 0) || undefined,
               observacion: String(c.observacion || "").trim() || undefined,
               oferta_id: c.oferta_id || undefined,
+              // De qué tienda es y su enlace: sin esto la bandeja ya no
+              // distinguía un producto de Amsodent de uno de otra tienda.
+              tienda: c.origen === "stock" ? undefined : c.tienda || undefined,
+              url: c.origen === "stock" || !/^https?:/i.test(String(c.url || "")) ? undefined : c.url,
             })),
             nota: notaPedido.trim() || undefined,
           }),
@@ -3775,6 +3785,35 @@ function PanelExploradorPrecios() {
                     {(() => {
                       // Si el producto ya está en el pedido, la tarjeta lo dice
                       // y muestra el stepper con la cantidad seleccionada.
+                      /* Producto con variantes: se elige cuál (cada una tiene su
+                         SKU) y esa es la que entra al pedido. */
+                      if (Array.isArray(it.variantes) && it.variantes.length > 1) {
+                        const enPedido = carrito
+                          .filter((p) => String(p.url || "").startsWith(`${it.url}#v`))
+                          .reduce((acc, p) => acc + Number(p.cantidad || 0), 0);
+                        return (
+                          <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 3, minWidth: 0, flex: "1 1 150px" }}>
+                            {enPedido > 0 && (
+                              <span style={{ fontSize: 10, fontWeight: 800, color: TEAL, display: "inline-flex", alignItems: "center", gap: 4 }}>
+                                <CheckCircle2 size={11} /> {enPedido} EN EL PEDIDO
+                              </span>
+                            )}
+                            <DropdownSelect
+                              value=""
+                              onChange={(id) => {
+                                const v = it.variantes.find((x) => String(x.id) === String(id));
+                                if (v) agregarAlCarrito(it, v);
+                              }}
+                              placeholder="Elegir variante…"
+                              minWidth={200}
+                              className=""
+                              title="Este producto viene en varias presentaciones: elige cuál agregar al pedido"
+                              style={{ width: "100%", fontSize: 11.5, fontWeight: 800, padding: "6px 10px", borderRadius: 999, border: `1px solid ${TEAL}`, fontFamily: "inherit" }}
+                              options={it.variantes.map((v) => ({ value: String(v.id), label: v.etiqueta, detalle: [v.sku ? `SKU ${v.sku}` : "", fmtMoneda(v.precio)].filter(Boolean).join(" · ") }))}
+                            />
+                          </div>
+                        );
+                      }
                       const enCarro = carrito.find((p) => p.url === it.url);
                       const cant = Number(enCarro?.cantidad || 0);
                       if (cant > 0) {
@@ -5668,6 +5707,7 @@ function ModalSolicitudCotizacion({
         const sugerida = Math.max(0, Math.ceil(referencia - actual));
         return {
           nombre: String(p.nombre).trim(),
+          sku: String(p.sku || "").trim(),
           marca: p.marca || "",
           unidad: p.unidad || "",
           stock_actual: actual,
@@ -5747,6 +5787,7 @@ function ModalSolicitudCotizacion({
         ...prev,
         {
           nombre: String(prod.nombre || "").trim(),
+          sku: String(prod.sku || "").trim(),
           marca: prod.marca || "",
           unidad: prod.unidad || "",
           stock_actual: actual,
@@ -5778,6 +5819,9 @@ function ModalSolicitudCotizacion({
         ...prev,
         {
           nombre: String(prod.nombre || "").trim(),
+          // El SKU del catálogo de Amsodent: es lo que identifica el producto
+          // cuando el pedido se convierte en cotización.
+          sku: String(prod.sku || "").trim(),
           marca: prod.marca || "",
           unidad: "",
           stock_actual: null,
@@ -5796,6 +5840,7 @@ function ModalSolicitudCotizacion({
     )
     .map((f) => ({
       nombre: f.nombre.trim(),
+      sku: f.sku || undefined,
       unidad: f.unidad || undefined,
       cantidad: Number(f.cantidad) || 0,
     }));
