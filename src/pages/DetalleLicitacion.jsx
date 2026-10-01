@@ -860,6 +860,9 @@ export default function EditarLicitacion() {
   const [docEmpresa, setDocEmpresa] = useState("Starken");
   const [docNumSeguimiento, setDocNumSeguimiento] = useState("");
   const [docUrl, setDocUrl] = useState(""); // Webpay: link al comprobante
+  // (2026-10-01) Procesador del pago con tarjeta: Transbank o Getnet. Los dos
+  // depositan en la misma cuenta, así que hay que anotarlo al registrar.
+  const [docProcesador, setDocProcesador] = useState("transbank");
   const [docFile, setDocFile] = useState(null);
   const [subiendoDoc, setSubiendoDoc] = useState(false);
 
@@ -1131,8 +1134,11 @@ export default function EditarLicitacion() {
       return documentos.filter((d) => d.tipo === "orden_compra");
     }
     // El comprobante de transferencia se asocia a la boleta/factura que paga.
-    if (docTipo === "comprobante_pago") {
-      return documentos.filter((d) => d.tipo === "factura_boleta");
+    // (2026-10-01) El pago con tarjeta también: "webpay" no estaba en esta
+    // lista, así que el selector de boleta/factura salía vacío y —como
+    // asociar es obligatorio— el pago con tarjeta no se podía guardar.
+    if (docTipo === "comprobante_pago" || docTipo === "webpay") {
+      return documentos.filter((d) => d.tipo === "factura_boleta" || d.tipo === "factura");
     }
     // El pago en efectivo puede asociarse a la factura o boleta que paga.
     if (docTipo === "efectivo") {
@@ -1890,6 +1896,9 @@ export default function EditarLicitacion() {
         empresa_despacho: esGuia ? empresaGuia : null,
         n_seguimiento: esGuia && !esDespachoInterno ? ((docNumSeguimiento || "").trim() || null) : null,
         url: esWebpay ? ((docUrl || "").trim() || null) : null,
+        // El tipo sigue siendo "webpay" (pago con tarjeta); el procesador va en
+        // forma_pago, que es donde Seguimiento de Pagos lee el medio.
+        ...(esWebpay ? { forma_pago: docProcesador } : {}),
         bucket,
         storage_path: storagePath,
         file_name: file.name,
@@ -4835,7 +4844,7 @@ export default function EditarLicitacion() {
                 <>
                   <option value="factura_boleta">Factura o Boleta</option>
                   <option value="comprobante_pago">Comprobante de Transferencia</option>
-                  <option value="webpay">Webpay</option>
+                  <option value="webpay">Pago con tarjeta (Transbank / Getnet)</option>
                   <option value="efectivo">Efectivo</option>
                   <option value="info_despacho">Información de Despacho</option>
                 </>
@@ -5011,13 +5020,42 @@ export default function EditarLicitacion() {
               </div>
               {docTipo === "webpay" && (
                 <div className="md:col-span-12">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">URL del comprobante (Webpay)</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Procesador del pago *</label>
+                  <div style={{ display: "inline-flex", border: "1px solid #d1d5db", borderRadius: 8, overflow: "hidden" }}>
+                    {[
+                      { value: "transbank", label: "Transbank (Webpay)" },
+                      { value: "getnet", label: "Getnet" },
+                    ].map((op) => (
+                      <button
+                        key={op.value}
+                        type="button"
+                        onClick={() => setDocProcesador(op.value)}
+                        disabled={subiendoDoc}
+                        style={{
+                          padding: "7px 14px",
+                          fontSize: 13,
+                          border: "none",
+                          cursor: "pointer",
+                          fontWeight: docProcesador === op.value ? 700 : 500,
+                          background: docProcesador === op.value ? "var(--primary)" : "#fff",
+                          color: docProcesador === op.value ? "#fff" : "#374151",
+                        }}
+                      >
+                        {op.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {docTipo === "webpay" && (
+                <div className="md:col-span-12">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">URL del comprobante (opcional)</label>
                   <input
                     type="url"
                     className={`${inputClass} text-sm`}
                     value={docUrl}
                     onChange={(e) => setDocUrl(e.target.value)}
-                    placeholder="https://… (link al voucher Webpay)"
+                    placeholder="https://… (link al voucher del pago)"
                     disabled={subiendoDoc}
                   />
                 </div>

@@ -38,7 +38,15 @@ const FORMAS_PAGO = [
   { value: "vale_vista", label: "Vale Vista" },
   { value: "efectivo", label: "Efectivo" },
   { value: "factoring", label: "Factoring" },
+  // (2026-10-01) Pago con tarjeta, distinguiendo el procesador. Los dos
+  // depositan en la misma cuenta, así que el banco no sirve para saber por
+  // dónde entró la plata; y es lo que define qué comisión se descuenta.
+  { value: "transbank", label: "Tarjeta · Transbank" },
+  { value: "getnet", label: "Tarjeta · Getnet" },
 ];
+
+// Medios que depositan con comisión descontada y pueden ir en cuotas.
+const esPagoTarjeta = (forma) => forma === "transbank" || forma === "getnet";
 
 function diasEntre(fechaIso) {
   if (!fechaIso) return null;
@@ -109,6 +117,156 @@ function fmtCLP(value) {
   return `$${Number(value || 0).toLocaleString("es-CL")}`;
 }
 
+/* ── Cuenta de cada factura (2026-10-01) ─────────────────────────────────────
+   Antes el saldo se calculaba POR COTIZACIÓN y se le colgaba a cada una de sus
+   facturas: base = la orden de compra entera, pagado = todos los comprobantes
+   de la cotización. Con una sola factura por OC daba bien; con varias, no:
+
+     OC 5215-253-SE26 por $8.494.101, factura 501 por $5.393.080 ya pagada.
+     Saldo que se mostraba para la 501: 8.494.101 − 5.393.080 = $3.101.021,
+     y la factura quedaba "Pendiente de pago" — por plata que en realidad
+     era de la factura 757 más $808.962 que todavía ni se facturan. Y como el
+     mismo saldo se repetía en cada factura de la OC, el reporte lo sumaba
+     una vez por factura.
+
+   Ahora cada factura lleva su propia cuenta:
+
+     saldo por pagar = bruto de ESA factura − sus notas de crédito − sus
+                       multas − los pagos imputados a ESA factura
+
+   y lo que la OC tiene sin facturar es otra cifra, aparte y por OC ("saldo por
+   facturar"), que no toca el estado de pago de ninguna factura.
+
+   Imputación: los pagos, notas de crédito y multas registrados desde este
+   módulo guardan `deriva_de_id` = la factura. Los que no lo traen (comprobantes
+   subidos desde Trazabilidad) se aplican en cascada a las facturas de la
+   cotización, de la más antigua a la más nueva, hasta cubrir cada una; con una
+   sola factura eso equivale a imputárselo a ella. */
+/* Diferencia que se considera redondeo y no deuda. Los montos se guardan
+   netos y se llevan a bruto × 1,19 al leer; el pago se digita bruto y se
+   guarda neto. Entre una conversión y otra se pierden unos pocos pesos: la
+   factura 253 (Maipú, $11,6 millones) quedaba "pendiente" por $3. Cinco pesos
+   cubren eso sin tragarse nada real — una comisión de Transbank, la
+   diferencia legítima más chica que se ha visto, ronda los $100. */
+const TOLERANCIA_SALDO = 5;
+
+function calcularCuentas({ facturas, licMap, montoOcMap, pagosMap, notasCreditoMap, multasMap }) {
+  const porFactura = {};
+  const porLic = {};
+
+  const grupos = new Map();
+  for (const f of facturas || []) {
+    if (!grupos.has(f.licitacion_id)) grupos.set(f.licitacion_id, []);
+    grupos.get(f.licitacion_id).push(f);
+  }
+  const brutoDe = (f) => {
+    const neto = Number(f?.monto || 0);
+    return neto > 0 ? Math.round(neto * 1.19) : 0;
+  };
+  const claveOrden = (f) => `${String(f.fecha_factura || f.created_at || "9999")}|${String(f.id).padStart(12, "0")}`;
+
+  for (const [lid, lista] of grupos) {
+    const lic = (licMap || {})[lid] || {};
+    const particular = esClienteParticular(lic);
+    const ordenadas = [...lista].sort((a, b) => claveOrden(a).localeCompare(claveOrden(b)));
+    const ocBruto = Number(montoOcMap?.[lid] || 0) > 0 ? Math.round(Number(montoOcMap[lid]) * 1.19) : 0;
+    const baseLic = particular ? Number(lic.total_con_iva) || 0 : montoBrutoPago(montoOcMap?.[lid], lic);
+    const sumaFacturado = ordenadas.reduce((acc, f) => acc + brutoDe(f), 0);
+    const haySinMonto = ordenadas.some((f) => brutoDe(f) === 0);
+
+    const cuentas = ordenadas.map((f) => {
+      const propio = brutoDe(f);
+      return {
+        id: f.id,
+        // Factura sin monto cargado (datos antiguos): se le atribuye lo que la
+        // cotización no tiene cubierto por las demás, que con una sola factura
+        // es el total de siempre.
+        base: propio > 0 ? propio : Math.max(0, baseLic - sumaFacturado),
+        recibido: 0,
+        comision: 0,
+        nc: 0,
+        multas: 0,
+        abonos: 0,
+        // Medio del último pago imputado. Para el cliente particular la
+        // factura no guarda forma_pago: el medio vive en sus comprobantes.
+        medio: null,
+      };
+    });
+    const porId = new Map(cuentas.map((c) => [c.id, c]));
+    const faltaDe = (c) => c.base - c.nc - c.multas - c.recibido - c.comision;
+
+    const repartir = (docs, aplicar, montoDe) => {
+      const sueltos = [];
+      for (const d of docs || []) {
+        const c = d?.deriva_de_id != null ? porId.get(d.deriva_de_id) : null;
+        if (c) aplicar(c, d, montoDe(d));
+        else sueltos.push(d);
+      }
+      // Sin vínculo a una factura: en cascada, de la más antigua a la más nueva.
+      for (const d of sueltos) {
+        let resto = montoDe(d);
+        for (const c of cuentas) {
+          if (resto <= 0) break;
+          const falta = faltaDe(c);
+          if (falta <= 0) continue;
+          const toma = Math.min(resto, falta);
+          aplicar(c, d, toma);
+          resto -= toma;
+        }
+        // Lo que sobra (pago en exceso) queda a la vista en la última factura.
+        if (resto > 0) aplicar(cuentas[cuentas.length - 1], d, resto);
+      }
+    };
+
+    repartir(notasCreditoMap?.[lid], (c, _d, m) => { c.nc += m; }, (d) => Number(d?.monto || 0));
+    repartir(multasMap?.[lid], (c, _d, m) => { c.multas += m; }, (d) => Number(d?.monto || 0));
+    // Pagos: lo recibido se guarda NETO (× 1,19 al leer). La comisión del
+    // medio de pago (Transbank/Getnet) va aparte y en bruto: no se recibió,
+    // pero tampoco se le debe cobrar al cliente, así que también salda.
+    repartir(
+      pagosMap?.[lid],
+      (c, d, m) => {
+        const total = Math.round(Number(d?.monto || 0) * 1.19) + Number(d?.comision_pago || 0);
+        const comision = total > 0 ? Math.round(m * (Number(d?.comision_pago || 0) / total)) : 0;
+        c.recibido += m - comision;
+        c.comision += comision;
+        c.abonos += 1;
+        c.medio =
+          d?.forma_pago ||
+          (d?.tipo === "webpay" ? "transbank" : d?.tipo === "efectivo" ? "efectivo" : c.medio || "transferencia");
+      },
+      (d) => Math.round(Number(d?.monto || 0) * 1.19) + Number(d?.comision_pago || 0),
+    );
+
+    for (const c of cuentas) {
+      const pagado = c.recibido + c.comision;
+      porFactura[c.id] = {
+        base: c.base,
+        recibido: c.recibido,
+        comision: c.comision,
+        pagado,
+        nc: c.nc,
+        multas: c.multas,
+        abonos: c.abonos,
+        medio: c.medio,
+        cargas: pagado + c.nc + c.multas,
+        saldo: Math.round(c.base - c.nc - c.multas - pagado),
+      };
+    }
+
+    // Saldo de la OC por facturar: solo sector público con OC, ciclo abierto y
+    // todas las facturas con su monto (si a alguna le falta, no se puede saber).
+    // La tolerancia cubre el redondeo de aplicar el IVA factura por factura.
+    let porFacturar = 0;
+    if (!particular && ocBruto > 0 && !lic.ciclo_cerrado && !haySinMonto) {
+      const dif = ocBruto - sumaFacturado;
+      if (dif > ordenadas.length + 1) porFacturar = dif;
+    }
+    porLic[lid] = { ocBruto, facturado: sumaFacturado, porFacturar, facturas: ordenadas.length };
+  }
+  return { porFactura, porLic };
+}
+
 function esClienteParticular(lic) {
   return (lic?.tipo_cliente || "").toString().toLowerCase().includes("particular");
 }
@@ -131,14 +289,13 @@ export default function SeguimientoPagos() {
   const puedeVer = esAdmin || rolNorm === "jefe_ventas_especial" || rolNorm === "contabilidad";
   const [facturas, setFacturas] = useState([]);
   const [comprobantesMap, setComprobantesMap] = useState({});
-  // Suma de comprobantes (transferencia/comprobante, webpay y efectivo) por
-  // cotización; sirve para el saldo por pagar del cliente particular.
-  const [comprobantesSumMap, setComprobantesSumMap] = useState({});
+  // lic_id → [comprobantes de pago]. Con la lista (y su `deriva_de_id`) cada
+  // pago se imputa a SU factura; con la sola suma por cotización no se podía.
+  const [pagosMap, setPagosMap] = useState({});
   // Notas de crédito por cotización: lista (para ver/abrir) y suma (descuenta del monto).
   const [notasCreditoMap, setNotasCreditoMap] = useState({});
   const [notasCreditoSumMap, setNotasCreditoSumMap] = useState({});
   const [multasMap, setMultasMap] = useState({});       // lic_id → [docs multa]
-  const [multasSumMap, setMultasSumMap] = useState({}); // lic_id → Σ multas (brutas)
   // Suma de órdenes de compra por cotización (monto a cobrar de la columna Monto).
   const [montoOcMap, setMontoOcMap] = useState({});
   // OC por id: permite resolver el monto de la factura pública que deriva de una
@@ -225,6 +382,10 @@ export default function SeguimientoPagos() {
   // (Punto 6) Banco receptor del pago — todas las formas salvo efectivo.
   const [bancoPago, setBancoPago] = useState("");
   const [montoPago, setMontoPago] = useState("");
+  // Solo con tarjeta: comisión que descontó el medio (bruto) y número de
+  // cuotas en que el cliente pagó (1 = contado).
+  const [comisionPago, setComisionPago] = useState("");
+  const [cuotasPago, setCuotasPago] = useState("1");
   const [guardando, setGuardando] = useState(false);
 
   const [reloadKey, setReloadKey] = useState(0);
@@ -247,11 +408,10 @@ export default function SeguimientoPagos() {
     }
     if (doc.tipo === "multa") {
       setMultasMap((prev) => ({ ...prev, [lid]: [...(prev[lid] || []), doc] }));
-      setMultasSumMap((prev) => ({ ...prev, [lid]: (prev[lid] || 0) + Number(doc.monto || 0) }));
       return;
     }
     // comprobante_pago / webpay / efectivo: suman al pagado (neto → bruto ×1,19)
-    setComprobantesSumMap((prev) => ({ ...prev, [lid]: (prev[lid] || 0) + Math.round(Number(doc.monto || 0) * 1.19) }));
+    setPagosMap((prev) => ({ ...prev, [lid]: [...(prev[lid] || []), doc] }));
     if (doc.tipo === "comprobante_pago") {
       setComprobantesMap((prev) => {
         const p = prev[lid];
@@ -291,7 +451,7 @@ export default function SeguimientoPagos() {
         const ids = rows.map((l) => l.id);
         let allFacturas = [];
         const compMap = {};
-        const compSum = {};
+        const pagosList = {};
         const ocSum = {};
         const ocById = {};
         const guiaById = {};
@@ -300,7 +460,6 @@ export default function SeguimientoPagos() {
         const ncList = {};
         const ncSum = {};
         const multaList = {};
-        const multaSum = {};
         const empresaMap = {};
         const cierreMap = {};
         if (ids.length > 0) {
@@ -347,7 +506,6 @@ export default function SeguimientoPagos() {
               // Multa cursada a Amsodent: descuenta del monto a cobrar igual
               // que una nota de crédito (bruta, tal cual se digita).
               (multaList[lid] = multaList[lid] || []).push(d);
-              multaSum[lid] = (multaSum[lid] || 0) + Number(d.monto || 0);
               return;
             }
             if (d.tipo === "cierre_forzado") {
@@ -363,7 +521,7 @@ export default function SeguimientoPagos() {
             // el monto pagado por cotización. Se guardan NETOS (igual que la
             // factura) → se convierten a bruto ×1,19 para comparar contra el
             // bruto de la factura.
-            compSum[lid] = (compSum[lid] || 0) + Math.round(Number(d.monto || 0) * 1.19);
+            (pagosList[lid] = pagosList[lid] || []).push(d);
             if (d.tipo === "comprobante_pago") {
               // Para la columna "Pago" nos quedamos con el comprobante más reciente.
               const fa = String(d.fecha_oc || d.created_at || "");
@@ -377,7 +535,7 @@ export default function SeguimientoPagos() {
         setEmpresaDespachoMap(empresaMap);
         setCierreForzadoMap(cierreMap);
         setComprobantesMap(compMap);
-        setComprobantesSumMap(compSum);
+        setPagosMap(pagosList);
         setMontoOcMap(ocSum);
         setOcByIdMap(ocById);
         setGuiaByIdMap(guiaById);
@@ -385,7 +543,6 @@ export default function SeguimientoPagos() {
         setNotasCreditoMap(ncList);
         setNotasCreditoSumMap(ncSum);
         setMultasMap(multaList);
-        setMultasSumMap(multaSum);
         const ocNumFinal = {};
         Object.entries(ocNums).forEach(([lid, arr]) => {
           ocNumFinal[lid] = Array.from(new Set(arr)).join(", ");
@@ -460,9 +617,23 @@ export default function SeguimientoPagos() {
   // bruto de la factura/boleta; público → bruto de la OC. Los comprobantes se
   // guardan netos y se convierten a bruto al acumularlos, así que la base
   // debe ser bruta para que el saldo cuadre.
-  function montoBaseFactura(f, lic) {
-    if (esClienteParticular(lic)) return montoFacturaBruto(f) || Number(lic?.total_con_iva) || 0;
-    return montoBrutoPago(montoOcMap[lic?.id], lic);
+  /* (2026-10-01) La base es la de ESA factura. Antes, para el sector público
+     era la orden de compra entera, y por eso una factura pagada de una OC con
+     saldo sin facturar aparecía "pendiente de pago" (ver calcularCuentas). */
+  const cuentas = useMemo(
+    () => calcularCuentas({ facturas, licMap, montoOcMap, pagosMap, notasCreditoMap, multasMap }),
+    [facturas, licMap, montoOcMap, pagosMap, notasCreditoMap, multasMap],
+  );
+  const CUENTA_VACIA = { base: 0, recibido: 0, comision: 0, pagado: 0, nc: 0, multas: 0, abonos: 0, medio: null, cargas: 0, saldo: 0 };
+  // Medio de pago de la factura: el que se registró en ella o, si no, el de
+  // sus comprobantes (así se sabe si un particular pagó por Transbank o Getnet).
+  const medioDe = (f) => f?.forma_pago || cuentaDe(f).medio || "";
+  const etiquetaMedio = (valor) => FORMAS_PAGO.find((x) => x.value === valor)?.label || valor || "";
+  function cuentaDe(f) {
+    return cuentas.porFactura[f?.id] || CUENTA_VACIA;
+  }
+  function montoBaseFactura(f) {
+    return cuentaDe(f).base;
   }
   // Neto de la OC detrás de un id que puede ser una OC directa o una guía de
   // despacho (la guía deriva de la OC). Devuelve 0 si no resuelve.
@@ -488,26 +659,25 @@ export default function SeguimientoPagos() {
     return neto > 0 ? Math.round(neto * 1.19) : 0;
   }
   function notasCreditoDe(f) {
-    return Number(notasCreditoSumMap[f.licitacion_id] || 0);
+    return cuentaDe(f).nc;
   }
   function multasDe(f) {
-    return Number(multasSumMap[f.licitacion_id] || 0);
+    return cuentaDe(f).multas;
   }
-  // Saldo por cobrar = base − notas de crédito − multas − comprobantes cargados.
-  function saldoFactura(f, lic) {
-    const base = montoBaseFactura(f, lic);
-    const pagado = Number(comprobantesSumMap[f.licitacion_id] || 0);
-    return Math.round(base - notasCreditoDe(f) - multasDe(f) - pagado);
+  // Saldo por cobrar de la factura = su bruto − sus notas de crédito − sus
+  // multas − los pagos imputados a ella (lo recibido más la comisión del medio).
+  function saldoFactura(f) {
+    return cuentaDe(f).saldo;
   }
   // Punto 17: si los montos cargados (comprobantes/transferencias + notas de
   // crédito) no cuadran con el total a cobrar (saldo ≠ 0), la factura no puede
   // considerarse pagada — queda "pendiente de pago", aunque tenga el flag de
   // pagada. Aplica a cualquier tipo de cliente. Si todavía no se cargó ningún
   // monto, no se fuerza el descalce (respeta el flujo simple de "marcar pagada").
-  function descalceMontos(f, lic) {
-    const cargas = Number(comprobantesSumMap[f.licitacion_id] || 0) + notasCreditoDe(f) + multasDe(f);
-    if (cargas <= 0) return false; // nada cargado aún
-    return saldoFactura(f, lic) > 1; // tolerancia $1
+  function descalceMontos(f) {
+    const c = cuentaDe(f);
+    if (c.cargas <= 0) return false; // nada cargado aún
+    return c.saldo > TOLERANCIA_SALDO;
   }
   // Pagada "efectiva": respeta el flag salvo que los montos cargados no calcen.
   function estaPagada(f, lic) {
@@ -571,7 +741,9 @@ export default function SeguimientoPagos() {
 
       // Tipo de pago (forma_pago): solo aplica a facturas con forma registrada.
       if (filtroFormaPago.length > 0) {
-        if (!f.forma_pago || !filtroFormaPago.includes(f.forma_pago)) return false;
+        // El medio puede estar en la factura o en sus comprobantes (particular).
+        const medio = f.forma_pago || cuentas.porFactura[f.id]?.medio;
+        if (!medio || !filtroFormaPago.includes(medio)) return false;
       }
 
       // Cierre forzado de ciclo (Trazabilidad → ciclo_cerrado).
@@ -580,7 +752,7 @@ export default function SeguimientoPagos() {
 
       return true;
     });
-  }, [facturas, licMap, filtroEntidad, filtroCotizacion, filtroRut, filtroNumero, filtroTipoCotizacion, filtroTipoCompra, filtroFormaPago, filtroEmpresaDespacho, empresaDespachoMap, filtroDesde, filtroHasta, filtroCierreForzado]);
+  }, [facturas, licMap, filtroEntidad, filtroCotizacion, filtroRut, filtroNumero, filtroTipoCotizacion, filtroTipoCompra, filtroFormaPago, filtroEmpresaDespacho, empresaDespachoMap, filtroDesde, filtroHasta, filtroCierreForzado, cuentas]);
 
   // Filtros aplicados a la tabla = base + filtro de estado.
   const facturasFiltradas = useMemo(() => {
@@ -598,7 +770,7 @@ export default function SeguimientoPagos() {
       if (filtroEstado === "por_vencer" && (pagadaEf || diasRestantes == null || diasRestantes < 0 || diasRestantes > 5)) return false;
       return true;
     });
-  }, [facturasFiltradasBase, licMap, filtroEstado, notasCreditoSumMap, multasSumMap, comprobantesSumMap, montoOcMap]);
+  }, [facturasFiltradasBase, licMap, filtroEstado, cuentas, montoOcMap]);
 
   // Ordenamiento
   const facturasOrdenadas = useMemo(() => {
@@ -665,8 +837,11 @@ export default function SeguimientoPagos() {
       const restantes = dias != null ? plazoDias(lic.condicion_venta) - dias : null;
       const particular = esClienteParticular(lic);
       const descalce = descalceMontos(f, lic);
+      const cuotasTotal = Number(f.cuotas_total) || 0;
+      const abonos = cuentaDe(f).abonos;
       let estado;
-      if (descalce) estado = "Pendiente de pago";
+      if (descalce && f.pagada && cuotasTotal > 1) estado = `En cuotas ${Math.min(abonos, cuotasTotal)}/${cuotasTotal}`;
+      else if (descalce) estado = "Pendiente de pago";
       else if (estaPagada(f, lic)) estado = "Pagada";
       else if (restantes == null) estado = "Sin fecha";
       else if (restantes < 0) estado = "Vencida";
@@ -676,11 +851,14 @@ export default function SeguimientoPagos() {
       const multas = multasDe(f);
       // Saldo por cobrar: lo mostramos cuando hay montos cargados (notas de
       // crédito, multas o comprobantes); si no se ha cargado nada, queda en blanco.
-      const cargas = Number(comprobantesSumMap[f.licitacion_id] || 0) + nc + multas;
-      const saldoPorPagar = cargas > 0 ? saldoFactura(f, lic) : "";
+      const cuenta = cuentaDe(f);
+      const saldoPorPagar = cuenta.cargas > 0 ? cuenta.saldo : "";
       return {
         "ID Cotización": lic.id_licitacion || lic.id || "",
         "Cliente": lic.nombre_entidad || "",
+        // (2026-10-01) El banco a veces solo muestra el RUT de quien transfirió:
+        // con esto se ubica el pago sin tener que adivinar el cliente.
+        "RUT Cliente": lic.rut_entidad || "",
         "N° OC": ocNumMap[lic.id] || "",
         "N° Factura": f.numero || "",
         "Fecha Factura": fmtFecha(f.fecha_factura),
@@ -689,14 +867,47 @@ export default function SeguimientoPagos() {
         "Monto": montoFacturaBruto(f, lic),
         "Notas de crédito": nc || "",
         "Multas": multas || "",
+        // Lo que entró de verdad a la cuenta y lo que se quedó el medio de pago.
+        "Recibido": cuenta.recibido || "",
+        "Comisión medio de pago": cuenta.comision || "",
+        // Saldo de ESTA factura. Ya no incluye lo que la OC tiene sin facturar
+        // (eso va en la hoja "OC por facturar", una vez por OC).
         "Saldo por pagar": saldoPorPagar,
         "Estado": estado,
         "Pagada": estaPagada(f, lic) ? "Sí" : "No",
+        "Cuotas": cuotasTotal > 1 ? `${Math.min(abonos, cuotasTotal)} de ${cuotasTotal}` : "",
         "Fecha Pago": fmtFecha(f.fecha_pago),
-        "Forma Pago": f.forma_pago || "",
+        "Forma Pago": etiquetaMedio(medioDe(f)),
         "Banco": f.banco_pago || "",
       };
     });
+  }
+
+  /* Hoja "OC por facturar": lo que cada orden de compra tiene sin facturar.
+     Va aparte y UNA vez por OC a propósito: es de la OC, no de sus facturas,
+     y repetirlo en cada fila era justo lo que inflaba los totales. */
+  function construirFilasPorFacturar() {
+    const vistas = new Set();
+    const filas = [];
+    facturasOrdenadas.forEach((f) => {
+      const lid = f.licitacion_id;
+      if (vistas.has(lid)) return;
+      vistas.add(lid);
+      const c = cuentas.porLic[lid];
+      if (!c || !(c.porFacturar > 0)) return;
+      const lic = licMap[lid] || {};
+      filas.push({
+        "ID Cotización": lic.id_licitacion || lic.id || "",
+        "Cliente": lic.nombre_entidad || "",
+        "RUT Cliente": lic.rut_entidad || "",
+        "N° OC": ocNumMap[lid] || "",
+        "Monto OC (bruto)": c.ocBruto,
+        "Facturado (bruto)": c.facturado,
+        "Saldo por facturar": c.porFacturar,
+        "N° de facturas": c.facturas,
+      });
+    });
+    return filas;
   }
 
   async function descargarReporte(formato) {
@@ -713,6 +924,10 @@ export default function SeguimientoPagos() {
       if (formato === "xlsx") {
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, ws, "Seguimiento");
+        const porFacturar = construirFilasPorFacturar();
+        if (porFacturar.length > 0) {
+          XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(porFacturar), "OC por facturar");
+        }
         XLSX.writeFile(wb, `${nombreArchivo}.xlsx`);
       } else {
         const csv = XLSX.utils.sheet_to_csv(ws, { FS: ";" });
@@ -767,6 +982,15 @@ export default function SeguimientoPagos() {
         return;
       }
       pendientes++;
+      // Pagada con tarjeta en cuotas: el cliente ya pagó y solo falta que el
+      // medio deposite. No es vencida ni por vencer aunque pase el plazo.
+      if (f.pagada && Number(f.cuotas_total) > 1) {
+        montoEnPlazo += monto;
+        const etiqueta = `En cuotas ${Math.min(cuentaDe(f).abonos, Number(f.cuotas_total))}/${Number(f.cuotas_total)}`;
+        det.total.push({ f, lic, monto, estadoLabel: etiqueta });
+        det.enPlazo.push({ f, lic, monto, estadoLabel: etiqueta });
+        return;
+      }
       const plazo = plazoDias(lic.condicion_venta);
       const dias = diasEntre(f.fecha_factura);
       const diasRestantes = dias != null ? plazo - dias : null;
@@ -814,7 +1038,7 @@ export default function SeguimientoPagos() {
       }
     });
     return { total, pagadas, pendientes, vencidas, porVencer, montoPagadas, montoEnPlazo, montoPorVencer, montoVencidas, factoringCount, montoFactoring, ncCount, ncMonto, totalFacturadoCount, totalFacturadoMonto, forzadoCount, forzadoMonto, det };
-  }, [facturasFiltradasBase, licMap, montoOcMap, notasCreditoMap, notasCreditoSumMap, comprobantesSumMap, cierreForzadoMap]);
+  }, [facturasFiltradasBase, licMap, montoOcMap, notasCreditoMap, notasCreditoSumMap, cuentas, cierreForzadoMap]);
 
   /* Detalle de un KPI (modal). key = clave en stats.det; null = cerrado. */
   const [kpiDetalle, setKpiDetalle] = useState(null);
@@ -890,9 +1114,10 @@ export default function SeguimientoPagos() {
     // Prefill con el saldo pendiente (base − notas de crédito − comprobantes),
     // que en el caso normal es el total a cobrar. Editable o se puede dejar en
     // blanco si no se quiere registrar el valor del pago.
-    const lic = licMap[f.licitacion_id] || {};
-    const saldo = saldoFactura(f, lic);
-    setMontoPago(saldo > 0 ? String(saldo) : "");
+    const saldo = saldoFactura(f);
+    setMontoPago(saldo > TOLERANCIA_SALDO ? String(saldo) : "");
+    setComisionPago("");
+    setCuotasPago(String(Number(f.cuotas_total) > 1 ? Number(f.cuotas_total) : 1));
   }
 
   function cancelarPago() {
@@ -901,6 +1126,8 @@ export default function SeguimientoPagos() {
     setFormaPago("transferencia");
     setBancoPago("");
     setMontoPago("");
+    setComisionPago("");
+    setCuotasPago("1");
   }
 
   async function confirmarPago(f) {
@@ -930,6 +1157,14 @@ export default function SeguimientoPagos() {
     // (Punto 6 — 2026-09-10) Banco receptor del pago (Itaú/Santander); no
     // aplica al pago en efectivo.
     const banco = formaPago !== "efectivo" ? (bancoPago || null) : null;
+    /* (2026-10-01) Pago con tarjeta. La comisión es lo que el medio descuenta
+       antes de depositar: no se recibió, pero no es deuda del cliente, así
+       que va en el comprobante y salda la factura junto con lo recibido. Las
+       cuotas van en la factura: cada depósito del medio se registra como un
+       abono y el estado muestra "n de N". */
+    const tarjeta = esPagoTarjeta(formaPago);
+    const comisionNum = tarjeta ? Math.round(Number(String(comisionPago).replace(/[^\d]/g, "")) || 0) : 0;
+    const cuotasNum = tarjeta ? Math.max(1, Math.min(48, Math.round(Number(cuotasPago) || 1))) : 1;
     try {
       await api.put(`/licitaciones/documentos/${f.id}`, {
         pagada: true,
@@ -937,29 +1172,28 @@ export default function SeguimientoPagos() {
         forma_pago: formaPago,
         dias_atraso_pago: diasAtraso,
         banco_pago: banco,
+        ...(tarjeta ? { cuotas_total: cuotasNum } : {}),
       });
-      if (montoNum > 0) {
-        const nuevo = await api.post("/licitaciones/documentos", {
+      if (montoNum > 0 || comisionNum > 0) {
+        const comprobante = {
           licitacion_id: Number(f.licitacion_id),
           tipo: "comprobante_pago",
           monto: montoNetoPago, // neto: bruto digitado ÷ 1,19
           fecha_oc: fechaPago,
           deriva_de_id: Number(f.id),
-        });
+          forma_pago: formaPago,
+          ...(comisionNum > 0 ? { comision_pago: comisionNum } : {}),
+        };
+        const nuevo = await api.post("/licitaciones/documentos", comprobante);
         // (Punto 3) reflejar el comprobante en memoria, sin recargar la página
-        registrarDocLocal({
-          id: nuevo?.id,
-          licitacion_id: Number(f.licitacion_id),
-          tipo: "comprobante_pago",
-          monto: montoNetoPago,
-          fecha_oc: fechaPago,
-          created_at: new Date().toISOString(),
-          deriva_de_id: Number(f.id),
-        });
+        registrarDocLocal({ ...comprobante, id: nuevo?.id, created_at: new Date().toISOString() });
       }
       setToast({ type: "success", message: "Pago registrado." });
       cancelarPago();
-      actualizarFacturaLocal(f.id, { pagada: true, fecha_pago: fechaPago, forma_pago: formaPago, dias_atraso_pago: diasAtraso, banco_pago: banco });
+      actualizarFacturaLocal(f.id, {
+        pagada: true, fecha_pago: fechaPago, forma_pago: formaPago, dias_atraso_pago: diasAtraso, banco_pago: banco,
+        ...(tarjeta ? { cuotas_total: cuotasNum } : {}),
+      });
     } catch (e) {
       console.error(e);
       setToast({ type: "error", message: "Error al registrar el pago." });
@@ -972,10 +1206,9 @@ export default function SeguimientoPagos() {
   // los comprobantes (transferencia + webpay + efectivo). Si el saldo llega a 0
   // (o menos), se marca como pagada; si aún queda saldo, no se valida.
   async function validarPagoParticular(f) {
-    const lic = licMap[f.licitacion_id] || {};
     // Saldo = factura − notas de crédito − comprobantes.
-    const saldo = saldoFactura(f, lic);
-    if (saldo > 0) {
+    const saldo = saldoFactura(f);
+    if (saldo > TOLERANCIA_SALDO) {
       setToast({ type: "info", message: `Aún queda saldo por pagar: ${fmtCLP(saldo)}. No se puede validar el pago.` });
       return;
     }
@@ -1606,7 +1839,15 @@ export default function SeguimientoPagos() {
                   const ncMonto = notasCreditoDe(f);
                   const multaMonto = multasDe(f);
                   // Punto 17: si los montos no calzan, la factura queda "pendiente de pago".
-                  const sem = descalce
+                  /* (2026-10-01) Pagada con tarjeta en cuotas: el cliente ya
+                     pagó, lo que falta es que el medio vaya depositando. No es
+                     "pendiente de pago" — nadie tiene que cobrarle nada —, así
+                     que lleva su propio estado con el avance de los abonos. */
+                  const cuotasTotal = Number(f.cuotas_total) || 0;
+                  const enCuotas = descalce && Boolean(f.pagada) && cuotasTotal > 1;
+                  const sem = enCuotas
+                    ? { color: "#1d4ed8", bg: "#dbeafe", label: `En cuotas ${Math.min(cuentaDe(f).abonos, cuotasTotal)}/${cuotasTotal}` }
+                    : descalce
                     ? { color: "#b45309", bg: "#fef3c7", label: "Pendiente de pago" }
                     : semaforo(diasRestantes, pagadaEf);
                   const editando = pagandoId === f.id;
@@ -1762,13 +2003,22 @@ export default function SeguimientoPagos() {
                           // Saldo por pagar: base − notas de crédito − comprobantes.
                           // Lo mostramos cuando hay montos cargados (comprobantes
                           // o notas de crédito); aplica a cualquier tipo de cliente.
-                          const pagado = Number(comprobantesSumMap[lic.id] || 0);
-                          const cargas = pagado + ncMonto + multaMonto;
-                          if (cargas <= 0) {
-                            return <span style={{ color: "var(--text-muted)" }}>—</span>;
+                          const cuenta = cuentaDe(f);
+                          const pagado = cuenta.pagado;
+                          const porFacturar = cuentas.porLic[lic.id]?.porFacturar || 0;
+                          if (cuenta.cargas <= 0) {
+                            // Sin pagos cargados no hay saldo que mostrar, pero el
+                            // saldo de la OC por facturar se informa igual.
+                            return porFacturar > 0 ? (
+                              <div style={{ fontSize: 11, color: "var(--text-muted)", whiteSpace: "nowrap" }} title="Monto de la orden de compra que todavía no se factura. No es deuda de esta factura.">
+                                OC por facturar {fmtCLP(porFacturar)}
+                              </div>
+                            ) : (
+                              <span style={{ color: "var(--text-muted)" }}>—</span>
+                            );
                           }
-                          const saldo = saldoFactura(f, lic);
-                          const color = saldo > 1 ? "#b45309" : saldo < -1 ? "#dc2626" : "#16a34a";
+                          const saldo = cuenta.saldo;
+                          const color = saldo > TOLERANCIA_SALDO ? "#b45309" : saldo < -TOLERANCIA_SALDO ? "#dc2626" : "#16a34a";
                           return (
                             <div>
                               <div style={{ fontWeight: 600, color, whiteSpace: "nowrap" }}>{fmtCLP(saldo)}</div>
@@ -1780,6 +2030,16 @@ export default function SeguimientoPagos() {
                               {ncMonto > 0 && (
                                 <div style={{ fontSize: 11, color: "#7c3aed", whiteSpace: "nowrap" }}>
                                   N. crédito −{fmtCLP(ncMonto)}
+                                </div>
+                              )}
+                              {cuenta.comision > 0 && (
+                                <div style={{ fontSize: 11, color: "var(--text-muted)", whiteSpace: "nowrap" }} title="Comisión del medio de pago: no se recibió, pero no es deuda del cliente">
+                                  Comisión {fmtCLP(cuenta.comision)}
+                                </div>
+                              )}
+                              {porFacturar > 0 && (
+                                <div style={{ fontSize: 11, color: "var(--text-muted)", whiteSpace: "nowrap" }} title="Monto de la orden de compra que todavía no se factura. No es deuda de esta factura.">
+                                  OC por facturar {fmtCLP(porFacturar)}
                                 </div>
                               )}
                             </div>
@@ -1848,7 +2108,7 @@ export default function SeguimientoPagos() {
                               {fechaPagoMostrar ? new Date(`${fechaPagoMostrar}T00:00:00`).toLocaleDateString("es-CL") : "—"}
                             </div>
                             <div style={{ color: "var(--text-muted)", fontSize: "11px" }}>
-                              {FORMAS_PAGO.find((x) => x.value === f.forma_pago)?.label || f.forma_pago || "—"}
+                              {etiquetaMedio(medioDe(f)) || "—"}
                               {f.banco_pago ? ` · ${f.banco_pago}` : ""}
                             </div>
                           </div>
@@ -1897,6 +2157,35 @@ export default function SeguimientoPagos() {
                               onChange={(e) => setMontoPago(e.target.value.replace(/[^\d]/g, ""))}
                               disabled={guardando}
                             />
+                            {esPagoTarjeta(formaPago) && (
+                              <>
+                                <input
+                                  className="input"
+                                  inputMode="numeric"
+                                  placeholder="Comisión del medio (opcional)"
+                                  title="Lo que Transbank/Getnet descontó antes de depositar. No se recibió, pero no es deuda del cliente."
+                                  value={comisionPago ? `$${Number(String(comisionPago).replace(/[^\d]/g, "")).toLocaleString("es-CL")}` : ""}
+                                  onChange={(e) => setComisionPago(e.target.value.replace(/[^\d]/g, ""))}
+                                  disabled={guardando}
+                                />
+                                <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-muted)" }}>
+                                  Cuotas
+                                  <input
+                                    className="input"
+                                    inputMode="numeric"
+                                    style={{ width: 64 }}
+                                    title="En cuántas cuotas pagó el cliente. 1 = contado."
+                                    value={cuotasPago}
+                                    onChange={(e) => setCuotasPago(e.target.value.replace(/[^\d]/g, "").slice(0, 2))}
+                                    disabled={guardando}
+                                  />
+                                </label>
+                                <div style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.3 }}>
+                                  En «Monto» va lo que efectivamente se depositó. Con cuotas, registra
+                                  cada depósito como un abono.
+                                </div>
+                              </>
+                            )}
                             <div style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.3 }}>
                               Si el monto no cubre el total a cobrar, la factura queda «pendiente de pago».
                             </div>
@@ -1910,14 +2199,26 @@ export default function SeguimientoPagos() {
                             </div>
                           </div>
                         ) : f.pagada ? (
-                          <button
-                            type="button"
-                            onClick={() => desmarcarPago(f)}
-                            className="btn btn-secondary btn-sm"
-                            title="Desmarcar pago"
-                          >
-                            <CheckCircle2 size={13} style={{ color: "#15803d", marginRight: 4 }} /> Desmarcar
-                          </button>
+                          <>
+                            {descalce && (
+                              <button
+                                type="button"
+                                onClick={() => iniciarPago(f)}
+                                className="btn btn-primary btn-sm"
+                                title={enCuotas ? "Registrar el depósito de la siguiente cuota" : "Registrar otro pago para esta factura"}
+                              >
+                                Registrar abono
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => desmarcarPago(f)}
+                              className="btn btn-secondary btn-sm"
+                              title="Desmarcar pago"
+                            >
+                              <CheckCircle2 size={13} style={{ color: "#15803d", marginRight: 4 }} /> Desmarcar
+                            </button>
+                          </>
                         ) : particular ? (
                           <button
                             type="button"
