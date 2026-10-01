@@ -37,6 +37,33 @@ export class ActividadesController {
     return this.actividades.usuarios(req.user);
   }
 
+  // ── Campos propios del formulario (2026-10-01). Leerlos, cualquiera que
+  //    use la bitácora; cambiarlos, solo admin (lo valida el servicio). ──
+  @Get('campos')
+  campos(@Query('todos') todos?: string) {
+    return this.actividades.camposFormulario(todos === '1');
+  }
+
+  @Post('campos')
+  crearCampo(@Req() req: any, @Body() body: any) {
+    return this.actividades.crearCampo(req.user, body);
+  }
+
+  @Post('campos/orden')
+  ordenarCampos(@Req() req: any, @Body() body: { ids?: number[] }) {
+    return this.actividades.ordenarCampos(req.user, body?.ids);
+  }
+
+  @Put('campos/:id')
+  actualizarCampo(@Req() req: any, @Param('id', ParseIntPipe) id: number, @Body() body: any) {
+    return this.actividades.actualizarCampo(req.user, id, body);
+  }
+
+  @Delete('campos/:id')
+  eliminarCampo(@Req() req: any, @Param('id', ParseIntPipe) id: number) {
+    return this.actividades.eliminarCampo(req.user, id);
+  }
+
   // Importación inmediata del calendario de Google del usuario (la dispara la
   // bitácora al abrirse; con throttle interno de 1 minuto).
   @Post('importar-calendar')
