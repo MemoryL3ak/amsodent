@@ -6,17 +6,26 @@ import { MercadopublicoCron } from '../mercadopublico/mercadopublico.cron';
    Exploración automática de Mercado Público
    ----------------------------------------------------------------------------
    Corre la búsqueda del explorador (todo el catálogo de palabras clave, ~90
-   términos, ~4 minutos) dos veces al día —14:00 y 23:00 de Chile— y guarda el
+   términos, ~4 minutos) dos veces al día —08:00 y 15:00 de Chile— y guarda el
    resultado en `mp_exploracion`. La pestaña «Explorar» lee esa fila al abrir:
    instantánea y sin gastar cuota. La búsqueda manual quedó restringida a los
    correos de MP_EXPLORAR_EMAILS justamente porque cada ejecución son ~90
    consultas de una cuota compartida.
 
-   La corrida de las 23:00 convive con la sincronización del Análisis, que
-   dispara a la misma hora con 12 conexiones en paralelo. Esta búsqueda usa 6,
-   y 18 simultáneas quedan demasiado cerca del colapso medido de la API (24).
-   Por eso esta espera: se cede el paso a la sincronización y se corre al
-   terminar ella. A las 14:00 no hay nadie más y parte al tiro.
+   (2026-10-02) Antes corría a las 14:00 y 23:00: la de la noche encontraba
+   oportunidades que nadie miraba hasta el otro día. Ahora el equipo parte la
+   mañana con el listado fresco y lo vuelve a tener a media tarde.
+
+   Convivencia con los otros crones de Mercado Público. Esta búsqueda usa 6
+   conexiones; la sincronización del Análisis y el cambio automático de estados
+   usan 12 cada uno, y 18 simultáneas quedan demasiado cerca del colapso medido
+   de la API (24):
+     · con la SINCRONIZACIÓN (23:00): si alguna vez comparten hora, esta
+       búsqueda le cede el paso y corre al terminar ella;
+     · con el CAMBIO DE ESTADOS (9:00 y 15:00): a las 15:00 comparten hora, y
+       ahí es al revés — el cambio de estados espera a que esta búsqueda
+       termine (son ~4 min), porque el listado de las 15:00 es lo que el
+       equipo está esperando. Ver MpEstadosCron.cederPasoALaExploracion.
 
    Mismo patrón de reloj que MercadopublicoCron: temporizador propio + Intl con
    zona explícita, porque el servidor corre en UTC y un cron ingenuo se
@@ -25,7 +34,7 @@ import { MercadopublicoCron } from '../mercadopublico/mercadopublico.cron';
 
 const ZONA = 'America/Santiago';
 
-const HORAS = String(process.env.MP_EXPLORAR_AUTO_HORAS || '14,23')
+const HORAS = String(process.env.MP_EXPLORAR_AUTO_HORAS || '8,15')
   .split(',')
   .map((h) => Number(String(h).trim()))
   .filter((h) => Number.isInteger(h) && h >= 0 && h <= 23);
@@ -94,11 +103,16 @@ export class MpExploracionCron implements OnModuleInit, OnModuleDestroy {
     this.corriendo = true;
     const t0 = Date.now();
     try {
-      /* Ceder el paso a la sincronización del Análisis. El primer respiro de
-         90 s existe porque ambos crones despiertan en el mismo minuto: hay que
-         darle tiempo a que la sincronización marque `corriendo` antes de
-         decidir si está libre. */
-      await new Promise((r) => setTimeout(r, 90_000));
+      /* Ceder el paso a la sincronización del Análisis. El respiro de 90 s
+         existe porque, cuando comparten hora, ambos crones despiertan en el
+         mismo minuto: hay que darle tiempo a que la sincronización marque
+         `corriendo` antes de decidir si está libre. Si a esta hora no hay
+         sincronización programada, no se espera: se parte al tiro. */
+      const sync = this.mpCron.estado();
+      const horaActual = `${String(this.ahoraEnChile().hora).padStart(2, '0')}:00`;
+      if (sync.activa && sync.horarios.includes(horaActual)) {
+        await new Promise((r) => setTimeout(r, 90_000));
+      }
       const esperaTope = Date.now() + ESPERA_SYNC_MS;
       while (this.mpCron.estado().corriendo && Date.now() < esperaTope) {
         await new Promise((r) => setTimeout(r, REVISA_SYNC_MS));

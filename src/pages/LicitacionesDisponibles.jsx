@@ -233,7 +233,7 @@ export default function LicitacionesDisponibles({ embedded = false }) {
   const [mpProgreso, setMpProgreso] = useState(null);
   /* La búsqueda manual gasta ~90 consultas de la cuota diaria de la API, así
      que quedó restringida (lo dice el backend, según MP_EXPLORAR_EMAILS). Para
-     el resto del equipo la exploración se genera sola a las 14:00 y 23:00 y
+     el resto del equipo la exploración se genera sola a las 08:00 y 15:00 y
      acá solo se lee el resultado guardado. */
   // null = aún no se sabe (la respuesta viene en camino): el botón se muestra
   // y el backend igual rechaza a quien no corresponde. Solo `false` lo oculta.
@@ -338,7 +338,7 @@ export default function LicitacionesDisponibles({ embedded = false }) {
     // El backend igual lo rechaza (403): este corte temprano solo evita el
     // viaje para mostrar el mismo mensaje.
     if (mpPuedeBuscar === false) {
-      setToast({ type: "info", message: "La búsqueda manual está restringida. El listado se actualiza solo a las 14:00 y 23:00." });
+      setToast({ type: "info", message: "La búsqueda manual está restringida. El listado se actualiza solo a las 08:00 y 15:00." });
       return;
     }
     const idBusqueda = ++mpBusquedaRef.current;
@@ -501,7 +501,7 @@ export default function LicitacionesDisponibles({ embedded = false }) {
 
   /* Cada vez que se entra a «Explorar»: la última exploración automática. Se
      relee al cambiar de pestaña —y no solo al montar— para que una sesión que
-     lleva horas abierta reciba la corrida de las 14:00/23:00 sin recargar la
+     lleva horas abierta reciba la corrida de las 08:00/15:00 sin recargar la
      página; leerla no consulta la API, es una fila guardada. De paso el
      backend dice si este usuario puede lanzar búsquedas a mano. */
   useEffect(() => {
@@ -515,7 +515,7 @@ export default function LicitacionesDisponibles({ embedded = false }) {
         if (!Array.isArray(d?.items)) return;
         // Gana lo más NUEVO. Una búsqueda manual en pantalla se respeta solo
         // mientras no exista una exploración automática POSTERIOR: si el cron
-        // de las 14:00/23:00 corrió después de esa búsqueda, mostrar la
+        // de las 08:00/15:00 corrió después de esa búsqueda, mostrar la
         // búsqueda vieja sería informar datos menos frescos que los guardados.
         if (mpRes && !mpAuto) {
           const tsManual = leerVistaExploracion()?.ts || 0;
@@ -1665,7 +1665,7 @@ export default function LicitacionesDisponibles({ embedded = false }) {
             </span>
           )}
           <span style={{ color: "var(--text-muted)" }}>
-            Se actualiza sola a las 14:00 y 23:00
+            Se actualiza sola a las 08:00 y 15:00
             {mpPuedeBuscar === false ? "; la búsqueda manual está restringida porque consume la cuota diaria de la API." : "."}
           </span>
         </div>

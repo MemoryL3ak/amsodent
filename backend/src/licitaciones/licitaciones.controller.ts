@@ -113,14 +113,14 @@ export class LicitacionesController {
   //
   // Restringido: la búsqueda completa son ~90 consultas contra la API (~4 min
   // y cuota compartida con la sincronización del Análisis). Para el resto del
-  // equipo el resultado se genera solo (14:00 y 23:00) y se lee de
+  // equipo el resultado se genera solo (08:00 y 15:00) y se lee de
   // 'mercado-publico/exploracion'.
   @Get('mercado-publico/buscar')
   mercadoPublicoBuscar(@Query() query: any, @Req() req: any) {
     const email = (req?.user?.email || '').toLowerCase();
     if (!LicitacionesService.exploradoresMp().includes(email)) {
       throw new ForbiddenException(
-        'La búsqueda manual está restringida: consume la cuota diaria de la API. El listado se actualiza solo a las 14:00 y 23:00.',
+        'La búsqueda manual está restringida: consume la cuota diaria de la API. El listado se actualiza solo a las 08:00 y 15:00.',
       );
     }
     return this.licitacionesService.mercadoPublicoBuscar(query || {});

@@ -1,6 +1,7 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
 import { LicitacionesService } from './licitaciones.service';
+import { MpExploracionCron } from './mp-exploracion.cron';
 
 /* ============================================================================
    Cambio automático de estado según Mercado Público (pedido 2026-09-17)
@@ -68,7 +69,27 @@ export class MpEstadosCron implements OnModuleInit, OnModuleDestroy {
   constructor(
     private readonly supabase: SupabaseService,
     private readonly licitaciones: LicitacionesService,
+    private readonly exploracion: MpExploracionCron,
   ) {}
+
+  /* (2026-10-02) A las 15:00 esta pasada comparte hora con la exploración de
+     oportunidades. Juntas serían 12 + 6 conexiones contra una API que colapsa
+     cerca de 24, así que una espera a la otra. Cede esta: la exploración dura
+     ~4 minutos y su listado es lo que el equipo espera ver a las 15:00; que
+     los estados se actualicen unos minutos después no cambia nada. */
+  private async cederPasoALaExploracion(hora: number) {
+    const exp = this.exploracion.estado();
+    if (!exp.activa || !exp.horarios.includes(`${String(hora).padStart(2, '0')}:00`)) return;
+    const espera = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    // Los dos crones despiertan en el mismo minuto: se le da tiempo a la
+    // exploración para que alcance a marcarse como corriendo.
+    await espera(100_000);
+    const tope = Date.now() + 30 * 60_000;
+    while (this.exploracion.estado().corriendo && Date.now() < tope) await espera(30_000);
+    if (this.exploracion.estado().corriendo) {
+      this.log.warn('La exploración lleva 30 min corriendo; el cambio de estados parte igual.');
+    }
+  }
 
   onModuleInit() {
     if (String(process.env.MP_ESTADOS_AUTO || '').toLowerCase() === 'off') {
@@ -112,6 +133,7 @@ export class MpEstadosCron implements OnModuleInit, OnModuleDestroy {
     this.ultima = marca;
     this.corriendo = true;
     try {
+      await this.cederPasoALaExploracion(hora);
       await this.correr();
     } catch (e: any) {
       this.log.warn(`Pasada fallida: ${String(e?.message || e).slice(0, 160)}`);
