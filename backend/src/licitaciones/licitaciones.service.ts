@@ -1865,6 +1865,35 @@ export class LicitacionesService {
       }
     }
 
+    /* (2026-10-02) Cierre forzado: el saldo de la orden pasa a contarse como 0,
+       pero con cuánto saldo se cerró tiene que quedar guardado SIEMPRE. Antes
+       ese monto lo calculaba y mandaba la pantalla; si no llegaba (o llegaba en
+       0 por datos sin refrescar) el cierre se guardaba igual y el monto se
+       perdía — hay dos cierres así. Ahora lo calcula el servidor desde los
+       documentos: suma de OC − suma de guías, en neto, como siempre. Al
+       reabrir el ciclo se borra. */
+    if (body?.ciclo_cerrado === true) {
+      try {
+        const { data: antes } = await client
+          .from('licitaciones')
+          .select('ciclo_cerrado, monto_forzado')
+          .eq('id', id)
+          .maybeSingle();
+        const yaCerrada = antes?.ciclo_cerrado === true && Number(antes?.monto_forzado || 0) > 0;
+        if (yaCerrada) {
+          // Ya estaba cerrada y con su monto: es el saldo DEL MOMENTO del
+          // cierre, no se recalcula ni se deja pisar con lo que venga.
+          delete body.monto_forzado;
+        } else {
+          body.monto_forzado = await this.saldoPorConsumir(id);
+        }
+      } catch (e: any) {
+        this.logger.warn(`cierre forzado ${id}: no se pudo calcular el saldo al cerrar: ${e?.message || e}`);
+      }
+    } else if (body?.ciclo_cerrado === false) {
+      body.monto_forzado = null;
+    }
+
     const ejecutar = (payload: Record<string, any>) =>
       client.from('licitaciones').update(payload).eq('id', id).select().single();
 
@@ -1922,6 +1951,20 @@ export class LicitacionesService {
       }
     }
     return data;
+  }
+
+  /** Saldo neto de la orden que queda sin consumir: Σ OC − Σ guías (mínimo 0). */
+  async saldoPorConsumir(licId: number): Promise<number> {
+    const { data, error } = await this.supabase
+      .getClient()
+      .from('licitacion_documentos')
+      .select('tipo, monto')
+      .eq('licitacion_id', licId)
+      .in('tipo', ['orden_compra', 'guia_despacho']);
+    if (error) throw new BadRequestException(error.message);
+    const suma = (tipo: string) =>
+      (data || []).filter((d: any) => d.tipo === tipo).reduce((a: number, d: any) => a + Number(d.monto || 0), 0);
+    return Math.max(0, Math.round(suma('orden_compra') - suma('guia_despacho')));
   }
 
   // Avisa al cliente que la cotización vinculada a su solicitud fue modificada:

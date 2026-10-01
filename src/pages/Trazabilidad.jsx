@@ -917,11 +917,17 @@ export default function Trazabilidad() {
       }),
     );
     try {
-      await api.put(`/licitaciones/${licId}`, { ciclo_cerrado: valor, monto_forzado: montoForzado });
+      const guardada = await api.put(`/licitaciones/${licId}`, { ciclo_cerrado: valor, monto_forzado: montoForzado });
+      // El saldo al cerrar lo calcula y guarda el servidor desde los documentos:
+      // se muestra ese, que es el que quedó registrado.
+      const cerradoCon = valor ? Number(guardada?.monto_forzado ?? montoForzado ?? 0) : null;
+      if (valor) {
+        setData((prev) => prev.map((l) => (l.id === licId ? { ...l, monto_forzado: cerradoCon } : l)));
+      }
       setToast({
         type: "success",
         message: valor
-          ? `Ciclo cerrado. Monto forzado: $${Number(montoForzado || 0).toLocaleString("es-CL")}`
+          ? `Ciclo cerrado. El saldo de la orden queda en $0; se cerró con $${Number(cerradoCon || 0).toLocaleString("es-CL")} sin consumir (queda guardado).`
           : "Ciclo reabierto.",
       });
     } catch {
@@ -1241,6 +1247,12 @@ export default function Trazabilidad() {
       sumaOC,
       sumaGuias,
       porConsumir: lic.ciclo_cerrado ? 0 : Math.round(sumaOC - sumaGuias),
+      // Con cuánto saldo se cerró (registro; no se contabiliza). Sale de
+      // monto_forzado y, en los cierres antiguos que no lo guardaron, de los
+      // documentos.
+      alCerrar: lic.ciclo_cerrado
+        ? (Number(lic.monto_forzado || 0) > 0 ? Number(lic.monto_forzado) : Math.max(0, Math.round(sumaOC - sumaGuias)))
+        : null,
     };
   }
 
@@ -1371,7 +1383,7 @@ export default function Trazabilidad() {
         "Factoring": a.factoring,
         "Ciclo Cerrado": lic.ciclo_cerrado ? "Sí" : "No",
         "Motivo Cierre Forzado": a.cierre ? a.cierre.numero || "" : "",
-        "Saldo al Cerrar": lic.ciclo_cerrado ? Number(lic.monto_forzado || 0) : "",
+        "Saldo al Cerrar": lic.ciclo_cerrado ? Number(montoPorConsumir(lic).alCerrar || 0) : "",
       };
     });
   }
@@ -2843,8 +2855,8 @@ export default function Trazabilidad() {
                                     <div>OC neto ${m.sumaOC.toLocaleString("es-CL")}</div>
                                     <div>Guías neto ${m.sumaGuias.toLocaleString("es-CL")}</div>
                                     {lic.ciclo_cerrado && (
-                                      <div style={{ color: "#b91c1c", fontWeight: 600 }} title="Ciclo cerrado de forma forzada: el saldo por consumir queda en $0">
-                                        Cierre forzado
+                                      <div style={{ color: "#b91c1c", fontWeight: 600 }} title="Ciclo cerrado de forma forzada: el saldo por consumir se contabiliza en $0. Queda el registro de con cuánto se cerró.">
+                                        Cierre forzado · se cerró con ${Number(m.alCerrar || 0).toLocaleString("es-CL")}
                                       </div>
                                     )}
                                   </div>
