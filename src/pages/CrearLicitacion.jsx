@@ -8,6 +8,7 @@ import Toast from "../components/Toast";
 import Select, { components } from "react-select";
 import { generarPDFcotizacion } from "../utils/generarPDFcotizacion";
 import { calcularLista3 } from "../lib/listas";
+import { precioCampanaMargen } from "../lib/campanasMargen";
 import ProductoPickerModal from "../components/ProductoPickerModal";
 import ModalValidarTransitorio from "../components/ModalValidarTransitorio";
 import CalculadoraFlete from "../components/CalculadoraFlete";
@@ -147,7 +148,7 @@ function normalizarVolumenCm3(valor) {
  * ✅ FIX: si el producto NO tiene SKU, igual debe devolver precio de lista.
  * - SKU solo se usa para campañas (si existe).
  */
-function getPrecioBaseParaSKU(prod, listado, campaignPrices) {
+function getPrecioBaseParaSKU(prod, listado, campaignPrices, campanasMargen) {
   if (!prod) return 0;
 
   const sku = String(prod?.sku ?? "").trim();
@@ -155,6 +156,12 @@ function getPrecioBaseParaSKU(prod, listado, campaignPrices) {
   // campaña solo si existe SKU
   const camp = sku ? campaignPrices?.[sku] : null;
   if (camp && camp.precio != null) return Number(camp.precio || 0);
+
+  // (2026-10-01) Campaña de margen por marca/categoría sobre ESTA lista: el
+  // precio sale del costo del producto y del margen de la campaña. Va después
+  // de la campaña por producto, que es más específica y manda.
+  const porMargen = precioCampanaMargen(prod, listado, campanasMargen);
+  if (porMargen) return porMargen.precio;
 
   // Lista 3 se usa para tipo de compra "Licitación 9 a 24 meses".
   // Si el producto tiene Lista 3 explícita usamos ese valor; si no,
@@ -829,6 +836,8 @@ export default function CrearLicitacion() {
   const [productos, setProductos] = useState([]);
   const [toast, setToast] = useState(null);
   const [campaignPrices, setCampaignPrices] = useState({});
+  // Campañas de margen vigentes hoy (marca/categoría → margen sobre una lista).
+  const [campanasMargen, setCampanasMargen] = useState([]);
   const [campanasListas, setCampanasListas] = useState(false);
   // Productos que llegan en el borrador solo por SKU + cantidad (pedido del
   // portal): se resuelven contra el catálogo cuando este ya cargó.
@@ -1177,7 +1186,7 @@ export default function CrearLicitacion() {
       const cantidad = Math.max(1, Number(it.cantidad || 1));
       const prod = buscarProducto(it);
       if (prod) {
-        const precio = getPrecioBaseParaSKU(prod, listado, campaignPrices);
+        const precio = getPrecioBaseParaSKU(prod, listado, campaignPrices, campanasMargen);
         nuevos.push({
           ...crearItemVacio(),
           sku: String(prod.sku || "").trim(),
@@ -1460,6 +1469,13 @@ export default function CrearLicitacion() {
         console.error("Error cargando campañas vigentes:", err);
         if (alive) setCampaignPrices({});
       } finally {
+        // Campañas de margen: si fallan, se cotiza con el precio de lista.
+        try {
+          const margen = await api.get("/campanas-margen/vigentes");
+          if (alive) setCampanasMargen(Array.isArray(margen) ? margen : []);
+        } catch {
+          if (alive) setCampanasMargen([]);
+        }
         if (alive) setCampanasListas(true);
       }
     }
@@ -1579,7 +1595,7 @@ export default function CrearLicitacion() {
       item.producto = prod.nombre || "";
       item.categoria = prod.categoria || "";
       item.formato = prod.formato || "";
-      item.precio = getPrecioBaseParaSKU(prod, listado, campaignPrices);
+      item.precio = getPrecioBaseParaSKU(prod, listado, campaignPrices, campanasMargen);
       item.costo = Number(prod.costo ?? 0);
       item.precioManual = false;
       item.precioUnitarioStr = "";
@@ -1775,7 +1791,8 @@ export default function CrearLicitacion() {
     if (!hydrated) return;
     if (!productos?.length) return;
 
-    const tieneCamp = campaignPrices && Object.keys(campaignPrices).length > 0;
+    const tieneCamp =
+      (campaignPrices && Object.keys(campaignPrices).length > 0) || campanasMargen.length > 0;
     if (!tieneCamp) return;
 
     const copia = items.map((it) => {
@@ -1790,7 +1807,7 @@ export default function CrearLicitacion() {
 
       if (!prod) return it;
 
-      const precioBase = getPrecioBaseParaSKU(prod, listado, campaignPrices);
+      const precioBase = getPrecioBaseParaSKU(prod, listado, campaignPrices, campanasMargen);
       const cantidad = Math.max(1, Number(it.cantidad || 1));
       const precioConFlete = precioBase + fletePorUnidad;
 
@@ -1804,7 +1821,7 @@ export default function CrearLicitacion() {
 
     setItems(copia);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [campaignPrices, productos]);
+  }, [campaignPrices, campanasMargen, productos]);
 
   const totalNeto = items.reduce((acc, it) => acc + Number(it.total || 0), 0);
   const totalIVA = Math.round(totalNeto * 0.19);
@@ -2676,7 +2693,7 @@ export default function CrearLicitacion() {
                 // formulario ya se limpió, así que se usa la capturada).
                 const listaPrecio = sugerenciaEquiv.form?.listado || listado;
                 const prodOrig = buscarProductoPorSku(c.sku);
-                const precioOrig = prodOrig ? getPrecioBaseParaSKU(prodOrig, listaPrecio, campaignPrices) : 0;
+                const precioOrig = prodOrig ? getPrecioBaseParaSKU(prodOrig, listaPrecio, campaignPrices, campanasMargen) : 0;
                 const fmtP = (v) => `$${Math.round(Number(v || 0)).toLocaleString("es-CL")}`;
                 return (
                   <div key={c.sku} style={{ padding: "10px 12px", borderBottom: "1px solid var(--border)", fontSize: 12.5 }}>
@@ -2690,7 +2707,7 @@ export default function CrearLicitacion() {
                     <ul style={{ listStyle: "disc", margin: 0, paddingLeft: 20, display: "flex", flexDirection: "column", gap: 3 }}>
                       {c.equivalencias.map((sku) => {
                         const p = buscarProductoPorSku(sku);
-                        const precio = p ? getPrecioBaseParaSKU(p, listaPrecio, campaignPrices) : 0;
+                        const precio = p ? getPrecioBaseParaSKU(p, listaPrecio, campaignPrices, campanasMargen) : 0;
                         return (
                           <li key={sku} style={{ color: "var(--text-muted)" }}>
                             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
@@ -3275,7 +3292,7 @@ export default function CrearLicitacion() {
                         >
                           {equivOpciones.map((p, i) => {
                             const skuOp = String(p.sku || "").trim();
-                            const precioOp = getPrecioBaseParaSKU(p, listado, campaignPrices);
+                            const precioOp = getPrecioBaseParaSKU(p, listado, campaignPrices, campanasMargen);
                             return (
                               <option key={skuOp} value={skuOp}>
                                 {i === 0 ? "(Original) " : `(Equiv. ${i}) `}{skuOp} — {p.nombre} — ${Number(precioOp || 0).toLocaleString("es-CL")}

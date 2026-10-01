@@ -23,6 +23,7 @@ import ProductoPickerModal from "../components/ProductoPickerModal";
 import CalculadoraFlete from "../components/CalculadoraFlete";
 import { generarPDFcotizacion } from "../utils/generarPDFcotizacion";
 import { calcularLista3 } from "../lib/listas";
+import { precioCampanaMargen } from "../lib/campanasMargen";
 import { useUnsavedChanges } from "../context/UnsavedChangesContext";
 import { GripVertical, Plus, Trash2, MessageSquare, Minus, ChevronUp, ChevronDown } from "lucide-react";
 
@@ -1098,6 +1099,9 @@ export default function EditarLicitacion() {
   ]);
 
   const [campaignPriceBySku, setCampaignPriceBySku] = useState(new Map());
+  // (2026-10-01) Campañas de margen vigentes (marca/categoría → margen sobre
+  // una lista). Aplican al elegir un producto, después de la campaña por SKU.
+  const [campanasMargen, setCampanasMargen] = useState([]);
   const [hydrated, setHydrated] = useState(false);
 
   /* ============================================================
@@ -2417,6 +2421,11 @@ export default function EditarLicitacion() {
     }
 
     cargarCampaniasVigentes();
+    // Campañas de margen: si fallan, queda el precio de lista.
+    api
+      .get("/campanas-margen/vigentes")
+      .then((r) => setCampanasMargen(Array.isArray(r) ? r : []))
+      .catch(() => setCampanasMargen([]));
   }, []);
 
   /* ============================================================
@@ -2763,7 +2772,7 @@ export default function EditarLicitacion() {
       item.precio =
         precioCampania != null
           ? Number(precioCampania)
-          : getPrecioPorListado(prod, listado);
+          : (precioCampanaMargen(prod, listado, campanasMargen)?.precio ?? getPrecioPorListado(prod, listado));
 
       item.precioManual = false;
       item.precioUnitarioStr = "";
@@ -2821,7 +2830,9 @@ export default function EditarLicitacion() {
       const sku = String(item.sku || "").trim();
       const precioCampania = sku ? campaignPriceBySku.get(sku) : null;
       item.precio =
-        precioCampania != null ? Number(precioCampania) : getPrecioPorListado(prod, listado);
+        precioCampania != null
+          ? Number(precioCampania)
+          : (precioCampanaMargen(prod, listado, campanasMargen)?.precio ?? getPrecioPorListado(prod, listado));
 
       item.precioManual = false;
       item.precioUnitarioStr = "";

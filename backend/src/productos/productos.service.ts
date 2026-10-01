@@ -94,6 +94,9 @@ export class ProductosService {
       categoria: p.categoria,
       formato: p.formato,
       estado: p.estado,
+      // (2026-10-01) El costo se pedia en el select pero no se devolvia. Lo
+      // necesitan las campanas de margen, que calculan el precio desde el costo.
+      costo: p.costo,
       lista1: p.lista1,
       lista2: p.lista2,
       lista3: p.lista3,
