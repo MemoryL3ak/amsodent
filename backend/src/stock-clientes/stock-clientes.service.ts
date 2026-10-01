@@ -2145,7 +2145,10 @@ export class StockClientesService {
     // corre, se cae a la lista básica de siempre.
     const COLS_FLUJO =
       COLS_BASE +
-      ', flujo_estado, disponibilidad, monto_total, sos, pago_estado, pago_medio, pago_at, aprobado_cliente_at, validado_at';
+      ', flujo_estado, disponibilidad, monto_total, sos, pago_estado, pago_medio, pago_at, aprobado_cliente_at, validado_at' +
+      // (2026-10-01) Faltaban: sin ellas el portal no sabia que la cotizacion
+      // ya estaba validada por el cliente y el boton seguia ofreciendose.
+      ', validado_cliente_at, validado_cliente_por, modificacion_pedida_at, origen_seccion';
     const pedir = (cols: string) =>
       this.supabase
         .getClient()
@@ -2160,6 +2163,52 @@ export class StockClientesService {
     }
     if (res.error) throw new BadRequestException(res.error.message);
     return await this.enriquecerSolicitudes(res.data || [], 'cliente');
+  }
+
+  /* ── Ejecutivo asignado al cliente (2026-10-01) ──────────────────────────
+     El cliente del portal no tenia como escribirle a su vendedor: para una
+     duda sobre un pedido tenia que buscar el telefono por fuera. Sale de
+     `clientes.vendedor_asignado` y su celular del perfil del usuario.
+
+     Devuelve null en vez de fallar cuando no hay cliente, no hay vendedor
+     asignado o el vendedor no tiene celular cargado: el portal simplemente no
+     muestra el boton. */
+  async ejecutivoDeCliente(rut: string) {
+    const rutN = normalizarRut(rut);
+    if (!rutN) return null;
+    const client = this.supabase.getClient();
+
+    const { data: cli } = await client
+      .from('clientes')
+      .select('rut, vendedor_asignado')
+      .eq('rut', rutN)
+      .maybeSingle();
+    const correo = String(cli?.vendedor_asignado || '').trim().toLowerCase();
+    if (!correo) return null;
+
+    const { data: perfil } = await client
+      .from('profiles')
+      .select('nombre, email, celular, firma_cargo, avatar_url')
+      .ilike('email', correo)
+      .maybeSingle();
+    if (!perfil) return null;
+
+    // WhatsApp necesita el numero en formato internacional sin signos. Si el
+    // celular viene sin prefijo se asume Chile, que es el unico pais en que
+    // opera Amsodent.
+    const soloDigitos = String(perfil.celular || '').replace(/[^0-9]/g, '');
+    let whatsapp: string | null = null;
+    if (soloDigitos.length >= 8) {
+      whatsapp = soloDigitos.startsWith('56') ? soloDigitos : `56${soloDigitos.replace(/^0+/, '')}`;
+    }
+
+    return {
+      nombre: perfil.nombre || perfil.email,
+      email: perfil.email,
+      cargo: perfil.firma_cargo || null,
+      avatar_url: perfil.avatar_url || null,
+      whatsapp,
+    };
   }
 
   // Historial de cotizaciones del sistema principal a nombre del cliente. Se
