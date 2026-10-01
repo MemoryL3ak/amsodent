@@ -1456,20 +1456,28 @@ export default function PanelIndicadores() {
                 <div>
                   <h3 className="surface-title" style={{ margin: 0 }}>Comparativo de facturación · Bsale vs sistema</h3>
                   <p style={{ fontSize: 12, color: "var(--text-muted)", margin: 0 }}>
-                    Neto emitido en Bsale (facturas + boletas − notas de crédito) contra las facturas y boletas registradas en las cotizaciones, ambos por fecha del documento, en el {periodoLabel.toLowerCase()} · un descuadre suele venir de documentos registrados con otra fecha o aún sin emitir
+                    Bruto emitido en Bsale (facturas + boletas − notas de crédito) contra las facturas y boletas registradas en las cotizaciones, ambos por fecha del documento, en el {periodoLabel.toLowerCase()} · un descuadre suele venir de documentos registrados con otra fecha o aún sin emitir
                   </p>
                 </div>
               </div>
               <div style={{ padding: "14px 18px 18px", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 14 }}>
                 {(() => {
-                  const bsaleNeto = Number(bsaleVentas.neto || 0);
-                  const dif = facturadoSistema - bsaleNeto; // >0: el sistema registra más que lo emitido en Bsale
-                  const pct = bsaleNeto > 0 ? (dif / bsaleNeto) * 100 : null;
+                  /* (2026-10-01) El comparativo va en BRUTO: es lo que Bsale
+                     muestra en pantalla y lo que la gente tiene en la cabeza.
+                     Contra el neto habia que hacer la cuenta mental y parecia
+                     que las cifras no cuadraban. Los documentos del sistema se
+                     guardan netos, asi que se llevan a bruto con el IVA; si el
+                     backend todavia no manda el bruto (deploy viejo), se cae al
+                     neto para no mostrar cero. */
+                  const bsaleBruto = Number(bsaleVentas.bruto ?? bsaleVentas.neto ?? 0);
+                  const sistemaBruto = Math.round(facturadoSistema * 1.19);
+                  const dif = sistemaBruto - bsaleBruto; // >0: el sistema registra mas que lo emitido en Bsale
+                  const pct = bsaleBruto > 0 ? (dif / bsaleBruto) * 100 : null;
                   const cuadrado = Math.abs(dif) < 1;
                   const casiCuadrado = pct != null && Math.abs(pct) <= 5;
                   return [
-                    { label: "Facturado en Bsale", valor: fmtCLP(bsaleNeto), accent: "#c2570c", valColor: "var(--text)", sub: `${fmtNum(bsaleVentas.documentos || 0)} documentos emitidos (neto)` },
-                    { label: "Registrado en el sistema", valor: fmtCLP(facturadoSistema), accent: "#0e7490", valColor: "var(--text)", sub: "facturas y boletas de cotizaciones" },
+                    { label: "Facturado en Bsale", valor: fmtCLP(bsaleBruto), accent: "#c2570c", valColor: "var(--text)", sub: `${fmtNum(bsaleVentas.documentos || 0)} documentos emitidos (bruto, IVA incluido)` },
+                    { label: "Registrado en el sistema", valor: fmtCLP(sistemaBruto), accent: "#0e7490", valColor: "var(--text)", sub: `facturas y boletas de cotizaciones · neto ${fmtCLP(facturadoSistema)} × 1,19` },
                     {
                       label: "Diferencia",
                       valor: `${cuadrado ? "" : dif > 0 ? "+" : "−"}${fmtCLP(Math.abs(dif))}`,

@@ -264,6 +264,25 @@ export default function Productos() {
   const [filtroPeso, setFiltroPeso] = useStickyState("productos.filtroPeso", "");
   const [filtroMedidas, setFiltroMedidas] = useStickyState("productos.filtroMedidas", "");
   const [ordenTabla, setOrdenTabla] = useStickyState("productos.ordenTabla", { key: null, dir: "asc" });
+  /* (2026-10-01) Precio de venta al publico sugerido, para el Showroom del
+     portal. Se edita en linea desde la grilla: son 426 productos de Prevencion
+     e Higiene y abrir la ficha de cada uno para un solo numero no es viable. */
+  async function guardarVentaShowroom(producto, valor) {
+    const limpio = valor === "" || valor == null ? null : Math.max(0, Math.round(Number(valor)));
+    if (limpio != null && !Number.isFinite(limpio)) return;
+    if ((producto.precio_sugerido ?? null) === limpio) return;
+    const previo = producto.precio_sugerido ?? null;
+    setProductos((prev) => prev.map((x) => (x.id === producto.id ? { ...x, precio_sugerido: limpio } : x)));
+    try {
+      // `propagar: false`: esto no es un precio de lista, no debe arrastrar
+      // nada hacia las cotizaciones ni a los equivalentes.
+      await api.put(`/productos/${producto.id}`, { precio_sugerido: limpio, propagar: false });
+    } catch (e) {
+      setProductos((prev) => prev.map((x) => (x.id === producto.id ? { ...x, precio_sugerido: previo } : x)));
+      setToast({ type: "error", message: e?.message || "No se pudo guardar el precio de venta." });
+    }
+  }
+
   // Qué lista de precios muestra la columna "Precio Unitario" (lista1 | lista2 | lista3).
   // Lista 3 NO está en la DB: es un valor calculado = lista2 * FACTOR_LISTA_3.
   const [listaPrecio, setListaPrecio] = useStickyState("productos.listaPrecio", "lista1");
@@ -886,6 +905,12 @@ export default function Productos() {
                   </div>
                 </th>
                 <th>Precio Bruto</th>
+                {/* (2026-10-01) Precio al que le sugerimos al cliente del portal
+                    revender el producto. Solo tiene sentido en los que entran al
+                    Showroom; en el resto la celda queda muda. */}
+                <th title="Precio sugerido de venta al publico, para el Showroom del portal">
+                  Venta showroom
+                </th>
                 <th>Acciones</th>
               </tr>
             </thead>
@@ -925,6 +950,7 @@ export default function Productos() {
                       </div>
                     </td>
 
+
                     <td style={{fontWeight: 600}}>
                       {/* Punto 34: bruto (neto × 1.19) — IVA incluido */}
                       <div style={{lineHeight: 1.4}}>
@@ -936,6 +962,14 @@ export default function Productos() {
                           </div>
                         )}
                       </div>
+                    </td>
+
+                    <td>
+                      <CeldaVentaShowroom
+                        producto={p}
+                        habilitada={esCategoriaShowroom(p.categoria)}
+                        onGuardar={(valor) => guardarVentaShowroom(p, valor)}
+                      />
                     </td>
 
                     <td style={{textAlign: "right"}}>
@@ -1501,3 +1535,79 @@ function HistorialCargasModal({ esAdmin, onClose, onRevertido, onToast }) {
 
 
 
+
+/* ── Venta showroom (2026-10-01) ─────────────────────────────────────────────
+   Precio al que le sugerimos al cliente del portal revender el producto a su
+   paciente. Solo aplica a los que entran al Showroom (Prevencion e Higiene):
+   en el resto la celda queda muda, para no sugerir que hay algo que llenar.
+
+   Se edita en linea y no en la ficha: son 426 productos y abrir una ficha por
+   cada uno para escribir un solo numero no es viable. */
+const CATEGORIA_SHOWROOM = "Prevención e Higiene";
+
+const esCategoriaShowroom = (categoria) =>
+  String(categoria || "").trim().toLowerCase() === CATEGORIA_SHOWROOM.toLowerCase();
+
+function CeldaVentaShowroom({ producto, habilitada, onGuardar }) {
+  const guardado = producto.precio_sugerido ?? null;
+  const [editando, setEditando] = useState(false);
+  /* El valor del input se reinicia cada vez que se entra a editar, en vez de
+     sincronizarse por efecto: asi no hay un setState en un useEffect solo para
+     seguir a una prop, que es justo lo que React desaconseja. */
+  const [texto, setTexto] = useState("");
+
+  if (!habilitada) {
+    return (
+      <span style={{ color: "var(--text-muted)", fontSize: 12 }} title={`Solo para la categoria ${CATEGORIA_SHOWROOM}`}>
+        —
+      </span>
+    );
+  }
+
+  // El margen respecto de la lista 2, que es la que paga el cliente del portal.
+  const base = Number(producto.lista2) || Number(producto.lista1) || 0;
+  const margen = guardado && base ? guardado - base : null;
+
+  if (!editando) {
+    return (
+      <button
+        type="button"
+        onClick={() => { setTexto(guardado == null ? "" : String(guardado)); setEditando(true); }}
+        title="Clic para editar el precio sugerido de venta"
+        style={{
+          background: "none", border: "none", padding: 0, cursor: "text", textAlign: "left",
+          fontWeight: guardado ? 600 : 400,
+          color: guardado ? "var(--text)" : "var(--text-muted)",
+          fontStyle: guardado ? "normal" : "italic",
+          lineHeight: 1.35,
+        }}
+      >
+        {guardado ? `$${guardado.toLocaleString("es-CL")}` : "Agregar…"}
+        {margen != null && (
+          <div style={{ fontSize: 11, fontWeight: 500, color: margen > 0 ? "#15803d" : "#b91c1c" }}>
+            {margen > 0 ? "+" : ""}{margen.toLocaleString("es-CL")} de margen
+          </div>
+        )}
+      </button>
+    );
+  }
+
+  return (
+    <input
+      autoFocus
+      className="input"
+      inputMode="numeric"
+      value={texto}
+      onChange={(e) => setTexto(e.target.value.replace(/[^0-9]/g, ""))}
+      onBlur={() => { setEditando(false); onGuardar(texto); }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") e.currentTarget.blur();
+        // Escape devuelve el valor guardado ANTES de cerrar: al desmontarse el
+        // input puede dispararse el blur, y si no, guardaria lo tecleado.
+        if (e.key === "Escape") { setTexto(guardado == null ? "" : String(guardado)); setEditando(false); }
+      }}
+      placeholder="0"
+      style={{ width: 96, height: 30, fontSize: 13, padding: "2px 7px" }}
+    />
+  );
+}
