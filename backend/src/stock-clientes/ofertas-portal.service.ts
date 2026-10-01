@@ -367,6 +367,39 @@ export class OfertasPortalService {
     };
   }
 
+  // ── SKU de las líneas de Gestión de Stock ───────────────────────────────
+
+  /* Las líneas que salen del inventario que el cliente declara traen el código
+     que ÉL le puso al producto, que puede ser el SKU de Amsodent o un código
+     propio. Solo se conserva como SKU cuando existe en nuestro catálogo Y el
+     nombre corresponde; si no, se descarta — un código ajeno que coincidiera
+     por casualidad con un SKU nuestro haría que la cotización naciera con
+     otro producto. Las líneas que vienen de una tienda (explorador, showroom,
+     ofertas) no se tocan: su SKU ya es el nuestro. */
+  async depurarSkusDeInventario<T extends Record<string, any>>(items: T[]): Promise<T[]> {
+    const esDeInventario = (it: any) => it?.sku && !it?.tienda && !it?.url;
+    if (!items.some(esDeInventario)) return items;
+    let productos: any[] = [];
+    try {
+      productos = await this.productos();
+    } catch {
+      /* sin catálogo no se puede confirmar ninguno: se descartan */
+    }
+    const porSku = new Map(productos.map((p) => [norm(p.sku), p]));
+    const limpio = (v: any) => norm(v).replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+    return items.map((it) => {
+      if (!esDeInventario(it)) return it;
+      const prod = porSku.get(norm(it.sku));
+      const a = limpio(it.nombre);
+      const b = limpio(prod?.nombre);
+      const corresponde =
+        !!prod && !!a && !!b && (a === b || (a.length >= 8 && b.length >= 8 && (a.includes(b) || b.includes(a))));
+      if (corresponde) return { ...it, sku: String(prod.sku).trim() };
+      const { sku: _ajeno, ...sinSku } = it as any;
+      return sinSku as T;
+    });
+  }
+
   // ── Validación del pedido ───────────────────────────────────────────────
 
   /* Recibe las líneas de un pedido del portal y vuelve a preciar las que dicen

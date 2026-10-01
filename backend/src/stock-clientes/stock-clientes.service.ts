@@ -1652,7 +1652,10 @@ export class StockClientesService {
        sigue vigente y alcanza a ese producto, quedan con el precio de oferta
        calculado por el servidor; si no, con el precio normal. El precio que
        mandó el navegador no se usa. */
-    const items = await this.ofertas.aplicarAItems(itemsLimpios);
+    const conOfertas = await this.ofertas.aplicarAItems(itemsLimpios);
+    // El código que el cliente le pone a su inventario solo vale como SKU si
+    // es de verdad uno nuestro (ver depurarSkusDeInventario).
+    const items = await this.ofertas.depurarSkusDeInventario(conOfertas);
 
     if (items.length === 0) {
       throw new BadRequestException(

@@ -774,6 +774,11 @@ export default function PedidosPortal() {
                                         <tr key={idx}>
                                           <td>
                                             {i?.nombre || "—"}
+                                            {i?.sku && (
+                                              <span style={{ marginLeft: 6, fontSize: 11, color: "#64748b", fontFamily: "ui-monospace, monospace", whiteSpace: "nowrap" }}>
+                                                SKU {i.sku}
+                                              </span>
+                                            )}
                                             {i?.observacion && (
                                               <div style={{ fontSize: 11, color: "#64748b", fontStyle: "italic", marginTop: 1 }}>
                                                 Obs: {i.observacion}

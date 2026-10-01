@@ -1220,14 +1220,21 @@ export default function CrearLicitacion() {
       // Línea libre: no está en el catálogo interno.
       const webBruto = Number(it.precio_referencia || 0);
       const precioNeto = webBruto > 0 ? Math.round(webBruto / 1.19) : 0;
+      /* (2026-10-02) El producto no está en el catálogo interno, pero si viene
+         de la web de Amsodent trae el SKU con que se vende ahí: la línea lo
+         conserva en vez de nacer sin código. (No se hace con los códigos que
+         el cliente pone a su propio inventario: esos no son SKU nuestros.) */
+      const skuWeb = /amsodent/i.test(String(it.tienda || "")) ? String(it.sku || "").trim() : "";
       const nota = [
         it.observacion || "",
-        webBruto > 0 ? `Precio web referencial: ${webBruto.toLocaleString("es-CL")} bruto (${it.tienda || "tienda Amsodent"}). No está en el catálogo interno: revisar SKU y precio.` : "No está en el catálogo interno: revisar SKU y precio.",
+        webBruto > 0
+          ? `Precio web referencial: ${webBruto.toLocaleString("es-CL")} bruto (${it.tienda || "tienda Amsodent"}). No está en el catálogo interno: ${skuWeb ? "el SKU es el de la web; revisar precio y costo" : "revisar SKU y precio"}.`
+          : `No está en el catálogo interno: ${skuWeb ? "el SKU es el de la web; revisar precio y costo" : "revisar SKU y precio"}.`,
       ].filter(Boolean).join(" · ");
       libres.push(it.nombre);
       nuevos.push({
         ...crearItemVacio(),
-        sku: "",
+        sku: skuWeb,
         producto: it.nombre || "",
         cantidad,
         precio: precioNeto,
