@@ -7,7 +7,42 @@ type Usuario = { id?: string; email?: string };
 
 // Columnas opcionales que pueden no estar migradas todavía: si el insert/update
 // falla mencionándolas, se quitan del payload y se reintenta.
-const COLUMNAS_OPCIONALES = ['adjuntos', 'motivo', 'licitacion_id', 'grupo_id', 'participantes', 'meet_url', 'evento_google_id'];
+const COLUMNAS_OPCIONALES = ['adjuntos', 'motivo', 'licitacion_id', 'grupo_id', 'participantes', 'meet_url', 'evento_google_id', 'campos_extra'];
+
+/* ── Campos propios del formulario (2026-10-01) ──────────────────────────
+   Los campos de una actividad estaban fijos en el código: para registrar algo
+   nuevo ("resultado de la visita", "próximo paso"…) había que pedir un cambio
+   de programa. Ahora administración define campos extra; su valor vive en
+   `actividades_cliente.campos_extra` (un objeto clave → valor), así no hay que
+   agregar una columna por cada campo. */
+const TIPOS_CAMPO = ['texto', 'texto_largo', 'numero', 'fecha', 'opciones', 'si_no'];
+const MIGRACION_CAMPOS = 'Falta aplicar la migración 20261001_lote_octubre.sql en Supabase.';
+
+/** "Resultado de la visita" → "resultado_de_la_visita". */
+function claveDesdeEtiqueta(etiqueta: string): string {
+  const base = String(etiqueta || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 40);
+  return base || 'campo';
+}
+
+/** Deja solo valores simples (texto, número, sí/no) y descarta los vacíos. */
+function limpiarCamposExtra(v: any): Record<string, string | number | boolean> | null {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
+  const out: Record<string, string | number | boolean> = {};
+  for (const [k, val] of Object.entries(v)) {
+    const clave = String(k || '').trim().slice(0, 60);
+    if (!clave) continue;
+    if (typeof val === 'boolean') out[clave] = val;
+    else if (typeof val === 'number' && Number.isFinite(val)) out[clave] = val;
+    else if (typeof val === 'string' && val.trim()) out[clave] = val.trim().slice(0, 2000);
+  }
+  return Object.keys(out).length ? out : null;
+}
 
 export interface ActividadFiltros {
   desde?: string;
@@ -177,6 +212,10 @@ export class ActividadesService {
       estado: (body.estado || 'pendiente').trim(),
       adjuntos: Array.isArray(body.adjuntos) ? body.adjuntos : [],
     };
+    // Campos propios: solo viajan si traen algo, así una actividad corriente
+    // no depende de que la columna ya exista.
+    const extra = limpiarCamposExtra(body.campos_extra);
+    if (extra) base.campos_extra = extra;
 
     // Actividades automáticas (correos de cobranza, gestiones desde otros
     // módulos) llegan sin cliente_id: se intenta amarrarlas al cliente por el
@@ -348,6 +387,7 @@ export class ActividadesService {
     if (body.hora_inicio !== undefined) setCompartido('hora_inicio', body.todo_el_dia ? null : body.hora_inicio || null);
     if (body.hora_fin !== undefined) setCompartido('hora_fin', body.todo_el_dia ? null : body.hora_fin || null);
     if (body.adjuntos !== undefined) setCompartido('adjuntos', Array.isArray(body.adjuntos) ? body.adjuntos : []);
+    if (body.campos_extra !== undefined) setCompartido('campos_extra', limpiarCamposExtra(body.campos_extra));
     // estado: solo en la fila propia (cada participante lleva el suyo).
     if (body.estado !== undefined) patch.estado = (body.estado || 'pendiente').trim();
     // participantes se reconcilia aparte (crea/borra filas), no como campo simple.
@@ -492,6 +532,7 @@ export class ActividadesService {
         todo_el_dia: Boolean(plantilla.todo_el_dia),
         estado: 'pendiente',
         adjuntos: Array.isArray(plantilla.adjuntos) ? plantilla.adjuntos : [],
+        ...(plantilla.campos_extra ? { campos_extra: plantilla.campos_extra } : {}),
         grupo_id: grupoId,
         participantes: participantesJson,
         meet_url: plantilla.meet_url ?? null,
@@ -698,6 +739,127 @@ export class ActividadesService {
       // Best-effort: si Google falla, la bitácora carga igual.
       return { conectado: true, importadas: 0 };
     }
+  }
+
+  // ── Campos propios del formulario ─────────────────────────────────────
+
+  /** Campos definidos, en orden. Sin la tabla (migración pendiente) → []. */
+  async camposFormulario(incluirInactivos = false) {
+    let q = this.supabase
+      .getClient()
+      .from('actividad_campos')
+      .select('*')
+      .order('orden', { ascending: true })
+      .order('id', { ascending: true });
+    if (!incluirInactivos) q = q.eq('activo', true);
+    const { data, error } = await q;
+    if (error) return [];
+    return data || [];
+  }
+
+  private async exigirAdmin(user: Usuario) {
+    const { rol } = await this.datosPerfil(user);
+    if (!this.esAdmin(rol)) {
+      throw new ForbiddenException('Solo un administrador puede cambiar los campos del formulario.');
+    }
+  }
+
+  private errorCampos(error: any): never {
+    const msg = String(error?.message || '');
+    if (/actividad_campos/i.test(msg) && /(schema cache|does not exist|not find)/i.test(msg)) {
+      throw new BadRequestException(MIGRACION_CAMPOS);
+    }
+    throw new BadRequestException(msg || 'No se pudo guardar el campo.');
+  }
+
+  private datosDeCampo(body: any) {
+    const etiqueta = String(body?.etiqueta || '').trim().slice(0, 80);
+    if (!etiqueta) throw new BadRequestException('El campo necesita un nombre.');
+    const tipo = String(body?.tipo || 'texto').trim();
+    if (!TIPOS_CAMPO.includes(tipo)) throw new BadRequestException('Tipo de campo no válido.');
+    let opciones: string[] | null = null;
+    if (tipo === 'opciones') {
+      opciones = [
+        ...new Set<string>(
+          (Array.isArray(body?.opciones) ? body.opciones : [])
+            .map((o: any) => String(o || '').trim().slice(0, 80))
+            .filter(Boolean),
+        ),
+      ];
+      if (opciones.length < 2) {
+        throw new BadRequestException('Una lista de opciones necesita al menos dos opciones.');
+      }
+    }
+    return {
+      etiqueta,
+      tipo,
+      opciones,
+      obligatorio: body?.obligatorio === true,
+      activo: body?.activo !== false,
+      ayuda: String(body?.ayuda || '').trim().slice(0, 200) || null,
+    };
+  }
+
+  async crearCampo(user: Usuario, body: any) {
+    await this.exigirAdmin(user);
+    const client = this.supabase.getClient();
+    const datos = this.datosDeCampo(body);
+
+    const { data: existentes, error: eSel } = await client.from('actividad_campos').select('clave, orden');
+    if (eSel) this.errorCampos(eSel);
+    const usadas = new Set((existentes || []).map((x: any) => String(x.clave)));
+    // La clave es el nombre con que se guarda el valor en cada actividad: no
+    // puede repetirse, o dos campos escribirían sobre el mismo dato.
+    const base = claveDesdeEtiqueta(datos.etiqueta);
+    let clave = base;
+    for (let i = 2; usadas.has(clave); i++) clave = `${base}_${i}`;
+    const orden = (existentes || []).reduce((m: number, x: any) => Math.max(m, Number(x.orden) || 0), 0) + 1;
+
+    const { data, error } = await client
+      .from('actividad_campos')
+      .insert({ ...datos, clave, orden })
+      .select()
+      .single();
+    if (error) this.errorCampos(error);
+    return data;
+  }
+
+  async actualizarCampo(user: Usuario, id: number, body: any) {
+    await this.exigirAdmin(user);
+    // La clave no se toca: cambiarla dejaría huérfanos los valores ya guardados.
+    const datos = this.datosDeCampo(body);
+    const { data, error } = await this.supabase
+      .getClient()
+      .from('actividad_campos')
+      .update({ ...datos, updated_at: new Date().toISOString() })
+      .eq('id', id)
+      .select()
+      .maybeSingle();
+    if (error) this.errorCampos(error);
+    if (!data) throw new NotFoundException('Campo no encontrado.');
+    return data;
+  }
+
+  /** Reordena: `ids` en el orden en que deben aparecer en el formulario. */
+  async ordenarCampos(user: Usuario, ids: any) {
+    await this.exigirAdmin(user);
+    const lista = (Array.isArray(ids) ? ids : []).map((x) => Number(x)).filter((x) => Number.isFinite(x));
+    const client = this.supabase.getClient();
+    for (let i = 0; i < lista.length; i++) {
+      const { error } = await client.from('actividad_campos').update({ orden: i + 1 }).eq('id', lista[i]);
+      if (error) this.errorCampos(error);
+    }
+    return { ok: true };
+  }
+
+  /* Borra la DEFINICIÓN. Los valores ya guardados en las actividades no se
+     tocan (quedan en campos_extra), solo dejan de mostrarse. Para ocultar un
+     campo sin perder la opción de volver a mostrarlo, se desactiva. */
+  async eliminarCampo(user: Usuario, id: number) {
+    await this.exigirAdmin(user);
+    const { error } = await this.supabase.getClient().from('actividad_campos').delete().eq('id', id);
+    if (error) this.errorCampos(error);
+    return { ok: true };
   }
 
   // Usuarios con actividades (para el filtro del admin).

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import Select from "react-select";
 import CreatableSelect from "react-select/creatable";
@@ -9,14 +9,46 @@ import useAuth from "../hooks/useAuth";
 import Toast from "../components/Toast";
 import BotonLimpiarFiltros from "../components/BotonLimpiarFiltros";
 import ConfirmModal from "../components/ConfirmModal";
+import DropdownSelect from "../components/ui/DropdownSelect";
 import {
   ChevronLeft, ChevronRight, Plus, X, Trash2, Clock, User, Filter,
   CalendarDays, CalendarRange, CalendarClock, ListChecks, Check, Paperclip, FileText,
   Users, Tag, FileSignature, Video,
   ClipboardCheck, AlertCircle, CalendarCheck, Bell,
+  SlidersHorizontal, ArrowUp, ArrowDown, Pencil,
 } from "lucide-react";
 
 const ACTIVIDADES_BUCKET = "chat-adjuntos";
+
+/* ── Campos propios del formulario (2026-10-01) ───────────────────────────
+   Los campos de una actividad estaban fijos en el código. Ahora
+   administración define campos extra (texto, número, fecha, lista, sí/no) que
+   aparecen en el formulario y en el detalle. Van por contexto porque los usan
+   el modal y las filas de las vistas, varios niveles más abajo. */
+const CamposContext = createContext([]);
+
+const TIPOS_CAMPO = [
+  { value: "texto", label: "Texto corto", detalle: "Una línea" },
+  { value: "texto_largo", label: "Texto largo", detalle: "Varias líneas" },
+  { value: "numero", label: "Número" },
+  { value: "fecha", label: "Fecha" },
+  { value: "opciones", label: "Lista de opciones", detalle: "Se elige una de una lista" },
+  { value: "si_no", label: "Sí / No" },
+];
+const TIPO_CAMPO_LABEL = Object.fromEntries(TIPOS_CAMPO.map((t) => [t.value, t.label]));
+
+// `false` y 0 son respuestas válidas: vacío es solo lo que no se respondió.
+const campoVacio = (v) => v === undefined || v === null || v === "";
+
+function valorCampoTexto(campo, valor) {
+  if (campoVacio(valor)) return "";
+  if (campo.tipo === "si_no") return valor === true || valor === "true" ? "Sí" : "No";
+  if (campo.tipo === "fecha") {
+    const m = String(valor).match(/^(\d{4})-(\d{2})-(\d{2})/);
+    return m ? `${m[3]}-${m[2]}-${m[1]}` : String(valor);
+  }
+  return String(valor);
+}
 
 // Motivo de la gestión. Se separa en generales y los propios de un Prospecto:
 // al elegir el tipo "Prospecto" el motivo se restringe a Mapeo / Visita
@@ -218,6 +250,16 @@ export default function BitacoraActividades() {
     setFiltroUsuario([]);
     setFiltroMotivo("");
   }
+
+  // Campos propios del formulario (los activos) y su administración.
+  const [campos, setCampos] = useState([]);
+  const [modalCampos, setModalCampos] = useState(false);
+  const cargarCampos = useCallback(() => {
+    api.get("/actividades/campos")
+      .then((r) => setCampos(Array.isArray(r) ? r : []))
+      .catch(() => {});
+  }, []);
+  useEffect(() => { cargarCampos(); }, [cargarCampos]);
 
   // Modal de actividad
   const [modal, setModal] = useState(null); // { ...actividad } o { fecha } para nueva
@@ -576,6 +618,7 @@ export default function BitacoraActividades() {
   const hoyDate = new Date(); hoyDate.setHours(0, 0, 0, 0);
 
   return (
+    <CamposContext.Provider value={campos}>
     <div className="page">
       {toast && <Toast type={toast.type} message={toast.message} onClose={() => setToast(null)} />}
 
@@ -595,9 +638,21 @@ export default function BitacoraActividades() {
           <h1 className="page-title">Bitácora de actividades</h1>
           <p className="page-subtitle">Gestiones y actividades por cliente · {verTodas ? "vista global" : "tu agenda"}</p>
         </div>
-        <button type="button" className="btn btn-primary" onClick={() => abrirNueva()}>
-          <Plus size={15} /> Nueva actividad
-        </button>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {esAdmin && (
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => setModalCampos(true)}
+              title="Agregar o quitar campos del formulario de actividad"
+            >
+              <SlidersHorizontal size={15} /> Campos del formulario
+            </button>
+          )}
+          <button type="button" className="btn btn-primary" onClick={() => abrirNueva()}>
+            <Plus size={15} /> Nueva actividad
+          </button>
+        </div>
       </div>
 
       {/* KPIs superiores (datos reales) */}
@@ -768,7 +823,16 @@ export default function BitacoraActividades() {
           onCrearCliente={crearClienteRapido}
         />
       )}
+
+      {modalCampos && (
+        <ModalCamposActividad
+          onCerrar={() => setModalCampos(false)}
+          onCambio={cargarCampos}
+          setToast={setToast}
+        />
+      )}
     </div>
+    </CamposContext.Provider>
   );
 }
 
@@ -1048,6 +1112,8 @@ function VistaAgenda({ actividades, onEditar, onToggle, esAdmin, mostrarUsuario 
 function FilaActividad({ a, onEditar, onToggle, mostrarUsuario }) {
   const color = colorTipo(a.tipo);
   const hecha = a.estado === "realizada";
+  const campos = useContext(CamposContext);
+  const extras = campos.filter((c) => !campoVacio(a.campos_extra?.[c.clave]));
   return (
     <div style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "10px 12px", border: "1px solid var(--border)", borderRadius: 10, borderLeft: `4px solid ${color}`, background: "var(--surface)" }}>
       <button
@@ -1093,6 +1159,16 @@ function FilaActividad({ a, onEditar, onToggle, mostrarUsuario }) {
           </div>
         )}
         {a.comentario && <div style={{ fontSize: 12.5, color: "var(--text-soft, #64748b)", marginTop: 4, whiteSpace: "pre-wrap" }}>{a.comentario}</div>}
+        {extras.length > 0 && (
+          <div style={{ marginTop: 5, display: "flex", flexDirection: "column", gap: 2 }}>
+            {extras.map((c) => (
+              <div key={c.clave} style={{ fontSize: 12.5, color: "var(--text)", overflowWrap: "anywhere" }}>
+                <span style={{ color: "var(--text-muted)" }}>{c.etiqueta}:</span>{" "}
+                <span style={{ whiteSpace: "pre-wrap" }}>{valorCampoTexto(c, a.campos_extra[c.clave])}</span>
+              </div>
+            ))}
+          </div>
+        )}
         {Array.isArray(a.adjuntos) && a.adjuntos.length > 0 && (
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 }} onClick={(e) => e.stopPropagation()}>
             {a.adjuntos.map((ad, i) => {
@@ -1115,6 +1191,282 @@ function FilaActividad({ a, onEditar, onToggle, mostrarUsuario }) {
             Registrada por {a.user_nombre || a.user_email}
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+/* ── Un campo propio dentro del formulario ────────────────────────────── */
+function CampoExtra({ campo, valor, onChange }) {
+  const etiqueta = (
+    <label className="field-label">
+      {campo.etiqueta} {campo.obligatorio && <span style={{ color: "var(--danger)" }}>*</span>}
+    </label>
+  );
+  let control;
+  if (campo.tipo === "texto_largo") {
+    control = (
+      <textarea className="input" rows={2} value={valor ?? ""} onChange={(e) => onChange(e.target.value)} style={{ resize: "vertical", fontFamily: "inherit", height: "auto", paddingTop: 8, paddingBottom: 8 }} />
+    );
+  } else if (campo.tipo === "numero") {
+    control = (
+      <input
+        type="number"
+        className="input"
+        value={valor ?? ""}
+        onChange={(e) => onChange(e.target.value === "" ? "" : Number(e.target.value))}
+      />
+    );
+  } else if (campo.tipo === "fecha") {
+    control = <input type="date" className="input" value={valor ?? ""} onChange={(e) => onChange(e.target.value)} />;
+  } else if (campo.tipo === "opciones") {
+    const opciones = (Array.isArray(campo.opciones) ? campo.opciones : []).map((o) => ({ value: o, label: o }));
+    // Un valor guardado que ya no está en la lista se sigue mostrando.
+    if (!campoVacio(valor) && !opciones.some((o) => o.value === valor)) opciones.push({ value: valor, label: String(valor) });
+    control = (
+      <Combo value={valor ?? ""} onChange={(v) => onChange(v || "")} isSearchable={false} isClearable placeholder="Selecciona…" options={opciones} />
+    );
+  } else if (campo.tipo === "si_no") {
+    const actual = valor === true || valor === "true" ? true : valor === false || valor === "false" ? false : null;
+    control = (
+      <div className="segmentado" style={{ height: 36 }}>
+        {[[true, "Sí"], [false, "No"]].map(([v, texto]) => (
+          <button
+            key={texto}
+            type="button"
+            className={actual === v ? "activo" : undefined}
+            // Volver a tocar la respuesta marcada la borra.
+            onClick={() => onChange(actual === v ? "" : v)}
+          >
+            {texto}
+          </button>
+        ))}
+      </div>
+    );
+  } else {
+    control = <input type="text" className="input" value={valor ?? ""} onChange={(e) => onChange(e.target.value)} />;
+  }
+  return (
+    <div className="field">
+      {etiqueta}
+      {control}
+      {campo.ayuda && <div className="field-hint">{campo.ayuda}</div>}
+    </div>
+  );
+}
+
+/* ── Administración de los campos propios (solo admin) ────────────────── */
+const CAMPO_NUEVO = { id: null, etiqueta: "", tipo: "texto", opcionesTexto: "", obligatorio: false, ayuda: "" };
+
+function ModalCamposActividad({ onCerrar, onCambio, setToast }) {
+  const [lista, setLista] = useState(null);
+  const [form, setForm] = useState(CAMPO_NUEVO);
+  const [guardando, setGuardando] = useState(false);
+  const [error, setError] = useState("");
+  const [aEliminar, setAEliminar] = useState(null);
+
+  const cargar = useCallback(async () => {
+    try {
+      const r = await api.get("/actividades/campos?todos=1");
+      setLista(Array.isArray(r) ? r : []);
+    } catch {
+      setLista([]);
+    }
+  }, []);
+  useEffect(() => { cargar(); }, [cargar]);
+
+  const refrescar = async () => { await cargar(); onCambio?.(); };
+
+  function editar(c) {
+    setError("");
+    setForm({
+      id: c.id,
+      etiqueta: c.etiqueta || "",
+      tipo: c.tipo || "texto",
+      opcionesTexto: (Array.isArray(c.opciones) ? c.opciones : []).join("\n"),
+      obligatorio: Boolean(c.obligatorio),
+      ayuda: c.ayuda || "",
+      activo: c.activo !== false,
+    });
+  }
+
+  async function guardar(e) {
+    e.preventDefault();
+    if (guardando) return;
+    const opciones = form.opcionesTexto.split("\n").map((o) => o.trim()).filter(Boolean);
+    if (!form.etiqueta.trim()) { setError("El campo necesita un nombre."); return; }
+    if (form.tipo === "opciones" && opciones.length < 2) { setError("Escribe al menos dos opciones, una por línea."); return; }
+    setError("");
+    setGuardando(true);
+    const payload = {
+      etiqueta: form.etiqueta.trim(),
+      tipo: form.tipo,
+      opciones,
+      obligatorio: form.obligatorio,
+      ayuda: form.ayuda.trim(),
+      activo: form.id ? form.activo !== false : true,
+    };
+    try {
+      if (form.id) await api.put(`/actividades/campos/${form.id}`, payload);
+      else await api.post("/actividades/campos", payload);
+      setForm(CAMPO_NUEVO);
+      await refrescar();
+      setToast({ type: "success", message: form.id ? "Campo actualizado." : "Campo agregado al formulario." });
+    } catch (err) {
+      setError(err?.message || "No se pudo guardar el campo.");
+    } finally {
+      setGuardando(false);
+    }
+  }
+
+  async function alternarActivo(c) {
+    try {
+      await api.put(`/actividades/campos/${c.id}`, { ...c, activo: c.activo === false });
+      await refrescar();
+    } catch (err) {
+      setToast({ type: "error", message: err?.message || "No se pudo cambiar el campo." });
+    }
+  }
+
+  async function mover(indice, delta) {
+    const destino = indice + delta;
+    if (!lista || destino < 0 || destino >= lista.length) return;
+    const nueva = [...lista];
+    [nueva[indice], nueva[destino]] = [nueva[destino], nueva[indice]];
+    setLista(nueva); // optimista
+    try {
+      await api.post("/actividades/campos/orden", { ids: nueva.map((c) => c.id) });
+      onCambio?.();
+    } catch (err) {
+      setToast({ type: "error", message: err?.message || "No se pudo reordenar." });
+      cargar();
+    }
+  }
+
+  async function eliminar() {
+    const c = aEliminar;
+    setAEliminar(null);
+    if (!c) return;
+    try {
+      await api.delete(`/actividades/campos/${c.id}`);
+      if (form.id === c.id) setForm(CAMPO_NUEVO);
+      await refrescar();
+      setToast({ type: "success", message: "Campo eliminado." });
+    } catch (err) {
+      setToast({ type: "error", message: err?.message || "No se pudo eliminar el campo." });
+    }
+  }
+
+  const btnIcono = { background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", padding: 3, display: "inline-flex" };
+
+  return (
+    <div
+      onClick={(e) => { if (e.target === e.currentTarget) onCerrar(); }}
+      style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,.55)", zIndex: 11000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+    >
+      <ConfirmModal
+        open={aEliminar !== null}
+        title="¿Eliminar este campo?"
+        message={`«${aEliminar?.etiqueta || ""}» dejará de aparecer en el formulario y en las actividades donde se llenó. Si solo quieres ocultarlo por ahora, desactívalo.`}
+        confirmText="Eliminar"
+        confirmTone="danger"
+        onConfirm={eliminar}
+        onCancel={() => setAEliminar(null)}
+      />
+      <div style={{ width: 560, maxWidth: "100%", maxHeight: "88vh", overflow: "auto", background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", boxShadow: "var(--shadow-lg)" }}>
+        <div style={{ padding: "12px 18px", borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center", position: "sticky", top: 0, background: "var(--surface)", zIndex: 1 }}>
+          <strong style={{ fontSize: 15 }}>Campos del formulario de actividad</strong>
+          <button type="button" onClick={onCerrar} className="btn btn-ghost" style={{ padding: 6 }}><X size={18} /></button>
+        </div>
+
+        <div style={{ padding: "14px 18px", display: "flex", flexDirection: "column", gap: 14 }}>
+          <div style={{ fontSize: 12.5, color: "var(--text-muted)", lineHeight: 1.5 }}>
+            Estos campos se suman a los de siempre (cliente, título, acción, fecha…) y aparecen para todos los usuarios, en el orden de esta lista.
+          </div>
+
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {lista === null && <div style={{ fontSize: 13, color: "var(--text-muted)" }}>Cargando…</div>}
+            {lista !== null && lista.length === 0 && (
+              <div style={{ fontSize: 13, color: "var(--text-muted)", border: "1px dashed var(--border)", borderRadius: 8, padding: "14px 12px", textAlign: "center" }}>
+                Todavía no hay campos propios. Agrega el primero acá abajo.
+              </div>
+            )}
+            {(lista || []).map((c, i) => (
+              <div
+                key={c.id}
+                style={{
+                  display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap",
+                  border: `1px solid ${form.id === c.id ? "var(--primary)" : "var(--border)"}`,
+                  borderRadius: 8, padding: "7px 10px", background: c.activo === false ? "var(--bg)" : "var(--surface)",
+                  opacity: c.activo === false ? 0.7 : 1,
+                }}
+              >
+                <span style={{ display: "inline-flex", flexDirection: "column" }}>
+                  <button type="button" style={{ ...btnIcono, padding: 0 }} disabled={i === 0} onClick={() => mover(i, -1)} title="Subir"><ArrowUp size={13} /></button>
+                  <button type="button" style={{ ...btnIcono, padding: 0 }} disabled={i === lista.length - 1} onClick={() => mover(i, 1)} title="Bajar"><ArrowDown size={13} /></button>
+                </span>
+                <span style={{ flex: "1 1 160px", minWidth: 0 }}>
+                  <span style={{ display: "block", fontSize: 13.5, fontWeight: 600, color: "var(--text)", overflowWrap: "anywhere" }}>
+                    {c.etiqueta}{c.obligatorio && <span style={{ color: "var(--danger)" }}> *</span>}
+                  </span>
+                  <span style={{ display: "block", fontSize: 11.5, color: "var(--text-muted)" }}>
+                    {TIPO_CAMPO_LABEL[c.tipo] || c.tipo}
+                    {c.tipo === "opciones" && Array.isArray(c.opciones) ? ` · ${c.opciones.length} opciones` : ""}
+                    {c.activo === false ? " · desactivado" : ""}
+                  </span>
+                </span>
+                <span style={{ display: "inline-flex", gap: 6, flexWrap: "wrap" }}>
+                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => editar(c)} style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                    <Pencil size={12} /> Editar
+                  </button>
+                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => alternarActivo(c)}>
+                    {c.activo === false ? "Activar" : "Desactivar"}
+                  </button>
+                  <button type="button" style={{ ...btnIcono, color: "#dc2626" }} onClick={() => setAEliminar(c)} title="Eliminar"><Trash2 size={14} /></button>
+                </span>
+              </div>
+            ))}
+          </div>
+
+          <form onSubmit={guardar} style={{ border: "1px solid var(--border)", borderRadius: 10, padding: 12, background: "var(--bg)", display: "flex", flexDirection: "column", gap: 10 }}>
+            <strong style={{ fontSize: 13 }}>{form.id ? "Editar campo" : "Agregar campo"}</strong>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              <div className="field" style={{ flex: "2 1 200px", minWidth: 0 }}>
+                <label className="field-label">Nombre del campo</label>
+                <input className="input" value={form.etiqueta} onChange={(e) => setForm((f) => ({ ...f, etiqueta: e.target.value }))} placeholder="Ej: Resultado de la visita" maxLength={80} />
+              </div>
+              <div className="field" style={{ flex: "1 1 170px", minWidth: 0 }}>
+                <label className="field-label">Tipo</label>
+                <DropdownSelect value={form.tipo} onChange={(v) => setForm((f) => ({ ...f, tipo: v }))} options={TIPOS_CAMPO} minWidth={200} />
+              </div>
+            </div>
+            {form.tipo === "opciones" && (
+              <div className="field">
+                <label className="field-label">Opciones (una por línea)</label>
+                <textarea className="input" rows={4} value={form.opcionesTexto} onChange={(e) => setForm((f) => ({ ...f, opcionesTexto: e.target.value }))} placeholder={"Interesado\nPidió cotización\nNo interesado"} style={{ resize: "vertical", fontFamily: "inherit", height: "auto", paddingTop: 8, paddingBottom: 8 }} />
+              </div>
+            )}
+            <div className="field">
+              <label className="field-label">Texto de ayuda <span style={{ color: "var(--text-muted)", fontWeight: 400 }}>(opcional)</span></label>
+              <input className="input" value={form.ayuda} onChange={(e) => setForm((f) => ({ ...f, ayuda: e.target.value }))} placeholder="Se muestra bajo el campo" maxLength={200} />
+            </div>
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--text-soft)", fontWeight: 500, cursor: "pointer" }}>
+              <input type="checkbox" checked={form.obligatorio} onChange={(e) => setForm((f) => ({ ...f, obligatorio: e.target.checked }))} />
+              Obligatorio: no deja guardar la actividad sin llenarlo
+            </label>
+            {error && <div style={{ color: "var(--danger)", fontSize: 12.5, fontWeight: 600 }}>{error}</div>}
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button type="submit" className="btn btn-primary btn-sm" disabled={guardando}>
+                {guardando ? "Guardando…" : form.id ? "Guardar cambios" : "Agregar campo"}
+              </button>
+              {form.id && (
+                <button type="button" className="btn btn-secondary btn-sm" onClick={() => { setForm(CAMPO_NUEVO); setError(""); }}>
+                  Cancelar edición
+                </button>
+              )}
+            </div>
+          </form>
+        </div>
       </div>
     </div>
   );
@@ -1193,6 +1545,10 @@ function ModalActividad({ inicial, clienteOptions, cotizacionOptions, perfiles, 
   const [comentario, setComentario] = useState(inicial.comentario || "");
   const [estado, setEstado] = useState(inicial.estado || "pendiente");
   const [adjuntos, setAdjuntos] = useState(Array.isArray(inicial.adjuntos) ? inicial.adjuntos : []);
+  // Campos propios. Se parte de lo guardado completo: así el valor de un campo
+  // que hoy está desactivado no se pierde al guardar.
+  const campos = useContext(CamposContext);
+  const [extra, setExtra] = useState(() => ({ ...(inicial.campos_extra || {}) }));
   const [subiendo, setSubiendo] = useState(false);
   const [errorAdj, setErrorAdj] = useState("");
   const [guardando, setGuardando] = useState(false);
@@ -1278,6 +1634,8 @@ function ModalActividad({ inicial, clienteOptions, cotizacionOptions, perfiles, 
     // creía haber guardado (típico en actividades automáticas sin cliente).
     if (!titulo.trim()) { setErrorForm("Falta el título de la actividad."); return; }
     if (!clienteSel && !clienteOpcional) { setErrorForm("Selecciona el cliente para poder guardar."); return; }
+    const falta = campos.find((c) => c.obligatorio && campoVacio(extra[c.clave]));
+    if (falta) { setErrorForm(`Falta completar «${falta.etiqueta}».`); return; }
     setErrorForm("");
     setGuardando(true);
     const form = {
@@ -1298,6 +1656,11 @@ function ModalActividad({ inicial, clienteOptions, cotizacionOptions, perfiles, 
       estado,
       adjuntos,
     };
+    // Solo viaja si hay campos definidos o la actividad ya traía valores: sin
+    // eso, guardar no toca `campos_extra`.
+    if (campos.length > 0 || inicial.campos_extra) {
+      form.campos_extra = Object.fromEntries(Object.entries(extra).filter(([, v]) => !campoVacio(v)));
+    }
     const res = await onSave(form);
     setGuardando(false);
     if (res?._meet_generado && res?.meet_url) setMeetCreado(res.meet_url);
@@ -1532,6 +1895,15 @@ function ModalActividad({ inicial, clienteOptions, cotizacionOptions, perfiles, 
             <label className="field-label">Comentario</label>
             <textarea className="input" value={comentario} onChange={(e) => setComentario(e.target.value)} rows={2} placeholder="Detalle de la gestión, acuerdos, próximos pasos…" style={{ resize: "vertical", fontFamily: "inherit", height: "auto", paddingTop: 8, paddingBottom: 8 }} />
           </div>
+
+          {campos.map((c) => (
+            <CampoExtra
+              key={c.clave}
+              campo={c}
+              valor={extra[c.clave]}
+              onChange={(v) => setExtra((prev) => ({ ...prev, [c.clave]: v }))}
+            />
+          ))}
 
           <div className="field">
             <label className="field-label">Adjuntos (archivos / fotos)</label>
