@@ -2369,6 +2369,10 @@ export class LicitacionesService {
       if (msg.includes('n_seguimiento')) { delete bodyWithout.n_seguimiento; removed = true; }
       if (msg.includes('url')) { delete bodyWithout.url; removed = true; }
       if (msg.includes('guias_ids')) { delete bodyWithout.guias_ids; removed = true; }
+      // Columnas de la migración 20261001 (comisión del medio de pago y
+      // cuotas): si aún no está aplicada, el pago se registra igual sin ellas.
+      if (msg.includes('comision_pago')) { delete bodyWithout.comision_pago; removed = true; }
+      if (msg.includes('cuotas_total')) { delete bodyWithout.cuotas_total; removed = true; }
       if (removed) {
         const { data: d2, error: e2 } = await this.supabase.getClient()
           .from('licitacion_documentos')
@@ -2954,6 +2958,8 @@ export class LicitacionesService {
         'observacion_despacho',
         'observacion_actualizada_at',
         'observacion_actualizada_por',
+        'comision_pago',
+        'cuotas_total',
       ];
       const aQuitar = opcionales.filter((c) => msg.includes(c));
       if (aQuitar.length) {

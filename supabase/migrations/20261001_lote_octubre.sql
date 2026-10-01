@@ -68,3 +68,18 @@ create table if not exists public.campanas_margen (
 
 create index if not exists campanas_margen_vigencia_idx
   on public.campanas_margen (desde, hasta) where activa;
+
+-- ───────────────────────────────────────────────────────────────────────────
+-- 4. Pagos con tarjeta: comisión del medio y cuotas
+--    · `comision_pago` va en el COMPROBANTE, en bruto: lo que Transbank/Getnet
+--      descuenta antes de depositar. No se recibió, pero tampoco es deuda del
+--      cliente, así que salda la factura igual (factura 772: $12.079, se
+--      recibieron $11.975, comisión $104).
+--    · `cuotas_total` va en la FACTURA: en cuántas cuotas se pagó. Cada abono
+--      que deposita el medio de pago es un comprobante; "3 de 6" sale de
+--      contar los abonos contra este número.
+--    El medio (transbank / getnet) se guarda en `forma_pago`, que ya existe.
+-- ───────────────────────────────────────────────────────────────────────────
+alter table public.licitacion_documentos
+  add column if not exists comision_pago numeric,
+  add column if not exists cuotas_total  smallint;
