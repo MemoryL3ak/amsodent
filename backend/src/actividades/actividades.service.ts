@@ -82,7 +82,16 @@ export class ActividadesService {
     // Visibilidad: admin y jefe de ventas ven todo (y filtran por usuario); el
     // resto solo ve sus propias actividades.
     if (this.puedeVerTodas(rol)) {
-      if (filtros.email) query = query.ilike('user_email', filtros.email);
+      /* (2026-10-01) `email` acepta varios correos separados por coma: la
+         bitacora dejo de filtrar por un usuario a la vez. Se usa `in` y no
+         `ilike` cuando son varios, asi que los correos se comparan en
+         minuscula — que es como se guardan al crear la actividad. */
+      const correos = String(filtros.email || '')
+        .split(',')
+        .map((e) => e.trim().toLowerCase())
+        .filter(Boolean);
+      if (correos.length === 1) query = query.ilike('user_email', correos[0]);
+      else if (correos.length > 1) query = query.in('user_email', correos);
     } else {
       query = query.ilike('user_email', email);
     }

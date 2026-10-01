@@ -147,9 +147,14 @@ export class BsaleService {
   }
 
   /* Venta total emitida en Bsale en un rango de fechas (comparativo del
-     Panel de Indicadores): NETO de facturas (SII 33/34) + boletas (39/41)
-     menos notas de crédito (61). Fechas YYYY-MM-DD; los documentos anulados
-     (state=1) no cuentan. */
+     Panel de Indicadores): facturas (SII 33/34) + boletas (39/41) menos notas
+     de crédito (61). Fechas YYYY-MM-DD; los documentos anulados (state=1) no
+     cuentan.
+
+     (2026-10-01) Se devuelve neto Y BRUTO. El bruto sale de `totalAmount`, que
+     es lo que Bsale muestra en pantalla y lo que la gente tiene en la cabeza
+     al comparar: un comparativo contra el neto obligaba a hacer la cuenta
+     mental y daba la impresion de que las cifras no cuadraban. */
   async ventas(desde: string, hasta: string) {
     if (!this.token) return { disponible: false, motivo: 'Falta BSALE_ACCESS_TOKEN en el backend.' };
     const d1 = Date.parse(`${desde}T00:00:00Z`) / 1000;
@@ -160,16 +165,20 @@ export class BsaleService {
     const rango = `emissiondaterange=[${Math.floor(d1)},${Math.floor(d2)}]`;
     const sumar = async (codes: number[]) => {
       let neto = 0;
+      let bruto = 0;
       let docs = 0;
       for (const code of codes) {
         const filas = await this.paginado('/documents.json', `&codesii=${code}&${rango}`);
         for (const f of filas) {
           if (Number(f?.state) === 1) continue; // anulado
           neto += Number(f?.netAmount || 0);
+          // Si el documento no trae totalAmount (algunos exentos), el bruto es
+          // el neto mas el IVA que Bsale si informa.
+          bruto += Number(f?.totalAmount || 0) || Number(f?.netAmount || 0) + Number(f?.taxAmount || 0);
           docs += 1;
         }
       }
-      return { neto, docs };
+      return { neto, bruto, docs };
     };
     const ventas = await sumar([33, 34, 39, 41]); // facturas afectas/exentas + boletas
     const nc = await sumar([61]); // notas de crédito
@@ -180,6 +189,9 @@ export class BsaleService {
       ventas_neto: Math.round(ventas.neto),
       notas_credito_neto: Math.round(nc.neto),
       neto: Math.round(ventas.neto - nc.neto),
+      ventas_bruto: Math.round(ventas.bruto),
+      notas_credito_bruto: Math.round(nc.bruto),
+      bruto: Math.round(ventas.bruto - nc.bruto),
       documentos: ventas.docs,
       notas_credito: nc.docs,
     };

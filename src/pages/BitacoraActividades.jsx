@@ -74,6 +74,27 @@ const comboTheme = (theme) => ({
     primary75: "#7fd4d6",
   },
 });
+/* Mismo aspecto que el resto de los filtros, pero multi: las fichas de los
+   usuarios elegidos y el menu por encima del resto. */
+const ESTILOS_MULTI = {
+  control: (base, state) => ({
+    ...base,
+    minHeight: 36,
+    borderColor: state.isFocused ? "var(--primary)" : "var(--border-strong)",
+    boxShadow: state.isFocused ? "0 0 0 3px rgba(40,174,177,.12)" : "none",
+    borderRadius: "var(--radius)",
+    fontSize: 13.5,
+    backgroundColor: "var(--surface)",
+    "&:hover": { borderColor: "var(--primary)" },
+  }),
+  valueContainer: (b) => ({ ...b, padding: "2px 8px" }),
+  indicatorSeparator: (b) => ({ ...b, display: "none" }),
+  multiValue: (b) => ({ ...b, background: "var(--primary-light)", borderRadius: 6 }),
+  multiValueLabel: (b) => ({ ...b, fontSize: 12, color: "var(--primary-dark, #0f766e)" }),
+  menuPortal: (b) => ({ ...b, zIndex: 12000 }),
+  menu: (b) => ({ ...b, fontSize: 13 }),
+};
+
 const comboStyles = {
   control: (base, state) => ({
     ...base,
@@ -181,17 +202,20 @@ export default function BitacoraActividades() {
   const [filtroTipo, setFiltroTipo] = useState("");
   const [filtroCliente, setFiltroCliente] = useState("");
   const [filtroTipoCliente, setFiltroTipoCliente] = useState(""); // filtra el selector de clientes por tipo
-  const [filtroUsuario, setFiltroUsuario] = useState("");
+  /* (2026-10-01) Varios usuarios a la vez: antes solo se podía mirar a uno,
+     y para comparar el trabajo de un equipo había que ir cambiando el filtro
+     de a uno y sumar a mano. */
+  const [filtroUsuario, setFiltroUsuario] = useState([]);
   const [filtroMotivo, setFiltroMotivo] = useState("");
   /* (2026-09-24) Volver a ver todo sin ir borrando filtro por filtro. Va
      DESPUÉS de los useState: declarado antes tiraba "Cannot access before
      initialization" al renderizar. */
-  const hayFiltros = filtroTipo !== "" || filtroCliente !== "" || filtroTipoCliente !== "" || filtroUsuario !== "" || filtroMotivo !== "";
+  const hayFiltros = filtroTipo !== "" || filtroCliente !== "" || filtroTipoCliente !== "" || filtroUsuario.length > 0 || filtroMotivo !== "";
   function limpiarFiltros() {
     setFiltroTipo("");
     setFiltroCliente("");
     setFiltroTipoCliente("");
-    setFiltroUsuario("");
+    setFiltroUsuario([]);
     setFiltroMotivo("");
   }
 
@@ -218,7 +242,7 @@ export default function BitacoraActividades() {
       params.set("hasta", rango.hasta);
       if (filtroTipo) params.set("tipo", filtroTipo);
       if (filtroCliente) params.set("cliente_id", filtroCliente);
-      if (verTodas && filtroUsuario) params.set("email", filtroUsuario);
+      if (verTodas && filtroUsuario.length) params.set("email", filtroUsuario.join(","));
       const data = await api.get(`/actividades?${params.toString()}`);
       setActividades(Array.isArray(data) ? data : []);
     } catch (e) {
@@ -252,7 +276,7 @@ export default function BitacoraActividades() {
       const params = new URLSearchParams();
       params.set("desde", ymd(addDays(h, -60)));
       params.set("hasta", ymd(addDays(h, 60)));
-      if (verTodas && filtroUsuario) params.set("email", filtroUsuario);
+      if (verTodas && filtroUsuario.length) params.set("email", filtroUsuario.join(","));
       const data = await api.get(`/actividades?${params.toString()}`);
       setMetricas(Array.isArray(data) ? data : []);
     } catch {
@@ -294,7 +318,7 @@ export default function BitacoraActividades() {
   }, [verTodas]);
 
   // En vista global sin filtro de un único usuario, diferenciamos por color/usuario.
-  const mostrarUsuario = verTodas && !filtroUsuario;
+  const mostrarUsuario = verTodas && filtroUsuario.length !== 1;
 
   const clienteOptions = useMemo(
     () => clientes
@@ -664,11 +688,18 @@ export default function BitacoraActividades() {
         {verTodas && (
           <div className="filter-field" style={{ minWidth: 220 }}>
             <label className="filter-label"><User size={11} style={{ marginRight: 4 }} />Usuario</label>
-            <Combo
-              value={filtroUsuario}
-              onChange={setFiltroUsuario}
+            <Select
+              isMulti
+              isClearable
               placeholder="Todos"
-              options={[{ value: "", label: "Todos" }, ...usuarios.map((u) => ({ value: u.email, label: u.nombre }))]}
+              noOptionsMessage={() => "Sin usuarios"}
+              options={usuarios.map((u) => ({ value: u.email, label: u.nombre }))}
+              value={usuarios
+                .filter((u) => filtroUsuario.includes(u.email))
+                .map((u) => ({ value: u.email, label: u.nombre }))}
+              onChange={(vals) => setFiltroUsuario((vals || []).map((v) => v.value))}
+              styles={ESTILOS_MULTI}
+              menuPortalTarget={document.body}
             />
           </div>
         )}
