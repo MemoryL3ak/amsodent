@@ -239,8 +239,11 @@ y cruza las referencias de la guía contra el N° de la OC de la cotización. El
 ícono de camión junto a cada OC busca en Bsale TODAS las guías que la
 referencian (incluidas las no registradas en el sistema) y muestra el monto
 despachado y CUÁNTO FALTA POR DESPACHAR = monto OC − despachado según Bsale.
-EMITIR FACTURA EN BSALE (solo administración y contabilidad): en Trazabilidad,
-una guía que todavía no tiene factura muestra el botón "Emitir factura". Abre
+EMITIR FACTURA EN BSALE (administración, contabilidad y jefe_ventas_especial).
+Hay dos entradas a lo mismo: el módulo FACTURACIÓN (/facturacion, menú
+Post-venta), que lista todas las guías por facturar (las más antiguas primero,
+con los días que llevan sin factura) y el historial de lo emitido; y, en
+Trazabilidad, el botón "Emitir factura" de cada guía sin factura. Abre
 un borrador armado desde la guía que ya existe en Bsale: mismo cliente, mismos
 productos y precios, con referencia a la orden de compra y a la guía. Se elige
 fecha de emisión, plazo de vencimiento y forma de pago (y se puede corregir el
@@ -248,7 +251,10 @@ N° de orden de compra), se marca la casilla de confirmación y se emite: la
 factura electrónica va al SII, su PDF queda guardado y aparece registrada en la
 cotización, enlazada a su guía. No vuelve a descontar stock. Solo se puede
 facturar desde una guía emitida en Bsale; una guía ya facturada (en el sistema
-o en Bsale) queda bloqueada. Una factura emitida solo se anula con nota de
+o en Bsale) queda bloqueada, y también si la guía de Bsale es de OTRO cliente
+(el número de guía está mal digitado en Trazabilidad: se corrige ahí). El
+número de guía es el que encabeza el campo; se puede dejar una nota después
+("709 - 2da entrega"). Una factura emitida solo se anula con nota de
 crédito, que se hace en Bsale. Si la ventana dice "Modo simulación", la emisión
 real no está activada y el botón solo muestra lo que se enviaría.
 

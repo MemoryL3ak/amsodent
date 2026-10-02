@@ -32,8 +32,12 @@ const aFecha = (iso) => (iso ? new Date(`${iso}T00:00:00`) : undefined);
 
 const etiqueta = { fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px", color: "var(--text-muted)", display: "block", marginBottom: 4 };
 
-export default function EmitirFacturaBsale({ licitacionId, guiaDocId, onCerrar, onEmitida }) {
-  const [seleccion, setSeleccion] = useState([Number(guiaDocId)]);
+// `guiaDocIds` (opcional) abre la ventana con varias guías ya elegidas: sirve
+// para retomar un intento que combinaba más de una.
+export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds, onCerrar, onEmitida }) {
+  const [seleccion, setSeleccion] = useState(() =>
+    (Array.isArray(guiaDocIds) && guiaDocIds.length ? guiaDocIds : [guiaDocId]).map(Number).sort((a, b) => a - b),
+  );
   const [borrador, setBorrador] = useState(null);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState("");
@@ -252,9 +256,11 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, onCerrar, 
                               onChange={() => alternarGuia(g.doc_id)}
                               disabled={enviando || (seleccion.includes(g.doc_id) && seleccion.length === 1)}
                             />
-                            <span>
+                            <span style={{ minWidth: 0, overflowWrap: "anywhere" }}>
                               Guía <b>{g.numero}</b>
                               <span style={{ color: "var(--text-muted)", fontSize: 12 }}> · {fechaCL(g.fecha)}</span>
+                              {/* Nota que alguien dejó junto al número ("NO FACTURAR HASTA…") */}
+                              {g.nota && <span style={{ display: "block", fontSize: 11.5, color: "#92400e" }}>«{g.nota}»</span>}
                             </span>
                           </label>
                         ))}

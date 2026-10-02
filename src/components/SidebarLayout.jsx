@@ -42,6 +42,7 @@ import {
   Wallet,
   KeyRound,
   Landmark,
+  Receipt,
   LayoutDashboard,
   Scale,
   FilePieChart,
@@ -233,6 +234,7 @@ export default function SidebarLayout() {
     puede("trazabilidad") && { to: "/trazabilidad",      icon: FileText,   label: "Trazabilidad" },
     puede("seguimiento_pagos") && { to: "/seguimiento-pagos", icon: CreditCard, label: "Seguimiento de Pagos" },
     puede("cobranza") && { to: "/cobranza", icon: Wallet, label: "Cobranza" },
+    puede("facturacion") && { to: "/facturacion", icon: Receipt, label: "Facturación" },
     puede("factoring") && { to: "/factoring", icon: Landmark, label: "Factoring" },
   ].filter(Boolean);
 

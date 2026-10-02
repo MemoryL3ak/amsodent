@@ -56,6 +56,7 @@ import Trazabilidad from "./pages/Trazabilidad";
 import SeguimientoPagos from "./pages/SeguimientoPagos";
 import Cobranza from "./pages/Cobranza";
 import Factoring from "./pages/Factoring";
+import Facturacion from "./pages/Facturacion";
 import BitacoraCotizaciones from "./pages/BitacoraCotizaciones";
 import Buzon from "./pages/Buzon";
 
@@ -232,6 +233,14 @@ export default function App() {
             element={
               <RequireModulo modulo="factoring">
                 <Factoring />
+              </RequireModulo>
+            }
+          />
+          <Route
+            path="facturacion"
+            element={
+              <RequireModulo modulo="facturacion">
+                <Facturacion />
               </RequireModulo>
             }
           />

@@ -72,6 +72,15 @@ export function plazoDias(condicionVenta: any): number {
 }
 
 export const soloDigitos = (v: any) => String(v ?? '').replace(/\D/g, '').replace(/^0+/, '');
+/* Folio de una guía a partir de lo que se digitó en el sistema. El campo trae
+   texto libre ("709 - 2da entrega", "GD-810", "838 - ENTREGADA, FACTURAR"):
+   juntar todos los dígitos daría OTRA guía ("7092"). Vale solo el número con
+   que parte el texto (con prefijo GD / G / N° opcional); si parte con otra
+   cosa ("FACTURA 263", "Enviado por Factura 175") no es una guía. */
+export function folioGuia(v: any): string {
+  const m = String(v ?? '').match(/^\s*(?:GD|G|N[°º.]?)?\s*[-.]?\s*0*(\d{1,9})(?=$|[\s\-–—.,;:(/])/i);
+  return m ? m[1] : '';
+}
 // Folio de una orden de compra, como se escribe en una referencia: sin
 // espacios y en mayúsculas ("1057448-254-ag26" → "1057448-254-AG26").
 export const normOc = (v: any) => String(v ?? '').replace(/\s+/g, '').toUpperCase();
@@ -145,7 +154,7 @@ export class BsaleFacturacionService {
 
   // Roles que pueden emitir (BSALE_EMISION_ROLES, separados por coma).
   get rolesPermitidos(): string[] {
-    const crudo = (process.env.BSALE_EMISION_ROLES || 'admin,contabilidad').toLowerCase();
+    const crudo = (process.env.BSALE_EMISION_ROLES || 'admin,contabilidad,jefe_ventas_especial').toLowerCase();
     return crudo.split(',').map((r) => r.trim()).filter(Boolean);
   }
 
@@ -248,7 +257,7 @@ export class BsaleFacturacionService {
 
   // Guía electrónica por número, con TODAS sus líneas (el expand trae 25).
   private async guiaEnBsale(numero: string) {
-    const num = soloDigitos(numero);
+    const num = folioGuia(numero);
     if (!num) return null;
     const r = await this.apiGet(
       `/documents.json?codesii=${DTE_GUIA}&number=${num}&expand=[details,references,client,office]&limit=10`,
@@ -292,6 +301,121 @@ export class BsaleFacturacionService {
       }
     }
     return halladas;
+  }
+
+  // ── Listas del módulo Facturación ───────────────────────────────────────
+
+  /* Guías de despacho que todavía no tienen factura, de cotizaciones
+     adjudicadas. Sale solo de la base (no consulta Bsale): la revisión contra
+     Bsale se hace al abrir el borrador de cada una. */
+  async pendientes(userId: string) {
+    await this.exigirRol(userId);
+    const db = this.supabase.getClient();
+    const docs: any[] = [];
+    for (let desde = 0; ; desde += 1000) {
+      const { data, error } = await db
+        .from('licitacion_documentos')
+        .select('id, licitacion_id, tipo, numero, monto, fecha_oc, deriva_de_id, guias_ids, created_at')
+        .in('tipo', ['orden_compra', 'guia_despacho', 'factura', 'factura_boleta'])
+        .order('id', { ascending: true })
+        .range(desde, desde + 999);
+      if (error) throw new BadRequestException(error.message);
+      docs.push(...(data || []));
+      if (!data || data.length < 1000) break;
+    }
+    const facturadas = new Set<number>();
+    for (const f of docs) {
+      if (f.tipo !== 'factura' && f.tipo !== 'factura_boleta') continue;
+      if (f.deriva_de_id) facturadas.add(Number(f.deriva_de_id));
+      if (Array.isArray(f.guias_ids)) for (const g of f.guias_ids) facturadas.add(Number(g));
+    }
+    const ocPorId = new Map<number, any>(docs.filter((d) => d.tipo === 'orden_compra').map((d) => [d.id, d] as [number, any]));
+    const sinFactura = docs.filter((d) => d.tipo === 'guia_despacho' && !facturadas.has(d.id));
+
+    const licIds = [...new Set(sinFactura.map((g) => Number(g.licitacion_id)))];
+    const lics = new Map<number, any>();
+    for (let i = 0; i < licIds.length; i += 200) {
+      const { data, error } = await db
+        .from('licitaciones')
+        .select('id, id_licitacion, nombre_entidad, rut_entidad, condicion_venta, estado')
+        .in('id', licIds.slice(i, i + 200));
+      if (error) throw new BadRequestException(error.message);
+      for (const l of data || []) lics.set(Number((l as any).id), l);
+    }
+
+    const hoy = fechaAEpoch(hoyEnChile());
+    const filas = sinFactura
+      .map((g) => {
+        const lic = lics.get(Number(g.licitacion_id));
+        if (!lic || lic.estado !== 'Adjudicada') return null;
+        const fecha = String(g.fecha_oc || g.created_at || '').slice(0, 10) || null;
+        const oc = ocPorId.get(Number(g.deriva_de_id));
+        return {
+          guia_id: g.id,
+          guia_numero: String(g.numero || '').trim() || null,
+          guia_fecha: fecha,
+          dias: fecha && Number.isFinite(fechaAEpoch(fecha)) ? Math.max(0, Math.round((hoy - fechaAEpoch(fecha)) / 86400)) : null,
+          licitacion_id: lic.id,
+          codigo: lic.id_licitacion || null,
+          cliente: lic.nombre_entidad || '',
+          rut: lic.rut_entidad || '',
+          oc_numero: oc?.numero ? String(oc.numero) : null,
+          oc_neto: Number(oc?.monto) || null,
+          guia_folio: folioGuia(g.numero) || null,
+          // Sin un folio reconocible no se puede buscar la guía en Bsale.
+          emitible: !!folioGuia(g.numero),
+        };
+      })
+      .filter(Boolean) as any[];
+    // Las más antiguas primero: son las que urge facturar.
+    filas.sort((a, b) => String(a.guia_fecha || '9999').localeCompare(String(b.guia_fecha || '9999')) || a.guia_id - b.guia_id);
+    return { filas };
+  }
+
+  /* Historial de lo emitido (y de los intentos que no resultaron) desde el
+     sistema. Si la migración no está aplicada, devuelve la lista vacía. */
+  async emitidas(userId: string, limite = 300) {
+    await this.exigirRol(userId);
+    const db = this.supabase.getClient();
+    const { data, error } = await db
+      .from('bsale_emisiones')
+      .select('id, estado, numero, neto, total, fecha_emision, url_pdf, licitacion_id, guias_doc_ids, usuario, error, created_at, updated_at')
+      .order('id', { ascending: false })
+      .limit(Math.min(Math.max(Number(limite) || 300, 1), 1000));
+    if (error) return { registro_listo: false, filas: [] };
+    const emisiones: any[] = data || [];
+
+    const licIds = [...new Set(emisiones.map((e) => Number(e.licitacion_id)))];
+    const guiaIds = [...new Set(emisiones.flatMap((e) => (e.guias_doc_ids || []).map(Number)))];
+    const lics = new Map<number, any>();
+    const guias = new Map<number, string>();
+    if (licIds.length) {
+      const { data: l } = await db.from('licitaciones').select('id, id_licitacion, nombre_entidad').in('id', licIds);
+      for (const x of l || []) lics.set(Number((x as any).id), x);
+    }
+    if (guiaIds.length) {
+      const { data: g } = await db.from('licitacion_documentos').select('id, numero').in('id', guiaIds);
+      for (const x of g || []) guias.set(Number((x as any).id), String((x as any).numero || ''));
+    }
+    return {
+      registro_listo: true,
+      filas: emisiones.map((e) => ({
+        id: e.id,
+        estado: e.estado,
+        numero: e.numero || null,
+        neto: Number(e.neto) || null,
+        total: Number(e.total) || null,
+        fecha: e.fecha_emision || String(e.updated_at || e.created_at || '').slice(0, 10) || null,
+        url_pdf: e.url_pdf || null,
+        licitacion_id: e.licitacion_id,
+        codigo: lics.get(Number(e.licitacion_id))?.id_licitacion || null,
+        cliente: lics.get(Number(e.licitacion_id))?.nombre_entidad || '',
+        guias: (e.guias_doc_ids || []).map((id: any) => guias.get(Number(id)) || '').filter(Boolean),
+        guia_ids: (e.guias_doc_ids || []).map(Number),
+        usuario: e.usuario || null,
+        error: e.estado === 'emitida' ? null : e.error || null,
+      })),
+    };
   }
 
   // ── Borrador ────────────────────────────────────────────────────────────
@@ -341,7 +465,7 @@ export class BsaleFacturacionService {
       elegidas.push(g);
       const f = facturaDe(g);
       if (f) problemas.push({ codigo: 'ya_facturada_sistema', mensaje: `La guía ${g.numero || 's/n'} ya tiene la factura ${f.numero || 's/n'} registrada en el sistema.` });
-      if (!soloDigitos(g.numero)) problemas.push({ codigo: 'guia_sin_numero', mensaje: 'Una de las guías no tiene número: no se puede buscar en Bsale.' });
+      if (!folioGuia(g.numero)) problemas.push({ codigo: 'guia_sin_numero', mensaje: `La guía «${g.numero || 'sin número'}» no tiene un número de guía reconocible: no se puede buscar en Bsale. Corrige el número en Trazabilidad.` });
     }
 
     // Las guías en Bsale
@@ -356,10 +480,10 @@ export class BsaleFacturacionService {
     const ocsSistema: string[] = []; // OC del sistema que no coinciden con la de la guía
     let primeraEmision = Infinity;
     for (const g of elegidas) {
-      if (!soloDigitos(g.numero)) continue;
+      if (!folioGuia(g.numero)) continue;
       const enBsale = await this.guiaEnBsale(g.numero);
       if (!enBsale) {
-        problemas.push({ codigo: 'guia_no_esta', mensaje: `Bsale no tiene una guía de despacho electrónica con el N° ${g.numero}. Solo se puede facturar desde una guía emitida en Bsale.` });
+        problemas.push({ codigo: 'guia_no_esta', mensaje: `Bsale no tiene una guía de despacho electrónica con el N° ${folioGuia(g.numero)}. Solo se puede facturar desde una guía emitida en Bsale.` });
         continue;
       }
       const { doc, detalles } = enBsale;
@@ -390,6 +514,9 @@ export class BsaleFacturacionService {
 
       guias.push({
         doc_id: g.id,
+        // Lo digitado en el sistema puede traer una nota ("767 - NO FACTURAR
+        // HASTA…"): se muestra tal cual junto al folio.
+        nota: String(g.numero || '').trim() !== String(doc.number) ? String(g.numero || '').trim() : null,
         numero: String(doc.number),
         fecha: epochAFecha(doc.emissionDate),
         neto: Number(doc.netAmount || 0),
@@ -450,8 +577,17 @@ export class BsaleFacturacionService {
     if (clientes.size > 1) problemas.push({ codigo: 'clientes_distintos', mensaje: 'Las guías elegidas son de clientes distintos en Bsale: no pueden ir en una misma factura.' });
     const cliente = [...clientes.values()][0] || null;
     if (cliente && Number(cliente.state) === 1) problemas.push({ codigo: 'cliente_inactivo', mensaje: 'El cliente está inactivo en Bsale.' });
-    if (cliente && normRut(lic.rut_entidad) && normRut(cliente.code) && normRut(lic.rut_entidad) !== normRut(cliente.code)) {
-      avisos.push({ codigo: 'rut_distinto', mensaje: `El RUT del cliente en Bsale (${cliente.code}) no es el de la cotización (${lic.rut_entidad}).` });
+    /* La guía se busca en Bsale solo por su número. Si su cliente no es el de
+       la cotización, el número digitado apunta a OTRA guía: facturarla sería
+       facturar los productos de otro cliente. (En las guías reales revisadas
+       el RUT coincide siempre.) */
+    if (cliente && normRut(lic.rut_entidad) && normRut(lic.rut_entidad) !== normRut(cliente.code)) {
+      problemas.push({
+        codigo: 'cliente_distinto',
+        mensaje: `La guía ${guias.map((g) => g.numero).join(', ')} en Bsale es de ${String(cliente.company || '').trim() || 'otro cliente'} (RUT ${cliente.code || 'sin RUT'}), y esta cotización es de ${lic.nombre_entidad || 'otro cliente'} (RUT ${lic.rut_entidad}). Revisa el número de la guía en Trazabilidad.`,
+      });
+    } else if (cliente && !normRut(lic.rut_entidad)) {
+      avisos.push({ codigo: 'cotizacion_sin_rut', mensaje: `La cotización no tiene RUT cargado: no se pudo comprobar que la guía sea de este cliente (${cliente.code}).` });
     }
 
     // ¿Alguna ya está facturada en Bsale?
@@ -494,8 +630,13 @@ export class BsaleFacturacionService {
 
     // Otras guías de la cotización que aún no tienen factura (para sumarlas).
     const disponibles = guiasSistema
-      .filter((g) => !facturaDe(g) && soloDigitos(g.numero))
-      .map((g) => ({ doc_id: g.id, numero: String(g.numero), fecha: String(g.fecha_oc || g.created_at || '').slice(0, 10) || null }))
+      .filter((g) => !facturaDe(g) && folioGuia(g.numero))
+      .map((g) => ({
+        doc_id: g.id,
+        numero: folioGuia(g.numero),
+        nota: String(g.numero || '').trim() !== folioGuia(g.numero) ? String(g.numero || '').trim() : null,
+        fecha: String(g.fecha_oc || g.created_at || '').slice(0, 10) || null,
+      }))
       .sort((a, b) => a.doc_id - b.doc_id);
 
     const borrador = {
@@ -758,7 +899,17 @@ export class BsaleFacturacionService {
     }
     const texto = await res.text().catch(() => '');
     if (res.status >= 500) throw Object.assign(new Error(`Bsale ${res.status}: ${texto.slice(0, 300)}`), { incierta: true });
-    if (!res.ok) throw new Error(`${res.status} ${texto.slice(0, 600)}`);
+    if (!res.ok) {
+      // Bsale explica el rechazo en `error` (o `message`): se muestra eso, no el JSON.
+      let motivo = texto.slice(0, 600);
+      try {
+        const cuerpo = JSON.parse(texto);
+        motivo = String(cuerpo?.error || cuerpo?.message || motivo).slice(0, 600);
+      } catch {
+        /* no era JSON */
+      }
+      throw new Error(motivo || `código ${res.status}`);
+    }
     try {
       return JSON.parse(texto);
     } catch {
