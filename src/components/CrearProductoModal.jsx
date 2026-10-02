@@ -486,8 +486,12 @@ export default function CrearProductoModal({ onClose, onCreado, inicial = null }
         lista2: numFromCL(precios.lista2),
         lista3: 0,
         lista4: 0,
-        // Venta sugerida al publico (Showroom del portal); 0 = sin definir.
-        precio_sugerido: numFromCL(precios.precio_sugerido) || null,
+        // Venta showroom (precio sugerido al público); solo para la categoría
+        // del Showroom. 0 = sin definir.
+        precio_sugerido:
+          String(categoria || "").trim().toLowerCase() === "prevención e higiene"
+            ? numFromCL(precios.precio_sugerido) || null
+            : null,
         creado_por: userEmail || null,
       };
       if (puedeVerCosto) payload.costo = numFromCL(costo);
@@ -1083,13 +1087,16 @@ export default function CrearProductoModal({ onClose, onCreado, inicial = null }
                   {/* (2026-09-24) Precio al que le sugerimos al cliente del
                       portal revender el producto a su paciente. Es lo que el
                       Showroom muestra junto a su precio y su margen; sin esto
-                      la vitrina no puede decirle cuanto gana. */}
-                  <ListaPreciosFila
-                    label="Venta sugerida al publico"
-                    value={precios.precio_sugerido || ""}
-                    onChange={(v) => actualizarPrecio("precio_sugerido", v)}
-                    hint="Lo que el cliente del portal le cobra a su paciente. Se ve en el Showroom."
-                  />
+                      la vitrina no puede decirle cuanto gana. Solo para lo que
+                      entra al Showroom: la categoría Prevención e Higiene. */}
+                  {String(categoria || "").trim().toLowerCase() === "prevención e higiene" && (
+                    <ListaPreciosFila
+                      label="Venta showroom"
+                      value={precios.precio_sugerido || ""}
+                      onChange={(v) => actualizarPrecio("precio_sugerido", v)}
+                      hint="Precio sugerido de venta al público: lo que el cliente del portal le cobra a su paciente. Se ve en el Showroom."
+                    />
+                  )}
                 </div>
               )}
             </>

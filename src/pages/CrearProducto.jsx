@@ -207,6 +207,9 @@ export default function CrearProducto() {
     lista2: "",
     lista3: "",
     lista4: "",
+    // Venta showroom: precio sugerido de venta al público. Solo para lo que
+    // entra al Showroom del portal (categoría Prevención e Higiene).
+    precio_sugerido: "",
   });
 
   const [toast, setToast] = useState(null);
@@ -299,6 +302,19 @@ export default function CrearProducto() {
   }, [precios.lista2, costo]);
 
   // Lista 3 es siempre calculada (Lista 2 × factor), no editable.
+  // Venta showroom (2026-10-02): mismo criterio que la ficha del producto y el
+  // servidor — entra al Showroom lo de la categoría Prevención e Higiene.
+  const entraAlShowroom = String(categoria || "").trim().toLowerCase() === "prevención e higiene";
+  const gananciaShowroom = useMemo(() => {
+    const venta = numFromCL(precios.precio_sugerido);
+    const paga = numFromCL(precios.lista2) || numFromCL(precios.lista1);
+    if (!venta || !paga) return "";
+    const gana = venta - paga;
+    const pct = Math.round((gana / venta) * 1000) / 10;
+    const signo = gana < 0 ? "−" : "";
+    return `${signo}$${Math.abs(gana).toLocaleString("es-CL")} (${signo}${Math.abs(pct).toLocaleString("es-CL")}%)`;
+  }, [precios.precio_sugerido, precios.lista2, precios.lista1]);
+
   const lista3Calculada = useMemo(() => {
     return calcularLista3(numFromCL(precios.lista2));
   }, [precios.lista2]);
@@ -442,6 +458,8 @@ export default function CrearProducto() {
       // frontend hace fallback al leer.
       lista3: 0,
       lista4: 0,
+      // Solo se manda cuando el campo está a la vista (categoría del Showroom).
+      ...(entraAlShowroom ? { precio_sugerido: numFromCL(precios.precio_sugerido) || null } : {}),
       equivalente_1: (equivalentes[0] || "").trim() || null,
       equivalente_2: (equivalentes[1] || "").trim() || null,
       equivalente_3: (equivalentes[2] || "").trim() || null,
@@ -509,7 +527,7 @@ export default function CrearProducto() {
     setLargo("");
     setAncho("");
     setImagenFile(null);
-    setPrecios({ lista1: "", lista2: "", lista3: "", lista4: "" });
+    setPrecios({ lista1: "", lista2: "", lista3: "", lista4: "", precio_sugerido: "" });
     setGuardando(false);
   }
 
@@ -1032,6 +1050,32 @@ export default function CrearProducto() {
                     value={margenVentaLista3}
                   />
                 </div>
+              )}
+
+              {entraAlShowroom && (
+                <>
+                  <div>
+                    <label className="block text-sm text-gray-600 mb-1">Venta showroom</label>
+                    <MoneyInput
+                      value={precios.precio_sugerido}
+                      onChange={(v) => actualizarPrecio("precio_sugerido", v)}
+                    />
+                    <p className="text-[11px] text-gray-500 mt-1">
+                      Precio sugerido de venta al público: lo que el cliente del portal le cobra a su paciente. Se ve en el Showroom.
+                    </p>
+                  </div>
+                  <div>
+                    <label className="block text-sm text-gray-600 mb-1">Ganancia del cliente</label>
+                    <input
+                      readOnly
+                      className="w-full rounded-md border border-gray-300 bg-gray-100 px-3 py-2"
+                      value={gananciaShowroom}
+                      placeholder="—"
+                      title="Venta showroom menos lo que paga el cliente del portal (lista 2)"
+                    />
+                  </div>
+                  {mostrarMargen && <div />}
+                </>
               )}
             </div>
           </div>
