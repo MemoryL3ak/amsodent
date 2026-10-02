@@ -505,9 +505,18 @@ export class LicitacionesService {
     }
     const json: any = await res.json().catch(() => null);
     if (res.status === 429) {
-      throw new BadRequestException(
-        'Se agotó la cuota diaria del ticket de Mercado Público; se restablece al día siguiente.',
+      /* La v1 devuelve 429 por dos motivos distintos: la cuota diaria agotada
+         y "peticiones simultáneas" (código 10500), que pasa incluso con
+         consultas seguidas de a una. El segundo se arregla esperando unos
+         segundos; se marca en el error para que quien llama pueda reintentar. */
+      const simultaneas = /simult/i.test(String(json?.Mensaje || ''));
+      const err: any = new BadRequestException(
+        simultaneas
+          ? 'Mercado Público rechazó la consulta por peticiones simultáneas; vuelve a intentarlo en unos segundos.'
+          : 'Se agotó la cuota diaria del ticket de Mercado Público; se restablece al día siguiente.',
       );
+      err.mpSimultaneas = simultaneas;
+      throw err;
     }
     return { res, json };
   }
@@ -3373,42 +3382,92 @@ export class LicitacionesService {
      leerlo sin gastar cuota. Refrescar consume ~110 llamadas del ticket, por
      eso usa el mismo gate que la exploración manual (exploradoresMp). */
   private analisisGlobalCorriendo = false;
+  // Una corrida marcada "corriendo" más vieja que esto quedó colgada (p. ej. el
+  // backend se reinició a mitad): no se la muestra como en curso.
+  private static readonly ANALISIS_GLOBAL_COLGADO_MS = 20 * 60 * 1000;
+
+  /* (2026-10-02) La corrida deja su estado EN LA FILA (corriendo / ok / error,
+     con el mensaje): antes solo vivía en memoria y, si fallaba o el servidor
+     se reiniciaba a mitad, la pantalla no decía nada. Si la migración
+     20261003_mp_analisis_estado.sql no está aplicada, se guarda sin esas
+     columnas y la pantalla sigue funcionando como antes. */
+  private async guardarEstadoAnalisisGlobal(campos: Record<string, any>) {
+    const client = this.supabase.getClient();
+    const { error } = await client.from('mp_analisis_productos').upsert([{ id: 1, ...campos }]);
+    if (!error) return;
+    if (/estado|inicio_at|error/.test(String(error.message)) && /column|schema cache|not find/i.test(String(error.message))) {
+      const { estado: _e, inicio_at: _i, error: _er, ...sinEstado } = campos;
+      if (!Object.keys(sinEstado).length) return;
+      const { error: e2 } = await client.from('mp_analisis_productos').upsert([{ id: 1, ...sinEstado }]);
+      if (e2) throw new Error(e2.message);
+      return;
+    }
+    throw new Error(error.message);
+  }
 
   async analisisProductosGlobalGuardado(email: string) {
-    const { data, error } = await this.supabase.getClient()
+    const client = this.supabase.getClient();
+    let { data, error } = await client
       .from('mp_analisis_productos')
-      .select('resultado, actualizado_at')
+      .select('resultado, actualizado_at, estado, error, inicio_at')
       .eq('id', 1)
       .maybeSingle();
+    if (error && /estado|inicio_at/.test(String(error.message)) && /column|schema cache|not find/i.test(String(error.message))) {
+      ({ data, error } = await client.from('mp_analisis_productos').select('resultado, actualizado_at').eq('id', 1).maybeSingle());
+    }
     if (error) {
       if (/does not exist|schema cache/i.test(error.message)) {
         throw new BadRequestException('Falta aplicar la migración 20260904_mp_analisis_productos.sql en Supabase.');
       }
       throw new BadRequestException(error.message);
     }
+    const fila: any = data || null;
+    const inicio = fila?.inicio_at ? new Date(fila.inicio_at).getTime() : 0;
+    const enFila = fila?.estado === 'corriendo' && Date.now() - inicio < LicitacionesService.ANALISIS_GLOBAL_COLGADO_MS;
+    const colgada = fila?.estado === 'corriendo' && !enFila;
     return {
-      corriendo: this.analisisGlobalCorriendo,
+      corriendo: this.analisisGlobalCorriendo || enFila,
+      estado: colgada ? 'error' : fila?.estado || null,
+      error: colgada ? 'La corrida anterior se interrumpió (el servidor se reinició a mitad).' : fila?.error || null,
+      inicio_at: fila?.inicio_at || null,
       puede_refrescar: LicitacionesService.exploradoresMp().includes((email || '').toLowerCase()),
-      guardado: data ? { ...(data.resultado as any), actualizado_at: data.actualizado_at } : null,
+      automatico: this.analisisGlobalAutomatico(),
+      guardado: fila?.resultado ? { ...(fila.resultado as any), actualizado_at: fila.actualizado_at } : null,
     };
+  }
+
+  // Lo informa el cron (MpAnalisisGlobalCron) para que la pantalla diga a qué hora se actualiza solo.
+  private analisisGlobalAutomatico: () => any = () => null;
+  registrarAutomaticoAnalisisGlobal(fn: () => any) {
+    this.analisisGlobalAutomatico = fn;
   }
 
   iniciarAnalisisProductosGlobal(email: string) {
     if (!LicitacionesService.exploradoresMp().includes((email || '').toLowerCase())) {
       throw new BadRequestException('El análisis global gasta cuota del ticket: solo los exploradores autorizados pueden refrescarlo.');
     }
+    return this.iniciarAnalisisProductosGlobalSinGate('manual');
+  }
+
+  // Sin el gate de correos: lo usa el cron diario.
+  iniciarAnalisisProductosGlobalSinGate(motivo: string) {
     if (this.analisisGlobalCorriendo) {
       throw new BadRequestException('Ya hay un análisis global corriendo; espera a que termine.');
     }
-    void this.correrAnalisisProductosGlobal().catch((e) =>
+    void this.correrAnalisisProductosGlobal(motivo).catch((e) =>
       this.logger.error(`Análisis global de productos MP falló: ${String(e?.message || e)}`),
     );
     return { iniciado: true };
   }
 
-  private async correrAnalisisProductosGlobal() {
+  get analisisGlobalEnCurso(): boolean {
+    return this.analisisGlobalCorriendo;
+  }
+
+  private async correrAnalisisProductosGlobal(motivo = 'manual') {
     this.analisisGlobalCorriendo = true;
     try {
+      await this.guardarEstadoAnalisisGlobal({ estado: 'corriendo', inicio_at: new Date().toISOString(), error: null }).catch(() => undefined);
       const ticket = this.mpTicket();
       const client = this.supabase.getClient();
       const { data: kws } = await client.from('mp_keywords').select('texto').eq('activa', true);
@@ -3419,17 +3478,37 @@ export class LicitacionesService {
         .map((kw) => ({ kw, ws: norm(kw).split(/\s+/).filter(Boolean) }))
         .filter((d) => d.ws.length);
       const pausa = () => new Promise((r) => setTimeout(r, 700)); // la v1 castiga peticiones seguidas
+      /* La v1 contesta 429 "peticiones simultáneas" aun con consultas de a una
+         (medido el 2026-10-02: 37 de 77 llamadas). Antes cada 429 era un día o
+         una ficha perdidos; ahora se reintenta con esperas crecientes. */
+      let reintentos = 0;
+      let perdidas = 0;
+      const pedir = async (url: string) => {
+        for (let intento = 0; ; intento++) {
+          try {
+            return await this.mpFetch(url);
+          } catch (e: any) {
+            if (e?.mpSimultaneas && intento < 4) {
+              reintentos++;
+              await new Promise((r) => setTimeout(r, 1500 * 2 ** intento));
+              continue;
+            }
+            throw e;
+          }
+        }
+      };
 
       // 1) Licitaciones adjudicadas de los últimos 30 días que calzan con el rubro.
       const DIAS = 30;
       const detectadas: Array<{ codigo: string; matched: string[] }> = [];
       const vistos = new Set<string>();
+      let diasPerdidos = 0;
       for (let i = 1; i <= DIAS; i++) {
         const d = new Date();
         d.setDate(d.getDate() - i);
         const ddmmyyyy = `${String(d.getDate()).padStart(2, '0')}${String(d.getMonth() + 1).padStart(2, '0')}${d.getFullYear()}`;
         try {
-          const { res, json } = await this.mpFetch(
+          const { res, json } = await pedir(
             `https://api.mercadopublico.cl/servicios/v1/publico/licitaciones.json?fecha=${ddmmyyyy}&estado=adjudicada&ticket=${encodeURIComponent(ticket)}`,
           );
           const listado: any[] = res.ok && Array.isArray(json?.Listado) ? json.Listado : [];
@@ -3442,7 +3521,7 @@ export class LicitacionesService {
             vistos.add(codigo);
             detectadas.push({ codigo, matched });
           }
-        } catch { /* día perdido: se sigue con el resto */ }
+        } catch { diasPerdidos++; /* día perdido: se sigue con el resto */ }
         await pausa();
       }
 
@@ -3458,11 +3537,11 @@ export class LicitacionesService {
       let fichasOk = 0;
       for (const c of detectadas.slice(0, MAX_FICHAS)) {
         try {
-          const { res, json } = await this.mpFetch(
+          const { res, json } = await pedir(
             `https://api.mercadopublico.cl/servicios/v1/publico/licitaciones.json?codigo=${encodeURIComponent(c.codigo)}&ticket=${encodeURIComponent(ticket)}`,
           );
           const l: any = res.ok ? json?.Listado?.[0] : null;
-          if (!l) continue;
+          if (!l) { perdidas++; continue; }
           fichasOk++;
           for (const it of l?.Items?.Listado || []) {
             const adj = it?.Adjudicacion || null;
@@ -3490,7 +3569,7 @@ export class LicitacionesService {
             if (rut && rutNuestro && rut === rutNuestro) g.nuestros += 1;
             productos.set(key, g);
           }
-        } catch { /* ficha perdida: se sigue */ }
+        } catch { perdidas++; /* ficha perdida: se sigue */ }
         await pausa();
       }
 
@@ -3512,16 +3591,21 @@ export class LicitacionesService {
         dias: DIAS,
         licitaciones_detectadas: detectadas.length,
         fichas_analizadas: fichasOk,
+        fichas_perdidas: perdidas,
+        dias_perdidos: diasPerdidos,
+        reintentos,
+        motivo,
         keywords_usadas: palabras.length,
         filas: filas.slice(0, 400),
       };
-      const { error: errUp } = await client
-        .from('mp_analisis_productos')
-        .upsert([{ id: 1, resultado, actualizado_at: new Date().toISOString() }]);
-      if (errUp) throw new Error(errUp.message);
+      await this.guardarEstadoAnalisisGlobal({ resultado, actualizado_at: new Date().toISOString(), estado: 'ok', error: null });
       this.logger.log(
-        `Análisis global de productos MP: ${detectadas.length} licitaciones del rubro, ${fichasOk} fichas, ${filas.length} productos.`,
+        `Análisis global de productos MP (${motivo}): ${detectadas.length} licitaciones del rubro, ${fichasOk} fichas (${perdidas} perdidas, ${diasPerdidos} días sin respuesta, ${reintentos} reintentos), ${filas.length} productos.`,
       );
+    } catch (e: any) {
+      // Queda dicho en la fila por qué no hay resultado nuevo (el anterior se conserva).
+      await this.guardarEstadoAnalisisGlobal({ estado: 'error', error: String(e?.message || e).slice(0, 500) }).catch(() => undefined);
+      throw e;
     } finally {
       this.analisisGlobalCorriendo = false;
     }

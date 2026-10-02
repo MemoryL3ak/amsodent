@@ -5,6 +5,7 @@ import { MpExploracionCron } from './mp-exploracion.cron';
 import { EquivalenciasCron } from './equivalencias.cron';
 import { FacturasVencidasCron } from './facturas-vencidas.cron';
 import { MpEstadosCron } from './mp-estados.cron';
+import { MpAnalisisGlobalCron } from './mp-analisis-global.cron';
 import { MailingsModule } from '../mailings/mailings.module';
 import { MercadopublicoModule } from '../mercadopublico/mercadopublico.module';
 import { ChatModule } from '../chat/chat.module';
@@ -17,7 +18,7 @@ import { FeriadosModule } from '../feriados/feriados.module';
   // FeriadosModule: días hábiles del calendario de cobranza (FacturasVencidasCron).
   imports: [MailingsModule, MercadopublicoModule, ChatModule, FeriadosModule],
   controllers: [LicitacionesController],
-  providers: [LicitacionesService, MpExploracionCron, EquivalenciasCron, FacturasVencidasCron, MpEstadosCron],
+  providers: [LicitacionesService, MpExploracionCron, EquivalenciasCron, FacturasVencidasCron, MpEstadosCron, MpAnalisisGlobalCron],
   exports: [LicitacionesService],
 })
 export class LicitacionesModule {}

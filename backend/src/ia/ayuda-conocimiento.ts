@@ -182,6 +182,10 @@ Catálogo maestro: SKU, marca, categoría, formato, 3 listas de precios (Lista 3
 = Lista 2 × 1,08, solo lectura), precios de campaña, imagen, peso y medidas
 (cm³ para el cálculo de flete), ficha técnica en PDF. Estados: Activo (con
 SKU), Transitorio (sin SKU), Pendiente Aprobación (margen 0-20%), Inactivo.
+En los productos de la categoría Prevención e Higiene (los del Showroom del
+portal) hay un campo VENTA SHOWROOM al crear y en la ficha: el precio sugerido
+de venta al público, con la ganancia que le deja al cliente del portal sobre la
+lista 2.
 Al CREAR un producto todos los campos son obligatorios (excepto el SKU, que lo
 asigna un admin); al EDITAR nada es obligatorio salvo la imagen. Ventas puede
 editar peso y dimensiones de los Transitorios y Pendientes de Aprobación. Al
@@ -212,14 +216,17 @@ LISTA DE PRECIOS asociada (1, 2 o 3): el precio unitario de referencia de cada
 SKU sale de esa lista. Crear campañas es solo admin.
 
 ### Campañas de margen (/campanas-margen)
-Campaña por MARCA y/o CATEGORÍA, sobre una lista de precios (1, 2 o 3) y con
-vigencia. En vez de fijar un precio por SKU, fija un MARGEN: mientras está
+Campaña por MARCA, CATEGORÍA y/o lista de SKUs, sobre una lista de precios
+(1, 2 o 3) y con vigencia. En vez de fijar un precio por SKU, fija un MARGEN: mientras está
 vigente, el precio de esos productos en esa lista es costo / (1 − margen)
 (margen sobre el precio de venta, el mismo que mide la cotización). No
 reescribe el catálogo: al terminar la vigencia vuelve solo el precio de lista.
 Al crearla se ve una simulación: a cuántos productos alcanza, cuántos suben o
-bajan y los que más cambian. Marcas o categorías vacías = todas; con ambas, el
-producto debe cumplir las dos. Productos sin costo quedan fuera. Orden al
+bajan y los que más cambian. Marcas, categorías o SKUs vacíos = todos; con más
+de un filtro, el producto debe cumplirlos todos (solo SKUs = solo esos
+productos). Los SKUs se pegan como texto (coma, espacio o salto de línea) y la
+pantalla avisa cuáles no están en el catálogo o no tienen costo. Productos sin
+costo quedan fuera. Orden al
 cotizar: campaña por producto (SKU) → campaña de margen → precio de lista; si
 dos campañas de margen alcanzan al mismo producto manda la más nueva. Con
 margen bajo 20% las cotizaciones quedan "Pendiente Aprobación". Se puede
@@ -421,8 +428,10 @@ fichas (qué ganamos/perdemos y a qué precio) y ANÁLISIS GLOBAL DE PRODUCTOS
 "sin haber licitado": barre las licitaciones ADJUDICADAS de todo Mercado
 Público de los últimos 30 días que calzan con el catálogo de palabras clave y
 muestra por producto los procesos, cantidades, precio unitario adjudicado
-promedio, monto y ganador frecuente (refrescarlo gasta ~110 llamadas del
-ticket; solo exploradores autorizados).
+promedio, monto y ganador frecuente. Se actualiza SOLO cada día a las 06:00
+(MP_ANALISIS_GLOBAL_AUTO); si una corrida falla o se corta, el panel muestra
+el motivo y conserva el resultado anterior. Refrescarlo a mano gasta ~110
+llamadas del ticket (solo exploradores autorizados).
 
 ### Panel de Ejecutivos (/cotizaciones-vendedor)
 Rendimiento por vendedor: cotizaciones, adjudicaciones, ventas y resumen
