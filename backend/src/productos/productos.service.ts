@@ -64,10 +64,6 @@ export class ProductosService {
       'lista2',
       'lista3',
       'precio_actualizado_at',
-      // (2026-10-01) Precio sugerido de venta al publico: es lo que el cliente
-      // del portal le cobra a su paciente y lo que el Showroom muestra junto a
-      // su precio y su margen. Se edita desde la grilla.
-      'precio_sugerido',
       // Datos de flete: la grilla filtra por productos con/sin peso y medidas.
       'peso',
       'largo',
@@ -100,7 +96,6 @@ export class ProductosService {
       lista1: p.lista1,
       lista2: p.lista2,
       lista3: p.lista3,
-      precio_sugerido: p.precio_sugerido,
       precio_actualizado_at: p.precio_actualizado_at,
       peso: p.peso,
       largo: p.largo,

@@ -65,6 +65,9 @@ function formatearCLDesdeString(value) {
   return Number(digits).toLocaleString("es-CL");
 }
 
+// Categoría que entra al Showroom del portal (misma del servidor).
+const CATEGORIA_SHOWROOM = "Prevención e Higiene";
+
 function numFromCL(value) {
   if (typeof value === "number") return value;
   const digits = String(value ?? "").replace(/\D/g, "");
@@ -187,6 +190,8 @@ export default function EditarProducto() {
     lista1: 0,
     lista2: 0,
     lista3: 0,
+    precio_sugerido: "",
+    showroom: null,
     link_referencia: "",
     creado_por: "",
     created_at: "",
@@ -258,6 +263,26 @@ export default function EditarProducto() {
   const lista3Calculada = useMemo(() => {
     return calcularLista3(numFromCL(producto.lista2));
   }, [producto.lista2]);
+
+  /* Venta showroom: precio al que le sugerimos al cliente del portal revender
+     el producto a su paciente. Solo aplica a lo que entra al Showroom — la
+     misma regla del servidor: `showroom` manda si está marcado y, si no,
+     decide la categoría. */
+  const entraAlShowroom =
+    producto.showroom === true ||
+    (producto.showroom !== false &&
+      String(producto.categoria || "").trim().toLowerCase() === CATEGORIA_SHOWROOM.toLowerCase());
+
+  // Lo que gana el cliente: contra la lista 2, que es la que él paga.
+  const gananciaShowroom = useMemo(() => {
+    const venta = numFromCL(producto.precio_sugerido);
+    const paga = numFromCL(producto.lista2) || numFromCL(producto.lista1);
+    if (!venta || !paga) return "";
+    const gana = venta - paga;
+    const pct = Math.round((gana / venta) * 1000) / 10;
+    const signo = gana < 0 ? "−" : "";
+    return `${signo}$${Math.abs(gana).toLocaleString("es-CL")} (${signo}${Math.abs(pct).toLocaleString("es-CL")}%)`;
+  }, [producto.precio_sugerido, producto.lista2, producto.lista1]);
 
   const lista3Display = useMemo(() => {
     return lista3Calculada > 0 ? lista3Calculada.toLocaleString("es-CL") : "";
@@ -380,6 +405,8 @@ export default function EditarProducto() {
         lista1: formatearCLDesdeString(String(data.lista1 ?? "")),
         lista2: formatearCLDesdeString(String(data.lista2 ?? "")),
         lista3: 0,
+        precio_sugerido: formatearCLDesdeString(String(data.precio_sugerido ?? "")),
+        showroom: data.showroom ?? null,
         link_referencia: data.link_referencia ?? "",
         creado_por: data.creado_por ?? "",
         created_at: data.created_at ?? "",
@@ -649,6 +676,12 @@ export default function EditarProducto() {
 
     if (esAdmin || (esVentasOJefe && (esProductoTransitorio || esPendienteAprobacion))) {
       payload.costo = numFromCL(producto.costo);
+    }
+
+    // Solo se manda cuando el campo está a la vista: así un producto que no
+    // entra al Showroom, o un rol que no ve los precios, no lo borra.
+    if (entraAlShowroom && !esVentasNoTransitorio) {
+      payload.precio_sugerido = numFromCL(producto.precio_sugerido) || null;
     }
 
     // El link de referencia solo lo puede modificar el administrador.
@@ -1248,6 +1281,33 @@ try {
                   <label className="label">{esVentasOJefe ? "Margen Venta Neto 3" : "Margen Lista 3"}</label>
                   <input readOnly className="input" style={{background:"var(--bg)"}} value={margenVentaLista3} />
                 </div>
+              )}
+
+              {entraAlShowroom && (
+                <>
+                  <div>
+                    <label className="label">Venta showroom</label>
+                    <MoneyInput
+                      value={producto.precio_sugerido}
+                      onChange={(v) => setProducto((prev) => ({ ...prev, precio_sugerido: formatearCLDesdeString(v) }))}
+                    />
+                    <p style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>
+                      Precio sugerido de venta al público: lo que el cliente del portal le cobra a su paciente. Se ve en el Showroom.
+                    </p>
+                  </div>
+                  <div>
+                    <label className="label">Ganancia del cliente</label>
+                    <input
+                      readOnly
+                      className="input"
+                      style={{background:"var(--bg)"}}
+                      value={gananciaShowroom}
+                      placeholder="—"
+                      title="Venta showroom menos lo que paga el cliente del portal (lista 2)"
+                    />
+                  </div>
+                  {mostrarMargen && <div />}
+                </>
               )}
             </div>
           </div>
