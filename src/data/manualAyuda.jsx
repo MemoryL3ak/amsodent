@@ -435,10 +435,12 @@ export const GRUPOS_MANUAL = [
         ruta: "/factoring",
         acceso: { tipo: "modulo", key: "factoring" },
         quien: "Contabilidad, jefe de ventas especial y administración",
-        resumen: "Facturas cedidas: empresa de factoring, margen (% y $) y plazo.",
+        resumen: "Facturas cedidas: empresa de factoring, margen (% y $) y plazo con semáforo y avisos.",
         funciones: [
           "Registro de la cesión con su costo financiero para descontarlo del análisis.",
           "El margen y el plazo llegan desde Seguimiento de Pagos, donde se piden al registrar el pago por factoring; aquí se completa lo que falte (p. ej. la empresa). Con los tres datos, la fila queda bloqueada salvo para administración.",
+          "Semáforo del plazo según la fecha de vencimiento: verde si faltan más de 7 días, amarillo si faltan 7 o menos (incluye el día del vencimiento) y rojo si ya venció. Sobre la tabla, los botones En plazo / Por vencer / Vencidos / Sin plazo muestran cuántas facturas hay en cada color y la filtran con un clic; lo más urgente queda arriba.",
+          "Avisos automáticos por campana y correo: 7 y 3 días antes del vencimiento, el mismo día, y 1, 7 y 15 días después. Cada aviso sale una sola vez por factura; si se corrige la fecha de vencimiento, el calendario parte de nuevo.",
         ],
       },
     ],

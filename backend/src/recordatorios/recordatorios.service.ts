@@ -5,7 +5,8 @@ import { MailingsService } from '../mailings/mailings.service';
 // Scheduler liviano (setInterval, sin dependencias extra) que genera
 // recordatorios de cotización: cierre próximo (3 h / 1 h antes) y resultados
 // publicados (1 día después). Crea una notificación (popup en la app) y envía
-// un correo al vendedor. Marca columnas para no repetir.
+// un correo al vendedor. Marca columnas para no repetir. También lleva el
+// calendario de avisos del plazo de factoring (ver recordatoriosFactoring).
 @Injectable()
 export class RecordatoriosService implements OnModuleInit {
   private readonly logger = new Logger('Recordatorios');
@@ -46,17 +47,20 @@ export class RecordatoriosService implements OnModuleInit {
     tipo: string;
     mensaje: string;
     licitacionId: number;
+    link?: string;
     metadata?: Record<string, any>;
-  }) {
-    await this.supabase.getClient().from('notificaciones').insert([
+  }): Promise<boolean> {
+    const { error } = await this.supabase.getClient().from('notificaciones').insert([
       {
         user_email: args.email,
         tipo: args.tipo,
         mensaje: args.mensaje,
-        link: `/detalle/${args.licitacionId}`,
+        link: args.link || `/detalle/${args.licitacionId}`,
         metadata: { licitacion_id: args.licitacionId, ...(args.metadata || {}) },
       },
     ]);
+    if (error) this.logger.warn(`no se pudo notificar a ${args.email}: ${error.message}`);
+    return !error;
   }
 
   private async enviarCorreo(email: string, asunto: string, html: string) {
@@ -176,80 +180,295 @@ export class RecordatoriosService implements OnModuleInit {
     }
   }
 
-  // ── Factoring por vencer (1 semana antes de factoring_vencimiento) ───────
-  // Avisa por notificación y correo a contabilidad/jefatura cuando faltan 7 días
-  // o menos para el vencimiento del factoring. Marca factoring_recordatorio_at
-  // para no reenviar. Si la columna no está migrada, el SELECT falla y salimos
-  // sin enviar nada (evita reenvíos en bucle).
+  // ── Plazo de factoring: avisos antes y después del vencimiento ───────────
+  // Calendario de avisos (campana + correo a contabilidad/jefatura) sobre
+  // factoring_vencimiento, en días corridos: 7 y 3 días antes, el mismo día, y
+  // 1, 7 y 15 días después. Va de la mano del semáforo del módulo Factoring:
+  // el primer aviso sale cuando la factura pasa a amarillo y el de "+1" cuando
+  // pasa a rojo.
+  //
+  // Cada (destinatario, factura, hito, vencimiento) se avisa UNA sola vez: el
+  // dedupe se lee de las notificaciones ya creadas, así que no necesita
+  // columnas propias (factoring_recordatorio_at quedó sin uso). Se gatilla el
+  // hito MÁS AVANZADO alcanzado (>=, no igualdad): si el backend estuvo caído
+  // o el plazo se cargó tarde, sale un solo aviso con el estado actual. Si se
+  // corrige la fecha de vencimiento, el calendario parte de nuevo.
   private static readonly FACTORING_AVISO = [
     'jer.consorcio@gmail.com',
     'benja.alarcon.z@gmail.com',
   ];
 
+  // Los avisos salen desde esta hora de Chile (el día se cuenta en hora de
+  // Chile, no del servidor): nada de correos de madrugada.
+  private static readonly FACTORING_HORA_DESDE = 8;
+
+  private static readonly FACTORING_TIPOS = ['factoring_por_vencer', 'factoring_vencido'];
+
+  private ahoraEnChile() {
+    const partes = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/Santiago',
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', hour12: false,
+    }).formatToParts(new Date());
+    const v = (t: string) => partes.find((p) => p.type === t)?.value || '';
+    return { fecha: `${v('year')}-${v('month')}-${v('day')}`, hora: Number(v('hour')) % 24 };
+  }
+
+  /** Claves `email|documento|hito|vencimiento` ya avisadas. null = no se pudo leer. */
+  private async factoringYaAvisados(): Promise<Set<string> | null> {
+    const client = this.supabase.getClient();
+    const ya = new Set<string>();
+    for (let p = 0; ; p++) {
+      const { data, error } = await client
+        .from('notificaciones')
+        .select('user_email, metadata')
+        .in('tipo', RecordatoriosService.FACTORING_TIPOS)
+        .order('id', { ascending: true })
+        .range(p * 1000, p * 1000 + 999);
+      if (error) {
+        this.logger.warn(`factoring (avisos previos): ${error.message}`);
+        return null;
+      }
+      for (const n of (data || []) as any[]) {
+        const m = n?.metadata || {};
+        if (m.documento_id == null || !m.hito) continue;
+        ya.add(claveFactoring(n.user_email, m.documento_id, m.hito, m.vencimiento));
+      }
+      if ((data || []).length < 1000) break;
+    }
+    return ya;
+  }
+
   private async recordatoriosFactoring() {
+    // FACTORING_AVISOS=off lo apaga (backend local: apunta a la misma base de
+    // producción y duplicaría los avisos de Railway).
+    if (String(process.env.FACTORING_AVISOS || '').toLowerCase() === 'off') return;
+    const { fecha: hoy, hora } = this.ahoraEnChile();
+    if (hora < RecordatoriosService.FACTORING_HORA_DESDE) return;
+
     const client = this.supabase.getClient();
     const { data, error } = await client
       .from('licitacion_documentos')
-      .select(
-        'id, licitacion_id, numero, monto, factoring_empresa, factoring_vencimiento, factoring_recordatorio_at',
-      )
+      .select('id, licitacion_id, numero, monto, factoring_empresa, factoring_vencimiento')
       .in('tipo', ['factura', 'factura_boleta'])
       .eq('forma_pago', 'factoring')
-      .not('factoring_vencimiento', 'is', null)
-      .is('factoring_recordatorio_at', null);
+      .not('factoring_vencimiento', 'is', null);
     if (error) {
       this.logger.warn(`factoring: ${error.message}`);
       return;
     }
-    if (!data?.length) return;
 
-    const licIds = [...new Set((data as any[]).map((d) => d.licitacion_id).filter(Boolean))];
-    const licMap: Record<number, any> = {};
-    if (licIds.length) {
-      const { data: lics } = await client
-        .from('licitaciones')
-        .select('id, id_licitacion, nombre_entidad')
-        .in('id', licIds);
-      (lics || []).forEach((l: any) => { licMap[l.id] = l; });
+    // 1) Hito alcanzado por cada factura (el más avanzado).
+    const alcanzados: AvisoFactoring[] = [];
+    for (const doc of (data || []) as any[]) {
+      const venc = String(doc.factoring_vencimiento).slice(0, 10);
+      const atraso = diasEntre(venc, hoy);
+      if (atraso == null) continue;
+      const hito = hitoFactoring(atraso);
+      if (hito) alcanzados.push({ doc, venc, atraso, hito, lic: null });
     }
+    if (!alcanzados.length) return;
 
-    const hoy = new Date();
-    hoy.setHours(0, 0, 0, 0);
-    for (const doc of data as any[]) {
-      const venc = new Date(`${String(doc.factoring_vencimiento).slice(0, 10)}T00:00:00`);
-      if (Number.isNaN(venc.getTime())) continue;
-      const dias = Math.round((venc.getTime() - hoy.getTime()) / 86_400_000);
-      if (dias > 7) continue; // todavía falta más de una semana
+    // 2) Solo cotizaciones adjudicadas: las mismas que muestra el módulo.
+    const licIds = [...new Set(alcanzados.map((a) => a.doc.licitacion_id).filter(Boolean))];
+    const { data: lics, error: errLics } = await client
+      .from('licitaciones')
+      .select('id, id_licitacion, nombre_entidad, total_con_iva, estado')
+      .in('id', licIds);
+    if (errLics) {
+      this.logger.warn(`factoring (cotizaciones): ${errLics.message}`);
+      return;
+    }
+    const licMap = new Map<number, any>((lics || []).map((l: any) => [Number(l.id), l]));
+    const vigentes = alcanzados.filter((a) => {
+      a.lic = licMap.get(Number(a.doc.licitacion_id)) || null;
+      return a.lic?.estado === 'Adjudicada';
+    });
+    if (!vigentes.length) return;
 
-      const lic = licMap[doc.licitacion_id] || {};
-      const entidad = lic.nombre_entidad || `#${doc.licitacion_id}`;
-      const fechaTxt = String(doc.factoring_vencimiento).slice(0, 10);
-      const empresa = doc.factoring_empresa || 'sin empresa';
-      const numero = doc.numero || 'S/N';
-      const cuando =
-        dias < 0 ? `venció hace ${Math.abs(dias)} día(s)`
-        : dias === 0 ? 'vence hoy'
-        : `vence en ${dias} día(s)`;
-      const asunto = `🏦 Factoring por vencer: factura ${numero} (${entidad})`;
-      const html =
-        `<p>El plazo de factoring de la factura <strong>${numero}</strong> de <strong>${entidad}</strong> ${cuando} (<strong>${fechaTxt}</strong>).</p>` +
-        `<p>Empresa de factoring: <strong>${empresa}</strong>.</p>`;
-      const mensaje = `Factoring de la factura ${numero} (${entidad}) ${cuando} — vence ${fechaTxt}.`;
+    // 3) Dedupe. Sin poder leer lo ya avisado no se envía nada: mejor perder
+    //    una pasada que repetir el correo cada 5 minutos.
+    const ya = await this.factoringYaAvisados();
+    if (!ya) return;
 
-      for (const email of RecordatoriosService.FACTORING_AVISO) {
-        await this.crearNotificacion({
+    for (const email of RecordatoriosService.FACTORING_AVISO) {
+      const nuevos = vigentes.filter(
+        (a) => !ya.has(claveFactoring(email, a.doc.id, a.hito.key, a.venc)),
+      );
+      if (!nuevos.length) continue;
+
+      // La notificación es el registro del aviso: el correo solo lleva las
+      // facturas cuya notificación quedó guardada.
+      const avisados: AvisoFactoring[] = [];
+      for (const a of nuevos) {
+        const ok = await this.crearNotificacion({
           email,
-          tipo: 'factoring_por_vencer',
-          mensaje,
-          licitacionId: doc.licitacion_id,
-          metadata: { documento_id: doc.id, vencimiento: fechaTxt },
+          tipo: a.atraso > 0 ? 'factoring_vencido' : 'factoring_por_vencer',
+          mensaje:
+            `Factoring de la factura N° ${a.doc.numero || 'S/N'} (${entidadFactoring(a)}) ` +
+            `${cuandoFactoring(a.atraso)} — vencimiento ${fmtDiaCL(a.venc)}` +
+            (a.doc.factoring_empresa ? ` · ${a.doc.factoring_empresa}` : '') +
+            ` · ${fmtCLP(montoFactoring(a))} con IVA.`,
+          licitacionId: a.doc.licitacion_id,
+          link: '/factoring',
+          metadata: {
+            documento_id: a.doc.id,
+            hito: a.hito.key,
+            vencimiento: a.venc,
+            semaforo: a.atraso > 0 ? 'rojo' : 'amarillo',
+          },
         });
-        await this.enviarCorreo(email, asunto, html);
+        if (ok) avisados.push(a);
       }
-      await client
-        .from('licitacion_documentos')
-        .update({ factoring_recordatorio_at: new Date().toISOString() })
-        .eq('id', doc.id);
+      if (!avisados.length) continue;
+
+      const { asunto, html } = correoFactoring(avisados);
+      await this.enviarCorreo(email, asunto, html);
+      this.logger.log(`factoring: ${avisados.length} aviso(s) de plazo a ${email}.`);
     }
   }
+}
+
+/* ── Calendario de avisos del plazo de factoring (funciones puras) ───────── */
+
+// Umbral del semáforo. MISMA regla que el módulo (src/pages/Factoring.jsx →
+// DIAS_AMARILLO): verde = faltan más de 7 días; amarillo = 7 o menos (incluye
+// el día del vencimiento); rojo = vencido. Si cambia aquí, cambia allá.
+export const FACTORING_DIAS_AMARILLO = 7;
+
+// off = días corridos respecto del vencimiento (negativo = antes). El orden
+// importa: se gatilla el hito más avanzado alcanzado.
+export const HITOS_FACTORING: Array<{ key: string; off: number }> = [
+  { key: 'pre7', off: -FACTORING_DIAS_AMARILLO },
+  { key: 'pre3', off: -3 },
+  { key: 'venc', off: 0 },
+  { key: 'post1', off: 1 },
+  { key: 'post7', off: 7 },
+  { key: 'post15', off: 15 },
+];
+
+type AvisoFactoring = {
+  doc: any;
+  lic: any;
+  venc: string;
+  atraso: number;
+  hito: (typeof HITOS_FACTORING)[number];
+};
+
+/** Días corridos de `desde` a `hasta` (ambas YYYY-MM-DD); null si alguna no es fecha. */
+export function diasEntre(desde: string, hasta: string): number | null {
+  const utc = (s: string) => {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s || ''));
+    return m ? Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : NaN;
+  };
+  const dif = (utc(hasta) - utc(desde)) / 86_400_000;
+  return Number.isFinite(dif) ? Math.round(dif) : null;
+}
+
+/** Hito más avanzado alcanzado. `atraso` = días desde el vencimiento (negativo = faltan). */
+export function hitoFactoring(atraso: number) {
+  let hito: (typeof HITOS_FACTORING)[number] | null = null;
+  for (const h of HITOS_FACTORING) {
+    if (atraso >= h.off) hito = h;
+  }
+  return hito;
+}
+
+export function cuandoFactoring(atraso: number): string {
+  if (atraso === 0) return 'vence hoy';
+  if (atraso === -1) return 'vence mañana';
+  if (atraso < 0) return `vence en ${-atraso} días`;
+  if (atraso === 1) return 'venció ayer';
+  return `venció hace ${atraso} días`;
+}
+
+function claveFactoring(email: any, documentoId: any, hito: any, vencimiento: any): string {
+  return [String(email || '').trim().toLowerCase(), documentoId, hito, String(vencimiento || '').slice(0, 10)].join('|');
+}
+
+function entidadFactoring(a: AvisoFactoring): string {
+  return a.lic?.nombre_entidad || `#${a.doc.licitacion_id}`;
+}
+
+// Monto cedido CON IVA: los documentos se guardan en neto (igual que el módulo).
+function montoFactoring(a: AvisoFactoring): number {
+  const neto = Number(a.doc.monto) || 0;
+  return neto > 0 ? Math.round(neto * 1.19) : Number(a.lic?.total_con_iva) || 0;
+}
+
+function fmtCLP(v: any): string {
+  return `$${Math.round(Number(v) || 0).toLocaleString('es-CL')}`;
+}
+
+function fmtDiaCL(ymd: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(ymd || ''));
+  return m ? `${m[3]}-${m[2]}-${m[1]}` : String(ymd || '');
+}
+
+function esc(v: any): string {
+  return String(v ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+const APP_URL = (process.env.PUBLIC_APP_URL || 'https://amsodent.vercel.app').replace(/\/+$/, '');
+
+/** Un solo correo por destinatario con todas las facturas del aviso. */
+function correoFactoring(items: AvisoFactoring[]): { asunto: string; html: string } {
+  // Lo más urgente primero.
+  const orden = [...items].sort((a, b) => b.atraso - a.atraso);
+  const vencidos = orden.filter((a) => a.atraso > 0).length;
+  const porVencer = orden.length - vencidos;
+
+  let asunto: string;
+  if (orden.length === 1) {
+    const a = orden[0];
+    asunto =
+      `🏦 Factoring ${a.atraso > 0 ? 'vencido' : 'por vencer'}: factura N° ${a.doc.numero || 'S/N'} ` +
+      `(${entidadFactoring(a)}) ${cuandoFactoring(a.atraso)}`;
+  } else {
+    const partes: string[] = [];
+    if (vencidos) partes.push(`${vencidos} vencido${vencidos > 1 ? 's' : ''}`);
+    if (porVencer) partes.push(`${porVencer} por vencer`);
+    asunto = `🏦 Factoring: ${partes.join(' y ')}`;
+  }
+
+  const celda = 'padding:8px 10px;border-bottom:1px solid #e5e7eb;font-size:13px;';
+  const filas = orden
+    .map((a) => {
+      const rojo = a.atraso > 0;
+      const pastilla =
+        `<span style="display:inline-block;padding:2px 10px;border-radius:999px;font-weight:600;white-space:nowrap;` +
+        `color:${rojo ? '#b91c1c' : '#a16207'};background:${rojo ? '#fee2e2' : '#fef9c3'};">` +
+        `${esc(cuandoFactoring(a.atraso))}</span>`;
+      return (
+        `<tr>` +
+        `<td style="${celda}"><strong>N° ${esc(a.doc.numero || 'S/N')}</strong></td>` +
+        `<td style="${celda}">${esc(entidadFactoring(a))}` +
+        (a.lic?.id_licitacion ? `<br><span style="color:#6b7280;font-size:11px;">${esc(a.lic.id_licitacion)}</span>` : '') +
+        `</td>` +
+        `<td style="${celda}">${esc(a.doc.factoring_empresa || '—')}</td>` +
+        `<td style="${celda}text-align:right;white-space:nowrap;">${fmtCLP(montoFactoring(a))}</td>` +
+        `<td style="${celda}white-space:nowrap;">${fmtDiaCL(a.venc)}</td>` +
+        `<td style="${celda}">${pastilla}</td>` +
+        `</tr>`
+      );
+    })
+    .join('');
+
+  const th = 'padding:8px 10px;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:#6b7280;border-bottom:2px solid #e5e7eb;';
+  const html =
+    `<p>Plazo de factoring — ${orden.length === 1 ? 'esta factura requiere' : 'estas facturas requieren'} atención:</p>` +
+    `<table style="border-collapse:collapse;width:100%;max-width:760px;">` +
+    `<thead><tr>` +
+    `<th style="${th}">Factura</th><th style="${th}">Cliente</th><th style="${th}">Empresa factoring</th>` +
+    `<th style="${th}text-align:right;">Monto con IVA</th><th style="${th}">Vencimiento</th><th style="${th}">Estado</th>` +
+    `</tr></thead><tbody>${filas}</tbody></table>` +
+    `<p style="margin-top:16px;"><a href="${APP_URL}/factoring">Abrir el módulo Factoring</a></p>` +
+    `<p style="color:#6b7280;font-size:12px;">Aviso automático: se envía ${FACTORING_DIAS_AMARILLO} y 3 días antes del vencimiento, ` +
+    `el mismo día, y 1, 7 y 15 días después.</p>`;
+
+  return { asunto, html };
 }
