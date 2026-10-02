@@ -1194,6 +1194,51 @@ select.input {
 }
 
 .btn-sm { height: 30px; padding: 0 10px; font-size: 12.5px; }
+
+/* ── Botones dentro de una celda angosta ─────────────────────────
+   Para columnas de acciones en tablas que se ajustan al ancho: un botón de
+   texto fijo no cabe en una celda de 100 px y se monta sobre la columna
+   vecina. Aquí el botón puede partir su texto, los secundarios se reparten en
+   filas y, según el ancho REAL de la celda (no el de la pantalla), se muestra
+   el nombre completo con ícono (`.cb-largo`, `.cb-ico`) o el corto
+   (`.cb-corto`). `:where()` deja la especificidad baja para que sigan mandando
+   las reglas táctiles de más abajo. */
+.celda-botones {
+  container-type: inline-size;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  min-width: 0;
+}
+:where(.celda-botones) .btn {
+  height: auto;
+  min-height: 28px;
+  padding: 4px 7px;
+  font-size: 12px;
+  line-height: 1.2;
+  white-space: normal;
+  overflow-wrap: normal;
+  word-break: normal;
+  justify-content: center;
+  text-align: center;
+}
+.celda-botones-sec {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: stretch;
+  gap: 4px;
+}
+.celda-botones-sec > .btn { flex: 1 1 auto; }
+.celda-botones .cb-largo,
+.celda-botones .cb-ico { display: none; }
+@container (min-width: 150px) {
+  .celda-botones .cb-largo { display: inline; }
+  .celda-botones .cb-ico { display: inline-block; flex-shrink: 0; }
+  .celda-botones .cb-corto { display: none; }
+  :where(.celda-botones) .btn { min-height: 30px; padding: 5px 10px; font-size: 12.5px; }
+}
 .btn-lg { height: 42px; padding: 0 20px; font-size: 15px; }
 
 .btn-primary {
@@ -2491,6 +2536,26 @@ img, video, canvas { height: auto; }
     min-width: 760px;
   }
 }
+
+/* Seguimiento de Pagos: la tabla cabe entera desde ~1280 px de pantalla. Bajo
+   eso no se aprieta más (las celdas partían el texto letra por letra y los
+   botones no cabían): conserva este ancho y se desplaza dentro de
+   .table-scroll. La página nunca scrollea de lado. */
+.pagos-table.table-fit { min-width: 980px; }
+.pagos-table.table-fit th,
+.pagos-table.table-fit td { padding-left: 7px; padding-right: 7px; }
+.pagos-table.table-fit th:first-child,
+.pagos-table.table-fit td:first-child { padding-left: 10px; }
+@media (max-width: 900px) {
+  .trazabilidad-table.pagos-table.table-fit {
+    table-layout: fixed;
+    min-width: 980px;
+  }
+}
+/* El selector de fecha ocupa todo el ancho de su campo dentro de la ventana. */
+.modal-registrar-pago .react-datepicker-wrapper,
+.modal-registrar-pago .trazabilidad-datepicker,
+.modal-registrar-pago .trazabilidad-datepicker input { width: 100%; }
 
 /* Autocompletado de Google Places: el dropdown se monta en <body>; subimos su
    z-index para que no quede tapado por los modales (overlay z-index 1000+). */

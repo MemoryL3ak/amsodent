@@ -6,6 +6,7 @@ import Toast from "../components/Toast";
 import DateFilter from "../components/DateFilter";
 import { Eye, AlertTriangle, Save, Lock } from "lucide-react";
 import BotonLimpiarFiltros from "../components/BotonLimpiarFiltros";
+import DropdownSelect from "../components/ui/DropdownSelect";
 
 function fmtCLP(value) {
   return `$${Number(value || 0).toLocaleString("es-CL")}`;
@@ -115,17 +116,20 @@ export default function Factoring() {
     return Number(f.monto) || Number(lic.total_con_iva) || 0;
   }
 
-  // Una fila tiene datos de factoring guardados si ya se le cargó al menos un campo.
-  function filaGuardada(f) {
+  /* El margen y el plazo llegan desde Seguimiento de Pagos, donde se piden al
+     registrar el pago por factoring; la empresa es opcional allá. Por eso la
+     fila se da por completa solo cuando tiene los tres datos: mientras falte
+     alguno se puede terminar de llenar aquí. */
+  function filaCompleta(f) {
     return Boolean(
-      (f.factoring_empresa || "").toString().trim() ||
-      f.factoring_vencimiento ||
+      (f.factoring_empresa || "").toString().trim() &&
+      f.factoring_vencimiento &&
       f.factoring_comision_pct != null
     );
   }
-  // Tras guardar, la edición queda bloqueada salvo para admin.
+  // Una vez completa, la edición queda bloqueada salvo para admin.
   function filaBloqueada(f) {
-    return filaGuardada(f) && !esAdmin;
+    return filaCompleta(f) && !esAdmin;
   }
 
   function setDraft(docId, campo, valor) {
@@ -136,7 +140,7 @@ export default function Factoring() {
     const d = draftMap[f.id] || {};
     const comisionNum = d.comision === "" || d.comision == null ? null : Number(d.comision);
     if (comisionNum != null && (Number.isNaN(comisionNum) || comisionNum < 0 || comisionNum > 100)) {
-      setToast({ type: "error", message: "La comisión debe ser un porcentaje entre 0 y 100." });
+      setToast({ type: "error", message: "El margen debe ser un porcentaje entre 0 y 100." });
       return;
     }
     setSavingId(f.id);
@@ -274,7 +278,7 @@ export default function Factoring() {
           <div className="stat-sub">total · con IVA</div>
         </div>
         <div className="stat-card">
-          <div className="stat-label">Comisión total</div>
+          <div className="stat-label">Margen total</div>
           <div className="stat-value stat-value-money" style={{ color: "#b45309" }}>{fmtCLP(stats.comision)}</div>
           <div className="stat-sub">según % registrado</div>
         </div>
@@ -299,22 +303,29 @@ export default function Factoring() {
         </div>
         <div className="filter-field">
           <label className="filter-label">Empresa de factoring</label>
-          <select className="input" value={filtroEmpresa} onChange={(e) => setFiltroEmpresa(e.target.value)}>
-            <option value="">Todas</option>
-            {empresasUnicas.map((e) => (
-              <option key={e} value={e}>{e}</option>
-            ))}
-          </select>
+          <DropdownSelect
+            value={filtroEmpresa}
+            onChange={setFiltroEmpresa}
+            options={[{ value: "", label: "Todas" }, ...empresasUnicas.map((e) => ({ value: e, label: e }))]}
+            minWidth={180}
+            style={{ width: "100%" }}
+          />
         </div>
         <div className="filter-field">
           <label className="filter-label">Plazo</label>
-          <select className="input" value={filtroPlazo} onChange={(e) => setFiltroPlazo(e.target.value)}>
-            <option value="todas">Todos</option>
-            <option value="vigentes">Vigentes</option>
-            <option value="por_vencer">Por vencer (≤5d)</option>
-            <option value="vencidas">Vencidos</option>
-            <option value="sin_plazo">Sin plazo</option>
-          </select>
+          <DropdownSelect
+            value={filtroPlazo}
+            onChange={setFiltroPlazo}
+            options={[
+              { value: "todas", label: "Todos" },
+              { value: "vigentes", label: "Vigentes" },
+              { value: "por_vencer", label: "Por vencer (≤5d)" },
+              { value: "vencidas", label: "Vencidos" },
+              { value: "sin_plazo", label: "Sin plazo" },
+            ]}
+            minWidth={180}
+            style={{ width: "100%" }}
+          />
         </div>
         <BotonLimpiarFiltros hay={hayFiltros} onLimpiar={limpiarFiltros} />
       </div>
@@ -336,8 +347,8 @@ export default function Factoring() {
                 <th style={{ textAlign: "left" }}>Factura</th>
                 <th style={{ textAlign: "right" }}>Monto</th>
                 <th style={{ textAlign: "left" }}>Empresa factoring</th>
-                <th style={{ textAlign: "right" }}>Comisión %</th>
-                <th style={{ textAlign: "right" }}>Comisión $</th>
+                <th style={{ textAlign: "right" }} title="Porcentaje que cobra la empresa de factoring sobre el monto de la factura">Margen %</th>
+                <th style={{ textAlign: "right" }}>Margen $</th>
                 <th style={{ textAlign: "left" }}>Plazo (vencimiento)</th>
                 <th style={{ textAlign: "right" }}>Acción</th>
               </tr>
@@ -346,7 +357,7 @@ export default function Factoring() {
               {facturasFiltradas.length === 0 ? (
                 <tr>
                   <td colSpan="8" style={{ textAlign: "center", padding: "60px 0", color: "var(--text-muted)" }}>
-                    No hay facturas pagadas por factoring. Marca una factura con forma de pago «Factoring» en Seguimiento de Pagos.
+                    No hay facturas pagadas por factoring. Llegan aquí al registrar un pago con forma «Factoring» en Seguimiento de Pagos, con su margen y su plazo.
                   </td>
                 </tr>
               ) : (
