@@ -38,7 +38,8 @@ export class BsaleFacturacionController {
     );
   }
 
-  // Emite (o simula, si la emisión real no está activada).
+  // Emite la factura. Con `simular: true` (botón "Simular") solo devuelve lo
+  // que se enviaría, sin llamar a Bsale.
   @Post('emitir')
   emitir(
     @Req() req: any,
@@ -49,7 +50,9 @@ export class BsaleFacturacionController {
       fecha_emision?: string;
       dias_vencimiento?: number;
       forma_pago_id?: number;
+      oc_numero?: string;
       huella?: string;
+      simular?: boolean;
     },
   ) {
     return this.facturacion.emitir(

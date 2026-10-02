@@ -255,8 +255,10 @@ o en Bsale) queda bloqueada, y también si la guía de Bsale es de OTRO cliente
 (el número de guía está mal digitado en Trazabilidad: se corrige ahí). El
 número de guía es el que encabeza el campo; se puede dejar una nota después
 ("709 - 2da entrega"). Una factura emitida solo se anula con nota de
-crédito, que se hace en Bsale. Si la ventana dice "Modo simulación", la emisión
-real no está activada y el botón solo muestra lo que se enviaría.
+crédito, que se hace en Bsale. El borrador tiene DOS BOTONES: "Simular" muestra
+exactamente lo que se le enviaría a Bsale, sin emitir ni guardar nada (sirve
+para revisar antes); "Emitir factura por $…" emite de verdad y solo se habilita
+al marcar la casilla de confirmación. Nada se emite solo: siempre es ese botón.
 
 ### Seguimiento de Pagos (/seguimiento-pagos)
 DOS PESTAÑAS: "Cliente particular" y "Entidad pública". Cada una muestra sus
