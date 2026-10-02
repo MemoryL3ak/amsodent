@@ -2,8 +2,9 @@ import { Body, Controller, Get, Post, Req, UseGuards } from '@nestjs/common';
 import { AuthGuard } from '../auth/auth.guard';
 import { BsaleFacturacionService } from './bsale-facturacion.service';
 
-// Emisión de facturas en Bsale desde Trazabilidad. Exige sesión; quién puede
-// emitir lo decide el servicio por rol (BSALE_EMISION_ROLES).
+// Emisión de facturas en Bsale (módulo Facturación y botón en Trazabilidad).
+// Exige sesión; quién puede emitir lo decide el servicio por rol
+// (BSALE_EMISION_ROLES).
 @Controller('bsale/facturas')
 @UseGuards(AuthGuard)
 export class BsaleFacturacionController {
@@ -13,6 +14,18 @@ export class BsaleFacturacionController {
   @Get('estado')
   estado(@Req() req: any) {
     return this.facturacion.estado(String(req?.user?.id || ''));
+  }
+
+  // Módulo Facturación: guías que aún no tienen factura.
+  @Get('pendientes')
+  pendientes(@Req() req: any) {
+    return this.facturacion.pendientes(String(req?.user?.id || ''));
+  }
+
+  // Módulo Facturación: historial de lo emitido desde el sistema.
+  @Get('emitidas')
+  emitidas(@Req() req: any) {
+    return this.facturacion.emitidas(String(req?.user?.id || ''));
   }
 
   // Borrador de la factura a partir de las guías elegidas. No escribe nada.

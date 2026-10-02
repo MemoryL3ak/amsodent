@@ -14,6 +14,10 @@ export const MODULOS = [
   { key: "seguimiento_pagos", label: "Seguimiento de Pagos", grupo: "Post-venta" },
   { key: "cobranza", label: "Cobranza", grupo: "Post-venta" },
   { key: "factoring", label: "Factoring", grupo: "Post-venta" },
+  // Facturación (2026-10-02): emitir en Bsale la factura de una guía. Además
+  // del módulo, el backend exige rol administración, contabilidad o jefe de
+  // ventas especial.
+  { key: "facturacion", label: "Facturación (emitir en Bsale)", grupo: "Post-venta" },
   { key: "mi_correo", label: "Mi Correo", grupo: "Comunicación" },
   { key: "chat", label: "Chat Grupal", grupo: "Comunicación" },
   // "Resumen canales" se fusionó dentro de Definición de metas (2026-09):
@@ -53,10 +57,10 @@ const BASE = ["cotizaciones", "crear_cotizacion", "clientes", "mis_clientes", "b
 // Fallback por rol (debe reflejar backend/src/auth/permisos.ts).
 const ROLE_DEFAULTS = {
   jefe_ventas: [...BASE, "trazabilidad", "metas", "panel_indicadores", "resumen_comercial", "cotizaciones_vendedor"],
-  jefe_ventas_especial: [...BASE, "trazabilidad", "seguimiento_pagos", "cobranza", "factoring", "metas", "panel_indicadores", "resumen_comercial", "cotizaciones_vendedor"],
+  jefe_ventas_especial: [...BASE, "trazabilidad", "seguimiento_pagos", "cobranza", "factoring", "facturacion", "metas", "panel_indicadores", "resumen_comercial", "cotizaciones_vendedor"],
   ventas: [...BASE, "metas"],
   ventas_especial: [...BASE, "metas", "sorteo", "monitoreo_stock"],
-  contabilidad: ["mi_correo", "chat", "seguimiento_pagos", "cobranza", "metas"],
+  contabilidad: ["mi_correo", "chat", "seguimiento_pagos", "cobranza", "facturacion", "metas"],
 };
 
 export function esAdminRol(rol) {

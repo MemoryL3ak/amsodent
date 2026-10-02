@@ -14,6 +14,8 @@ export const MODULOS: string[] = [
   'seguimiento_pagos',
   'cobranza',
   'factoring',
+  // Facturación (2026-10-02): emitir en Bsale la factura de una guía.
+  'facturacion',
   'mi_correo',
   'chat',
   'metas',
@@ -64,10 +66,10 @@ export function esRolAdmin(rol?: string): boolean {
 // Acceso por rol según la matriz vigente (ver SidebarLayout/RequireRole).
 export const ROLE_DEFAULTS: Record<string, string[]> = {
   jefe_ventas: [...BASE, 'trazabilidad', 'metas', 'panel_indicadores', 'resumen_comercial', 'cotizaciones_vendedor'],
-  jefe_ventas_especial: [...BASE, 'trazabilidad', 'seguimiento_pagos', 'cobranza', 'factoring', 'metas', 'panel_indicadores', 'resumen_comercial', 'cotizaciones_vendedor'],
+  jefe_ventas_especial: [...BASE, 'trazabilidad', 'seguimiento_pagos', 'cobranza', 'factoring', 'facturacion', 'metas', 'panel_indicadores', 'resumen_comercial', 'cotizaciones_vendedor'],
   ventas: [...BASE, 'metas'],
   ventas_especial: [...BASE, 'metas', 'sorteo', 'monitoreo_stock'],
-  contabilidad: ['mi_correo', 'chat', 'seguimiento_pagos', 'cobranza', 'metas'],
+  contabilidad: ['mi_correo', 'chat', 'seguimiento_pagos', 'cobranza', 'facturacion', 'metas'],
 };
 
 // Permisos efectivos de un usuario: perfil asignado o, en su defecto, por rol.
