@@ -388,7 +388,8 @@ export const GRUPOS_MANUAL = [
         ],
         funciones: [
           "8 KPIs clickeables que abren el detalle de sus filas: total, pagadas, en plazo, por vencer, vencidas, factoring, notas de crédito y cierre forzado.",
-          "Registrar pago: se digita el monto BRUTO y el sistema guarda el neto; quedan la forma de pago (incluye factoring), el banco receptor (Itaú o Santander — no aplica a efectivo) y los días de atraso. El cambio se refleja al instante, sin recargar la página.",
+          "Registrar pago: abre una ventana donde se digita el monto BRUTO y el sistema guarda el neto; quedan la forma de pago (incluye factoring), el banco receptor (Itaú o Santander — no aplica a efectivo) y los días de atraso. El cambio se refleja al instante, sin recargar la página.",
+          "Pago por factoring: además se piden el margen (%) y el plazo (en días o con su fecha de vencimiento), obligatorios, y la empresa de factoring (opcional). Esos datos quedan en el módulo Factoring.",
           "Notas de crédito: restan del saldo de la factura.",
           "Cada factura lleva su propia cuenta: saldo por pagar = bruto de esa factura - sus notas de crédito - sus multas - sus pagos. Lo que la orden de compra tiene todavía sin facturar se muestra aparte, como «OC por facturar», y no deja pendiente a una factura ya pagada.",
           "Pagos con tarjeta: el medio de pago distingue Transbank y Getnet. Se puede anotar la comisión que descontó el medio (la factura queda saldada igual) y las cuotas: cada depósito se registra como un abono y el estado muestra «En cuotas 3/6». En entidades públicas va en «Registrar pago»; en clientes particulares, en «Subir voucher» (con tarjeta el archivo es opcional).",
@@ -434,9 +435,10 @@ export const GRUPOS_MANUAL = [
         ruta: "/factoring",
         acceso: { tipo: "modulo", key: "factoring" },
         quien: "Contabilidad, jefe de ventas especial y administración",
-        resumen: "Facturas cedidas: empresa de factoring, comisión (% y $) y plazo.",
+        resumen: "Facturas cedidas: empresa de factoring, margen (% y $) y plazo.",
         funciones: [
           "Registro de la cesión con su costo financiero para descontarlo del análisis.",
+          "El margen y el plazo llegan desde Seguimiento de Pagos, donde se piden al registrar el pago por factoring; aquí se completa lo que falte (p. ej. la empresa). Con los tres datos, la fila queda bloqueada salvo para administración.",
         ],
       },
     ],

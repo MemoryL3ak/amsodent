@@ -244,7 +244,11 @@ despachado y CUÁNTO FALTA POR DESPACHAR = monto OC − despachado según Bsale.
 El semáforo de cobro: 8 KPIs clickeables (total, pagadas, en plazo, por vencer,
 vencidas, factoring, notas de crédito, cierre forzado) que abren el detalle de
 sus filas. Vencimiento = fecha factura + plazo de la condición de venta.
-Registrar pago (monto bruto → guarda neto), forma de pago, días de atraso.
+Registrar pago (abre una ventana; monto bruto → guarda neto), forma de pago,
+días de atraso. Si la forma de pago es FACTORING, la ventana pide además el
+margen (%) y el plazo (en días o con la fecha de vencimiento; uno calcula al
+otro desde la fecha de pago), ambos obligatorios, y la empresa de factoring
+(opcional). Esos datos quedan en el módulo Factoring.
 CADA FACTURA LLEVA SU PROPIA CUENTA: saldo por pagar = bruto de esa factura −
 sus notas de crédito − sus multas − los pagos de esa factura. Lo que una orden
 de compra todavía tiene SIN FACTURAR es otra cifra, aparte: se muestra como
@@ -277,7 +281,10 @@ Gestión de lo vencido: Sin gestión → En gestión → Comprometida. Acceso: a
 contabilidad y jefe_ventas_especial.
 
 ### Factoring (/factoring)
-Facturas cedidas a factoring: empresa, comisión (% y $), plazo.
+Facturas cedidas a factoring: empresa, margen (% y $), plazo. El margen y el
+plazo llegan desde Seguimiento de Pagos (se piden al registrar el pago por
+factoring); aquí se completa lo que falte. Con empresa, margen y plazo
+cargados, la fila queda bloqueada salvo para administración.
 
 ## MÓDULOS — GRUPO LOGÍSTICA
 
