@@ -162,6 +162,14 @@ export class StockClientesController {
     );
   }
 
+  /* ── Actividad por pedido (2026-10-02): una línea de tiempo por cada
+     pedido de la cuenta, con el detalle de cada paso. */
+  @UseGuards(StockPortalGuard)
+  @Get('mi-actividad')
+  async miActividad(@Req() req: any, @Query('limite') limite?: string) {
+    return await this.pedidosFlujo.actividadPorPedido(req.stockPortal.rut, Number(limite) || 40);
+  }
+
   /* ── Historial de actividad de la cuenta (2026-09-24) ──────────────────
      La misma informacion para los dos lados: el cliente lo ve en su portal y
      Amsodent en la bandeja de pedidos. */
