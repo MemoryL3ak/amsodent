@@ -7,8 +7,10 @@ import Toast from "../components/Toast";
 import ConfirmModal from "../components/ConfirmModal";
 import DateFilter from "../components/DateFilter";
 import DropdownSelect from "../components/ui/DropdownSelect";
-import { Eye, CheckCircle2, Circle, AlertTriangle, ArrowUpDown, ArrowUp, ArrowDown, Download, ChevronDown, Upload, FileMinus, Mail, Copy, ExternalLink, X, Pencil } from "lucide-react";
+import { Eye, CheckCircle2, Circle, AlertTriangle, ArrowUpDown, ArrowUp, ArrowDown, Download, ChevronDown, Upload, FileMinus, Mail, Copy, ExternalLink, X, Pencil, User, Landmark, ListChecks } from "lucide-react";
 import BotonLimpiarFiltros from "../components/BotonLimpiarFiltros";
+import SeguimientoPagoParticular from "../components/SeguimientoPagoParticular";
+import { MEDIOS_PARTICULAR, OPCIONES_CUOTAS, esPagoTarjeta, limitarCuotas, planDeFactura, soloDigitos } from "../lib/pagosParticular";
 
 // Normaliza el nombre de archivo para el storage (sin acentos ni símbolos).
 function normalizarNombreArchivo(nombre) {
@@ -46,9 +48,6 @@ const FORMAS_PAGO = [
   { value: "getnet", label: "Tarjeta · Getnet" },
 ];
 
-// Medios que depositan con comisión descontada y pueden ir en cuotas.
-const esPagoTarjeta = (forma) => forma === "transbank" || forma === "getnet";
-
 // Medios con que se registra un pago ya recibido (factoring no es un pago del
 // cliente: se marca en la factura).
 const MEDIOS_DE_PAGO = FORMAS_PAGO.filter((x) => x.value !== "factoring");
@@ -58,7 +57,33 @@ const BANCOS = [
   { value: "Santander", label: "Santander" },
 ];
 
-const soloDigitos = (v) => Math.round(Number(String(v ?? "").replace(/[^\d]/g, "")) || 0);
+/* (2026-10-02) El módulo se divide en dos pestañas: cada tipo de cliente
+   registra sus pagos por un flujo distinto. La elegida se recuerda. */
+const PESTANAS = [
+  { value: "particular", label: "Cliente particular", Icono: User },
+  { value: "publica", label: "Entidad pública", Icono: Landmark },
+];
+const CLAVE_PESTANA = "amsodent.pagos.pestana";
+
+const OPCIONES_ESTADO = [
+  { value: "todas", label: "Todas" },
+  { value: "pagadas", label: "Pagadas" },
+  { value: "pendientes", label: "Pendientes" },
+  { value: "por_vencer", label: "Por vencer" },
+  { value: "vencidas", label: "Vencidas" },
+];
+const OPCIONES_CIERRE = [
+  { value: "todas", label: "Todos" },
+  { value: "forzado", label: "Cierre forzado" },
+  { value: "abiertos", label: "Ciclos abiertos" },
+];
+function pestanaInicial() {
+  try {
+    const guardada = window.localStorage.getItem(CLAVE_PESTANA);
+    if (PESTANAS.some((p) => p.value === guardada)) return guardada;
+  } catch { /* sin almacenamiento: parte en la primera */ }
+  return PESTANAS[0].value;
+}
 
 /* ── Pago por factoring (2026-10-02) ─────────────────────────────────────────
    Al registrar un pago por factoring se piden, junto con lo de siempre, el
@@ -364,6 +389,18 @@ function esClienteParticular(lic) {
   return (lic?.tipo_cliente || "").toString().toLowerCase().includes("particular");
 }
 
+// Comprobante de pago más reciente de una lista de pagos (el que muestra la
+// columna «Pago»). Con la misma fecha gana el que se cargó después.
+function ultimoComprobante(lista) {
+  return (lista || [])
+    .filter((d) => d.tipo === "comprobante_pago")
+    .reduce((mejor, d) => {
+      const fa = String(d.fecha_oc || d.created_at || "");
+      const fb = mejor ? String(mejor.fecha_oc || mejor.created_at || "") : "";
+      return !mejor || fa >= fb ? d : mejor;
+    }, null);
+}
+
 function semaforo(diasRestantes, pagada) {
   if (pagada) return { color: "#15803d", bg: "#dcfce7", label: "Pagada" };
   if (diasRestantes == null) return { color: "#6b7280", bg: "#f3f4f6", label: "Sin fecha" };
@@ -381,10 +418,19 @@ export default function SeguimientoPagos() {
   // ventas especial y contabilidad). Los vendedores no acceden aquí.
   const puedeVer = esAdmin || rolNorm === "jefe_ventas_especial" || rolNorm === "contabilidad";
   const [facturas, setFacturas] = useState([]);
-  const [comprobantesMap, setComprobantesMap] = useState({});
   // lic_id → [comprobantes de pago]. Con la lista (y su `deriva_de_id`) cada
   // pago se imputa a SU factura; con la sola suma por cotización no se podía.
   const [pagosMap, setPagosMap] = useState({});
+  // lic_id → su comprobante más reciente. Sale de los pagos: así no se
+  // desfasa al ingresar, corregir o eliminar uno.
+  const comprobantesMap = useMemo(() => {
+    const m = {};
+    for (const [lid, lista] of Object.entries(pagosMap)) {
+      const ultimo = ultimoComprobante(lista);
+      if (ultimo) m[lid] = ultimo;
+    }
+    return m;
+  }, [pagosMap]);
   // Notas de crédito por cotización: lista (para ver/abrir) y suma (descuenta del monto).
   const [notasCreditoMap, setNotasCreditoMap] = useState({});
   const [notasCreditoSumMap, setNotasCreditoSumMap] = useState({});
@@ -408,21 +454,32 @@ export default function SeguimientoPagos() {
   const [toast, setToast] = useState(null);
   const [confirmDesmarcar, setConfirmDesmarcar] = useState(null);
 
-  // Subida de voucher (comprobante de transferencia) o nota de crédito.
+  // Nota de crédito o multa que se está cargando a una factura.
   const [voucherFor, setVoucherFor] = useState(null); // factura (f) a la que se vincula
-  const [voucherTipo, setVoucherTipo] = useState("comprobante"); // "comprobante" | "nota_credito"
+  const [voucherTipo, setVoucherTipo] = useState("nota_credito"); // "nota_credito" | "multa"
   const [vFile, setVFile] = useState(null);
   const [vMonto, setVMonto] = useState("");
   const [vFecha, setVFecha] = useState("");
   const [vNumero, setVNumero] = useState("");
-  // (2026-10-02) El comprobante que sube un cliente particular también lleva
-  // su medio de pago; con tarjeta, la comisión del medio y las cuotas.
-  const [vMedio, setVMedio] = useState("transferencia");
-  const [vComision, setVComision] = useState("");
-  const [vCuotas, setVCuotas] = useState("1");
-  // Factura cuyos pagos se están revisando / corrigiendo.
+  // Factura cuyos pagos se están revisando / corrigiendo (entidad pública).
   const [pagosDe, setPagosDe] = useState(null);
   const [subiendoVoucher, setSubiendoVoucher] = useState(false);
+  /* (2026-10-02) Cliente particular: ventana de seguimiento del pago (forma de
+     pago, cuotas y cada pago con su comprobante). `conFormulario` la abre
+     directo en el ingreso del siguiente pago. */
+  const [seguimientoDe, setSeguimientoDe] = useState(null); // { id, conFormulario }
+  // Falso si la base aún no tiene las columnas de la migración 20261002.
+  const [migracionCuotas, setMigracionCuotas] = useState(true);
+
+  // Pestaña: cliente particular / entidad pública.
+  const [pestana, setPestana] = useState(pestanaInicial);
+  function cambiarPestana(valor) {
+    setPestana(valor);
+    // Un medio de pago que la otra pestaña no ofrece dejaría un filtro invisible.
+    const medios = (valor === "particular" ? MEDIOS_PARTICULAR : FORMAS_PAGO).map((x) => x.value);
+    setFiltroFormaPago((prev) => prev.filter((x) => medios.includes(x)));
+    try { window.localStorage.setItem(CLAVE_PESTANA, valor); } catch { /* sin almacenamiento */ }
+  }
 
   // Filtros
   const [filtroEstado, setFiltroEstado] = useState("todas");
@@ -431,7 +488,6 @@ export default function SeguimientoPagos() {
   const [filtroCotizacion, setFiltroCotizacion] = useState(""); // código MP o N° interno (#123)
   const [filtroRut, setFiltroRut] = useState("");
   const [filtroNumero, setFiltroNumero] = useState("");
-  const [filtroTipoCotizacion, setFiltroTipoCotizacion] = useState("");
   const [filtroTipoCompra, setFiltroTipoCompra] = useState("");
   // Tipo de pago: selección múltiple (forma_pago). Vacío = todas.
   const [filtroFormaPago, setFiltroFormaPago] = useState([]);
@@ -518,14 +574,6 @@ export default function SeguimientoPagos() {
     }
     // comprobante_pago / webpay / efectivo: suman al pagado (neto → bruto ×1,19)
     setPagosMap((prev) => ({ ...prev, [lid]: [...(prev[lid] || []), doc] }));
-    if (doc.tipo === "comprobante_pago") {
-      setComprobantesMap((prev) => {
-        const p = prev[lid];
-        const fa = String(doc.fecha_oc || doc.created_at || "");
-        const fp = p ? String(p.fecha_oc || p.created_at || "") : "";
-        return !p || fa >= fp ? { ...prev, [lid]: doc } : prev;
-      });
-    }
   }
 
   // Punto 36: dropdown descarga reporte
@@ -556,7 +604,6 @@ export default function SeguimientoPagos() {
         // 2. Facturas de esas cotizaciones
         const ids = rows.map((l) => l.id);
         let allFacturas = [];
-        const compMap = {};
         const pagosList = {};
         const ocSum = {};
         const ocById = {};
@@ -568,6 +615,7 @@ export default function SeguimientoPagos() {
         const multaList = {};
         const empresaMap = {};
         const cierreMap = {};
+        let hayColumnasCuotas = true;
         if (ids.length > 0) {
           const docs = await api.post("/licitaciones/documentos/filter", {
             // Orden de compra (monto a cobrar), factura (Entidad Pública),
@@ -579,6 +627,9 @@ export default function SeguimientoPagos() {
             },
             fields: "*",
           });
+          // `fields: "*"` trae todas las columnas: si ninguna fila trae
+          // `valor_cuota`, la migración 20261002 no está aplicada.
+          hayColumnasCuotas = !(docs || []).length || (docs || []).some((d) => "valor_cuota" in d);
           (docs || []).forEach((d) => {
             const lid = d.licitacion_id;
             if (d.tipo === "guia_despacho") {
@@ -628,19 +679,12 @@ export default function SeguimientoPagos() {
             // factura) → se convierten a bruto ×1,19 para comparar contra el
             // bruto de la factura.
             (pagosList[lid] = pagosList[lid] || []).push(d);
-            if (d.tipo === "comprobante_pago") {
-              // Para la columna "Pago" nos quedamos con el comprobante más reciente.
-              const fa = String(d.fecha_oc || d.created_at || "");
-              const prev = compMap[lid];
-              const fp = prev ? String(prev.fecha_oc || prev.created_at || "") : "";
-              if (!prev || fa > fp) compMap[lid] = d;
-            }
           });
         }
         setFacturas(dedupFacturas(allFacturas));
+        setMigracionCuotas(hayColumnasCuotas);
         setEmpresaDespachoMap(empresaMap);
         setCierreForzadoMap(cierreMap);
-        setComprobantesMap(compMap);
         setPagosMap(pagosList);
         setMontoOcMap(ocSum);
         setOcByIdMap(ocById);
@@ -684,16 +728,6 @@ export default function SeguimientoPagos() {
     const set = new Set();
     Object.values(licMap || {}).forEach((l) => {
       const t = (l?.tipo_compra || "").toString().trim();
-      if (t) set.add(t);
-    });
-    return [...set].sort();
-  }, [licMap]);
-
-  // Tipos de cotización disponibles (tipo_cliente: Entidad Pública / Cliente Particular).
-  const tiposCotizacion = useMemo(() => {
-    const set = new Set();
-    Object.values(licMap || {}).forEach((l) => {
-      const t = (l?.tipo_cliente || "").toString().trim();
       if (t) set.add(t);
     });
     return [...set].sort();
@@ -757,9 +791,18 @@ export default function SeguimientoPagos() {
   // En cuotas: se pactó en más de una y todavía falta que el medio deposite.
   // No depende de que la factura esté marcada pagada — un particular no se
   // marca hasta que se valida el pago completo.
+  /* (2026-10-02) El cliente particular puede tener el plan de cuotas guardado
+     antes de que entre el primer pago: también cuenta («En cuotas 0/6»). Para
+     la entidad pública sigue igual: hace falta al menos un monto cargado. */
   function enCuotasDe(f) {
-    return Number(f?.cuotas_total) > 1 && descalceMontos(f);
+    if (!(Number(f?.cuotas_total) > 1)) return false;
+    const c = cuentaDe(f);
+    if (f?.pagada && c.abonos <= 0) return false; // marcada pagada sin montos
+    if (c.cargas <= 0 && !esClienteParticular(licMap[f.licitacion_id])) return false;
+    return c.saldo > TOLERANCIA_SALDO;
   }
+  const etiquetaCuotas = (f) =>
+    `En cuotas ${Math.min(cuentaDe(f).abonos, Number(f.cuotas_total))}/${Number(f.cuotas_total)}`;
   function montoBaseFactura(f) {
     return cuentaDe(f).base;
   }
@@ -828,8 +871,9 @@ export default function SeguimientoPagos() {
   // Filtros base: todos MENOS el de estado. Los KPIs se calculan sobre estas
   // facturas para que respeten los filtros (entidad, fecha, empresa, etc.) sin
   // que el filtro de estado anule el resto de los baldes (los KPIs SON el
-  // desglose por estado).
-  const facturasFiltradasBase = useMemo(() => {
+  // desglose por estado). `facturasSinPestana` es lo mismo antes de separar
+  // por tipo de cliente: de ahí sale el número que muestra cada pestaña.
+  const facturasSinPestana = useMemo(() => {
     return facturas.filter((f) => {
       const lic = licMap[f.licitacion_id];
       if (!lic) return false;
@@ -854,10 +898,6 @@ export default function SeguimientoPagos() {
           const rutLic = String(lic.rut_entidad || "").replace(/[^0-9kK]/g, "").toLowerCase();
           if (!rutLic.includes(rutBuscado)) return false;
         }
-      }
-
-      if (filtroTipoCotizacion && (lic.tipo_cliente || "").toString().trim() !== filtroTipoCotizacion) {
-        return false;
       }
 
       if (filtroTipoCompra && (lic.tipo_compra || "").toString().trim() !== filtroTipoCompra) {
@@ -893,7 +933,19 @@ export default function SeguimientoPagos() {
 
       return true;
     });
-  }, [facturas, licMap, filtroEntidad, filtroCotizacion, filtroRut, filtroNumero, filtroTipoCotizacion, filtroTipoCompra, filtroFormaPago, filtroEmpresaDespacho, empresaDespachoMap, filtroDesde, filtroHasta, filtroCierreForzado, cuentas]);
+  }, [facturas, licMap, filtroEntidad, filtroCotizacion, filtroRut, filtroNumero, filtroTipoCompra, filtroFormaPago, filtroEmpresaDespacho, empresaDespachoMap, filtroDesde, filtroHasta, filtroCierreForzado, cuentas]);
+
+  const esParticularTab = pestana === "particular";
+  // Medios que ofrece el filtro «Tipo de pago»: los del flujo de cada pestaña.
+  const mediosFiltro = esParticularTab ? MEDIOS_PARTICULAR : FORMAS_PAGO;
+  const facturasFiltradasBase = useMemo(
+    () => facturasSinPestana.filter((f) => esClienteParticular(licMap[f.licitacion_id]) === esParticularTab),
+    [facturasSinPestana, licMap, esParticularTab],
+  );
+  const conteoPestanas = useMemo(() => {
+    const particular = facturasSinPestana.filter((f) => esClienteParticular(licMap[f.licitacion_id])).length;
+    return { particular, publica: facturasSinPestana.length - particular };
+  }, [facturasSinPestana, licMap]);
 
   // Filtros aplicados a la tabla = base + filtro de estado.
   const facturasFiltradas = useMemo(() => {
@@ -984,7 +1036,7 @@ export default function SeguimientoPagos() {
       const cuotasTotal = Number(f.cuotas_total) || 0;
       const abonos = cuentaDe(f).abonos;
       let estado;
-      if (descalce && cuotasTotal > 1) estado = `En cuotas ${Math.min(abonos, cuotasTotal)}/${cuotasTotal}`;
+      if (enCuotasDe(f)) estado = etiquetaCuotas(f);
       else if (descalce) estado = "Pendiente de pago";
       else if (estaPagada(f, lic)) estado = "Pagada";
       else if (restantes == null) estado = "Sin fecha";
@@ -1023,6 +1075,7 @@ export default function SeguimientoPagos() {
         "Estado": estado,
         "Pagada": estaPagada(f, lic) ? "Sí" : "No",
         "Cuotas": cuotasTotal > 1 ? `${Math.min(abonos, cuotasTotal)} de ${cuotasTotal}` : "",
+        "Valor cuota": cuotasTotal > 1 && Number(f.valor_cuota) > 0 ? Math.round(Number(f.valor_cuota)) : "",
         "Fecha Pago": fmtFecha(f.fecha_pago),
         "Forma Pago": etiquetaMedio(medioDe(f)),
         "Banco": f.banco_pago || "",
@@ -1068,7 +1121,7 @@ export default function SeguimientoPagos() {
       return;
     }
     const ts = new Date().toISOString().slice(0, 10);
-    const nombreArchivo = `seguimiento_pagos_${ts}`;
+    const nombreArchivo = `seguimiento_pagos_${esParticularTab ? "particulares" : "entidades_publicas"}_${ts}`;
     try {
       const XLSX = await import("xlsx");
       const ws = XLSX.utils.json_to_sheet(filas);
@@ -1106,10 +1159,11 @@ export default function SeguimientoPagos() {
     let total = 0, pagadas = 0, pendientes = 0, vencidas = 0, porVencer = 0;
     let montoPagadas = 0, montoEnPlazo = 0, montoPorVencer = 0, montoVencidas = 0;
     let factoringCount = 0, montoFactoring = 0;
+    let enCuotasCount = 0, montoEnCuotas = 0;
     let totalFacturadoCount = 0, totalFacturadoMonto = 0;
     // Detalle por KPI: filas de factura {f, lic, monto, estadoLabel} y, para
     // notas de crédito / forzado a cierre, sus propias filas.
-    const det = { total: [], pagadas: [], enPlazo: [], porVencer: [], vencidas: [], factoring: [], nc: [], forzado: [] };
+    const det = { total: [], pagadas: [], enPlazo: [], enCuotas: [], porVencer: [], vencidas: [], factoring: [], nc: [], forzado: [] };
     const licsEnVista = new Set();
     facturasFiltradasBase.forEach((f) => {
       const lic = licMap[f.licitacion_id];
@@ -1136,10 +1190,16 @@ export default function SeguimientoPagos() {
       // Pagada con tarjeta en cuotas: el cliente ya pagó y solo falta que el
       // medio deposite. No es vencida ni por vencer aunque pase el plazo.
       if (enCuotasDe(f)) {
-        montoEnPlazo += monto;
-        const etiqueta = `En cuotas ${Math.min(cuentaDe(f).abonos, Number(f.cuotas_total))}/${Number(f.cuotas_total)}`;
+        const etiqueta = etiquetaCuotas(f);
         det.total.push({ f, lic, monto, estadoLabel: etiqueta });
-        det.enPlazo.push({ f, lic, monto, estadoLabel: etiqueta });
+        enCuotasCount++; montoEnCuotas += monto;
+        det.enCuotas.push({ f, lic, monto, estadoLabel: etiqueta });
+        // En la pestaña de particulares tienen su propia tarjeta; en la de
+        // entidades públicas siguen dentro de «Pendientes», como siempre.
+        if (!esParticularTab) {
+          montoEnPlazo += monto;
+          det.enPlazo.push({ f, lic, monto, estadoLabel: etiqueta });
+        }
         return;
       }
       const plazo = plazoDias(lic.condicion_venta);
@@ -1188,8 +1248,8 @@ export default function SeguimientoPagos() {
         });
       }
     });
-    return { total, pagadas, pendientes, vencidas, porVencer, montoPagadas, montoEnPlazo, montoPorVencer, montoVencidas, factoringCount, montoFactoring, ncCount, ncMonto, totalFacturadoCount, totalFacturadoMonto, forzadoCount, forzadoMonto, det };
-  }, [facturasFiltradasBase, licMap, montoOcMap, notasCreditoMap, notasCreditoSumMap, cuentas, cierreForzadoMap]);
+    return { total, pagadas, pendientes, vencidas, porVencer, montoPagadas, montoEnPlazo, montoPorVencer, montoVencidas, factoringCount, montoFactoring, enCuotasCount, montoEnCuotas, ncCount, ncMonto, totalFacturadoCount, totalFacturadoMonto, forzadoCount, forzadoMonto, det };
+  }, [facturasFiltradasBase, licMap, montoOcMap, notasCreditoMap, notasCreditoSumMap, cuentas, cierreForzadoMap, esParticularTab]);
 
   /* Detalle de un KPI (modal). key = clave en stats.det; null = cerrado. */
   const [kpiDetalle, setKpiDetalle] = useState(null);
@@ -1200,6 +1260,7 @@ export default function SeguimientoPagos() {
     porVencer: { titulo: "Por vencer", nota: "Sin pago y con 5 días o menos para el vencimiento." },
     vencidas: { titulo: "Vencidas", nota: "Sin pago y fuera del plazo de la condición de venta." },
     factoring: { titulo: "Factoring", nota: "Facturas pagadas vía factoring." },
+    enCuotas: { titulo: "En cuotas", nota: "Facturas pagadas con tarjeta en cuotas que todavía no completan sus pagos." },
     nc: { titulo: "Notas de crédito", nota: "Notas de crédito cargadas a las cotizaciones de la vista (montos brutos, descuentan del total a cobrar)." },
     forzado: { titulo: "Forzado a cierre", nota: "Cotizaciones con ciclo cerrado a la fuerza desde Trazabilidad, con su monto forzado y el motivo del cierre." },
   };
@@ -1281,7 +1342,7 @@ export default function SeguimientoPagos() {
     const sugerido = cuotasPactadas > 1 ? Math.min(saldo, Math.round(montoBaseFactura(f) / cuotasPactadas)) : saldo;
     setMontoPago(saldo > TOLERANCIA_SALDO ? String(sugerido) : "");
     setComisionPago("");
-    setCuotasPago(String(Number(f.cuotas_total) > 1 ? Number(f.cuotas_total) : 1));
+    setCuotasPago(String(limitarCuotas(f.cuotas_total)));
     // Factoring ya cargado (aquí o en el módulo Factoring): se parte de eso.
     const vence = f.factoring_vencimiento ? String(f.factoring_vencimiento).slice(0, 10) : "";
     const plazo = vence ? diasEntreFechas(f.fecha_pago || new Date().toISOString().slice(0, 10), vence) : null;
@@ -1365,7 +1426,7 @@ export default function SeguimientoPagos() {
        abono y el estado muestra "n de N". */
     const tarjeta = esPagoTarjeta(formaPago);
     const comisionNum = tarjeta ? Math.round(Number(String(comisionPago).replace(/[^\d]/g, "")) || 0) : 0;
-    const cuotasNum = tarjeta ? Math.max(1, Math.min(48, Math.round(Number(cuotasPago) || 1))) : 1;
+    const cuotasNum = tarjeta ? limitarCuotas(cuotasPago) : 1;
     try {
       await api.put(`/licitaciones/documentos/${f.id}`, {
         pagada: true,
@@ -1418,20 +1479,23 @@ export default function SeguimientoPagos() {
       setToast({ type: "info", message: `Aún queda saldo por pagar: ${fmtCLP(saldo)}. No se puede validar el pago.` });
       return;
     }
-    // La fecha de pago del particular es la del comprobante de pago adjuntado.
+    // La fecha de pago del particular es la de su último pago (con cuotas, la
+    // de la última); si no tiene pagos propios, la del comprobante adjuntado.
+    const ultimo = pagosDeFactura(f)[0];
     const comp = comprobantesMap[f.licitacion_id];
     const fecha =
+      (ultimo?.fecha_oc ? String(ultimo.fecha_oc).slice(0, 10) : "") ||
       (comp?.fecha_oc ? String(comp.fecha_oc).slice(0, 10) : "") ||
       f.fecha_factura ||
       (f.fecha_oc ? String(f.fecha_oc).slice(0, 10) : "") ||
       (f.created_at ? String(f.created_at).slice(0, 10) : new Date().toISOString().slice(0, 10));
+    // El medio queda como está: es parte del plan de pago de la factura.
     try {
       await api.put(`/licitaciones/documentos/${f.id}`, {
         pagada: true,
         fecha_pago: fecha,
-        forma_pago: null,
       });
-      actualizarFacturaLocal(f.id, { pagada: true, fecha_pago: fecha, forma_pago: null });
+      actualizarFacturaLocal(f.id, { pagada: true, fecha_pago: fecha });
       setToast({ type: "success", message: "Pago validado y registrado." });
     } catch (e) {
       console.error(e);
@@ -1520,21 +1584,107 @@ export default function SeguimientoPagos() {
     }
   }
 
-  // ── Voucher (comprobante de transferencia) ───────────────────────────────
-  function abrirVoucher(f) {
-    setVoucherTipo("comprobante");
-    setVoucherFor(f);
-    setVFile(null);
-    setVMonto("");
-    setVFecha(new Date().toISOString().slice(0, 10));
-    setVNumero("");
-    // Si la factura ya viene pagándose con tarjeta, el siguiente abono parte
-    // con el mismo medio y las mismas cuotas.
-    const medioPrevio = medioDe(f);
-    setVMedio(esPagoTarjeta(medioPrevio) ? medioPrevio : "transferencia");
-    setVComision("");
-    setVCuotas(String(Number(f.cuotas_total) > 1 ? Number(f.cuotas_total) : 1));
+  /* ── Pago del cliente particular (2026-10-02) ─────────────────────────────
+     Todo pasa por la ventana de seguimiento (SeguimientoPagoParticular): la
+     forma de pago y las cuotas van en la factura; cada pago o cuota, en su
+     comprobante. Estas funciones guardan y dejan los mapas en memoria al día;
+     la ventana se vuelve a pintar sola con la cuenta recalculada. */
+  const BUCKET_PAGOS = "factura";
+  async function subirArchivoPago(licitacionId, file) {
+    const ext = (file.name.split(".").pop() || "pdf").toLowerCase();
+    const safe = normalizarNombreArchivo(file.name.replace(/\.[^.]+$/, ""));
+    const storagePath = `${licitacionId}/${Date.now()}-${Math.random().toString(36).slice(2)}-${safe}.${ext}`;
+    const fd = new FormData();
+    fd.append("file", file);
+    await api.postForm(`/licitaciones/storage/upload?bucket=${BUCKET_PAGOS}&path=${encodeURIComponent(storagePath)}`, fd);
+    return {
+      bucket: BUCKET_PAGOS,
+      storage_path: storagePath,
+      file_name: file.name,
+      mime_type: file.type || "application/pdf",
+      size_bytes: Number(file.size || 0),
+    };
   }
+  async function borrarArchivoPago(doc) {
+    if (!doc?.bucket || !doc?.storage_path) return;
+    try {
+      await api.delete(`/licitaciones/storage/file?bucket=${encodeURIComponent(doc.bucket)}&path=${encodeURIComponent(doc.storage_path)}`);
+    } catch { /* el archivo huérfano no bloquea nada */ }
+  }
+  // Reemplaza los pagos en memoria de una cotización.
+  function fijarPagosLocal(lid, transformar) {
+    setPagosMap((prev) => ({ ...prev, [lid]: transformar(prev[lid] || []) }));
+  }
+
+  async function guardarPlanPago(f, plan) {
+    const cambios = {
+      forma_pago: plan.forma_pago,
+      cuotas_total: limitarCuotas(plan.cuotas_total),
+      valor_cuota: plan.valor_cuota > 0 ? Math.round(plan.valor_cuota) : null,
+    };
+    await api.put(`/licitaciones/documentos/${f.id}`, cambios);
+    actualizarFacturaLocal(f.id, cambios);
+  }
+
+  // valores: { fecha, medio, recibido (bruto), comision (bruto), numero, detalle, file }
+  async function registrarPagoParticular(f, valores) {
+    const archivo = valores.file ? await subirArchivoPago(f.licitacion_id, valores.file) : null;
+    const doc = {
+      licitacion_id: Number(f.licitacion_id),
+      tipo: "comprobante_pago",
+      numero: valores.numero || null,
+      // Se digita en BRUTO (lo que entró) y se guarda NETO (÷ 1,19).
+      monto: Math.round(valores.recibido / 1.19),
+      fecha_oc: valores.fecha,
+      deriva_de_id: Number(f.id),
+      forma_pago: valores.medio,
+      bucket: archivo?.bucket || null,
+      storage_path: archivo?.storage_path || null,
+      file_name: archivo?.file_name || null,
+      mime_type: archivo?.mime_type || null,
+      size_bytes: archivo?.size_bytes ?? null,
+      ...(valores.comision > 0 ? { comision_pago: valores.comision } : {}),
+      ...(valores.detalle ? { detalle_pago: valores.detalle } : {}),
+    };
+    let nuevo;
+    try {
+      nuevo = await api.post("/licitaciones/documentos", doc);
+    } catch (e) {
+      await borrarArchivoPago(archivo);
+      throw e;
+    }
+    registrarDocLocal({ ...doc, id: nuevo?.id, created_at: new Date().toISOString() });
+  }
+
+  async function editarPagoParticular(doc, valores) {
+    const archivo = valores.file ? await subirArchivoPago(doc.licitacion_id, valores.file) : null;
+    const cambios = {
+      numero: valores.numero || null,
+      monto: Math.round(valores.recibido / 1.19),
+      fecha_oc: valores.fecha,
+      forma_pago: valores.medio,
+      comision_pago: valores.comision > 0 ? valores.comision : null,
+      detalle_pago: valores.detalle || null,
+      ...(archivo || {}),
+    };
+    try {
+      await api.put(`/licitaciones/documentos/${doc.id}`, cambios);
+    } catch (e) {
+      await borrarArchivoPago(archivo);
+      throw e;
+    }
+    // El comprobante anterior ya no lo referencia nadie.
+    if (archivo) await borrarArchivoPago(doc);
+    fijarPagosLocal(doc.licitacion_id, (lista) => lista.map((d) => (d.id === doc.id ? { ...d, ...cambios } : d)));
+  }
+
+  async function eliminarPagoParticular(doc) {
+    await api.delete(`/licitaciones/documentos/${doc.id}`);
+    await borrarArchivoPago(doc);
+    fijarPagosLocal(doc.licitacion_id, (lista) => lista.filter((d) => d.id !== doc.id));
+  }
+
+  // ── Nota de crédito / multa ──────────────────────────────────────────────
   function abrirNotaCredito(f) {
     setVoucherTipo("nota_credito");
     setVoucherFor(f);
@@ -1553,7 +1703,6 @@ export default function SeguimientoPagos() {
   }
   function cerrarVoucher() {
     setVoucherFor(null);
-    setVoucherTipo("comprobante");
     setVFile(null);
     setVMonto("");
     setVFecha("");
@@ -1563,80 +1712,39 @@ export default function SeguimientoPagos() {
     e?.preventDefault?.();
     if (!voucherFor || subiendoVoucher) return;
     const esNC = voucherTipo === "nota_credito";
-    const esMulta = voucherTipo === "multa";
-    const esDescuento = esNC || esMulta; // ambos restan del monto a cobrar, en bruto
-    const etiqueta = esNC ? "nota de crédito" : esMulta ? "multa" : "comprobante";
-    // El comprobante de transferencia requiere archivo; la nota de crédito, la
-    // multa y el pago con tarjeta (que no siempre deja un voucher) lo aceptan
-    // opcional.
-    const conTarjeta = !esDescuento && esPagoTarjeta(vMedio);
-    if (!esDescuento && !conTarjeta && !vFile) { setToast({ type: "error", message: "Selecciona el archivo del comprobante." }); return; }
-    const comisionNum = conTarjeta ? soloDigitos(vComision) : 0;
-    const cuotasNum = conTarjeta ? Math.max(1, Math.min(48, soloDigitos(vCuotas) || 1)) : 1;
-    const montoNum = Math.round(Number(String(vMonto).replace(/[^\d]/g, "")) || 0);
+    const etiqueta = esNC ? "nota de crédito" : "multa";
+    // El archivo es opcional. Ambas restan del monto a cobrar y se usan en
+    // bruto, tal cual se digitan.
+    const montoNum = soloDigitos(vMonto);
     if (montoNum <= 0) { setToast({ type: "error", message: `Ingresa el monto de la ${etiqueta}.` }); return; }
     if (!vFecha) { setToast({ type: "error", message: `Ingresa la fecha de la ${etiqueta}.` }); return; }
     setSubiendoVoucher(true);
-    const bucket = "factura";
-    let storagePath = null;
+    let archivo = null;
     try {
-      if (vFile) {
-        const ext = (vFile.name.split(".").pop() || "pdf").toLowerCase();
-        const safe = normalizarNombreArchivo(vFile.name.replace(/\.[^.]+$/, ""));
-        storagePath = `${voucherFor.licitacion_id}/${Date.now()}-${Math.random().toString(36).slice(2)}-${safe}.${ext}`;
-        const fd = new FormData();
-        fd.append("file", vFile);
-        await api.postForm(`/licitaciones/storage/upload?bucket=${bucket}&path=${encodeURIComponent(storagePath)}`, fd);
-      }
+      if (vFile) archivo = await subirArchivoPago(voucherFor.licitacion_id, vFile);
+      const doc = {
+        licitacion_id: Number(voucherFor.licitacion_id),
+        tipo: esNC ? "nota_credito" : "multa",
+        numero: (vNumero || "").trim() || null,
+        monto: montoNum,
+        fecha_oc: vFecha,
+        deriva_de_id: Number(voucherFor.id),
+        bucket: archivo?.bucket || null,
+        storage_path: archivo?.storage_path || null,
+        file_name: archivo?.file_name || null,
+        mime_type: archivo?.mime_type || null,
+        size_bytes: archivo?.size_bytes ?? null,
+      };
       let nuevoDoc = null;
       try {
-        nuevoDoc = await api.post("/licitaciones/documentos", {
-          licitacion_id: Number(voucherFor.licitacion_id),
-          tipo: esNC ? "nota_credito" : esMulta ? "multa" : "comprobante_pago",
-          numero: (vNumero || "").trim() || null,
-          // El comprobante se digita en BRUTO (lo transferido) pero se guarda
-          // NETO (÷1,19), la convención de toda la app. La nota de crédito y
-          // la multa se usan en bruto tal cual se digitan.
-          monto: esDescuento ? montoNum : Math.round(montoNum / 1.19),
-          fecha_oc: vFecha,
-          deriva_de_id: Number(voucherFor.id),
-          bucket: storagePath ? bucket : null,
-          storage_path: storagePath,
-          file_name: vFile ? vFile.name : null,
-          mime_type: vFile ? (vFile.type || "application/pdf") : null,
-          size_bytes: vFile ? Number(vFile.size || 0) : null,
-          // Medio del pago y, con tarjeta, lo que descontó el medio.
-          ...(!esDescuento ? { forma_pago: vMedio } : {}),
-          ...(comisionNum > 0 ? { comision_pago: comisionNum } : {}),
-        });
-        // Las cuotas son de la factura, no del comprobante.
-        if (conTarjeta && cuotasNum !== (Number(voucherFor.cuotas_total) || 1)) {
-          await api.put(`/licitaciones/documentos/${voucherFor.id}`, { cuotas_total: cuotasNum });
-          actualizarFacturaLocal(voucherFor.id, { cuotas_total: cuotasNum });
-        }
+        nuevoDoc = await api.post("/licitaciones/documentos", doc);
       } catch (insErr) {
-        if (storagePath) {
-          try { await api.delete(`/licitaciones/storage/file?bucket=${bucket}&path=${encodeURIComponent(storagePath)}`); } catch { /* */ }
-        }
+        await borrarArchivoPago(archivo);
         throw insErr;
       }
-      setToast({ type: "success", message: esNC ? "Nota de crédito cargada." : esMulta ? "Multa registrada." : "Pago registrado." });
+      setToast({ type: "success", message: esNC ? "Nota de crédito cargada." : "Multa registrada." });
       // (Punto 3) reflejar el documento en memoria, sin recargar la página
-      registrarDocLocal({
-        id: nuevoDoc?.id,
-        licitacion_id: Number(voucherFor.licitacion_id),
-        tipo: esNC ? "nota_credito" : esMulta ? "multa" : "comprobante_pago",
-        numero: (vNumero || "").trim() || null,
-        monto: esDescuento ? montoNum : Math.round(montoNum / 1.19),
-        fecha_oc: vFecha,
-        created_at: new Date().toISOString(),
-        deriva_de_id: Number(voucherFor.id),
-        bucket: storagePath ? bucket : null,
-        storage_path: storagePath,
-        file_name: vFile ? vFile.name : null,
-        ...(!esDescuento ? { forma_pago: vMedio } : {}),
-        ...(comisionNum > 0 ? { comision_pago: comisionNum } : {}),
-      });
+      registrarDocLocal({ ...doc, id: nuevoDoc?.id, created_at: new Date().toISOString() });
       cerrarVoucher();
     } catch (err) {
       console.error(err);
@@ -1655,16 +1763,10 @@ export default function SeguimientoPagos() {
     const cambios = pagoAPayload(valores);
     await api.put(`/licitaciones/documentos/${doc.id}`, cambios);
     const nuevo = { ...doc, ...cambios };
-    setPagosMap((prev) => ({
-      ...prev,
-      [doc.licitacion_id]: (prev[doc.licitacion_id] || []).map((d) => (d.id === doc.id ? nuevo : d)),
-    }));
-    setComprobantesMap((prev) =>
-      prev[doc.licitacion_id]?.id === doc.id ? { ...prev, [doc.licitacion_id]: nuevo } : prev,
-    );
+    fijarPagosLocal(doc.licitacion_id, (lista) => lista.map((d) => (d.id === doc.id ? nuevo : d)));
   }
   async function guardarCuotas(f, cuotas) {
-    const n = Math.max(1, Math.min(48, soloDigitos(cuotas) || 1));
+    const n = limitarCuotas(soloDigitos(cuotas));
     await api.put(`/licitaciones/documentos/${f.id}`, { cuotas_total: n });
     actualizarFacturaLocal(f.id, { cuotas_total: n });
   }
@@ -1673,14 +1775,17 @@ export default function SeguimientoPagos() {
     const f = confirmDesmarcar;
     setConfirmDesmarcar(null);
     if (!f) return;
+    // En el cliente particular el medio es parte del plan de pago (va con las
+    // cuotas y su valor): desmarcar no lo borra.
+    const cambios = {
+      pagada: false,
+      fecha_pago: null,
+      dias_atraso_pago: null,
+      ...(esClienteParticular(licMap[f.licitacion_id]) ? {} : { forma_pago: null }),
+    };
     try {
-      await api.put(`/licitaciones/documentos/${f.id}`, {
-        pagada: false,
-        fecha_pago: null,
-        forma_pago: null,
-        dias_atraso_pago: null,
-      });
-      actualizarFacturaLocal(f.id, { pagada: false, fecha_pago: null, forma_pago: null, dias_atraso_pago: null });
+      await api.put(`/licitaciones/documentos/${f.id}`, cambios);
+      actualizarFacturaLocal(f.id, cambios);
       setToast({ type: "success", message: "Pago desmarcado." });
     } catch (e) {
       setToast({ type: "error", message: "Error desmarcando el pago." });
@@ -1712,7 +1817,7 @@ export default function SeguimientoPagos() {
 
 
   /* (2026-09-24) Volver a ver todo sin ir borrando filtro por filtro. */
-  const hayFiltros = filtroEstado !== "todas" || filtroCierreForzado !== "todas" || filtroEntidad !== "" || filtroCotizacion !== "" || filtroRut !== "" || filtroNumero !== "" || filtroTipoCotizacion !== "" || filtroTipoCompra !== "" || filtroFormaPago.length > 0 || filtroDesde !== "" || filtroHasta !== "" || filtroEmpresaDespacho !== "";
+  const hayFiltros = filtroEstado !== "todas" || filtroCierreForzado !== "todas" || filtroEntidad !== "" || filtroCotizacion !== "" || filtroRut !== "" || filtroNumero !== "" || filtroTipoCompra !== "" || filtroFormaPago.length > 0 || filtroDesde !== "" || filtroHasta !== "" || filtroEmpresaDespacho !== "";
   function limpiarFiltros() {
     setFiltroEstado("todas");
     setFiltroCierreForzado("todas");
@@ -1720,7 +1825,6 @@ export default function SeguimientoPagos() {
     setFiltroCotizacion("");
     setFiltroRut("");
     setFiltroNumero("");
-    setFiltroTipoCotizacion("");
     setFiltroTipoCompra("");
     setFiltroFormaPago([]);
     setFiltroDesde("");
@@ -1794,6 +1898,25 @@ export default function SeguimientoPagos() {
         </div>
       </div>
 
+      {/* Pestañas por tipo de cliente: cada una con su flujo de pago. El número
+          es el de facturas que calzan con los filtros. */}
+      <div className="pagos-tabs" role="tablist" aria-label="Tipo de cliente">
+        {PESTANAS.map((p) => (
+          <button
+            key={p.value}
+            type="button"
+            role="tab"
+            aria-selected={pestana === p.value}
+            className={pestana === p.value ? "activo" : ""}
+            onClick={() => cambiarPestana(p.value)}
+          >
+            <p.Icono size={15} />
+            {p.label}
+            <span className="pagos-tab-n">{conteoPestanas[p.value]}</span>
+          </button>
+        ))}
+      </div>
+
       {/* Stats — cantidad + monto por estado. Respetan los filtros aplicados.
           Cada tarjeta se abre con un clic para ver el detalle de sus filas. */}
       <div className="stats-row stats-8">
@@ -1812,7 +1935,7 @@ export default function SeguimientoPagos() {
         <div className="stat-card" onClick={() => setKpiDetalle("enPlazo")} style={{ cursor: "pointer" }} title="Ver el detalle de las facturas de este KPI">
           <div className="stat-label">Pendientes</div>
           <div className="stat-value" style={{ color: "var(--primary)" }}>
-            {Math.max(0, stats.pendientes - stats.porVencer - stats.vencidas)}
+            {Math.max(0, stats.pendientes - stats.porVencer - stats.vencidas - (esParticularTab ? stats.enCuotasCount : 0))}
           </div>
           <div className="stat-money" style={{ color: "var(--primary)" }}>{fmtCLP(stats.montoEnPlazo)}</div>
           <div className="stat-sub">aún en plazo · con IVA</div>
@@ -1829,12 +1952,23 @@ export default function SeguimientoPagos() {
           <div className="stat-money" style={{ color: "var(--danger)" }}>{fmtCLP(stats.montoVencidas)}</div>
           <div className="stat-sub">fuera de plazo · con IVA</div>
         </div>
-        <div className="stat-card" onClick={() => setKpiDetalle("factoring")} style={{ cursor: "pointer" }} title="Ver el detalle de las facturas de este KPI">
-          <div className="stat-label">Factoring</div>
-          <div className="stat-value" style={{ color: "#7c3aed" }}>{stats.factoringCount}</div>
-          <div className="stat-money" style={{ color: "#7c3aed" }}>{fmtCLP(stats.montoFactoring)}</div>
-          <div className="stat-sub">pagadas por factoring · con IVA</div>
-        </div>
+        {/* El factoring es de las entidades públicas; los particulares pagan
+            con tarjeta en cuotas, y eso es lo que les conviene ver aquí. */}
+        {esParticularTab ? (
+          <div className="stat-card kpi-cuotas" onClick={() => setKpiDetalle("enCuotas")} style={{ cursor: "pointer" }} title="Ver el detalle de las facturas de este KPI">
+            <div className="stat-label">En cuotas</div>
+            <div className="stat-value" style={{ color: "#1d4ed8" }}>{stats.enCuotasCount}</div>
+            <div className="stat-money" style={{ color: "#1d4ed8" }}>{fmtCLP(stats.montoEnCuotas)}</div>
+            <div className="stat-sub">con cuotas por pagar · con IVA</div>
+          </div>
+        ) : (
+          <div className="stat-card" onClick={() => setKpiDetalle("factoring")} style={{ cursor: "pointer" }} title="Ver el detalle de las facturas de este KPI">
+            <div className="stat-label">Factoring</div>
+            <div className="stat-value" style={{ color: "#7c3aed" }}>{stats.factoringCount}</div>
+            <div className="stat-money" style={{ color: "#7c3aed" }}>{fmtCLP(stats.montoFactoring)}</div>
+            <div className="stat-sub">pagadas por factoring · con IVA</div>
+          </div>
+        )}
         <div className="stat-card" onClick={() => setKpiDetalle("nc")} style={{ cursor: "pointer" }} title="Ver el detalle de las notas de crédito">
           <div className="stat-label">Notas de crédito</div>
           <div className="stat-value" style={{ color: "#0ea5e9" }}>{stats.ncCount}</div>
@@ -1864,21 +1998,11 @@ export default function SeguimientoPagos() {
         </div>
         <div className="filter-field">
           <label className="filter-label">Estado</label>
-          <select className="input" value={filtroEstado} onChange={(e) => setFiltroEstado(e.target.value)}>
-            <option value="todas">Todas</option>
-            <option value="pagadas">Pagadas</option>
-            <option value="pendientes">Pendientes</option>
-            <option value="por_vencer">Por vencer</option>
-            <option value="vencidas">Vencidas</option>
-          </select>
+          <DropdownSelect value={filtroEstado} onChange={setFiltroEstado} options={OPCIONES_ESTADO} minWidth={150} style={{ width: "100%" }} />
         </div>
         <div className="filter-field">
           <label className="filter-label">Cierre de ciclo</label>
-          <select className="input" value={filtroCierreForzado} onChange={(e) => setFiltroCierreForzado(e.target.value)}>
-            <option value="todas">Todos</option>
-            <option value="forzado">Cierre forzado</option>
-            <option value="abiertos">Ciclos abiertos</option>
-          </select>
+          <DropdownSelect value={filtroCierreForzado} onChange={setFiltroCierreForzado} options={OPCIONES_CIERRE} minWidth={160} style={{ width: "100%" }} />
         </div>
         <div className="filter-field">
           <label className="filter-label">Cotización</label>
@@ -1921,30 +2045,14 @@ export default function SeguimientoPagos() {
           />
         </div>
         <div className="filter-field">
-          <label className="filter-label">Tipo de Cotización</label>
-          <select
-            className="input"
-            value={filtroTipoCotizacion}
-            onChange={(e) => setFiltroTipoCotizacion(e.target.value)}
-          >
-            <option value="">Todas</option>
-            {tiposCotizacion.map((t) => (
-              <option key={t} value={t}>{t}</option>
-            ))}
-          </select>
-        </div>
-        <div className="filter-field">
           <label className="filter-label">Tipo de Compra</label>
-          <select
-            className="input"
+          <DropdownSelect
             value={filtroTipoCompra}
-            onChange={(e) => setFiltroTipoCompra(e.target.value)}
-          >
-            <option value="">Todos</option>
-            {tiposCompra.map((t) => (
-              <option key={t} value={t}>{t}</option>
-            ))}
-          </select>
+            onChange={setFiltroTipoCompra}
+            options={[{ value: "", label: "Todos" }, ...tiposCompra.map((t) => ({ value: t, label: t }))]}
+            minWidth={180}
+            style={{ width: "100%" }}
+          />
         </div>
         <div className="filter-field" style={{ position: "relative" }} ref={formaPagoRef}>
           <label className="filter-label">Tipo de Pago</label>
@@ -1957,14 +2065,14 @@ export default function SeguimientoPagos() {
             <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {filtroFormaPago.length === 0
                 ? "Todos"
-                : FORMAS_PAGO.filter((fp) => filtroFormaPago.includes(fp.value)).map((fp) => fp.label).join(", ")}
+                : mediosFiltro.filter((fp) => filtroFormaPago.includes(fp.value)).map((fp) => fp.label).join(", ")}
             </span>
             <ChevronDown size={14} style={{ flexShrink: 0, opacity: 0.6 }} />
           </button>
           {openFormaPago && (
             <div className="dropdown-menu" style={{ zIndex: 40 }}>
               <div className="dropdown-menu-header">
-                <button className="btn btn-sm btn-secondary" onClick={() => setFiltroFormaPago(FORMAS_PAGO.map((fp) => fp.value))}>
+                <button className="btn btn-sm btn-secondary" onClick={() => setFiltroFormaPago(mediosFiltro.map((fp) => fp.value))}>
                   Todos
                 </button>
                 <button className="btn btn-sm btn-secondary" onClick={() => setFiltroFormaPago([])}>
@@ -1972,7 +2080,7 @@ export default function SeguimientoPagos() {
                 </button>
               </div>
               <div className="dropdown-menu-body">
-                {FORMAS_PAGO.map((fp) => (
+                {mediosFiltro.map((fp) => (
                   <label key={fp.value} className="dropdown-option">
                     <input
                       type="checkbox"
@@ -1992,16 +2100,13 @@ export default function SeguimientoPagos() {
         {empresasDespacho.length > 0 && (
           <div className="filter-field">
             <label className="filter-label">Empresa despachadora</label>
-            <select
-              className="input"
+            <DropdownSelect
               value={filtroEmpresaDespacho}
-              onChange={(e) => setFiltroEmpresaDespacho(e.target.value)}
-            >
-              <option value="">Todas</option>
-              {empresasDespacho.map((e) => (
-                <option key={e} value={e}>{e}</option>
-              ))}
-            </select>
+              onChange={setFiltroEmpresaDespacho}
+              options={[{ value: "", label: "Todas" }, ...empresasDespacho.map((e) => ({ value: e, label: e }))]}
+              minWidth={180}
+              style={{ width: "100%" }}
+            />
           </div>
         )}
         <BotonLimpiarFiltros hay={hayFiltros} onLimpiar={limpiarFiltros} />
@@ -2095,10 +2200,9 @@ export default function SeguimientoPagos() {
                      pagó, lo que falta es que el medio vaya depositando. No es
                      "pendiente de pago" — nadie tiene que cobrarle nada —, así
                      que lleva su propio estado con el avance de los abonos. */
-                  const cuotasTotal = Number(f.cuotas_total) || 0;
-                  const enCuotas = descalce && cuotasTotal > 1;
+                  const enCuotas = enCuotasDe(f);
                   const sem = enCuotas
-                    ? { color: "#1d4ed8", bg: "#dbeafe", label: `En cuotas ${Math.min(cuentaDe(f).abonos, cuotasTotal)}/${cuotasTotal}` }
+                    ? { color: "#1d4ed8", bg: "#dbeafe", label: etiquetaCuotas(f) }
                     : descalce
                     ? { color: "#b45309", bg: "#fef3c7", label: "Pendiente de pago" }
                     : semaforo(diasRestantes, pagadaEf);
@@ -2118,6 +2222,9 @@ export default function SeguimientoPagos() {
                     : comprobante?.monto != null
                       ? Math.round(Number(comprobante.monto) * 1.19)
                       : montoFacturaBruto(f);
+                  // Particular: plan de pago guardado y lo que le falta por pagar.
+                  const plan = particular ? planDeFactura(f, cuentaFila) : null;
+                  const faltaPagar = saldoMostrado(f) > TOLERANCIA_SALDO;
 
                   return (
                     <tr key={f.id}>
@@ -2300,7 +2407,7 @@ export default function SeguimientoPagos() {
                         })()}
                       </td>
                       <td style={{ verticalAlign: "middle" }}>
-                        {particular && !f.pagada && !descalce ? (
+                        {particular && !f.pagada && !descalce && !enCuotas ? (
                           <span style={{ color: "var(--text-muted)" }}>—</span>
                         ) : (
                           <span
@@ -2330,38 +2437,42 @@ export default function SeguimientoPagos() {
                               {fechaPagoMostrar ? new Date(`${fechaPagoMostrar}T00:00:00`).toLocaleDateString("es-CL") : "—"}
                             </div>
                             <div style={{ color: "var(--text-muted)", fontSize: "11px" }}>
-                              {montoParticular != null ? fmtCLP(montoParticular) : "—"}
+                              {/* Sin pagos ni marca de pagada no hay monto que mostrar. */}
+                              {cuentaFila.abonos <= 0 && !f.pagada ? "Sin pagos" : fmtCLP(montoParticular)}
                             </div>
-                            {cuentaFila.abonos > 0 && (
+                            {(cuentaFila.abonos > 0 || f.forma_pago) && (
                               <div style={{ color: "var(--text-muted)", fontSize: "11px" }}>
                                 {etiquetaMedio(medioDe(f))}
                                 {cuentaFila.comision > 0 ? ` · comisión ${fmtCLP(cuentaFila.comision)}` : ""}
                               </div>
                             )}
-                            <div className="celda-botones" style={{ marginTop: 6 }}>
-                             <div className="celda-botones-sec" style={{ justifyContent: "flex-start" }}>
-                              <button
-                                type="button"
-                                onClick={() => abrirVoucher(f)}
-                                className="btn btn-secondary btn-sm"
-                                title="Registrar un pago: transferencia o tarjeta (Transbank / Getnet), con su comprobante"
+                            {/* Plan en cuotas: avance y valor de cada una */}
+                            {plan.cuotas > 1 && (
+                              <div
+                                className="pagos-plan-mini"
+                                title={`${Math.min(cuentaFila.abonos, plan.cuotas)} de ${plan.cuotas} cuotas pagadas${plan.valorCuota > 0 ? ` · ${fmtCLP(plan.valorCuota)} cada una` : ""}`}
                               >
-                                <Upload size={12} className="cb-ico" />
-                                <span className="cb-largo">{enCuotas ? "Registrar abono" : "Subir voucher"}</span>
-                                <span className="cb-corto">{enCuotas ? "Abono" : "Voucher"}</span>
-                              </button>
-                              {comprobante?.bucket && comprobante?.storage_path && (
-                                <button
-                                  type="button"
-                                  onClick={() => abrirDocumento(comprobante)}
-                                  className="btn btn-secondary btn-sm"
-                                  title="Ver comprobante"
-                                >
-                                  <Eye size={12} className="cb-ico" /> Ver
-                                </button>
-                              )}
-                             </div>
-                            </div>
+                                <div className="pagos-plan-barra">
+                                  <span style={{ width: `${Math.round((Math.min(cuentaFila.abonos, plan.cuotas) / plan.cuotas) * 100)}%` }} />
+                                </div>
+                                {Math.min(cuentaFila.abonos, plan.cuotas)}/{plan.cuotas} cuotas
+                                {plan.valorCuota > 0 ? ` de ${fmtCLP(plan.valorCuota)}` : ""}
+                              </div>
+                            )}
+                            {comprobante?.bucket && comprobante?.storage_path && (
+                              <div className="celda-botones" style={{ marginTop: 6 }}>
+                                <div className="celda-botones-sec" style={{ justifyContent: "flex-start" }}>
+                                  <button
+                                    type="button"
+                                    onClick={() => abrirDocumento(comprobante)}
+                                    className="btn btn-secondary btn-sm"
+                                    title="Ver el último comprobante de pago"
+                                  >
+                                    <Eye size={12} className="cb-ico" /> Ver
+                                  </button>
+                                </div>
+                              </div>
+                            )}
                           </div>
                         ) : f.pagada ? (
                           <div>
@@ -2383,9 +2494,24 @@ export default function SeguimientoPagos() {
                            su nombre completo y, si no, el corto. El formulario
                            del pago se abre en una ventana aparte. */}
                        <div className="celda-botones">
+                        {/* Cliente particular con saldo: lo primero es ingresar el
+                            pago (o la cuota que toca) en la ventana de seguimiento. */}
+                        {particular && faltaPagar && (
+                          <button
+                            type="button"
+                            onClick={() => setSeguimientoDe({ id: f.id, conFormulario: true })}
+                            className="btn btn-primary btn-sm"
+                            title={plan.cuotas > 1
+                              ? "Ingresar la siguiente cuota pagada: fecha, monto, detalle y comprobante"
+                              : "Registrar un pago: transferencia, Transbank, Getnet o efectivo, con su comprobante"}
+                          >
+                            <Upload size={12} className="cb-ico" />
+                            {plan.cuotas > 1 ? "Ingresar cuota" : cuentaFila.abonos > 0 ? "Registrar abono" : "Registrar pago"}
+                          </button>
+                        )}
                         {f.pagada ? (
                           <>
-                            {descalce && (
+                            {descalce && !particular && (
                               <button
                                 type="button"
                                 onClick={() => iniciarPago(f)}
@@ -2405,14 +2531,17 @@ export default function SeguimientoPagos() {
                             </button>
                           </>
                         ) : particular ? (
-                          <button
-                            type="button"
-                            onClick={() => validarPagoParticular(f)}
-                            className="btn btn-primary btn-sm"
-                            title="Valida que los comprobantes cubran la factura (saldo 0)"
-                          >
-                            <CheckCircle2 size={13} className="cb-ico" /> Validar pago
-                          </button>
+                          // Validar solo tiene sentido cuando los pagos ya cubren la factura.
+                          !faltaPagar && (
+                            <button
+                              type="button"
+                              onClick={() => validarPagoParticular(f)}
+                              className="btn btn-primary btn-sm"
+                              title="Los pagos cubren la factura: déjala como pagada"
+                            >
+                              <CheckCircle2 size={13} className="cb-ico" /> Validar pago
+                            </button>
+                          )
                         ) : (
                           <button
                             type="button"
@@ -2424,7 +2553,19 @@ export default function SeguimientoPagos() {
                           </button>
                         )}
                         <div className="celda-botones-sec">
-                          {(cuentaFila.abonos > 0 || Number(f.cuotas_total) > 1) && (
+                          {particular ? (
+                            <button
+                              type="button"
+                              onClick={() => setSeguimientoDe({ id: f.id, conFormulario: false })}
+                              className="btn btn-secondary btn-sm"
+                              title="Seguimiento del pago: forma de pago, cuotas y cada pago con su fecha, monto, detalle y comprobante"
+                            >
+                              <ListChecks size={12} className="cb-ico" />
+                              <span className="cb-largo">Seguimiento</span>
+                              <span className="cb-corto">Pagos</span>
+                              {cuentaFila.abonos > 0 ? ` (${cuentaFila.abonos})` : ""}
+                            </button>
+                          ) : (cuentaFila.abonos > 0 || Number(f.cuotas_total) > 1) && (
                             <button
                               type="button"
                               onClick={() => setPagosDe(f)}
@@ -2747,17 +2888,12 @@ export default function SeguimientoPagos() {
                         style={{ marginTop: 4, width: "100%" }}
                       />
                     </label>
-                    <label style={{ fontSize: 13, fontWeight: 600, flex: "1 1 90px", minWidth: 0 }} title="En cuántas cuotas pagó el cliente. 1 = contado.">
+                    <div style={{ fontSize: 13, fontWeight: 600, flex: "1 1 130px", minWidth: 0 }} title="En cuántas cuotas pagó el cliente (hasta 12).">
                       Cuotas
-                      <input
-                        className="input"
-                        inputMode="numeric"
-                        value={cuotasPago}
-                        onChange={(e) => setCuotasPago(e.target.value.replace(/[^\d]/g, "").slice(0, 2))}
-                        disabled={guardando}
-                        style={{ marginTop: 4, width: "100%" }}
-                      />
-                    </label>
+                      <div style={{ marginTop: 4 }}>
+                        <DropdownSelect value={String(limitarCuotas(cuotasPago))} onChange={setCuotasPago} options={OPCIONES_CUOTAS} disabled={guardando} minWidth={130} style={{ width: "100%" }} />
+                      </div>
+                    </div>
                   </div>
                   <div style={{ fontSize: 11.5, color: "var(--text-muted)", lineHeight: 1.4 }}>
                     En «Monto» va lo que efectivamente se depositó. Con cuotas, registra cada depósito como un abono.
@@ -2860,6 +2996,33 @@ export default function SeguimientoPagos() {
         />
       )}
 
+      {/* Cliente particular: forma de pago, cuotas y cada pago con su comprobante. */}
+      {(() => {
+        const f = seguimientoDe ? facturas.find((x) => x.id === seguimientoDe.id) : null;
+        if (!f) return null;
+        return (
+          <SeguimientoPagoParticular
+            key={f.id}
+            factura={f}
+            cliente={licMap[f.licitacion_id]?.nombre_entidad || ""}
+            // El saldo es el que muestra la tabla: 0 si está marcada pagada sin montos.
+            cuenta={{ ...cuentaDe(f), saldo: saldoMostrado(f) }}
+            pagos={pagosDeFactura(f)}
+            tolerancia={TOLERANCIA_SALDO}
+            sinMigracion={!migracionCuotas}
+            abrirFormulario={seguimientoDe.conFormulario}
+            onCerrar={() => setSeguimientoDe(null)}
+            onGuardarPlan={guardarPlanPago}
+            onRegistrarPago={registrarPagoParticular}
+            onEditarPago={editarPagoParticular}
+            onEliminarPago={eliminarPagoParticular}
+            onValidar={validarPagoParticular}
+            onVerArchivo={abrirDocumento}
+            avisar={setToast}
+          />
+        );
+      })()}
+
       {voucherFor && createPortal(
         <div
           onClick={cerrarVoucher}
@@ -2872,28 +3035,18 @@ export default function SeguimientoPagos() {
           >
             <div style={{ padding: "16px 20px", borderBottom: "1px solid var(--border)" }}>
               <strong style={{ fontSize: 15 }}>
-                {voucherTipo === "nota_credito" ? "Agregar nota de crédito" : voucherTipo === "multa" ? "Registrar multa" : "Registrar pago"}
+                {voucherTipo === "nota_credito" ? "Agregar nota de crédito" : "Registrar multa"}
               </strong>
               <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 2 }}>
                 Factura {voucherFor.numero || "S/N"} · {licMap[voucherFor.licitacion_id]?.nombre_entidad || ""}
               </div>
-              {(voucherTipo === "nota_credito" || voucherTipo === "multa") && (
-                <div style={{ fontSize: 11.5, color: "var(--text-muted)", marginTop: 4 }}>
-                  El monto se descontará del total a cobrar de esta factura.
-                </div>
-              )}
+              <div style={{ fontSize: 11.5, color: "var(--text-muted)", marginTop: 4 }}>
+                El monto se descontará del total a cobrar de esta factura.
+              </div>
             </div>
             <div style={{ padding: "16px 20px", display: "flex", flexDirection: "column", gap: 12 }}>
-              {voucherTipo === "comprobante" && (
-                <div style={{ fontSize: 13, fontWeight: 600 }}>
-                  Medio de pago
-                  <div style={{ marginTop: 4 }}>
-                    <DropdownSelect value={vMedio} onChange={setVMedio} options={MEDIOS_DE_PAGO} minWidth={220} style={{ width: "100%" }} />
-                  </div>
-                </div>
-              )}
               <div style={{ fontSize: 13, fontWeight: 600 }}>
-                {voucherTipo === "comprobante" ? "Comprobante" : "Archivo"}{voucherTipo === "nota_credito" || voucherTipo === "multa" || esPagoTarjeta(vMedio) ? " (opcional)" : ""}
+                Archivo (opcional)
                 <div style={{ marginTop: 6, display: "flex", alignItems: "center", gap: 10 }}>
                   <label className="btn btn-secondary btn-sm" style={{ cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
                     <Upload size={13} /> Seleccionar archivo
@@ -2913,43 +3066,24 @@ export default function SeguimientoPagos() {
                 </div>
               </div>
               <label style={{ fontSize: 13, fontWeight: 600 }}>
-                {voucherTipo === "nota_credito" ? "Monto" : voucherTipo === "multa" ? "Monto de la multa (bruto)" : esPagoTarjeta(vMedio) ? "Monto bruto (lo que depositó el medio)" : "Monto bruto (lo transferido)"}
+                {voucherTipo === "nota_credito" ? "Monto" : "Monto de la multa (bruto)"}
                 <input type="text" inputMode="numeric" className="input" value={vMonto ? Number(vMonto).toLocaleString("es-CL") : ""} onChange={(e) => setVMonto(e.target.value.replace(/[^\d]/g, ""))} placeholder="0" style={{ marginTop: 4 }} />
               </label>
-              {voucherTipo === "comprobante" && esPagoTarjeta(vMedio) && (
-                <>
-                  <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-                    <label style={{ fontSize: 13, fontWeight: 600, flex: "2 1 160px", minWidth: 0 }}>
-                      Comisión del medio (opcional)
-                      <input type="text" inputMode="numeric" className="input" value={vComision ? Number(vComision).toLocaleString("es-CL") : ""} onChange={(e) => setVComision(e.target.value.replace(/[^\d]/g, ""))} placeholder="0" style={{ marginTop: 4 }} />
-                    </label>
-                    <label style={{ fontSize: 13, fontWeight: 600, flex: "1 1 90px", minWidth: 0 }}>
-                      Cuotas
-                      <input type="text" inputMode="numeric" className="input" value={vCuotas} onChange={(e) => setVCuotas(e.target.value.replace(/[^\d]/g, "").slice(0, 2))} placeholder="1" style={{ marginTop: 4 }} />
-                    </label>
-                  </div>
-                  <div style={{ fontSize: 11.5, color: "var(--text-muted)", lineHeight: 1.4 }}>
-                    La comisión es lo que Transbank / Getnet descontó antes de depositar: no se recibió, pero no es deuda
-                    del cliente, así que también salda la factura. Con más de 1 cuota, registra cada depósito como un
-                    abono; la factura queda «En cuotas» hasta completar.
-                  </div>
-                </>
-              )}
               <label style={{ fontSize: 13, fontWeight: 600 }}>
-                {voucherTipo === "nota_credito" ? "Fecha de la nota de crédito" : voucherTipo === "multa" ? "Fecha de la multa" : "Fecha del comprobante"}
+                {voucherTipo === "nota_credito" ? "Fecha de la nota de crédito" : "Fecha de la multa"}
                 <div style={{ marginTop: 4 }}>
                   <DateFilter value={vFecha} onChange={setVFecha} placeholder="Fecha" />
                 </div>
               </label>
               <label style={{ fontSize: 13, fontWeight: 600 }}>
                 N° / referencia (opcional)
-                <input type="text" className="input" value={vNumero} onChange={(e) => setVNumero(e.target.value)} placeholder={voucherTipo === "nota_credito" ? "N° nota de crédito…" : voucherTipo === "multa" ? "N° resolución / multa…" : "N° operación, banco…"} style={{ marginTop: 4 }} />
+                <input type="text" className="input" value={vNumero} onChange={(e) => setVNumero(e.target.value)} placeholder={voucherTipo === "nota_credito" ? "N° nota de crédito…" : "N° resolución / multa…"} style={{ marginTop: 4 }} />
               </label>
             </div>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, padding: "14px 20px", borderTop: "1px solid var(--border)", background: "var(--bg)" }}>
               <button type="button" onClick={cerrarVoucher} disabled={subiendoVoucher} className="btn btn-secondary">Cancelar</button>
               <button type="submit" disabled={subiendoVoucher} className="btn btn-primary">
-                {subiendoVoucher ? "Guardando…" : voucherTipo === "nota_credito" ? "Agregar nota de crédito" : voucherTipo === "multa" ? "Registrar multa" : "Registrar pago"}
+                {subiendoVoucher ? "Guardando…" : voucherTipo === "nota_credito" ? "Agregar nota de crédito" : "Registrar multa"}
               </button>
             </div>
           </form>
@@ -2967,7 +3101,7 @@ export default function SeguimientoPagos() {
 function ModalPagosFactura({ factura, cliente, pagos, cuenta, onCerrar, onGuardarPago, onGuardarCuotas, onVerArchivo, avisar }) {
   const [filas, setFilas] = useState(() => Object.fromEntries(pagos.map((d) => [d.id, pagoAFormulario(d)])));
   const [guardandoId, setGuardandoId] = useState(null);
-  const cuotasGuardadas = String(Number(factura.cuotas_total) > 1 ? Number(factura.cuotas_total) : 1);
+  const cuotasGuardadas = String(limitarCuotas(factura.cuotas_total));
   const [cuotas, setCuotas] = useState(cuotasGuardadas);
   const [guardandoCuotas, setGuardandoCuotas] = useState(false);
 
@@ -3038,15 +3172,15 @@ function ModalPagosFactura({ factura, cliente, pagos, cuenta, onCerrar, onGuarda
 
           {/* Cuotas pactadas */}
           <div style={{ display: "flex", alignItems: "flex-end", gap: 10, flexWrap: "wrap" }}>
-            <label style={{ flex: "0 0 110px" }}>
+            <div style={{ flex: "0 0 140px" }}>
               <span style={etiqueta}>Cuotas pactadas</span>
-              <input className="input" inputMode="numeric" value={cuotas} onChange={(e) => setCuotas(e.target.value.replace(/[^\d]/g, "").slice(0, 2))} />
-            </label>
+              <DropdownSelect value={String(limitarCuotas(cuotas))} onChange={setCuotas} options={OPCIONES_CUOTAS} minWidth={140} style={{ width: "100%" }} />
+            </div>
             <button type="button" className="btn btn-secondary btn-sm" onClick={guardarLasCuotas} disabled={guardandoCuotas || String(cuotasNum) === cuotasGuardadas} style={{ marginBottom: 2 }}>
               {guardandoCuotas ? "Guardando…" : "Guardar cuotas"}
             </button>
             <span style={{ flex: "1 1 220px", fontSize: 11.5, color: "var(--text-muted)", lineHeight: 1.4 }}>
-              1 = pago de una vez. Con más de 1, la factura muestra «En cuotas {Math.min(cuenta.abonos, cuotasNum)}/{cuotasNum}» hasta que el medio termine de depositar; cada depósito es un pago de esta lista.
+              Sin cuotas = pago de una vez. Con cuotas, la factura muestra «En cuotas {Math.min(cuenta.abonos, cuotasNum)}/{cuotasNum}» hasta que el medio termine de depositar; cada depósito es un pago de esta lista.
             </span>
           </div>
 

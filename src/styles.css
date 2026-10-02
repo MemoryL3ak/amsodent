@@ -2537,6 +2537,467 @@ img, video, canvas { height: auto; }
   }
 }
 
+/* ── Seguimiento de Pagos: pestañas por tipo de cliente ──────────
+   Cliente particular / entidad pública. La línea de base va como sombra
+   interior y no como borde con margen negativo: el contenedor se desplaza de
+   lado en pantallas chicas y ese margen le sumaría un desplazamiento vertical. */
+.pagos-tabs {
+  display: flex;
+  gap: 4px;
+  margin: 0 0 16px;
+  box-shadow: inset 0 -1px 0 var(--border);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.pagos-tabs::-webkit-scrollbar { display: none; }
+.pagos-tabs > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 8px 8px 0 0;
+  background: none;
+  cursor: pointer;
+  font-family: var(--font);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-soft);
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: color .15s, border-color .15s, background .15s;
+}
+.pagos-tabs > button:hover { color: var(--text); background: var(--neutral-bg); }
+.pagos-tabs > button.activo {
+  color: var(--primary-dark);
+  border-bottom-color: var(--primary);
+}
+.pagos-tab-n {
+  min-width: 22px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--neutral-bg);
+  color: var(--text-soft);
+  font-size: 11.5px;
+  font-weight: 700;
+  text-align: center;
+}
+.pagos-tabs > button.activo .pagos-tab-n { background: var(--primary-light); color: var(--primary-dark); }
+@media (max-width: 560px) {
+  .pagos-tabs > button { flex: 1 1 0; justify-content: center; padding: 10px 8px; font-size: 13px; gap: 6px; }
+}
+/* KPI «En cuotas» de la pestaña de particulares (ocupa el lugar de Factoring). */
+.stats-row.stats-8 .stat-card.kpi-cuotas::after { background: #1d4ed8; }
+/* Avance del plan de cuotas dentro de la columna «Pago». */
+.pagos-plan-mini { margin-top: 4px; font-size: 11px; font-weight: 600; color: #1d4ed8; }
+.pagos-plan-barra { height: 4px; margin-bottom: 3px; border-radius: 999px; background: #dbeafe; overflow: hidden; }
+.pagos-plan-barra > span { display: block; height: 100%; border-radius: inherit; background: #1d4ed8; }
+
+/* ── Seguimiento del pago de un cliente particular (ventana) ─────
+   components/SeguimientoPagoParticular.jsx: resumen de la cuenta, forma de
+   pago (medio, cuotas y valor por cuota) y la línea de pagos / cuotas. La
+   ventana tiene cabecera y pie fijos; solo el cuerpo se desplaza. */
+.sgp-fondo {
+  position: fixed;
+  inset: 0;
+  z-index: 11000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(15, 23, 42, .55);
+}
+.sgp-modal {
+  width: 780px;
+  max-width: 100%;
+  max-height: 92vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: 0 24px 60px -12px rgba(15, 23, 42, .30), 0 8px 20px -8px rgba(15, 23, 42, .12);
+}
+.sgp-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+  background: linear-gradient(120deg, var(--primary-light), var(--surface) 62%);
+}
+.sgp-head-ico {
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 11px;
+  background: var(--primary);
+  color: #fff;
+  box-shadow: 0 8px 16px -8px rgba(40, 174, 177, .9);
+}
+.sgp-head-txt { flex: 1; min-width: 0; }
+.sgp-head-titulo { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; }
+.sgp-head-titulo strong { font-size: 16px; font-weight: 700; }
+.sgp-head-sub { display: block; margin-top: 2px; font-size: 12.5px; color: var(--text-soft); overflow-wrap: anywhere; }
+.sgp-chip {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.sgp-chip-ok     { background: #dcfce7; color: #15803d; }
+.sgp-chip-info   { background: #ccfbf1; color: #0f766e; }
+.sgp-chip-cuotas { background: #dbeafe; color: #1d4ed8; }
+.sgp-chip-pend   { background: #fef3c7; color: #b45309; }
+
+.sgp-cuerpo {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 18px 20px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.sgp-resumen { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.sgp-dato {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg);
+}
+.sgp-dato > span {
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+  color: var(--text-soft);
+}
+.sgp-dato > strong { font-size: 17px; font-weight: 700; line-height: 1.25; overflow-wrap: anywhere; }
+.sgp-dato > em { font-style: normal; font-size: 11px; color: var(--text-soft); line-height: 1.3; }
+.sgp-ok     { color: #15803d; }
+.sgp-falta  { color: #b45309; }
+.sgp-exceso { color: #dc2626; }
+.sgp-avance { display: flex; align-items: center; gap: 10px; margin-top: 10px; font-size: 12px; font-weight: 600; color: var(--text-soft); white-space: nowrap; }
+.sgp-avance-barra { flex: 1; height: 8px; border-radius: 999px; background: var(--neutral-bg); overflow: hidden; }
+.sgp-avance-barra > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--primary), #16a34a);
+  transition: width .3s ease;
+}
+
+.sgp-titulo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 10px;
+  font-size: 11.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .6px;
+  color: var(--text-soft);
+}
+.sgp-titulo::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+
+/* Medio de pago: cuatro tarjetas elegibles */
+.sgp-medios { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.sgp-medio {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1.5px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  font-family: var(--font);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color .15s, background .15s, box-shadow .15s;
+}
+.sgp-medio:hover { border-color: var(--primary-mid); }
+.sgp-medio:disabled { cursor: default; opacity: .7; }
+.sgp-medio.activo {
+  border-color: var(--primary);
+  background: var(--primary-light);
+  box-shadow: 0 0 0 3px rgba(40, 174, 177, .12);
+}
+.sgp-medio-ico {
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9px;
+  background: var(--neutral-bg);
+  color: var(--text-soft);
+}
+.sgp-medio.activo .sgp-medio-ico { background: var(--primary); color: #fff; }
+.sgp-medio-txt { min-width: 0; display: flex; flex-direction: column; }
+.sgp-medio-txt strong { font-size: 13px; font-weight: 700; color: var(--text); }
+.sgp-medio-txt em { font-style: normal; font-size: 11px; color: var(--text-soft); line-height: 1.25; }
+.sgp-medio-check { position: absolute; top: 7px; right: 8px; color: var(--primary-dark); }
+
+/* Cuotas: modalidad, número y valor de cada una */
+.sgp-cuotas {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+  align-items: end;
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px dashed var(--primary-mid);
+  border-radius: 12px;
+  background: #f6fcfc;
+}
+.sgp-calculo { grid-column: 1 / -1; font-size: 12.5px; color: var(--text-soft); }
+.sgp-calculo strong { color: var(--text); }
+.sgp-calculo-dif { color: #b45309; }
+.sgp-campo { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.sgp-etq {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .4px;
+  color: var(--text-soft);
+}
+.sgp-aviso {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 9px 12px;
+  border-radius: 10px;
+  background: #fef3c7;
+  color: #92400e;
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+.sgp-aviso > svg { flex-shrink: 0; margin-top: 2px; }
+.sgp-plan-pie {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin-top: 12px;
+  font-size: 12.5px;
+  color: var(--text-soft);
+}
+
+/* Línea de pagos y cuotas */
+.sgp-linea { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.sgp-item { position: relative; padding-left: 44px; }
+.sgp-item::before {
+  content: "";
+  position: absolute;
+  left: 15px;
+  top: 38px;
+  bottom: -14px;
+  width: 2px;
+  background: var(--border);
+}
+.sgp-item:last-child::before { display: none; }
+.sgp-item.sgp-pagada::before { background: #86efac; }
+.sgp-marca {
+  position: absolute;
+  left: 0;
+  top: 8px;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 2px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text-soft);
+  font-size: 12.5px;
+  font-weight: 700;
+}
+.sgp-pagada .sgp-marca { border-color: var(--success); background: var(--success); color: #fff; }
+.sgp-siguiente .sgp-marca {
+  border-color: var(--primary);
+  color: var(--primary-dark);
+  box-shadow: 0 0 0 4px rgba(40, 174, 177, .15);
+}
+.sgp-card {
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+.sgp-pagada .sgp-card { border-left: 3px solid var(--success); }
+.sgp-pendiente .sgp-card { border-style: dashed; background: var(--bg); }
+.sgp-siguiente .sgp-card { border-color: var(--primary-mid); background: #f6fcfc; }
+.sgp-card-top { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 4px 12px; }
+.sgp-card-titulo { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; font-size: 13.5px; font-weight: 700; }
+.sgp-card-sub { margin-top: 1px; font-size: 12px; color: var(--text-soft); }
+.sgp-card-monto { font-size: 16px; font-weight: 700; white-space: nowrap; }
+.sgp-pendiente .sgp-card-monto { color: var(--text-soft); }
+.sgp-etiqueta-medio {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: #e0f2fe;
+  color: #0369a1;
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .4px;
+}
+.sgp-card-datos { display: flex; flex-wrap: wrap; gap: 2px 16px; margin-top: 8px; font-size: 12px; color: var(--text-soft); }
+.sgp-card-datos strong { font-weight: 600; color: var(--text); overflow-wrap: anywhere; }
+.sgp-card-detalle {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--bg);
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: #374151;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.sgp-card-pie { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.sgp-acciones { display: inline-flex; gap: 6px; }
+.sgp-sin-archivo { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--text-muted); }
+.sgp-enlace {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0;
+  border: none;
+  background: none;
+  font-family: var(--font);
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--primary-dark);
+  cursor: pointer;
+}
+.sgp-enlace:hover { text-decoration: underline; }
+.sgp-enlace:disabled { opacity: .5; cursor: default; text-decoration: none; }
+.sgp-agregar { margin: 12px 0 0 44px; }
+.sgp-icono-btn {
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text-soft);
+  cursor: pointer;
+  transition: background .15s, color .15s, border-color .15s;
+}
+.sgp-icono-btn:hover { background: var(--neutral-bg); color: var(--text); }
+.sgp-icono-btn.peligro:hover { background: var(--danger-bg); border-color: #fecaca; color: var(--danger); }
+.sgp-icono-btn:disabled { opacity: .5; cursor: default; }
+.sgp-vacio {
+  padding: 16px 12px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 10px;
+  font-size: 13px;
+  text-align: center;
+  color: var(--text-soft);
+}
+
+/* Formulario de un pago / cuota */
+.sgp-form {
+  padding: 14px;
+  border: 1.5px solid var(--primary);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: 0 0 0 4px rgba(40, 174, 177, .10);
+}
+.sgp-form-titulo { margin-bottom: 10px; font-size: 13.5px; font-weight: 700; }
+.sgp-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.sgp-campo-ancho { grid-column: 1 / -1; }
+.sgp-form textarea.input {
+  height: auto;
+  min-height: 62px;
+  padding: 8px 10px;
+  line-height: 1.45;
+  resize: vertical;
+}
+.sgp-archivo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1.5px dashed var(--border-strong);
+  border-radius: 10px;
+  background: var(--bg);
+  font-size: 12.5px;
+  color: var(--text-soft);
+  cursor: pointer;
+  transition: border-color .15s, color .15s;
+}
+.sgp-archivo:hover { border-color: var(--primary); color: var(--primary-dark); }
+.sgp-archivo.con-archivo { border-style: solid; border-color: var(--primary-mid); background: var(--primary-light); color: var(--text); font-weight: 600; }
+.sgp-archivo > svg { flex-shrink: 0; }
+.sgp-archivo > input { display: none; }
+.sgp-archivo-nombre { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sgp-campo > .sgp-enlace { align-self: flex-start; margin-top: 2px; }
+.sgp-form-nota { margin-top: 10px; font-size: 11.5px; color: var(--text-soft); }
+.sgp-form-pie { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+/* El selector de fecha ocupa el ancho de su campo y su calendario queda por
+   encima de las tarjetas que siguen. */
+.sgp-modal .react-datepicker-wrapper,
+.sgp-modal .trazabilidad-datepicker,
+.sgp-modal .trazabilidad-datepicker input { width: 100%; }
+.sgp-modal .react-datepicker-popper { z-index: 5; }
+
+.sgp-pie {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px 12px;
+  padding: 12px 20px;
+  border-top: 1px solid var(--border);
+  background: var(--bg);
+  font-size: 12px;
+  color: var(--text-soft);
+}
+.sgp-pie > span { flex: 1 1 220px; min-width: 0; }
+/* Mientras se guarda, los botones de la ventana se ven apagados. */
+.sgp-modal .btn:disabled { opacity: .55; cursor: default; }
+.sgp-pie-botones { display: flex; flex-wrap: wrap; gap: 8px; margin-left: auto; }
+
+@media (max-width: 640px) {
+  .sgp-fondo { padding: 8px; }
+  .sgp-modal { max-height: 96vh; border-radius: 14px; }
+  .sgp-head { padding: 12px 14px; }
+  .sgp-cuerpo { padding: 14px; gap: 16px; }
+  .sgp-pie { padding: 10px 14px; }
+  .sgp-resumen { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .sgp-medios { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .sgp-cuotas { grid-template-columns: minmax(0, 1fr); }
+  .sgp-form-grid { grid-template-columns: minmax(0, 1fr); }
+  .sgp-item { padding-left: 38px; }
+  .sgp-marca { width: 28px; height: 28px; font-size: 11.5px; }
+  .sgp-item::before { left: 13px; top: 34px; }
+  .sgp-agregar { margin-left: 38px; }
+}
+
 /* Seguimiento de Pagos: la tabla cabe entera desde ~1280 px de pantalla. Bajo
    eso no se aprieta más (las celdas partían el texto letra por letra y los
    botones no cabían): conserva este ancho y se desplaza dentro de
