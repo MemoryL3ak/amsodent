@@ -73,6 +73,7 @@ function SLABadge({ fechaOc }) {
 }
 import { Upload, Eye, Trash2, ArrowUpDown, ArrowUp, ArrowDown, Calendar, FileCheck, ChevronDown, Truck, Download, Clock, CheckCircle2, Check, Pencil, X, AlertTriangle, Package } from "lucide-react";
 import { SunflowerIcon } from "../components/DamarIAWidget";
+import EmitirFacturaBsale from "../components/EmitirFacturaBsale";
 
 // Mapping empresa courier → builder de URL de tracking. Si la empresa no
 // tiene URL o no hay número, devuelve "" (no renderizamos el link).
@@ -561,6 +562,10 @@ export default function Trazabilidad() {
   // Falta por despachar de una OC según las guías emitidas en Bsale (modal):
   // { ocNumero, ocMonto, ocFecha, cliente } | null.
   const [despachoBsale, setDespachoBsale] = useState(null);
+  // Emitir la factura de una guía en Bsale (ventana): { licId, guiaId } | null.
+  const [emitirFactura, setEmitirFactura] = useState(null);
+  // ¿Puede este usuario emitir? Lo decide el backend (rol + integración).
+  const [puedeEmitirBsale, setPuedeEmitirBsale] = useState(false);
   const [facturaNumero, setFacturaNumero] = useState("");
   const [facturaFecha, setFacturaFecha] = useState("");
   const [facturaMonto, setFacturaMonto] = useState(""); // monto NETO de la factura (solo dígitos)
@@ -661,6 +666,17 @@ export default function Trazabilidad() {
       console.error("Error refrescando documentos:", err);
     }
   }
+
+  // Emisión de facturas en Bsale: el botón solo aparece si el backend dice
+  // que este usuario puede (rol permitido e integración configurada).
+  useEffect(() => {
+    if (cargando || soloLectura) return;
+    let vivo = true;
+    api.get("/bsale/facturas/estado")
+      .then((e) => { if (vivo) setPuedeEmitirBsale(!!e?.puede); })
+      .catch(() => { /* backend sin la función: el botón no aparece */ });
+    return () => { vivo = false; };
+  }, [cargando, soloLectura]);
 
   /* ── Load data ────────────────────────────────────────────── */
   useEffect(() => {
@@ -2284,6 +2300,17 @@ export default function Trazabilidad() {
       {toast && <Toast type={toast.type} message={toast.message} onClose={() => setToast(null)} />}
       {guiaBsale && <ModalGuiaBsale {...guiaBsale} onCerrar={() => setGuiaBsale(null)} />}
       {despachoBsale && <ModalDespachoBsale {...despachoBsale} onCerrar={() => setDespachoBsale(null)} />}
+      {emitirFactura && (
+        <EmitirFacturaBsale
+          licitacionId={emitirFactura.licId}
+          guiaDocId={emitirFactura.guiaId}
+          onCerrar={() => setEmitirFactura(null)}
+          onEmitida={(r) => {
+            setToast({ type: "success", message: `Factura ${r.numero} emitida en Bsale${r.registrada ? " y registrada en la cotización." : "."}` });
+            refrescarDocumentosLic(emitirFactura.licId);
+          }}
+        />
+      )}
 
       {/* Header */}
       <div className="page-header" style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
@@ -3042,7 +3069,21 @@ export default function Trazabilidad() {
                               )}
                             </div>
                           ) : (
-                            <span className="badge badge-warning">Pendiente</span>
+                            <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 5 }}>
+                              <span className="badge badge-warning">Pendiente</span>
+                              {/* Emitir la factura en Bsale a partir de la guía (quien pueda). */}
+                              {puedeEmitirBsale && !soloLectura && guia?.id && guia?.numero && (
+                                <button
+                                  type="button"
+                                  onClick={() => setEmitirFactura({ licId: lic.id, guiaId: guia.id })}
+                                  className="btn btn-secondary btn-sm"
+                                  style={{ height: "auto", minHeight: 26, padding: "3px 8px", fontSize: 11.5, whiteSpace: "normal", textAlign: "left", lineHeight: 1.2 }}
+                                  title={`Emitir en Bsale la factura de la guía ${guia.numero}: se arma con los productos de la guía y queda registrada aquí`}
+                                >
+                                  <FileCheck size={12} style={{ flexShrink: 0 }} /> Emitir factura
+                                </button>
+                              )}
+                            </div>
                           )}
                         </td>
                         )}

@@ -3016,7 +3016,13 @@ img, video, canvas { height: auto; }
 /* El selector de fecha ocupa todo el ancho de su campo dentro de la ventana. */
 .modal-registrar-pago .react-datepicker-wrapper,
 .modal-registrar-pago .trazabilidad-datepicker,
-.modal-registrar-pago .trazabilidad-datepicker input { width: 100%; }
+.modal-registrar-pago .trazabilidad-datepicker input,
+.modal-emitir-factura .react-datepicker-wrapper,
+.modal-emitir-factura .trazabilidad-datepicker,
+.modal-emitir-factura .trazabilidad-datepicker input { width: 100%; }
+/* Ícono de "cargando" que gira. */
+.spin { animation: spin-girar 1s linear infinite; }
+@keyframes spin-girar { to { transform: rotate(360deg); } }
 
 /* Autocompletado de Google Places: el dropdown se monta en <body>; subimos su
    z-index para que no quede tapado por los modales (overlay z-index 1000+). */

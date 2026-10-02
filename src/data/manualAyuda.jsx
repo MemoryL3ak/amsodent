@@ -372,6 +372,7 @@ export const GRUPOS_MANUAL = [
           "Tracking del envío por N° de seguimiento.",
           "Ícono de paquete junto a cada guía: consulta la guía electrónica en Bsale y muestra los productos despachados (SKU, cantidad, precio), cruzando sus referencias contra el N° de la OC de la cotización.",
           "Ícono de camión junto a cada OC: busca en Bsale TODAS las guías que referencian esa OC (incluidas las no registradas acá) y muestra el monto despachado y cuánto FALTA por despachar contra el documento real.",
+          "Emitir factura en Bsale (administración y contabilidad): en una guía que aún no tiene factura aparece el botón «Emitir factura». Abre el borrador armado desde la guía de Bsale (mismo cliente y productos, con referencia a la orden de compra y a la guía), deja elegir fecha, plazo de vencimiento y forma de pago, y al confirmar emite la factura electrónica, guarda su PDF y la deja registrada en la cotización. No descuenta stock de nuevo. Una guía ya facturada (aquí o en Bsale) queda bloqueada. Mientras la emisión real no esté activada, el botón solo simula.",
         ],
         figura: { tipo: "flujo", pasos: ["OC", "Guías (≤ 3 días háb.)", "Factura", "Pago"] },
       },
