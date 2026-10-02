@@ -685,6 +685,43 @@ function RenderTexto({ texto }) {
   );
 }
 
+/* ── Posición del widget ─────────────────────────────────────────────────
+   El widget se puede mover: el botón flotante se arrastra entero y el panel
+   desde su cabecera. La posición se guarda como distancia a la esquina
+   inferior derecha (así, si la ventana cambia de tamaño, sigue pegado a su
+   esquina) y la comparten el botón y el panel: el panel se abre donde está el
+   botón y, al cerrarlo, el botón queda donde quedó el panel. */
+const POS_INICIAL = { right: 26, bottom: 26 };
+const POS_CLAVE = "damaria_pos";
+const POS_MARGEN = 8; // nunca queda pegado al borde ni fuera de la pantalla
+const TAM_FAB = { w: 58, h: 58 };
+
+function leerPosicion() {
+  try {
+    const p = JSON.parse(localStorage.getItem(POS_CLAVE) || "null");
+    if (Number.isFinite(p?.right) && Number.isFinite(p?.bottom)) return { right: p.right, bottom: p.bottom };
+  } catch { /* sin posición guardada */ }
+  return POS_INICIAL;
+}
+
+function guardarPosicion(p) {
+  try { localStorage.setItem(POS_CLAVE, JSON.stringify(p)); } catch { /* */ }
+}
+
+const medirVentana = () => ({ w: window.innerWidth, h: window.innerHeight });
+
+// Mismo tamaño que declara el estilo `panel` (min(404px, 100vw−32) × min(640px, 100vh−110)).
+const tamanoPanel = (v) => ({ w: Math.min(404, v.w - 32), h: Math.min(640, v.h - 110) });
+
+// Mete la posición dentro de la ventana para una caja de ese tamaño.
+function encajar(pos, tam, v) {
+  const tope = (valor, max) => Math.round(Math.min(Math.max(valor, POS_MARGEN), Math.max(POS_MARGEN, max)));
+  return {
+    right: tope(pos.right, v.w - tam.w - POS_MARGEN),
+    bottom: tope(pos.bottom, v.h - tam.h - POS_MARGEN),
+  };
+}
+
 /* ── Widget principal ────────────────────────────────────────────────── */
 export default function DamarIAWidget() {
   const { perfil } = useAuth();
@@ -707,6 +744,73 @@ export default function DamarIAWidget() {
   // conversación hasta que se inicie una nueva.
   const contextoRef = useRef("");
   const [contextoNombre, setContextoNombre] = useState("");
+
+  // Mover el widget (ver "Posición del widget" más arriba).
+  const [pos, setPos] = useState(leerPosicion);
+  const [ventana, setVentana] = useState(medirVentana);
+  const [arrastrando, setArrastrando] = useState(false);
+  const panelRef = useRef(null);
+  // Un arrastre del botón termina con un "click": esto evita que además abra.
+  const huboArrastreRef = useRef(false);
+
+  useEffect(() => {
+    const alCambiar = () => setVentana(medirVentana());
+    window.addEventListener("resize", alCambiar);
+    return () => window.removeEventListener("resize", alCambiar);
+  }, []);
+
+  function iniciarArrastre(e) {
+    if (e.button != null && e.button !== 0) return;
+    // En la cabecera del panel los botones (voz, nueva, cerrar) siguen siendo botones.
+    if (abierto && e.target.closest("button")) return;
+    const caja = (abierto ? panelRef.current : e.currentTarget)?.getBoundingClientRect();
+    if (!caja) return;
+    const tam = { w: caja.width, h: caja.height };
+    const esBoton = !abierto;
+    const inicio = encajar(pos, tam, medirVentana());
+    const x0 = e.clientX;
+    const y0 = e.clientY;
+    let movido = false;
+    let ultima = inicio;
+    huboArrastreRef.current = false;
+
+    const mover = (ev) => {
+      const dx = ev.clientX - x0;
+      const dy = ev.clientY - y0;
+      // Umbral: un clic con un leve temblor del mouse no cuenta como arrastre.
+      if (!movido && Math.hypot(dx, dy) < 5) return;
+      if (!movido) {
+        movido = true;
+        if (esBoton) huboArrastreRef.current = true;
+        setArrastrando(true);
+        document.body.style.userSelect = "none";
+      }
+      ultima = encajar({ right: inicio.right - dx, bottom: inicio.bottom - dy }, tam, medirVentana());
+      setPos(ultima);
+    };
+    const soltar = () => {
+      window.removeEventListener("pointermove", mover);
+      window.removeEventListener("pointerup", soltar);
+      window.removeEventListener("pointercancel", soltar);
+      if (!movido) return;
+      document.body.style.userSelect = "";
+      setArrastrando(false);
+      guardarPosicion(ultima);
+      // El "click" con que termina el arrastre llega justo después de soltar;
+      // pasado ese instante la marca se limpia, para no tragarse un clic real
+      // posterior (p. ej. si se soltó fuera del botón o se abre con el teclado).
+      setTimeout(() => { huboArrastreRef.current = false; }, 0);
+    };
+    window.addEventListener("pointermove", mover);
+    window.addEventListener("pointerup", soltar);
+    window.addEventListener("pointercancel", soltar);
+  }
+
+  function volverALaEsquina(e) {
+    if (e.target.closest("button")) return;
+    setPos(POS_INICIAL);
+    guardarPosicion(POS_INICIAL);
+  }
 
   function toggleVoz() {
     setVozActiva((v) => {
@@ -928,9 +1032,18 @@ export default function DamarIAWidget() {
         <button
           type="button"
           className="dm-fab"
-          onClick={() => setAbierto(true)}
-          title="Abrir DamarIA"
-          style={fab}
+          onPointerDown={iniciarArrastre}
+          onClick={() => {
+            if (huboArrastreRef.current) { huboArrastreRef.current = false; return; }
+            setAbierto(true);
+          }}
+          title="Abrir DamarIA · arrástrame para moverme"
+          style={{
+            ...fab,
+            ...encajar(pos, TAM_FAB, ventana),
+            touchAction: "none",
+            cursor: arrastrando ? "grabbing" : "pointer",
+          }}
         >
           <SunflowerIcon size={28} petalColor="#fff" centerColor={CAFE_CENTRO} />
         </button>
@@ -938,9 +1051,14 @@ export default function DamarIAWidget() {
 
       {/* Panel */}
       {abierto && (
-        <div style={panel} className="dm-panel">
-          {/* Header */}
-          <div style={header}>
+        <div ref={panelRef} style={{ ...panel, ...encajar(pos, tamanoPanel(ventana), ventana) }} className="dm-panel">
+          {/* Header: también es el asa para mover el panel */}
+          <div
+            style={{ ...header, touchAction: "none", userSelect: "none", cursor: arrastrando ? "grabbing" : "grab" }}
+            onPointerDown={iniciarArrastre}
+            onDoubleClick={volverALaEsquina}
+            title="Arrastra para mover · doble clic para volver a la esquina"
+          >
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
               <div style={avatarHeader}>
                 <SunflowerIcon size={22} petalColor="#fff" centerColor={CAFE_CENTRO} />

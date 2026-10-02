@@ -466,6 +466,9 @@ girasol 🌻). Hoy ayuda en:
 - Centro de Ayuda (/ayuda): responde cómo usar la plataforma (todos los roles).
 - Widget flotante de datos (solo admin): consultas en lenguaje natural sobre la
   base de datos, con gráficos, tablas, export a Excel/PDF y voz.
+  Se puede mover: el botón del girasol se arrastra, y el panel abierto se
+  arrastra desde su cabecera (doble clic en la cabecera lo devuelve a la
+  esquina). La posición queda recordada en ese navegador.
 - Lectura de documentos: al subir una factura o guía en Trazabilidad, el botón
   del girasol extrae número, fecha, monto y courier automáticamente.
 - Recomendación de precios en el simulador del Análisis Mercado Público.
