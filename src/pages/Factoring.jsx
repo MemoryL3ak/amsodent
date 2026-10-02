@@ -111,9 +111,14 @@ export default function Factoring() {
     return () => { mounted = false; };
   }, [cargando, puedeVer]);
 
+  /* Monto de la factura CON IVA, que es lo que se cede al factoring y sobre lo
+     que se calcula el margen. Los documentos se guardan en NETO, así que se
+     lleva a bruto (×1,19), igual que en Seguimiento de Pagos. Antes se mostraba
+     el neto bajo el rótulo "con IVA" y el margen en pesos salía 16 % más bajo. */
   function montoFactura(f) {
     const lic = licMap[f.licitacion_id] || {};
-    return Number(f.monto) || Number(lic.total_con_iva) || 0;
+    const neto = Number(f.monto) || 0;
+    return neto > 0 ? Math.round(neto * 1.19) : Number(lic.total_con_iva) || 0;
   }
 
   /* El margen y el plazo llegan desde Seguimiento de Pagos, donde se piden al
