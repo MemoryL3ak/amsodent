@@ -12,10 +12,11 @@ import DropdownSelect from "./ui/DropdownSelect";
    ventana solo lo muestra y deja decidir tres cosas: fecha, plazo y forma de
    pago (más corregir el folio de la orden de compra si la guía lo trae mal).
 
-   Emitir no tiene vuelta atrás —una factura enviada al SII solo se anula con
-   nota de crédito—, así que el botón exige marcar la casilla de confirmación.
-   Si el backend está en modo simulación, el botón no emite: muestra lo que se
-   enviaría. */
+   Abajo hay dos botones. "Simular" muestra exactamente lo que se le enviaría
+   a Bsale, sin emitir ni guardar nada. "Emitir factura" emite de verdad: no
+   tiene vuelta atrás —una factura enviada al SII solo se anula con nota de
+   crédito—, así que exige marcar la casilla de confirmación. Si el servidor
+   tiene la emisión apagada (BSALE_EMISION=off), solo queda "Simular". */
 
 const clp = (n) => `$${Math.round(Number(n) || 0).toLocaleString("es-CL")}`;
 const fechaCL = (iso) => {
@@ -47,7 +48,7 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
   const [forma, setForma] = useState("");
   const [oc, setOc] = useState("");
   const [confirmo, setConfirmo] = useState(false);
-  const [enviando, setEnviando] = useState(false);
+  const [enviando, setEnviando] = useState(""); // "" | "simular" | "emitir"
   const [resultado, setResultado] = useState(null);
 
   useEffect(() => {
@@ -71,7 +72,8 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
     return () => { vivo = false; };
   }, [licitacionId, seleccion]);
 
-  const simulacion = borrador?.modo !== "activa";
+  // El servidor puede tener la emisión real apagada: ahí solo se simula.
+  const apagada = borrador?.modo !== "activa";
   const bloqueada = (borrador?.problemas?.length || 0) > 0;
   const variasGuias = (borrador?.guias?.length || 0) > 1;
   const vence = fecha && dias !== "" ? sumarDias(fecha, dias) : "";
@@ -89,12 +91,13 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
     });
   }
 
-  async function emitir() {
+  async function enviar(accion) {
     if (enviando || !borrador) return;
-    setEnviando(true);
+    setEnviando(accion);
     setError("");
     try {
       const r = await api.post("/bsale/facturas/emitir", {
+        ...(accion === "simular" ? { simular: true } : {}),
         licitacion_id: Number(licitacionId),
         guia_ids: seleccion,
         fecha_emision: fecha,
@@ -107,16 +110,16 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
       setResultado(r);
       if (r?.emitida) onEmitida?.(r);
     } catch (e) {
-      setError(e?.message || "No se pudo emitir la factura.");
+      setError(e?.message || (accion === "simular" ? "No se pudo simular." : "No se pudo emitir la factura."));
     } finally {
-      setEnviando(false);
+      setEnviando("");
     }
   }
 
   const cerrar = () => { if (!enviando) onCerrar?.(); };
-  const puedeEnviar =
-    !cargando && !enviando && borrador && !bloqueada && fecha && dias !== "" && forma &&
-    (simulacion || borrador.recuperar || confirmo);
+  const completo = !cargando && !enviando && borrador && !bloqueada && fecha && dias !== "" && forma;
+  const puedeSimular = completo;
+  const puedeEmitir = completo && !apagada && (borrador.recuperar || confirmo);
 
   return createPortal(
     <div
@@ -139,7 +142,7 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
               {borrador?.cotizacion?.cliente ? ` · ${borrador.cotizacion.cliente}` : ""}
             </div>
           </div>
-          <button type="button" onClick={cerrar} className="btn btn-ghost" style={{ padding: 6, flexShrink: 0 }} title="Cerrar" disabled={enviando}>
+          <button type="button" onClick={cerrar} className="btn btn-ghost" style={{ padding: 6, flexShrink: 0 }} title="Cerrar" disabled={!!enviando}>
             <X size={16} />
           </button>
         </div>
@@ -167,9 +170,12 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
           )}
           {resultado?.simulacion && (
             <div style={{ border: "1px solid #fde68a", background: "#fffbeb", borderRadius: 10, padding: 14, display: "flex", flexDirection: "column", gap: 8 }}>
-              <div style={{ fontSize: 13.5, fontWeight: 700, color: "#92400e" }}>Simulación: no se emitió nada</div>
+              <div style={{ fontSize: 13.5, fontWeight: 700, color: "#92400e" }}>
+                Simulación: no se emitió nada{resultado.emision_apagada ? " (la emisión real está apagada en el servidor)" : ""}
+              </div>
               <div style={{ fontSize: 12.5 }}>
                 Esto es exactamente lo que se le enviaría a Bsale: factura por {clp(resultado.totales?.total)}, con vencimiento el {fechaCL(resultado.fecha_vencimiento)}.
+                {!apagada ? " Si está bien, emítela con el botón «Emitir factura»." : ""}
               </div>
               <pre style={{ margin: 0, fontSize: 11.5, background: "#fff", border: "1px solid var(--border)", borderRadius: 8, padding: 10, maxHeight: 220, overflow: "auto", whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
                 {JSON.stringify(resultado.solicitud, null, 2)}
@@ -192,12 +198,12 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
 
               {borrador && !cargando && (
                 <>
-                  {simulacion && (
+                  {apagada && (
                     <div style={{ border: "1px solid #fde68a", background: "#fffbeb", color: "#92400e", borderRadius: 10, padding: "10px 12px", fontSize: 12.5, display: "flex", gap: 8 }}>
                       <Info size={15} style={{ flexShrink: 0, marginTop: 1 }} />
                       <span>
-                        <b>Modo simulación.</b> La emisión real está desactivada: puedes revisar el borrador y ver lo que se
-                        enviaría a Bsale, pero no se emite ninguna factura.
+                        <b>La emisión real está apagada en el servidor.</b> Puedes revisar el borrador y simular, pero no se
+                        emite ninguna factura.
                       </span>
                     </div>
                   )}
@@ -254,7 +260,7 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
                               type="checkbox"
                               checked={seleccion.includes(g.doc_id)}
                               onChange={() => alternarGuia(g.doc_id)}
-                              disabled={enviando || (seleccion.includes(g.doc_id) && seleccion.length === 1)}
+                              disabled={!!enviando || (seleccion.includes(g.doc_id) && seleccion.length === 1)}
                             />
                             <span style={{ minWidth: 0, overflowWrap: "anywhere" }}>
                               Guía <b>{g.numero}</b>
@@ -318,7 +324,7 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
                   <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
                     <div style={{ flex: "1 1 150px", minWidth: 0 }}>
                       <span style={etiqueta}>Fecha de emisión</span>
-                      <DateFilter value={fecha} onChange={setFecha} minDate={aFecha(borrador.fecha_minima)} maxDate={aFecha(borrador.fecha_maxima)} disabled={enviando} placeholder="Fecha" />
+                      <DateFilter value={fecha} onChange={setFecha} minDate={aFecha(borrador.fecha_minima)} maxDate={aFecha(borrador.fecha_maxima)} disabled={!!enviando} placeholder="Fecha" />
                     </div>
                     <label style={{ flex: "1 1 130px", minWidth: 0 }}>
                       <span style={etiqueta}>Vence en (días)</span>
@@ -327,25 +333,25 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
                         inputMode="numeric"
                         value={dias}
                         onChange={(e) => setDias(e.target.value.replace(/[^\d]/g, "").slice(0, 3))}
-                        disabled={enviando}
+                        disabled={!!enviando}
                         style={{ width: "100%" }}
                       />
                       <span style={{ fontSize: 11.5, color: "var(--text-muted)" }}>{vence ? `Vence el ${fechaCL(vence)}` : " "}</span>
                     </label>
                     <div style={{ flex: "1 1 190px", minWidth: 0 }}>
                       <span style={etiqueta}>Forma de pago</span>
-                      <DropdownSelect value={forma} onChange={setForma} options={opcionesForma} disabled={enviando} minWidth={190} style={{ width: "100%" }} />
+                      <DropdownSelect value={forma} onChange={setForma} options={opcionesForma} disabled={!!enviando} minWidth={190} style={{ width: "100%" }} />
                     </div>
                   </div>
                   <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end" }}>
                     {borrador.oc_editable && (
                       <label style={{ flex: "1 1 220px", minWidth: 0 }}>
                         <span style={etiqueta}>N° orden de compra (referencia)</span>
-                        <input className="input" value={oc} maxLength={18} onChange={(e) => setOc(e.target.value)} disabled={enviando} style={{ width: "100%" }} />
+                        <input className="input" value={oc} maxLength={18} onChange={(e) => setOc(e.target.value)} disabled={!!enviando} style={{ width: "100%" }} />
                       </label>
                     )}
                     {borrador.oc_editable && borrador.oc_del_sistema && oc.trim().toUpperCase() !== borrador.oc_del_sistema && (
-                      <button type="button" className="btn btn-secondary btn-sm" onClick={() => setOc(borrador.oc_del_sistema)} disabled={enviando} style={{ height: "auto", minHeight: 30, whiteSpace: "normal", textAlign: "left", padding: "5px 10px" }}>
+                      <button type="button" className="btn btn-secondary btn-sm" onClick={() => setOc(borrador.oc_del_sistema)} disabled={!!enviando} style={{ height: "auto", minHeight: 30, whiteSpace: "normal", textAlign: "left", padding: "5px 10px" }}>
                         Usar la del sistema: {borrador.oc_del_sistema}
                       </button>
                     )}
@@ -356,12 +362,12 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
                     </div>
                   </div>
 
-                  {!simulacion && !borrador.recuperar && !bloqueada && (
+                  {!apagada && !borrador.recuperar && !bloqueada && (
                     <label style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 13, border: "1px solid var(--border)", borderRadius: 10, padding: "10px 12px", cursor: "pointer" }}>
-                      <input type="checkbox" checked={confirmo} onChange={(e) => setConfirmo(e.target.checked)} disabled={enviando} style={{ marginTop: 2 }} />
+                      <input type="checkbox" checked={confirmo} onChange={(e) => setConfirmo(e.target.checked)} disabled={!!enviando} style={{ marginTop: 2 }} />
                       <span>
-                        Revisé el cliente, los productos y los montos. Entiendo que la factura se envía al SII y que solo se
-                        puede anular con una nota de crédito.
+                        <b>Para emitir:</b> revisé el cliente, los productos y los montos. Entiendo que la factura se envía al
+                        SII y que solo se puede anular con una nota de crédito.
                       </span>
                     </label>
                   )}
@@ -372,18 +378,37 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
         </div>
 
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, flexWrap: "wrap", padding: "14px 20px", borderTop: "1px solid var(--border)", background: "var(--bg)", borderRadius: "0 0 var(--radius-lg) var(--radius-lg)" }}>
-          <button type="button" onClick={cerrar} disabled={enviando} className="btn btn-secondary">
+          <button type="button" onClick={cerrar} disabled={!!enviando} className="btn btn-secondary">
             {resultado?.emitida ? "Cerrar" : "Cancelar"}
           </button>
-          {!resultado?.emitida && (
-            <button type="button" onClick={emitir} disabled={!puedeEnviar} className="btn btn-primary" style={{ height: "auto", minHeight: 36, whiteSpace: "normal" }}>
-              {enviando
-                ? (simulacion ? "Simulando…" : "Emitiendo…")
-                : simulacion
-                  ? "Simular emisión"
-                  : borrador?.recuperar
-                    ? `Registrar la factura ${borrador.recuperar.numero}`
-                    : `Emitir factura por ${clp(borrador?.totales?.total)}`}
+          {/* Simular: muestra lo que se enviaría. No emite ni guarda nada. */}
+          {!resultado?.emitida && !borrador?.recuperar && (
+            <button
+              type="button"
+              onClick={() => enviar("simular")}
+              disabled={!puedeSimular}
+              className="btn btn-secondary"
+              style={{ opacity: puedeSimular ? 1 : 0.5, cursor: puedeSimular ? "pointer" : "not-allowed" }}
+              title="Muestra exactamente lo que se le enviaría a Bsale. No emite ni guarda nada."
+            >
+              {enviando === "simular" ? "Simulando…" : "Simular"}
+            </button>
+          )}
+          {/* Emitir: la factura real. Exige la casilla de confirmación. */}
+          {!resultado?.emitida && !apagada && (
+            <button
+              type="button"
+              onClick={() => enviar("emitir")}
+              disabled={!puedeEmitir}
+              className="btn btn-primary"
+              style={{ height: "auto", minHeight: 36, whiteSpace: "normal", opacity: puedeEmitir ? 1 : 0.5, cursor: puedeEmitir ? "pointer" : "not-allowed" }}
+              title={borrador?.recuperar || confirmo || bloqueada ? "" : "Marca la casilla de confirmación para emitir"}
+            >
+              {enviando === "emitir"
+                ? "Emitiendo…"
+                : borrador?.recuperar
+                  ? `Registrar la factura ${borrador.recuperar.numero}`
+                  : `Emitir factura por ${clp(borrador?.totales?.total)}`}
             </button>
           )}
         </div>

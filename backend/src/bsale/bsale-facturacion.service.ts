@@ -20,8 +20,9 @@ import { SupabaseService } from '../supabase/supabase.service';
    · `preparar` no escribe nada: arma el borrador y dice qué lo bloquea.
    · `emitir` vuelve a armar el borrador en el servidor (nunca confía en las
      líneas que mande el navegador) y exige que no haya cambiado.
-   · Sin `BSALE_EMISION=on` corre en SIMULACIÓN: devuelve lo que enviaría y
-     no llama a Bsale.
+   · La ventana ofrece dos botones: SIMULAR (devuelve lo que se enviaría y
+     no llama a Bsale ni escribe nada) y EMITIR. `BSALE_EMISION=off` apaga la
+     emisión real en el servidor y deja solo la simulación.
    · Cada emisión lleva un `salesId` propio; Bsale lo usa para no duplicar: si
      la respuesta se pierde y se reintenta, devuelve la misma factura.
    · Todo queda en `bsale_emisiones` (quién, cuándo, qué se envió, qué volvió). */
@@ -147,9 +148,10 @@ export class BsaleFacturacionService {
     return (process.env.BSALE_URL || 'https://api.bsale.io').replace(/\/+$/, '');
   }
 
-  // Emisión real solo con BSALE_EMISION=on; cualquier otro valor = simulación.
+  // La emisión real está activa salvo que se apague con BSALE_EMISION=off
+  // (interruptor de emergencia: deja solo la simulación).
   get emisionActiva(): boolean {
-    return (process.env.BSALE_EMISION || '').trim().toLowerCase() === 'on';
+    return (process.env.BSALE_EMISION || '').trim().toLowerCase() !== 'off';
   }
 
   // Roles que pueden emitir (BSALE_EMISION_ROLES, separados por coma).
@@ -714,7 +716,7 @@ export class BsaleFacturacionService {
 
   async emitir(
     usuario: { id: string; email: string },
-    body: { licitacion_id: number; guia_ids: number[]; fecha_emision?: string; dias_vencimiento?: number; forma_pago_id?: number; oc_numero?: string; huella?: string },
+    body: { licitacion_id: number; guia_ids: number[]; fecha_emision?: string; dias_vencimiento?: number; forma_pago_id?: number; oc_numero?: string; huella?: string; simular?: boolean },
   ) {
     await this.exigirRol(usuario.id);
     if (!this.token) throw new BadRequestException('La integración con Bsale no está configurada (falta el token).');
@@ -723,16 +725,19 @@ export class BsaleFacturacionService {
     const guiaIds = [...new Set((body?.guia_ids || []).map(Number).filter((n) => n > 0))].sort((a, b) => a - b);
     const clave = `AMS-${licId}-${guiaIds.join('.')}`;
     const db = this.supabase.getClient();
+    // Botón "Simular" (o emisión apagada en el servidor): se arma y se valida
+    // todo igual, pero no se llama a Bsale ni se escribe nada.
+    const real = this.emisionActiva && body?.simular !== true;
 
     // Una emisión que sí salió pero no alcanzó a registrarse en el sistema se
     // completa aquí, sin volver a llamar a Bsale.
-    if (this.emisionActiva) {
+    if (real) {
       const pendiente = await this.emisionSinRegistrar(clave);
       if (pendiente) return this.registrarEnSistema(pendiente, usuario.email);
     }
 
     const b = await this.armarBorrador(licId, guiaIds);
-    if (this.emisionActiva && b._recuperar && !b.problemas.length) {
+    if (real && b._recuperar && !b.problemas.length) {
       const doc = b._recuperar.doc;
       const datos = {
         estado: 'emitida',
@@ -776,9 +781,16 @@ export class BsaleFacturacionService {
 
     const opciones = { fecha_emision: fecha, dias_vencimiento: dias, forma_pago_id: forma };
 
-    if (!this.emisionActiva) {
+    if (!real) {
       const solicitud = armarSolicitud(b as any, { ...opciones, sales_id: `${clave}-0` });
-      return { simulacion: true, solicitud, totales: b.totales, fecha_vencimiento: sumarDias(fecha, dias) };
+      return {
+        simulacion: true,
+        // Se pidió emitir pero el servidor tiene la emisión apagada.
+        emision_apagada: body?.simular !== true,
+        solicitud,
+        totales: b.totales,
+        fecha_vencimiento: sumarDias(fecha, dias),
+      };
     }
 
     // ── A partir de aquí es emisión real ──

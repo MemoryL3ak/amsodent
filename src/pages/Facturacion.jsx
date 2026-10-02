@@ -10,7 +10,8 @@ import EmitirFacturaBsale from "../components/EmitirFacturaBsale";
    Sección para emitir en Bsale la factura de una guía de despacho.
    · "Por facturar": las guías de cotizaciones adjudicadas que todavía no
      tienen factura, las más antiguas primero. El botón abre el borrador
-     (el mismo de Trazabilidad), que es donde se revisa contra Bsale.
+     (el mismo de Trazabilidad), que es donde se revisa contra Bsale y donde
+     están los dos botones: Simular y Emitir factura.
    · "Emitidas": lo que se ha emitido desde el sistema, y los intentos que no
      resultaron, con quién y cuándo.
    Quién puede usarla lo decide el backend (administración y contabilidad). */
@@ -142,7 +143,8 @@ export default function Facturacion() {
     );
   }
 
-  const simulacion = estado && estado.modo !== "activa";
+  // La emisión real se puede apagar en el servidor (BSALE_EMISION=off).
+  const apagada = estado && estado.modo !== "activa";
 
   return (
     <div className="page">
@@ -170,12 +172,12 @@ export default function Facturacion() {
         </button>
       </div>
 
-      {simulacion && (
+      {apagada && (
         <div style={{ border: "1px solid #fde68a", background: "#fffbeb", color: "#92400e", borderRadius: 10, padding: "10px 14px", fontSize: 13, display: "flex", gap: 8, marginBottom: 14 }}>
           <Info size={16} style={{ flexShrink: 0, marginTop: 1 }} />
           <span>
-            <b>Modo simulación.</b> La emisión real está desactivada: puedes abrir cada guía, revisar el borrador y ver lo
-            que se enviaría a Bsale, pero no se emite ninguna factura.
+            <b>La emisión real está apagada en el servidor.</b> Puedes abrir cada guía, revisar el borrador y simular,
+            pero no se emite ninguna factura.
           </span>
         </div>
       )}
@@ -283,7 +285,7 @@ export default function Facturacion() {
                         <td style={{ verticalAlign: "middle", textAlign: "right", whiteSpace: "nowrap" }}>
                           {f.emitible ? (
                             <button type="button" className="btn btn-primary btn-sm" onClick={() => setEmitir({ licId: f.licitacion_id, guiaId: f.guia_id })}>
-                              <FileCheck size={13} /> {simulacion ? "Revisar borrador" : "Emitir factura"}
+                              <FileCheck size={13} /> {apagada ? "Revisar borrador" : "Emitir factura"}
                             </button>
                           ) : (
                             <span style={{ fontSize: 12, color: "var(--text-muted)" }} title="Lo cargado como número no es un folio de guía: no se puede buscar en Bsale. Corrígelo en Trazabilidad.">
