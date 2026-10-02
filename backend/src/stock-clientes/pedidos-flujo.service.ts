@@ -193,6 +193,217 @@ export class PedidosFlujoService {
     return filas.slice(0, tope);
   }
 
+  /* ── Actividad por pedido (2026-10-02) ──────────────────────────────────
+     La pestaña Actividad del portal era una sola lista con todo mezclado: para
+     seguir un pedido había que ir saltando entre líneas de otros. Esto arma
+     UNA LÍNEA DE TIEMPO POR PEDIDO, en el orden en que pasaron las cosas, con
+     el detalle de cada paso.
+
+     Los pasos salen de cuatro fuentes, porque no todo quedó como evento:
+       · el propio pedido      → cuándo se envió y cuándo se generó su cotización;
+       · sus eventos           → aprobación, validaciones, modificaciones, pagos;
+       · avisos del portal     → cotización aprobada, despacho en camino;
+       · documentos de la cotización → guías de despacho y facturas.
+     Lo que no pertenece a ningún pedido va aparte, en `otras`. */
+  async actividadPorPedido(rut: string, limite = 40) {
+    const tope = Math.max(1, Math.min(100, Number(limite) || 40));
+    const $ = (n: any) => `$${Math.round(Number(n) || 0).toLocaleString('es-CL')}`;
+    const plural = (n: number, uno: string, varios: string) => `${n} ${n === 1 ? uno : varios}`;
+
+    const { data: pedidos, error } = await this.client
+      .from(TABLA)
+      .select('*')
+      .eq('rut', rut)
+      .order('id', { ascending: false })
+      .limit(tope);
+    if (error) this.traducirError(error);
+    const lista: any[] = pedidos || [];
+    const ids = lista.map((p) => Number(p.id));
+    const licIds = [...new Set(lista.map((p) => Number(p.licitacion_id)).filter((x) => Number.isFinite(x) && x > 0))];
+
+    // Cada consulta es independiente y tolerante: si una tabla falta o falla,
+    // la línea de tiempo sale igual con lo demás.
+    const leer = async (q: any): Promise<any[]> => {
+      try {
+        const { data, error: e } = await q;
+        return e ? [] : data || [];
+      } catch {
+        return [];
+      }
+    };
+    const [eventos, avisos, cotizaciones, documentos] = await Promise.all([
+      ids.length
+        ? leer(this.client.from(TABLA_EVENTOS).select('*').in('solicitud_id', ids).order('created_at', { ascending: true }))
+        : [],
+      leer(this.client.from('portal_actividades').select('*').eq('cliente_rut', rut).order('created_at', { ascending: true }).limit(400)),
+      licIds.length
+        ? leer(this.client.from('licitaciones').select('id, id_licitacion, estado, total_con_iva, created_at').in('id', licIds))
+        : [],
+      licIds.length
+        ? leer(
+            this.client
+              .from('licitacion_documentos')
+              .select('id, licitacion_id, tipo, numero, fecha_oc, fecha_factura, created_at, empresa_despacho, n_seguimiento')
+              .in('licitacion_id', licIds)
+              .in('tipo', ['guia_despacho', 'info_despacho', 'factura', 'factura_boleta']),
+          )
+        : [],
+    ]);
+    const cotPorId = new Map<number, any>(cotizaciones.map((l: any) => [Number(l.id), l] as [number, any]));
+
+    type Paso = {
+      fecha: string;
+      tipo: string;
+      titulo: string;
+      detalle: string | null;
+      actor: string | null;
+      lado: 'cliente' | 'amsodent' | 'sistema';
+      cambios?: Array<{ accion: string; nombre: string; sku: string | null; cantidad: number; cantidad_anterior: number | null }>;
+    };
+    const ORIGEN: Record<string, string> = {
+      ofertas: 'las Ofertas especiales',
+      showroom: 'el Showroom',
+      explorador: 'el Explorador de precios',
+      stock: 'Gestión de Stock',
+    };
+    const nombreDe = (correo: any) => String(correo || '').split('@')[0] || null;
+    const lado = (t: any): Paso['lado'] => (t === 'plataforma' ? 'amsodent' : t === 'cliente' ? 'cliente' : 'sistema');
+
+    // Cómo se cuenta cada evento. El texto guardado en el evento está escrito
+    // para la bandeja de Amsodent ("El cliente…"); acá se redacta neutro,
+    // porque esto lo lee el propio cliente.
+    const deEvento = (e: any): Paso => {
+      const d = e?.datos || {};
+      const base = { fecha: e.created_at, tipo: String(e.tipo || 'evento'), actor: nombreDe(e.actor_email), lado: lado(e.actor_tipo) };
+      switch (e.tipo) {
+        case 'aprobado_cliente':
+          return { ...base, titulo: 'Pedido aprobado', detalle: 'El administrador de la cuenta aprobó el pedido y pasó a revisión de Amsodent.' };
+        case 'cotizacion_validada_cliente':
+          return { ...base, titulo: 'Cotización validada', detalle: 'Se revisó la cotización y se dio por buena.' };
+        case 'modificacion_pedida': {
+          const cambios = (Array.isArray(d.detalle) ? d.detalle : [])
+            .filter((x: any) => x?.accion && x.accion !== 'mantiene')
+            .map((x: any) => ({
+              accion: String(x.accion),
+              nombre: String(x.nombre || ''),
+              sku: x.sku || null,
+              cantidad: Number(x.cantidad) || 0,
+              cantidad_anterior: x.cantidad_anterior == null ? null : Number(x.cantidad_anterior),
+            }));
+          return {
+            ...base,
+            titulo: 'Pedido modificado',
+            detalle: cambios.length ? 'Se cambiaron productos del pedido; Amsodent vuelve a revisarlo.' : 'Se pidió una modificación del pedido.',
+            cambios,
+          };
+        }
+        case 'validado':
+          return {
+            ...base,
+            titulo: 'Existencias confirmadas',
+            detalle:
+              [d.items ? plural(Number(d.items), 'producto confirmado', 'productos confirmados') : '', d.monto ? `total a pagar ${$(d.monto)}` : '']
+                .filter(Boolean)
+                .join(' · ') || 'Amsodent confirmó las existencias y dejó el pedido listo para pagar.',
+          };
+        case 'pago_iniciado':
+          return { ...base, titulo: 'Pago iniciado', detalle: [d.monto ? $(d.monto) : '', d.buy_order ? `orden ${d.buy_order}` : ''].filter(Boolean).join(' · ') || null };
+        case 'pago_rechazado':
+          return { ...base, titulo: 'Pago no completado', detalle: 'El pago no se autorizó. Se puede volver a intentar.' };
+        case 'pagado':
+          return { ...base, titulo: 'Pago recibido', detalle: [d.monto ? $(d.monto) : '', String(e.detalle || '').replace(/\.$/, '')].filter(Boolean).join(' · ') || null };
+        case 'reversa':
+          return { ...base, titulo: 'Pedido devuelto a la etapa anterior', detalle: e.detalle || null };
+        case 'sos':
+          return { ...base, titulo: /retirado/i.test(String(e.detalle || '')) ? 'Despacho urgente retirado' : 'Despacho urgente solicitado (SOS)', detalle: e.detalle || null };
+        default:
+          return { ...base, titulo: 'Actualización del pedido', detalle: e.detalle || null };
+      }
+    };
+    const deAviso = (a: any): Paso => ({
+      fecha: a.created_at,
+      tipo: String(a.tipo || 'aviso'),
+      titulo:
+        a.tipo === 'cotizacion_aprobada' ? 'Cotización aprobada por Amsodent'
+        : a.tipo === 'despacho_en_curso' ? 'Despacho en camino'
+        : String(a.descripcion || 'Aviso').slice(0, 120),
+      detalle: ['cotizacion_aprobada', 'despacho_en_curso'].includes(a.tipo) ? String(a.descripcion || '') || null : null,
+      actor: a.actor_nombre || nombreDe(a.actor_email),
+      lado: a.origen === 'amsodent' ? 'amsodent' : 'cliente',
+    });
+
+    const avisosUsados = new Set<any>();
+    const salida = lista.map((p) => {
+      const items: any[] = Array.isArray(p.items) ? p.items : [];
+      const cot = p.licitacion_id ? cotPorId.get(Number(p.licitacion_id)) : null;
+      const pasos: Paso[] = [];
+
+      pasos.push({
+        fecha: p.created_at,
+        tipo: 'enviado',
+        titulo: 'Pedido enviado',
+        detalle: `${plural(items.length, 'producto', 'productos')}${ORIGEN[p.origen_seccion] ? ` desde ${ORIGEN[p.origen_seccion]}` : ''}.`,
+        actor: nombreDe(p.creado_por_email),
+        lado: 'cliente',
+      });
+      if (cot) {
+        pasos.push({
+          fecha: p.respondida_at || cot.created_at || p.created_at,
+          tipo: 'cotizacion',
+          titulo: 'Cotización generada',
+          detalle: [`N° ${cot.id_licitacion || cot.id}`, Number(cot.total_con_iva) > 0 ? `total ${$(cot.total_con_iva)} con IVA` : ''].filter(Boolean).join(' · '),
+          actor: null,
+          lado: 'amsodent',
+        });
+      }
+      for (const e of eventos) if (Number(e.solicitud_id) === Number(p.id)) pasos.push(deEvento(e));
+      for (const a of avisos) {
+        const esDeEste = Number(a.solicitud_id) === Number(p.id) || (a.licitacion_id && Number(a.licitacion_id) === Number(p.licitacion_id));
+        if (!esDeEste) continue;
+        avisosUsados.add(a);
+        pasos.push(deAviso(a));
+      }
+      for (const d of documentos) {
+        if (Number(d.licitacion_id) !== Number(p.licitacion_id)) continue;
+        const esDespacho = d.tipo === 'guia_despacho' || d.tipo === 'info_despacho';
+        pasos.push({
+          fecha: (esDespacho ? d.fecha_oc : d.fecha_factura || d.fecha_oc) || d.created_at,
+          tipo: esDespacho ? 'despacho' : 'factura',
+          titulo: esDespacho ? `Despacho${d.numero ? ` · guía N° ${d.numero}` : ''}` : `${d.tipo === 'factura_boleta' ? 'Factura / boleta' : 'Factura'}${d.numero ? ` N° ${d.numero}` : ''} emitida`,
+          detalle: esDespacho
+            ? [d.empresa_despacho, d.n_seguimiento ? `seguimiento ${d.n_seguimiento}` : ''].filter(Boolean).join(' · ') || null
+            : null,
+          actor: null,
+          lado: 'amsodent',
+        });
+      }
+      // En el orden en que pasaron. Las fechas sin hora (documentos) van al
+      // final de su día para no adelantarse a lo que sí tiene hora.
+      const clave = (f: any) => { const t = String(f || ''); return t.length <= 10 ? `${t}T23:59:59` : t; };
+      pasos.sort((a, b) => clave(a.fecha).localeCompare(clave(b.fecha)));
+
+      return {
+        id: Number(p.id),
+        creado: p.created_at,
+        etapa: this.estadoDe(p),
+        origen: p.origen_seccion || null,
+        monto: Number(p.monto_total) || Number(cot?.total_con_iva) || items.reduce((acc, i) => acc + (Number(i?.precio_referencia) || 0) * (Number(i?.cantidad) || 0), 0) || null,
+        cotizacion: cot ? { id: cot.id, codigo: cot.id_licitacion || String(cot.id), estado: cot.estado || null } : null,
+        productos: items.map((i) => ({
+          nombre: String(i?.nombre || ''),
+          sku: i?.sku || null,
+          cantidad: Number(i?.cantidad) || 0,
+          unidad: i?.unidad || null,
+          oferta: i?.oferta ? `Oferta −${Number(i.oferta.descuento_pct)}%` : null,
+        })),
+        pasos,
+      };
+    });
+
+    const otras = avisos.filter((a: any) => !avisosUsados.has(a)).map(deAviso).sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)));
+    return { pedidos: salida, otras };
+  }
+
   /** Anota una actividad del portal que no cuelga de un pedido. Best-effort:
       nunca hace fallar la acción que la origina. */
   async anotarActividad(args: {

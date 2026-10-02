@@ -2338,25 +2338,91 @@ function PantallaDeclaracion({ cliente, setToast }) {
    en orden, y es exactamente lo mismo que ve Amsodent de su lado. */
 
 const ICONO_ACTIVIDAD = {
-  despacho_en_curso: { icono: Truck, color: "#0369a1", bg: "#e0f2fe" },
+  enviado: { icono: ShoppingCart, color: "#0f766e", bg: "#ccfbf1" },
+  cotizacion: { icono: FileSpreadsheet, color: "#0369a1", bg: "#e0f2fe" },
   cotizacion_aprobada: { icono: CheckCircle2, color: "#15803d", bg: "#dcfce7" },
-  modificacion_pedida: { icono: ShoppingCart, color: "#b45309", bg: "#fef3c7" },
-  cotizacion_validada_cliente: { icono: CheckCircle2, color: "#15803d", bg: "#dcfce7" },
-  validado_plataforma: { icono: FileSpreadsheet, color: "#7c3aed", bg: "#f3e8ff" },
   aprobado_cliente: { icono: CheckCircle2, color: "#15803d", bg: "#dcfce7" },
+  cotizacion_validada_cliente: { icono: CheckCircle2, color: "#15803d", bg: "#dcfce7" },
+  modificacion_pedida: { icono: ShoppingCart, color: "#b45309", bg: "#fef3c7" },
+  validado: { icono: Database, color: "#7c3aed", bg: "#f3e8ff" },
+  validado_plataforma: { icono: Database, color: "#7c3aed", bg: "#f3e8ff" },
+  pago_iniciado: { icono: Activity, color: "#475569", bg: "#f1f5f9" },
+  pago_rechazado: { icono: AlertTriangle, color: "#b91c1c", bg: "#fee2e2" },
   pagado: { icono: CheckCircle2, color: "#15803d", bg: "#dcfce7" },
+  despacho: { icono: Truck, color: "#0369a1", bg: "#e0f2fe" },
+  despacho_en_curso: { icono: Truck, color: "#0369a1", bg: "#e0f2fe" },
+  factura: { icono: FileText, color: "#475569", bg: "#f1f5f9" },
+  sos: { icono: Zap, color: "#b91c1c", bg: "#fee2e2" },
+  reversa: { icono: RefreshCw, color: "#b45309", bg: "#fef3c7" },
 };
 
+const CAMBIO_PEDIDO = {
+  agrega: { texto: "Agregado", color: "#15803d" },
+  cambia: { texto: "Cantidad", color: "#b45309" },
+  quita: { texto: "Quitado", color: "#b91c1c" },
+};
+
+/* Un paso de la línea de tiempo: ícono, qué pasó, su detalle y quién/cuándo. */
+function PasoActividad({ paso, ultimo }) {
+  const meta = ICONO_ACTIVIDAD[paso.tipo] || { icono: Activity, color: "#475569", bg: "#f1f5f9" };
+  const Icono = meta.icono;
+  return (
+    <div style={{ display: "flex", gap: 12 }}>
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", width: 30, flexShrink: 0 }}>
+        <div style={{ width: 30, height: 30, borderRadius: 999, background: meta.bg, color: meta.color, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+          <Icono size={15} />
+        </div>
+        {!ultimo && <div style={{ width: 2, flex: 1, background: "#e2e8f0", minHeight: 14 }} />}
+      </div>
+      <div style={{ paddingBottom: ultimo ? 0 : 16, flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 13.5, fontWeight: 700, color: "#0f172a" }}>{paso.titulo}</div>
+        {paso.detalle && (
+          <div style={{ fontSize: 12.5, color: "#475569", lineHeight: 1.45, marginTop: 2, overflowWrap: "anywhere" }}>{paso.detalle}</div>
+        )}
+        {Array.isArray(paso.cambios) && paso.cambios.length > 0 && (
+          <div style={{ marginTop: 5, display: "flex", flexDirection: "column", gap: 3 }}>
+            {paso.cambios.map((cb, i) => {
+              const m = CAMBIO_PEDIDO[cb.accion] || { texto: cb.accion, color: "#475569" };
+              return (
+                <div key={i} style={{ fontSize: 12, color: "#334155", overflowWrap: "anywhere" }}>
+                  <strong style={{ color: m.color }}>{m.texto}:</strong> {cb.nombre}
+                  {cb.accion === "cambia" && cb.cantidad_anterior != null ? ` (de ${cb.cantidad_anterior} a ${cb.cantidad})` : ""}
+                  {cb.accion === "agrega" ? ` (${cb.cantidad})` : ""}
+                  {cb.accion === "quita" && cb.cantidad_anterior != null ? ` (eran ${cb.cantidad_anterior})` : ""}
+                </div>
+              );
+            })}
+          </div>
+        )}
+        <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 3 }}>
+          {fmtFechaHora(paso.fecha)}
+          {paso.actor ? ` · ${paso.actor}` : ""}
+          {paso.lado === "amsodent" ? " · Amsodent" : paso.lado === "cliente" ? " · tu equipo" : ""}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* (2026-10-02) Una línea de tiempo POR PEDIDO. Antes era una sola lista con
+   los eventos de todos los pedidos mezclados, de lo más nuevo a lo más viejo:
+   para seguir un pedido había que ir saltando entre líneas de otros. Ahora
+   cada pedido es una tarjeta con sus productos y sus pasos en el orden en que
+   ocurrieron (enviado → cotización → validaciones → pago → despacho). */
 function PanelHistorialPortal() {
-  const [filas, setFilas] = useState(null);
+  const [datos, setDatos] = useState(null);
   const [error, setError] = useState("");
+  // Pedidos que el usuario abrió o cerró a mano (id → abierto).
+  const [abiertos, setAbiertos] = useState({});
+  const [conProductos, setConProductos] = useState({});
 
   useEffect(() => {
     let vivo = true;
+    const vacio = { pedidos: [], otras: [] };
     const cargar = () => {
-      apiRequest("/stock-clientes/mi-historial")
-        .then((r) => { if (vivo) setFilas(Array.isArray(r) ? r : []); })
-        .catch((e) => { if (vivo) { setError(e?.message || "No se pudo cargar el historial."); setFilas([]); } });
+      apiRequest("/stock-clientes/mi-actividad")
+        .then((r) => { if (vivo) setDatos(r && Array.isArray(r.pedidos) ? r : vacio); })
+        .catch((e) => { if (vivo) { setError(e?.message || "No se pudo cargar la actividad."); setDatos(vacio); } });
     };
     cargar();
     // Al abrirlo, los avisos dejan de estar pendientes.
@@ -2365,54 +2431,111 @@ function PanelHistorialPortal() {
     return () => { vivo = false; window.removeEventListener(PORTAL_REFRESCAR, cargar); };
   }, []);
 
-  if (filas == null) {
+  if (datos == null) {
     return <div style={{ padding: 24, color: "#64748b", fontSize: 14 }}>Cargando actividad…</div>;
   }
+
+  const pedidos = datos.pedidos || [];
+  const otras = datos.otras || [];
+  // Los tres pedidos más recientes parten abiertos; el resto, cerrados.
+  const estaAbierto = (p, i) => (p.id in abiertos ? abiertos[p.id] : i < 3);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
       <div>
         <h2 style={{ fontSize: 17, fontWeight: 800, color: "#0f172a", margin: 0 }}>Actividad de la cuenta</h2>
         <p style={{ fontSize: 13, color: "#64748b", margin: "4px 0 0" }}>
-          Todo lo que ha pasado con tus pedidos y despachos, de lo más reciente a lo más antiguo.
+          La línea de tiempo de cada pedido: qué se hizo, cuándo y quién lo hizo.
         </p>
       </div>
 
       {error && <div style={{ fontSize: 13, color: "#b91c1c" }}>{error}</div>}
 
-      {filas.length === 0 && !error ? (
+      {pedidos.length === 0 && otras.length === 0 && !error && (
         <div style={{ border: "1px dashed #cbd5e1", borderRadius: 12, padding: 24, textAlign: "center", color: "#64748b", fontSize: 13.5 }}>
           Todavía no hay actividad registrada en esta cuenta.
         </div>
-      ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
-          {filas.map((f, i) => {
-            const meta = ICONO_ACTIVIDAD[f.tipo] || { icono: Activity, color: "#475569", bg: "#f1f5f9" };
-            const Icono = meta.icono;
-            const ultima = i === filas.length - 1;
-            return (
-              <div key={`${f.fecha}-${i}`} style={{ display: "flex", gap: 12 }}>
-                {/* Línea de tiempo */}
-                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", width: 30 }}>
-                  <div style={{ width: 30, height: 30, borderRadius: 999, background: meta.bg, color: meta.color, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                    <Icono size={15} />
-                  </div>
-                  {!ultima && <div style={{ width: 2, flex: 1, background: "#e2e8f0", minHeight: 14 }} />}
-                </div>
-                <div style={{ paddingBottom: ultima ? 0 : 16, flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13.5, fontWeight: 700, color: "#0f172a" }}>{f.titulo}</div>
-                  {f.detalle && (
-                    <div style={{ fontSize: 12.5, color: "#475569", lineHeight: 1.45, marginTop: 2 }}>{f.detalle}</div>
+      )}
+
+      {pedidos.map((p, i) => {
+        const abierto = estaAbierto(p, i);
+        const etapa = FLUJO_CLIENTE[p.etapa] || { label: p.etapa, color: "#475569", bg: "#f1f5f9" };
+        const ultimoPaso = p.pasos[p.pasos.length - 1];
+        const verProductos = Boolean(conProductos[p.id]);
+        return (
+          <div key={p.id} style={{ border: "1px solid #e2e8f0", borderRadius: 14, background: "#fff", overflow: "hidden" }}>
+            <button
+              type="button"
+              onClick={() => setAbiertos((prev) => ({ ...prev, [p.id]: !abierto }))}
+              title={abierto ? "Ocultar la línea de tiempo" : "Ver la línea de tiempo"}
+              style={{
+                display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", width: "100%", textAlign: "left",
+                padding: "12px 14px", background: abierto ? "#f8fafc" : "#fff", border: "none",
+                borderBottom: abierto ? "1px solid #e2e8f0" : "none", cursor: "pointer", fontFamily: "inherit",
+              }}
+            >
+              <span style={{ fontSize: 14.5, fontWeight: 800, color: "#0f172a", whiteSpace: "nowrap" }}>Pedido N° {p.id}</span>
+              <span style={{ fontSize: 11, fontWeight: 800, color: etapa.color, background: etapa.bg, borderRadius: 999, padding: "2px 9px", whiteSpace: "nowrap" }}>
+                {etapa.label}
+              </span>
+              <span style={{ fontSize: 12, color: "#64748b", flex: "1 1 200px", minWidth: 0 }}>
+                {fmtFechaHora(p.creado)} · {p.productos.length} producto{p.productos.length === 1 ? "" : "s"}
+                {p.monto ? ` · ${fmtMoneda(p.monto)}` : ""}
+                {p.cotizacion ? ` · Cotización ${p.cotizacion.codigo}` : ""}
+              </span>
+              {!abierto && ultimoPaso && (
+                <span className="truncar" style={{ fontSize: 12, color: "#475569", maxWidth: "100%" }}>
+                  Último: {ultimoPaso.titulo}
+                </span>
+              )}
+              <span style={{ color: "#94a3b8", display: "inline-flex" }}><ChevronIcon abierto={abierto} /></span>
+            </button>
+
+            {abierto && (
+              <div style={{ padding: "14px 14px 16px", display: "flex", flexDirection: "column", gap: 12 }}>
+                {/* Productos del pedido */}
+                <div>
+                  <button
+                    type="button"
+                    onClick={() => setConProductos((prev) => ({ ...prev, [p.id]: !verProductos }))}
+                    style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: TEAL, fontSize: 12.5, fontWeight: 700, fontFamily: "inherit" }}
+                  >
+                    {verProductos ? "Ocultar productos" : `Ver los ${p.productos.length} producto${p.productos.length === 1 ? "" : "s"} del pedido`}
+                  </button>
+                  {verProductos && (
+                    <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 4 }}>
+                      {p.productos.map((it, k) => (
+                        <div key={k} style={{ fontSize: 12.5, color: "#334155", display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap" }}>
+                          <strong style={{ color: "#0f172a", whiteSpace: "nowrap" }}>{it.cantidad} {it.unidad || "un"}</strong>
+                          <span style={{ flex: "1 1 180px", minWidth: 0, overflowWrap: "anywhere" }}>{it.nombre}</span>
+                          {it.sku && <span style={{ fontSize: 11, color: "#94a3b8", fontFamily: "ui-monospace, monospace", whiteSpace: "nowrap" }}>SKU {it.sku}</span>}
+                          {it.oferta && <span style={{ fontSize: 11, fontWeight: 800, color: "#c2410c", whiteSpace: "nowrap" }}>{it.oferta}</span>}
+                        </div>
+                      ))}
+                    </div>
                   )}
-                  <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 3 }}>
-                    {fmtFechaHora(f.fecha)}
-                    {f.actor ? ` · ${String(f.actor).split("@")[0]}` : ""}
-                    {f.origen === "plataforma" ? " · Amsodent" : f.origen === "cliente" ? " · tu equipo" : ""}
-                  </div>
+                </div>
+
+                {/* Línea de tiempo, en el orden en que pasaron las cosas */}
+                <div style={{ display: "flex", flexDirection: "column" }}>
+                  {p.pasos.map((paso, k) => (
+                    <PasoActividad key={`${paso.fecha}-${k}`} paso={paso} ultimo={k === p.pasos.length - 1} />
+                  ))}
                 </div>
               </div>
-            );
-          })}
+            )}
+          </div>
+        );
+      })}
+
+      {otras.length > 0 && (
+        <div style={{ border: "1px solid #e2e8f0", borderRadius: 14, background: "#fff", padding: "14px 14px 16px" }}>
+          <div style={{ fontSize: 13.5, fontWeight: 800, color: "#0f172a", marginBottom: 10 }}>Otras novedades de la cuenta</div>
+          <div style={{ display: "flex", flexDirection: "column" }}>
+            {otras.map((paso, k) => (
+              <PasoActividad key={`${paso.fecha}-${k}`} paso={paso} ultimo={k === otras.length - 1} />
+            ))}
+          </div>
         </div>
       )}
     </div>

@@ -504,9 +504,15 @@ export default function PedidosPortal() {
             Todo lo que los clientes piden desde el portal — carrito del Explorador de Precios y solicitudes de Gestión de Stock — en una sola bandeja.
           </p>
         </div>
-        <button type="button" className="btn btn-secondary" onClick={cargar} title="Actualizar">
-          <RefreshCw size={14} style={{ marginRight: 6 }} /> Actualizar
-        </button>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {/* Atajo a la pantalla donde se publican las ofertas especiales del portal. */}
+          <Link to="/ofertas-portal" className="btn btn-secondary" title="Publicar y administrar las ofertas especiales que ve el cliente en su portal">
+            Ofertas del portal
+          </Link>
+          <button type="button" className="btn btn-secondary" onClick={cargar} title="Actualizar">
+            <RefreshCw size={14} style={{ marginRight: 6 }} /> Actualizar
+          </button>
+        </div>
       </div>
 
       {/* KPIs — una sola fila (5 columnas) */}
