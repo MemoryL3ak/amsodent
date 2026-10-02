@@ -1201,9 +1201,10 @@ export default function AnalisisMercadoPublico() {
         <Panel
           titulo="Análisis global de productos (sin haber licitado)"
           sub={
-            global?.guardado
-              ? `Adjudicadas de nuestro rubro en TODO Mercado Público (últimos ${global.guardado.dias || 30} días): ${global.guardado.licitaciones_detectadas ?? "—"} licitaciones detectadas, ${global.guardado.fichas_analizadas ?? "—"} fichas analizadas · actualizado ${String(global.guardado.actualizado_at || "").slice(0, 10)}`
-              : "Qué se adjudica de nuestro rubro en todo Mercado Público, aunque Amsodent no haya postulado"
+            (global?.guardado
+              ? `Adjudicadas de nuestro rubro en TODO Mercado Público (últimos ${global.guardado.dias || 30} días): ${global.guardado.licitaciones_detectadas ?? "—"} licitaciones detectadas, ${global.guardado.fichas_analizadas ?? "—"} fichas analizadas${(global.guardado.fichas_perdidas || 0) + (global.guardado.dias_perdidos || 0) > 0 ? ` (${global.guardado.dias_perdidos || 0} días y ${global.guardado.fichas_perdidas || 0} fichas sin respuesta de la API)` : ""} · actualizado ${String(global.guardado.actualizado_at || "").slice(0, 10)}`
+              : "Qué se adjudica de nuestro rubro en todo Mercado Público, aunque Amsodent no haya postulado") +
+            (global?.automatico?.activa ? ` · se actualiza solo cada día a las ${global.automatico.hora}` : "")
           }
           extra={
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
@@ -1237,10 +1238,31 @@ export default function AnalisisMercadoPublico() {
             </div>
           }
         >
+          {/* La corrida deja su estado en la base: si falló, acá se dice por qué. */}
+          {global?.estado === "error" && global?.error && !global?.corriendo && (
+            <div style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 12.5, color: "#b91c1c", background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 8, padding: "8px 10px", marginBottom: 10 }}>
+              <AlertTriangle size={14} style={{ flexShrink: 0, marginTop: 2 }} />
+              <span>
+                El último intento de análisis falló: {global.error}
+                {global?.guardado ? " Se muestra el resultado anterior." : ""}
+                {global?.automatico?.activa ? ` Se vuelve a intentar solo a las ${global.automatico.hora}.` : ""}
+              </span>
+            </div>
+          )}
           {global?.corriendo && !global?.guardado ? (
             <Vacio texto="Analizando Mercado Público… esto toma un par de minutos; la tabla aparecerá sola." />
           ) : !(global?.guardado?.filas || []).length ? (
-            <Vacio texto="Aún no se ha corrido el análisis global. Usa «Actualizar análisis» para generarlo." />
+            <Vacio
+              texto={
+                global?.estado === "error"
+                  ? (global?.puede_refrescar ? "Sin resultado todavía. Puedes volver a intentarlo con «Actualizar análisis»." : "Sin resultado todavía.")
+                  : global?.automatico?.activa
+                    ? `Aún no se ha corrido el análisis global. Se genera solo cada día a las ${global.automatico.hora}${global?.puede_refrescar ? ", o ahora con «Actualizar análisis»" : ""}.`
+                    : global?.puede_refrescar
+                      ? "Aún no se ha corrido el análisis global. Usa «Actualizar análisis» para generarlo."
+                      : "Aún no se ha corrido el análisis global. Solo los exploradores autorizados pueden generarlo."
+              }
+            />
           ) : (
             <>
               <div style={{ border: "1px solid var(--border)", borderRadius: 8, overflowX: "auto" }}>

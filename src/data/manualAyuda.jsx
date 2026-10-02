@@ -249,6 +249,7 @@ export const GRUPOS_MANUAL = [
         ],
         funciones: [
           "Crear producto: TODOS los campos son obligatorios (la única excepción es el SKU, que lo asigna un admin). Editar: nada es obligatorio salvo la imagen.",
+          "Venta showroom: en los productos de la categoría Prevención e Higiene (los que entran al Showroom del portal) aparece, al crear y en la ficha, el precio sugerido de venta al público, con la ganancia que le deja al cliente del portal sobre la lista 2.",
           "Estados automáticos: con SKU → Activo; sin SKU → Transitorio; margen 0-20% sin SKU → Pendiente Aprobación (el admin aprueba desde Editar).",
           "Ventas puede editar peso y dimensiones de los Transitorios y Pendientes de Aprobación. Al cotizar un transitorio con más de 30 días de creado, el sistema pide validar que su costo siga vigente.",
           "Carga masiva por planilla con historial y rollback (deshace esa carga y las posteriores).",
@@ -317,13 +318,13 @@ export const GRUPOS_MANUAL = [
         ruta: "/campanas-margen",
         acceso: { tipo: "modulo", key: "campanas" },
         quien: "Todo el equipo comercial (crear y cambiar: admin)",
-        resumen: "Un margen para marcas o categorías completas, sobre una lista de precios y por un período.",
+        resumen: "Un margen para marcas o categorías completas, o para una lista de SKUs, sobre una lista de precios y por un período.",
         queEs: [
           "En vez de fijar un precio por SKU, la campaña fija un margen: mientras está vigente, el precio de esos productos en esa lista es costo / (1 - margen), con el margen medido sobre el precio de venta, igual que en la cotización.",
           "No reescribe el catálogo: al terminar la vigencia vuelve solo el precio de lista.",
         ],
         funciones: [
-          "Campaña = nombre + lista de precios (1, 2 o 3) + margen % + fechas + marcas y/o categorías (vacío = todas; con ambas, el producto debe cumplir las dos).",
+          "Campaña = nombre + lista de precios (1, 2 o 3) + margen % + fechas + marcas, categorías y/o SKUs (vacío = todos; con más de un filtro, el producto debe cumplirlos todos). Los SKUs se pegan tal cual vienen de un Excel y la pantalla avisa cuáles no están en el catálogo o no tienen costo.",
           "Simulación antes de guardar: a cuántos productos alcanza, cuántos suben o bajan respecto de su lista y los que más cambian.",
           "Al cotizar manda primero la campaña por producto (SKU), después la campaña de margen y al final el precio de lista. Entre dos campañas de margen que alcancen al mismo producto manda la más nueva.",
           "Pausar y reanudar sin borrar; en Productos el precio de campaña se muestra bajo el de lista.",
@@ -650,7 +651,7 @@ export const GRUPOS_MANUAL = [
           "Simulador de descuento con recomendación estratégica de DamarIA.",
           "Panel de diferencias contra el Panel de Indicadores: conciliación por causa, inconsistencias de estados y export.",
           "Análisis de productos (al pie): qué productos se mueven en nuestras fichas, cuántos ganamos/perdemos y a qué precio.",
-          "Análisis global de productos «sin haber licitado»: barre las adjudicadas de TODO Mercado Público (últimos 30 días) que calzan con las palabras clave y muestra procesos, cantidades, precio adjudicado promedio y ganador frecuente por producto. Refrescarlo gasta cuota del ticket (exploradores autorizados).",
+          "Análisis global de productos «sin haber licitado»: barre las adjudicadas de TODO Mercado Público (últimos 30 días) que calzan con las palabras clave y muestra procesos, cantidades, precio adjudicado promedio y ganador frecuente por producto. Se actualiza solo cada día a las 06:00; si la corrida falla, el panel dice por qué. Refrescarlo a mano gasta cuota del ticket (exploradores autorizados).",
         ],
       },
       {
