@@ -369,6 +369,23 @@ function getNotifVisuales(notif) {
       etiqueta: "Cobranza",
     };
   }
+  // Plazo de factoring: mismos colores del semáforo del módulo Factoring.
+  if (tipo === "factoring_vencido") {
+    return {
+      icono: AlertCircle,
+      color: "#b91c1c",
+      bg: "#fee2e2",
+      etiqueta: "Factoring vencido",
+    };
+  }
+  if (tipo === "factoring_por_vencer") {
+    return {
+      icono: AlertTriangle,
+      color: "#a16207",
+      bg: "#fef9c3",
+      etiqueta: "Factoring por vencer",
+    };
+  }
   // Cotización con productos sin peso: requiere revisión de un admin.
   if (tipo === "aprobacion_peso") {
     return {

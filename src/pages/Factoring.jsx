@@ -4,7 +4,7 @@ import { Link } from "react-router-dom";
 import useAuth from "../hooks/useAuth";
 import Toast from "../components/Toast";
 import DateFilter from "../components/DateFilter";
-import { Eye, AlertTriangle, Save, Lock } from "lucide-react";
+import { Eye, AlertTriangle, Save, Lock, Bell } from "lucide-react";
 import BotonLimpiarFiltros from "../components/BotonLimpiarFiltros";
 import DropdownSelect from "../components/ui/DropdownSelect";
 
@@ -27,13 +27,55 @@ function diasHasta(fechaIso) {
   return Math.round((f.getTime() - hoy.getTime()) / (1000 * 60 * 60 * 24));
 }
 
-// Semáforo del plazo de factoring por días restantes.
+/* Semáforo del plazo de factoring por días restantes:
+     verde    → faltan más de DIAS_AMARILLO días
+     amarillo → faltan DIAS_AMARILLO días o menos (incluye el día del vencimiento)
+     rojo     → la fecha ya pasó
+   MISMA regla que los avisos por campana y correo del backend
+   (recordatorios.service.ts → FACTORING_DIAS_AMARILLO): el primer aviso sale
+   cuando la factura pasa a amarillo. Si cambia aquí, cambia allá. */
+const DIAS_AMARILLO = 7;
+
+const SEMAFORO = {
+  verde: { color: "#15803d", bg: "#dcfce7", luz: "#16a34a" },
+  amarillo: { color: "#a16207", bg: "#fef9c3", luz: "#eab308" },
+  rojo: { color: "#b91c1c", bg: "#fee2e2", luz: "#dc2626" },
+  sin_plazo: { color: "#6b7280", bg: "#f3f4f6", luz: "#d1d5db" },
+};
+
+function estadoPlazo(dias) {
+  if (dias == null) return "sin_plazo";
+  if (dias < 0) return "rojo";
+  if (dias <= DIAS_AMARILLO) return "amarillo";
+  return "verde";
+}
+
 function semaforoPlazo(dias) {
-  if (dias == null) return { color: "#6b7280", bg: "#f3f4f6", label: "Sin plazo" };
-  if (dias < 0) return { color: "#dc2626", bg: "#fee2e2", label: `Vencido (${Math.abs(dias)}d)` };
-  if (dias <= 5) return { color: "#b45309", bg: "#fef3c7", label: `Por vencer (${dias}d)` };
-  if (dias <= 15) return { color: "#0d9488", bg: "#ccfbf1", label: `${dias}d restantes` };
-  return { color: "#1d4ed8", bg: "#dbeafe", label: `${dias}d restantes` };
+  const estado = estadoPlazo(dias);
+  let label = "Sin plazo";
+  if (estado === "rojo") label = `Vencido (${Math.abs(dias)}d)`;
+  else if (estado === "amarillo") label = dias === 0 ? "Vence hoy" : `Por vencer (${dias}d)`;
+  else if (estado === "verde") label = `En plazo (${dias}d)`;
+  return { estado, label, ...SEMAFORO[estado] };
+}
+
+const BOTONES_SEMAFORO = [
+  { estado: "verde", titulo: "En plazo", regla: `más de ${DIAS_AMARILLO} días` },
+  { estado: "amarillo", titulo: "Por vencer", regla: `${DIAS_AMARILLO} días o menos` },
+  { estado: "rojo", titulo: "Vencidos", regla: "fecha pasada" },
+  { estado: "sin_plazo", titulo: "Sin plazo", regla: "sin fecha" },
+];
+
+function Luz({ estado, size = 9 }) {
+  return (
+    <span
+      aria-hidden
+      style={{
+        display: "inline-block", width: size, height: size, borderRadius: "50%",
+        background: SEMAFORO[estado].luz, flexShrink: 0,
+      }}
+    />
+  );
 }
 
 function esClienteParticular(lic) {
@@ -195,34 +237,38 @@ export default function Factoring() {
     return [...set].sort();
   }, [facturas]);
 
+  /* Lo más urgente arriba: primero lo vencido hace más tiempo, al final lo que
+     no tiene plazo. Se ordena por la fecha GUARDADA, no por la que se está
+     escribiendo, para que la fila no salte mientras se edita. */
   const facturasFiltradas = useMemo(() => {
-    return facturas.filter((f) => {
-      const lic = licMap[f.licitacion_id] || {};
-      if (filtroEntidad && !(lic.nombre_entidad || "").toLowerCase().includes(filtroEntidad.toLowerCase())) return false;
-      if (filtroEmpresa && (f.factoring_empresa || "") !== filtroEmpresa) return false;
-      if (filtroPlazo !== "todas") {
-        const dias = diasHasta(f.factoring_vencimiento);
-        if (filtroPlazo === "sin_plazo" && dias != null) return false;
-        if (filtroPlazo === "vencidas" && !(dias != null && dias < 0)) return false;
-        if (filtroPlazo === "por_vencer" && !(dias != null && dias >= 0 && dias <= 5)) return false;
-        if (filtroPlazo === "vigentes" && !(dias != null && dias > 5)) return false;
-      }
-      return true;
-    });
+    return facturas
+      .filter((f) => {
+        const lic = licMap[f.licitacion_id] || {};
+        if (filtroEntidad && !(lic.nombre_entidad || "").toLowerCase().includes(filtroEntidad.toLowerCase())) return false;
+        if (filtroEmpresa && (f.factoring_empresa || "") !== filtroEmpresa) return false;
+        if (filtroPlazo !== "todas" && estadoPlazo(diasHasta(f.factoring_vencimiento)) !== filtroPlazo) return false;
+        return true;
+      })
+      .sort((a, b) => {
+        const da = diasHasta(a.factoring_vencimiento);
+        const db = diasHasta(b.factoring_vencimiento);
+        if (da == null || db == null) return (da == null) - (db == null);
+        return da - db;
+      });
   }, [facturas, licMap, filtroEntidad, filtroEmpresa, filtroPlazo]);
 
   const stats = useMemo(() => {
-    let count = 0, monto = 0, comision = 0, vencidas = 0;
+    let count = 0, monto = 0, comision = 0;
+    const plazo = { verde: 0, amarillo: 0, rojo: 0, sin_plazo: 0 };
     facturas.forEach((f) => {
       count++;
       const m = montoFactura(f);
       monto += m;
       const pct = Number(f.factoring_comision_pct);
       if (Number.isFinite(pct)) comision += Math.round((m * pct) / 100);
-      const dias = diasHasta(f.factoring_vencimiento);
-      if (dias != null && dias < 0) vencidas++;
+      plazo[estadoPlazo(diasHasta(f.factoring_vencimiento))]++;
     });
-    return { count, monto, comision, vencidas };
+    return { count, monto, comision, plazo };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [facturas, licMap]);
 
@@ -289,7 +335,7 @@ export default function Factoring() {
         </div>
         <div className="stat-card">
           <div className="stat-label">Plazos vencidos</div>
-          <div className="stat-value" style={{ color: "var(--danger)" }}>{stats.vencidas}</div>
+          <div className="stat-value" style={{ color: "var(--danger)" }}>{stats.plazo.rojo}</div>
           <div className="stat-sub">fecha de pago factoring pasada</div>
         </div>
       </div>
@@ -323,9 +369,9 @@ export default function Factoring() {
             onChange={setFiltroPlazo}
             options={[
               { value: "todas", label: "Todos" },
-              { value: "vigentes", label: "Vigentes" },
-              { value: "por_vencer", label: "Por vencer (≤5d)" },
-              { value: "vencidas", label: "Vencidos" },
+              { value: "verde", label: "En plazo (verde)" },
+              { value: "amarillo", label: `Por vencer (amarillo, ≤${DIAS_AMARILLO}d)` },
+              { value: "rojo", label: "Vencidos (rojo)" },
               { value: "sin_plazo", label: "Sin plazo" },
             ]}
             minWidth={180}
@@ -333,6 +379,40 @@ export default function Factoring() {
           />
         </div>
         <BotonLimpiarFiltros hay={hayFiltros} onLimpiar={limpiarFiltros} />
+      </div>
+
+      {/* Semáforo: cuántas facturas hay en cada color. Cada botón filtra la
+          tabla (otro clic vuelve a mostrar todo) y hace de leyenda. */}
+      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px 10px", margin: "0 0 12px" }}>
+        {BOTONES_SEMAFORO.map((b) => {
+          const activo = filtroPlazo === b.estado;
+          const s = SEMAFORO[b.estado];
+          return (
+            <button
+              key={b.estado}
+              type="button"
+              onClick={() => setFiltroPlazo(activo ? "todas" : b.estado)}
+              aria-pressed={activo}
+              title={activo ? "Quitar el filtro" : "Ver solo estas facturas"}
+              style={{
+                display: "inline-flex", alignItems: "center", gap: 7,
+                padding: "5px 12px", borderRadius: 999, cursor: "pointer",
+                fontSize: 12, fontWeight: 600, color: s.color,
+                background: activo ? s.bg : "var(--surface, #fff)",
+                border: `1px solid ${activo ? s.luz : "var(--border)"}`,
+              }}
+            >
+              <Luz estado={b.estado} />
+              {b.titulo}
+              <span style={{ fontVariantNumeric: "tabular-nums" }}>{stats.plazo[b.estado]}</span>
+              <span style={{ fontWeight: 400, color: "var(--text-muted)" }}>{b.regla}</span>
+            </button>
+          );
+        })}
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-muted)" }}>
+          <Bell size={12} style={{ flexShrink: 0 }} />
+          Avisos por campana y correo: {DIAS_AMARILLO} y 3 días antes, el día del vencimiento, y 1, 7 y 15 días después.
+        </span>
       </div>
 
       {/* Tabla */}
@@ -344,7 +424,7 @@ export default function Factoring() {
           overflow: "hidden",
         }}
       >
-        <div className="table-scroll" style={{ maxHeight: "calc(100vh - 360px)" }}>
+        <div className="table-scroll" style={{ maxHeight: "calc(100vh - 400px)" }}>
           <table className="data-table" style={{ minWidth: "1080px" }}>
             <thead>
               <tr>
@@ -380,14 +460,17 @@ export default function Factoring() {
                   const bloqueada = filaBloqueada(f);
                   return (
                     <tr key={f.id}>
-                      <td style={{ verticalAlign: "middle" }}>
+                      {/* Franja del color del semáforo al borde de la fila */}
+                      <td style={{ verticalAlign: "middle", boxShadow: `inset 4px 0 0 ${sem.luz}` }}>
                         <Link to={`/detalle/${lic.id}`} className="table-link" style={{ fontWeight: 600 }}>
                           #{lic.id}
                         </Link>
                         {lic.id_licitacion && (
                           <span style={{ color: "var(--text-muted)", fontSize: "11px", marginLeft: 6 }}>{lic.id_licitacion}</span>
                         )}
-                        <div style={{ fontWeight: 500, fontSize: "13px", color: "#1f2937", marginTop: 2 }}>
+                        {/* El nombre largo se parte en líneas: en una sola empujaba
+                            la columna del plazo (el semáforo) fuera de la pantalla. */}
+                        <div style={{ fontWeight: 500, fontSize: "13px", color: "#1f2937", marginTop: 2, whiteSpace: "normal", maxWidth: 260 }}>
                           {lic.nombre_entidad || "—"}
                         </div>
                         <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 3 }}>
@@ -463,11 +546,11 @@ export default function Factoring() {
                           )}
                           <div style={{ marginTop: 4 }}>
                             <span style={{
-                              display: "inline-flex", alignItems: "center", gap: 4,
+                              display: "inline-flex", alignItems: "center", gap: 5,
                               padding: "2px 8px", borderRadius: "999px", fontSize: "11px", fontWeight: 600,
-                              color: sem.color, backgroundColor: sem.bg,
+                              color: sem.color, backgroundColor: sem.bg, whiteSpace: "nowrap",
                             }}>
-                              {dias != null && dias <= 5 && <AlertTriangle size={11} />}
+                              {sem.estado === "rojo" ? <AlertTriangle size={11} /> : <Luz estado={sem.estado} size={7} />}
                               {sem.label}
                             </span>
                             {!bloqueada && d.vencimiento && (

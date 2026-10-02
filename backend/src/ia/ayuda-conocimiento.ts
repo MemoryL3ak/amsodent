@@ -285,6 +285,15 @@ Facturas cedidas a factoring: empresa, margen (% y $), plazo. El margen y el
 plazo llegan desde Seguimiento de Pagos (se piden al registrar el pago por
 factoring); aquí se completa lo que falte. Con empresa, margen y plazo
 cargados, la fila queda bloqueada salvo para administración.
+SEMÁFORO DEL PLAZO (según la fecha de vencimiento del factoring): verde si
+faltan más de 7 días, amarillo si faltan 7 o menos (incluye el día del
+vencimiento), rojo si ya venció. Sobre la tabla, los botones "En plazo", "Por
+vencer", "Vencidos" y "Sin plazo" muestran cuántas facturas hay en cada color
+y filtran la tabla con un clic; lo más urgente queda arriba.
+AVISOS AUTOMÁTICOS por campana y correo (desde las 08:00): 7 y 3 días antes del
+vencimiento, el mismo día, y 1, 7 y 15 días después. Cada aviso sale una sola
+vez por factura; si se corrige la fecha de vencimiento, el calendario parte de
+nuevo. Una factura sin fecha de vencimiento no tiene semáforo ni avisos.
 
 ## MÓDULOS — GRUPO LOGÍSTICA
 
