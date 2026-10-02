@@ -23,6 +23,8 @@ import { SupabaseService } from '../supabase/supabase.service';
 ============================================================================ */
 
 const MIGRACION = 'Falta aplicar la migración 20261001_lote_octubre.sql en Supabase.';
+const MIGRACION_SKUS = 'Falta aplicar la migración 20261003_campanas_margen_skus.sql en Supabase (campañas por SKU).';
+const MAX_SKUS = 2000;
 const RE_FECHA = /^\d{4}-\d{2}-\d{2}$/;
 
 /** Fecha de hoy en Chile (YYYY-MM-DD): la vigencia se decide con el día local. */
@@ -34,6 +36,12 @@ export function hoyEnChile(ahora = new Date()): string {
     day: '2-digit',
   }).format(ahora);
   return p; // en-CA ya entrega YYYY-MM-DD
+}
+
+// SKUs: sin espacios y en mayúsculas, como están en el catálogo.
+function listaSkus(v: any): string[] {
+  const lista = Array.isArray(v) ? v : String(v ?? '').split(/[\s,;]+/);
+  return [...new Set<string>(lista.map((x: any) => String(x ?? '').trim().toUpperCase()).filter(Boolean))].slice(0, MAX_SKUS);
 }
 
 function listaLimpia(v: any): string[] {
@@ -77,12 +85,26 @@ export class CampanasMargenService {
     const { data, error } = await this.supabase
       .getClient()
       .from('campanas_margen')
-      .select('id, nombre, lista_precios, marcas, categorias, margen_pct, desde, hasta, created_at')
+      .select('id, nombre, lista_precios, marcas, categorias, skus, margen_pct, desde, hasta, created_at')
       .eq('activa', true)
       .lte('desde', hoy)
       .gte('hasta', hoy)
       .order('created_at', { ascending: false });
-    if (error) return [];
+    if (error) {
+      // Migración de SKUs pendiente: las campañas por marca/categoría siguen valiendo.
+      if (/skus/i.test(String(error.message || ''))) {
+        const { data: sinSkus } = await this.supabase
+          .getClient()
+          .from('campanas_margen')
+          .select('id, nombre, lista_precios, marcas, categorias, margen_pct, desde, hasta, created_at')
+          .eq('activa', true)
+          .lte('desde', hoy)
+          .gte('hasta', hoy)
+          .order('created_at', { ascending: false });
+        return sinSkus || [];
+      }
+      return [];
+    }
     return data || [];
   }
 
@@ -111,6 +133,7 @@ export class CampanasMargenService {
       lista_precios: lista,
       marcas: listaLimpia(body?.marcas),
       categorias: listaLimpia(body?.categorias),
+      skus: listaSkus(body?.skus),
       margen_pct: Math.round(margen * 100) / 100,
       desde,
       hasta,
@@ -119,6 +142,11 @@ export class CampanasMargenService {
   }
 
   private error(error: any): never {
+    // El mensaje de Supabase nombra la tabla también cuando lo que falta es
+    // una columna: la de SKUs se revisa antes que la tabla entera.
+    if (/skus/i.test(String(error?.message || '')) && /(schema cache|column|not find)/i.test(String(error?.message || ''))) {
+      throw new BadRequestException(MIGRACION_SKUS);
+    }
     if (this.sinTabla(error)) throw new BadRequestException(MIGRACION);
     throw new BadRequestException(String(error?.message || 'No se pudo guardar la campaña.'));
   }

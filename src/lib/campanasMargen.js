@@ -32,15 +32,22 @@ export function margenDePrecio(costo, precio) {
   return ((p - Number(costo || 0)) / p) * 100;
 }
 
-/* ¿La campaña alcanza a este producto? Marcas y categorías vacías significan
-   "todas". Se compara sin tildes ni mayúsculas: el catálogo tiene la misma
-   marca escrita de varias formas. Un producto sin costo queda fuera — sin
-   costo no hay cómo calcular un precio por margen. */
+// SKU tal como se compara: sin espacios, en mayúsculas.
+export const normSku = (v) => String(v ?? "").replace(/\s+/g, "").toUpperCase();
+
+/* ¿La campaña alcanza a este producto? Marcas, categorías y SKUs vacíos
+   significan "todos"; con más de un filtro, el producto debe cumplirlos
+   todos (con SKUs y nada más, la campaña es solo para esos productos). Se
+   compara sin tildes ni mayúsculas: el catálogo tiene la misma marca escrita
+   de varias formas. Un producto sin costo queda fuera — sin costo no hay cómo
+   calcular un precio por margen. */
 export function campanaAlcanza(prod, campana) {
   if (!prod || !campana) return false;
   if (!(Number(prod.costo) > 0)) return false;
   const marcas = Array.isArray(campana.marcas) ? campana.marcas : [];
   const categorias = Array.isArray(campana.categorias) ? campana.categorias : [];
+  const skus = Array.isArray(campana.skus) ? campana.skus : [];
+  if (skus.length && !skus.some((s) => normSku(s) === normSku(prod.sku))) return false;
   if (marcas.length && !marcas.some((m) => norm(m) === norm(prod.marca))) return false;
   if (categorias.length && !categorias.some((c) => norm(c) === norm(prod.categoria))) return false;
   return true;
