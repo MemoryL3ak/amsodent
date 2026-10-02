@@ -2570,6 +2570,10 @@ export class LicitacionesService {
       // cuotas): si aún no está aplicada, el pago se registra igual sin ellas.
       if (msg.includes('comision_pago')) { delete bodyWithout.comision_pago; removed = true; }
       if (msg.includes('cuotas_total')) { delete bodyWithout.cuotas_total; removed = true; }
+      // Migración 20261002 (valor por cuota y detalle de cada pago del
+      // cliente particular): mismo criterio.
+      if (msg.includes('valor_cuota')) { delete bodyWithout.valor_cuota; removed = true; }
+      if (msg.includes('detalle_pago')) { delete bodyWithout.detalle_pago; removed = true; }
       if (removed) {
         const { data: d2, error: e2 } = await this.supabase.getClient()
           .from('licitacion_documentos')
@@ -3157,6 +3161,8 @@ export class LicitacionesService {
         'observacion_actualizada_por',
         'comision_pago',
         'cuotas_total',
+        'valor_cuota',
+        'detalle_pago',
       ];
       const aQuitar = opcionales.filter((c) => msg.includes(c));
       if (aQuitar.length) {

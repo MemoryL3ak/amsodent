@@ -241,11 +241,28 @@ referencian (incluidas las no registradas en el sistema) y muestra el monto
 despachado y CUÁNTO FALTA POR DESPACHAR = monto OC − despachado según Bsale.
 
 ### Seguimiento de Pagos (/seguimiento-pagos)
+DOS PESTAÑAS: "Cliente particular" y "Entidad pública". Cada una muestra sus
+facturas, sus KPIs y su propio flujo de pago (la pestaña elegida se recuerda).
 El semáforo de cobro: 8 KPIs clickeables (total, pagadas, en plazo, por vencer,
-vencidas, factoring, notas de crédito, cierre forzado) que abren el detalle de
-sus filas. Vencimiento = fecha factura + plazo de la condición de venta.
-Registrar pago (abre una ventana; monto bruto → guarda neto), forma de pago,
-días de atraso. Si la forma de pago es FACTORING, la ventana pide además el
+vencidas, factoring —en la pestaña de particulares, "En cuotas"—, notas de
+crédito, cierre forzado) que abren el detalle de sus filas. Vencimiento =
+fecha factura + plazo de la condición de venta.
+PAGO DEL CLIENTE PARTICULAR: el botón "Registrar pago" de la fila (o
+"Seguimiento") abre la ventana de seguimiento del pago. Ahí se elige la FORMA
+DE PAGO: transferencia, Transbank, Getnet o efectivo. Con Transbank o Getnet se
+elige "Sin cuotas" o "En cuotas" (de 2 a 12) y el VALOR POR CUOTA (si se deja
+vacío, es el total a cobrar dividido en las cuotas); "Guardar forma de pago"
+lo deja en la factura. Debajo está el SEGUIMIENTO: una línea con cada cuota —
+las pagadas con su fecha, monto, medio, comisión, detalle y comprobante; las
+pendientes con su valor—. En la siguiente pendiente, "Ingresar cuota pagada"
+(o "Registrar pago" sin cuotas) pide fecha, monto recibido, medio, comisión
+del medio (tarjeta), N° de operación, detalle y el comprobante (imagen o PDF;
+obligatorio en transferencia, opcional en el resto). Cada pago se puede
+corregir (lápiz) o eliminar (basurero). Cuando los pagos cubren la factura,
+"Validar pago" la deja pagada; mientras falten cuotas el estado es "En cuotas
+2/6" y la fila muestra una barra de avance.
+PAGO DE ENTIDAD PÚBLICA: Registrar pago (abre una ventana; monto bruto →
+guarda neto), forma de pago, días de atraso. Si la forma de pago es FACTORING, la ventana pide además el
 margen (%) y el plazo (en días o con la fecha de vencimiento; uno calcula al
 otro desde la fecha de pago), ambos obligatorios, y la empresa de factoring
 (opcional). Esos datos quedan en el módulo Factoring.
@@ -257,16 +274,17 @@ PAGOS CON TARJETA: la forma de pago distingue "Tarjeta · Transbank" y "Tarjeta
 · Getnet" (ambos depositan en la misma cuenta). Se puede anotar la COMISIÓN
 que descontó el medio (lo recibido es menor que la factura, pero la comisión
 no es deuda del cliente: la factura queda saldada) y en cuántas CUOTAS se
-pagó; cada depósito se registra como un abono y el estado muestra "En cuotas
-3/6". Dónde se registra: en entidades públicas, en "Registrar pago"; en
-clientes particulares, en "Subir voucher" (ahí se elige el medio; con tarjeta
-el archivo es opcional), o en el detalle de la cotización como documento "Pago
-con tarjeta (Transbank / Getnet)". Para CORREGIR un pago ya registrado (medio,
-fecha, monto recibido, comisión) o las cuotas pactadas: botón "Pagos" de la
-fila. La columna "Saldo por pagar" muestra lo que le falta a cada factura (su
-monto completo si no tiene pagos, 0 si está pagada). El reporte en Excel trae
-RUT del cliente, recibido, comisión, cuotas y una hoja aparte "OC por
-facturar".
+pagó (máximo 12); cada depósito se registra como un abono y el estado muestra
+"En cuotas 3/6". Dónde se registra: en entidades públicas, en "Registrar
+pago"; en clientes particulares, en la ventana de seguimiento del pago (ver
+arriba), o en el detalle de la cotización como documento "Pago con tarjeta
+(Transbank / Getnet)". Para CORREGIR un pago ya registrado (medio, fecha,
+monto recibido, comisión) o las cuotas pactadas: en entidades públicas, botón
+"Pagos" de la fila; en clientes particulares, botón "Seguimiento". La columna
+"Saldo por pagar" muestra lo que le falta a cada factura (su monto completo si
+no tiene pagos, 0 si está pagada). El reporte en Excel (de la pestaña que se
+está viendo) trae RUT del cliente, recibido, comisión, cuotas, valor de la
+cuota y una hoja aparte "OC por facturar".
 Botón "Correo cobro" genera el borrador de cobranza (OC, guía, factura,
 despacho) para que el usuario lo envíe desde su propio correo. La mora
 acumulada de un cliente bloquea nuevas cotizaciones para ese cliente.
