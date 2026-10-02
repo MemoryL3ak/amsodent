@@ -8,6 +8,7 @@ import DropdownSelect from "../components/ui/DropdownSelect";
 import { calcularLista3 } from "../lib/listas";
 import {
   campanaAlcanza,
+  normSku,
   estadoCampanaMargen,
   hoyEnChile,
   margenDePrecio,
@@ -141,7 +142,7 @@ export default function CampanasMargen() {
   function nueva() {
     setForm({
       id: null, nombre: "", descripcion: "", lista_precios: "1", margen_pct: "",
-      marcas: [], categorias: [], desde: hoy, hasta: "", activa: true,
+      marcas: [], categorias: [], skus: [], desde: hoy, hasta: "", activa: true,
     });
   }
   function editar(c) {
@@ -153,6 +154,7 @@ export default function CampanasMargen() {
       margen_pct: String(c.margen_pct ?? ""),
       marcas: Array.isArray(c.marcas) ? c.marcas : [],
       categorias: Array.isArray(c.categorias) ? c.categorias : [],
+      skus: Array.isArray(c.skus) ? c.skus : [],
       desde: String(c.desde || "").slice(0, 10),
       hasta: String(c.hasta || "").slice(0, 10),
       activa: c.activa !== false,
@@ -200,7 +202,7 @@ export default function CampanasMargen() {
         <div>
           <h1 className="page-title">Campañas de margen</h1>
           <p className="page-subtitle">
-            Un margen para marcas o categorías completas, sobre una lista de precios y por un período. Al terminar, vuelve solo el precio de lista.
+            Un margen para marcas o categorías completas, o para una lista de SKUs, sobre una lista de precios y por un período. Al terminar, vuelve solo el precio de lista.
           </p>
         </div>
         {esAdmin && (
@@ -256,6 +258,7 @@ export default function CampanasMargen() {
               const est = ESTADOS[estadoCampanaMargen(c, hoy)];
               const marcas = Array.isArray(c.marcas) ? c.marcas : [];
               const cats = Array.isArray(c.categorias) ? c.categorias : [];
+              const skus = Array.isArray(c.skus) ? c.skus : [];
               return (
                 <tr key={c.id}>
                   <td style={{ maxWidth: 260 }}>
@@ -264,7 +267,12 @@ export default function CampanasMargen() {
                   </td>
                   <td style={{ whiteSpace: "nowrap" }}>Lista {c.lista_precios}</td>
                   <td style={{ maxWidth: 280, fontSize: 12.5 }}>
-                    {marcas.length === 0 && cats.length === 0 && <span style={{ color: "#b45309", fontWeight: 600 }}>Todo el catálogo</span>}
+                    {marcas.length === 0 && cats.length === 0 && skus.length === 0 && <span style={{ color: "#b45309", fontWeight: 600 }}>Todo el catálogo</span>}
+                    {skus.length > 0 && (
+                      <div title={skus.join(", ")}>
+                        <span style={{ color: "var(--text-muted)" }}>SKUs:</span> {skus.slice(0, 3).join(", ")}{skus.length > 3 ? ` +${skus.length - 3}` : ""}
+                      </div>
+                    )}
                     {marcas.length > 0 && (
                       <div title={marcas.join(", ")}>
                         <span style={{ color: "var(--text-muted)" }}>Marcas:</span> {marcas.slice(0, 3).join(", ")}{marcas.length > 3 ? ` +${marcas.length - 3}` : ""}
@@ -365,9 +373,26 @@ function ModalCampana({ inicial, productos, otras, onCerrar, onGuardada }) {
   const margen = f.margen_pct === "" ? NaN : Number(String(f.margen_pct).replace(",", "."));
   const margenValido = Number.isFinite(margen) && margen >= 0 && margen < 95;
   const sim = useMemo(
-    () => (margenValido ? simular(productos, { marcas: f.marcas, categorias: f.categorias, lista_precios: f.lista_precios, margen_pct: margen }) : null),
-    [productos, f.marcas, f.categorias, f.lista_precios, margen, margenValido],
+    () => (margenValido ? simular(productos, { marcas: f.marcas, categorias: f.categorias, skus: f.skus, lista_precios: f.lista_precios, margen_pct: margen }) : null),
+    [productos, f.marcas, f.categorias, f.skus, f.lista_precios, margen, margenValido],
   );
+
+  /* SKUs: se pegan tal cual vienen de un Excel o un correo (separados por
+     coma, punto y coma, espacio o salto de línea). Se avisa cuáles no están en
+     el catálogo activo y cuáles no tienen costo (no entran a la campaña). */
+  const [skusTexto, setSkusTexto] = useState((f.skus || []).join(", "));
+  const skusInfo = useMemo(() => {
+    const porSku = new Map(productos.map((p) => [normSku(p.sku), p]));
+    const lista = Array.isArray(f.skus) ? f.skus : [];
+    const noEstan = lista.filter((s) => !porSku.has(normSku(s)));
+    const sinCosto = lista.filter((s) => porSku.has(normSku(s)) && !(Number(porSku.get(normSku(s)).costo) > 0));
+    return { total: lista.length, noEstan, sinCosto };
+  }, [productos, f.skus]);
+  function aplicarSkus(texto) {
+    setSkusTexto(texto);
+    const lista = [...new Set(texto.split(/[\s,;]+/).map((x) => normSku(x)).filter(Boolean))];
+    set("skus")(lista);
+  }
   // Ejemplos: los que más cambian respecto de su precio de lista.
   const ejemplos = useMemo(
     () => (sim ? [...sim.filas].sort((a, b) => Math.abs(b.dif ?? 0) - Math.abs(a.dif ?? 0)).slice(0, 6) : []),
@@ -384,7 +409,7 @@ function ModalCampana({ inicial, productos, otras, onCerrar, onGuardada }) {
       .filter((x) => x.comunes > 0);
   }, [otras, sim, f]);
 
-  const todoElCatalogo = f.marcas.length === 0 && f.categorias.length === 0;
+  const todoElCatalogo = f.marcas.length === 0 && f.categorias.length === 0 && (f.skus || []).length === 0;
 
   async function guardar(e) {
     e.preventDefault();
@@ -402,6 +427,7 @@ function ModalCampana({ inicial, productos, otras, onCerrar, onGuardada }) {
       margen_pct: margen,
       marcas: f.marcas,
       categorias: f.categorias,
+      skus: f.skus || [],
       desde: f.desde,
       hasta: f.hasta,
       activa: f.activa !== false,
@@ -492,6 +518,23 @@ function ModalCampana({ inicial, productos, otras, onCerrar, onGuardada }) {
           </div>
 
           <div className="field">
+            <label className="field-label">SKUs <span style={{ color: "var(--text-muted)", fontWeight: 400 }}>(vacío = sin filtro por SKU)</span></label>
+            <textarea
+              className="input"
+              rows={3}
+              value={skusTexto}
+              onChange={(e) => aplicarSkus(e.target.value)}
+              placeholder="Pega los SKUs separados por coma, espacio o salto de línea. Ej: PH00030, INST00532"
+              style={{ height: "auto", minHeight: 72, padding: "8px 10px", fontFamily: "inherit", resize: "vertical" }}
+            />
+            <div className="field-hint">
+              {skusInfo.total === 0
+                ? "Solo estos productos entran a la campaña; si además pones marcas o categorías, deben cumplirlas."
+                : `${skusInfo.total} SKU${skusInfo.total === 1 ? "" : "s"}${skusInfo.noEstan.length ? ` · ${skusInfo.noEstan.length} no está${skusInfo.noEstan.length === 1 ? "" : "n"} en el catálogo activo: ${skusInfo.noEstan.slice(0, 8).join(", ")}${skusInfo.noEstan.length > 8 ? "…" : ""}` : ""}${skusInfo.sinCosto.length ? ` · ${skusInfo.sinCosto.length} sin costo (no entra${skusInfo.sinCosto.length === 1 ? "" : "n"}): ${skusInfo.sinCosto.slice(0, 8).join(", ")}${skusInfo.sinCosto.length > 8 ? "…" : ""}` : ""}`}
+            </div>
+          </div>
+
+          <div className="field">
             <label className="field-label">Descripción <span style={{ color: "var(--text-muted)", fontWeight: 400 }}>(opcional)</span></label>
             <input className="input" value={f.descripcion} onChange={(e) => set("descripcion")(e.target.value)} maxLength={400} />
           </div>
@@ -553,8 +596,8 @@ function ModalCampana({ inicial, productos, otras, onCerrar, onGuardada }) {
                 )}
               </>
             )}
-            {sim && sim.total === 0 && aviso("Ningún producto con costo cumple esta combinación de marcas y categorías: la campaña no tendría efecto.")}
-            {sim && todoElCatalogo && sim.total > 0 && aviso("Sin marcas ni categorías, la campaña aplica a TODO el catálogo.")}
+            {sim && sim.total === 0 && aviso("Ningún producto con costo cumple esta combinación de marcas, categorías y SKUs: la campaña no tendría efecto.")}
+            {sim && todoElCatalogo && sim.total > 0 && aviso("Sin marcas, categorías ni SKUs, la campaña aplica a TODO el catálogo.")}
             {margenValido && margen < 20 && aviso("Con menos de 20 % de margen, las cotizaciones quedan «Pendiente Aprobación» y necesitan que alguien las apruebe.")}
             {cruces.map(({ c, comunes }) => (
               <div key={c.id}>
