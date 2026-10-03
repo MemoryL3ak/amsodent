@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { AlertTriangle, ChevronLeft, ChevronRight, ExternalLink, FileCheck, Info, Plus, Receipt, RefreshCw } from "lucide-react";
+import { AlertTriangle, Ban, ChevronLeft, ChevronRight, ExternalLink, FileCheck, Info, Plus, Receipt, RefreshCw } from "lucide-react";
 import { api } from "../lib/api";
 import Toast from "../components/Toast";
 import BotonLimpiarFiltros from "../components/BotonLimpiarFiltros";
 import EmitirFacturaBsale from "../components/EmitirFacturaBsale";
 import EmitirDespachoBsale from "../components/EmitirDespachoBsale";
 import DocumentoLibreBsale from "../components/DocumentoLibreBsale";
+import AnularDocumentoBsale from "../components/AnularDocumentoBsale";
 
 /* ── Facturación (2026-10-02) ────────────────────────────────────────────────
    Sección para emitir en Bsale la factura de una guía de despacho.
@@ -36,7 +37,7 @@ function tonoDias(dias) {
   return { color: "#15803d", bg: "#dcfce7", texto };
 }
 
-const TIPOS_DOC = { factura: "Factura", boleta: "Boleta", guia: "Guía", nota_venta: "Orden" };
+const TIPOS_DOC = { factura: "Factura", boleta: "Boleta", guia: "Guía", nota_venta: "Orden", nota_credito: "Nota de crédito" };
 
 const ESTADOS = {
   emitida: { texto: "Emitida", color: "#15803d", bg: "#dcfce7" },
@@ -83,6 +84,8 @@ export default function Facturacion() {
   const [libre, setLibre] = useState(null);
   // Venta directa: boleta o factura al instante, que crea su cotización (2026-10-03).
   const [venta, setVenta] = useState(null); // "boleta" | "factura" | null
+  // Anular con nota de crédito (2026-10-03): { bsaleId? } — vacío = buscar por N°.
+  const [anular, setAnular] = useState(null);
   const [emitidas, setEmitidas] = useState({ registro_listo: true, filas: [] });
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState("");
@@ -195,6 +198,16 @@ export default function Facturacion() {
           }}
         />
       )}
+      {anular && (
+        <AnularDocumentoBsale
+          bsaleId={anular.bsaleId || null}
+          onCerrar={() => setAnular(null)}
+          onEmitida={(r) => {
+            setToast({ type: "success", message: `Nota de crédito ${r.numero} emitida: anula la ${String(r.original?.tipo || "documento").toLowerCase()} N° ${r.original?.numero}.` });
+            cargar();
+          }}
+        />
+      )}
       {venta && (
         <DocumentoLibreBsale
           tipo={venta}
@@ -240,6 +253,9 @@ export default function Facturacion() {
               </button>
               <button type="button" className="btn btn-secondary" onClick={() => setLibre("factura")} title="Armar una factura a mano: cliente, productos, precios y forma de pago">
                 <Plus size={14} /> Nueva factura
+              </button>
+              <button type="button" className="btn btn-secondary" onClick={() => setAnular({})} title="Anular una factura o boleta con nota de crédito (por su N°)">
+                <Ban size={14} /> Anular documento
               </button>
             </>
           )}
@@ -522,6 +538,14 @@ export default function Facturacion() {
                         <td style={{ verticalAlign: "middle", fontSize: 12, whiteSpace: "normal", overflowWrap: "anywhere" }}>{f.usuario || "—"}</td>
                         <td style={{ verticalAlign: "middle", whiteSpace: "normal" }}>
                           <span style={pastilla(est)}>{est.texto}</span>
+                          {f.anulada_por && <span style={{ ...pastilla({ color: "#b91c1c", bg: "#fee2e2" }), marginLeft: 6 }}>Anulada · NC {f.anulada_por}</span>}
+                          {f.estado === "emitida" && (f.tipo === "factura" || f.tipo === "boleta") && f.bsale_id && !f.anulada_por && (
+                            <div style={{ marginTop: 5 }}>
+                              <button type="button" className="btn btn-secondary btn-sm" onClick={() => setAnular({ bsaleId: f.bsale_id })} title="Anular con nota de crédito en Bsale">
+                                <Ban size={12} /> Anular
+                              </button>
+                            </div>
+                          )}
                           {f.error && (
                             <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 3, overflowWrap: "anywhere", maxWidth: 260 }} title={f.error}>
                               {f.error.length > 110 ? `${f.error.slice(0, 110)}…` : f.error}

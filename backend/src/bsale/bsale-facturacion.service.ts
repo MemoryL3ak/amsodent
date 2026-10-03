@@ -440,7 +440,7 @@ export class BsaleFacturacionService {
     const tope = Math.min(Math.max(Number(limite) || 300, 1), 1000);
     let r: any = await db
       .from('bsale_emisiones')
-      .select('id, clave, tipo, origen_doc_id, estado, numero, neto, total, fecha_emision, url_pdf, licitacion_id, guias_doc_ids, usuario, error, created_at, updated_at')
+      .select('id, clave, tipo, origen_doc_id, estado, numero, neto, total, fecha_emision, url_pdf, bsale_id, licitacion_id, guias_doc_ids, usuario, error, created_at, updated_at')
       .order('id', { ascending: false })
       .limit(tope);
     if (r.error && /tipo|origen_doc_id/.test(String(r.error.message)) && /column|schema cache/i.test(String(r.error.message))) {
@@ -452,6 +452,14 @@ export class BsaleFacturacionService {
     }
     if (r.error) return { registro_listo: false, filas: [] };
     const emisiones: any[] = r.data || [];
+
+    // Anulaciones hechas desde el sistema: la clave de la nota de crédito es
+    // AMS-NC-<id en Bsale del documento anulado>.
+    const anuladoPor = new Map<number, string>();
+    for (const e of emisiones) {
+      const m = String(e.clave || '').match(/^AMS-NC-(\d+)$/);
+      if (e.tipo === 'nota_credito' && e.estado === 'emitida' && m) anuladoPor.set(Number(m[1]), String(e.numero || ''));
+    }
 
     const licIds = [...new Set(emisiones.map((e) => Number(e.licitacion_id)).filter((id) => id > 0))];
     const guiaIds = [...new Set(emisiones.flatMap((e) => (e.guias_doc_ids || []).map(Number)))];
@@ -472,6 +480,8 @@ export class BsaleFacturacionService {
         tipo: e.tipo || 'factura',
         // Venta directa (boleta o factura que crea su propia cotización).
         venta_directa: String(e.clave || '').startsWith('AMS-V-'),
+        bsale_id: Number(e.bsale_id) || null,
+        anulada_por: e.bsale_id && anuladoPor.has(Number(e.bsale_id)) ? anuladoPor.get(Number(e.bsale_id)) || 'NC' : null,
         origen_doc_id: e.origen_doc_id || null,
         estado: e.estado,
         numero: e.numero || null,
