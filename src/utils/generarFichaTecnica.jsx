@@ -72,7 +72,27 @@ async function resolverImagenProducto(producto) {
  * @param {object} producto  – registro completo del producto
  * @returns {Promise<void>}
  */
-export async function descargarFichaTecnica(producto) {
+/* Abre la ficha en una pestaña nueva (2026-10-03: botón "Abrir ficha técnica"
+   al crear un producto). La pestaña se abre ANTES de generar el PDF, todavía
+   dentro del clic, para que el navegador no la bloquee como ventana emergente. */
+export async function abrirFichaTecnica(producto) {
+  const ventana = window.open("", "_blank");
+  if (ventana) {
+    try { ventana.document.title = "Ficha técnica"; ventana.document.body.innerHTML = '<p style="font-family:sans-serif;padding:24px">Generando la ficha técnica…</p>'; } catch { /* otra pestaña */ }
+  }
+  try {
+    const blob = await descargarFichaTecnica(producto, { soloBlob: true });
+    const url = URL.createObjectURL(blob);
+    if (ventana && !ventana.closed) ventana.location.href = url;
+    else window.open(url, "_blank");
+    setTimeout(() => URL.revokeObjectURL(url), 5 * 60 * 1000);
+  } catch (e) {
+    try { ventana?.close(); } catch { /* nada */ }
+    throw e;
+  }
+}
+
+export async function descargarFichaTecnica(producto, opciones) {
   if (!producto) throw new Error("Producto requerido");
 
   const logoUrl = `${window.location.origin}/logo_superior_ficha.png`;
@@ -97,6 +117,7 @@ export async function descargarFichaTecnica(producto) {
       productoSrc={productoSrc || null}
     />
   ).toBlob();
+  if (opciones?.soloBlob) return pdfBlob;
 
   const sku = (producto.sku || "").toString().trim();
   const safeSku = (sku || "producto")

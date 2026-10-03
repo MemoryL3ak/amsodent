@@ -17,6 +17,7 @@ import {
   referenciaOcGuia,
   referenciaParaBsale,
   referenciaVista,
+  EMISOR,
 } from './bsale-facturacion.service';
 
 /* ── Guías de despacho y órdenes (notas de venta) en Bsale (2026-10-02) ──────
@@ -473,6 +474,7 @@ export class BsaleDespachosService {
 
   private vista(b: any, extra: Record<string, any>) {
     return {
+      emisor: EMISOR,
       cliente: { razon_social: extra.clienteNuevo?.company || b.cliente.razon_social, rut: extra.clienteNuevo?.code || b.cliente.rut, giro: extra.clienteNuevo?.activity || b.cliente.giro, direccion: extra.clienteNuevo?.address || b.cliente.direccion, comuna: extra.clienteNuevo?.municipality || b.cliente.comuna, nuevo: b.cliente.nuevo },
       referencias: b.referencias.map(referenciaVista),
       ...extra,
@@ -682,7 +684,7 @@ export class BsaleDespachosService {
   // ── Emisión real (común) ───────────────────────────────────────────────
 
   async emitirReal(p: {
-    usuario: { id: string; email: string }; clave: string; salesId: string; tipo: 'guia' | 'nota_venta' | 'factura'; ruta: string;
+    usuario: { id: string; email: string }; clave: string; salesId: string; tipo: 'guia' | 'nota_venta' | 'factura' | 'boleta'; ruta: string;
     solicitud: Record<string, any>; vista: any; licitacionId: number | null; origenDocId: number | null; lineas: any[];
     registrar: (doc: any, pdf: { path: string; size: number } | null) => Promise<number | null>;
     verificar: (doc: any) => Promise<string[]>; sinPdf?: boolean; bucket?: string;
@@ -739,7 +741,7 @@ export class BsaleDespachosService {
       fecha_emision: epochAFecha(p.solicitud.emissionDate), updated_at: new Date().toISOString(),
     };
     await db.from('bsale_emisiones').update(emitida).eq('id', emisionId);
-    this.logger.log(`${p.tipo === 'guia' ? 'Guía' : p.tipo === 'factura' ? 'Factura' : 'Nota de venta'} ${emitida.numero} emitida en Bsale (${p.licitacionId ? `cotización ${p.licitacionId}` : 'libre'}) por ${p.usuario.email}`);
+    this.logger.log(`${p.tipo === 'guia' ? 'Guía' : p.tipo === 'factura' ? 'Factura' : p.tipo === 'boleta' ? 'Boleta' : 'Nota de venta'} ${emitida.numero} emitida en Bsale (${p.licitacionId ? `cotización ${p.licitacionId}` : 'libre'}) por ${p.usuario.email}`);
 
     const avisos = await p.verificar(doc);
     let pdf: { path: string; size: number } | null = null;

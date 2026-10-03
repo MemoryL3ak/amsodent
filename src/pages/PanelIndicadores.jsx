@@ -8,6 +8,7 @@ import EmbudoComercial from "../components/panel/EmbudoComercial";
 import ModalAvanceMeta from "../components/ModalAvanceMeta";
 import { esVendedorSiempreVisible } from "../constants/vendedores";
 import ModalMargenDesglose from "../components/panel/ModalMargenDesglose";
+import { indiceCostos, margenDeItems, filaMargenLic, notaSinCosto } from "../lib/margenItems";
 import {
   TrendingUp, TrendingDown, Minus, ShoppingCart, Target, FileText,
   UserPlus, RefreshCw, Award, Banknote, X, Download,
@@ -272,12 +273,8 @@ export default function PanelIndicadores() {
     (async () => {
       try {
         const prods = await api.get("/productos");
-        const m = {};
-        (prods || []).forEach((p) => {
-          const sku = String(p.sku || "").trim().toUpperCase();
-          if (sku) m[sku] = Number(p.costo || 0);
-        });
-        if (activo) setCostoBySku(m);
+        // Por SKU y por nombre, como la cotización (lib/margenItems).
+        if (activo) setCostoBySku(indiceCostos(prods));
       } catch (e) {
         console.error("Error cargando costos de productos:", e);
         if (activo) setCostoBySku({});
@@ -302,8 +299,6 @@ export default function PanelIndicadores() {
         });
         const mapCat = {};      // cat -> total
         const mapCatProd = {};  // cat -> { producto -> monto }
-        const porLic = {};      // licId -> { venta, costo } (desglose del margen)
-        let ventaNeta = 0, costoTotal = 0; // para el margen del mes
         (items || []).forEach((it) => {
           const total = Number(it.total || 0);
           const cat = (it.categoria || "Sin categoría").trim() || "Sin categoría";
@@ -311,26 +306,12 @@ export default function PanelIndicadores() {
           mapCat[cat] = (mapCat[cat] || 0) + total;
           (mapCatProd[cat] = mapCatProd[cat] || {});
           mapCatProd[cat][prod] = (mapCatProd[cat][prod] || 0) + total;
-          ventaNeta += total;
-          const sku = String(it.sku || "").trim().toUpperCase();
-          // Costo guardado CON la cotización (incluye el costo editado a mano
-          // en el detalle, que antes este panel no veía y el margen no
-          // cuadraba con la cotización). Filas anteriores a la columna
-          // `costo` vienen null → costo vigente del catálogo, como siempre.
-          const costoUnit = Number(it.costo) > 0 ? Number(it.costo) : (costoBySku[sku] || 0);
-          const costoItem = costoUnit * (Number(it.cantidad) || 0);
-          costoTotal += costoItem;
-          const lid = Number(it.licitacion_id);
-          if (lid) {
-            const acc = (porLic[lid] = porLic[lid] || { venta: 0, costo: 0 });
-            acc.venta += total;
-            acc.costo += costoItem;
-          }
         });
-        const margenMonto = Math.round(ventaNeta - costoTotal);
-        const margenPct = ventaNeta > 0 ? (margenMonto / ventaNeta) * 100 : 0;
-        if (activo) setMargenMes({ monto: margenMonto, pct: margenPct });
-        if (activo) setMargenPorLic(Object.entries(porLic).map(([licId, v]) => ({ licId: Number(licId), ...v })));
+        // Margen (2026-10-03): costo guardado → catálogo por SKU → por nombre;
+        // las líneas que siguen sin costo quedan fuera (antes contaban 100%).
+        const mg = margenDeItems(items, costoBySku);
+        if (activo) setMargenMes(mg);
+        if (activo) setMargenPorLic(Object.entries(mg.porLic).map(([licId, v]) => ({ licId: Number(licId), ...v })));
         const arrCat = Object.entries(mapCat).map(([categoria, monto]) => ({
           categoria,
           monto,
@@ -874,20 +855,14 @@ export default function PanelIndicadores() {
     const filas = margenPorLic.map((r) => {
       const l = licById.get(r.licId) || {};
       const email = (l.creado_por || "").trim().toLowerCase();
-      const monto = r.venta - r.costo;
       return {
         licId: r.licId,
         codigo: l.id_licitacion || `Cot. ${r.licId}`,
         cliente: l.nombre_entidad || l.rut_entidad || "—",
         vendedor: nombresVendedores[email] || email || "Sin vendedor",
         tipo: l.tipo_compra || (esParticular(l) ? "Cliente particular" : "Sin tipo"),
-        venta: r.venta,
-        costo: r.costo,
-        monto,
-        pct: r.venta > 0 ? (monto / r.venta) * 100 : 0,
-        // Sin costo en ningún ítem (ni guardado ni en catálogo por SKU): el
-        // "100%" no es margen real, es un dato faltante que hay que sanear.
-        sinCosto: r.venta > 0 && !(r.costo > 0),
+        // Sin costo en ningún ítem: no entra al margen, se marca para sanear.
+        ...filaMargenLic(r),
       };
     }).sort((a, b) => b.venta - a.venta);
     const agrupar = (key) => {
@@ -895,8 +870,7 @@ export default function PanelIndicadores() {
       filas.forEach((f) => {
         const k = f[key] || "—";
         const e = (m[k] = m[k] || { label: k, venta: 0, costo: 0, cotizaciones: 0 });
-        e.venta += f.venta;
-        e.costo += f.costo;
+        if (!f.sinCosto) { e.venta += f.venta; e.costo += f.costo; }
         e.cotizaciones += 1;
       });
       return Object.values(m)
@@ -1058,7 +1032,7 @@ export default function PanelIndicadores() {
               <KpiCard icon={Award} color="#b45309" label="Cotizaciones adjudicadas" sub={`Cierres del ${periodoLabel.toLowerCase()} · clic para detalle`} value={fmtNum(m.adjudicadas)} delta={mostrarDelta ? <Delta actual={m.adjudicadas} prev={mPrev.adjudicadas} /> : null} />
             </div>
             <div onClick={() => setMargenOpen(true)} style={{ cursor: "pointer" }} title="Ver desglose del margen por cotización, vendedor y tipo">
-              <KpiCard icon={TrendingUp} color="#7c3aed" label="Margen %" sub="(venta − costo) / venta · clic para desglose" value={fmtPct(margenMes.pct)} />
+              <KpiCard icon={TrendingUp} color="#7c3aed" label="Margen %" sub={`(venta − costo) / venta${notaSinCosto(margenMes)} · clic para desglose`} value={fmtPct(margenMes.pct)} />
             </div>
             {!esJefatura && (
               <div onClick={() => setMargenOpen(true)} style={{ cursor: "pointer" }} title="Ver desglose del margen por cotización, vendedor y tipo">

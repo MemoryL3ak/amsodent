@@ -9,6 +9,7 @@ import { pdf } from "@react-pdf/renderer";
 import { FichaTecnicaDocument } from "../components/FichaTecnica";
 import { FACTOR_LISTA_3, calcularLista3 } from "../lib/listas";
 import EquivalentesProducto from "../components/EquivalentesProducto";
+import { mensajeBsale, tipoAvisoBsale } from "../lib/bsaleProducto";
 
 /* ============================================================
    BUSCADOR MEJORADO (igual que licitaciones)
@@ -411,6 +412,9 @@ export default function EditarProducto() {
         creado_por: data.creado_por ?? "",
         created_at: data.created_at ?? "",
         precio_actualizado_at: data.precio_actualizado_at ?? "",
+        // Sincronización con Bsale (migración 20261006; si falta, quedan vacíos).
+        bsale_variant_id: data.bsale_variant_id ?? null,
+        bsale_sync_error: data.bsale_sync_error ?? null,
       });
 
       setLoading(false);
@@ -715,14 +719,40 @@ export default function EditarProducto() {
     const partes = [];
     if (prop.sku > 0) partes.push(`${prop.sku} ítem(s) recibieron el SKU`);
     if (prop.costo > 0) partes.push(`${prop.costo} ítem(s) recibieron el costo`);
+    // SKU recién asignado: el servidor lo creó en Bsale (o dice por qué no).
+    const bsale = guardado?.bsale || null;
+    if (bsale) aplicarResultadoBsale(bsale);
+    const base = partes.length
+      ? `Producto actualizado · En cotizaciones ya creadas: ${partes.join(" y ")}.`
+      : desdeValidacion
+      ? "Producto actualizado. Vuelve a la pestaña de la cotización: se aplicará ahí."
+      : "Producto actualizado.";
     setToast({
-      type: "success",
-      message: partes.length
-        ? `Producto actualizado · En cotizaciones ya creadas: ${partes.join(" y ")}.`
-        : desdeValidacion
-        ? "Producto actualizado. Vuelve a la pestaña de la cotización: se aplicará ahí."
-        : "Producto actualizado",
+      type: bsale ? tipoAvisoBsale(bsale) : "success",
+      message: bsale ? `${base} ${mensajeBsale(bsale)}` : base,
     });
+  }
+
+  const [enviandoBsale, setEnviandoBsale] = useState(false);
+  function aplicarResultadoBsale(r) {
+    setProducto((prev) => ({
+      ...prev,
+      bsale_variant_id: r?.variante_id ?? (r?.estado === "error" ? prev.bsale_variant_id : prev.bsale_variant_id),
+      bsale_sync_error: r?.estado === "error" ? r.mensaje || "error" : r?.variante_id ? null : prev.bsale_sync_error,
+    }));
+  }
+  async function enviarABsale() {
+    if (enviandoBsale || !id) return;
+    setEnviandoBsale(true);
+    try {
+      const r = await api.post(`/productos/${id}/bsale`, {});
+      aplicarResultadoBsale(r);
+      setToast({ type: tipoAvisoBsale(r), message: mensajeBsale(r) || "Listo." });
+    } catch (e) {
+      setToast({ type: "error", message: e?.message || "No se pudo enviar a Bsale." });
+    } finally {
+      setEnviandoBsale(false);
+    }
   }
 
   async function aprobarProducto() {
@@ -952,6 +982,22 @@ try {
                   />
                   {!puedeEditarSKU && (
                     <p style={{fontSize:12, color:"var(--text-muted)", marginTop:4}}>Solo admin o jefe de ventas puede editar el SKU.</p>
+                  )}
+                  {skuOriginal && (
+                    <div style={{ fontSize: 12, marginTop: 6, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                      {producto.bsale_variant_id ? (
+                        <span style={{ color: "#15803d", fontWeight: 600 }}>En Bsale · variante {producto.bsale_variant_id}</span>
+                      ) : producto.bsale_sync_error ? (
+                        <span style={{ color: "#b91c1c", overflowWrap: "anywhere" }}>No se pudo enviar a Bsale: {producto.bsale_sync_error}</span>
+                      ) : (
+                        <span style={{ color: "var(--text-muted)" }}>Sin confirmar en Bsale</span>
+                      )}
+                      {puedeEditarSKU && (
+                        <button type="button" className="btn btn-secondary btn-sm" onClick={enviarABsale} disabled={enviandoBsale}>
+                          {enviandoBsale ? "Enviando…" : producto.bsale_variant_id ? "Revisar en Bsale" : "Enviar a Bsale"}
+                        </button>
+                      )}
+                    </div>
                   )}
                 </div>
 

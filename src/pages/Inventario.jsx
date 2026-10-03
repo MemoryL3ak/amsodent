@@ -864,7 +864,7 @@ export default function Inventario() {
             setHuerfanos((h) => h.filter((x) => String(x.sku).toUpperCase() !== String(sku).toUpperCase()));
             setToast({
               type: estadoFinal === "Pendiente Aprobación" ? "info" : "success",
-              message: `Producto ${sku} creado${estadoFinal === "Pendiente Aprobación" ? " (queda pendiente de aprobación)" : ""}.${msgStock}`,
+              message: `Producto ${sku} creado${estadoFinal === "Pendiente Aprobación" ? " (queda pendiente de aprobación)" : ""}.${msgStock}${creado?.bsale?.estado === "error" ? ` No se pudo enlazar con Bsale: ${creado.bsale.mensaje}` : ""}`,
             });
             cargar();
             setLibro(null);

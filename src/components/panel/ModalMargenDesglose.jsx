@@ -64,7 +64,7 @@ export default function ModalMargenDesglose({ desglose, margen, mostrarMonto, co
         </div>
         <p style={{ fontSize: 12.5, color: "var(--text-muted)", marginTop: 2, marginBottom: 12 }}>
           Margen del periodo: <strong style={{ color: colorPct(margen.pct) }}>{fmtPct(margen.pct)}</strong>
-          {mostrarMonto ? <> · <strong>{fmtCLP(margen.monto)}</strong></> : null}. Calculado sobre los ítems de las cotizaciones adjudicadas del periodo (costo guardado con cada cotización; si no existe, el del catálogo por SKU). Las filas con ⚠ no tienen costo en ningún ítem: su "100%" no es margen real.
+          {mostrarMonto ? <> · <strong>{fmtCLP(margen.monto)}</strong></> : null}. Calculado sobre los ítems de las cotizaciones adjudicadas del periodo: costo guardado con cada cotización; si no existe, el del catálogo por SKU o por nombre del producto. Las líneas sin costo quedan fuera del margen{margen?.ventaSinCosto > 0 ? <> ({mostrarMonto ? <strong>{fmtCLP(margen.ventaSinCosto)}</strong> : "parte"} de la venta)</> : null}. Las filas con ⚠ no tienen costo en ningún ítem: no entran al margen.
         </p>
         <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
           {TABS.map((t) => (
@@ -116,9 +116,9 @@ export default function ModalMargenDesglose({ desglose, margen, mostrarMonto, co
                     {mostrarMonto && <td style={{ textAlign: "right", fontWeight: 600 }}>{fmtCLP(f.monto)}</td>}
                     <td
                       style={{ textAlign: "right", fontWeight: 700, whiteSpace: "nowrap", color: f.sinCosto ? "var(--text-muted)" : colorPct(f.pct) }}
-                      title={f.sinCosto ? "Ningún ítem de esta cotización tiene costo (ni guardado ni en el catálogo por SKU): el 100% no es margen real. Ingresa el costo de los ítems en el detalle de la cotización." : undefined}
+                      title={f.sinCosto ? "Ningún ítem de esta cotización tiene costo (ni guardado ni en el catálogo por SKU o nombre): no entra al margen. Ingresa el costo de los ítems en el detalle de la cotización." : undefined}
                     >
-                      {f.sinCosto ? "⚠ " : ""}{fmtPct(f.pct)}
+                      {f.sinCosto ? "⚠ sin costo" : fmtPct(f.pct)}
                     </td>
                   </tr>
                 ))}

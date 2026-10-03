@@ -15,6 +15,7 @@ import {
 import useEmbudoComercial, { ETAPAS_EMBUDO } from "../components/panel/useEmbudoComercial";
 import { ModalEtapaEmbudo } from "../components/panel/EmbudoComercial";
 import ModalMargenDesglose from "../components/panel/ModalMargenDesglose";
+import { indiceCostos, margenDeItems, filaMargenLic, notaSinCosto } from "../lib/margenItems";
 
 const ICONOS = { prospectos: Users, contactados: PhoneCall, cotizan: FileText, compran: ShoppingCart };
 
@@ -90,11 +91,7 @@ export default function PanelParticular() {
           });
         }
         const prods = await api.get("/productos");
-        const costos = {};
-        (prods || []).forEach((p) => {
-          const sku = String(p.sku || "").trim().toUpperCase();
-          if (sku) costos[sku] = Number(p.costo || 0);
-        });
+        const costos = indiceCostos(prods); // por SKU y por nombre, como la cotización
         if (!activo) return;
         setLicsPart(rows);
         setAdjDatePart(adj);
@@ -119,29 +116,13 @@ export default function PanelParticular() {
     let activo = true;
     api.post("/licitaciones/items/filter", {
       licitacion_ids: idsMes,
-      fields: "licitacion_id,total,cantidad,sku,costo",
+      fields: "licitacion_id,producto,total,cantidad,sku,costo",
     })
       .then((items) => {
         if (!activo) return;
-        let venta = 0, costo = 0;
-        const porLic = {}; // licId → { venta, costo } (desglose del margen)
-        (items || []).forEach((it) => {
-          const v = Number(it.total || 0);
-          venta += v;
-          const sku = String(it.sku || "").trim().toUpperCase();
-          const costoUnit = Number(it.costo) > 0 ? Number(it.costo) : (costoBySku[sku] || 0);
-          const c = costoUnit * (Number(it.cantidad) || 0);
-          costo += c;
-          const lid = Number(it.licitacion_id);
-          if (lid) {
-            const e = (porLic[lid] = porLic[lid] || { venta: 0, costo: 0 });
-            e.venta += v;
-            e.costo += c;
-          }
-        });
-        const monto = Math.round(venta - costo);
-        setMargenMes({ monto, pct: venta > 0 ? (monto / venta) * 100 : 0, venta: Math.round(venta) });
-        setMargenPorLic(Object.entries(porLic).map(([licId, v]) => ({ licId: Number(licId), ...v })));
+        const mg = margenDeItems(items, costoBySku);
+        setMargenMes(mg);
+        setMargenPorLic(Object.entries(mg.porLic).map(([licId, v]) => ({ licId: Number(licId), ...v })));
       })
       .catch(() => { if (activo) { setMargenMes({ monto: 0, pct: 0, venta: 0 }); setMargenPorLic([]); } });
     return () => { activo = false; };
@@ -154,17 +135,12 @@ export default function PanelParticular() {
     const filas = margenPorLic.map((r) => {
       const l = licById.get(r.licId) || {};
       const email = (l.creado_por || "").trim().toLowerCase();
-      const monto = r.venta - r.costo;
       return {
         licId: r.licId,
         codigo: l.id_licitacion || `Cot. ${r.licId}`,
         cliente: l.nombre_entidad || l.rut_entidad || "—",
         vendedor: nombresEjecutivos[email] || email || "Sin vendedor",
-        venta: r.venta,
-        costo: r.costo,
-        monto,
-        pct: r.venta > 0 ? (monto / r.venta) * 100 : 0,
-        sinCosto: r.venta > 0 && !(r.costo > 0),
+        ...filaMargenLic(r),
       };
     }).sort((a, b) => b.venta - a.venta);
     const porVendedor = (() => {
@@ -172,8 +148,7 @@ export default function PanelParticular() {
       filas.forEach((f) => {
         const k = f.vendedor || "—";
         const e = (m[k] = m[k] || { label: k, venta: 0, costo: 0, cotizaciones: 0 });
-        e.venta += f.venta;
-        e.costo += f.costo;
+        if (!f.sinCosto) { e.venta += f.venta; e.costo += f.costo; }
         e.cotizaciones += 1;
       });
       return Object.values(m)
@@ -276,7 +251,7 @@ export default function PanelParticular() {
             ))}
             <KpiCard icon={ShoppingCart} color="#0e7490" label="Venta Total" sub="Ventas particulares del mes (neto)" value={fmtCLP(margenMes.venta)} delta={null} />
             <div onClick={() => setMargenOpen(true)} style={{ cursor: "pointer" }} title="Ver desglose del margen por cotización y vendedor">
-              <KpiCard icon={TrendingUp} color="#7c3aed" label="Margen %" sub="Ventas particulares del mes · clic para desglose" value={fmtPct(margenMes.pct)} delta={null} />
+              <KpiCard icon={TrendingUp} color="#7c3aed" label="Margen %" sub={`Ventas particulares del mes${notaSinCosto(margenMes)} · clic para desglose`} value={fmtPct(margenMes.pct)} delta={null} />
             </div>
             {!esJefatura && (
               <div onClick={() => setMargenOpen(true)} style={{ cursor: "pointer" }} title="Ver desglose del margen por cotización y vendedor">

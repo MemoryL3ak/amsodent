@@ -8,6 +8,9 @@ import Select from "react-select";
 import { FACTOR_LISTA_3, calcularLista3 } from "../lib/listas";
 import EquivalentesProducto from "../components/EquivalentesProducto";
 import ConfirmModal from "../components/ConfirmModal";
+import { abrirFichaTecnica, descargarFichaTecnica } from "../utils/generarFichaTecnica";
+import { mensajeBsale, tipoAvisoBsale } from "../lib/bsaleProducto";
+import ProductoCreadoAviso from "../components/ProductoCreadoAviso";
 
 /* ============================================================
    BUSCADOR MEJORADO (igual que CrearLicitacion)
@@ -364,6 +367,29 @@ export default function CrearProducto() {
     return res.path;
   }
 
+  /* Recién creado (2026-10-03): queda a la vista con sus botones para abrir o
+     descargar la ficha técnica, y lo que pasó al enviarlo a Bsale. */
+  const [creado, setCreado] = useState(null);
+  const [generandoFicha, setGenerandoFicha] = useState("");
+
+  async function fichaDelCreado(accion) {
+    if (!creado?.id || generandoFicha) return;
+    setGenerandoFicha(accion);
+    try {
+      if (accion === "abrir") {
+        await abrirFichaTecnica(creado);
+      } else {
+        const completo = await api.get(`/productos/${creado.id}`).catch(() => null);
+        await descargarFichaTecnica({ ...creado, ...(completo || {}) });
+      }
+    } catch (e) {
+      console.error(e);
+      setToast({ type: "error", message: "No se pudo generar la ficha técnica." });
+    } finally {
+      setGenerandoFicha("");
+    }
+  }
+
   async function guardarProducto(permitirDuplicado = false) {
     // El botón se deshabilita al guardar, pero el estado tarda un render en
     // llegar al DOM: este retorno temprano corta el doble clic igual.
@@ -474,8 +500,9 @@ export default function CrearProducto() {
       payload.permitir_duplicado = true;
     }
 
+    let nuevo = null;
     try {
-      await api.post("/productos", payload);
+      nuevo = await api.post("/productos", payload);
     } catch (error) {
       console.error(error);
       setGuardando(false);
@@ -500,10 +527,11 @@ export default function CrearProducto() {
       });
     } else {
       setToast({
-        type: "success",
-        message: "Producto creado con éxito",
+        type: nuevo?.bsale ? tipoAvisoBsale(nuevo.bsale) : "success",
+        message: `Producto creado con éxito.${nuevo?.bsale ? ` ${mensajeBsale(nuevo.bsale)}` : ""}`,
       });
     }
+    if (nuevo?.id) setCreado({ ...nuevo, estado: nuevo.estado || estadoFinal });
 
     setSku("");
     setEstado(estadoFinal);
@@ -558,6 +586,14 @@ export default function CrearProducto() {
       <h1 className="text-3xl font-semibold text-gray-900 mb-8">
         Crear Producto
       </h1>
+
+      <ProductoCreadoAviso
+        creado={creado}
+        generando={generandoFicha}
+        onAbrir={() => fichaDelCreado("abrir")}
+        onDescargar={() => fichaDelCreado("descargar")}
+        onCerrar={() => setCreado(null)}
+      />
 
       <Link
         to="/productos"

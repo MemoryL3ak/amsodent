@@ -1,11 +1,37 @@
-import { Injectable, BadRequestException, NotFoundException, Logger } from '@nestjs/common';
+import { Injectable, BadRequestException, NotFoundException, Logger, Optional } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
+import { BsaleProductosService } from '../bsale/bsale-productos.service';
 
 @Injectable()
 export class ProductosService {
   private readonly logger = new Logger(ProductosService.name);
 
-  constructor(private supabase: SupabaseService) {}
+  constructor(
+    private supabase: SupabaseService,
+    // Opcional para que las pruebas puedan crear el servicio sin Bsale.
+    @Optional() private bsaleProductos?: BsaleProductosService,
+  ) {}
+
+  /* Un producto con SKU se crea en Bsale (pedido de Ariel, 2026-10-03). Nunca
+     frena el guardado: el resultado viaja en `bsale` para mostrarlo. */
+  private async enviarABsale(producto: any, motivo: string) {
+    if (!this.bsaleProductos || !String(producto?.sku || '').trim()) return null;
+    try {
+      return await this.bsaleProductos.sincronizar(producto, { motivo });
+    } catch (e: any) {
+      return { estado: 'error', mensaje: String(e?.message || e).slice(0, 300) };
+    }
+  }
+
+  /* Botón "Enviar a Bsale" de la ficha: reintento a mano. */
+  async reenviarABsale(id: number) {
+    const { data, error } = await this.supabase.getClient().from('productos').select('*').eq('id', id).maybeSingle();
+    if (error) throw new BadRequestException(error.message);
+    if (!data) throw new NotFoundException('Producto no encontrado');
+    if (!String((data as any).sku || '').trim()) throw new BadRequestException('El producto no tiene SKU: asígnale uno antes de enviarlo a Bsale.');
+    if (!this.bsaleProductos) throw new BadRequestException('La integración con Bsale no está disponible.');
+    return this.bsaleProductos.sincronizar(data as any, { motivo: 'reenvío desde la ficha' });
+  }
 
   async findAll() {
     const { data, error } = await this.supabase
@@ -211,7 +237,8 @@ export class ProductosService {
       .select()
       .single();
     if (error) throw new BadRequestException(error.message);
-    return data;
+    const bsale = await this.enviarABsale(data, 'producto nuevo');
+    return bsale ? { ...(data as any), bsale } : data;
   }
 
   // ¿Existe ya un producto con el mismo nombre+marca+formato (normalizados)?
@@ -260,6 +287,7 @@ export class ProductosService {
     }
 
     const skus = Array.from(new Set(validRows.map((r) => r.sku.trim())));
+    const nuevosParaBsale: any[] = [];
 
     // Productos existentes para clasificar creados vs actualizados. Se trae la
     // fila COMPLETA (no solo los precios) porque de ahí sale la foto del
@@ -345,6 +373,7 @@ export class ProductosService {
         if (error) errores.push(`Insert batch ${i}: ${error.message}`);
         else {
           creados += (data || []).length;
+          nuevosParaBsale.push(...((data as any[]) || []));
           for (const p of data || []) {
             // Creado por esta carga: deshacerlo es borrarlo, por eso no hay
             // "antes" que guardar.
@@ -378,7 +407,17 @@ export class ProductosService {
       auditoria,
     );
 
-    return { creados, actualizados, ignorados, errores, carga_id: carga?.id ?? null };
+    // Los productos nuevos de la carga se crean en Bsale en segundo plano (uno
+    // tras otro: Bsale corta las llamadas simultáneas). No frena la carga.
+    let bsaleEnCola = 0;
+    if (this.bsaleProductos && nuevosParaBsale.length) {
+      bsaleEnCola = nuevosParaBsale.length;
+      void this.bsaleProductos
+        .sincronizarVarios(nuevosParaBsale, { motivo: `carga masiva${meta?.archivo ? ` ${meta.archivo}` : ''}`, tope: 1000 })
+        .then((r) => this.logger.log(`Carga masiva → Bsale: ${JSON.stringify(r)}`))
+        .catch((e) => this.logger.warn(`Carga masiva → Bsale falló: ${e?.message || e}`));
+    }
+    return { creados, actualizados, ignorados, errores, carga_id: carga?.id ?? null, bsale_en_cola: bsaleEnCola };
   }
 
   /* ── Historial de cargas masivas ─────────────────────────────────────────
@@ -674,7 +713,11 @@ export class ProductosService {
         this.logger.warn(`Propagación a cotizaciones falló: ${e?.message || e}`);
       }
     }
-    return { ...(data as any), propagado };
+    // SKU recién asignado (o cambiado): el producto se crea en Bsale.
+    const skuAhora = String((data as any)?.sku || '').replace(/\s+/g, '').toUpperCase();
+    const skuAntes = String(anterior?.sku || '').replace(/\s+/g, '').toUpperCase();
+    const bsale = skuAhora && skuAhora !== skuAntes ? await this.enviarABsale(data, skuAntes ? `SKU cambiado (antes ${skuAntes})` : 'SKU asignado') : null;
+    return { ...(data as any), propagado, ...(bsale ? { bsale } : {}) };
   }
 
   async remove(id: number) {
