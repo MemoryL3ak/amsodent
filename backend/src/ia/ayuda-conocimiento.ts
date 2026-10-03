@@ -248,9 +248,17 @@ referencian (incluidas las no registradas en el sistema) y muestra el monto
 despachado y CUÁNTO FALTA POR DESPACHAR = monto OC − despachado según Bsale.
 EMITIR FACTURA EN BSALE (administración, contabilidad y jefe_ventas_especial).
 Hay dos entradas a lo mismo: el módulo FACTURACIÓN (/facturacion, menú
-Post-venta), que lista todas las guías por facturar (las más antiguas primero,
-con los días que llevan sin factura) y el historial de lo emitido; y, en
-Trazabilidad, el botón "Emitir factura" de cada guía sin factura. Abre
+Post-venta) y, en Trazabilidad, el botón "Emitir factura" de cada guía sin
+factura. El módulo tiene tres pestañas: POR DESPACHAR (órdenes de compra de
+cotizaciones adjudicadas y abiertas; "Emitir guía" arma la guía de despacho
+con los productos de la cotización, descontando lo que ya se despachó según
+las guías que hay en Bsale para esa orden, se elige cuánto va en esta entrega,
+dirección y tipo de traslado; Bsale descuenta el stock y la guía queda en
+Trazabilidad; "Registrar orden en Bsale" deja la orden del cliente como NOTA
+DE VENTA en Bsale, sin SII ni stock, y las guías salen enlazadas a ella), POR
+FACTURAR (guías sin factura, las más antiguas primero) y EMITIDAS (historial de
+facturas, guías y órdenes). Un producto sin SKU o cuyo SKU no está en Bsale no
+puede ir en una guía ni en una orden. El borrador de factura abre
 un borrador armado desde la guía que ya existe en Bsale: mismo cliente, mismos
 productos y precios, con referencia a la orden de compra y a la guía. Se elige
 fecha de emisión, plazo de vencimiento y forma de pago (y se puede corregir el
@@ -262,10 +270,11 @@ o en Bsale) queda bloqueada, y también si la guía de Bsale es de OTRO cliente
 (el número de guía está mal digitado en Trazabilidad: se corrige ahí). El
 número de guía es el que encabeza el campo; se puede dejar una nota después
 ("709 - 2da entrega"). Una factura emitida solo se anula con nota de
-crédito, que se hace en Bsale. El borrador tiene DOS BOTONES: "Simular" muestra
-exactamente lo que se le enviaría a Bsale, sin emitir ni guardar nada (sirve
-para revisar antes); "Emitir factura por $…" emite de verdad y solo se habilita
-al marcar la casilla de confirmación. Nada se emite solo: siempre es ese botón.
+crédito, que se hace en Bsale. Todos los borradores (factura, guía, orden)
+tienen DOS BOTONES: "Simular" muestra el documento como quedaría —cliente,
+productos, totales, referencias, despacho— sin emitir ni guardar nada (el JSON
+técnico queda plegado); "Emitir" emite de verdad y solo se habilita al marcar
+la casilla de confirmación. Nada se emite solo: siempre es ese botón.
 
 ### Seguimiento de Pagos (/seguimiento-pagos)
 DOS PESTAÑAS: "Cliente particular" y "Entidad pública". Cada una muestra sus
