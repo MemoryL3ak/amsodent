@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { AlertTriangle, ChevronLeft, ChevronRight, ExternalLink, FileCheck, Info, Plus, RefreshCw } from "lucide-react";
+import { AlertTriangle, ChevronLeft, ChevronRight, ExternalLink, FileCheck, Info, Plus, Receipt, RefreshCw } from "lucide-react";
 import { api } from "../lib/api";
 import Toast from "../components/Toast";
 import BotonLimpiarFiltros from "../components/BotonLimpiarFiltros";
@@ -36,7 +36,7 @@ function tonoDias(dias) {
   return { color: "#15803d", bg: "#dcfce7", texto };
 }
 
-const TIPOS_DOC = { factura: "Factura", guia: "Guía", nota_venta: "Orden" };
+const TIPOS_DOC = { factura: "Factura", boleta: "Boleta", guia: "Guía", nota_venta: "Orden" };
 
 const ESTADOS = {
   emitida: { texto: "Emitida", color: "#15803d", bg: "#dcfce7" },
@@ -81,6 +81,8 @@ export default function Facturacion() {
   const [despacho, setDespacho] = useState(null); // { tipo: "guia" | "orden", licId, ocId } | null
   // Guía o factura armada a mano, sin orden de compra: "guia" | "factura" | null.
   const [libre, setLibre] = useState(null);
+  // Venta directa: boleta o factura al instante, que crea su cotización (2026-10-03).
+  const [venta, setVenta] = useState(null); // "boleta" | "factura" | null
   const [emitidas, setEmitidas] = useState({ registro_listo: true, filas: [] });
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState("");
@@ -123,11 +125,12 @@ export default function Facturacion() {
     () => (!texto ? emitidas.filas : emitidas.filas.filter((f) => sinTildes(`${f.cliente} ${f.codigo} #${f.licitacion_id} ${f.numero} ${f.guias.join(" ")} ${f.usuario}`).includes(texto))),
     [emitidas, texto],
   );
+  const ventasFiltradas = useMemo(() => emitidasFiltradas.filter((f) => f.venta_directa), [emitidasFiltradas]);
   const despachosFiltradas = useMemo(
     () => (!texto ? despachos : despachos.filter((f) => sinTildes(`${f.cliente} ${f.rut} ${f.codigo} #${f.licitacion_id} ${f.oc_numero} ${f.guias.join(" ")}`).includes(texto))),
     [despachos, texto],
   );
-  const lista = pestana === "pendientes" ? pendientesFiltradas : pestana === "despachar" ? despachosFiltradas : emitidasFiltradas;
+  const lista = pestana === "pendientes" ? pendientesFiltradas : pestana === "despachar" ? despachosFiltradas : pestana === "venta" ? ventasFiltradas : emitidasFiltradas;
   const paginas = Math.max(1, Math.ceil(lista.length / POR_PAGINA));
   const paginaActual = Math.min(pagina, paginas);
   const visibles = lista.slice((paginaActual - 1) * POR_PAGINA, paginaActual * POR_PAGINA);
@@ -192,6 +195,21 @@ export default function Facturacion() {
           }}
         />
       )}
+      {venta && (
+        <DocumentoLibreBsale
+          tipo={venta}
+          ventaDirecta
+          onCerrar={() => setVenta(null)}
+          onEmitida={(r) => {
+            setToast({
+              type: r.cotizacion ? "success" : "warning",
+              message: `${r.tipo === "boleta" ? "Boleta" : "Factura"} ${r.numero} emitida en Bsale${r.cotizacion ? ` · cotización #${r.cotizacion.id} creada.` : " · la cotización no se pudo crear: revisa el aviso."}`,
+            });
+            cambiarPestana("venta");
+            cargar();
+          }}
+        />
+      )}
       {despacho && (
         <EmitirDespachoBsale
           tipo={despacho.tipo}
@@ -214,10 +232,13 @@ export default function Facturacion() {
           {/* Documentos libres: sin orden de compra de por medio (pedido 2026-10-03). */}
           {estado?.puede && (
             <>
-              <button type="button" className="btn btn-primary" onClick={() => setLibre("guia")} title="Armar una guía de despacho a mano: cliente, productos, cantidades y despacho">
+              <button type="button" className="btn btn-primary" onClick={() => setVenta("boleta")} title="Boleta o factura al instante: se emite en Bsale y se crea la cotización con esos productos">
+                <Receipt size={14} /> Venta directa
+              </button>
+              <button type="button" className="btn btn-secondary" onClick={() => setLibre("guia")} title="Armar una guía de despacho a mano: cliente, productos, cantidades y despacho">
                 <Plus size={14} /> Nueva guía
               </button>
-              <button type="button" className="btn btn-primary" onClick={() => setLibre("factura")} title="Armar una factura a mano: cliente, productos, precios y forma de pago">
+              <button type="button" className="btn btn-secondary" onClick={() => setLibre("factura")} title="Armar una factura a mano: cliente, productos, precios y forma de pago">
                 <Plus size={14} /> Nueva factura
               </button>
             </>
@@ -285,6 +306,9 @@ export default function Facturacion() {
           </button>
           <button type="button" className={`btn ${pestana === "emitidas" ? "btn-primary" : "btn-secondary"}`} onClick={() => cambiarPestana("emitidas")}>
             Emitidas ({emitidas.filas.filter((f) => f.estado === "emitida").length})
+          </button>
+          <button type="button" className={`btn ${pestana === "venta" ? "btn-primary" : "btn-secondary"}`} onClick={() => cambiarPestana("venta")}>
+            Venta directa ({emitidas.filas.filter((f) => f.venta_directa && f.estado === "emitida").length})
           </button>
         </div>
         <div className="filter-field" style={{ flex: "1 1 220px", minWidth: 0 }}>
@@ -456,7 +480,13 @@ export default function Facturacion() {
                 {visibles.length === 0 ? (
                   <tr>
                     <td colSpan="8" style={{ textAlign: "center", padding: "50px 0", color: "var(--text-muted)" }}>
-                      {cargando ? "Cargando…" : emitidas.filas.length === 0 ? "Todavía no se ha emitido ninguna factura desde el sistema." : "Nada coincide con la búsqueda."}
+                      {cargando
+                        ? "Cargando…"
+                        : pestana === "venta"
+                          ? (emitidas.filas.some((f) => f.venta_directa)
+                              ? "Nada coincide con la búsqueda."
+                              : <>Todavía no hay ventas directas. Usa <b>Venta directa</b> (arriba) para emitir una boleta o factura al instante.</>)
+                          : emitidas.filas.length === 0 ? "Todavía no se ha emitido ninguna factura desde el sistema." : "Nada coincide con la búsqueda."}
                     </td>
                   </tr>
                 ) : (
@@ -470,15 +500,20 @@ export default function Facturacion() {
                             <span style={{ fontSize: 11, color: "var(--text-muted)" }}>{TIPOS_DOC[f.tipo] || "Factura"}</span>
                             <span style={{ fontWeight: 600 }}>{f.numero || "—"}</span>
                             {f.url_pdf && (
-                              <a href={f.url_pdf} target="_blank" rel="noopener noreferrer" title="Ver la factura en Bsale" style={{ color: "var(--primary)", display: "inline-flex" }}>
+                              <a href={f.url_pdf} target="_blank" rel="noopener noreferrer" title="Ver el documento en Bsale" style={{ color: "var(--primary)", display: "inline-flex" }}>
                                 <ExternalLink size={13} />
                               </a>
                             )}
                           </div>
                         </td>
                         <td style={{ verticalAlign: "middle", whiteSpace: "normal" }}>
-                          <Link to={`/detalle/${f.licitacion_id}`} className="table-link" style={{ fontWeight: 600 }}>#{f.licitacion_id}</Link>
-                          {f.codigo && <span style={{ color: "var(--text-muted)", fontSize: 11, marginLeft: 6 }}>{f.codigo}</span>}
+                          {f.licitacion_id ? (
+                            <Link to={`/detalle/${f.licitacion_id}`} className="table-link" style={{ fontWeight: 600 }}>#{f.licitacion_id}</Link>
+                          ) : (
+                            <span style={{ color: "var(--text-muted)", fontSize: 12 }}>Sin cotización</span>
+                          )}
+                          {f.codigo && f.codigo !== String(f.licitacion_id) && <span style={{ color: "var(--text-muted)", fontSize: 11, marginLeft: 6 }}>{f.codigo}</span>}
+                          {f.venta_directa && <span style={{ ...pastilla({ color: "#6d28d9", bg: "#ede9fe" }), marginLeft: 6 }}>Venta directa</span>}
                           <div style={{ fontSize: 13, color: "#1f2937", marginTop: 2, overflowWrap: "anywhere" }}>{f.cliente || "—"}</div>
                         </td>
                         <td style={{ verticalAlign: "middle" }}>{f.guias.join(", ") || "—"}</td>
@@ -517,7 +552,7 @@ export default function Facturacion() {
         </div>
       </div>
 
-      <Paginacion pagina={paginaActual} total={lista.length} porPagina={POR_PAGINA} onCambiar={setPagina} nombre={pestana === "pendientes" ? "guías" : pestana === "despachar" ? "órdenes" : "registros"} />
+      <Paginacion pagina={paginaActual} total={lista.length} porPagina={POR_PAGINA} onCambiar={setPagina} nombre={pestana === "pendientes" ? "guías" : pestana === "despachar" ? "órdenes" : pestana === "venta" ? "ventas" : "registros"} />
     </div>
   );
 }

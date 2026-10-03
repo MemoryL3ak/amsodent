@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { AlertTriangle, CheckCircle2, ExternalLink, FileText, Info, Loader2, Plus, Search, Trash2, Truck, X } from "lucide-react";
+import { Link } from "react-router-dom";
+import { AlertTriangle, CheckCircle2, ExternalLink, FileText, Info, Loader2, Plus, Receipt, Search, Trash2, Truck, X } from "lucide-react";
 import { api } from "../lib/api";
 import DateFilter from "./DateFilter";
 import DropdownSelect from "./ui/DropdownSelect";
@@ -11,15 +12,22 @@ import VistaPreviaBsale from "./VistaPreviaBsale";
    (si no está en Bsale se crea), se agregan productos del catálogo con su
    cantidad y precio neto, se completa el despacho (guía) o la forma de pago
    (factura), y opcionalmente una referencia a OC/guía y la cotización donde
-   debe quedar registrado. Mismos dos pasos: 1) Simular, 2) Emitir oficial. */
+   debe quedar registrado. Mismos dos pasos: 1) Simular, 2) Emitir oficial.
+
+   VENTA DIRECTA (`ventaDirecta`, 2026-10-03): boleta o factura al instante,
+   sin cotización previa. Al emitir, el servidor crea la cotización particular
+   adjudicada con estos ítems y deja el documento (y el pago, si no es a
+   crédito) registrados en ella. En una boleta el cliente es opcional. */
 
 const clp = (n) => `$${Math.round(Number(n) || 0).toLocaleString("es-CL")}`;
 const aFecha = (iso) => (iso ? new Date(`${iso}T00:00:00`) : undefined);
 const etiqueta = { fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px", color: "var(--text-muted)", display: "block", marginBottom: 4 };
 const caja = { border: "1px solid var(--border)", borderRadius: 10, padding: "10px 12px" };
 
-export default function DocumentoLibreBsale({ tipo = "guia", onCerrar, onEmitida }) {
-  const esGuia = tipo !== "factura";
+export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = false, onCerrar, onEmitida }) {
+  const [tipoDoc, setTipoDoc] = useState(ventaDirecta && tipo === "guia" ? "boleta" : tipo);
+  const esGuia = tipoDoc === "guia";
+  const esBoleta = tipoDoc === "boleta";
   const [opciones, setOpciones] = useState(null);
   const [error, setError] = useState("");
   const [enviando, setEnviando] = useState("");
@@ -52,12 +60,12 @@ export default function DocumentoLibreBsale({ tipo = "guia", onCerrar, onEmitida
         if (!vivo) return;
         setOpciones(o);
         setFecha(o.fecha_emision);
-        setFormaPago(String(o.forma_pago_id || ""));
+        setFormaPago(String((ventaDirecta ? o.forma_pago_venta_id : o.forma_pago_id) || o.forma_pago_id || ""));
         setDespacho((d) => ({ ...d, tipo_traslado_id: String(o.tipo_traslado_id || "") }));
       })
       .catch((e) => vivo && setError(e?.message || "No se pudieron cargar las opciones."));
     return () => { vivo = false; };
-  }, []);
+  }, [ventaDirecta]);
 
   // Búsquedas con pausa, para no consultar por cada tecla.
   const timerCliente = useRef(null);
@@ -109,6 +117,11 @@ export default function DocumentoLibreBsale({ tipo = "guia", onCerrar, onEmitida
   const cambiarLinea = (sku, campo, v) => setLineas((prev) => prev.map((l) => (l.sku === sku ? { ...l, [campo]: v.replace(/[^\d.,]/g, "").replace(",", ".") } : l)));
   const quitarLinea = (sku) => setLineas((prev) => prev.filter((l) => l.sku !== sku));
 
+  // Venta directa: el plazo solo aplica si la factura queda a crédito.
+  const formaElegida = (opciones?.formas_pago || []).find((f) => String(f.id) === String(formaPago));
+  const aCredito = !!formaElegida?.credito;
+  const diasEfectivos = esGuia ? 0 : esBoleta ? 0 : ventaDirecta && !aCredito ? 0 : Number(dias);
+
   const totales = useMemo(() => {
     const neto = Math.round(lineas.reduce((a, l) => a + (Number(l.cantidad) || 0) * (Number(l.neto_unitario) || 0), 0));
     const iva = Math.round(neto * 0.19);
@@ -116,16 +129,21 @@ export default function DocumentoLibreBsale({ tipo = "guia", onCerrar, onEmitida
   }, [lineas]);
 
   const cuerpo = () => ({
-    tipo: esGuia ? "guia" : "factura",
-    cliente: cliente ? { rut: cliente.rut, razon_social: cliente.razon_social, giro: cliente.giro, direccion: cliente.direccion, comuna: cliente.comuna, ciudad: cliente.ciudad, email: cliente.email } : { rut },
+    tipo: tipoDoc,
+    ...(ventaDirecta ? { venta_directa: true } : {}),
+    cliente: cliente ? { rut: cliente.rut, razon_social: cliente.razon_social, giro: cliente.giro, direccion: cliente.direccion, comuna: cliente.comuna, ciudad: cliente.ciudad, email: cliente.email } : { rut: esBoleta ? "" : rut },
     lineas: lineas.map((l) => ({ sku: l.sku, producto: l.producto, cantidad: Number(l.cantidad), neto_unitario: Number(l.neto_unitario) })),
     fecha_emision: fecha,
-    ...(esGuia ? { despacho: { ...despacho, tipo_traslado_id: Number(despacho.tipo_traslado_id) } } : { forma_pago_id: Number(formaPago), dias_vencimiento: Number(dias), descuenta_stock: descuentaStock }),
-    referencias: [
-      ...(refOc.numero.trim() ? [{ tipo: "oc", numero: refOc.numero.trim(), fecha: refOc.fecha || null }] : []),
-      ...(!esGuia && refGuia.numero.trim() ? [{ tipo: "guia", numero: refGuia.numero.trim(), fecha: refGuia.fecha || null }] : []),
-    ],
-    ...(cotizacion.trim() ? { cotizacion_id: Number(cotizacion.trim().replace(/\D/g, "")) } : {}),
+    ...(esGuia
+      ? { despacho: { ...despacho, tipo_traslado_id: Number(despacho.tipo_traslado_id) } }
+      : { forma_pago_id: Number(formaPago), dias_vencimiento: diasEfectivos, ...(ventaDirecta ? {} : { descuenta_stock: descuentaStock }) }),
+    referencias: ventaDirecta
+      ? []
+      : [
+          ...(refOc.numero.trim() ? [{ tipo: "oc", numero: refOc.numero.trim(), fecha: refOc.fecha || null }] : []),
+          ...(!esGuia && refGuia.numero.trim() ? [{ tipo: "guia", numero: refGuia.numero.trim(), fecha: refGuia.fecha || null }] : []),
+        ],
+    ...(!ventaDirecta && cotizacion.trim() ? { cotizacion_id: Number(cotizacion.trim().replace(/\D/g, "")) } : {}),
   });
   // Firma de lo decidido: la simulación y la confirmación valen solo para estos datos.
   const firma = JSON.stringify(cuerpo());
@@ -153,10 +171,11 @@ export default function DocumentoLibreBsale({ tipo = "guia", onCerrar, onEmitida
 
   const apagada = opciones && opciones.modo !== "activa";
   const cerrar = () => { if (!enviando) onCerrar?.(); };
-  const listoParaSimular = !!opciones && !enviando && !!cliente && lineas.length > 0 && !!fecha;
+  const listoParaSimular = !!opciones && !enviando && (!!cliente || esBoleta) && lineas.length > 0 && !!fecha;
   const puedeEmitir = listoParaSimular && !apagada && simulacionVigente && confirmo;
-  const titulo = esGuia ? "Nueva guía de despacho (libre)" : "Nueva factura (libre)";
-  const verbo = esGuia ? "Emitir guía" : "Emitir factura";
+  const nombreDoc = esGuia ? "guía" : esBoleta ? "boleta" : "factura";
+  const titulo = ventaDirecta ? `Venta directa · ${esBoleta ? "Boleta" : "Factura"}` : esGuia ? "Nueva guía de despacho (libre)" : "Nueva factura (libre)";
+  const verbo = `Emitir ${nombreDoc}`;
   const opcionesTraslado = (opciones?.tipos_traslado || []).map((t) => ({ value: String(t.id), label: t.nombre }));
   const opcionesPago = (opciones?.formas_pago || []).map((f) => ({ value: String(f.id), label: f.nombre }));
 
@@ -173,9 +192,13 @@ export default function DocumentoLibreBsale({ tipo = "guia", onCerrar, onEmitida
         <div style={{ padding: "14px 20px", borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
           <div style={{ minWidth: 0 }}>
             <strong style={{ fontSize: 15, display: "inline-flex", alignItems: "center", gap: 7 }}>
-              {esGuia ? <Truck size={16} style={{ color: "var(--primary)" }} /> : <FileText size={16} style={{ color: "var(--primary)" }} />} {titulo}
+              {esGuia ? <Truck size={16} style={{ color: "var(--primary)" }} /> : ventaDirecta ? <Receipt size={16} style={{ color: "var(--primary)" }} /> : <FileText size={16} style={{ color: "var(--primary)" }} />} {titulo}
             </strong>
-            <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 2 }}>Se arma a mano y Bsale la emite. Paso 1: simular. Paso 2: emitir el documento oficial.</div>
+            <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 2 }}>
+              {ventaDirecta
+                ? "Se emite al tiro en Bsale y el sistema crea la cotización con estos productos. Paso 1: simular. Paso 2: emitir el documento oficial."
+                : "Se arma a mano y Bsale la emite. Paso 1: simular. Paso 2: emitir el documento oficial."}
+            </div>
           </div>
           <button type="button" onClick={cerrar} className="btn btn-ghost" style={{ padding: 6, flexShrink: 0 }} title="Cerrar" disabled={!!enviando}><X size={16} /></button>
         </div>
@@ -184,11 +207,15 @@ export default function DocumentoLibreBsale({ tipo = "guia", onCerrar, onEmitida
           {resultado?.emitida && (
             <div style={{ border: "1px solid #bbf7d0", background: "#f0fdf4", borderRadius: 10, padding: 16, display: "flex", flexDirection: "column", gap: 8 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 15, fontWeight: 700, color: "#15803d" }}>
-                <CheckCircle2 size={18} /> {esGuia ? "Guía" : "Factura"} N° {resultado.numero} emitida en Bsale
+                <CheckCircle2 size={18} /> {esGuia ? "Guía" : esBoleta ? "Boleta" : "Factura"} N° {resultado.numero} emitida en Bsale
               </div>
               <div style={{ fontSize: 13 }}>
                 {resultado.total ? `Total ${clp(resultado.total)}. ` : ""}
-                {resultado.registrada ? "Quedó registrada en la cotización indicada." : "No se indicó cotización: queda en Bsale y en el historial de Emitidas."}
+                {resultado.cotizacion
+                  ? <>Se creó la cotización <Link to={`/detalle/${resultado.cotizacion.id}`} className="table-link" style={{ fontWeight: 700 }}>#{resultado.cotizacion.id}</Link> con estos productos{resultado.cotizacion.pagada ? ", el documento y el pago registrados." : " y el documento registrado (pago pendiente: aparece en Seguimiento de Pagos)."}</>
+                  : ventaDirecta
+                    ? "El documento se emitió pero la cotización no se pudo crear: revisa el aviso de abajo."
+                    : resultado.registrada ? "Quedó registrada en la cotización indicada." : "No se indicó cotización: queda en Bsale y en el historial de Emitidas."}
               </div>
               {(resultado.avisos || []).map((a, i) => <div key={i} style={{ fontSize: 12.5, color: "#92400e" }}>{a}</div>)}
               {resultado.url_pdf && <a href={resultado.url_pdf} target="_blank" rel="noopener noreferrer" className="btn btn-secondary btn-sm" style={{ alignSelf: "flex-start", textDecoration: "none" }}><ExternalLink size={13} /> Ver en Bsale</a>}
@@ -215,7 +242,7 @@ export default function DocumentoLibreBsale({ tipo = "guia", onCerrar, onEmitida
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                   <div style={{ border: "1px solid #fde68a", background: "#fffbeb", borderRadius: 10, padding: "10px 14px", fontSize: 12.5, color: "#92400e" }}>
                     <b>Paso 1 listo — simulación: no se emitió nada{resultado.emision_apagada ? " (la emisión real está apagada en el servidor)" : ""}.</b>
-                    {!apagada && simulacionVigente ? ` Si está bien, abajo puedes ${esGuia ? "emitir la guía oficial" : "emitir la factura oficial"}.` : ""}
+                    {!apagada && simulacionVigente ? ` Si está bien, abajo puedes emitir la ${nombreDoc} oficial.` : ""}
                     {!simulacionVigente ? " Cambiaste datos después de simular: vuelve a simular antes de emitir." : ""}
                   </div>
                   {(resultado.avisos || []).length > 0 && (
@@ -227,9 +254,21 @@ export default function DocumentoLibreBsale({ tipo = "guia", onCerrar, onEmitida
                 </div>
               )}
 
+              {ventaDirecta && (
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                  <span style={{ ...etiqueta, marginBottom: 0, marginRight: 4 }}>Documento</span>
+                  {[["boleta", "Boleta"], ["factura", "Factura"]].map(([v, t]) => (
+                    <button key={v} type="button" className={`btn btn-sm ${tipoDoc === v ? "btn-primary" : "btn-secondary"}`} onClick={() => setTipoDoc(v)} disabled={!!enviando}>
+                      {t}
+                    </button>
+                  ))}
+                  <span style={{ fontSize: 12, color: "var(--text-muted)" }}>{esBoleta ? "A consumidor final: el cliente es opcional." : "Con RUT y giro del cliente."}</span>
+                </div>
+              )}
+
               {/* Cliente */}
               <div style={caja}>
-                <span style={etiqueta}>Cliente</span>
+                <span style={etiqueta}>{esBoleta ? "Cliente (opcional en una boleta)" : "Cliente"}</span>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end" }}>
                   <label style={{ flex: "1 1 180px", minWidth: 0 }}>
                     <span style={etiqueta}>RUT</span>
@@ -256,10 +295,12 @@ export default function DocumentoLibreBsale({ tipo = "guia", onCerrar, onEmitida
                   <div style={{ marginTop: 10 }}>
                     {cliente.nuevo ? (
                       <>
-                        <div style={{ fontSize: 12.5, color: "#92400e", marginBottom: 6 }}>Este RUT no está en Bsale: se creará con estos datos. Razón social, giro, dirección y comuna son obligatorios.</div>
+                        <div style={{ fontSize: 12.5, color: "#92400e", marginBottom: 6 }}>
+                          {esBoleta ? "Este RUT no está en Bsale: se creará con estos datos. En una boleta basta el nombre." : "Este RUT no está en Bsale: se creará con estos datos. Razón social, giro, dirección y comuna son obligatorios."}
+                        </div>
                         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
                           {campo(cliente, setCliente, "razon_social", "Razón social", { style: { width: "100%" } })}
-                          {campo(cliente, setCliente, "giro", "Giro", { placeholder: "Obligatorio para Bsale" })}
+                          {campo(cliente, setCliente, "giro", "Giro", { placeholder: esBoleta ? "Opcional" : "Obligatorio para Bsale" })}
                           {campo(cliente, setCliente, "direccion", "Dirección")}
                           {campo(cliente, setCliente, "comuna", "Comuna")}
                           {campo(cliente, setCliente, "ciudad", "Ciudad")}
@@ -273,8 +314,14 @@ export default function DocumentoLibreBsale({ tipo = "guia", onCerrar, onEmitida
                         <div style={{ color: "var(--text-muted)", fontSize: 12 }}>{[cliente.giro, cliente.direccion, cliente.comuna].filter(Boolean).join(" · ") || "Sin giro ni dirección"}</div>
                       </div>
                     )}
+                    {esBoleta && (
+                      <button type="button" className="btn btn-ghost btn-sm" onClick={() => { setCliente(null); setRut(""); }} disabled={!!enviando} style={{ marginTop: 6, fontSize: 12 }}>
+                        Quitar cliente (boleta a consumidor final)
+                      </button>
+                    )}
                   </div>
                 )}
+                {esBoleta && !cliente && <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 8 }}>Sin cliente, la boleta sale a consumidor final.</div>}
               </div>
 
               {/* Productos */}
@@ -316,7 +363,10 @@ export default function DocumentoLibreBsale({ tipo = "guia", onCerrar, onEmitida
                             <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Lista 1 {clp(l.lista1)} · Lista 2 {clp(l.lista2)} · stock {l.stock}</div>
                           </td>
                           <td style={{ textAlign: "right" }}><input className="input" inputMode="decimal" value={l.cantidad} onChange={(e) => cambiarLinea(l.sku, "cantidad", e.target.value)} disabled={!!enviando} style={{ width: 84, height: 30, padding: "2px 8px", textAlign: "right" }} /></td>
-                          <td style={{ textAlign: "right" }}><input className="input" inputMode="numeric" value={l.neto_unitario} onChange={(e) => cambiarLinea(l.sku, "neto_unitario", e.target.value)} disabled={!!enviando} style={{ width: 104, height: 30, padding: "2px 8px", textAlign: "right" }} /></td>
+                          <td style={{ textAlign: "right" }}>
+                            <input className="input" inputMode="numeric" value={l.neto_unitario} onChange={(e) => cambiarLinea(l.sku, "neto_unitario", e.target.value)} disabled={!!enviando} style={{ width: 104, height: 30, padding: "2px 8px", textAlign: "right" }} />
+                            {Number(l.neto_unitario) > 0 && <div style={{ fontSize: 10.5, color: "var(--text-muted)", whiteSpace: "nowrap" }}>{clp(Number(l.neto_unitario) * 1.19)} c/IVA</div>}
+                          </td>
                           <td style={{ textAlign: "right", whiteSpace: "nowrap", fontWeight: 600 }}>{clp((Number(l.cantidad) || 0) * (Number(l.neto_unitario) || 0))}</td>
                           <td style={{ textAlign: "right" }}><button type="button" className="btn btn-ghost btn-sm" onClick={() => quitarLinea(l.sku)} disabled={!!enviando} title="Quitar" style={{ color: "#dc2626", padding: 4 }}><Trash2 size={13} /></button></td>
                         </tr>
@@ -349,10 +399,17 @@ export default function DocumentoLibreBsale({ tipo = "guia", onCerrar, onEmitida
                       <span style={etiqueta}>Forma de pago</span>
                       <DropdownSelect value={formaPago} onChange={setFormaPago} options={opcionesPago} disabled={!!enviando} minWidth={190} style={{ width: "100%" }} />
                     </div>
-                    <label style={{ flex: "1 1 120px", minWidth: 0 }}>
-                      <span style={etiqueta}>Vence en (días)</span>
-                      <input className="input" inputMode="numeric" value={dias} onChange={(e) => setDias(e.target.value.replace(/[^\d]/g, "").slice(0, 3))} disabled={!!enviando} style={{ width: "100%" }} />
-                    </label>
+                    {!esBoleta && (!ventaDirecta || aCredito) && (
+                      <label style={{ flex: "1 1 120px", minWidth: 0 }}>
+                        <span style={etiqueta}>Vence en (días)</span>
+                        <input className="input" inputMode="numeric" value={dias} onChange={(e) => setDias(e.target.value.replace(/[^\d]/g, "").slice(0, 3))} disabled={!!enviando} style={{ width: "100%" }} />
+                      </label>
+                    )}
+                    {ventaDirecta && (
+                      <div style={{ flex: "2 1 220px", minWidth: 0, fontSize: 12, color: "var(--text-muted)", alignSelf: "center" }}>
+                        {aCredito ? "A crédito: el documento queda por cobrar en Seguimiento de Pagos." : "Pagada al emitir: el pago queda registrado en la cotización."}
+                      </div>
+                    )}
                   </>
                 )}
               </div>
@@ -367,7 +424,7 @@ export default function DocumentoLibreBsale({ tipo = "guia", onCerrar, onEmitida
                   </div>
                 </div>
               )}
-              <div style={caja}>
+              {!ventaDirecta && <div style={caja}>
                 <span style={etiqueta}>Referencias y registro (opcional)</span>
                 <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 8 }}>
                   {esGuia
@@ -398,12 +455,12 @@ export default function DocumentoLibreBsale({ tipo = "guia", onCerrar, onEmitida
                     Descontar stock en Bsale con esta factura (desmárcalo si la mercadería ya salió con una guía)
                   </label>
                 )}
-              </div>
+              </div>}
 
               {!apagada && simulacionVigente && (
                 <label style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 13, border: "1px solid var(--border)", borderRadius: 10, padding: "10px 12px", cursor: "pointer" }}>
                   <input type="checkbox" checked={confirmo} onChange={(e) => setConfirmadoCon(e.target.checked ? firma : null)} disabled={!!enviando} style={{ marginTop: 2 }} />
-                  <span><b>Paso 2 — {esGuia ? "emitir la guía oficial" : "emitir la factura oficial"}:</b> la simulación está correcta. Entiendo que el documento va al SII y que solo se anula en Bsale{esGuia ? "" : " con nota de crédito"}.</span>
+                  <span><b>Paso 2 — emitir la {nombreDoc} oficial:</b> la simulación está correcta. Entiendo que el documento va al SII y que solo se anula en Bsale{esGuia ? "" : " con nota de crédito"}{ventaDirecta ? ", y que se creará la cotización con estos productos" : ""}.</span>
                 </label>
               )}
               {!apagada && !simulacionVigente && (

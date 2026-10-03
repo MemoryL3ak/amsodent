@@ -1168,7 +1168,10 @@ function CargaMasivaProductosModal({ onClose, onSuccess, onToast }) {
       if (res.errores?.length > 0) {
         onToast?.({ type: "info", message: `Importado con ${res.errores.length} errores. Revisa el detalle.` });
       } else {
-        onToast?.({ type: "success", message: `Listo: ${res.creados} creados, ${res.actualizados} actualizados.` });
+        onToast?.({
+          type: "success",
+          message: `Listo: ${res.creados} creados, ${res.actualizados} actualizados.${res.bsale_en_cola ? ` Los ${res.bsale_en_cola} productos nuevos se están creando en Bsale en segundo plano.` : ""}`,
+        });
       }
     } catch (e) {
       console.error(e);

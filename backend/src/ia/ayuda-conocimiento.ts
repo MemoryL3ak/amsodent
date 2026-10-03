@@ -92,7 +92,11 @@ Comunicaciones (correo masivo), Monitoreo del Sistema, widget DamarIA de datos.
     de adjudicadas del mes; margen usa el costo congelado del ítem;
     productividad = actividades de la Bitácora; conversión = adjudicadas /
     ingresadas.
-11. LECTURA — Panel de Indicadores (global y por tipo de cliente), Panel de
+11. LECTURA — MARGEN % de los paneles = (venta − costo) / venta sobre los
+    ítems de lo adjudicado; costo = el guardado en el ítem, si no el del
+    catálogo por SKU y luego por nombre (igual que la cotización); las líneas
+    sin costo NO entran (el KPI dice qué % de la venta quedó fuera).
+    Panel de Indicadores (global y por tipo de cliente), Panel de
     Ejecutivos (por vendedor), Definición de metas (con resumen por canal), y
     Análisis Mercado Público (nuestra oferta vs el ganador).
 
@@ -193,7 +197,16 @@ usar en una cotización un transitorio con MÁS DE 30 DÍAS de creado, el sistem
 pide validar que su costo siga vigente (muestra costo y antigüedad) antes de
 agregarlo al ítem. Carga masiva
 por planilla con historial y rollback (deshace esa carga y las posteriores).
-Filtros de completitud: SKU asignado, con/sin peso, con/sin medidas.
+Filtros de completitud: SKU asignado, con/sin peso, con/sin medidas. Al crear
+un producto queda a la vista con botones "Abrir ficha técnica", "Descargar
+PDF" y "Ver / editar producto".
+BSALE: un producto nuevo con SKU, o uno al que se le asigna SKU, se crea solo
+en Bsale: producto (tipo = su categoría), variante con el SKU como código y
+precios netos (lista 1 → WEB-PARTICULAR, lista 2 → PRECIO MP). Si el SKU ya
+existe en Bsale solo se enlaza. La ficha del producto dice si está en Bsale y
+tiene el botón "Enviar a Bsale" para reintentar. En la carga masiva los nuevos
+se crean en Bsale en segundo plano. Cambiar después un precio NO lo cambia en
+Bsale.
 
 ### Inventario (/inventario) — solo admin
 Stock por SKU + libro de movimientos auditable (entrada / salida / ajuste, con
@@ -265,7 +278,19 @@ la cotización donde debe quedar registrado (si no se indica, queda solo en
 Bsale y en Emitidas). Referencias a la orden de compra: en guías y notas de
 venta la cotización va como FOLIO y el N° de OC como RAZÓN; en facturas el N°
 de OC va en el folio (Mercado Público cruza la factura con la OC por ese campo)
-y también en la razón. Una factura libre sin guía descuenta stock en Bsale; si
+y también en la razón; la fila de la GUÍA en una factura lleva el N° de la
+guía como folio y el N° de OC como razón. VENTA DIRECTA (botón arriba y
+pestaña propia): boleta o factura al instante, sin cotización previa. Boleta:
+cliente opcional (sin RUT = consumidor final). Factura: RUT y giro. Pagada al
+emitir (efectivo, transferencia, tarjeta, Webpay) o, solo factura, a crédito
+con plazo (un cliente bloqueado por mora no puede a crédito). Al emitir se
+crea sola la cotización particular ADJUDICADA con esos productos, con la
+boleta/factura registrada y, si se pagó, su comprobante de pago; a crédito
+queda por cobrar en Seguimiento de Pagos. VISTA PREVIA: al simular, el
+documento se ve con su formato (emisor AMSODENT MEDICAL SPA, recuadro del SII,
+receptor, referencias con folio y razón, detalle y totales); folio y timbre
+los asigna el SII al emitir. ANULAR: factura o boleta con nota de crédito en
+Bsale; la guía se anula en Bsale. Una factura libre sin guía descuenta stock en Bsale; si
 referencia una guía, no. Un producto sin SKU o cuyo SKU no está en Bsale no
 puede ir en ningún documento. El borrador de factura abre
 un borrador armado desde la guía que ya existe en Bsale: mismo cliente, mismos

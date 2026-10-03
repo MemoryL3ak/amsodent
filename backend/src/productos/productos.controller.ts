@@ -70,6 +70,12 @@ export class ProductosController {
     return this.productosService.uploadImage(file, sku);
   }
 
+  // Reenvía el producto a Bsale (lo crea allá si su SKU no existe).
+  @Post(':id/bsale')
+  reenviarABsale(@Param('id', ParseIntPipe) id: number) {
+    return this.productosService.reenviarABsale(id);
+  }
+
   @Put(':id')
   update(@Param('id', ParseIntPipe) id: number, @Body() body: any) {
     return this.productosService.update(id, body);

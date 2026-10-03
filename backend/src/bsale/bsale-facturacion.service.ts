@@ -88,6 +88,19 @@ export const normOc = (v: any) => String(v ?? '').replace(/\s+/g, '').toUpperCas
 // El SII admite hasta 18 caracteres en el folio de una referencia.
 const MAX_FOLIO_REF = 18;
 
+/* El emisor tal como Bsale lo imprime en los documentos (leído de la guía
+   N° 881, 2026-10-03). Solo se usa para la vista previa: el documento real
+   lo arma Bsale con los datos de la cuenta. */
+export const EMISOR = {
+  razon_social: 'AMSODENT MEDICAL SPA',
+  rut: '78.087.954-8',
+  giro: 'VENTA DE PRODUCTOS DENTALES, MEDICOS E INSUMOS',
+  direccion: '1 MAYO 45',
+  comuna: 'SAN BERNARDO',
+  ciudad: 'SAN BERNARDO',
+  ciudad_sii: 'SAN BERNARDO',
+};
+
 /* Cómo van las referencias a Bsale (regla de Ariel, 2026-10-03, tras la
    primera guía real, y lo que muestran los documentos hechos a mano):
    - GUÍA y NOTA DE VENTA: en la referencia a la ORDEN DE COMPRA, el FOLIO
@@ -96,7 +109,8 @@ const MAX_FOLIO_REF = 18;
    - FACTURA: el número de la orden de compra va en el FOLIO (Mercado Público
      cruza la factura con la OC por ese campo; así están las 76 facturas reales
      con OC) y también en la razón.
-   - Referencia a una GUÍA (52): el folio es el de la guía.
+   - Referencia a una GUÍA (52) en una factura: el folio es el N° de la guía
+     y la razón el N° de la orden de compra (regla de Ariel, 2026-10-03).
    `numero` es siempre el N° de la OC (o de la guía), para comparar y avisar. */
 export type Referencia = { codigo_sii: number; folio: string; numero: string; razon: string; fecha: string | null };
 
@@ -108,8 +122,8 @@ export function referenciaOcFactura(numeroOc: string, fecha: string | null): Ref
   return { codigo_sii: 801, folio: normOc(numeroOc), numero: normOc(numeroOc), razon: normOc(numeroOc), fecha };
 }
 
-export function referenciaGuia(numeroGuia: string, fecha: string | null): Referencia {
-  return { codigo_sii: 52, folio: String(numeroGuia).trim(), numero: String(numeroGuia).trim(), razon: 'Guía de despacho', fecha };
+export function referenciaGuia(numeroGuia: string, fecha: string | null, numeroOc?: string | null): Referencia {
+  return { codigo_sii: 52, folio: String(numeroGuia).trim(), numero: String(numeroGuia).trim(), razon: normOc(numeroOc) || 'Guía de despacho', fecha };
 }
 
 export function referenciaParaBsale(r: Referencia, emision: number) {
@@ -135,7 +149,7 @@ export function ocDeReferencia(r: any): string {
   return /\d/.test(razon) ? razon : folio;
 }
 
-export const referenciaVista = (r: Referencia) => ({ tipo: r.codigo_sii === 801 ? 'Orden de compra' : 'Guía de despacho', folio: r.folio, razon: r.codigo_sii === 801 ? r.razon : '', fecha: r.fecha });
+export const referenciaVista = (r: Referencia) => ({ tipo: r.codigo_sii === 801 ? 'Orden de compra' : 'Guía de despacho electrónica', folio: r.folio, razon: r.razon, fecha: r.fecha });
 export const normRut = (v: any) => String(v ?? '').replace(/[^0-9kK]/g, '').toUpperCase();
 
 /* Totales como los calcula el SII para una factura afecta: el IVA es el 19 %
@@ -426,7 +440,7 @@ export class BsaleFacturacionService {
     const tope = Math.min(Math.max(Number(limite) || 300, 1), 1000);
     let r: any = await db
       .from('bsale_emisiones')
-      .select('id, tipo, origen_doc_id, estado, numero, neto, total, fecha_emision, url_pdf, licitacion_id, guias_doc_ids, usuario, error, created_at, updated_at')
+      .select('id, clave, tipo, origen_doc_id, estado, numero, neto, total, fecha_emision, url_pdf, licitacion_id, guias_doc_ids, usuario, error, created_at, updated_at')
       .order('id', { ascending: false })
       .limit(tope);
     if (r.error && /tipo|origen_doc_id/.test(String(r.error.message)) && /column|schema cache/i.test(String(r.error.message))) {
@@ -439,7 +453,7 @@ export class BsaleFacturacionService {
     if (r.error) return { registro_listo: false, filas: [] };
     const emisiones: any[] = r.data || [];
 
-    const licIds = [...new Set(emisiones.map((e) => Number(e.licitacion_id)))];
+    const licIds = [...new Set(emisiones.map((e) => Number(e.licitacion_id)).filter((id) => id > 0))];
     const guiaIds = [...new Set(emisiones.flatMap((e) => (e.guias_doc_ids || []).map(Number)))];
     const lics = new Map<number, any>();
     const guias = new Map<number, string>();
@@ -456,6 +470,8 @@ export class BsaleFacturacionService {
       filas: emisiones.map((e) => ({
         id: e.id,
         tipo: e.tipo || 'factura',
+        // Venta directa (boleta o factura que crea su propia cotización).
+        venta_directa: String(e.clave || '').startsWith('AMS-V-'),
         origen_doc_id: e.origen_doc_id || null,
         estado: e.estado,
         numero: e.numero || null,
@@ -608,7 +624,9 @@ export class BsaleFacturacionService {
           referencias.push(referenciaOcFactura(numero, String(ocSistema.fecha_oc || '').slice(0, 10) || null));
         }
       }
-      referencias.push(referenciaGuia(String(doc.number), epochAFecha(doc.emissionDate)));
+      // La fila de la guía lleva su folio y, como razón, el N° de la orden de compra.
+      const ocDeLaGuia = refsOc.length ? ocDeReferencia(refsOc[0]) : normOc(ocSistema?.numero);
+      referencias.push(referenciaGuia(String(doc.number), epochAFecha(doc.emissionDate), ocDeLaGuia));
 
       // Cuadre con la orden de compra del sistema (aviso, no bloquea: una OC
       // puede despacharse en varias guías).
@@ -830,7 +848,9 @@ export class BsaleFacturacionService {
     if (ocNueva) {
       if (!b.oc_editable) throw new BadRequestException('Esta factura no lleva una única orden de compra que corregir.');
       if (ocNueva.length > MAX_FOLIO_REF) throw new BadRequestException(`El N° de orden de compra no puede tener más de ${MAX_FOLIO_REF} caracteres.`);
-      b.referencias = b.referencias.map((r) => (r.codigo_sii === DTE_OC ? referenciaOcFactura(ocNueva, r.fecha) : r));
+      b.referencias = b.referencias.map((r) =>
+        r.codigo_sii === DTE_OC ? referenciaOcFactura(ocNueva, r.fecha) : r.codigo_sii === DTE_GUIA ? { ...r, razon: ocNueva } : r,
+      );
     }
 
     const opciones = { fecha_emision: fecha, dias_vencimiento: dias, forma_pago_id: forma };
@@ -850,6 +870,7 @@ export class BsaleFacturacionService {
           tipo: 'Factura electrónica',
           sii: true,
           descuenta_stock: false,
+          emisor: EMISOR,
           cliente: b.cliente,
           lineas: b.lineas.map((l) => ({ sku: l.sku, producto: l.producto, cantidad: l.cantidad, neto_unitario: l.neto_unitario, neto: l.neto, guia: l.guia })),
           totales: b.totales,
@@ -973,12 +994,18 @@ export class BsaleFacturacionService {
   }
 
   async apiPost(ruta: string, solicitud: Record<string, any>): Promise<any> {
+    return this.apiEnviar('POST', ruta, solicitud);
+  }
+
+  /* POST o PUT a Bsale. Un 5xx o una respuesta perdida queda "incierta" (no se
+     sabe si Bsale lo hizo); un 4xx trae el motivo del rechazo. */
+  async apiEnviar(metodo: 'POST' | 'PUT', ruta: string, solicitud: Record<string, any>): Promise<any> {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), 60000);
     let res: Response;
     try {
       res = await fetch(`${this.base}/v1${ruta}`, {
-        method: 'POST',
+        method: metodo,
         headers: { access_token: this.token, Accept: 'application/json', 'Content-Type': 'application/json' },
         body: JSON.stringify(solicitud),
         signal: ctrl.signal,

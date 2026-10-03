@@ -2,25 +2,36 @@ import { BadRequestException, ConflictException, Injectable, Logger } from '@nes
 import { SupabaseService } from '../supabase/supabase.service';
 import { LicitacionesService } from '../licitaciones/licitaciones.service';
 import {
-  BsaleFacturacionService, fechaAEpoch, folioCotizacion, normOc, normRut, ocDeReferencia, referenciaGuia, referenciaOcFactura, referenciaOcGuia, referenciaParaBsale, referenciaVista, sumarDias, totalesDe,
+  BsaleFacturacionService, EMISOR, fechaAEpoch, folioCotizacion, normOc, normRut, ocDeReferencia, referenciaGuia, referenciaOcFactura, referenciaOcGuia, referenciaParaBsale, referenciaVista, sumarDias, totalesDe,
 } from './bsale-facturacion.service';
 import { BsaleDespachosService } from './bsale-despachos.service';
 
-/* ── Guías y facturas LIBRES en Bsale (2026-10-03) ───────────────────────────
+/* ── Guías, facturas y boletas LIBRES en Bsale (2026-10-03) ──────────────────
    Pedido de Ariel: "necesito la opción de crear guías y facturas de manera
    libre". Sin orden de compra ni cotización de por medio: se elige el cliente
    (por RUT; si no está en Bsale se crea), se arman las líneas a mano (SKU,
    cantidad, precio neto), se completan despacho o forma de pago, y opcional-
    mente se referencia una OC o una guía y se cuelga de una cotización para
-   que quede en Trazabilidad. Mismos dos pasos: simular y después emitir. */
+   que quede en Trazabilidad. Mismos dos pasos: simular y después emitir.
+
+   VENTA DIRECTA (2026-10-03, segundo pedido): "emitir boletas/facturas
+   instantáneamente; al generarlas se debe crear automáticamente una
+   cotización". Es el mismo armado con `venta_directa: true` y tipo boleta o
+   factura: al emitir, el sistema crea la cotización particular (adjudicada,
+   a nombre del cliente, con los ítems), le registra el documento como
+   factura_boleta y, si se pagó al emitir, el comprobante de pago. Es lo que
+   el mesón hacía a mano ("meson", "boleta") en cuatro pantallas. */
 
 const DTE_OC = 801;
 const DTE_GUIA = 52;
+const DTE_BOLETA = 39;
 const IVA_ID = 1;
 const MAX_FOLIO_REF = 18;
+// RUT genérico del SII para boletas a consumidor final.
+const RUT_CONSUMIDOR_FINAL = '66666666-6';
 
+type Tipo = 'guia' | 'factura' | 'boleta';
 type Problema = { codigo: string; mensaje: string };
-type Linea = { sku: string; cantidad: number; neto_unitario: number };
 
 const hoyEnChile = () =>
   new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Santiago', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
@@ -30,6 +41,23 @@ const rutBsale = (v: any) => {
   const limpio = normRut(v);
   return limpio.length > 1 ? `${limpio.slice(0, -1)}-${limpio.slice(-1)}` : limpio;
 };
+const esCredito = (nombreForma: any) => /^cr[eé]dito$/i.test(String(nombreForma || '').trim());
+const etiquetaTipo = (t: Tipo) => (t === 'guia' ? 'Guía de despacho electrónica' : t === 'boleta' ? 'Boleta electrónica' : 'Factura electrónica');
+
+/* La forma de pago de Bsale traducida al medio que usa Seguimiento de Pagos
+   (transferencia | transbank | getnet | efectivo | webpay …). */
+export function medioDePago(nombreBsale: any): string {
+  const n = String(nombreBsale || '').toLowerCase();
+  if (/efectivo/.test(n)) return 'efectivo';
+  if (/transferencia/.test(n)) return 'transferencia';
+  if (/getnet/.test(n)) return 'getnet';
+  if (/tbk|transbank/.test(n)) return 'transbank';
+  if (/webpay/.test(n)) return 'webpay';
+  if (/mercado ?pago/.test(n)) return 'mercadopago';
+  if (/tarjeta/.test(n)) return 'tarjeta';
+  if (/cheque/.test(n)) return 'cheque';
+  return n.replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') || 'otro';
+}
 
 @Injectable()
 export class BsaleLibreService {
@@ -49,8 +77,10 @@ export class BsaleLibreService {
     const [{ formas }, traslados] = await Promise.all([this.facturacion.listas(), this.despachos.tiposTraslado()]);
     return {
       modo: this.facturacion.emisionActiva ? 'activa' : 'simulacion',
-      formas_pago: formas,
-      forma_pago_id: formas.find((f) => /^cr[eé]dito$/i.test(f.nombre))?.id || formas[0]?.id || null,
+      formas_pago: formas.map((f) => ({ ...f, credito: esCredito(f.nombre) })),
+      forma_pago_id: formas.find((f) => esCredito(f.nombre))?.id || formas[0]?.id || null,
+      // Para la venta directa se parte de efectivo (lo más común en el mesón).
+      forma_pago_venta_id: formas.find((f) => /efectivo/i.test(f.nombre))?.id || formas.find((f) => !esCredito(f.nombre))?.id || null,
       tipos_traslado: traslados,
       tipo_traslado_id: traslados.find((t) => t.id === 2)?.id || traslados[0]?.id || null,
       fecha_emision: hoyEnChile(),
@@ -87,20 +117,22 @@ export class BsaleLibreService {
     await this.facturacion.exigirRol(userId);
     if (!normRut(rut)) throw new BadRequestException('Indica el RUT del cliente.');
     const enBsale = await this.despachos.clientePorRut(rut);
-    if (enBsale) {
-      return {
-        id: Number(enBsale.id), nuevo: false, rut: String(enBsale.code || ''),
-        razon_social: String(enBsale.company || `${enBsale.firstName || ''} ${enBsale.lastName || ''}`).trim(),
-        giro: String(enBsale.activity || ''), direccion: String(enBsale.address || ''), comuna: String(enBsale.municipality || ''),
-        ciudad: String(enBsale.city || ''), email: String(enBsale.email || ''),
-      };
-    }
+    if (enBsale) return this.clienteDeBsale(enBsale);
     const { data } = await this.supabase.getClient().from('clientes').select('rut, nombre, direccion, comuna').limit(200);
     const propio = (data || []).find((c: any) => normRut(c.rut) === normRut(rut));
     return {
       id: null, nuevo: true, rut: rutBsale(rut),
       razon_social: String(propio?.nombre || '').trim(), giro: '', direccion: String(propio?.direccion || '').trim(),
       comuna: String(propio?.comuna || '').trim(), ciudad: String(propio?.comuna || '').trim(), email: '',
+    };
+  }
+
+  private clienteDeBsale(c: any) {
+    return {
+      id: Number(c.id), nuevo: false, rut: String(c.code || ''),
+      razon_social: String(c.company || `${c.firstName || ''} ${c.lastName || ''}`).trim(),
+      giro: String(c.activity || ''), direccion: String(c.address || ''), comuna: String(c.municipality || ''),
+      ciudad: String(c.city || ''), email: String(c.email || ''),
     };
   }
 
@@ -129,29 +161,32 @@ export class BsaleLibreService {
   // ── Armado y validación ────────────────────────────────────────────────
 
   private async armar(body: any) {
-    const tipo = body?.tipo === 'factura' ? 'factura' : 'guia';
+    const tipo: Tipo = body?.tipo === 'factura' ? 'factura' : body?.tipo === 'boleta' ? 'boleta' : 'guia';
+    const ventaDirecta = body?.venta_directa === true;
+    const esBoleta = tipo === 'boleta';
     const problemas: Problema[] = [];
     const avisos: Problema[] = [];
+    if (ventaDirecta && tipo === 'guia') problemas.push({ codigo: 'venta_guia', mensaje: 'La venta directa emite boleta o factura, no guía.' });
 
-    // Cliente
+    // Cliente. En una boleta es opcional: sin RUT va a consumidor final.
     const rut = rutBsale(body?.cliente?.rut);
-    if (!rut) problemas.push({ codigo: 'sin_rut', mensaje: 'Indica el RUT del cliente.' });
+    const sinCliente = esBoleta && !rut;
+    if (!rut && !esBoleta) problemas.push({ codigo: 'sin_rut', mensaje: 'Indica el RUT del cliente.' });
     const enBsale = rut ? await this.despachos.clientePorRut(rut) : null;
-    const cliente = enBsale
-      ? {
-          id: Number(enBsale.id), nuevo: false, rut: String(enBsale.code || ''),
-          razon_social: String(enBsale.company || `${enBsale.firstName || ''} ${enBsale.lastName || ''}`).trim(),
-          giro: String(enBsale.activity || ''), direccion: String(enBsale.address || ''), comuna: String(enBsale.municipality || ''),
-          ciudad: String(enBsale.city || ''), email: String(enBsale.email || ''),
-        }
-      : {
-          id: null, nuevo: true, rut,
-          razon_social: texto(body?.cliente?.razon_social, 120), giro: texto(body?.cliente?.giro, 80), direccion: texto(body?.cliente?.direccion, 120),
-          comuna: texto(body?.cliente?.comuna, 60), ciudad: texto(body?.cliente?.ciudad, 60), email: texto(body?.cliente?.email, 120),
-        };
-    if (cliente.nuevo && rut) {
+    const cliente: any = sinCliente
+      ? null
+      : enBsale
+        ? this.clienteDeBsale(enBsale)
+        : {
+            id: null, nuevo: true, rut,
+            razon_social: texto(body?.cliente?.razon_social, 120), giro: texto(body?.cliente?.giro, 80), direccion: texto(body?.cliente?.direccion, 120),
+            comuna: texto(body?.cliente?.comuna, 60), ciudad: texto(body?.cliente?.ciudad, 60), email: texto(body?.cliente?.email, 120),
+          };
+    if (cliente?.nuevo && rut) {
       avisos.push({ codigo: 'cliente_nuevo', mensaje: `El cliente (RUT ${rut}) no existe en Bsale: se creará con los datos ingresados.` });
-      if (!cliente.razon_social || !cliente.giro || !cliente.direccion || !cliente.comuna) {
+      if (esBoleta) {
+        if (!cliente.razon_social) problemas.push({ codigo: 'cliente_incompleto', mensaje: 'Para crear el cliente en Bsale indica al menos su nombre o razón social (o deja la boleta sin cliente).' });
+      } else if (!cliente.razon_social || !cliente.giro || !cliente.direccion || !cliente.comuna) {
         problemas.push({ codigo: 'cliente_incompleto', mensaje: 'El cliente nuevo necesita razón social, giro, dirección y comuna (Bsale los exige).' });
       }
     }
@@ -186,10 +221,10 @@ export class BsaleLibreService {
     else if (fecha > hoy) problemas.push({ codigo: 'fecha_futura', mensaje: 'La fecha de emisión no puede ser futura.' });
     else if (fecha < sumarDias(hoy, -30)) problemas.push({ codigo: 'fecha_antigua', mensaje: 'La fecha de emisión no puede tener más de 30 días.' });
 
-    // Cotización a la que se cuelga (opcional): su código va como FOLIO en la referencia a la OC.
+    // Cotización a la que se cuelga (opcional; la venta directa crea la suya).
     let cotizacion: any = null;
     let licCot: any = null;
-    if (body?.cotizacion_id != null && String(body.cotizacion_id).trim() !== '') {
+    if (!ventaDirecta && body?.cotizacion_id != null && String(body.cotizacion_id).trim() !== '') {
       const id = Number(body.cotizacion_id);
       const { data: lic } = id > 0 ? await this.supabase.getClient().from('licitaciones').select('id, id_licitacion, nombre_entidad, rut_entidad').eq('id', id).maybeSingle() : { data: null };
       if (!lic) problemas.push({ codigo: 'cotizacion', mensaje: `No existe la cotización #${body.cotizacion_id}.` });
@@ -202,18 +237,22 @@ export class BsaleLibreService {
       }
     }
 
-    // Referencias (opcionales). OC en guía: folio = cotización, razón = N° de OC. OC en factura: N° de OC en ambos. Guía: folio = N° de guía.
+    // Referencias (opcionales; la venta directa no lleva).
+    //   OC en guía: folio = cotización, razón = N° de OC. OC en factura: N° de OC en ambos.
+    //   Guía (en una factura): folio = N° de guía, razón = N° de OC si se conoce.
     const referencias: any[] = [];
-    for (const r of Array.isArray(body?.referencias) ? body.referencias : []) {
+    for (const r of ventaDirecta ? [] : Array.isArray(body?.referencias) ? body.referencias : []) {
       const numero = normOc(r?.numero);
       if (!numero) continue;
       const esGuia = r?.tipo === 'guia';
       const f = String(r?.fecha || '').slice(0, 10);
-      const fecha = /^\d{4}-\d{2}-\d{2}$/.test(f) ? f : null;
-      const ref = esGuia ? referenciaGuia(numero, fecha) : tipo === 'guia' ? referenciaOcGuia(licCot ? folioCotizacion(licCot) : numero, numero, fecha) : referenciaOcFactura(numero, fecha);
+      const fechaRef = /^\d{4}-\d{2}-\d{2}$/.test(f) ? f : null;
+      const ref = esGuia ? referenciaGuia(numero, fechaRef) : tipo === 'guia' ? referenciaOcGuia(licCot ? folioCotizacion(licCot) : numero, numero, fechaRef) : referenciaOcFactura(numero, fechaRef);
       if (ref.folio.length > MAX_FOLIO_REF) problemas.push({ codigo: 'folio_largo', mensaje: `El folio de referencia ${ref.folio} supera los ${MAX_FOLIO_REF} caracteres que acepta el SII.` });
       referencias.push(ref);
     }
+    const ocReferenciada = referencias.find((r) => r.codigo_sii === DTE_OC)?.numero;
+    if (ocReferenciada) for (const r of referencias) if (r.codigo_sii === DTE_GUIA) r.razon = ocReferenciada;
 
     // Tipo de documento y sus datos propios
     let tipoDocumentoId = 0;
@@ -222,14 +261,16 @@ export class BsaleLibreService {
     let dias = 0;
     let descuentaStock = tipo === 'guia';
     let traslado: any = null;
+    let credito = false;
+    let pagadaAhora = false;
     if (tipo === 'guia') {
       const td = await this.despachos.tipoDocumento(String(DTE_GUIA), /gu[ií]a/i);
       tipoDocumentoId = Number(td?.id) || 0;
       if (!td) problemas.push({ codigo: 'sin_tipo', mensaje: 'La cuenta de Bsale no tiene activa la guía de despacho electrónica.' });
       const d = body?.despacho || {};
       despacho = {
-        direccion: texto(d.direccion ?? cliente.direccion, 120), comuna: texto(d.comuna ?? cliente.comuna, 60), ciudad: texto(d.ciudad ?? cliente.ciudad, 60),
-        destinatario: texto(d.destinatario ?? cliente.razon_social, 120), tipo_traslado_id: Number(d.tipo_traslado_id) || 0,
+        direccion: texto(d.direccion ?? cliente?.direccion, 120), comuna: texto(d.comuna ?? cliente?.comuna, 60), ciudad: texto(d.ciudad ?? cliente?.ciudad, 60),
+        destinatario: texto(d.destinatario ?? cliente?.razon_social, 120), tipo_traslado_id: Number(d.tipo_traslado_id) || 0,
       };
       const traslados = await this.despachos.tiposTraslado();
       traslado = traslados.find((t) => t.id === despacho.tipo_traslado_id) || null;
@@ -237,50 +278,72 @@ export class BsaleLibreService {
       if (!traslado) problemas.push({ codigo: 'traslado', mensaje: 'Elige el tipo de traslado.' });
     } else {
       const { tipoFactura, formas } = await this.facturacion.listas();
-      tipoDocumentoId = Number(tipoFactura?.id) || 0;
-      if (!tipoFactura) problemas.push({ codigo: 'sin_tipo', mensaje: 'La cuenta de Bsale no tiene activa la factura electrónica.' });
+      if (esBoleta) {
+        const tb = await this.despachos.tipoDocumento(String(DTE_BOLETA), /boleta/i);
+        tipoDocumentoId = Number(tb?.id) || 0;
+        if (!tb) problemas.push({ codigo: 'sin_tipo', mensaje: 'La cuenta de Bsale no tiene activa la boleta electrónica.' });
+      } else {
+        tipoDocumentoId = Number(tipoFactura?.id) || 0;
+        if (!tipoFactura) problemas.push({ codigo: 'sin_tipo', mensaje: 'La cuenta de Bsale no tiene activa la factura electrónica.' });
+      }
       formaPago = formas.find((f) => f.id === Number(body?.forma_pago_id)) || null;
       if (!formaPago) problemas.push({ codigo: 'forma_pago', mensaje: 'Elige la forma de pago.' });
-      dias = Math.round(Number(body?.dias_vencimiento ?? 30));
+      credito = !!formaPago && esCredito(formaPago.nombre);
+      if (esBoleta && credito) problemas.push({ codigo: 'boleta_credito', mensaje: 'Una boleta se paga al emitirla: elige efectivo, transferencia, tarjeta o Webpay.' });
+      dias = esBoleta ? 0 : Math.round(Number(body?.dias_vencimiento ?? 30));
       if (!Number.isFinite(dias) || dias < 0 || dias > 365) problemas.push({ codigo: 'plazo', mensaje: 'El plazo de vencimiento debe estar entre 0 y 365 días.' });
-      // Una factura que no viene de una guía es la que mueve el stock.
+      // Una factura que no viene de una guía es la que mueve el stock. La venta directa siempre lo mueve.
       const refGuia = referencias.some((r) => r.codigo_sii === DTE_GUIA);
-      descuentaStock = body?.descuenta_stock == null ? !refGuia : body.descuenta_stock === true;
+      descuentaStock = ventaDirecta ? true : body?.descuenta_stock == null ? !refGuia : body.descuenta_stock === true;
       if (refGuia && descuentaStock) avisos.push({ codigo: 'stock_doble', mensaje: 'La factura referencia una guía y además descuenta stock: si la guía ya lo descontó, saldría dos veces.' });
       if (!refGuia && !descuentaStock) avisos.push({ codigo: 'sin_stock', mensaje: 'La factura no descuenta stock: el stock en Bsale quedará como está.' });
+      pagadaAhora = ventaDirecta && !!formaPago && !credito;
+      // A crédito rige el mismo freno por mora que al cotizar.
+      if (ventaDirecta && credito && rut) {
+        try {
+          const bloqueo: any = await this.licitaciones.estadoBloqueoCliente(rut, 'Cliente Particular');
+          if (bloqueo?.bloqueado) problemas.push({ codigo: 'mora', mensaje: `Cliente bloqueado por deuda: ${bloqueo.diasAtrasoMax} días de atraso (máximo permitido ${bloqueo.umbral}). Cóbrale al contado o pide el desbloqueo a un administrador.` });
+        } catch { /* sin datos de mora no se frena */ }
+      }
     }
 
     const borrador = {
-      tipo, tipo_documento_id: tipoDocumentoId, cliente, lineas, totales, fecha_emision: fecha, referencias, despacho,
+      tipo, venta_directa: ventaDirecta, tipo_documento_id: tipoDocumentoId, cliente, lineas, totales, fecha_emision: fecha, referencias, despacho,
       traslado: traslado ? { id: traslado.id, nombre: traslado.nombre } : null,
-      forma_pago: formaPago ? { id: formaPago.id, nombre: formaPago.nombre } : null, dias_vencimiento: dias,
-      vencimiento: tipo === 'factura' ? sumarDias(fecha, dias) : null, descuenta_stock: descuentaStock, cotizacion, problemas, avisos,
+      forma_pago: formaPago ? { id: formaPago.id, nombre: formaPago.nombre } : null, dias_vencimiento: dias, credito,
+      medio_pago: formaPago ? medioDePago(formaPago.nombre) : null, pagada_ahora: pagadaAhora,
+      vencimiento: tipo === 'guia' ? null : sumarDias(fecha, dias), descuenta_stock: descuentaStock, cotizacion, problemas, avisos,
     };
     const huella = this.facturacion.huellaDe({
-      cliente: { id: cliente.id || cliente.rut }, tipo_documento_id: tipoDocumentoId,
+      cliente: { id: cliente?.id || cliente?.rut || 'consumidor-final' }, tipo_documento_id: tipoDocumentoId,
       lineas: lineas.map((l) => ({ detalle_id: l.variante_id, cantidad: l.cantidad, neto: l.neto_unitario })),
-      referencias: [...referencias.map((r) => ({ codigo_sii: r.codigo_sii, folio: r.folio, numero: r.numero })), { codigo_sii: 0, numero: `${fecha}|${JSON.stringify(despacho)}|${formaPago?.id}|${dias}|${descuentaStock}|${cotizacion?.id || ''}|${cliente.nuevo ? JSON.stringify(cliente) : ''}` }],
+      referencias: [...referencias.map((r) => ({ codigo_sii: r.codigo_sii, folio: r.folio, numero: r.numero })), { codigo_sii: 0, numero: `${tipo}|${ventaDirecta}|${fecha}|${JSON.stringify(despacho)}|${formaPago?.id}|${dias}|${descuentaStock}|${cotizacion?.id || ''}|${cliente?.nuevo ? JSON.stringify(cliente) : ''}` }],
       totales,
     });
     return { ...borrador, huella };
   }
 
   private vista(b: any) {
+    const c = b.cliente;
+    const nombreCliente = c?.razon_social || 'consumidor final';
     return {
-      tipo: b.tipo === 'guia' ? 'Guía de despacho electrónica' : 'Factura electrónica',
+      tipo: etiquetaTipo(b.tipo),
       sii: true,
       descuenta_stock: b.descuenta_stock,
-      cliente: { razon_social: b.cliente.razon_social, rut: b.cliente.rut, giro: b.cliente.giro, direccion: b.cliente.direccion, comuna: b.cliente.comuna, nuevo: b.cliente.nuevo },
+      emisor: EMISOR,
+      cliente: c ? { razon_social: c.razon_social, rut: c.rut, giro: c.giro, direccion: c.direccion, comuna: c.comuna, nuevo: c.nuevo } : {},
       lineas: b.lineas.map((l: any) => ({ sku: l.sku, producto: l.producto, cantidad: l.cantidad, neto_unitario: l.neto_unitario, neto: l.neto })),
       totales: b.totales,
       referencias: b.referencias.map(referenciaVista),
       forma_pago: b.forma_pago?.nombre || null,
       fecha_emision: b.fecha_emision,
-      vencimiento: b.vencimiento,
+      vencimiento: b.tipo === 'factura' ? b.vencimiento : null,
       despacho: b.despacho ? { ...b.despacho, tipo_traslado: b.traslado?.nombre || null } : null,
       notas: [
-        b.tipo === 'guia' ? 'Bsale descuenta el stock al emitir la guía.' : b.descuenta_stock ? 'La factura descuenta el stock en Bsale (no viene de una guía).' : 'La factura no mueve stock.',
-        b.cotizacion ? `Quedará registrada en la cotización #${b.cotizacion.id}${b.cotizacion.codigo ? ` (${b.cotizacion.codigo})` : ''}.` : 'No se indicó cotización: quedará solo en Bsale y en el historial de Emitidas.',
+        b.tipo === 'guia' ? 'Bsale descuenta el stock al emitir la guía.' : b.descuenta_stock ? `La ${b.tipo} descuenta el stock en Bsale${b.venta_directa ? '' : ' (no viene de una guía)'}.` : 'La factura no mueve stock.',
+        b.venta_directa
+          ? `Al emitir se crea en el sistema una cotización particular adjudicada a nombre de ${nombreCliente}, con estos ítems y el documento registrado${b.pagada_ahora ? ` y pagado (${b.forma_pago?.nombre}).` : ' con el pago pendiente (crédito): aparecerá en Seguimiento de Pagos.'}`
+          : b.cotizacion ? `Quedará registrada en la cotización #${b.cotizacion.id}${b.cotizacion.codigo ? ` (${b.cotizacion.codigo})` : ''}.` : 'No se indicó cotización: quedará solo en Bsale y en el historial de Emitidas.',
       ],
     };
   }
@@ -301,10 +364,21 @@ export class BsaleLibreService {
     }
 
     const emision = fechaAEpoch(b.fecha_emision);
-    const cli = b.cliente.nuevo
-      ? { client: { code: b.cliente.rut, company: b.cliente.razon_social, activity: b.cliente.giro, address: b.cliente.direccion, municipality: b.cliente.comuna, city: b.cliente.ciudad, ...(b.cliente.email ? { email: b.cliente.email } : {}), companyOrPerson: 1 } }
-      : { clientId: b.cliente.id };
-    const clave = `AMS-L-${b.tipo === 'guia' ? 'G' : 'F'}-${b.huella}`;
+    const c = b.cliente;
+    const cli = !c
+      ? {}
+      : c.nuevo
+        ? {
+            client: {
+              code: c.rut, company: c.razon_social, companyOrPerson: 1,
+              ...(c.giro ? { activity: c.giro } : {}), ...(c.direccion ? { address: c.direccion } : {}), ...(c.comuna ? { municipality: c.comuna } : {}),
+              ...(c.ciudad ? { city: c.ciudad } : {}), ...(c.email ? { email: c.email } : {}),
+            },
+          }
+        : { clientId: c.id };
+    const letra = b.tipo === 'guia' ? 'G' : b.tipo === 'boleta' ? 'B' : 'F';
+    // AMS-V-…: venta directa (la que crea su cotización); AMS-L-…: documento libre.
+    const clave = `AMS-${b.venta_directa ? 'V' : 'L'}-${letra}-${b.huella}`;
     const { data: previas } = await this.supabase.getClient().from('bsale_emisiones').select('id').eq('clave', clave).eq('estado', 'emitida');
     const salesId = `${clave}-${(previas || []).length}`;
     const details = b.lineas.map((l: any) => ({ code: l.sku, quantity: l.cantidad, netUnitValue: l.neto_unitario, taxId: `[${IVA_ID}]` }));
@@ -318,7 +392,7 @@ export class BsaleLibreService {
           }
         : {
             documentTypeId: b.tipo_documento_id, emissionDate: emision, expirationDate: fechaAEpoch(b.vencimiento), declareSii: 1,
-            ...cli, details, payments: [{ paymentTypeId: b.forma_pago.id, amount: b.totales.total, recordDate: emision }], references, salesId,
+            ...cli, details, payments: [{ paymentTypeId: b.forma_pago.id, amount: b.totales.total, recordDate: emision }], ...(references.length ? { references } : {}), salesId,
             ...(b.descuenta_stock ? { dispatch: 1 } : {}),
           };
     const vista = this.vista(b);
@@ -327,12 +401,18 @@ export class BsaleLibreService {
     }
 
     const esGuia = b.tipo === 'guia';
-    return this.despachos.emitirReal({
-      usuario, clave, salesId, tipo: esGuia ? 'guia' : 'factura', ruta: esGuia ? '/shippings.json' : '/documents.json', solicitud, vista,
+    let creada: any = null;
+    const r = await this.despachos.emitirReal({
+      usuario, clave, salesId, tipo: b.tipo, ruta: esGuia ? '/shippings.json' : '/documents.json', solicitud, vista,
       licitacionId: b.cotizacion?.id || null, origenDocId: null,
       lineas: b.lineas.map((l: any) => ({ sku: l.sku, cantidad: l.cantidad, neto_unitario: l.neto_unitario })),
       bucket: esGuia ? 'guia-despacho' : 'factura',
       registrar: async (doc: any, pdf: any) => {
+        if (b.venta_directa) {
+          const res = await this.registrarVentaDirecta(b, doc, pdf, usuario);
+          creada = res.cotizacion;
+          return res.documentoId;
+        }
         if (!b.cotizacion) return null; // sin cotización no hay dónde colgarlo: queda en Bsale y en Emitidas
         if (esGuia) {
           // Si la cotización tiene una sola orden de compra, la guía cuelga de ella.
@@ -345,19 +425,14 @@ export class BsaleLibreService {
           });
           return Number((creado as any)?.id) || null;
         }
-        const documento: Record<string, any> = {
+        const etiqueta = b.tipo === 'boleta' ? 'Boleta' : 'Factura';
+        const fila = await this.insertarTolerante('licitacion_documentos', {
           licitacion_id: b.cotizacion.id, tipo: 'factura', numero: String(doc.number), monto: Number(doc.netAmount ?? b.totales.neto) || null, fecha_oc: null,
           fecha_factura: b.fecha_emision, deriva_de_id: null, guias_ids: null, bucket: pdf ? 'factura' : null, storage_path: pdf?.path || null,
-          file_name: pdf ? `Factura ${doc.number}.pdf` : null, mime_type: pdf ? 'application/pdf' : null, size_bytes: pdf?.size || null,
-          bsale_id: Number(doc.id) || null, bsale_url: doc.urlPdf || doc.urlPublicView || null,
-        };
-        let r: any = await this.supabase.getClient().from('licitacion_documentos').insert([documento]).select('id').single();
-        if (r.error && /bsale_id|bsale_url/.test(String(r.error.message))) {
-          const { bsale_id: _a, bsale_url: _b, ...sin } = documento;
-          r = await this.supabase.getClient().from('licitacion_documentos').insert([sin]).select('id').single();
-        }
-        if (r.error) throw new Error(r.error.message);
-        return Number(r.data?.id) || null;
+          file_name: pdf ? `${etiqueta} ${doc.number}.pdf` : null, mime_type: pdf ? 'application/pdf' : null, size_bytes: pdf?.size || null,
+          bsale_id: Number(doc.id) || null, bsale_url: doc.urlPdf || doc.urlPublicView || null, ...(b.tipo === 'boleta' ? { descripcion: 'Boleta electrónica' } : {}),
+        });
+        return Number(fila?.id) || null;
       },
       verificar: async (doc: any) => {
         const avisos: string[] = [];
@@ -365,13 +440,104 @@ export class BsaleLibreService {
         try {
           const completo = await this.facturacion.apiGet(`/documents/${Number(doc.id)}.json?expand=[references]`);
           const refs: any[] = completo?.references?.items || [];
-          for (const r of b.referencias) {
-            const esta = r.codigo_sii === DTE_OC ? refs.some((x: any) => ocDeReferencia(x) === r.numero) : refs.some((x: any) => normOc(x?.number) === normOc(r.folio));
-            if (!esta) avisos.push(`El documento ${doc.number} salió sin la referencia ${r.codigo_sii === DTE_OC ? 'a la orden de compra' : 'a la guía'} ${r.numero}: agrégala en Bsale.`);
+          for (const ref of b.referencias) {
+            const esta = ref.codigo_sii === DTE_OC ? refs.some((x: any) => ocDeReferencia(x) === ref.numero) : refs.some((x: any) => normOc(x?.number) === normOc(ref.folio));
+            if (!esta) avisos.push(`El documento ${doc.number} salió sin la referencia ${ref.codigo_sii === DTE_OC ? 'a la orden de compra' : 'a la guía'} ${ref.numero}: agrégala en Bsale.`);
           }
         } catch { /* la verificación no frena nada */ }
         return avisos;
       },
     });
+    return { ...r, cotizacion: creada };
+  }
+
+  // ── Venta directa: la cotización que antes se armaba a mano ────────────
+
+  /* Crea la cotización particular ADJUDICADA con los ítems vendidos, registra
+     el documento emitido como factura_boleta (monto NETO, como todo en
+     licitacion_documentos) y, si se pagó al emitir, el comprobante de pago con
+     el medio. Corre después de que Bsale confirmó el documento: si algo falla
+     acá, emitirReal lo avisa y el documento ya existe en Bsale. */
+  private async registrarVentaDirecta(b: any, doc: any, pdf: { path: string; size: number } | null, usuario: { id: string; email: string }) {
+    const db = this.supabase.getClient();
+    const { data: perfil } = await db.from('profiles').select('nombre, celular, email').eq('id', usuario.id).maybeSingle();
+    const c = b.cliente;
+    const nombreCliente = texto(c?.razon_social, 160) || 'Consumidor final';
+    const etiqueta = etiquetaTipo(b.tipo);
+    const numero = String(doc.number);
+    const hoy = b.fecha_emision;
+    const ahora = new Date().toISOString();
+
+    const lic = await this.insertarTolerante('licitaciones', {
+      id_licitacion: `__pending_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      nombre: `Venta directa · ${etiqueta} N° ${numero} · ${nombreCliente}`.slice(0, 200),
+      fecha_hora_cierre: null, fecha: hoy, monto: 0, lista_precios: 1,
+      rut_entidad: c?.rut || RUT_CONSUMIDOR_FINAL, nombre_entidad: nombreCliente, giro: c?.giro || null,
+      tipo_cliente: 'Cliente Particular', tipo_compra: 'Cliente particular', departamento: b.tipo === 'boleta' ? 'boleta' : 'factura', municipalidad: '',
+      direccion: c?.direccion || '', sucursal: 'Casa Matriz', region: '', comuna: c?.comuna || '', contacto: '', email: c?.email || '', telefono: '',
+      condicion_venta: b.credito ? `Crédito ${b.dias_vencimiento} días` : 'Contado',
+      creado_por: usuario.email, estado: 'Adjudicada', fecha_adjudicada: ahora, madre_id: null, jerarquia: 'madre', flete_estimado: 0,
+      total_con_iva: b.totales.total, total_sin_iva: b.totales.neto, total_iva: b.totales.iva,
+      observaciones: `Creada automáticamente por la venta directa: ${etiqueta} N° ${numero} emitida en Bsale por ${usuario.email}.`,
+      vendedor_nombre: (perfil as any)?.nombre || null, vendedor_celular: (perfil as any)?.celular || null, vendedor_correo: (perfil as any)?.email || usuario.email,
+      estado_entrega: 'Entregado', estado_envio: 'retirado',
+    });
+    const licId = Number(lic.id);
+    // Para cliente particular el código de la cotización es su propio número.
+    await db.from('licitaciones').update({ id_licitacion: String(licId) }).eq('id', licId);
+
+    const skus = b.lineas.map((l: any) => l.sku);
+    const { data: prods } = await db.from('productos').select('sku, formato, categoria, costo').in('sku', skus);
+    const porSku = new Map<string, any>((prods || []).map((p: any) => [normSku(p.sku), p]));
+    await this.licitaciones.insertItems(
+      b.lineas.map((l: any, i: number) => {
+        const p = porSku.get(l.sku);
+        return {
+          licitacion_id: licId, orden: i + 1, producto: l.producto, formato: p?.formato || null, cantidad: l.cantidad,
+          valor_unitario: l.neto_unitario, sku: l.sku, total: l.neto, categoria: p?.categoria || null, observacion: null,
+          costo: p?.costo != null ? Number(p.costo) : null,
+        };
+      }),
+    );
+
+    const documento = await this.insertarTolerante('licitacion_documentos', {
+      licitacion_id: licId, tipo: 'factura_boleta', numero, descripcion: etiqueta, monto: Number(doc.netAmount ?? b.totales.neto) || b.totales.neto,
+      fecha_oc: hoy, fecha_factura: hoy, deriva_de_id: null,
+      bucket: pdf ? 'factura' : null, storage_path: pdf?.path || null, file_name: pdf ? `${etiqueta} ${numero}.pdf` : null,
+      mime_type: pdf ? 'application/pdf' : null, size_bytes: pdf?.size || null,
+      bsale_id: Number(doc.id) || null, bsale_url: doc.urlPdf || doc.urlPublicView || null,
+      pagada: b.pagada_ahora, fecha_pago: b.pagada_ahora ? hoy : null, forma_pago: b.pagada_ahora ? b.medio_pago : null,
+    });
+    const documentoId = Number(documento?.id) || null;
+    if (b.pagada_ahora && documentoId) {
+      try {
+        await this.insertarTolerante('licitacion_documentos', {
+          licitacion_id: licId, tipo: 'comprobante_pago', numero: `Pago ${b.forma_pago.nombre}`, monto: b.totales.neto, fecha_oc: hoy,
+          deriva_de_id: documentoId, forma_pago: b.medio_pago, descripcion: `Pago recibido al emitir la ${b.tipo} (${b.forma_pago.nombre}).`,
+        });
+      } catch (e: any) {
+        this.logger.warn(`Venta directa ${numero}: el comprobante de pago no se pudo registrar: ${e?.message || e}`);
+      }
+    }
+    this.logger.log(`Venta directa: ${etiqueta} ${numero} → cotización #${licId} (${nombreCliente}) por ${usuario.email}`);
+    return { documentoId, cotizacion: { id: licId, codigo: String(licId), nombre: nombreCliente, pagada: b.pagada_ahora } };
+  }
+
+  /* Inserta tolerando columnas que aún no existen (migraciones pendientes):
+     quita la columna que la base no reconoce y reintenta. */
+  private async insertarTolerante(tabla: string, fila: Record<string, any>): Promise<any> {
+    const db = this.supabase.getClient();
+    let payload: Record<string, any> = { ...fila };
+    for (let intento = 0; intento < 10; intento++) {
+      const r: any = await db.from(tabla).insert([payload]).select().single();
+      if (!r.error) return r.data;
+      const msg = String(r.error.message || '');
+      const m = msg.match(/Could not find the '([^']+)' column/i) || msg.match(/column "?([a-zA-Z0-9_]+)"? (?:of relation|does not exist)/i);
+      const col = m?.[1];
+      if (!col || !(col in payload)) throw new Error(`${tabla}: ${msg}`);
+      const { [col]: _omitida, ...resto } = payload;
+      payload = resto;
+    }
+    throw new Error(`${tabla}: demasiadas columnas desconocidas`);
   }
 }

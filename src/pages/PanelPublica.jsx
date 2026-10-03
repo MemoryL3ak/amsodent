@@ -15,6 +15,7 @@ import {
   labelMesCorto, labelMesLargo, Delta, KpiCard, LineChart, BarChart, HBarList,
 } from "../components/panel/panelKit";
 import ModalMargenDesglose from "../components/panel/ModalMargenDesglose";
+import { indiceCostos, margenDeItems, filaMargenLic, notaSinCosto } from "../lib/margenItems";
 
 // Estados que NO cuentan como licitación participada.
 const ESTADOS_NO_PARTICIPA = ["Descartada", "Cancelada", "Pendiente Aprobación", "Pendiente Aprobación Peso"];
@@ -88,9 +89,9 @@ export default function PanelPublica() {
               .map((s) => String(s || "").trim().toUpperCase())
               .filter((s) => s && s !== sku && porSku.has(s));
             if (eqs.length) conEquiv.add(sku);
-            costos[sku] = Number(p.costo || 0); // fallback del margen cuando el ítem no trae costo
           });
-          if (activo) { setSkusConEquiv(conEquiv); setCostoBySku(costos); }
+          // Respaldo del margen cuando el ítem no trae costo: por SKU y por nombre.
+          if (activo) { setSkusConEquiv(conEquiv); setCostoBySku(indiceCostos(prods)); }
         } catch {
           if (activo) { setSkusConEquiv(new Set()); setCostoBySku({}); }
         }
@@ -146,29 +147,13 @@ export default function PanelPublica() {
     let activo = true;
     api.post("/licitaciones/items/filter", {
       licitacion_ids: idsMes,
-      fields: "licitacion_id,total,cantidad,sku,costo",
+      fields: "licitacion_id,producto,total,cantidad,sku,costo",
     })
       .then((items) => {
         if (!activo) return;
-        let venta = 0, costo = 0;
-        const porLic = {}; // licId → { venta, costo } (desglose del margen)
-        (items || []).forEach((it) => {
-          const v = Number(it.total || 0);
-          venta += v;
-          const sku = String(it.sku || "").trim().toUpperCase();
-          const costoUnit = Number(it.costo) > 0 ? Number(it.costo) : (costoBySku[sku] || 0);
-          const c = costoUnit * (Number(it.cantidad) || 0);
-          costo += c;
-          const lid = Number(it.licitacion_id);
-          if (lid) {
-            const e = (porLic[lid] = porLic[lid] || { venta: 0, costo: 0 });
-            e.venta += v;
-            e.costo += c;
-          }
-        });
-        const monto = Math.round(venta - costo);
-        setMargenMes({ monto, pct: venta > 0 ? (monto / venta) * 100 : 0, venta });
-        setMargenPorLic(Object.entries(porLic).map(([licId, v]) => ({ licId: Number(licId), ...v })));
+        const mg = margenDeItems(items, costoBySku);
+        setMargenMes(mg);
+        setMargenPorLic(Object.entries(mg.porLic).map(([licId, v]) => ({ licId: Number(licId), ...v })));
       })
       .catch(() => { if (activo) { setMargenMes({ monto: 0, pct: 0, venta: 0 }); setMargenPorLic([]); } });
     return () => { activo = false; };
@@ -180,18 +165,13 @@ export default function PanelPublica() {
     const filas = margenPorLic.map((r) => {
       const l = licById.get(r.licId) || {};
       const email = (l.creado_por || "").trim().toLowerCase();
-      const monto = r.venta - r.costo;
       return {
         licId: r.licId,
         codigo: l.id_licitacion || `Cot. ${r.licId}`,
         cliente: l.nombre_entidad || l.rut_entidad || "—",
         vendedor: nombresVendedores[email] || email || "Sin vendedor",
         tipo: l.tipo_compra || "Sin tipo",
-        venta: r.venta,
-        costo: r.costo,
-        monto,
-        pct: r.venta > 0 ? (monto / r.venta) * 100 : 0,
-        sinCosto: r.venta > 0 && !(r.costo > 0),
+        ...filaMargenLic(r),
       };
     }).sort((a, b) => b.venta - a.venta);
     const agrupar = (key) => {
@@ -199,8 +179,7 @@ export default function PanelPublica() {
       filas.forEach((f) => {
         const k = f[key] || "—";
         const e = (m[k] = m[k] || { label: k, venta: 0, costo: 0, cotizaciones: 0 });
-        e.venta += f.venta;
-        e.costo += f.costo;
+        if (!f.sinCosto) { e.venta += f.venta; e.costo += f.costo; }
         e.cotizaciones += 1;
       });
       return Object.values(m)
@@ -485,7 +464,7 @@ export default function PanelPublica() {
             <KpiCard icon={Banknote} color="#15803d" label="Monto Adjudicado" sub="Del mes · órdenes de compra" value={fmtCLP(m.montoAdj)} delta={<Delta actual={m.montoAdj} prev={mPrev.montoAdj} />} />
             <KpiCard icon={PieChart} color="#0ea5e9" label="Participación en Licitaciones" sub="Participadas / publicadas" value={fmtPct(m.participacion)} delta={<Delta actual={m.participacion} prev={mPrev.participacion} unidadPp />} />
             <div onClick={() => setMargenOpen(true)} style={{ cursor: "pointer" }} title="Ver desglose del margen por cotización, vendedor y tipo">
-              <KpiCard icon={TrendingUp} color="#7c3aed" label="Margen %" sub="Adjudicadas del mes · clic para desglose" value={fmtPct(margenMes.pct)} delta={null} />
+              <KpiCard icon={TrendingUp} color="#7c3aed" label="Margen %" sub={`Adjudicadas del mes${notaSinCosto(margenMes)} · clic para desglose`} value={fmtPct(margenMes.pct)} delta={null} />
             </div>
             {!esJefatura && (
               <div onClick={() => setMargenOpen(true)} style={{ cursor: "pointer" }} title="Ver desglose del margen por cotización, vendedor y tipo">
