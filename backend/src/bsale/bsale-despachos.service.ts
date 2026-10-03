@@ -145,7 +145,7 @@ export class BsaleDespachosService {
 
   // ── Datos de Bsale ─────────────────────────────────────────────────────
 
-  private async tiposTraslado() {
+  async tiposTraslado() {
     if (this.cacheTraslados && Date.now() - this.cacheTraslados.ts < 10 * 60 * 1000) return this.cacheTraslados.tipos;
     const tipos = (await this.facturacion.todos('/shipping_types.json'))
       .filter((t) => Number(t.state) === 0)
@@ -154,7 +154,7 @@ export class BsaleDespachosService {
     return tipos;
   }
 
-  private async variantePorSku(sku: string) {
+  async variantePorSku(sku: string) {
     const k = normSku(sku);
     if (!k) return null;
     const hit = this.cacheVariantes.get(k);
@@ -166,7 +166,7 @@ export class BsaleDespachosService {
     return variante;
   }
 
-  private async clientePorRut(rut: string) {
+  async clientePorRut(rut: string) {
     const code = rutBsale(rut);
     if (!code) return null;
     const r = await this.facturacion.apiGet(`/clients.json?code=${encodeURIComponent(code)}&limit=5`);
@@ -174,7 +174,7 @@ export class BsaleDespachosService {
     return items.find((c) => normRut(c?.code) === normRut(code)) || null;
   }
 
-  private async tipoDocumento(codigoSii: string | null, nombre: RegExp) {
+  async tipoDocumento(codigoSii: string | null, nombre: RegExp) {
     const tipos = await this.facturacion.todos('/document_types.json', '&state=0');
     return (
       tipos.find((t) => (codigoSii ? String(t.codeSii) === codigoSii && Number(t.isElectronicDocument) === 1 : nombre.test(String(t.name || '')))) || null
@@ -676,11 +676,11 @@ export class BsaleDespachosService {
 
   // ── Emisión real (común) ───────────────────────────────────────────────
 
-  private async emitirReal(p: {
-    usuario: { id: string; email: string }; clave: string; salesId: string; tipo: 'guia' | 'nota_venta'; ruta: string;
-    solicitud: Record<string, any>; vista: any; licitacionId: number; origenDocId: number; lineas: any[];
+  async emitirReal(p: {
+    usuario: { id: string; email: string }; clave: string; salesId: string; tipo: 'guia' | 'nota_venta' | 'factura'; ruta: string;
+    solicitud: Record<string, any>; vista: any; licitacionId: number | null; origenDocId: number | null; lineas: any[];
     registrar: (doc: any, pdf: { path: string; size: number } | null) => Promise<number | null>;
-    verificar: (doc: any) => Promise<string[]>; sinPdf?: boolean;
+    verificar: (doc: any) => Promise<string[]>; sinPdf?: boolean; bucket?: string;
   }) {
     const db = this.supabase.getClient();
     const fila = {
@@ -705,6 +705,9 @@ export class BsaleDespachosService {
       if (error) {
         if (/tipo|origen_doc_id|lineas/.test(String(error.message)) && /column|schema cache/i.test(String(error.message))) {
           throw new BadRequestException('Falta aplicar la migración 20261004_bsale_emisiones_tipo.sql en Supabase (guías y órdenes en Bsale).');
+        }
+        if (/licitacion_id/.test(String(error.message)) && /null/i.test(String(error.message))) {
+          throw new BadRequestException('Falta aplicar la migración 20261005_bsale_emisiones_libre.sql en Supabase (documentos libres).');
         }
         throw new ConflictException('Ya hay una emisión en curso para esta orden.');
       }
@@ -731,7 +734,7 @@ export class BsaleDespachosService {
       fecha_emision: epochAFecha(p.solicitud.emissionDate), updated_at: new Date().toISOString(),
     };
     await db.from('bsale_emisiones').update(emitida).eq('id', emisionId);
-    this.logger.log(`${p.tipo === 'guia' ? 'Guía' : 'Nota de venta'} ${emitida.numero} emitida en Bsale (cotización ${p.licitacionId}) por ${p.usuario.email}`);
+    this.logger.log(`${p.tipo === 'guia' ? 'Guía' : p.tipo === 'factura' ? 'Factura' : 'Nota de venta'} ${emitida.numero} emitida en Bsale (${p.licitacionId ? `cotización ${p.licitacionId}` : 'libre'}) por ${p.usuario.email}`);
 
     const avisos = await p.verificar(doc);
     let pdf: { path: string; size: number } | null = null;
@@ -741,8 +744,8 @@ export class BsaleDespachosService {
           const r = await fetch(String(emitida.url_pdf));
           if (r.ok && /pdf/i.test(r.headers.get('content-type') || '')) {
             const buf = Buffer.from(await r.arrayBuffer());
-            const path = `${p.licitacionId}/${Date.now()}-bsale-guia-${emitida.numero || emitida.bsale_id}.pdf`;
-            const { error } = await db.storage.from('guia-despacho').upload(path, buf, { contentType: 'application/pdf', upsert: false });
+            const path = `${p.licitacionId || 'libre'}/${Date.now()}-bsale-${p.tipo}-${emitida.numero || emitida.bsale_id}.pdf`;
+            const { error } = await db.storage.from(p.bucket || 'guia-despacho').upload(path, buf, { contentType: 'application/pdf', upsert: false });
             if (!error) pdf = { path, size: buf.length };
           }
         } catch { /* se reintenta */ }

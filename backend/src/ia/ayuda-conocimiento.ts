@@ -257,8 +257,14 @@ dirección y tipo de traslado; Bsale descuenta el stock y la guía queda en
 Trazabilidad; "Registrar orden en Bsale" deja la orden del cliente como NOTA
 DE VENTA en Bsale, sin SII ni stock, y las guías salen enlazadas a ella), POR
 FACTURAR (guías sin factura, las más antiguas primero) y EMITIDAS (historial de
-facturas, guías y órdenes). Un producto sin SKU o cuyo SKU no está en Bsale no
-puede ir en una guía ni en una orden. El borrador de factura abre
+facturas, guías y órdenes). Arriba, "Nueva guía" y "Nueva factura" arman un
+documento LIBRE, sin orden de compra: cliente por RUT (si no está en Bsale se
+crea; giro obligatorio), productos del catálogo con cantidad y precio neto,
+despacho (guía) o forma de pago (factura), referencia opcional a OC o guía, y
+la cotización donde debe quedar registrado (si no se indica, queda solo en
+Bsale y en Emitidas). Una factura libre sin guía descuenta stock en Bsale; si
+referencia una guía, no. Un producto sin SKU o cuyo SKU no está en Bsale no
+puede ir en ningún documento. El borrador de factura abre
 un borrador armado desde la guía que ya existe en Bsale: mismo cliente, mismos
 productos y precios, con referencia a la orden de compra y a la guía. Se elige
 fecha de emisión, plazo de vencimiento y forma de pago (y se puede corregir el

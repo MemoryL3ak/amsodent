@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { AlertTriangle, ChevronLeft, ChevronRight, ExternalLink, FileCheck, Info, RefreshCw } from "lucide-react";
+import { AlertTriangle, ChevronLeft, ChevronRight, ExternalLink, FileCheck, Info, Plus, RefreshCw } from "lucide-react";
 import { api } from "../lib/api";
 import Toast from "../components/Toast";
 import BotonLimpiarFiltros from "../components/BotonLimpiarFiltros";
 import EmitirFacturaBsale from "../components/EmitirFacturaBsale";
 import EmitirDespachoBsale from "../components/EmitirDespachoBsale";
+import DocumentoLibreBsale from "../components/DocumentoLibreBsale";
 
 /* ── Facturación (2026-10-02) ────────────────────────────────────────────────
    Sección para emitir en Bsale la factura de una guía de despacho.
@@ -78,6 +79,8 @@ export default function Facturacion() {
   // Órdenes de compra por despachar (guías y órdenes en Bsale).
   const [despachos, setDespachos] = useState([]);
   const [despacho, setDespacho] = useState(null); // { tipo: "guia" | "orden", licId, ocId } | null
+  // Guía o factura armada a mano, sin orden de compra: "guia" | "factura" | null.
+  const [libre, setLibre] = useState(null);
   const [emitidas, setEmitidas] = useState({ registro_listo: true, filas: [] });
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState("");
@@ -179,6 +182,16 @@ export default function Facturacion() {
         />
       )}
 
+      {libre && (
+        <DocumentoLibreBsale
+          tipo={libre}
+          onCerrar={() => setLibre(null)}
+          onEmitida={(r) => {
+            setToast({ type: "success", message: `${r.tipo === "guia" ? "Guía" : "Factura"} ${r.numero} emitida en Bsale${r.registrada ? " y registrada en la cotización." : "."}` });
+            cargar();
+          }}
+        />
+      )}
       {despacho && (
         <EmitirDespachoBsale
           tipo={despacho.tipo}
@@ -197,9 +210,22 @@ export default function Facturacion() {
           <h1 className="page-title">Facturación</h1>
           <p className="page-subtitle">Desde la orden de compra: guía de despacho, factura y, si se quiere, la orden registrada en Bsale. Todo queda en su cotización.</p>
         </div>
-        <button type="button" className="btn btn-secondary" onClick={cargar} disabled={cargando}>
-          <RefreshCw size={14} className={cargando ? "spin" : ""} /> Actualizar
-        </button>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {/* Documentos libres: sin orden de compra de por medio (pedido 2026-10-03). */}
+          {estado?.puede && (
+            <>
+              <button type="button" className="btn btn-primary" onClick={() => setLibre("guia")} title="Armar una guía de despacho a mano: cliente, productos, cantidades y despacho">
+                <Plus size={14} /> Nueva guía
+              </button>
+              <button type="button" className="btn btn-primary" onClick={() => setLibre("factura")} title="Armar una factura a mano: cliente, productos, precios y forma de pago">
+                <Plus size={14} /> Nueva factura
+              </button>
+            </>
+          )}
+          <button type="button" className="btn btn-secondary" onClick={cargar} disabled={cargando}>
+            <RefreshCw size={14} className={cargando ? "spin" : ""} /> Actualizar
+          </button>
+        </div>
       </div>
 
       {apagada && (
