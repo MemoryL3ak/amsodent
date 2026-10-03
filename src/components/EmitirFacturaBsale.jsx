@@ -4,6 +4,7 @@ import { AlertTriangle, CheckCircle2, ExternalLink, FileText, Info, Loader2, X }
 import { api } from "../lib/api";
 import DateFilter from "./DateFilter";
 import DropdownSelect from "./ui/DropdownSelect";
+import VistaPreviaBsale from "./VistaPreviaBsale";
 
 /* ── Emitir factura en Bsale (2026-10-02) ────────────────────────────────────
    Ventana que se abre desde Trazabilidad sobre una guía sin factura. El
@@ -169,20 +170,15 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
             </div>
           )}
           {resultado?.simulacion && (
-            <div style={{ border: "1px solid #fde68a", background: "#fffbeb", borderRadius: 10, padding: 14, display: "flex", flexDirection: "column", gap: 8 }}>
-              <div style={{ fontSize: 13.5, fontWeight: 700, color: "#92400e" }}>
-                Simulación: no se emitió nada{resultado.emision_apagada ? " (la emisión real está apagada en el servidor)" : ""}
-              </div>
-              <div style={{ fontSize: 12.5 }}>
-                Esto es exactamente lo que se le enviaría a Bsale: factura por {clp(resultado.totales?.total)}, con vencimiento el {fechaCL(resultado.fecha_vencimiento)}.
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <div style={{ border: "1px solid #fde68a", background: "#fffbeb", borderRadius: 10, padding: "10px 14px", fontSize: 12.5, color: "#92400e" }}>
+                <b>Simulación: no se emitió nada{resultado.emision_apagada ? " (la emisión real está apagada en el servidor)" : ""}.</b>
                 {!apagada ? " Si está bien, emítela con el botón «Emitir factura»." : ""}
               </div>
-              <pre style={{ margin: 0, fontSize: 11.5, background: "#fff", border: "1px solid var(--border)", borderRadius: 8, padding: 10, maxHeight: 220, overflow: "auto", whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
-                {JSON.stringify(resultado.solicitud, null, 2)}
-              </pre>
+              {/* El documento como quedaría, en palabras; el JSON queda plegado. */}
+              <VistaPreviaBsale vista={resultado.vista} solicitud={resultado.solicitud} />
             </div>
           )}
-
           {!resultado?.emitida && (
             <>
               {cargando && (

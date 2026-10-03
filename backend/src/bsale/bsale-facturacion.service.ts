@@ -160,13 +160,13 @@ export class BsaleFacturacionService {
     return crudo.split(',').map((r) => r.trim()).filter(Boolean);
   }
 
-  private async rolDe(userId: string): Promise<string> {
+  async rolDe(userId: string): Promise<string> {
     const { data } = await this.supabase.getClient().from('profiles').select('rol').eq('id', userId).maybeSingle();
     const rol = String((data as any)?.rol || '').trim().toLowerCase();
     return rol === 'administrador' ? 'admin' : rol;
   }
 
-  private async exigirRol(userId: string) {
+  async exigirRol(userId: string) {
     const rol = await this.rolDe(userId);
     if (!this.rolesPermitidos.includes(rol)) {
       throw new ForbiddenException('Tu perfil no puede emitir facturas en Bsale.');
@@ -194,7 +194,7 @@ export class BsaleFacturacionService {
 
   // ── Llamadas a Bsale ────────────────────────────────────────────────────
 
-  private async apiGet(path: string, reintentos = 3): Promise<any> {
+  async apiGet(path: string, reintentos = 3): Promise<any> {
     for (let intento = 0; ; intento++) {
       const ctrl = new AbortController();
       const t = setTimeout(() => ctrl.abort(), 30000);
@@ -218,7 +218,7 @@ export class BsaleFacturacionService {
     }
   }
 
-  private async todos(recurso: string, extra = ''): Promise<any[]> {
+  async todos(recurso: string, extra = ''): Promise<any[]> {
     const out: any[] = [];
     for (let offset = 0; offset < 5000; offset += 50) {
       const r = await this.apiGet(`${recurso}?limit=50&offset=${offset}${extra}`);
@@ -234,7 +234,7 @@ export class BsaleFacturacionService {
   /* Tipo de documento "factura electrónica", formas de pago activas y la tabla
      de códigos tributarios (una referencia trae el id interno de Bsale, no el
      código SII: p. ej. id 20 = 801 orden de compra, id 16 = 52 guía). */
-  private async listas() {
+  async listas() {
     if (this.cacheListas && Date.now() - this.cacheListas.ts < 10 * 60 * 1000) return this.cacheListas;
     const [tipos, formas, codigos] = await Promise.all([
       this.todos('/document_types.json', '&state=0'),
@@ -379,13 +379,21 @@ export class BsaleFacturacionService {
   async emitidas(userId: string, limite = 300) {
     await this.exigirRol(userId);
     const db = this.supabase.getClient();
-    const { data, error } = await db
+    const tope = Math.min(Math.max(Number(limite) || 300, 1), 1000);
+    let r: any = await db
       .from('bsale_emisiones')
-      .select('id, estado, numero, neto, total, fecha_emision, url_pdf, licitacion_id, guias_doc_ids, usuario, error, created_at, updated_at')
+      .select('id, tipo, origen_doc_id, estado, numero, neto, total, fecha_emision, url_pdf, licitacion_id, guias_doc_ids, usuario, error, created_at, updated_at')
       .order('id', { ascending: false })
-      .limit(Math.min(Math.max(Number(limite) || 300, 1), 1000));
-    if (error) return { registro_listo: false, filas: [] };
-    const emisiones: any[] = data || [];
+      .limit(tope);
+    if (r.error && /tipo|origen_doc_id/.test(String(r.error.message)) && /column|schema cache/i.test(String(r.error.message))) {
+      r = await db
+        .from('bsale_emisiones')
+        .select('id, estado, numero, neto, total, fecha_emision, url_pdf, licitacion_id, guias_doc_ids, usuario, error, created_at, updated_at')
+        .order('id', { ascending: false })
+        .limit(tope);
+    }
+    if (r.error) return { registro_listo: false, filas: [] };
+    const emisiones: any[] = r.data || [];
 
     const licIds = [...new Set(emisiones.map((e) => Number(e.licitacion_id)))];
     const guiaIds = [...new Set(emisiones.flatMap((e) => (e.guias_doc_ids || []).map(Number)))];
@@ -403,6 +411,8 @@ export class BsaleFacturacionService {
       registro_listo: true,
       filas: emisiones.map((e) => ({
         id: e.id,
+        tipo: e.tipo || 'factura',
+        origen_doc_id: e.origen_doc_id || null,
         estado: e.estado,
         numero: e.numero || null,
         neto: Number(e.neto) || null,
@@ -701,7 +711,7 @@ export class BsaleFacturacionService {
   }
 
   // Resume lo que define la factura; si cambia entre revisar y emitir, se frena.
-  private huellaDe(b: any): string {
+  huellaDe(b: any): string {
     const base = JSON.stringify({
       c: b.cliente?.id || 0,
       t: b.tipo_documento_id,
@@ -783,6 +793,7 @@ export class BsaleFacturacionService {
 
     if (!real) {
       const solicitud = armarSolicitud(b as any, { ...opciones, sales_id: `${clave}-0` });
+      const formaPago = b.formas_pago.find((f) => f.id === forma);
       return {
         simulacion: true,
         // Se pidió emitir pero el servidor tiene la emisión apagada.
@@ -790,6 +801,20 @@ export class BsaleFacturacionService {
         solicitud,
         totales: b.totales,
         fecha_vencimiento: sumarDias(fecha, dias),
+        // Lo que verá la persona: el documento como quedaría, en palabras.
+        vista: {
+          tipo: 'Factura electrónica',
+          sii: true,
+          descuenta_stock: false,
+          cliente: b.cliente,
+          lineas: b.lineas.map((l) => ({ sku: l.sku, producto: l.producto, cantidad: l.cantidad, neto_unitario: l.neto_unitario, neto: l.neto, guia: l.guia })),
+          totales: b.totales,
+          referencias: b.referencias.map((r) => ({ razon: r.razon, numero: r.numero, fecha: r.fecha })),
+          forma_pago: formaPago?.nombre || null,
+          fecha_emision: fecha,
+          vencimiento: sumarDias(fecha, dias),
+          notas: ['Las líneas quedan enlazadas a la guía: el stock no se descuenta otra vez.'],
+        },
       };
     }
 
@@ -810,6 +835,7 @@ export class BsaleFacturacionService {
     const fila = {
       sales_id: salesId,
       clave,
+      tipo: 'factura',
       licitacion_id: licId,
       guias_doc_ids: guiaIds,
       estado: 'enviando',
@@ -829,7 +855,12 @@ export class BsaleFacturacionService {
       if (error) throw new BadRequestException(error.message);
       emisionId = (previa as any).id;
     } else {
-      const { data, error } = await db.from('bsale_emisiones').insert([fila]).select('id').single();
+      let { data, error } = await db.from('bsale_emisiones').insert([fila]).select('id').single();
+      // Migración 20261004 (columna tipo) sin aplicar: la factura se registra igual.
+      if (error && /tipo/.test(String(error.message)) && /column|schema cache/i.test(String(error.message))) {
+        const { tipo: _t, ...sinTipo } = fila;
+        ({ data, error } = await db.from('bsale_emisiones').insert([sinTipo]).select('id').single());
+      }
       // La restricción única sobre sales_id corta dos clics simultáneos.
       if (error) throw new ConflictException('Ya hay una emisión en curso para esta guía.');
       emisionId = (data as any).id;
@@ -893,12 +924,16 @@ export class BsaleFacturacionService {
   /* POST del documento. Un rechazo con respuesta (4xx) es un error claro; si
      no hay respuesta o es 5xx, NO se sabe si Bsale alcanzó a emitir: se marca
      `incierta` y no se reintenta solo. */
-  private async apiPostDocumento(solicitud: Record<string, any>): Promise<any> {
+  private apiPostDocumento(solicitud: Record<string, any>): Promise<any> {
+    return this.apiPost('/documents.json', solicitud);
+  }
+
+  async apiPost(ruta: string, solicitud: Record<string, any>): Promise<any> {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), 60000);
     let res: Response;
     try {
-      res = await fetch(`${this.base}/v1/documents.json`, {
+      res = await fetch(`${this.base}/v1${ruta}`, {
         method: 'POST',
         headers: { access_token: this.token, Accept: 'application/json', 'Content-Type': 'application/json' },
         body: JSON.stringify(solicitud),
