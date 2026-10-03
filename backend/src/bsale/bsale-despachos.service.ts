@@ -684,7 +684,7 @@ export class BsaleDespachosService {
   // ── Emisión real (común) ───────────────────────────────────────────────
 
   async emitirReal(p: {
-    usuario: { id: string; email: string }; clave: string; salesId: string; tipo: 'guia' | 'nota_venta' | 'factura' | 'boleta'; ruta: string;
+    usuario: { id: string; email: string }; clave: string; salesId: string; tipo: 'guia' | 'nota_venta' | 'factura' | 'boleta' | 'nota_credito'; ruta: string;
     solicitud: Record<string, any>; vista: any; licitacionId: number | null; origenDocId: number | null; lineas: any[];
     registrar: (doc: any, pdf: { path: string; size: number } | null) => Promise<number | null>;
     verificar: (doc: any) => Promise<string[]>; sinPdf?: boolean; bucket?: string;
@@ -730,10 +730,12 @@ export class BsaleDespachosService {
       if (incierta) throw new BadGatewayException('Bsale no respondió y no se sabe si el documento se emitió. Revisa en Bsale antes de volver a intentar.');
       throw new BadRequestException(`Bsale rechazó el documento: ${String(e?.message || e).slice(0, 400)}`);
     }
-    // /shippings.json devuelve el despacho con su guía adentro; /documents.json, el documento.
-    let doc: any = respuesta?.guide || respuesta?.document || respuesta;
-    if (doc && !doc.number && respuesta?.guide?.id) {
-      try { doc = await this.facturacion.apiGet(`/documents/${Number(respuesta.guide.id)}.json`); } catch { /* se sigue con lo que hay */ }
+    // /shippings.json devuelve el despacho con su guía adentro; /returns.json, la
+    // devolución con su nota de crédito; /documents.json, el documento.
+    let doc: any = respuesta?.guide || respuesta?.credit_note || respuesta?.document || respuesta;
+    const idInterno = Number(respuesta?.guide?.id || respuesta?.credit_note?.id) || 0;
+    if (doc && !doc.number && idInterno) {
+      try { doc = await this.facturacion.apiGet(`/documents/${idInterno}.json`); } catch { /* se sigue con lo que hay */ }
     }
     const emitida = {
       estado: 'emitida', respuesta, bsale_id: Number(doc?.id) || null, numero: doc?.number != null ? String(doc.number) : null,
@@ -741,7 +743,7 @@ export class BsaleDespachosService {
       fecha_emision: epochAFecha(p.solicitud.emissionDate), updated_at: new Date().toISOString(),
     };
     await db.from('bsale_emisiones').update(emitida).eq('id', emisionId);
-    this.logger.log(`${p.tipo === 'guia' ? 'Guía' : p.tipo === 'factura' ? 'Factura' : p.tipo === 'boleta' ? 'Boleta' : 'Nota de venta'} ${emitida.numero} emitida en Bsale (${p.licitacionId ? `cotización ${p.licitacionId}` : 'libre'}) por ${p.usuario.email}`);
+    this.logger.log(`${p.tipo === 'guia' ? 'Guía' : p.tipo === 'factura' ? 'Factura' : p.tipo === 'boleta' ? 'Boleta' : p.tipo === 'nota_credito' ? 'Nota de crédito' : 'Nota de venta'} ${emitida.numero} emitida en Bsale (${p.licitacionId ? `cotización ${p.licitacionId}` : 'libre'}) por ${p.usuario.email}`);
 
     const avisos = await p.verificar(doc);
     let pdf: { path: string; size: number } | null = null;

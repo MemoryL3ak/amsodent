@@ -55,7 +55,7 @@ export default function VistaPreviaBsale({ vista, solicitud, titulo = "Así qued
         <div style={etiqueta}>{titulo}</div>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
           <Chip ok={vista.sii} texto={vista.sii ? "Va al SII" : "No va al SII"} />
-          <Chip ok={vista.descuenta_stock} texto={vista.descuenta_stock ? "Descuenta stock" : "No mueve stock"} invertir />
+          <Chip ok={vista.descuenta_stock} texto={vista.stock_texto || (vista.descuenta_stock ? "Descuenta stock" : "No mueve stock")} invertir />
         </div>
       </div>
 
@@ -80,7 +80,7 @@ export default function VistaPreviaBsale({ vista, solicitud, titulo = "Así qued
         <div className="dte-meta">
           <Dato nombre="Fecha de emisión" valor={fechaCL(vista.fecha_emision)} />
           {vista.vencimiento && <Dato nombre="Vencimiento" valor={fechaCL(vista.vencimiento)} />}
-          {vista.forma_pago && <Dato nombre="Forma de pago" valor={vista.forma_pago} />}
+          {vista.forma_pago && <Dato nombre={vista.forma_pago_titulo || "Forma de pago"} valor={vista.forma_pago} />}
           {vista.despacho?.tipo_traslado && <Dato nombre="Tipo de traslado" valor={vista.despacho.tipo_traslado} />}
           {vista.vendedor && <Dato nombre="Vendedor" valor={vista.vendedor} />}
         </div>

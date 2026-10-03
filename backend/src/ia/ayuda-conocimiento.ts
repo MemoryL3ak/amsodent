@@ -290,8 +290,14 @@ boleta/factura registrada y, si se pagó, su comprobante de pago; a crédito
 queda por cobrar en Seguimiento de Pagos. VISTA PREVIA: al simular, el
 documento se ve con su formato (emisor AMSODENT MEDICAL SPA, recuadro del SII,
 receptor, referencias con folio y razón, detalle y totales); folio y timbre
-los asigna el SII al emitir. ANULAR: factura o boleta con nota de crédito en
-Bsale; la guía se anula en Bsale. Una factura libre sin guía descuenta stock en Bsale; si
+los asigna el SII al emitir. ANULAR DOCUMENTO (botón arriba o «Anular» en cada
+factura/boleta de Emitidas): anula una factura o boleta COMPLETA con nota de
+crédito en Bsale; se busca por tipo y N° (también las hechas a mano en Bsale),
+se escribe el motivo y se elige qué pasa con el dinero (rebajar la deuda,
+devolver el dinero o sin movimiento); simular y después emitir. Bsale
+reingresa el stock. Si está en una cotización, la nota de crédito queda ahí
+colgada de la factura y Seguimiento de Pagos la descuenta. No se anula dos
+veces. Las GUÍAS se anulan en Bsale (no hay forma documentada por la API). Una factura libre sin guía descuenta stock en Bsale; si
 referencia una guía, no. Un producto sin SKU o cuyo SKU no está en Bsale no
 puede ir en ningún documento. El borrador de factura abre
 un borrador armado desde la guía que ya existe en Bsale: mismo cliente, mismos
