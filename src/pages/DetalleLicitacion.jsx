@@ -21,6 +21,7 @@ import DateFilter from "../components/DateFilter";
 import Select, { components } from "react-select";
 import ProductoPickerModal from "../components/ProductoPickerModal";
 import CalculadoraFlete from "../components/CalculadoraFlete";
+import BotonFichaTecnica from "../components/BotonFichaTecnica";
 import { generarPDFcotizacion } from "../utils/generarPDFcotizacion";
 import { calcularLista3 } from "../lib/listas";
 import { precioCampanaMargen } from "../lib/campanasMargen";
@@ -4314,16 +4315,24 @@ export default function EditarLicitacion() {
 
                       {/* Producto */}
                       <div className={esAdmin ? "md:col-span-4" : "md:col-span-7"}>
-                        <div className="flex items-center justify-between mb-1">
+                        <div className="flex items-center justify-between mb-1 cab-producto-ficha" style={{ gap: "4px 6px", flexWrap: "wrap" }}>
+                          <div style={{ display: "inline-flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
                           <label className="block text-xs text-gray-600">
                             Producto *
                           </label>
+                          {/* Ficha técnica del producto de la línea (2026-10-03). */}
+                          <BotonFichaTecnica
+                            producto={productos.find((p) => String(p.sku || "").trim() && String(p.sku || "").trim() === String(it.sku || "").trim()) || productos.find((p) => String(p.nombre || "").trim() === String(it.producto || "").trim() && String(it.producto || "").trim()) || null}
+                            onError={(m) => setToast({ type: "error", message: m })}
+                          />
+                          </div>
                           {esEditable && (
                             <button
                               type="button"
                               onClick={() => setPickerIndex(index)}
                               title="Buscar producto en el catálogo"
                               style={{
+                                marginLeft: "auto",
                                 display: "inline-flex",
                                 alignItems: "center",
                                 gap: 5,

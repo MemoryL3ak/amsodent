@@ -3739,3 +3739,11 @@ a.ayuda-ruta-chip:hover { background: var(--primary-mid); }
 
 /* Giro del icono mientras algo se esta recargando (boton Actualizar). */
 @keyframes girar { to { transform: rotate(360deg); } }
+
+/* Cabecera "Producto *" de las líneas de cotización con el botón Ficha (2026-10-03).
+   En la columna angosta (vista admin) el botón queda solo con el ícono. */
+.cab-producto-ficha { container-type: inline-size; }
+@container (max-width: 145px) {
+  .cab-producto-ficha .bft-texto { display: none; }
+  .cab-producto-ficha .boton-ficha-tecnica { padding: 3px 6px !important; }
+}

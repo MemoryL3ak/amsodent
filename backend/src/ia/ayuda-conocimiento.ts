@@ -109,7 +109,8 @@ Detalle (/detalle/:id).
 
 ### Nueva Cotización (/crear)
 Formulario de creación: cliente, tipo de compra, condición de venta, lista de
-precios, ítems (buscador por SKU con modal de productos), flete estimado con
+precios, ítems (buscador por SKU con modal de productos; botón "Ficha" en cada
+línea para abrir la ficha técnica en PDF del producto), flete estimado con
 calculadora por courier, margen por línea visible para todos. Si hay productos
 equivalentes se ofrece crear una cotización hija (jerarquía madre/hija). Puede
 nacer vinculada a una postulación de Mercado Público o a una solicitud del

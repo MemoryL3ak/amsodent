@@ -158,7 +158,7 @@ export const GRUPOS_MANUAL = [
         ],
         funciones: [
           "Datos de negocio: tipo de cliente (Entidad Pública / Cliente Particular), tipo de compra, condición de venta (Contado / 30 días), lista de precios 1, 2 o 3.",
-          "Ítems por SKU con buscador y modal de productos; los precios de campaña vigente se aplican solos.",
+          "Ítems por SKU con buscador y modal de productos; los precios de campaña vigente se aplican solos. Cada línea con un producto del catálogo tiene el botón «Ficha» (junto a «Buscar catálogo») que abre su ficha técnica en PDF; también en el detalle de la cotización.",
           "Margen por línea visible para todos; el costo del ítem queda congelado y es el que usarán los paneles y comisiones para siempre.",
           "Flete estimado con calculadora por courier (peso/volumen de los productos). Flete GRATIS: destino San Bernardo siempre (sin mínimo), o compra ≥ $70.000 (bruto) con destino en la Región Metropolitana.",
           "Cliente particular puede marcar «Flete por pagar»: la cotización no cobra flete (el cliente lo paga al courier al recibir) y el PDF lo declara como ítem «Despacho / Flete — POR PAGAR»; con esa opción no se exige calcular el flete.",

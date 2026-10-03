@@ -75,13 +75,15 @@ async function resolverImagenProducto(producto) {
 /* Abre la ficha en una pestaña nueva (2026-10-03: botón "Abrir ficha técnica"
    al crear un producto). La pestaña se abre ANTES de generar el PDF, todavía
    dentro del clic, para que el navegador no la bloquee como ventana emergente. */
-export async function abrirFichaTecnica(producto) {
+export async function abrirFichaTecnica(producto, opciones = {}) {
   const ventana = window.open("", "_blank");
   if (ventana) {
     try { ventana.document.title = "Ficha técnica"; ventana.document.body.innerHTML = '<p style="font-family:sans-serif;padding:24px">Generando la ficha técnica…</p>'; } catch { /* otra pestaña */ }
   }
   try {
-    const blob = await descargarFichaTecnica(producto, { soloBlob: true });
+    // `cargar`: trae el producto completo (con los textos de la ficha) ya con la pestaña abierta.
+    const completo = opciones.cargar ? await opciones.cargar() : producto;
+    const blob = await descargarFichaTecnica(completo || producto, { soloBlob: true });
     const url = URL.createObjectURL(blob);
     if (ventana && !ventana.closed) ventana.location.href = url;
     else window.open(url, "_blank");
