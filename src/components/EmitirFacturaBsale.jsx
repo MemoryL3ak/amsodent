@@ -365,7 +365,7 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
                     )}
                     <div style={{ flex: "2 1 240px", minWidth: 0, fontSize: 12, color: "var(--text-muted)", lineHeight: 1.45, overflowWrap: "anywhere" }}>
                       La factura referencia:{" "}
-                      {borrador.referencias.map((r) => `${r.razon} ${r.codigo_sii === 801 && borrador.oc_editable ? (oc.trim().toUpperCase() || r.numero) : r.numero}`).join(" · ") || "nada"}.
+                      {borrador.referencias.map((r) => (r.codigo_sii === 801 ? `orden de compra ${borrador.oc_editable ? (oc.trim().toUpperCase() || r.numero) : r.numero}` : `guía ${r.folio}`)).join(" · ") || "nada"}.
                       Las líneas quedan enlazadas a la guía, así que el stock no se descuenta de nuevo.
                     </div>
                   </div>

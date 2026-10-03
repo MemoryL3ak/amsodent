@@ -369,6 +369,11 @@ export default function DocumentoLibreBsale({ tipo = "guia", onCerrar, onEmitida
               )}
               <div style={caja}>
                 <span style={etiqueta}>Referencias y registro (opcional)</span>
+                <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 8 }}>
+                  {esGuia
+                    ? <>En la referencia a la orden de compra, la cotización va como <b>folio</b> y el N° de orden de compra como <b>razón</b>.</>
+                    : <>El N° de orden de compra va como <b>folio</b> de la referencia (así Mercado Público cruza la factura con la OC).</>}
+                </div>
                 <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
                   {campo(refOc, setRefOc, "numero", "N° orden de compra", { maxLength: 18, placeholder: "Ej: 1293138-180-AG26" })}
                   <div style={{ flex: "1 1 150px", minWidth: 0 }}>
@@ -383,7 +388,7 @@ export default function DocumentoLibreBsale({ tipo = "guia", onCerrar, onEmitida
                     </div>
                   )}
                   <label style={{ flex: "1 1 150px", minWidth: 0 }}>
-                    <span style={etiqueta}>Cotización # (para Trazabilidad)</span>
+                    <span style={etiqueta}>{esGuia ? "Cotización # (folio de la referencia y Trazabilidad)" : "Cotización # (para Trazabilidad)"}</span>
                     <input className="input" inputMode="numeric" value={cotizacion} onChange={(e) => setCotizacion(e.target.value.replace(/[^\d]/g, ""))} disabled={!!enviando} placeholder="Ej: 5286" style={{ width: "100%" }} />
                   </label>
                 </div>

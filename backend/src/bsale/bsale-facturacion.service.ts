@@ -87,6 +87,55 @@ export function folioGuia(v: any): string {
 export const normOc = (v: any) => String(v ?? '').replace(/\s+/g, '').toUpperCase();
 // El SII admite hasta 18 caracteres en el folio de una referencia.
 const MAX_FOLIO_REF = 18;
+
+/* Cómo van las referencias a Bsale (regla de Ariel, 2026-10-03, tras la
+   primera guía real, y lo que muestran los documentos hechos a mano):
+   - GUÍA y NOTA DE VENTA: en la referencia a la ORDEN DE COMPRA, el FOLIO
+     lleva la cotización (su código de Mercado Público o, si no tiene, su número
+     interno) y la RAZÓN lleva el número de la orden de compra.
+   - FACTURA: el número de la orden de compra va en el FOLIO (Mercado Público
+     cruza la factura con la OC por ese campo; así están las 76 facturas reales
+     con OC) y también en la razón.
+   - Referencia a una GUÍA (52): el folio es el de la guía.
+   `numero` es siempre el N° de la OC (o de la guía), para comparar y avisar. */
+export type Referencia = { codigo_sii: number; folio: string; numero: string; razon: string; fecha: string | null };
+
+export function referenciaOcGuia(folioCotizacion: string, numeroOc: string, fecha: string | null): Referencia {
+  return { codigo_sii: 801, folio: normOc(folioCotizacion) || normOc(numeroOc), numero: normOc(numeroOc), razon: normOc(numeroOc), fecha };
+}
+
+export function referenciaOcFactura(numeroOc: string, fecha: string | null): Referencia {
+  return { codigo_sii: 801, folio: normOc(numeroOc), numero: normOc(numeroOc), razon: normOc(numeroOc), fecha };
+}
+
+export function referenciaGuia(numeroGuia: string, fecha: string | null): Referencia {
+  return { codigo_sii: 52, folio: String(numeroGuia).trim(), numero: String(numeroGuia).trim(), razon: 'Guía de despacho', fecha };
+}
+
+export function referenciaParaBsale(r: Referencia, emision: number) {
+  return { number: r.folio, referenceDate: r.fecha ? fechaAEpoch(r.fecha) : emision, reason: r.razon, codeSii: r.codigo_sii };
+}
+
+// Folio con que se identifica una cotización en una referencia.
+export const folioCotizacion = (lic: any) => normOc(lic?.id_licitacion) || String(lic?.id || '').trim();
+
+/* La orden de compra que trae una referencia leída de Bsale. En las guías del
+   sistema va en la razón (el folio es la cotización); en las hechas a mano va
+   en los dos campos, o en el folio con una razón libre ("HES 1026670275",
+   "DISPOSITO MEDICO") o un rótulo ("Orden de compra"). Se prefiere lo que tenga
+   forma de OC de Mercado Público (1234-56-AG26); si nada la tiene, la razón
+   solo vale cuando trae dígitos. */
+const ES_OC_MP = /^\d+-\d+-[A-Z]{2}\d{2}$/;
+export function ocDeReferencia(r: any): string {
+  const folio = normOc(r?.number);
+  const razon = normOc(r?.reason);
+  if (!razon || razon === folio) return folio;
+  if (ES_OC_MP.test(razon)) return razon;
+  if (ES_OC_MP.test(folio)) return folio;
+  return /\d/.test(razon) ? razon : folio;
+}
+
+export const referenciaVista = (r: Referencia) => ({ tipo: r.codigo_sii === 801 ? 'Orden de compra' : 'Guía de despacho', folio: r.folio, razon: r.codigo_sii === 801 ? r.razon : '', fecha: r.fecha });
 export const normRut = (v: any) => String(v ?? '').replace(/[^0-9kK]/g, '').toUpperCase();
 
 /* Totales como los calcula el SII para una factura afecta: el IVA es el 19 %
@@ -105,7 +154,7 @@ export function armarSolicitud(
     sucursal_id: number | null;
     cliente: { id: number };
     lineas: { detalle_id: number; cantidad: number }[];
-    referencias: { numero: string; fecha: string | null; razon: string; codigo_sii: number }[];
+    referencias: Referencia[];
     totales: { total: number };
   },
   o: { fecha_emision: string; dias_vencimiento: number; forma_pago_id: number; sales_id: string },
@@ -120,12 +169,7 @@ export function armarSolicitud(
     // Sin `dispatch`: la guía ya despachó y rebajó el stock.
     details: b.lineas.map((l) => ({ detailId: l.detalle_id, quantity: l.cantidad })),
     payments: [{ paymentTypeId: o.forma_pago_id, amount: b.totales.total, recordDate: emision }],
-    references: b.referencias.map((r) => ({
-      number: r.numero,
-      referenceDate: r.fecha ? fechaAEpoch(r.fecha) : emision,
-      reason: r.razon,
-      codeSii: r.codigo_sii,
-    })),
+    references: b.referencias.map((r) => referenciaParaBsale(r, emision)),
     salesId: o.sales_id,
   };
   if (b.sucursal_id) solicitud.officeId = b.sucursal_id;
@@ -486,7 +530,7 @@ export class BsaleFacturacionService {
 
     const guias: any[] = [];
     const lineas: any[] = [];
-    const referencias: { numero: string; fecha: string | null; razon: string; codigo_sii: number }[] = [];
+    const referencias: Referencia[] = [];
     const clientes = new Map<number, any>();
     const sucursales = new Set<number>();
     const ocsSistema: string[] = []; // OC del sistema que no coinciden con la de la guía
@@ -543,28 +587,28 @@ export class BsaleFacturacionService {
       const ocSistema = ocs.find((o) => o.id === g.deriva_de_id);
       if (refsOc.length) {
         for (const r of refsOc) {
-          const numero = normOc(r.number);
+          const numero = ocDeReferencia(r);
           if (numero && !referencias.some((x) => x.codigo_sii === DTE_OC && x.numero === numero)) {
-            referencias.push({ numero, fecha: epochAFecha(r.referenceDate), razon: 'Orden de compra', codigo_sii: DTE_OC });
+            referencias.push(referenciaOcFactura(numero, epochAFecha(r.referenceDate)));
           }
         }
         // La guía se digitó en Bsale y la OC en el sistema: si no dicen lo
         // mismo, una de las dos tiene un error de tipeo y hay que mirarlo.
         const delSistema = normOc(ocSistema?.numero);
-        if (delSistema && !refsOc.some((r: any) => normOc(r.number) === delSistema)) {
+        if (delSistema && !refsOc.some((r: any) => ocDeReferencia(r) === delSistema)) {
           avisos.push({
             codigo: 'oc_distinta',
-            mensaje: `La guía ${doc.number} referencia en Bsale la orden de compra ${normOc(refsOc[0].number)}, pero en el sistema está cargada como ${delSistema}. Revisa cuál es la correcta: puedes corregirla antes de emitir.`,
+            mensaje: `La guía ${doc.number} referencia en Bsale la orden de compra ${ocDeReferencia(refsOc[0])}, pero en el sistema está cargada como ${delSistema}. Revisa cuál es la correcta: puedes corregirla antes de emitir.`,
           });
           if (!ocsSistema.includes(delSistema)) ocsSistema.push(delSistema);
         }
       } else if (ocSistema?.numero) {
         const numero = normOc(ocSistema.numero);
         if (!referencias.some((x) => x.codigo_sii === DTE_OC && x.numero === numero)) {
-          referencias.push({ numero, fecha: String(ocSistema.fecha_oc || '').slice(0, 10) || null, razon: 'Orden de compra', codigo_sii: DTE_OC });
+          referencias.push(referenciaOcFactura(numero, String(ocSistema.fecha_oc || '').slice(0, 10) || null));
         }
       }
-      referencias.push({ numero: String(doc.number), fecha: epochAFecha(doc.emissionDate), razon: 'Guía de despacho', codigo_sii: DTE_GUIA });
+      referencias.push(referenciaGuia(String(doc.number), epochAFecha(doc.emissionDate)));
 
       // Cuadre con la orden de compra del sistema (aviso, no bloquea: una OC
       // puede despacharse en varias guías).
@@ -581,8 +625,8 @@ export class BsaleFacturacionService {
       avisos.push({ codigo: 'sin_oc', mensaje: 'No se encontró la orden de compra: la factura saldría sin esa referencia.' });
     }
     for (const r of referencias) {
-      if (r.numero.length > MAX_FOLIO_REF) {
-        avisos.push({ codigo: 'folio_largo', mensaje: `La referencia ${r.numero} tiene más de ${MAX_FOLIO_REF} caracteres, que es el máximo que acepta el SII.` });
+      if (r.folio.length > MAX_FOLIO_REF) {
+        avisos.push({ codigo: 'folio_largo', mensaje: `El folio de referencia ${r.folio} tiene más de ${MAX_FOLIO_REF} caracteres, que es el máximo que acepta el SII.` });
       }
     }
 
@@ -716,7 +760,7 @@ export class BsaleFacturacionService {
       c: b.cliente?.id || 0,
       t: b.tipo_documento_id,
       l: (b.lineas || []).map((l: any) => [l.detalle_id, l.cantidad, l.neto]),
-      r: (b.referencias || []).map((r: any) => [r.codigo_sii, r.numero]),
+      r: (b.referencias || []).map((r: any) => [r.codigo_sii, r.folio, r.numero]),
       n: b.totales?.total || 0,
     });
     return createHash('sha256').update(base).digest('hex').slice(0, 24);
@@ -786,7 +830,7 @@ export class BsaleFacturacionService {
     if (ocNueva) {
       if (!b.oc_editable) throw new BadRequestException('Esta factura no lleva una única orden de compra que corregir.');
       if (ocNueva.length > MAX_FOLIO_REF) throw new BadRequestException(`El N° de orden de compra no puede tener más de ${MAX_FOLIO_REF} caracteres.`);
-      b.referencias = b.referencias.map((r) => (r.codigo_sii === DTE_OC ? { ...r, numero: ocNueva } : r));
+      b.referencias = b.referencias.map((r) => (r.codigo_sii === DTE_OC ? referenciaOcFactura(ocNueva, r.fecha) : r));
     }
 
     const opciones = { fecha_emision: fecha, dias_vencimiento: dias, forma_pago_id: forma };
@@ -809,7 +853,7 @@ export class BsaleFacturacionService {
           cliente: b.cliente,
           lineas: b.lineas.map((l) => ({ sku: l.sku, producto: l.producto, cantidad: l.cantidad, neto_unitario: l.neto_unitario, neto: l.neto, guia: l.guia })),
           totales: b.totales,
-          referencias: b.referencias.map((r) => ({ razon: r.razon, numero: r.numero, fecha: r.fecha })),
+          referencias: b.referencias.map(referenciaVista),
           forma_pago: formaPago?.nombre || null,
           fecha_emision: fecha,
           vencimiento: sumarDias(fecha, dias),

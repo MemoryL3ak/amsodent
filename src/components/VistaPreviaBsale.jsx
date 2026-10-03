@@ -46,7 +46,7 @@ export default function VistaPreviaBsale({ vista, solicitud, titulo = "Así qued
           {vista.forma_pago && <div style={{ fontSize: 12.5 }}>Forma de pago <b>{vista.forma_pago}</b></div>}
           {(vista.referencias || []).length > 0 && (
             <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4 }}>
-              Referencias: {vista.referencias.map((r) => `${r.razon} ${r.numero}${r.fecha ? ` (${fechaCL(r.fecha)})` : ""}`).join(" · ")}
+              Referencias: {vista.referencias.map((r) => `${r.tipo || r.razon} ${r.folio ?? r.numero}${r.razon && r.tipo && r.razon !== r.folio ? ` (folio ${r.folio} · razón ${r.razon})` : ""}${r.fecha ? ` · ${fechaCL(r.fecha)}` : ""}`).join(" · ")}
             </div>
           )}
         </div>
