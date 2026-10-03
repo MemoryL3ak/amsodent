@@ -447,7 +447,7 @@ export const GRUPOS_MANUAL = [
           "Emitir factura: abre el borrador armado desde la guía de Bsale (mismo cliente y productos, con referencia a la orden de compra y a la guía). Se elige fecha, plazo y forma de pago, se confirma, y la factura electrónica se emite, se guarda su PDF y queda registrada en la cotización. No descuenta stock de nuevo.",
           "Bloqueos: no deja emitir si la guía ya está facturada (en el sistema o en Bsale), si no existe en Bsale o si la guía de Bsale es de otro cliente (número mal digitado).",
           "Emitidas: historial de todo lo emitido desde el sistema (facturas, guías y órdenes) —quién, cuándo, N° y enlace a Bsale— y de los intentos que no resultaron, con su motivo.",
-          "Dos botones en cada borrador: «Simular» muestra el documento como quedaría (cliente, productos, totales, referencias), sin emitir ni guardar nada; «Emitir» emite de verdad y exige marcar la casilla de confirmación.",
+          "Dos pasos en cada borrador: primero «Simular» muestra el documento como quedaría (cliente, productos, totales, referencias), sin emitir ni guardar nada; solo con esa simulación a la vista aparece «Emitir … oficial», que emite de verdad y exige marcar la casilla de confirmación. Si se cambia algún dato después de simular, hay que simular de nuevo.",
           "Un producto sin SKU, o cuyo SKU no está en Bsale, no puede ir en una guía ni en una orden: se avisa y hay que corregirlo en la cotización.",
           "Anular una factura se hace en Bsale con nota de crédito.",
         ],

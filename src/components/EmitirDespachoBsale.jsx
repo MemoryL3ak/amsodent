@@ -13,8 +13,10 @@ import VistaPreviaBsale from "./VistaPreviaBsale";
      esta guía, a dónde se despacha y con qué tipo de traslado.
    · tipo "orden": registra la orden del cliente en Bsale como nota de venta
      (todos los productos, sin elegir cantidades).
-   Dos botones: Simular (muestra el documento como quedaría, sin emitir) y
-   Emitir (real, con casilla de confirmación). */
+   Dos pasos, en orden: 1) Simular muestra el documento como quedaría, sin
+   emitir; 2) solo con esa simulación a la vista aparece Emitir (real, con
+   casilla de confirmación). Si se cambia algo después de simular, hay que
+   simular de nuevo. */
 
 const clp = (n) => `$${Math.round(Number(n) || 0).toLocaleString("es-CL")}`;
 const aFecha = (iso) => (iso ? new Date(`${iso}T00:00:00`) : undefined);
@@ -30,9 +32,15 @@ export default function EmitirDespachoBsale({ tipo = "guia", licitacionId, ocDoc
   const [despacho, setDespacho] = useState(null);
   const [cliente, setCliente] = useState(null);
   const [fecha, setFecha] = useState("");
-  const [confirmo, setConfirmo] = useState(false);
   const [enviando, setEnviando] = useState("");
   const [resultado, setResultado] = useState(null);
+  // La simulación y la confirmación valen para estos datos; si cambian, caducan.
+  const firma = JSON.stringify({ cantidades, despacho, cliente, fecha });
+  const [simuladoCon, setSimuladoCon] = useState(null);
+  const [confirmadoCon, setConfirmadoCon] = useState(null);
+  const simulacionVigente = !!resultado?.simulacion && simuladoCon === firma;
+  const confirmo = confirmadoCon === firma;
+  const setConfirmo = (v) => setConfirmadoCon(v ? firma : null);
 
   useEffect(() => {
     let vivo = true;
@@ -89,6 +97,7 @@ export default function EmitirDespachoBsale({ tipo = "guia", licitacionId, ocDoc
         ...(cliente?.nuevo ? { cliente } : {}),
       });
       setResultado(r);
+      if (r?.simulacion) setSimuladoCon(firma);
       if (r?.emitida) onEmitida?.(r);
     } catch (e) {
       setError(e?.message || (accion === "simular" ? "No se pudo simular." : "No se pudo emitir."));
@@ -101,7 +110,7 @@ export default function EmitirDespachoBsale({ tipo = "guia", licitacionId, ocDoc
   const faltaDespacho = esGuia && despacho && (!despacho.direccion?.trim() || !despacho.comuna?.trim() || !despacho.ciudad?.trim() || !despacho.destinatario?.trim() || !despacho.tipo_traslado_id);
   const faltaCliente = cliente?.nuevo && (!cliente.rut?.trim() || !cliente.razon_social?.trim() || !cliente.giro?.trim() || !cliente.direccion?.trim() || !cliente.comuna?.trim());
   const completo = !cargando && !enviando && borrador && !bloqueada && fecha && !excesos.length && !faltaDespacho && !faltaCliente && (esGuia ? lineasElegidas.length > 0 : true);
-  const puedeEmitir = completo && !apagada && confirmo;
+  const puedeEmitir = completo && !apagada && simulacionVigente && confirmo;
   const titulo = esGuia ? "Emitir guía de despacho en Bsale" : "Registrar la orden en Bsale";
   const verbo = esGuia ? "Emitir guía" : "Registrar orden";
 
@@ -149,8 +158,9 @@ export default function EmitirDespachoBsale({ tipo = "guia", licitacionId, ocDoc
           {resultado?.simulacion && (
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               <div style={{ border: "1px solid #fde68a", background: "#fffbeb", borderRadius: 10, padding: "10px 14px", fontSize: 12.5, color: "#92400e" }}>
-                <b>Simulación: no se emitió nada{resultado.emision_apagada ? " (la emisión real está apagada en el servidor)" : ""}.</b>
-                {!apagada ? ` Si está bien, ${esGuia ? "emite la guía" : "registra la orden"} con el botón de abajo.` : ""}
+                <b>Paso 1 listo — simulación: no se emitió nada{resultado.emision_apagada ? " (la emisión real está apagada en el servidor)" : ""}.</b>
+                {!apagada && simulacionVigente ? ` Si está bien, abajo puedes ${esGuia ? "emitir la guía oficial" : "registrar la orden oficial"}.` : ""}
+                {!simulacionVigente ? " Cambiaste datos después de simular: vuelve a simular antes de emitir." : ""}
               </div>
               <VistaPreviaBsale vista={resultado.vista} solicitud={resultado.solicitud} />
             </div>
@@ -300,11 +310,16 @@ export default function EmitirDespachoBsale({ tipo = "guia", licitacionId, ocDoc
                     {esGuia ? "Bsale descuenta el stock al emitir la guía; la factura se emite después desde la guía." : "La nota de venta no va al SII ni mueve stock."}
                   </div>
 
-                  {!apagada && !bloqueada && (
+                  {!apagada && !bloqueada && simulacionVigente && (
                     <label style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 13, border: "1px solid var(--border)", borderRadius: 10, padding: "10px 12px", cursor: "pointer" }}>
                       <input type="checkbox" checked={confirmo} onChange={(e) => setConfirmo(e.target.checked)} disabled={!!enviando} style={{ marginTop: 2 }} />
-                      <span><b>Para {esGuia ? "emitir" : "registrar"}:</b> revisé el cliente, los productos y las cantidades.{esGuia ? " Entiendo que la guía va al SII y descuenta stock, y que solo se anula en Bsale." : ""}</span>
+                      <span><b>Paso 2 — {esGuia ? "emitir la guía oficial" : "registrar la orden oficial"}:</b> la simulación está correcta.{esGuia ? " Entiendo que la guía va al SII y descuenta stock, y que solo se anula en Bsale." : ""}</span>
                     </label>
+                  )}
+                  {!apagada && !bloqueada && !simulacionVigente && (
+                    <div style={{ fontSize: 12.5, color: "var(--text-muted)" }}>
+                      Primero simula (paso 1). Con la simulación a la vista podrás {esGuia ? "emitir la guía oficial" : "registrar la orden oficial"} (paso 2).
+                    </div>
                   )}
                 </>
               )}
@@ -316,12 +331,12 @@ export default function EmitirDespachoBsale({ tipo = "guia", licitacionId, ocDoc
           <button type="button" onClick={cerrar} disabled={!!enviando} className="btn btn-secondary">{resultado?.emitida ? "Cerrar" : "Cancelar"}</button>
           {!resultado?.emitida && (
             <button type="button" onClick={() => enviar("simular")} disabled={!completo} className="btn btn-secondary" style={{ opacity: completo ? 1 : 0.5, cursor: completo ? "pointer" : "not-allowed" }} title="Muestra el documento como quedaría. No emite ni guarda nada.">
-              {enviando === "simular" ? "Simulando…" : "Simular"}
+              {enviando === "simular" ? "Simulando…" : simulacionVigente ? "Simular de nuevo" : "1. Simular"}
             </button>
           )}
-          {!resultado?.emitida && !apagada && (
+          {!resultado?.emitida && !apagada && simulacionVigente && (
             <button type="button" onClick={() => enviar("emitir")} disabled={!puedeEmitir} className="btn btn-primary" style={{ height: "auto", minHeight: 36, whiteSpace: "normal", opacity: puedeEmitir ? 1 : 0.5, cursor: puedeEmitir ? "pointer" : "not-allowed" }} title={confirmo || bloqueada ? "" : "Marca la casilla de confirmación"}>
-              {enviando === "emitir" ? (esGuia ? "Emitiendo…" : "Registrando…") : `${verbo} por ${clp(totales.total)}`}
+              {enviando === "emitir" ? (esGuia ? "Emitiendo…" : "Registrando…") : `2. ${verbo} oficial por ${clp(totales.total)}`}
             </button>
           )}
         </div>

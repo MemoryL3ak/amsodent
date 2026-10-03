@@ -13,11 +13,13 @@ import VistaPreviaBsale from "./VistaPreviaBsale";
    ventana solo lo muestra y deja decidir tres cosas: fecha, plazo y forma de
    pago (más corregir el folio de la orden de compra si la guía lo trae mal).
 
-   Abajo hay dos botones. "Simular" muestra exactamente lo que se le enviaría
-   a Bsale, sin emitir ni guardar nada. "Emitir factura" emite de verdad: no
-   tiene vuelta atrás —una factura enviada al SII solo se anula con nota de
-   crédito—, así que exige marcar la casilla de confirmación. Si el servidor
-   tiene la emisión apagada (BSALE_EMISION=off), solo queda "Simular". */
+   Dos pasos, en orden. 1) "Simular" muestra el documento como quedaría, sin
+   emitir ni guardar nada. 2) Solo con esa simulación a la vista aparece
+   "Emitir factura oficial", que emite de verdad: no tiene vuelta atrás —una
+   factura enviada al SII solo se anula con nota de crédito—, así que además
+   exige marcar la casilla de confirmación. Si después de simular se cambia
+   cualquier dato, hay que simular de nuevo. Si el servidor tiene la emisión
+   apagada (BSALE_EMISION=off), solo queda simular. */
 
 const clp = (n) => `$${Math.round(Number(n) || 0).toLocaleString("es-CL")}`;
 const fechaCL = (iso) => {
@@ -48,15 +50,22 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
   const [dias, setDias] = useState("");
   const [forma, setForma] = useState("");
   const [oc, setOc] = useState("");
-  const [confirmo, setConfirmo] = useState(false);
   const [enviando, setEnviando] = useState(""); // "" | "simular" | "emitir"
   const [resultado, setResultado] = useState(null);
+  /* La simulación vale para ESTOS datos: la firma resume lo que la persona
+     decide. Simular guarda la firma; si cambia algo, la simulación caduca y
+     la confirmación también (hay que simular y confirmar de nuevo). */
+  const firma = JSON.stringify({ seleccion, fecha, dias, forma, oc: oc.trim().toUpperCase() });
+  const [simuladoCon, setSimuladoCon] = useState(null);
+  const [confirmadoCon, setConfirmadoCon] = useState(null);
+  const simulacionVigente = !!resultado?.simulacion && simuladoCon === firma;
+  const confirmo = confirmadoCon === firma;
+  const setConfirmo = (v) => setConfirmadoCon(v ? firma : null);
 
   useEffect(() => {
     let vivo = true;
     setCargando(true);
     setError("");
-    setConfirmo(false);
     api
       .post("/bsale/facturas/preparar", { licitacion_id: Number(licitacionId), guia_ids: seleccion })
       .then((b) => {
@@ -109,6 +118,7 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
         huella: borrador.huella,
       });
       setResultado(r);
+      if (r?.simulacion) setSimuladoCon(firma);
       if (r?.emitida) onEmitida?.(r);
     } catch (e) {
       setError(e?.message || (accion === "simular" ? "No se pudo simular." : "No se pudo emitir la factura."));
@@ -120,7 +130,8 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
   const cerrar = () => { if (!enviando) onCerrar?.(); };
   const completo = !cargando && !enviando && borrador && !bloqueada && fecha && dias !== "" && forma;
   const puedeSimular = completo;
-  const puedeEmitir = completo && !apagada && (borrador.recuperar || confirmo);
+  // Emitir solo después de simular estos mismos datos (o al registrar una ya emitida).
+  const puedeEmitir = completo && !apagada && (borrador.recuperar || (simulacionVigente && confirmo));
 
   return createPortal(
     <div
@@ -172,8 +183,9 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
           {resultado?.simulacion && (
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               <div style={{ border: "1px solid #fde68a", background: "#fffbeb", borderRadius: 10, padding: "10px 14px", fontSize: 12.5, color: "#92400e" }}>
-                <b>Simulación: no se emitió nada{resultado.emision_apagada ? " (la emisión real está apagada en el servidor)" : ""}.</b>
-                {!apagada ? " Si está bien, emítela con el botón «Emitir factura»." : ""}
+                <b>Paso 1 listo — simulación: no se emitió nada{resultado.emision_apagada ? " (la emisión real está apagada en el servidor)" : ""}.</b>
+                {!apagada && simulacionVigente ? " Si está bien, abajo puedes emitir la factura oficial." : ""}
+                {!simulacionVigente ? " Cambiaste datos después de simular: vuelve a simular antes de emitir." : ""}
               </div>
               {/* El documento como quedaría, en palabras; el JSON queda plegado. */}
               <VistaPreviaBsale vista={resultado.vista} solicitud={resultado.solicitud} />
@@ -358,14 +370,19 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
                     </div>
                   </div>
 
-                  {!apagada && !borrador.recuperar && !bloqueada && (
+                  {!apagada && !borrador.recuperar && !bloqueada && simulacionVigente && (
                     <label style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 13, border: "1px solid var(--border)", borderRadius: 10, padding: "10px 12px", cursor: "pointer" }}>
                       <input type="checkbox" checked={confirmo} onChange={(e) => setConfirmo(e.target.checked)} disabled={!!enviando} style={{ marginTop: 2 }} />
                       <span>
-                        <b>Para emitir:</b> revisé el cliente, los productos y los montos. Entiendo que la factura se envía al
-                        SII y que solo se puede anular con una nota de crédito.
+                        <b>Paso 2 — emitir la factura oficial:</b> la simulación está correcta. Entiendo que la factura se
+                        envía al SII y que solo se puede anular con una nota de crédito.
                       </span>
                     </label>
+                  )}
+                  {!apagada && !borrador.recuperar && !bloqueada && !simulacionVigente && (
+                    <div style={{ fontSize: 12.5, color: "var(--text-muted)" }}>
+                      Primero simula (paso 1). Con la simulación a la vista podrás emitir la factura oficial (paso 2).
+                    </div>
                   )}
                 </>
               )}
@@ -387,11 +404,11 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
               style={{ opacity: puedeSimular ? 1 : 0.5, cursor: puedeSimular ? "pointer" : "not-allowed" }}
               title="Muestra exactamente lo que se le enviaría a Bsale. No emite ni guarda nada."
             >
-              {enviando === "simular" ? "Simulando…" : "Simular"}
+              {enviando === "simular" ? "Simulando…" : simulacionVigente ? "Simular de nuevo" : "1. Simular"}
             </button>
           )}
-          {/* Emitir: la factura real. Exige la casilla de confirmación. */}
-          {!resultado?.emitida && !apagada && (
+          {/* Emitir: la factura real. Solo tras simular, y con la casilla marcada. */}
+          {!resultado?.emitida && !apagada && (borrador?.recuperar || simulacionVigente) && (
             <button
               type="button"
               onClick={() => enviar("emitir")}
@@ -404,7 +421,7 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
                 ? "Emitiendo…"
                 : borrador?.recuperar
                   ? `Registrar la factura ${borrador.recuperar.numero}`
-                  : `Emitir factura por ${clp(borrador?.totales?.total)}`}
+                  : `2. Emitir factura oficial por ${clp(borrador?.totales?.total)}`}
             </button>
           )}
         </div>
