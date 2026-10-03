@@ -5,6 +5,7 @@ import { api } from "../lib/api";
 import Toast from "../components/Toast";
 import BotonLimpiarFiltros from "../components/BotonLimpiarFiltros";
 import EmitirFacturaBsale from "../components/EmitirFacturaBsale";
+import EmitirDespachoBsale from "../components/EmitirDespachoBsale";
 
 /* ── Facturación (2026-10-02) ────────────────────────────────────────────────
    Sección para emitir en Bsale la factura de una guía de despacho.
@@ -33,6 +34,8 @@ function tonoDias(dias) {
   if (dias > 2) return { color: "#b45309", bg: "#fef3c7", texto };
   return { color: "#15803d", bg: "#dcfce7", texto };
 }
+
+const TIPOS_DOC = { factura: "Factura", guia: "Guía", nota_venta: "Orden" };
 
 const ESTADOS = {
   emitida: { texto: "Emitida", color: "#15803d", bg: "#dcfce7" },
@@ -72,11 +75,14 @@ function Paginacion({ pagina, total, porPagina, onCambiar, nombre }) {
 export default function Facturacion() {
   const [estado, setEstado] = useState(null);
   const [pendientes, setPendientes] = useState([]);
+  // Órdenes de compra por despachar (guías y órdenes en Bsale).
+  const [despachos, setDespachos] = useState([]);
+  const [despacho, setDespacho] = useState(null); // { tipo: "guia" | "orden", licId, ocId } | null
   const [emitidas, setEmitidas] = useState({ registro_listo: true, filas: [] });
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState("");
   const [toast, setToast] = useState(null);
-  const [pestana, setPestana] = useState("pendientes");
+  const [pestana, setPestana] = useState("despachar");
   const [buscar, setBuscar] = useState("");
   const [pagina, setPagina] = useState(1);
   const [emitir, setEmitir] = useState(null); // { licId, guiaId, guiaIds? } | null
@@ -88,8 +94,13 @@ export default function Facturacion() {
       const e = await api.get("/bsale/facturas/estado");
       setEstado(e);
       if (!e?.puede) return;
-      const [p, h] = await Promise.all([api.get("/bsale/facturas/pendientes"), api.get("/bsale/facturas/emitidas")]);
+      const [p, h, d] = await Promise.all([
+        api.get("/bsale/facturas/pendientes"),
+        api.get("/bsale/facturas/emitidas"),
+        api.get("/bsale/despachos/pendientes").catch(() => ({ filas: [] })),
+      ]);
       setPendientes(p?.filas || []);
+      setDespachos(d?.filas || []);
       setEmitidas({ registro_listo: h?.registro_listo !== false, filas: h?.filas || [] });
     } catch (e) {
       setError(e?.message || "No se pudo cargar la facturación.");
@@ -109,7 +120,11 @@ export default function Facturacion() {
     () => (!texto ? emitidas.filas : emitidas.filas.filter((f) => sinTildes(`${f.cliente} ${f.codigo} #${f.licitacion_id} ${f.numero} ${f.guias.join(" ")} ${f.usuario}`).includes(texto))),
     [emitidas, texto],
   );
-  const lista = pestana === "pendientes" ? pendientesFiltradas : emitidasFiltradas;
+  const despachosFiltradas = useMemo(
+    () => (!texto ? despachos : despachos.filter((f) => sinTildes(`${f.cliente} ${f.rut} ${f.codigo} #${f.licitacion_id} ${f.oc_numero} ${f.guias.join(" ")}`).includes(texto))),
+    [despachos, texto],
+  );
+  const lista = pestana === "pendientes" ? pendientesFiltradas : pestana === "despachar" ? despachosFiltradas : emitidasFiltradas;
   const paginas = Math.max(1, Math.ceil(lista.length / POR_PAGINA));
   const paginaActual = Math.min(pagina, paginas);
   const visibles = lista.slice((paginaActual - 1) * POR_PAGINA, paginaActual * POR_PAGINA);
@@ -118,13 +133,15 @@ export default function Facturacion() {
     const mes = new Date().toISOString().slice(0, 7);
     const delMes = emitidas.filas.filter((f) => f.estado === "emitida" && String(f.fecha || "").slice(0, 7) === mes);
     return {
+      porDespachar: despachos.length,
+      sinGuia: despachos.filter((f) => !f.guias.length).length,
       porFacturar: pendientes.length,
       atrasadas: pendientes.filter((f) => (f.dias ?? 0) > 7).length,
       emitidasMes: delMes.length,
       totalMes: delMes.reduce((a, f) => a + (Number(f.total) || 0), 0),
       conProblema: emitidas.filas.filter((f) => f.estado === "error" || f.estado === "incierta").length,
     };
-  }, [pendientes, emitidas]);
+  }, [pendientes, emitidas, despachos]);
 
   const cambiarPestana = (p) => { setPestana(p); setPagina(1); };
 
@@ -162,10 +179,23 @@ export default function Facturacion() {
         />
       )}
 
+      {despacho && (
+        <EmitirDespachoBsale
+          tipo={despacho.tipo}
+          licitacionId={despacho.licId}
+          ocDocId={despacho.ocId}
+          onCerrar={() => setDespacho(null)}
+          onEmitida={(r) => {
+            setToast({ type: "success", message: r.tipo === "guia" ? `Guía ${r.numero} emitida en Bsale${r.registrada ? " y registrada en Trazabilidad." : "."}` : `Orden ${r.numero} registrada en Bsale.` });
+            cargar();
+          }}
+        />
+      )}
+
       <div className="page-header" style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
         <div>
           <h1 className="page-title">Facturación</h1>
-          <p className="page-subtitle">Emite en Bsale la factura de cada guía de despacho. Queda registrada en su cotización.</p>
+          <p className="page-subtitle">Desde la orden de compra: guía de despacho, factura y, si se quiere, la orden registrada en Bsale. Todo queda en su cotización.</p>
         </div>
         <button type="button" className="btn btn-secondary" onClick={cargar} disabled={cargando}>
           <RefreshCw size={14} className={cargando ? "spin" : ""} /> Actualizar
@@ -193,7 +223,12 @@ export default function Facturacion() {
         </div>
       )}
 
-      <div className="stats-row stats-3">
+      <div className="stats-row">
+        <div className="stat-card" onClick={() => cambiarPestana("despachar")} style={{ cursor: "pointer" }} title="Ver las órdenes de compra por despachar">
+          <div className="stat-label">Órdenes por despachar</div>
+          <div className="stat-value">{kpis.porDespachar}</div>
+          <div className="stat-sub">{kpis.sinGuia} sin ninguna guía todavía</div>
+        </div>
         <div className="stat-card" onClick={() => cambiarPestana("pendientes")} style={{ cursor: "pointer" }} title="Ver las guías por facturar">
           <div className="stat-label">Guías por facturar</div>
           <div className="stat-value">{kpis.porFacturar}</div>
@@ -216,6 +251,9 @@ export default function Facturacion() {
 
       <div className="filter-bar" style={{ alignItems: "flex-end" }}>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          <button type="button" className={`btn ${pestana === "despachar" ? "btn-primary" : "btn-secondary"}`} onClick={() => cambiarPestana("despachar")}>
+            Por despachar ({despachos.length})
+          </button>
           <button type="button" className={`btn ${pestana === "pendientes" ? "btn-primary" : "btn-secondary"}`} onClick={() => cambiarPestana("pendientes")}>
             Por facturar ({pendientes.length})
           </button>
@@ -228,7 +266,7 @@ export default function Facturacion() {
           <input
             type="text"
             className="input"
-            placeholder={pestana === "pendientes" ? "Cliente, RUT, cotización, orden de compra o guía…" : "Cliente, cotización, N° de factura o guía…"}
+            placeholder={pestana === "emitidas" ? "Cliente, cotización, N° de documento o guía…" : "Cliente, RUT, cotización, orden de compra o guía…"}
             value={buscar}
             onChange={(e) => { setBuscar(e.target.value); setPagina(1); }}
           />
@@ -238,7 +276,82 @@ export default function Facturacion() {
 
       <div className="table-wrap" style={{ boxShadow: "0 1px 3px rgba(15, 23, 42, 0.04), 0 0 0 1px rgba(15, 23, 42, 0.04)", borderRadius: 10, overflow: "hidden" }}>
         <div className="table-scroll">
-          {pestana === "pendientes" ? (
+          {pestana === "despachar" ? (
+            <table className="data-table" style={{ minWidth: 820 }}>
+              <thead>
+                <tr>
+                  <th style={{ textAlign: "left" }}>Cotización / Cliente</th>
+                  <th style={{ textAlign: "left" }}>Orden de compra</th>
+                  <th style={{ textAlign: "left" }}>Productos</th>
+                  <th style={{ textAlign: "left" }}>Guías</th>
+                  <th style={{ textAlign: "left" }}>Orden en Bsale</th>
+                  {/* Ancho fijo: con la tabla en auto, la columna quedaba de 60 px y los botones en tres líneas. */}
+                  <th style={{ textAlign: "right", width: 210 }}>Acción</th>
+                </tr>
+              </thead>
+              <tbody>
+                {visibles.length === 0 ? (
+                  <tr>
+                    <td colSpan="6" style={{ textAlign: "center", padding: "50px 0", color: "var(--text-muted)" }}>
+                      {cargando ? "Cargando…" : despachos.length === 0 ? "No hay órdenes de compra abiertas." : "Ninguna orden coincide con la búsqueda."}
+                    </td>
+                  </tr>
+                ) : (
+                  visibles.map((f) => {
+                    const tono = tonoDias(f.dias);
+                    return (
+                      <tr key={f.oc_id}>
+                        <td style={{ verticalAlign: "middle", whiteSpace: "normal" }}>
+                          <Link to={`/detalle/${f.licitacion_id}`} className="table-link" style={{ fontWeight: 600 }}>#{f.licitacion_id}</Link>
+                          {f.codigo && <span style={{ color: "var(--text-muted)", fontSize: 11, marginLeft: 6 }}>{f.codigo}</span>}
+                          <div style={{ fontWeight: 500, fontSize: 13, color: "#1f2937", marginTop: 2, overflowWrap: "anywhere" }}>{f.cliente || "—"}</div>
+                          {f.rut && <div style={{ color: "var(--text-muted)", fontSize: 11 }}>RUT {f.rut}{f.comuna ? ` · ${f.comuna}` : ""}</div>}
+                        </td>
+                        <td style={{ verticalAlign: "middle", whiteSpace: "normal" }}>
+                          <div style={{ fontWeight: 600, overflowWrap: "anywhere" }}>{f.oc_numero || "Sin número"}</div>
+                          <div style={{ color: "var(--text-muted)", fontSize: 11, whiteSpace: "nowrap" }}>{fechaCL(f.oc_fecha)}{f.oc_neto ? ` · Neto ${clp(f.oc_neto)}` : ""}</div>
+                          <span style={{ ...pastilla(tono), marginTop: 3 }}>{tono.texto}</span>
+                        </td>
+                        <td style={{ verticalAlign: "middle", whiteSpace: "normal" }}>
+                          {f.items}
+                          {f.items_sin_sku > 0 && (
+                            <div style={{ fontSize: 11, color: "#b91c1c" }} title="Los productos sin SKU no pueden ir en la guía: asígnales SKU en la cotización.">
+                              {f.items_sin_sku} sin SKU
+                            </div>
+                          )}
+                        </td>
+                        <td style={{ verticalAlign: "middle", whiteSpace: "normal" }}>
+                          {f.guias.length ? f.guias.join(", ") : <span style={{ color: "#b45309", fontWeight: 600, fontSize: 12 }}>Ninguna</span>}
+                        </td>
+                        <td style={{ verticalAlign: "middle" }}>
+                          {f.orden_bsale ? (
+                            f.orden_bsale.url
+                              ? <a href={f.orden_bsale.url} target="_blank" rel="noopener noreferrer" style={{ color: "#15803d", fontWeight: 600, fontSize: 12, whiteSpace: "nowrap" }}>Registrada <ExternalLink size={11} /></a>
+                              : <span style={{ color: "#15803d", fontWeight: 600, fontSize: 12 }}>Registrada</span>
+                          ) : (
+                            <span style={{ color: "var(--text-muted)", fontSize: 12 }}>—</span>
+                          )}
+                        </td>
+                        <td style={{ verticalAlign: "middle", textAlign: "right" }}>
+                          <div className="celda-botones">
+                            <button type="button" className="btn btn-primary btn-sm" onClick={() => setDespacho({ tipo: "guia", licId: f.licitacion_id, ocId: f.oc_id })} title="Emitir en Bsale una guía de despacho con lo que falta de esta orden">
+                              <FileCheck size={13} className="cb-ico" /> {apagada ? "Revisar guía" : "Emitir guía"}
+                            </button>
+                            {!f.orden_bsale && (
+                              <button type="button" className="btn btn-secondary btn-sm" onClick={() => setDespacho({ tipo: "orden", licId: f.licitacion_id, ocId: f.oc_id })} title="Registrar esta orden de compra en Bsale como nota de venta">
+                                <span className="cb-largo">Registrar orden en Bsale</span>
+                                <span className="cb-corto">Orden en Bsale</span>
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          ) : pestana === "pendientes" ? (
             <table className="data-table" style={{ minWidth: 760 }}>
               <thead>
                 <tr>
@@ -304,7 +417,7 @@ export default function Facturacion() {
               <thead>
                 <tr>
                   <th style={{ textAlign: "left" }}>Fecha</th>
-                  <th style={{ textAlign: "left" }}>Factura</th>
+                  <th style={{ textAlign: "left" }}>Documento</th>
                   <th style={{ textAlign: "left" }}>Cotización / Cliente</th>
                   <th style={{ textAlign: "left" }}>Guías</th>
                   <th style={{ textAlign: "right" }}>Neto</th>
@@ -327,7 +440,8 @@ export default function Facturacion() {
                       <tr key={f.id}>
                         <td style={{ verticalAlign: "middle", whiteSpace: "nowrap" }}>{fechaCL(f.fecha)}</td>
                         <td style={{ verticalAlign: "middle" }}>
-                          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                            <span style={{ fontSize: 11, color: "var(--text-muted)" }}>{TIPOS_DOC[f.tipo] || "Factura"}</span>
                             <span style={{ fontWeight: 600 }}>{f.numero || "—"}</span>
                             {f.url_pdf && (
                               <a href={f.url_pdf} target="_blank" rel="noopener noreferrer" title="Ver la factura en Bsale" style={{ color: "var(--primary)", display: "inline-flex" }}>
@@ -352,8 +466,17 @@ export default function Facturacion() {
                               {f.error.length > 110 ? `${f.error.slice(0, 110)}…` : f.error}
                             </div>
                           )}
-                          {(f.estado === "error" || f.estado === "incierta") && f.guia_ids?.[0] && (
-                            <button type="button" className="btn btn-secondary btn-sm" style={{ marginTop: 5 }} onClick={() => setEmitir({ licId: f.licitacion_id, guiaId: f.guia_ids[0], guiaIds: f.guia_ids })}>
+                          {(f.estado === "error" || f.estado === "incierta") && (f.tipo === "guia" || f.tipo === "nota_venta" ? !!f.origen_doc_id : !!f.guia_ids?.[0]) && (
+                            <button
+                              type="button"
+                              className="btn btn-secondary btn-sm"
+                              style={{ marginTop: 5 }}
+                              onClick={() =>
+                                f.tipo === "guia" || f.tipo === "nota_venta"
+                                  ? setDespacho({ tipo: f.tipo === "guia" ? "guia" : "orden", licId: f.licitacion_id, ocId: f.origen_doc_id })
+                                  : setEmitir({ licId: f.licitacion_id, guiaId: f.guia_ids[0], guiaIds: f.guia_ids })
+                              }
+                            >
                               Revisar de nuevo
                             </button>
                           )}
@@ -368,7 +491,7 @@ export default function Facturacion() {
         </div>
       </div>
 
-      <Paginacion pagina={paginaActual} total={lista.length} porPagina={POR_PAGINA} onCambiar={setPagina} nombre={pestana === "pendientes" ? "guías" : "registros"} />
+      <Paginacion pagina={paginaActual} total={lista.length} porPagina={POR_PAGINA} onCambiar={setPagina} nombre={pestana === "pendientes" ? "guías" : pestana === "despachar" ? "órdenes" : "registros"} />
     </div>
   );
 }
