@@ -12,6 +12,11 @@ import {
   plazoDias,
   sumarDias,
   totalesDe,
+  folioCotizacion,
+  ocDeReferencia,
+  referenciaOcGuia,
+  referenciaParaBsale,
+  referenciaVista,
 } from './bsale-facturacion.service';
 
 /* ── Guías de despacho y órdenes (notas de venta) en Bsale (2026-10-02) ──────
@@ -355,7 +360,7 @@ export class BsaleDespachosService {
         tipo_traslado_id: traslados.find((t) => t.id === TIPO_TRASLADO_POR_DEFECTO)?.id || traslados[0]?.id || null,
       },
       tipos_traslado: traslados,
-      referencias: ocNumero ? [{ numero: ocNumero, fecha: String(oc.fecha_oc || '').slice(0, 10) || null, razon: 'Orden de compra', codigo_sii: DTE_OC }] : [],
+      referencias: ocNumero ? [referenciaOcGuia(folioCotizacion(lic), ocNumero, String(oc.fecha_oc || '').slice(0, 10) || null)] : [],
       fecha_emision: hoy,
       fecha_minima: String(oc.fecha_oc || '').slice(0, 10) || sumarDias(hoy, -30),
       fecha_maxima: hoy,
@@ -418,7 +423,7 @@ export class BsaleDespachosService {
       cliente,
       lineas,
       totales,
-      referencias: ocNumero ? [{ numero: ocNumero, fecha: String(oc.fecha_oc || '').slice(0, 10) || null, razon: 'Orden de compra', codigo_sii: DTE_OC }] : [],
+      referencias: ocNumero ? [referenciaOcGuia(folioCotizacion(lic), ocNumero, String(oc.fecha_oc || '').slice(0, 10) || null)] : [],
       fecha_emision: hoy,
       fecha_minima: String(oc.fecha_oc || '').slice(0, 10) || sumarDias(hoy, -30),
       fecha_maxima: hoy,
@@ -469,7 +474,7 @@ export class BsaleDespachosService {
   private vista(b: any, extra: Record<string, any>) {
     return {
       cliente: { razon_social: extra.clienteNuevo?.company || b.cliente.razon_social, rut: extra.clienteNuevo?.code || b.cliente.rut, giro: extra.clienteNuevo?.activity || b.cliente.giro, direccion: extra.clienteNuevo?.address || b.cliente.direccion, comuna: extra.clienteNuevo?.municipality || b.cliente.comuna, nuevo: b.cliente.nuevo },
-      referencias: b.referencias.map((r: any) => ({ razon: r.razon, numero: r.numero, fecha: r.fecha })),
+      referencias: b.referencias.map(referenciaVista),
       ...extra,
     };
   }
@@ -548,7 +553,7 @@ export class BsaleDespachosService {
       details: elegidas.map((l) =>
         l.detalle_id ? { detailId: l.detalle_id, quantity: l.cantidad } : { code: l.sku, quantity: l.cantidad, netUnitValue: l.neto_unitario, taxId: `[${IVA_ID}]` },
       ),
-      references: b.referencias.map((r: any) => ({ number: r.numero, referenceDate: r.fecha ? fechaAEpoch(r.fecha) : emision, reason: r.razon, codeSii: r.codigo_sii })),
+      references: b.referencias.map((r: any) => referenciaParaBsale(r, emision)),
       salesId,
     };
     const vista = this.vista(b, {
@@ -598,7 +603,7 @@ export class BsaleDespachosService {
         try {
           const completo = await this.facturacion.apiGet(`/documents/${Number(doc.id)}.json?expand=[references]`);
           const refs: any[] = completo?.references?.items || [];
-          if (b.referencias.length && !refs.some((r: any) => normOc(r?.number) === b.referencias[0].numero)) {
+          if (b.referencias.length && !refs.some((r: any) => ocDeReferencia(r) === b.referencias[0].numero)) {
             avisos.push(`La guía ${doc.number} salió SIN la referencia a la orden de compra ${b.referencias[0].numero}: agrégala en Bsale.`);
           }
           if (Number.isFinite(Number(completo?.totalAmount)) && Math.abs(Number(completo.totalAmount) - totales.total) > 1) {
@@ -639,7 +644,7 @@ export class BsaleDespachosService {
       declareSii: 0,
       ...('clientId' in cli ? { clientId: cli.clientId } : { client: cli.client }),
       details: emitibles.map((l: any) => ({ code: l.sku, quantity: l.cantidad, netUnitValue: l.neto_unitario, taxId: `[${IVA_ID}]` })),
-      references: b.referencias.map((r: any) => ({ number: r.numero, referenceDate: r.fecha ? fechaAEpoch(r.fecha) : emision, reason: r.razon, codeSii: r.codigo_sii })),
+      references: b.referencias.map((r: any) => referenciaParaBsale(r, emision)),
       salesId,
     };
     const vista = this.vista(b, {

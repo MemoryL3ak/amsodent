@@ -262,7 +262,10 @@ documento LIBRE, sin orden de compra: cliente por RUT (si no está en Bsale se
 crea; giro obligatorio), productos del catálogo con cantidad y precio neto,
 despacho (guía) o forma de pago (factura), referencia opcional a OC o guía, y
 la cotización donde debe quedar registrado (si no se indica, queda solo en
-Bsale y en Emitidas). Una factura libre sin guía descuenta stock en Bsale; si
+Bsale y en Emitidas). Referencias a la orden de compra: en guías y notas de
+venta la cotización va como FOLIO y el N° de OC como RAZÓN; en facturas el N°
+de OC va en el folio (Mercado Público cruza la factura con la OC por ese campo)
+y también en la razón. Una factura libre sin guía descuenta stock en Bsale; si
 referencia una guía, no. Un producto sin SKU o cuyo SKU no está en Bsale no
 puede ir en ningún documento. El borrador de factura abre
 un borrador armado desde la guía que ya existe en Bsale: mismo cliente, mismos

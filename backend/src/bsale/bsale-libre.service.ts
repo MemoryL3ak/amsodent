@@ -1,7 +1,9 @@
 import { BadRequestException, ConflictException, Injectable, Logger } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
 import { LicitacionesService } from '../licitaciones/licitaciones.service';
-import { BsaleFacturacionService, fechaAEpoch, normOc, normRut, sumarDias, totalesDe } from './bsale-facturacion.service';
+import {
+  BsaleFacturacionService, fechaAEpoch, folioCotizacion, normOc, normRut, ocDeReferencia, referenciaGuia, referenciaOcFactura, referenciaOcGuia, referenciaParaBsale, referenciaVista, sumarDias, totalesDe,
+} from './bsale-facturacion.service';
 import { BsaleDespachosService } from './bsale-despachos.service';
 
 /* ── Guías y facturas LIBRES en Bsale (2026-10-03) ───────────────────────────
@@ -184,15 +186,33 @@ export class BsaleLibreService {
     else if (fecha > hoy) problemas.push({ codigo: 'fecha_futura', mensaje: 'La fecha de emisión no puede ser futura.' });
     else if (fecha < sumarDias(hoy, -30)) problemas.push({ codigo: 'fecha_antigua', mensaje: 'La fecha de emisión no puede tener más de 30 días.' });
 
-    // Referencias (opcionales)
-    const referencias: { numero: string; fecha: string | null; razon: string; codigo_sii: number }[] = [];
+    // Cotización a la que se cuelga (opcional): su código va como FOLIO en la referencia a la OC.
+    let cotizacion: any = null;
+    let licCot: any = null;
+    if (body?.cotizacion_id != null && String(body.cotizacion_id).trim() !== '') {
+      const id = Number(body.cotizacion_id);
+      const { data: lic } = id > 0 ? await this.supabase.getClient().from('licitaciones').select('id, id_licitacion, nombre_entidad, rut_entidad').eq('id', id).maybeSingle() : { data: null };
+      if (!lic) problemas.push({ codigo: 'cotizacion', mensaje: `No existe la cotización #${body.cotizacion_id}.` });
+      else {
+        licCot = lic;
+        cotizacion = { id: lic.id, codigo: lic.id_licitacion || null, cliente: lic.nombre_entidad || '' };
+        if (normRut(lic.rut_entidad) && rut && normRut(lic.rut_entidad) !== normRut(rut)) {
+          avisos.push({ codigo: 'rut_cotizacion', mensaje: `La cotización #${lic.id} es de ${lic.nombre_entidad} (RUT ${lic.rut_entidad}), distinto del cliente del documento.` });
+        }
+      }
+    }
+
+    // Referencias (opcionales). OC en guía: folio = cotización, razón = N° de OC. OC en factura: N° de OC en ambos. Guía: folio = N° de guía.
+    const referencias: any[] = [];
     for (const r of Array.isArray(body?.referencias) ? body.referencias : []) {
       const numero = normOc(r?.numero);
       if (!numero) continue;
-      if (numero.length > MAX_FOLIO_REF) problemas.push({ codigo: 'folio_largo', mensaje: `La referencia ${numero} supera los ${MAX_FOLIO_REF} caracteres que acepta el SII.` });
       const esGuia = r?.tipo === 'guia';
       const f = String(r?.fecha || '').slice(0, 10);
-      referencias.push({ numero, fecha: /^\d{4}-\d{2}-\d{2}$/.test(f) ? f : null, razon: esGuia ? 'Guía de despacho' : 'Orden de compra', codigo_sii: esGuia ? DTE_GUIA : DTE_OC });
+      const fecha = /^\d{4}-\d{2}-\d{2}$/.test(f) ? f : null;
+      const ref = esGuia ? referenciaGuia(numero, fecha) : tipo === 'guia' ? referenciaOcGuia(licCot ? folioCotizacion(licCot) : numero, numero, fecha) : referenciaOcFactura(numero, fecha);
+      if (ref.folio.length > MAX_FOLIO_REF) problemas.push({ codigo: 'folio_largo', mensaje: `El folio de referencia ${ref.folio} supera los ${MAX_FOLIO_REF} caracteres que acepta el SII.` });
+      referencias.push(ref);
     }
 
     // Tipo de documento y sus datos propios
@@ -230,20 +250,6 @@ export class BsaleLibreService {
       if (!refGuia && !descuentaStock) avisos.push({ codigo: 'sin_stock', mensaje: 'La factura no descuenta stock: el stock en Bsale quedará como está.' });
     }
 
-    // Cotización a la que se cuelga (opcional)
-    let cotizacion: any = null;
-    if (body?.cotizacion_id != null && String(body.cotizacion_id).trim() !== '') {
-      const id = Number(body.cotizacion_id);
-      const { data: lic } = id > 0 ? await this.supabase.getClient().from('licitaciones').select('id, id_licitacion, nombre_entidad, rut_entidad').eq('id', id).maybeSingle() : { data: null };
-      if (!lic) problemas.push({ codigo: 'cotizacion', mensaje: `No existe la cotización #${body.cotizacion_id}.` });
-      else {
-        cotizacion = { id: lic.id, codigo: lic.id_licitacion || null, cliente: lic.nombre_entidad || '' };
-        if (normRut(lic.rut_entidad) && rut && normRut(lic.rut_entidad) !== normRut(rut)) {
-          avisos.push({ codigo: 'rut_cotizacion', mensaje: `La cotización #${lic.id} es de ${lic.nombre_entidad} (RUT ${lic.rut_entidad}), distinto del cliente del documento.` });
-        }
-      }
-    }
-
     const borrador = {
       tipo, tipo_documento_id: tipoDocumentoId, cliente, lineas, totales, fecha_emision: fecha, referencias, despacho,
       traslado: traslado ? { id: traslado.id, nombre: traslado.nombre } : null,
@@ -253,7 +259,7 @@ export class BsaleLibreService {
     const huella = this.facturacion.huellaDe({
       cliente: { id: cliente.id || cliente.rut }, tipo_documento_id: tipoDocumentoId,
       lineas: lineas.map((l) => ({ detalle_id: l.variante_id, cantidad: l.cantidad, neto: l.neto_unitario })),
-      referencias: [...referencias.map((r) => ({ codigo_sii: r.codigo_sii, numero: r.numero })), { codigo_sii: 0, numero: `${fecha}|${JSON.stringify(despacho)}|${formaPago?.id}|${dias}|${descuentaStock}|${cotizacion?.id || ''}|${cliente.nuevo ? JSON.stringify(cliente) : ''}` }],
+      referencias: [...referencias.map((r) => ({ codigo_sii: r.codigo_sii, folio: r.folio, numero: r.numero })), { codigo_sii: 0, numero: `${fecha}|${JSON.stringify(despacho)}|${formaPago?.id}|${dias}|${descuentaStock}|${cotizacion?.id || ''}|${cliente.nuevo ? JSON.stringify(cliente) : ''}` }],
       totales,
     });
     return { ...borrador, huella };
@@ -267,7 +273,7 @@ export class BsaleLibreService {
       cliente: { razon_social: b.cliente.razon_social, rut: b.cliente.rut, giro: b.cliente.giro, direccion: b.cliente.direccion, comuna: b.cliente.comuna, nuevo: b.cliente.nuevo },
       lineas: b.lineas.map((l: any) => ({ sku: l.sku, producto: l.producto, cantidad: l.cantidad, neto_unitario: l.neto_unitario, neto: l.neto })),
       totales: b.totales,
-      referencias: b.referencias.map((r: any) => ({ razon: r.razon, numero: r.numero, fecha: r.fecha })),
+      referencias: b.referencias.map(referenciaVista),
       forma_pago: b.forma_pago?.nombre || null,
       fecha_emision: b.fecha_emision,
       vencimiento: b.vencimiento,
@@ -302,7 +308,7 @@ export class BsaleLibreService {
     const { data: previas } = await this.supabase.getClient().from('bsale_emisiones').select('id').eq('clave', clave).eq('estado', 'emitida');
     const salesId = `${clave}-${(previas || []).length}`;
     const details = b.lineas.map((l: any) => ({ code: l.sku, quantity: l.cantidad, netUnitValue: l.neto_unitario, taxId: `[${IVA_ID}]` }));
-    const references = b.referencias.map((r: any) => ({ number: r.numero, referenceDate: r.fecha ? fechaAEpoch(r.fecha) : emision, reason: r.razon, codeSii: r.codigo_sii }));
+    const references = b.referencias.map((r: any) => referenciaParaBsale(r, emision));
     const solicitud: Record<string, any> =
       b.tipo === 'guia'
         ? {
@@ -360,7 +366,8 @@ export class BsaleLibreService {
           const completo = await this.facturacion.apiGet(`/documents/${Number(doc.id)}.json?expand=[references]`);
           const refs: any[] = completo?.references?.items || [];
           for (const r of b.referencias) {
-            if (!refs.some((x: any) => normOc(x?.number) === r.numero)) avisos.push(`El documento ${doc.number} salió sin la referencia ${r.razon.toLowerCase()} ${r.numero}: agrégala en Bsale.`);
+            const esta = r.codigo_sii === DTE_OC ? refs.some((x: any) => ocDeReferencia(x) === r.numero) : refs.some((x: any) => normOc(x?.number) === normOc(r.folio));
+            if (!esta) avisos.push(`El documento ${doc.number} salió sin la referencia ${r.codigo_sii === DTE_OC ? 'a la orden de compra' : 'a la guía'} ${r.numero}: agrégala en Bsale.`);
           }
         } catch { /* la verificación no frena nada */ }
         return avisos;
