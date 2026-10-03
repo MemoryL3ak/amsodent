@@ -270,11 +270,13 @@ o en Bsale) queda bloqueada, y también si la guía de Bsale es de OTRO cliente
 (el número de guía está mal digitado en Trazabilidad: se corrige ahí). El
 número de guía es el que encabeza el campo; se puede dejar una nota después
 ("709 - 2da entrega"). Una factura emitida solo se anula con nota de
-crédito, que se hace en Bsale. Todos los borradores (factura, guía, orden)
-tienen DOS BOTONES: "Simular" muestra el documento como quedaría —cliente,
-productos, totales, referencias, despacho— sin emitir ni guardar nada (el JSON
-técnico queda plegado); "Emitir" emite de verdad y solo se habilita al marcar
-la casilla de confirmación. Nada se emite solo: siempre es ese botón.
+crédito, que se hace en Bsale. Todos los borradores (factura, guía, orden) van
+en DOS PASOS obligatorios: 1) "Simular" muestra el documento como quedaría
+—cliente, productos, totales, referencias, despacho— sin emitir ni guardar nada
+(el JSON técnico queda plegado); 2) solo con esa simulación a la vista aparece
+"Emitir … oficial", que emite de verdad y se habilita al marcar la casilla de
+confirmación. Si se cambia un dato después de simular, hay que simular de
+nuevo. Nada se emite solo: siempre es ese botón.
 
 ### Seguimiento de Pagos (/seguimiento-pagos)
 DOS PESTAÑAS: "Cliente particular" y "Entidad pública". Cada una muestra sus
