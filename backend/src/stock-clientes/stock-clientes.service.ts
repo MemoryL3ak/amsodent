@@ -5,6 +5,7 @@ import {
   NotFoundException,
   ForbiddenException,
   Logger,
+  Optional,
 } from '@nestjs/common';
 import * as crypto from 'crypto';
 import { SupabaseService } from '../supabase/supabase.service';
@@ -12,6 +13,7 @@ import { MailingsService } from '../mailings/mailings.service';
 import { CorreosService } from '../correos/correos.service';
 import { LicitacionesService } from '../licitaciones/licitaciones.service';
 import { OfertasPortalService } from './ofertas-portal.service';
+import { PortalModulosService, MODULOS_PORTAL } from './portal-modulos.service';
 import { firmarImagenesProductos } from './imagenes-productos';
 import {
   plantillaAlertaStock,
@@ -223,7 +225,15 @@ export class StockClientesService {
     private correos: CorreosService,
     private licitaciones: LicitacionesService,
     private ofertas: OfertasPortalService,
+    // Módulos del portal por cliente (2026-10-05). Opcional para las pruebas.
+    @Optional() private modulosPortal?: PortalModulosService,
   ) {}
+
+  /* Qué secciones ve el cliente (todo habilitado si no hay servicio o dato). */
+  async modulosDe(rut: string) {
+    if (!this.modulosPortal) return Object.fromEntries(MODULOS_PORTAL.map((m) => [m.clave, true]));
+    return this.modulosPortal.de(rut);
+  }
 
   private get secret(): string {
     // Contención auditoría 2026-09-04: sin literal 'dev-secret' forjable.
@@ -429,6 +439,7 @@ export class StockClientesService {
           razon_social: razonSocial,
           debe_cambiar_clave: !!usuario.password_temporal,
           requiere_acuerdo: !portal.acepto_acuerdo_en,
+          modulos: await this.modulosDe(rutN),
           usuario: {
             id: Number(usuario.id),
             email: String(usuario.email || '').toLowerCase(),
@@ -461,6 +472,7 @@ export class StockClientesService {
         razon_social: razonSocial,
         debe_cambiar_clave: !!portal.password_temporal,
         requiere_acuerdo: !portal.acepto_acuerdo_en,
+        modulos: await this.modulosDe(rutN),
         usuario: { id: null, email: String(portal.email || '').toLowerCase() || email, nombre: 'Cuenta principal', rol: 'admin' as PortalRol },
       },
     };
@@ -735,10 +747,14 @@ export class StockClientesService {
     const mapa = new Map<string, any>();
     (maestro || []).forEach((m: any) => mapa.set(normalizarRut(m?.rut), m));
 
+    // Módulos de cada RUT (null si la migración 20261006 está pendiente).
+    const modulos = this.modulosPortal ? await this.modulosPortal.deVarios().catch(() => null) : null;
     return (data || []).map((c: any) => {
       const m = mapa.get(normalizarRut(c.rut));
       return {
         ...c,
+        modulos: modulos ? modulos.get(normalizarRut(c.rut)) || null : null,
+        modulos_listos: !!modulos,
         razon_social: m?.nombre || c.razon_social,
         email: m?.email || c.email,
         telefono: m?.telefono || c.telefono,
@@ -1652,7 +1668,12 @@ export class StockClientesService {
        sigue vigente y alcanza a ese producto, quedan con el precio de oferta
        calculado por el servidor; si no, con el precio normal. El precio que
        mandó el navegador no se usa. */
-    const conOfertas = await this.ofertas.aplicarAItems(itemsLimpios);
+    // Módulos del cliente (2026-10-05): sin Ofertas habilitada, ninguna línea
+    // lleva precio de oferta; sin ninguna sección desde donde pedir, no hay pedido.
+    const mods = await this.modulosDe(rutN);
+    if (!mods.solicitudes) throw new ForbiddenException('Tu cuenta no tiene habilitados los pedidos en el portal. Consulta con tu ejecutivo de Amsodent.');
+    const paraOfertas = mods.ofertas ? itemsLimpios : itemsLimpios.map(({ oferta_id: _o, ...resto }: any) => resto);
+    const conOfertas = await this.ofertas.aplicarAItems(paraOfertas);
     // El código que el cliente le pone a su inventario solo vale como SKU si
     // es de verdad uno nuestro (ver depurarSkusDeInventario).
     const items = await this.ofertas.depurarSkusDeInventario(conOfertas);

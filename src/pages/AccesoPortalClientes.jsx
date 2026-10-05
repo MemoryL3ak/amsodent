@@ -23,6 +23,7 @@ import {
   Pencil,
   Trash2,
   Zap,
+  LayoutGrid,
 } from "lucide-react";
 import { api } from "../lib/api";
 import Toast from "../components/Toast";
@@ -90,6 +91,25 @@ function fmtFechaHora(iso) {
 
 const VIGENCIA_LABEL = { "1m": "1 mes", "3m": "3 meses", indefinido: "Indefinido" };
 
+/* Secciones del portal que se encienden o apagan por cliente (2026-10-05).
+   Debe calzar con MODULOS_PORTAL del backend (portal-modulos.service.ts).
+   `pide`: desde esa sección el cliente arma pedidos. */
+const MODULOS_PORTAL = [
+  { clave: "declaracion", nombre: "Gestión de Stock", detalle: "Inventario del cliente, declaraciones y sucursales.", pide: true },
+  { clave: "solicitudes", nombre: "Mis cotizaciones", detalle: "Pedidos, cotizaciones, aprobación y pago.", pide: false },
+  { clave: "ofertas", nombre: "Ofertas", detalle: "Ofertas especiales vigentes y sus precios.", pide: true },
+  { clave: "showroom", nombre: "Showroom", detalle: "Catálogo de venta al público con precio sugerido.", pide: true },
+  { clave: "explorador", nombre: "Explorador de precios", detalle: "Comparador de precios de otras tiendas dentales.", pide: true },
+  { clave: "actividad", nombre: "Actividad", detalle: "Línea de tiempo de los pedidos de la cuenta.", pide: false },
+];
+const modulosCompletos = (m) => {
+  const r = {};
+  for (const x of MODULOS_PORTAL) r[x.clave] = !m || m[x.clave] !== false;
+  if (MODULOS_PORTAL.some((x) => x.pide && r[x.clave])) r.solicitudes = true;
+  return r;
+};
+const modulosApagados = (m) => MODULOS_PORTAL.filter((x) => modulosCompletos(m)[x.clave] === false).map((x) => x.nombre);
+
 export default function AccesoPortalClientes() {
   const [tab, setTab] = useState("accesos"); // 'accesos' | 'recuperaciones'
   const [accesos, setAccesos] = useState([]);
@@ -102,6 +122,7 @@ export default function AccesoPortalClientes() {
   const [modalRegenerar, setModalRegenerar] = useState(null); // {rut, razon_social, recuperacion_id?}
   const [modalSucursales, setModalSucursales] = useState(null); // {rut, razon_social}
   const [modalUsuarios, setModalUsuarios] = useState(null); // {rut, razon_social}
+  const [modalModulos, setModalModulos] = useState(null); // {rut, razon_social, modulos, listos}
 
   const cargar = useCallback(async () => {
     setCargando(true);
@@ -275,6 +296,9 @@ export default function AccesoPortalClientes() {
                       onUsuarios={() =>
                         setModalUsuarios({ rut: a.rut, razon_social: a.razon_social })
                       }
+                      onModulos={() =>
+                        setModalModulos({ rut: a.rut, razon_social: a.razon_social, modulos: a.modulos || null, listos: a.modulos_listos !== false })
+                      }
                     />
                   ))}
                 </tbody>
@@ -340,6 +364,19 @@ export default function AccesoPortalClientes() {
         />
       )}
 
+      {modalModulos && (
+        <ModalModulosPortal
+          {...modalModulos}
+          onCerrar={() => setModalModulos(null)}
+          onGuardado={(rut, modulos) => {
+            setAccesos((prev) => prev.map((x) => (x.rut === rut ? { ...x, modulos } : x)));
+            setModalModulos(null);
+            setToast({ type: "success", message: "Módulos del portal actualizados: el cliente los ve al recargar su portal." });
+          }}
+          onError={(msg) => setToast({ type: "error", message: msg })}
+        />
+      )}
+
       {modalSucursales && (
         <ModalSucursalesHabilitar
           rut={modalSucursales.rut}
@@ -380,7 +417,8 @@ export default function AccesoPortalClientes() {
   );
 }
 
-function FilaAcceso({ a, onRegenerar, onReHabilitar, onDeshabilitar, onSucursales, onUsuarios }) {
+function FilaAcceso({ a, onRegenerar, onReHabilitar, onDeshabilitar, onSucursales, onUsuarios, onModulos }) {
+  const apagados = modulosApagados(a.modulos);
   let estado;
   if (!a.acceso_habilitado) {
     estado = { txt: "Deshabilitado", bg: "#f1f5f9", color: "#64748b", Icon: ShieldOff };
@@ -410,6 +448,11 @@ function FilaAcceso({ a, onRegenerar, onReHabilitar, onDeshabilitar, onSucursale
             <Clock size={11} /> Clave temporal
           </span>
         )}
+        {apagados.length > 0 && (
+          <div style={{ fontSize: 11.5, color: "#92400e", marginTop: 4, overflowWrap: "anywhere" }} title="Secciones del portal apagadas para este cliente">
+            Sin: {apagados.join(", ")}
+          </div>
+        )}
       </td>
       <td style={s.td}>{VIGENCIA_LABEL[a.acceso_vigencia] || "—"}</td>
       <td style={s.td}>{a.acceso_expira ? fmtFecha(a.acceso_expira) : "Sin término"}</td>
@@ -420,6 +463,9 @@ function FilaAcceso({ a, onRegenerar, onReHabilitar, onDeshabilitar, onSucursale
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6, justifyContent: "flex-end" }}>
           <button style={s.accBtn} onClick={onUsuarios} title="Usuarios del RUT en el portal (roles admin y asistente)">
             <UserPlus size={14} /> Usuarios
+          </button>
+          <button style={s.accBtn} onClick={onModulos} title="Qué secciones del portal ve este cliente">
+            <LayoutGrid size={14} /> Módulos
           </button>
           <button style={s.accBtn} onClick={onSucursales} title="Habilitar sucursales para el portal">
             <Building2 size={14} /> Sucursales
@@ -824,6 +870,82 @@ function Overlay({ children, onCerrar, ancho }) {
 
 // Habilita/deshabilita las sucursales del cliente para el portal. Las sucursales
 // se registran en la vista 360 del cliente; aquí solo se controla su visibilidad.
+/* ── Módulos del portal de un cliente (2026-10-05) ──────────────────────
+   Qué secciones ve: por ejemplo Showroom sí, Ofertas no. Mis cotizaciones
+   queda encendida mientras el cliente pueda pedir desde alguna sección. */
+function ModalModulosPortal({ rut, razon_social, modulos, listos = true, onCerrar, onGuardado, onError }) {
+  const [valores, setValores] = useState(() => modulosCompletos(modulos));
+  const [guardando, setGuardando] = useState(false);
+  const efectivos = modulosCompletos(valores);
+  const cotizacionesForzada = MODULOS_PORTAL.some((x) => x.pide && efectivos[x.clave]);
+  const cambio = JSON.stringify(efectivos) !== JSON.stringify(modulosCompletos(modulos));
+
+  async function guardar() {
+    if (guardando) return;
+    setGuardando(true);
+    try {
+      const r = await api.put("/stock-clientes/accesos/modulos", { rut, modulos: efectivos });
+      onGuardado?.(rut, r?.modulos || efectivos);
+    } catch (e) {
+      onError?.(e?.message || "No se pudieron guardar los módulos.");
+    } finally {
+      setGuardando(false);
+    }
+  }
+
+  return (
+    <Overlay onCerrar={onCerrar}>
+      <h2 style={{ ...s.modalTitle, paddingRight: 36 }}>
+        <LayoutGrid size={18} /> Módulos del portal · {razon_social || "Cliente"}
+      </h2>
+      <div style={s.modalBody}>
+        <div style={{ fontSize: 12.5, color: "#64748b", marginBottom: 12 }}>
+          Elige qué secciones ve este cliente en su portal. Resumen siempre está; Usuarios depende del rol de cada persona.
+        </div>
+        {!listos && (
+          <div style={{ fontSize: 12.5, color: "#92400e", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 10, padding: "8px 12px", marginBottom: 10 }}>
+            Falta aplicar la migración <b>20261006_portal_modulos.sql</b> en Supabase: hasta entonces todos los clientes ven todo y no se puede guardar.
+          </div>
+        )}
+        <div className="lista-modulos-portal" style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {MODULOS_PORTAL.map((m) => {
+            const forzado = m.clave === "solicitudes" && cotizacionesForzada;
+            const on = !!efectivos[m.clave];
+            return (
+              <label
+                key={m.clave}
+                style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "10px 12px", border: "1px solid #e2e8f0", borderRadius: 10, cursor: forzado || guardando ? "default" : "pointer", background: on ? "#fff" : "#f8fafc" }}
+              >
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 13.5, fontWeight: 600, color: on ? "#0f172a" : "#94a3b8" }}>{m.nombre}</div>
+                  <div style={{ fontSize: 12, color: "#64748b" }}>
+                    {forzado ? "Siempre encendida mientras el cliente pueda pedir desde otra sección: ahí llegan sus pedidos." : m.detalle}
+                    {m.clave === "explorador" && !on && (efectivos.showroom || efectivos.ofertas || efectivos.declaracion) ? " Su carrito seguirá disponible como «Mi pedido»." : ""}
+                  </div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={on}
+                  disabled={forzado || guardando}
+                  onChange={(e) => setValores((v) => ({ ...v, [m.clave]: e.target.checked }))}
+                  aria-label={m.nombre}
+                  style={{ width: 18, height: 18, cursor: forzado ? "default" : "pointer", flexShrink: 0 }}
+                />
+              </label>
+            );
+          })}
+        </div>
+      </div>
+      <div style={{ ...s.modalFooter, flexWrap: "wrap" }}>
+        <button style={s.btnGhost} onClick={onCerrar} disabled={guardando}>Cancelar</button>
+        <button style={{ ...s.btnPrimario, opacity: cambio && listos && !guardando ? 1 : 0.5, cursor: cambio && listos && !guardando ? "pointer" : "not-allowed" }} onClick={guardar} disabled={!cambio || !listos || guardando}>
+          {guardando ? "Guardando…" : "Guardar módulos"}
+        </button>
+      </div>
+    </Overlay>
+  );
+}
+
 function ModalSucursalesHabilitar({ rut, razonSocial, onCerrar, onOk, onError }) {
   const [sucursales, setSucursales] = useState([]);
   const [cargando, setCargando] = useState(true);
