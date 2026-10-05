@@ -432,6 +432,13 @@ nace con ese precio y la observación "Oferta especial". Verlas: quien ve
 Pedidos del Portal. Crear, editar, pausar y eliminar: solo admin.
 
 ### Acceso Portal Clientes (/portal-accesos)
+MÓDULOS POR CLIENTE: el botón "Módulos" de cada cliente enciende o apaga las
+secciones de su portal (Gestión de Stock, Mis cotizaciones, Ofertas, Showroom,
+Explorador de precios, Actividad), p. ej. Showroom sí y Ofertas no. Resumen
+siempre está; Usuarios depende del rol. Mis cotizaciones queda encendida
+mientras el cliente pueda pedir desde otra sección. Sin Explorador, el carrito
+sigue como "Mi pedido". El servidor lo exige: una sección apagada no entrega
+sus datos y, sin Ofertas, los pedidos van a precio normal.
 Credenciales del portal de stock: crear, renovar, revocar; y pestaña de
 recuperaciones de contraseña.
 

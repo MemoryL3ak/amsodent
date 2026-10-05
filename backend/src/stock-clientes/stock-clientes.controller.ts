@@ -19,6 +19,7 @@ import { PedidosFlujoService } from './pedidos-flujo.service';
 import { WebpayService } from './webpay.service';
 import { OfertasPortalService } from './ofertas-portal.service';
 import { StockPortalGuard } from './stock-clientes.guard';
+import { PortalModulosService, MODULOS_PORTAL } from './portal-modulos.service';
 import { AuthGuard } from '../auth/auth.guard';
 import { AdminGuard } from '../auth/admin.guard';
 
@@ -30,7 +31,15 @@ export class StockClientesController {
     private pedidosFlujo: PedidosFlujoService,
     private webpay: WebpayService,
     private ofertas: OfertasPortalService,
+    private modulos: PortalModulosService,
   ) {}
+
+  /* ── Módulos del portal (2026-10-05) ── Qué secciones ve la cuenta. */
+  @UseGuards(StockPortalGuard)
+  @Get('mis-modulos')
+  async misModulos(@Req() req: any) {
+    return { modulos: await this.modulos.de(req.stockPortal.rut), catalogo: MODULOS_PORTAL };
+  }
 
   // ============================================================
   // Público — acceso del cliente al portal
@@ -167,6 +176,7 @@ export class StockClientesController {
   @UseGuards(StockPortalGuard)
   @Get('mi-actividad')
   async miActividad(@Req() req: any, @Query('limite') limite?: string) {
+    await this.modulos.exigir(req.stockPortal.rut, 'actividad');
     return await this.pedidosFlujo.actividadPorPedido(req.stockPortal.rut, Number(limite) || 40);
   }
 
@@ -177,6 +187,7 @@ export class StockClientesController {
   @UseGuards(StockPortalGuard)
   @Get('mi-historial')
   async miHistorial(@Req() req: any, @Query('limite') limite?: string) {
+    await this.modulos.exigir(req.stockPortal.rut, 'actividad');
     return await this.pedidosFlujo.historialDeCuenta(req.stockPortal.rut, Number(limite) || 120);
   }
 
@@ -387,6 +398,7 @@ export class StockClientesController {
   @UseGuards(StockPortalGuard)
   @Post('declaracion')
   async crearDeclaracion(@Req() req: any, @Body() body: any) {
+    await this.modulos.exigir(req.stockPortal.rut, 'declaracion');
     const ip =
       req?.headers?.['x-forwarded-for']?.toString().split(',')[0]?.trim() ||
       req?.ip ||
@@ -457,7 +469,8 @@ export class StockClientesController {
      cuesta a el, lo que le sugerimos cobrar y cuanto gana con cada producto. */
   @UseGuards(StockPortalGuard)
   @Get('showroom')
-  async showroom(@Query('q') q?: string, @Query('marca') marca?: string) {
+  async showroom(@Req() req: any, @Query('q') q?: string, @Query('marca') marca?: string) {
+    await this.modulos.exigir(req.stockPortal.rut, 'showroom');
     return await this.stockClientes.catalogoShowroom({ q, marca });
   }
 
@@ -466,7 +479,8 @@ export class StockClientesController {
      productos en oferta con su precio normal y su precio rebajado. */
   @UseGuards(StockPortalGuard)
   @Get('ofertas')
-  async ofertasVigentes() {
+  async ofertasVigentes(@Req() req: any) {
+    await this.modulos.exigir(req.stockPortal.rut, 'ofertas');
     return await this.ofertas.vitrina();
   }
 
@@ -475,7 +489,8 @@ export class StockClientesController {
   // vivo todas las tiendas.
   @UseGuards(StockPortalGuard)
   @Get('explorador')
-  async explorarPrecios(@Query('q') q: string) {
+  async explorarPrecios(@Req() req: any, @Query('q') q: string) {
+    await this.modulos.exigir(req.stockPortal.rut, 'explorador');
     return await this.explorador.buscar(q, 'cliente');
   }
 
@@ -761,6 +776,13 @@ export class StockClientesController {
   }
 
   // Búsqueda en el maestro de clientes para habilitar un acceso nuevo.
+  // Módulos del portal de un cliente (2026-10-05): qué secciones ve.
+  @UseGuards(AdminGuard)
+  @Put('accesos/modulos')
+  async guardarModulosPortal(@Req() req: any, @Body() body: { rut: string; modulos: Record<string, boolean> }) {
+    return await this.modulos.guardar(String(body?.rut || ''), body?.modulos || {}, req?.user?.email || null);
+  }
+
   @UseGuards(AdminGuard)
   @Get('accesos/buscar-cliente')
   async buscarClienteParaAcceso(@Query('q') q: string) {

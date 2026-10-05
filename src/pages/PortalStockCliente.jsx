@@ -1316,6 +1316,37 @@ function PantallaDeclaracion({ cliente, setToast }) {
      aprobar y pagar); asistente, todo lo demás. Las sesiones antiguas no
      traen usuario, y esas son la cuenta principal → admin. */
   const esAdminPortal = (cliente?.usuario?.rol || "admin") === "admin";
+  /* (2026-10-05) Módulos habilitados para esta cuenta: Amsodent decide por
+     cliente qué secciones ve. Vienen con el login y se refrescan al entrar
+     (y con «Actualizar»). Sin dato = todo habilitado. */
+  const [modulos, setModulos] = useState(cliente?.modulos || null);
+  useEffect(() => {
+    let vivo = true;
+    const cargar = () => {
+      apiRequest("/stock-clientes/mis-modulos")
+        .then((r) => {
+          if (!vivo || !r?.modulos) return;
+          setModulos(r.modulos);
+          try {
+            const guardado = JSON.parse(localStorage.getItem(CLIENTE_KEY) || "null");
+            if (guardado) localStorage.setItem(CLIENTE_KEY, JSON.stringify({ ...guardado, modulos: r.modulos }));
+          } catch { /* sin almacenamiento */ }
+        })
+        .catch(() => {});
+    };
+    cargar();
+    window.addEventListener(PORTAL_REFRESCAR, cargar);
+    return () => { vivo = false; window.removeEventListener(PORTAL_REFRESCAR, cargar); };
+  }, []);
+  const habilCrudo = (clave) => !modulos || modulos[clave] !== false;
+  // Desde dónde se puede pedir: con cualquiera de estas, el carrito existe.
+  const puedePedir = ["declaracion", "ofertas", "showroom", "explorador"].some(habilCrudo);
+  // Mis cotizaciones queda encendida mientras se pueda pedir (misma regla que el servidor).
+  const habil = (clave) => (clave === "solicitudes" ? habilCrudo(clave) || puedePedir : habilCrudo(clave));
+  const permitido = (t) =>
+    t === "resumen" ||
+    (t === "usuarios" ? esAdminPortal : t === "explorador" ? habil("explorador") || puedePedir : habil(t));
+  const tabActiva = permitido(tab) ? tab : "resumen";
   // Cupo de crédito, para mostrarlo en el resumen comercial (punto 7 y 29).
   const [creditoCliente, setCreditoCliente] = useState(null);
   useEffect(() => {
@@ -1324,9 +1355,11 @@ function PantallaDeclaracion({ cliente, setToast }) {
   /* (2026-10-02) Ofertas especiales vigentes. Se cargan acá y no dentro de su
      pestaña porque la pestaña dice cuántas hay aunque no esté abierta. */
   const [ofertasPortal, setOfertasPortal] = useState(null);
+  const ofertasHabilitadas = habil("ofertas");
   useEffect(() => {
     let vivo = true;
     const vacio = { ofertas: [], items: [], total: 0 };
+    if (!ofertasHabilitadas) { setOfertasPortal(vacio); return () => { vivo = false; }; }
     const cargar = () => {
       apiRequest("/stock-clientes/ofertas")
         .then((r) => { if (vivo) setOfertasPortal(r && Array.isArray(r.items) ? r : vacio); })
@@ -1335,7 +1368,7 @@ function PantallaDeclaracion({ cliente, setToast }) {
     cargar();
     window.addEventListener(PORTAL_REFRESCAR, cargar);
     return () => { vivo = false; window.removeEventListener(PORTAL_REFRESCAR, cargar); };
-  }, []);
+  }, [ofertasHabilitadas]);
 
   /* El carrito vive dentro del panel del Explorador, así que sumar productos
      desde Gestión de Stock tiene que llevar también a esa pestaña; si no, el
@@ -1847,7 +1880,7 @@ function PantallaDeclaracion({ cliente, setToast }) {
               <div style={styles.heroNombre}>{nombreClienteDisplay}</div>
               <div style={styles.heroMeta}>
                 <span style={styles.heroRut}>{cliente.rut_formateado}</span>
-                {historial[0]?.fecha && (
+                {historial[0]?.fecha && habil("declaracion") && (
                   <>
                     <span style={styles.heroDivider} />
                     <span style={styles.heroUltimaInline}>
@@ -1859,7 +1892,7 @@ function PantallaDeclaracion({ cliente, setToast }) {
             </div>
           </div>
 
-          <div style={styles.kpiRow}>
+          {habil("declaracion") && <div style={styles.kpiRow}>
             <MetricCard label="Productos" valor={totales.total} tono="neutro" />
             <MetricCard label="OK" valor={totales.verdes} tono="verde" />
             <MetricCard label="Bajo" valor={totales.amarillos} tono="amarillo" />
@@ -1869,10 +1902,10 @@ function PantallaDeclaracion({ cliente, setToast }) {
               tono="rojo"
               pulse={tieneCritico}
             />
-          </div>
+          </div>}
         </div>
 
-        {tab === "declaracion" && estadoInfo && (
+        {tabActiva === "declaracion" && estadoInfo && (
           <EstadoBanner
             info={estadoInfo}
             criticos={itemsCriticos}
@@ -1883,16 +1916,18 @@ function PantallaDeclaracion({ cliente, setToast }) {
 
       {/* Tabs */}
       <TabNavigator
-        tab={tab}
+        tab={tabActiva}
         onChange={setTab}
         contadorSolicitudes={solicitudes.length}
         contadorOfertas={ofertasPortal?.total || 0}
         esAdminPortal={esAdminPortal}
+        habil={habil}
+        puedePedir={puedePedir}
       />
 
       {/* Avisos sin leer (despacho en curso). Van arriba de todo porque es lo
           primero que el cliente tiene que ver al entrar. */}
-      <AvisosPortal onVerHistorial={() => setTab("actividad")} />
+      <AvisosPortal onVerHistorial={habil("actividad") ? () => setTab("actividad") : null} />
 
       {/* (2026-10-01) Refrescar. El portal carga sus datos al entrar y despues
           se queda quieto: si Amsodent valida un pedido o despacha mientras el
@@ -1916,25 +1951,28 @@ function PantallaDeclaracion({ cliente, setToast }) {
         </button>
       </div>
 
-      {tab === "resumen" ? (
+      {tabActiva === "resumen" ? (
         <DashboardComercial
           items={items}
           solicitudes={solicitudes}
           cotizaciones={cotizacionesHist}
           credito={creditoCliente}
           onIrA={setTab}
+          puedeIr={permitido}
+          conStock={habil("declaracion")}
         />
-      ) : tab === "usuarios" ? (
+      ) : tabActiva === "usuarios" ? (
         <PanelUsuariosPortal setToast={setToast} />
-      ) : tab === "ofertas" ? (
+      ) : tabActiva === "ofertas" ? (
         <PanelOfertas datos={ofertasPortal} />
-      ) : tab === "showroom" ? (
+      ) : tabActiva === "showroom" ? (
         <PanelShowroom />
-      ) : tab === "actividad" ? (
+      ) : tabActiva === "actividad" ? (
         <PanelHistorialPortal />
-      ) : tab === "explorador" ? (
-        <PanelExploradorPrecios />
-      ) : tab === "solicitudes" ? (
+      ) : tabActiva === "explorador" ? (
+        // Sin Explorador habilitado, la pestaña muestra solo el carrito ("Mi pedido").
+        <PanelExploradorPrecios soloCarrito={!habil("explorador")} />
+      ) : tabActiva === "solicitudes" ? (
         <PanelMisSolicitudes
           solicitudes={solicitudes}
           cotizacionesHist={cotizacionesHist}
@@ -2577,9 +2615,11 @@ function AvisosPortal({ onVerHistorial }) {
             : <Truck size={16} style={{ color: "#0369a1", flexShrink: 0 }} />}
           <span style={{ fontSize: 13.5, color: "#0c4a6e", flex: 1, minWidth: 180 }}>{a.descripcion}</span>
           <span style={{ fontSize: 11.5, color: "#0369a1" }}>{fmtFechaHora(a.created_at)}</span>
-          <button type="button" onClick={onVerHistorial} style={{ ...styles.btnSecundarioChico, whiteSpace: "nowrap" }}>
-            Ver actividad
-          </button>
+          {onVerHistorial && (
+            <button type="button" onClick={onVerHistorial} style={{ ...styles.btnSecundarioChico, whiteSpace: "nowrap" }}>
+              Ver actividad
+            </button>
+          )}
           <button type="button" onClick={descartar} title="Descartar" style={{ background: "none", border: "none", cursor: "pointer", color: "#0369a1", padding: 2 }}>
             <X size={16} />
           </button>
@@ -3179,18 +3219,22 @@ const botonCantidad = {
   alignItems: "center",
   justifyContent: "center",
 };
-function TabNavigator({ tab, onChange, contadorSolicitudes, contadorOfertas = 0, esAdminPortal }) {
+function TabNavigator({ tab, onChange, contadorSolicitudes, contadorOfertas = 0, esAdminPortal, habil = () => true, puedePedir = true }) {
+  // (2026-10-05) Solo las secciones habilitadas para la cuenta. Sin Explorador,
+  // su lugar lo toma "Mi pedido" (el carrito) si se puede pedir desde otra sección.
   const opciones = [
     { id: "resumen", label: "Resumen", icono: Activity },
-    { id: "declaracion", label: "Gestión de Stock", icono: Database },
-    { id: "solicitudes", label: "Mis cotizaciones", icono: FileSpreadsheet },
-    { id: "ofertas", label: "Ofertas", icono: Tag },
-    { id: "showroom", label: "Showroom", icono: ShoppingCart },
-    { id: "explorador", label: "Explorador de precios", icono: Search },
-    { id: "actividad", label: "Actividad", icono: Activity },
+    habil("declaracion") && { id: "declaracion", label: "Gestión de Stock", icono: Database },
+    habil("solicitudes") && { id: "solicitudes", label: "Mis cotizaciones", icono: FileSpreadsheet },
+    habil("ofertas") && { id: "ofertas", label: "Ofertas", icono: Tag },
+    habil("showroom") && { id: "showroom", label: "Showroom", icono: ShoppingCart },
+    habil("explorador")
+      ? { id: "explorador", label: "Explorador de precios", icono: Search }
+      : puedePedir && { id: "explorador", label: "Mi pedido", icono: ShoppingCart },
+    habil("actividad") && { id: "actividad", label: "Actividad", icono: Activity },
     // Solo el administrador de la cuenta administra a los usuarios del RUT.
-    ...(esAdminPortal ? [{ id: "usuarios", label: "Usuarios", icono: UserCog }] : []),
-  ];
+    esAdminPortal && { id: "usuarios", label: "Usuarios", icono: UserCog },
+  ].filter(Boolean);
   return (
     <div style={tabStyles.contenedor}>
       {opciones.map((o) => {
@@ -3533,7 +3577,7 @@ function ModalUsuarioPortal({ usuario, guardando, onCerrar, onGuardar }) {
   );
 }
 
-function PanelExploradorPrecios() {
+function PanelExploradorPrecios({ soloCarrito = false }) {
   const [q, setQ] = useState("");
   const [cargando, setCargando] = useState(false);
   const [error, setError] = useState("");
@@ -3558,6 +3602,10 @@ function PanelExploradorPrecios() {
   // El pedido NUNCA se envía directo desde el carrito: siempre pasa por la
   // revisión del detalle completo.
   const [pasoCarrito, setPasoCarrito] = useState("carrito");
+  // Sin Explorador, esta pestaña ES el pedido: al entrar se abre el carrito si tiene algo.
+  useEffect(() => {
+    if (soloCarrito && leerCarrito().length) { setPasoCarrito("carrito"); setCarritoAbierto(true); }
+  }, [soloCarrito]);
   const [notaPedido, setNotaPedido] = useState("");
   const [contactoPedido, setContactoPedido] = useState({ nombre: "", email: "", telefono: "" });
   const [enviandoPedido, setEnviandoPedido] = useState(false);
@@ -3769,6 +3817,22 @@ function PanelExploradorPrecios() {
 
   return (
     <div style={ex.card}>
+      {soloCarrito && (
+        <>
+          <h2 style={ex.titulo}>Mi pedido</h2>
+          <p style={ex.sub}>
+            {carrito.length
+              ? "Aquí está lo que juntaste para pedir. Revisa cantidades y envíalo a Amsodent."
+              : "Tu pedido está vacío. Agrega productos desde las secciones del portal y vuelve aquí para enviarlo."}
+          </p>
+          {carrito.length > 0 && !carritoAbierto && (
+            <button type="button" style={ex.boton} onClick={() => { setPasoCarrito("carrito"); setCarritoAbierto(true); }}>
+              <ShoppingCart size={16} /> Ver mi pedido ({totalUnidades})
+            </button>
+          )}
+        </>
+      )}
+      {!soloCarrito && (<>
       <h2 style={ex.titulo}>Explorador de precios dentales</h2>
       <p style={ex.sub}>
         Busca un insumo por palabra clave y compara en vivo los precios publicados por las principales
@@ -3997,6 +4061,7 @@ function PanelExploradorPrecios() {
           </p>
         </>
       )}
+      </>)}
 
       {/* (Punto 14) Aviso de pedido enviado */}
       {pedidoEnviado && (
@@ -4497,7 +4562,7 @@ const histStyles = {
    artículos tiene, qué está en rojo, en qué van sus pedidos y cuánto lleva
    comprado. Todo se calcula con datos que el portal ya carga.
    ────────────────────────────────────────────────────────────────────── */
-function DashboardComercial({ items, solicitudes, cotizaciones, credito, onIrA }) {
+function DashboardComercial({ items, solicitudes, cotizaciones, credito, onIrA, puedeIr = () => true, conStock = true }) {
   const resumen = useMemo(() => {
     const conNombre = (items || []).filter((it) => String(it?.nombre || "").trim());
     let valor = 0;
@@ -4566,27 +4631,33 @@ function DashboardComercial({ items, solicitudes, cotizaciones, credito, onIrA }
             Tienes {resumen.porPagar.length} pedido{resumen.porPagar.length === 1 ? "" : "s"} listo{resumen.porPagar.length === 1 ? "" : "s"} para pagar
             {" "}({fmtMoneda(resumen.porPagar.reduce((a, p) => a + (Number(p.monto_total) || 0), 0))}).
           </span>
-          <button type="button" onClick={() => onIrA?.("solicitudes")} style={styles.btnPrimarioChico}>
-            Ver y pagar
-          </button>
+          {puedeIr("solicitudes") && (
+            <button type="button" onClick={() => onIrA?.("solicitudes")} style={styles.btnPrimarioChico}>
+              Ver y pagar
+            </button>
+          )}
         </div>
       )}
-      {resumen.criticos > 0 && (
+      {conStock && resumen.criticos > 0 && (
         <div style={{ border: "1px solid #fecaca", background: "#fef2f2", borderRadius: 12, padding: "12px 16px", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
           <AlertTriangle size={16} color="#b91c1c" />
           <span style={{ fontSize: 13, color: "#991b1b", fontWeight: 600 }}>
             {resumen.criticos} producto{resumen.criticos === 1 ? "" : "s"} en stock crítico
             {resumen.bajos > 0 ? ` y ${resumen.bajos} en stock bajo` : ""}.
           </span>
-          <button type="button" onClick={() => onIrA?.("declaracion")} style={styles.btnSecundarioChico}>
-            Revisar inventario
-          </button>
+          {puedeIr("declaracion") && (
+            <button type="button" onClick={() => onIrA?.("declaracion")} style={styles.btnSecundarioChico}>
+              Revisar inventario
+            </button>
+          )}
         </div>
       )}
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(190px, 100%), 1fr))", gap: 12 }}>
+        {conStock && (<>
         <TarjetaResumen etiqueta="Valor del inventario" valor={fmtMoneda(resumen.valor)} detalle={`${resumen.unidades.toLocaleString("es-CL")} unidades declaradas`} color={TEAL} />
         <TarjetaResumen etiqueta="Artículos" valor={String(resumen.productos)} detalle={`${resumen.criticos} críticos · ${resumen.bajos} bajos`} color="#b45309" />
+        </>)}
         <TarjetaResumen etiqueta="Total comprado" valor={fmtMoneda(resumen.totalComprado)} detalle={`${resumen.compras} compra${resumen.compras === 1 ? "" : "s"} registradas`} color="#15803d" />
         <TarjetaResumen etiqueta="Pedidos en curso" valor={String(resumen.pedidosAbiertos)} detalle="esperando aprobación, revisión o pago" color="#6d28d9" />
         {credito?.habilitado && (

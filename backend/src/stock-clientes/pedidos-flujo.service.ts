@@ -1,7 +1,8 @@
-import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
 import { MailingsService } from '../mailings/mailings.service';
 import { OfertasPortalService } from './ofertas-portal.service';
+import { PortalModulosService } from './portal-modulos.service';
 
 /* ── Flujo de aprobación y pago de los pedidos del portal (2026-09-16) ────
    Un pedido recorre estas etapas, cada una con responsable y hora:
@@ -47,6 +48,8 @@ export class PedidosFlujoService {
     private supabase: SupabaseService,
     private mailings: MailingsService,
     private ofertas: OfertasPortalService,
+    // Módulos del portal por cliente (2026-10-05). Opcional para las pruebas.
+    @Optional() private modulosPortal?: PortalModulosService,
   ) {}
 
   private get client() {
@@ -608,8 +611,10 @@ export class PedidosFlujoService {
       .filter((it) => it.nombre && it.cantidad > 0);
     // El precio de las líneas de oferta lo pone el servidor (si la oferta ya
     // no rige, vuelven al precio normal).
+    // Sin Ofertas habilitada para el cliente, ninguna línea lleva precio de oferta.
+    const ofertasOk = this.modulosPortal ? await this.modulosPortal.habilitado(String(pedido?.rut || ''), 'ofertas') : true;
     const nuevos: any[] = await this.ofertas.depurarSkusDeInventario(
-      await this.ofertas.aplicarAItems(limpios as any[]),
+      await this.ofertas.aplicarAItems((ofertasOk ? limpios : (limpios as any[]).map(({ oferta_id: _o, ...resto }: any) => resto)) as any[]),
     );
     if (!nuevos.length) {
       throw new BadRequestException('La modificación llegó sin productos.');
