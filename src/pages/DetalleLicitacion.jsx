@@ -22,6 +22,8 @@ import Select, { components } from "react-select";
 import ProductoPickerModal from "../components/ProductoPickerModal";
 import CalculadoraFlete from "../components/CalculadoraFlete";
 import BotonFichaTecnica from "../components/BotonFichaTecnica";
+import EmitirDespachoBsale from "../components/EmitirDespachoBsale";
+import DocumentoLibreBsale from "../components/DocumentoLibreBsale";
 import { generarPDFcotizacion } from "../utils/generarPDFcotizacion";
 import { calcularLista3 } from "../lib/listas";
 import { precioCampanaMargen } from "../lib/campanasMargen";
@@ -907,6 +909,22 @@ export default function EditarLicitacion() {
     const e = (miCorreo || "").trim().toLowerCase();
     return APROBADORES_AUTORIZADOS.includes(e);
   }, [esAdmin, miCorreo]);
+  /* (2026-10-07) Guía de despacho desde la cotización. Al quedar adjudicada se
+     habilita "Emitir guía de despacho" (quien emite en Bsale). Con orden de
+     compra la guía sale de ella; sin OC (particular), de los productos de la
+     cotización. El N° de seguimiento puede ir después. */
+  const [puedeBsale, setPuedeBsale] = useState(false);
+  const [guiaOc, setGuiaOc] = useState(null); // { ocId } | null
+  const [guiaLibre, setGuiaLibre] = useState(false);
+  const [elegirOc, setElegirOc] = useState(false);
+  const [seguimientoEdit, setSeguimientoEdit] = useState(null); // { id, numero, empresa } | null
+  const [guardandoSeguimiento, setGuardandoSeguimiento] = useState(false);
+  useEffect(() => {
+    let vivo = true;
+    api.get("/bsale/facturas/estado").then((e) => { if (vivo) setPuedeBsale(!!e?.puede); }).catch(() => {});
+    return () => { vivo = false; };
+  }, []);
+
   // Admin y jefe_ventas_especial pueden editar el nombre del documento y el N° de tracking.
   const puedeEditarDocAvanzado = useMemo(() => {
     const r = (rol ?? "").toString().trim().toLowerCase();
@@ -3531,6 +3549,44 @@ export default function EditarLicitacion() {
         />
       )}
 
+      {guiaOc && (
+        <EmitirDespachoBsale
+          tipo="guia"
+          licitacionId={Number(id)}
+          ocDocId={guiaOc.ocId}
+          onCerrar={() => setGuiaOc(null)}
+          onEmitida={(r) => {
+            setToast({ type: "success", message: `Guía ${r.numero} emitida en Bsale${r.registrada ? " y registrada en los documentos." : "."}` });
+            cargarDocumentosLicitacion();
+          }}
+        />
+      )}
+      {guiaLibre && (
+        <DocumentoLibreBsale
+          tipo="guia"
+          cotizacionId={Number(id)}
+          onCerrar={() => setGuiaLibre(false)}
+          onEmitida={(r) => {
+            setToast({ type: "success", message: `Guía ${r.numero} emitida en Bsale${r.registrada ? " y registrada en los documentos." : "."}` });
+            cargarDocumentosLicitacion();
+          }}
+        />
+      )}
+      {elegirOc && (
+        <div onClick={() => setElegirOc(false)} style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,.45)", zIndex: 11000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+          <div onClick={(e) => e.stopPropagation()} className="elegir-oc-guia" style={{ width: 420, maxWidth: "100%", background: "var(--surface)", borderRadius: "var(--radius-lg)", border: "1px solid var(--border)", boxShadow: "var(--shadow-lg)", padding: 18, display: "flex", flexDirection: "column", gap: 10 }}>
+            <strong style={{ fontSize: 15 }}>¿De qué orden de compra es la guía?</strong>
+            {documentos.filter((d) => d.tipo === "orden_compra").map((oc) => (
+              <button key={oc.id} type="button" className="btn btn-secondary" style={{ justifyContent: "space-between", height: "auto", minHeight: 38, whiteSpace: "normal", textAlign: "left" }} onClick={() => { setElegirOc(false); setGuiaOc({ ocId: oc.id }); }}>
+                <span style={{ fontWeight: 700, overflowWrap: "anywhere" }}>OC {oc.numero || `#${oc.id}`}</span>
+                <span style={{ color: "var(--text-muted)", fontSize: 12.5, whiteSpace: "nowrap" }}>{oc.monto ? `Neto $${Number(oc.monto).toLocaleString("es-CL")}` : ""}</span>
+              </button>
+            ))}
+            <button type="button" className="btn btn-ghost" onClick={() => setElegirOc(false)} style={{ alignSelf: "flex-end" }}>Cancelar</button>
+          </div>
+        </div>
+      )}
+
       {pickerIndex !== null && (
         <ProductoPickerModal
           productos={productos}
@@ -4846,8 +4902,23 @@ export default function EditarLicitacion() {
 
       {/* DOCUMENTOS */}
       <div className="surface">
-        <div className="surface-header">
+        <div className="surface-header" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
           <h3 className="surface-title">Documentos</h3>
+          {estadoActualDB === "Adjudicada" && puedeBsale && (
+            <button
+              type="button"
+              className="btn btn-primary btn-sm"
+              onClick={() => {
+                const ocs = documentos.filter((d) => d.tipo === "orden_compra");
+                if (ocs.length === 1) setGuiaOc({ ocId: ocs[0].id });
+                else if (ocs.length > 1) setElegirOc(true);
+                else setGuiaLibre(true);
+              }}
+              title="Emitir en Bsale la guía de despacho de esta cotización adjudicada (simular primero)"
+            >
+              Emitir guía de despacho
+            </button>
+          )}
         </div>
         <div className="surface-body">
 
@@ -5421,6 +5492,65 @@ export default function EditarLicitacion() {
                               {doc.empresa_despacho && doc.n_seguimiento ? " · " : ""}
                               {doc.n_seguimiento ? `Tracking: ${doc.n_seguimiento}` : ""}
                             </div>
+                          )}
+                          {/* (2026-10-07) Guía sin N° de seguimiento: se agrega cuando se tenga. */}
+                          {doc.tipo === "guia_despacho" && !doc.n_seguimiento && String(doc.empresa_despacho || "").toLowerCase() !== "despacho interno" && (puedeBsale || puedeEditarDocAvanzado) && (
+                            seguimientoEdit?.id === doc.id ? (
+                              <div className="agregar-seguimiento" style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", marginTop: 6 }}>
+                                {!doc.empresa_despacho && (
+                                  <DropdownSelect
+                                    value={seguimientoEdit.empresa}
+                                    onChange={(v) => setSeguimientoEdit((x) => ({ ...x, empresa: v }))}
+                                    options={[{ value: "", label: "Empresa…" }, { value: "Starken", label: "Starken" }, { value: "Blue Express", label: "Blue Express" }, { value: "Otro", label: "Otro" }]}
+                                    minWidth={130}
+                                    style={{ minWidth: 130, fontSize: 12.5 }}
+                                  />
+                                )}
+                                <input
+                                  type="text"
+                                  className="input text-sm"
+                                  style={{ minWidth: 150, flex: "1 1 150px" }}
+                                  value={seguimientoEdit.numero}
+                                  onChange={(e) => setSeguimientoEdit((x) => ({ ...x, numero: e.target.value.slice(0, 80) }))}
+                                  placeholder="N° de seguimiento"
+                                  disabled={guardandoSeguimiento}
+                                />
+                                <button
+                                  type="button"
+                                  className="btn btn-primary btn-sm"
+                                  disabled={guardandoSeguimiento || !seguimientoEdit.numero.trim()}
+                                  onClick={async () => {
+                                    setGuardandoSeguimiento(true);
+                                    try {
+                                      await api.put(`/licitaciones/documentos/${doc.id}`, {
+                                        n_seguimiento: seguimientoEdit.numero.trim(),
+                                        ...(!doc.empresa_despacho && seguimientoEdit.empresa ? { empresa_despacho: seguimientoEdit.empresa } : {}),
+                                      });
+                                      setSeguimientoEdit(null);
+                                      setToast({ type: "success", message: "N° de seguimiento guardado." });
+                                      await cargarDocumentosLicitacion();
+                                    } catch (e) {
+                                      setToast({ type: "error", message: e?.message || "No se pudo guardar el N° de seguimiento." });
+                                    } finally {
+                                      setGuardandoSeguimiento(false);
+                                    }
+                                  }}
+                                >
+                                  {guardandoSeguimiento ? "Guardando…" : "Guardar"}
+                                </button>
+                                <button type="button" className="btn btn-ghost btn-sm" onClick={() => setSeguimientoEdit(null)} disabled={guardandoSeguimiento}>Cancelar</button>
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                className="btn btn-secondary btn-sm"
+                                style={{ marginTop: 6, fontSize: 11.5, height: "auto", minHeight: 26, padding: "3px 8px" }}
+                                onClick={() => setSeguimientoEdit({ id: doc.id, numero: "", empresa: doc.empresa_despacho || "" })}
+                                title="Esta guía todavía no tiene N° de seguimiento del transporte"
+                              >
+                                + N° de seguimiento
+                              </button>
+                            )
                           )}
                         </>
                       )}

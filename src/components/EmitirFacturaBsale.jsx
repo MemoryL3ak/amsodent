@@ -5,6 +5,7 @@ import { api } from "../lib/api";
 import DateFilter from "./DateFilter";
 import DropdownSelect from "./ui/DropdownSelect";
 import VistaPreviaBsale from "./VistaPreviaBsale";
+import RegistrarComprobanteRapido from "./RegistrarComprobanteRapido";
 
 /* ── Emitir factura en Bsale (2026-10-02) ────────────────────────────────────
    Ventana que se abre desde Trazabilidad sobre una guía sin factura. El
@@ -177,6 +178,9 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
                 <a href={resultado.url_pdf} target="_blank" rel="noopener noreferrer" className="btn btn-secondary btn-sm" style={{ alignSelf: "flex-start", textDecoration: "none" }}>
                   <ExternalLink size={13} /> Ver la factura en Bsale
                 </a>
+              )}
+              {resultado.registrada && resultado.documento_id && (
+                <RegistrarComprobanteRapido licitacionId={licitacionId} documentoId={resultado.documento_id} totalBruto={resultado.total} nombreDocumento="la factura" />
               )}
             </div>
           )}

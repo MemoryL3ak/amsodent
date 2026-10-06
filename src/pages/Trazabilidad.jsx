@@ -74,6 +74,7 @@ function SLABadge({ fechaOc }) {
 import { Upload, Eye, Trash2, ArrowUpDown, ArrowUp, ArrowDown, Calendar, FileCheck, ChevronDown, Truck, Download, Clock, CheckCircle2, Check, Pencil, X, AlertTriangle, Package } from "lucide-react";
 import { SunflowerIcon } from "../components/DamarIAWidget";
 import EmitirFacturaBsale from "../components/EmitirFacturaBsale";
+import DocumentoLibreBsale from "../components/DocumentoLibreBsale";
 
 // Mapping empresa courier → builder de URL de tracking. Si la empresa no
 // tiene URL o no hay número, devuelve "" (no renderizamos el link).
@@ -564,6 +565,8 @@ export default function Trazabilidad() {
   const [despachoBsale, setDespachoBsale] = useState(null);
   // Emitir la factura de una guía en Bsale (ventana): { licId, guiaId } | null.
   const [emitirFactura, setEmitirFactura] = useState(null);
+  // (2026-10-07) Boleta o factura del cliente particular, armada con su cotización.
+  const [emitirBoleta, setEmitirBoleta] = useState(null); // { licId } | null
   // ¿Puede este usuario emitir? Lo decide el backend (rol + integración).
   const [puedeEmitirBsale, setPuedeEmitirBsale] = useState(false);
   const [facturaNumero, setFacturaNumero] = useState("");
@@ -2300,6 +2303,17 @@ export default function Trazabilidad() {
       {toast && <Toast type={toast.type} message={toast.message} onClose={() => setToast(null)} />}
       {guiaBsale && <ModalGuiaBsale {...guiaBsale} onCerrar={() => setGuiaBsale(null)} />}
       {despachoBsale && <ModalDespachoBsale {...despachoBsale} onCerrar={() => setDespachoBsale(null)} />}
+      {emitirBoleta && (
+        <DocumentoLibreBsale
+          tipo="boleta"
+          cotizacionId={emitirBoleta.licId}
+          onCerrar={() => setEmitirBoleta(null)}
+          onEmitida={(r) => {
+            setToast({ type: "success", message: `${r.tipo === "boleta" ? "Boleta" : "Factura"} ${r.numero} emitida en Bsale${r.registrada ? " y registrada en la cotización." : "."}` });
+            refrescarDocumentosLic(emitirBoleta.licId);
+          }}
+        />
+      )}
       {emitirFactura && (
         <EmitirFacturaBsale
           licitacionId={emitirFactura.licId}
@@ -3081,6 +3095,18 @@ export default function Trazabilidad() {
                                   title={`Emitir en Bsale la factura de la guía ${guia.numero}: se arma con los productos de la guía y queda registrada aquí`}
                                 >
                                   <FileCheck size={12} style={{ flexShrink: 0 }} /> Emitir factura
+                                </button>
+                              )}
+                              {/* Cliente particular: su boleta o factura, armada con los productos de la cotización. */}
+                              {puedeEmitirBsale && !soloLectura && esParticular(lic) && (
+                                <button
+                                  type="button"
+                                  onClick={() => setEmitirBoleta({ licId: lic.id })}
+                                  className="btn btn-secondary btn-sm"
+                                  style={{ height: "auto", minHeight: 26, padding: "3px 8px", fontSize: 11.5, whiteSpace: "normal", textAlign: "left", lineHeight: 1.2 }}
+                                  title="Emitir en Bsale la boleta o factura de esta cotización: se arma con su cliente y sus productos, y queda registrada aquí"
+                                >
+                                  <FileCheck size={12} style={{ flexShrink: 0 }} /> Emitir boleta / factura
                                 </button>
                               )}
                             </div>

@@ -33,6 +33,12 @@ export class BsaleLibreController {
     return this.libre.buscarProductos(String(req?.user?.id || ''), String(q || ''));
   }
 
+  // Cliente y líneas de una cotización, para armar su boleta, factura o guía.
+  @Get('desde-cotizacion')
+  desdeCotizacion(@Req() req: any, @Query('id') id: string) {
+    return this.libre.desdeCotizacion(String(req?.user?.id || ''), id);
+  }
+
   // Simula (simular: true) o emite el documento armado a mano.
   @Post('emitir')
   emitir(@Req() req: any, @Body() body: any) {

@@ -452,6 +452,8 @@ export default function SeguimientoPagos() {
   const [usuariosMap, setUsuariosMap] = useState({});
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState(null);
+  // Comprobantes de pago de una factura pagada (ojo de la columna Estado).
+  const [verPagos, setVerPagos] = useState(null);
   const [confirmDesmarcar, setConfirmDesmarcar] = useState(null);
 
   // Nota de crédito o multa que se está cargando a una factura.
@@ -863,9 +865,16 @@ export default function SeguimientoPagos() {
     if (f?.pagada && c.abonos <= 0) return false;
     return c.saldo > TOLERANCIA_SALDO;
   }
-  // Pagada "efectiva": respeta el flag salvo que los montos cargados no calcen.
+  /* (2026-10-07) Cubierta por sus pagos: los comprobantes cargados suman el
+     total, aunque nadie la haya marcado pagada. Había 115 boletas/facturas de
+     particulares así: con su comprobante y la columna Estado en blanco. */
+  function cubiertaPorPagos(f) {
+    const c = cuentaDe(f);
+    return c.abonos > 0 && c.saldo <= TOLERANCIA_SALDO;
+  }
+  // Pagada "efectiva": el flag (salvo que los montos no calcen) o cubierta por sus pagos.
   function estaPagada(f, lic) {
-    return Boolean(f.pagada) && !descalceMontos(f, lic);
+    return (Boolean(f.pagada) && !descalceMontos(f, lic)) || cubiertaPorPagos(f);
   }
 
   // Filtros base: todos MENOS el de estado. Los KPIs se calculan sobre estas
@@ -975,6 +984,12 @@ export default function SeguimientoPagos() {
     arr.sort((a, b) => {
       const licA = licMap[a.licitacion_id] || {};
       const licB = licMap[b.licitacion_id] || {};
+      // (2026-10-07) Primero las que faltan por pagar; dentro de cada grupo, el orden elegido.
+      if (sortCol !== "estado") {
+        const pa = estaPagada(a, licA) ? 1 : 0;
+        const pb = estaPagada(b, licB) ? 1 : 0;
+        if (pa !== pb) return pa - pb;
+      }
       switch (sortCol) {
         case "cotizacion": return ((licA.id || 0) - (licB.id || 0)) * dir;
         case "entidad": {
@@ -1004,7 +1019,7 @@ export default function SeguimientoPagos() {
         case "estado": {
           // Orden lógico: vencida (peor) → por vencer → pendientes → pagada
           const orden = (f, lic) => {
-            if (f.pagada) return 4;
+            if (estaPagada(f, lic)) return 4;
             const dias = diasEntre(f.fecha_factura);
             const restantes = dias != null ? plazoDias(lic.condicion_venta) - dias : null;
             if (restantes == null) return 5;
@@ -1018,7 +1033,7 @@ export default function SeguimientoPagos() {
       }
     });
     return arr;
-  }, [facturasFiltradas, licMap, sortCol, sortDir]);
+  }, [facturasFiltradas, licMap, sortCol, sortDir, cuentas]);
 
   /* ── Reporte descargable (Punto 36) ────────────────────────── */
   function construirFilasReporte() {
@@ -1300,6 +1315,72 @@ export default function SeguimientoPagos() {
       console.error("Error exportando detalle del KPI:", e);
       setToast({ type: "error", message: "No se pudo exportar el detalle." });
     }
+  }
+
+  // Ventana del ojo: los pagos de la factura, con su archivo si lo tienen.
+  function ventanaPagos() {
+    const f = verPagos;
+    if (!f) return null;
+    const lic = licMap[f.licitacion_id] || {};
+    const pagos = pagosDeFactura(f);
+    const NOMBRE = { comprobante_pago: "Comprobante", webpay: "Tarjeta (Webpay)", efectivo: "Efectivo" };
+    const fecha = (v) => (v ? new Date(`${String(v).slice(0, 10)}T00:00:00`).toLocaleDateString("es-CL") : "—");
+    return createPortal(
+      <div onClick={() => setVerPagos(null)} style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,.5)", zIndex: 11000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+        <div className="modal-ver-pagos" onClick={(e) => e.stopPropagation()} style={{ width: 640, maxWidth: "100%", maxHeight: "90vh", overflow: "auto", background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", boxShadow: "var(--shadow-lg)" }}>
+          <div style={{ padding: "14px 18px", borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
+            <div style={{ minWidth: 0 }}>
+              <strong style={{ fontSize: 15 }}>Pago de la {String(f.tipo) === "factura_boleta" ? "boleta/factura" : "factura"} N° {f.numero || "—"}</strong>
+              <div style={{ fontSize: 12.5, color: "var(--text-muted)", overflowWrap: "anywhere" }}>#{lic.id} · {lic.nombre_entidad || "—"}</div>
+            </div>
+            <button type="button" className="btn btn-ghost" onClick={() => setVerPagos(null)} style={{ padding: 6, flexShrink: 0 }} title="Cerrar"><X size={16} /></button>
+          </div>
+          <div style={{ padding: "12px 18px", display: "flex", flexDirection: "column", gap: 10 }}>
+            {pagos.length ? (
+              <div style={{ overflowX: "auto" }}>
+                <table className="data-table" style={{ width: "100%", minWidth: 520 }}>
+                  <thead>
+                    <tr>
+                      <th style={{ textAlign: "left" }}>Tipo</th>
+                      <th style={{ textAlign: "left" }}>N°</th>
+                      <th style={{ textAlign: "left" }}>Fecha</th>
+                      <th style={{ textAlign: "right" }}>Monto</th>
+                      <th style={{ textAlign: "left" }}>Medio</th>
+                      <th style={{ textAlign: "right" }}>Archivo</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pagos.map((d) => (
+                      <tr key={d.id}>
+                        <td>{NOMBRE[d.tipo] || d.tipo}</td>
+                        <td style={{ overflowWrap: "anywhere" }}>{d.numero || "—"}</td>
+                        <td style={{ whiteSpace: "nowrap" }}>{fecha(d.fecha_oc || d.created_at)}</td>
+                        <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>{fmtCLP(Math.round(Number(d.monto || 0) * 1.19))}</td>
+                        <td>{etiquetaMedio(d.forma_pago) || "—"}</td>
+                        <td style={{ textAlign: "right" }}>
+                          {d.storage_path ? (
+                            <button type="button" className="btn btn-secondary btn-sm" onClick={() => abrirDocumento(d)}>
+                              <Eye size={13} /> Ver
+                            </button>
+                          ) : (
+                            <span style={{ fontSize: 12, color: "var(--text-muted)" }}>Sin archivo</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div style={{ fontSize: 13 }}>
+                Marcada pagada{f.fecha_pago ? ` el ${fecha(f.fecha_pago)}` : ""}{f.forma_pago ? ` (${etiquetaMedio(f.forma_pago)})` : ""}, sin comprobante cargado.
+              </div>
+            )}
+          </div>
+        </div>
+      </div>,
+      document.body,
+    );
   }
 
   async function abrirDocumento(doc) {
@@ -1835,6 +1916,7 @@ export default function SeguimientoPagos() {
   return (
     <div className="page vista-compacta">
       {toast && <Toast type={toast.type} message={toast.message} onClose={() => setToast(null)} />}
+      {ventanaPagos()}
 
       <ConfirmModal
         open={confirmDesmarcar !== null}
@@ -2407,7 +2489,7 @@ export default function SeguimientoPagos() {
                         })()}
                       </td>
                       <td style={{ verticalAlign: "middle" }}>
-                        {particular && !f.pagada && !descalce && !enCuotas ? (
+                        {particular && !pagadaEf && !descalce && !enCuotas ? (
                           <span style={{ color: "var(--text-muted)" }}>—</span>
                         ) : (
                           <span
@@ -2427,13 +2509,25 @@ export default function SeguimientoPagos() {
                             {sem.label}
                           </span>
                         )}
+                        {pagadaEf && (
+                          <button
+                            type="button"
+                            className="ver-comprobante-pago"
+                            onClick={() => setVerPagos(f)}
+                            title="Ver el comprobante de pago"
+                            aria-label="Ver el comprobante de pago"
+                            style={{ background: "none", border: "none", cursor: "pointer", color: "var(--primary-dark)", padding: "2px 4px", marginLeft: 4, verticalAlign: "middle" }}
+                          >
+                            <Eye size={14} />
+                          </button>
+                        )}
                       </td>
                       <td style={{ verticalAlign: "middle" }}>
                         {particular ? (
                           // Particular: mostramos fecha y monto del comprobante de
                           // pago aunque la factura/boleta no esté marcada pagada.
                           <div>
-                            <div style={{ color: f.pagada ? "#15803d" : "#1f2937", fontWeight: 500, fontSize: "12px" }}>
+                            <div style={{ color: pagadaEf ? "#15803d" : "#1f2937", fontWeight: 500, fontSize: "12px" }}>
                               {fechaPagoMostrar ? new Date(`${fechaPagoMostrar}T00:00:00`).toLocaleDateString("es-CL") : "—"}
                             </div>
                             <div style={{ color: "var(--text-muted)", fontSize: "11px" }}>

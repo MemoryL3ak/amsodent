@@ -6,6 +6,8 @@ import { api } from "../lib/api";
 import DateFilter from "./DateFilter";
 import DropdownSelect from "./ui/DropdownSelect";
 import VistaPreviaBsale from "./VistaPreviaBsale";
+import CamposSeguimientoGuia from "./CamposSeguimientoGuia";
+import RegistrarComprobanteRapido from "./RegistrarComprobanteRapido";
 
 /* ── Guía o factura LIBRE en Bsale (2026-10-03) ──────────────────────────────
    Sin orden de compra ni cotización de por medio: se elige el cliente por RUT
@@ -24,7 +26,11 @@ const aFecha = (iso) => (iso ? new Date(`${iso}T00:00:00`) : undefined);
 const etiqueta = { fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px", color: "var(--text-muted)", display: "block", marginBottom: 4 };
 const caja = { border: "1px solid var(--border)", borderRadius: 10, padding: "10px 12px" };
 
-export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = false, onCerrar, onEmitida }) {
+/* DESDE UNA COTIZACIÓN (`cotizacionId`, 2026-10-07): boleta o factura del
+   cliente particular desde Trazabilidad, o guía de una cotización adjudicada
+   sin orden de compra. Se precargan el cliente y los productos de la
+   cotización, y el documento queda registrado en ella. */
+export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = false, cotizacionId = null, onCerrar, onEmitida }) {
   const [tipoDoc, setTipoDoc] = useState(ventaDirecta && tipo === "guia" ? "boleta" : tipo);
   const esGuia = tipoDoc === "guia";
   const esBoleta = tipoDoc === "boleta";
@@ -51,7 +57,9 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
   const [descuentaStock, setDescuentaStock] = useState(true);
   const [refOc, setRefOc] = useState({ numero: "", fecha: "" });
   const [refGuia, setRefGuia] = useState({ numero: "", fecha: "" });
-  const [cotizacion, setCotizacion] = useState("");
+  const [cotizacion, setCotizacion] = useState(cotizacionId ? String(cotizacionId) : "");
+  const [desde, setDesde] = useState(null); // datos de la cotización de origen
+  const [seguimiento, setSeguimiento] = useState({ empresa: "", numero: "" });
 
   useEffect(() => {
     let vivo = true;
@@ -60,12 +68,12 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
         if (!vivo) return;
         setOpciones(o);
         setFecha(o.fecha_emision);
-        setFormaPago(String((ventaDirecta ? o.forma_pago_venta_id : o.forma_pago_id) || o.forma_pago_id || ""));
+        setFormaPago(String(((ventaDirecta || cotizacionId) ? o.forma_pago_venta_id : o.forma_pago_id) || o.forma_pago_id || ""));
         setDespacho((d) => ({ ...d, tipo_traslado_id: String(o.tipo_traslado_id || "") }));
       })
       .catch((e) => vivo && setError(e?.message || "No se pudieron cargar las opciones."));
     return () => { vivo = false; };
-  }, [ventaDirecta]);
+  }, [ventaDirecta, cotizacionId]);
 
   // Búsquedas con pausa, para no consultar por cada tecla.
   const timerCliente = useRef(null);
@@ -105,6 +113,40 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
       setBuscandoCliente(false);
     }
   }
+
+  // Precarga: cliente y productos de la cotización.
+  useEffect(() => {
+    if (!cotizacionId) return undefined;
+    let vivo = true;
+    api.get(`/bsale/libre/desde-cotizacion?id=${encodeURIComponent(cotizacionId)}`)
+      .then(async (r) => {
+        if (!vivo || !r) return;
+        setDesde(r);
+        if (tipo !== "guia" && r.tipo_sugerido && !esGuia) setTipoDoc(r.tipo_sugerido);
+        setLineas((r.lineas || []).map((l) => ({ sku: l.sku, producto: l.producto, formato: "", cantidad: String(l.cantidad), neto_unitario: String(l.neto_unitario), lista1: null, lista2: null, stock: null, deCotizacion: true })));
+        if (r.cliente?.rut) {
+          setRut(r.cliente.rut);
+          try {
+            const c = await api.get(`/bsale/libre/cliente?rut=${encodeURIComponent(r.cliente.rut)}`);
+            if (!vivo) return;
+            // Lo que Bsale no sabe del cliente nuevo se completa con la cotización.
+            const lleno = c?.nuevo
+              ? { ...c, razon_social: c.razon_social || r.cliente.razon_social, giro: c.giro || r.cliente.giro, direccion: c.direccion || r.cliente.direccion, comuna: c.comuna || r.cliente.comuna, ciudad: c.ciudad || r.cliente.ciudad, email: c.email || r.cliente.email }
+              : c;
+            setCliente(lleno);
+            setRut(lleno.rut || r.cliente.rut);
+            if (esGuia) setDespacho((d) => ({ ...d, destinatario: d.destinatario || lleno.razon_social || "", direccion: d.direccion || lleno.direccion || r.cliente.direccion || "", comuna: d.comuna || lleno.comuna || r.cliente.comuna || "", ciudad: d.ciudad || lleno.ciudad || r.cliente.ciudad || "" }));
+          } catch { /* el RUT queda escrito para buscarlo a mano */ }
+        } else if (esGuia) {
+          // Sin RUT válido: el despacho igual sale de la cotización.
+          setDespacho((d) => ({ ...d, destinatario: d.destinatario || r.cliente?.razon_social || "", direccion: d.direccion || r.cliente?.direccion || "", comuna: d.comuna || r.cliente?.comuna || "", ciudad: d.ciudad || r.cliente?.ciudad || "" }));
+        }
+      })
+      .catch((e) => vivo && setError(e?.message || "No se pudo leer la cotización."));
+    return () => { vivo = false; };
+    // Solo al abrir: la cotización viene fija.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cotizacionId]);
 
   function agregarProducto(p) {
     setLineas((prev) => {
@@ -158,7 +200,7 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
     setEnviando(accion);
     setError("");
     try {
-      const r = await api.post("/bsale/libre/emitir", { ...cuerpo(), ...(accion === "simular" ? { simular: true } : { huella }) });
+      const r = await api.post("/bsale/libre/emitir", { ...cuerpo(), ...(accion === "simular" ? { simular: true } : { huella, ...(esGuia ? { seguimiento } : {}) }) });
       setResultado(r);
       if (r?.simulacion) { setSimuladoCon(firma); setHuella(r.huella || null); }
       if (r?.emitida) onEmitida?.(r);
@@ -174,7 +216,13 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
   const listoParaSimular = !!opciones && !enviando && (!!cliente || esBoleta) && lineas.length > 0 && !!fecha;
   const puedeEmitir = listoParaSimular && !apagada && simulacionVigente && confirmo;
   const nombreDoc = esGuia ? "guía" : esBoleta ? "boleta" : "factura";
-  const titulo = ventaDirecta ? `Venta directa · ${esBoleta ? "Boleta" : "Factura"}` : esGuia ? "Nueva guía de despacho (libre)" : "Nueva factura (libre)";
+  const titulo = ventaDirecta
+    ? `Venta directa · ${esBoleta ? "Boleta" : "Factura"}`
+    : cotizacionId
+      ? `${esGuia ? "Guía de despacho" : esBoleta ? "Boleta" : "Factura"} de la cotización #${cotizacionId}`
+      : esGuia ? "Nueva guía de despacho (libre)" : "Nueva factura (libre)";
+  // Boleta o factura a elegir: en la venta directa y al emitir desde la cotización de un particular.
+  const eligeTipo = ventaDirecta || (!!cotizacionId && !esGuia);
   const verbo = `Emitir ${nombreDoc}`;
   const opcionesTraslado = (opciones?.tipos_traslado || []).map((t) => ({ value: String(t.id), label: t.nombre }));
   const opcionesPago = (opciones?.formas_pago || []).map((f) => ({ value: String(f.id), label: f.nombre }));
@@ -219,6 +267,14 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
               </div>
               {(resultado.avisos || []).map((a, i) => <div key={i} style={{ fontSize: 12.5, color: "#92400e" }}>{a}</div>)}
               {resultado.url_pdf && <a href={resultado.url_pdf} target="_blank" rel="noopener noreferrer" className="btn btn-secondary btn-sm" style={{ alignSelf: "flex-start", textDecoration: "none" }}><ExternalLink size={13} /> Ver en Bsale</a>}
+              {!esGuia && resultado.registrada && resultado.documento_id && !resultado.cotizacion?.pagada && (
+                <RegistrarComprobanteRapido
+                  licitacionId={resultado.cotizacion?.id || Number(cotizacion) || null}
+                  documentoId={resultado.documento_id}
+                  totalBruto={resultado.total}
+                  nombreDocumento={esBoleta ? "la boleta" : "la factura"}
+                />
+              )}
             </div>
           )}
 
@@ -254,7 +310,23 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
                 </div>
               )}
 
-              {ventaDirecta && (
+              {cotizacionId && desde && (
+                <div style={{ border: "1px solid #bae6fd", background: "#f0f9ff", borderRadius: 10, padding: "8px 12px", fontSize: 12.5, color: "#0c4a6e" }}>
+                  Cotización <b>#{desde.cotizacion.id}</b>{desde.cotizacion.cliente ? ` · ${desde.cotizacion.cliente}` : ""}: se cargaron su cliente y sus {desde.lineas.length} producto{desde.lineas.length === 1 ? "" : "s"} con SKU (precio neto con el flete repartido, igual que su total). Revisa y simula.
+                  {desde.rut_descartado && (
+                    <div style={{ color: "#92400e", marginTop: 4 }}>
+                      El RUT de la cotización ({desde.rut_descartado}) no es válido: {esGuia ? "indica el RUT del destinatario." : "la boleta puede ir a consumidor final, o escribe el RUT correcto."}
+                    </div>
+                  )}
+                  {desde.sin_sku?.length > 0 && (
+                    <div style={{ color: "#92400e", marginTop: 4 }}>
+                      Sin SKU, no pueden ir en Bsale: {desde.sin_sku.join(" · ")}. Asígnales SKU en la cotización o agrégalos aquí con su SKU.
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {eligeTipo && (
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
                   <span style={{ ...etiqueta, marginBottom: 0, marginRight: 4 }}>Documento</span>
                   {[["boleta", "Boleta"], ["factura", "Factura"]].map(([v, t]) => (
@@ -360,7 +432,7 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
                           <td style={{ whiteSpace: "nowrap", fontWeight: 600 }}>{l.sku}</td>
                           <td style={{ whiteSpace: "normal", overflowWrap: "anywhere" }}>
                             {l.producto}{l.formato ? <span style={{ color: "var(--text-muted)", fontSize: 11 }}> · {l.formato}</span> : null}
-                            <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Lista 1 {clp(l.lista1)} · Lista 2 {clp(l.lista2)} · stock {l.stock}</div>
+                            <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{l.deCotizacion ? "De la cotización" : `Lista 1 ${clp(l.lista1)} · Lista 2 ${clp(l.lista2)} · stock ${l.stock}`}</div>
                           </td>
                           <td style={{ textAlign: "right" }}><input className="input" inputMode="decimal" value={l.cantidad} onChange={(e) => cambiarLinea(l.sku, "cantidad", e.target.value)} disabled={!!enviando} style={{ width: 84, height: 30, padding: "2px 8px", textAlign: "right" }} /></td>
                           <td style={{ textAlign: "right" }}>
@@ -424,7 +496,8 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
                   </div>
                 </div>
               )}
-              {!ventaDirecta && <div style={caja}>
+              {esGuia && <CamposSeguimientoGuia valor={seguimiento} onChange={setSeguimiento} disabled={!!enviando} />}
+              {!ventaDirecta && !esBoleta && <div style={caja}>
                 <span style={etiqueta}>Referencias y registro (opcional)</span>
                 <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 8 }}>
                   {esGuia
@@ -446,7 +519,7 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
                   )}
                   <label style={{ flex: "1 1 150px", minWidth: 0 }}>
                     <span style={etiqueta}>{esGuia ? "Cotización # (folio de la referencia y Trazabilidad)" : "Cotización # (para Trazabilidad)"}</span>
-                    <input className="input" inputMode="numeric" value={cotizacion} onChange={(e) => setCotizacion(e.target.value.replace(/[^\d]/g, ""))} disabled={!!enviando} placeholder="Ej: 5286" style={{ width: "100%" }} />
+                    <input className="input" inputMode="numeric" value={cotizacion} onChange={(e) => setCotizacion(e.target.value.replace(/[^\d]/g, ""))} disabled={!!enviando || !!cotizacionId} readOnly={!!cotizacionId} placeholder="Ej: 5286" style={{ width: "100%" }} />
                   </label>
                 </div>
                 {!esGuia && (
