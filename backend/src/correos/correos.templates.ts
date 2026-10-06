@@ -1,10 +1,11 @@
+import { LOGO_AMSODENT_URL } from './logo';
 // Plantillas HTML para correos transaccionales de AMSODENT.
 // Estilo "claro y minimalista": fondo gris muy claro, tarjetas blancas,
 // acento turquesa del logo. HTML compatible con clientes de correo
 // (tablas + estilos inline + emoji como iconos, sin imágenes externas).
 
-const LOGO_URL =
-  'https://amsodentmedical.cl/wp-content/uploads/2025/12/Amsodent-1.png';
+// El logo vive en el sistema (el del sitio web ya no existe): ver correos/logo.ts.
+const LOGO_URL = LOGO_AMSODENT_URL;
 const SITIO_WEB = 'https://amsodentmedical.cl';
 
 const C = {

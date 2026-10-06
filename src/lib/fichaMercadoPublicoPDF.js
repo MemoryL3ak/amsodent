@@ -6,7 +6,7 @@
 // Mismo lenguaje visual que los reportes de stock (src/lib/reporteStock.js).
 
 const LOGO_URL =
-  "https://amsodentmedical.cl/wp-content/uploads/2025/12/Amsodent-1.png";
+  "/logo-amsodent.png";
 
 const C = {
   teal: "#0f766e",

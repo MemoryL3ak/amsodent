@@ -10,6 +10,7 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import { SupabaseService } from '../supabase/supabase.service';
 import { MailingsService } from '../mailings/mailings.service';
+import { LOGO_AMSODENT_URL } from '../correos/logo';
 
 // Inscripciones al evento AMSODENT: registro público (portal /evento) con
 // rate-limit por IP, correo de confirmación vía SMTP (MailingsService) y
@@ -76,7 +77,8 @@ function eventoDe(raw: unknown): EventoInfo {
 // URL pública del frontend, para armar el link al formulario en los correos.
 const APP_URL = (process.env.PUBLIC_APP_URL || 'https://amsodent.vercel.app').replace(/\/+$/, '');
 
-const LOGO_URL = 'https://amsodentmedical.cl/wp-content/uploads/2025/12/Amsodent-1.png';
+// El logo vive en el sistema (el del sitio web ya no existe): ver correos/logo.ts.
+const LOGO_URL = LOGO_AMSODENT_URL;
 
 function sanitizeText(input: unknown, max = 255): string {
   if (typeof input !== 'string') return '';

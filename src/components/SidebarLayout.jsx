@@ -460,7 +460,7 @@ export default function SidebarLayout() {
           <div className="brand-logo-wrap">
             <img
               className="brand-logo"
-              src="https://amsodentmedical.cl/wp-content/uploads/2025/12/Amsodent-1.png"
+              src="/logo-amsodent.png"
               alt="Amsodent"
             />
           </div>

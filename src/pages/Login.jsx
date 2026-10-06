@@ -131,7 +131,7 @@ export default function Login() {
           {/* Logo */}
           <div style={{ display: "flex", justifyContent: "center", marginBottom: "8px" }}>
             <img
-              src="https://amsodentmedical.cl/wp-content/uploads/2025/12/Amsodent-1.png"
+              src="/logo-amsodent.png"
               alt="Amsodent"
               style={{ width: "auto", maxWidth: "240px", height: "auto" }}
             />
@@ -187,7 +187,7 @@ export default function Login() {
         {/* Mobile logo */}
         <div className="login-mobile-logo">
           <img
-            src="https://amsodentmedical.cl/wp-content/uploads/2025/12/Amsodent-1.png"
+            src="/logo-amsodent.png"
             alt="Amsodent"
             style={{ width: "48px", height: "auto", objectFit: "contain" }}
           />
@@ -198,7 +198,7 @@ export default function Login() {
           {/* Card header: logo centered + title */}
           <div className="lf-card-header">
             <img
-              src="https://amsodentmedical.cl/wp-content/uploads/2025/12/Amsodent-1.png"
+              src="/logo-amsodent.png"
               alt="Amsodent"
               style={{ width: "160px", height: "auto", objectFit: "contain" }}
             />

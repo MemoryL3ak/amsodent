@@ -14,7 +14,7 @@ export default function Sidebar() {
       <div className="brand">
         <img
           className="brand-logo"
-          src="https://amsodentmedical.cl/wp-content/uploads/2025/12/Amsodent-1.png"
+          src="/logo-amsodent.png"
           alt="Amsodent"
         />
         <div>

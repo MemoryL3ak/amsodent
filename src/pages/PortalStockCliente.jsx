@@ -472,7 +472,7 @@ export default function PortalStockCliente() {
           <header style={styles.header} data-portal-header>
             <div style={styles.brand}>
               <img
-                src="https://amsodentmedical.cl/wp-content/uploads/2025/12/Amsodent-1.png"
+                src="/logo-amsodent.png"
                 alt="Amsodent"
                 style={styles.brandLogo}
               />
@@ -585,7 +585,7 @@ function PantallaAcuerdo({ cliente, onAceptar, onVolver, setToast }) {
       <div style={{ display: "flex", justifyContent: "center", marginBottom: 22 }}>
         <div style={styles.brandMark} className="anim-chip">
           <img
-            src="https://amsodentmedical.cl/wp-content/uploads/2025/12/Amsodent-1.png"
+            src="/logo-amsodent.png"
             alt="Amsodent Medical"
             style={styles.brandMarkLogo}
           />
@@ -747,7 +747,7 @@ function PantallaLogin({ onLogin, setToast }) {
       <section style={styles.loginPitch}>
         <div style={styles.brandMark} className="anim-chip">
           <img
-            src="https://amsodentmedical.cl/wp-content/uploads/2025/12/Amsodent-1.png"
+            src="/logo-amsodent.png"
             alt="Amsodent Medical"
             style={styles.brandMarkLogo}
           />
@@ -965,7 +965,7 @@ function PantallaCambiarClave({ cliente, onListo, onVolver, setToast }) {
       <div style={{ display: "flex", justifyContent: "center", marginBottom: 22 }}>
         <div style={styles.brandMark} className="anim-chip">
           <img
-            src="https://amsodentmedical.cl/wp-content/uploads/2025/12/Amsodent-1.png"
+            src="/logo-amsodent.png"
             alt="Amsodent Medical"
             style={styles.brandMarkLogo}
           />
@@ -1262,7 +1262,7 @@ function BrandPortalCliente() {
   return (
     <div style={styles.loginBrand} className="anim-brand">
       <img
-        src="https://amsodentmedical.cl/wp-content/uploads/2025/12/Amsodent-1.png"
+        src="/logo-amsodent.png"
         alt="Amsodent Medical"
         style={styles.loginBrandLogo}
       />
