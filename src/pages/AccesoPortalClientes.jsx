@@ -1521,6 +1521,7 @@ function ModalTiendaExplorador({ tienda, onCerrar, onHecho, onError }) {
             { value: "woo", label: "WooCommerce", detalle: "WordPress — /wp-json/wc/store" },
             { value: "shopify", label: "Shopify", detalle: "/search/suggest.json" },
             { value: "odoo", label: "Odoo", detalle: "eCommerce — vitrina /shop" },
+            { value: "amsodent", label: "Web Amsodent", detalle: "Sitio propio — /catalogo y fichas de producto" },
           ]}
           className=""
           style={s.input}

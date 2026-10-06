@@ -14,14 +14,14 @@ import { SupabaseService } from '../supabase/supabase.service';
    8 s, User-Agent identificable y caché en memoria de 10 minutos por
    consulta (búsquedas repetidas no vuelven a golpear los sitios). */
 
-type Tienda = { id: string; nombre: string; tipo: 'shopify' | 'woo' | 'odoo'; base: string };
+type Tienda = { id: string; nombre: string; tipo: 'shopify' | 'woo' | 'odoo' | 'amsodent'; base: string };
 
 // Fallback si la tabla explorador_tiendas aún no existe (migración pendiente)
 // o quedó vacía. Desde el 2026-09-10 la lista viva se administra en el
 // mantenedor de la plataforma (tabla explorador_tiendas).
 const TIENDAS_FALLBACK: Tienda[] = [
   // La tienda propia va SIEMPRE primera en los resultados (ver orden en buscar()).
-  { id: 'amsodent', nombre: 'Amsodent', tipo: 'woo', base: 'https://amsodentmedical.cl' },
+  { id: 'amsodent', nombre: 'Amsodent', tipo: 'amsodent', base: 'https://amsodentmedical.cl' },
   { id: 'orbisdental', nombre: 'Orbis Dental', tipo: 'shopify', base: 'https://www.orbisdental.cl' },
   { id: 'gexachile', nombre: 'Gexa Chile', tipo: 'shopify', base: 'https://gexachile.cl' },
   { id: 'spdental', nombre: 'SP Dental', tipo: 'shopify', base: 'https://spdental.shop' },
@@ -40,8 +40,8 @@ const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36 AmsodentPortal/1.0 (+https://amsodent.cl)';
 // 12 s: con 8 s quedaban fuera tiendas lentas pero sanas. Las tiendas se
 // consultan en paralelo, así que esto no multiplica el tiempo de búsqueda.
-const TIPOS_VALIDOS: readonly string[] = ['shopify', 'woo', 'odoo'];
-const TIPOS = '"shopify", "woo" u "odoo"';
+const TIPOS_VALIDOS: readonly string[] = ['shopify', 'woo', 'odoo', 'amsodent'];
+const TIPOS = '"shopify", "woo", "odoo" o "amsodent"';
 const TIMEOUT_MS = 12000;
 const MAX_POR_TIENDA = 8;
 const CACHE_MS = 10 * 60 * 1000;
@@ -62,7 +62,7 @@ type Hallazgo = {
   /* Producto con variantes (forma, tamaño, color…): cada variante tiene su
      propio SKU y precio, así que hay que saber cuál quiere el cliente. Solo
      se llena para la tienda de Amsodent. */
-  variantes?: Array<{ id: number; sku: string | null; etiqueta: string; precio: number }>;
+  variantes?: Array<{ id: number | string; sku: string | null; etiqueta: string; precio: number }>;
   // Datos de la web que solo usa este servicio para resolver las variantes.
   web_id?: number;
   variable?: boolean;
@@ -74,6 +74,76 @@ type Hallazgo = {
     variacion: number | null; // precio actual − captura anterior
   } | null;
 };
+
+/* ── Web propia de Amsodent (2026-10-06) ────────────────────────────────────
+   El sitio amsodentmedical.cl dejó de ser WordPress/WooCommerce: es una tienda
+   propia en Next.js (App Router) y su /wp-json ya no existe (404), así que la
+   tienda de Amsodent quedó fuera del explorador. No tiene una API pública de
+   búsqueda, pero sus páginas traen los datos completos que usa la propia web:
+   · /catalogo?q=… → la grilla (nombre, precio, precio normal, stock, si tiene
+     variantes) y un ItemList schema.org con el orden de los resultados.
+   · /producto/<slug> → las variantes con su SKU real, precio y stock.
+   Next manda esos datos en trozos `self.__next_f.push([1,"…"])`: cada trozo es
+   un string JSON y, unidos, forman el "flight" donde están los objetos. */
+function flightDeNext(html: string): string {
+  const partes: string[] = [];
+  const rx = /self\.__next_f\.push\(\[1,("(?:\\.|[^"\\])*")\]\)/g;
+  let m: RegExpExecArray | null;
+  while ((m = rx.exec(html))) {
+    try { partes.push(JSON.parse(m[1])); } catch { /* trozo ilegible: se ignora */ }
+  }
+  return partes.join('');
+}
+
+/* El objeto JSON más chico que encierra la posición `pos` del texto. */
+function objetoQueContiene(texto: string, pos: number): any | null {
+  let prof = 0;
+  let i = pos;
+  for (; i >= 0; i--) {
+    const c = texto[i];
+    if (c === '}') prof++;
+    else if (c === '{') {
+      if (prof === 0) break;
+      prof--;
+    }
+  }
+  if (i < 0) return null;
+  let enStr = false;
+  let esc = false;
+  prof = 0;
+  for (let j = i; j < texto.length; j++) {
+    const c = texto[j];
+    if (enStr) {
+      if (esc) esc = false;
+      else if (c === '\\') esc = true;
+      else if (c === '"') enStr = false;
+      continue;
+    }
+    if (c === '"') enStr = true;
+    else if (c === '{') prof++;
+    else if (c === '}') {
+      prof--;
+      if (prof === 0) {
+        try { return JSON.parse(texto.slice(i, j + 1)); } catch { return null; }
+      }
+    }
+  }
+  return null;
+}
+
+/* Todos los objetos del flight que contienen la clave `clave` (por ejemplo
+   "hasVariants" marca a cada producto de la grilla). */
+function objetosConClave(texto: string, clave: string): any[] {
+  const out: any[] = [];
+  const marca = `"${clave}":`;
+  let i = texto.indexOf(marca);
+  while (i >= 0) {
+    const o = objetoQueContiene(texto, i);
+    if (o) out.push(o);
+    i = texto.indexOf(marca, i + marca.length);
+  }
+  return out;
+}
 
 // Los nombres de Woo llegan con entidades HTML ("&#8211;", "&amp;").
 function limpiarNombre(s: any): string {
@@ -343,6 +413,8 @@ export class ExploradorService {
 
   private async buscarEnTienda(t: Tienda, q: string): Promise<{ items: Hallazgo[] }> {
     const enc = encodeURIComponent(q);
+    // La tienda propia va por su lector aunque la fila aún diga "woo" (migración 20261007 pendiente).
+    if (t.tipo === 'amsodent' || t.id === 'amsodent') return this.buscarEnWebAmsodent(t, enc);
     if (t.tipo === 'shopify') {
       const json = await this.fetchJson(
         `${t.base}/search/suggest.json?q=${enc}&resources%5Btype%5D=product&resources%5Blimit%5D=${MAX_POR_TIENDA}`,
@@ -579,6 +651,92 @@ export class ExploradorService {
     };
   }
 
+  /* La web propia de Amsodent (ver flightDeNext). Una petición a la grilla y
+     otra por cada producto mostrado —en paralelo y en caché 6 h— para traer el
+     SKU real y las variantes, igual que daba la Store API de WooCommerce. */
+  private fichasAmsodent = new Map<string, { ts: number; variantes: Array<{ id: string; sku: string | null; nombre: string; precio: number; disponible: boolean }> }>();
+
+  private async variantesDeFicha(base: string, slug: string) {
+    const guardada = this.fichasAmsodent.get(slug);
+    if (guardada && Date.now() - guardada.ts < 6 * 3600 * 1000) return guardada.variantes;
+    const flight = flightDeNext(await this.fetchTexto(`${base}/producto/${encodeURIComponent(slug)}`));
+    const i = flight.indexOf('"variantes":[');
+    const datos = i >= 0 ? objetoQueContiene(flight, i) : null;
+    const variantes = (Array.isArray(datos?.variantes) ? datos.variantes : [])
+      .map((v: any) => ({
+        id: String(v?.id || ''),
+        sku: String(v?.sku || '').trim() || null,
+        nombre: limpiarNombre(v?.nombre || ''),
+        precio: Math.round(Number(v?.precio) || 0),
+        disponible: Number(v?.disponible) > 0 || v?.permiteEncargo === true,
+      }))
+      .filter((v: any) => v.id);
+    this.fichasAmsodent.set(slug, { ts: Date.now(), variantes });
+    if (this.fichasAmsodent.size > 2000) this.fichasAmsodent.clear();
+    return variantes;
+  }
+
+  private async buscarEnWebAmsodent(t: Tienda, enc: string): Promise<{ items: Hallazgo[] }> {
+    const html = await this.fetchTexto(`${t.base}/catalogo?q=${enc}`);
+    const flight = flightDeNext(html);
+    // Productos de la grilla: los objetos con nombre, precio y la marca de variantes.
+    const porSlug = new Map<string, any>();
+    for (const o of objetosConClave(flight, 'hasVariants')) {
+      if (o?.id && o?.name && Number(o?.price) > 0 && !porSlug.has(String(o.id))) porSlug.set(String(o.id), o);
+    }
+    // El orden de los resultados lo da el ItemList schema.org de la página.
+    const orden: string[] = [];
+    for (const m of html.matchAll(/<script[^>]*application\/ld\+json[^>]*>([\s\S]*?)<\/script>/g)) {
+      try {
+        const ld = JSON.parse(m[1]);
+        if (ld?.['@type'] !== 'ItemList') continue;
+        for (const e of ld.itemListElement || []) {
+          const slug = String(e?.url || '').split('/producto/')[1]?.split(/[?#/]/)[0];
+          if (slug) orden.push(decodeURIComponent(slug));
+        }
+      } catch { /* bloque ilegible */ }
+    }
+    const slugs = (orden.length ? orden.filter((x) => porSlug.has(x)) : [...porSlug.keys()]).slice(0, MAX_POR_TIENDA);
+    const abs = (u: any) => (!u ? null : /^https?:/i.test(String(u)) ? String(u) : `${t.base}${String(u).startsWith('/') ? '' : '/'}${u}`);
+    const items: Hallazgo[] = slugs.map((slug) => {
+      const p = porSlug.get(slug);
+      const precio = Math.round(Number(p.price) || 0);
+      const normal = Math.round(Number(p.compareAtPrice) || 0);
+      return {
+        tienda: t.id,
+        tienda_nombre: t.nombre,
+        nombre: limpiarNombre(p.name),
+        url: `${t.base}/producto/${slug}`,
+        precio,
+        precio_normal: normal > precio ? normal : null,
+        oferta: normal > precio,
+        imagen: abs(p.image),
+        disponible: p.inStock !== false || p.backorderAvailable === true,
+        sku: null,
+        variable: p.hasVariants === true,
+      };
+    });
+    // SKU real y variantes, desde la ficha de cada producto.
+    await Promise.all(
+      items.map(async (it, n) => {
+        try {
+          const vs = await this.variantesDeFicha(t.base, slugs[n]);
+          if (vs.length === 1) {
+            it.sku = vs[0].sku;
+          } else if (vs.length > 1) {
+            it.sku = null; // el producto es una familia: lo vendible es cada variante
+            it.variantes = vs
+              .map((v) => ({ id: v.id, sku: v.sku, etiqueta: `${v.nombre || v.sku || 'Variante'}${v.disponible ? '' : ' (sin stock)'}`, precio: v.precio || it.precio }))
+              .sort((a, b) => String(a.etiqueta).localeCompare(String(b.etiqueta), 'es'));
+          }
+        } catch (e: any) {
+          this.logger.warn(`Explorador: sin ficha para ${it.url}: ${String(e?.message || e).slice(0, 100)}`);
+        }
+      }),
+    );
+    return { items };
+  }
+
   /* SKU para los hallazgos de la tienda de Amsodent que llegan SIN él. Lo
      normal es que la tienda lo publique (ver mapearWooStore); esto queda para
      la vía de respaldo (wp/v2/product), que no lo trae. Ahí se calza por
@@ -651,10 +809,17 @@ export class ExploradorService {
     try {
       const client = this.supabase.getClient();
       const urls = [...new Set(items.map((i) => i.url))];
+      // Web de Amsodent (2026-10-06): las capturas viejas quedaron con la URL de
+      // WooCommerce (/product/<slug>/); se buscan también para no perder el histórico.
+      const legado = (u: string) => {
+        const m = u.match(/^(https:\/\/amsodentmedical\.cl)\/producto\/([^/?#]+)$/);
+        return m ? `${m[1]}/product/${m[2]}/` : null;
+      };
+      const consulta = [...new Set([...urls, ...(urls.map(legado).filter(Boolean) as string[])])];
       const { data: previas, error } = await client
         .from('explorador_precios')
         .select('url, precio, capturado_at')
-        .in('url', urls)
+        .in('url', consulta)
         .order('capturado_at', { ascending: true })
         .limit(5000);
       if (error) throw new Error(error.message);
@@ -669,7 +834,10 @@ export class ExploradorService {
       const hoy = new Date().toISOString().slice(0, 10);
       const nuevas: any[] = [];
       for (const it of items) {
-        const prev = porUrl.get(it.url) || [];
+        const viejo = legado(it.url);
+        const prev = [...(porUrl.get(it.url) || []), ...((viejo && porUrl.get(viejo)) || [])].sort((a, b) =>
+          String(a.capturado_at).localeCompare(String(b.capturado_at)),
+        );
         if (prev.length) {
           const precios = prev.map((p) => p.precio);
           const ultima = prev[prev.length - 1];
