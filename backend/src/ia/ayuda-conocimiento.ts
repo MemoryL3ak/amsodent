@@ -660,8 +660,10 @@ girasol 🌻). Hoy ayuda en:
   en el carrito.
 - TIENDAS DEL EXPLORADOR (mantenedor, solo admin): en Acceso Portal Clientes →
   pestaña "Tiendas del Explorador" se administran las páginas que consulta el
-  buscador (agregar/editar/activar/ordenar). Solo se soportan tiendas Shopify
-  o WooCommerce con API pública; el botón "Probar conexión" valida el sitio
+  buscador (agregar/editar/activar/ordenar). Se soportan tiendas Shopify,
+  WooCommerce con API pública y Odoo; la de Amsodent es tipo "Web Amsodent"
+  (su web propia desde octubre 2026: se lee el catálogo y cada ficha para el SKU
+  real y las variantes); el botón "Probar conexión" valida el sitio
   con una búsqueda real antes de activarlo. Amsodent siempre va primera y no
   se puede desactivar. Requiere la migración 20260910_explorador_tiendas.
 - SALDO OC (Despachos y Choferes → pestaña "Saldo OC"): detalle de las OC de

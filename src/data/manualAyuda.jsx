@@ -595,7 +595,7 @@ export const GRUPOS_MANUAL = [
         funciones: [
           "Vigencia y expiración por cliente, último acceso, y atención de solicitudes de cambio de clave.",
           "Módulos por cliente: el botón «Módulos» de cada cliente enciende o apaga las secciones de su portal (Gestión de Stock, Mis cotizaciones, Ofertas, Showroom, Explorador de precios, Actividad); por ejemplo Showroom sí y Ofertas no. Resumen siempre está y Usuarios depende del rol. Mis cotizaciones queda encendida mientras el cliente pueda pedir desde otra sección. Si se apaga el Explorador, el carrito sigue como «Mi pedido». La fila muestra qué tiene apagado. El servidor también lo exige: una sección apagada no entrega sus datos y, sin Ofertas, sus pedidos van a precio normal.",
-          "Pestaña «Tiendas del Explorador»: mantenedor de las páginas que consulta el Explorador de Precios del portal — agregar, editar, activar/desactivar y ordenar tiendas (solo Shopify o WooCommerce con API pública), con botón «Probar conexión» que hace una búsqueda real antes de activarlas. Amsodent siempre va primera y no se puede desactivar.",
+          "Pestaña «Tiendas del Explorador»: mantenedor de las páginas que consulta el Explorador de Precios del portal — agregar, editar, activar/desactivar y ordenar tiendas (Shopify, WooCommerce con API pública u Odoo), con botón «Probar conexión» que hace una búsqueda real antes de activarlas. Amsodent siempre va primera y no se puede desactivar; desde octubre de 2026 su web es una tienda propia (tipo «Web Amsodent»): el explorador lee su catálogo y la ficha de cada producto para traer el SKU real y las variantes.",
         ],
       },
       {
