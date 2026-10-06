@@ -5,6 +5,7 @@ import { api } from "../lib/api";
 import DateFilter from "./DateFilter";
 import DropdownSelect from "./ui/DropdownSelect";
 import VistaPreviaBsale from "./VistaPreviaBsale";
+import CamposSeguimientoGuia from "./CamposSeguimientoGuia";
 
 /* ── Emitir guía de despacho / registrar orden en Bsale (2026-10-02) ─────────
    Ventana del módulo Facturación para una orden de compra:
@@ -30,6 +31,8 @@ export default function EmitirDespachoBsale({ tipo = "guia", licitacionId, ocDoc
   const [error, setError] = useState("");
   const [cantidades, setCantidades] = useState({});
   const [despacho, setDespacho] = useState(null);
+  // Transporte de la guía: solo para el sistema, no cambia lo simulado.
+  const [seguimiento, setSeguimiento] = useState({ empresa: "", numero: "" });
   const [cliente, setCliente] = useState(null);
   const [fecha, setFecha] = useState("");
   const [enviando, setEnviando] = useState("");
@@ -93,6 +96,7 @@ export default function EmitirDespachoBsale({ tipo = "guia", licitacionId, ocDoc
         oc_doc_id: Number(ocDocId),
         fecha_emision: fecha,
         huella: borrador.huella,
+        ...(esGuia && accion !== "simular" ? { seguimiento } : {}),
         ...(esGuia ? { lineas: lineasElegidas.map((l) => ({ sku: l.sku, cantidad: l.cantidad })), despacho: { ...despacho, tipo_traslado_id: Number(despacho?.tipo_traslado_id) } } : {}),
         ...(cliente?.nuevo ? { cliente } : {}),
       });
@@ -305,6 +309,7 @@ export default function EmitirDespachoBsale({ tipo = "guia", licitacionId, ocDoc
                       </div>
                     </div>
                   )}
+                  {esGuia && <CamposSeguimientoGuia valor={seguimiento} onChange={setSeguimiento} disabled={!!enviando} />}
                   <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.45 }}>
                     {borrador.referencias?.length ? `Referencia a la orden de compra: folio ${borrador.referencias[0].folio} · razón ${borrador.referencias[0].numero}. ` : ""}
                     {esGuia ? "Bsale descuenta el stock al emitir la guía; la factura se emite después desde la guía." : "La nota de venta no va al SII ni mueve stock."}

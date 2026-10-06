@@ -2605,7 +2605,68 @@ export class LicitacionesService {
       console.error('[LicitacionesService] notificarCorreoPendiente falló:', e?.message || e);
     }
 
+    // (2026-10-07) Un pago que completa la factura la deja pagada. Antes solo
+    // se marcaba a mano: 115 boletas/facturas de particulares tenían su
+    // comprobante por el total y seguían "pendientes" en Seguimiento de Pagos.
+    if (['comprobante_pago', 'webpay', 'efectivo'].includes(String(body?.tipo || ''))) {
+      try {
+        const marcada = await this.marcarPagadaSiCubierta(
+          Number(body.licitacion_id),
+          body.deriva_de_id != null ? Number(body.deriva_de_id) : null,
+        );
+        if (marcada) return { ...(inserted || {}), factura_pagada: true };
+      } catch (e: any) {
+        console.error('[LicitacionesService] marcarPagadaSiCubierta falló:', e?.message || e);
+      }
+    }
+
     return inserted;
+  }
+
+  /* Marca pagada la factura (o factura/boleta) cuando sus pagos la cubren.
+     Los montos están en NETO, salvo la nota de crédito, que va en bruto. Los
+     pagos sin factura asignada cuentan solo si la cotización tiene una sola
+     factura (si hay varias no se sabe a cuál van). Tolerancia de $5, la misma
+     de Seguimiento de Pagos. Devuelve true si la marcó. */
+  async marcarPagadaSiCubierta(licitacionId: number, facturaId: number | null): Promise<boolean> {
+    if (!(licitacionId > 0)) return false;
+    const db = this.supabase.getClient();
+    const PAGOS = ['comprobante_pago', 'webpay', 'efectivo'];
+    const { data, error } = await db
+      .from('licitacion_documentos')
+      .select('id, tipo, monto, deriva_de_id, pagada, fecha_oc, forma_pago')
+      .eq('licitacion_id', licitacionId)
+      .in('tipo', ['factura', 'factura_boleta', 'nota_credito', ...PAGOS]);
+    if (error) return false;
+    const docs: any[] = data || [];
+    const facturas = docs.filter((d) => d.tipo === 'factura' || d.tipo === 'factura_boleta');
+    const idsFacturas = new Set(facturas.map((f) => Number(f.id)));
+    const objetivo =
+      (facturaId != null && facturas.find((f) => Number(f.id) === facturaId)) || (facturas.length === 1 ? facturas[0] : null);
+    if (!objetivo || objetivo.pagada) return false;
+    const pagos = docs.filter(
+      (d) =>
+        PAGOS.includes(d.tipo) &&
+        (Number(d.deriva_de_id) === Number(objetivo.id) ||
+          (facturas.length === 1 && (d.deriva_de_id == null || !idsFacturas.has(Number(d.deriva_de_id))))),
+    );
+    if (!pagos.length) return false;
+    const pagado = pagos.reduce((a, d) => a + (Number(d.monto) || 0), 0);
+    const notas = docs
+      .filter((d) => d.tipo === 'nota_credito' && Number(d.deriva_de_id) === Number(objetivo.id))
+      .reduce((a, d) => a + (Number(d.monto) || 0) / 1.19, 0);
+    const base = (Number(objetivo.monto) || 0) - notas;
+    if (!(base > 0) || pagado < base - 5) return false;
+    const ultimo = [...pagos].sort((a, b) => String(b.fecha_oc || '').localeCompare(String(a.fecha_oc || '')))[0];
+    const { error: errUp } = await db
+      .from('licitacion_documentos')
+      .update({
+        pagada: true,
+        fecha_pago: ultimo?.fecha_oc || new Date().toISOString().slice(0, 10),
+        ...(objetivo.forma_pago ? {} : { forma_pago: ultimo?.forma_pago || (ultimo?.tipo === 'comprobante_pago' ? null : ultimo?.tipo) || null }),
+      })
+      .eq('id', objetivo.id);
+    return !errUp;
   }
 
   // Crea una notificación para que el vendedor envíe un correo al cliente:

@@ -41,6 +41,21 @@ const rutBsale = (v: any) => {
   const limpio = normRut(v);
   return limpio.length > 1 ? `${limpio.slice(0, -1)}-${limpio.slice(-1)}` : limpio;
 };
+// RUT con dígito verificador correcto (descarta rellenos como 000000000).
+const rutValido = (v: any) => {
+  const limpio = normRut(v);
+  if (limpio.length < 2) return false;
+  const cuerpo = limpio.slice(0, -1);
+  if (!/^\d+$/.test(cuerpo) || Number(cuerpo) === 0) return false;
+  let suma = 0;
+  let factor = 2;
+  for (let i = cuerpo.length - 1; i >= 0; i--) {
+    suma += Number(cuerpo[i]) * factor;
+    factor = factor === 7 ? 2 : factor + 1;
+  }
+  const r = 11 - (suma % 11);
+  return limpio.slice(-1) === (r === 11 ? '0' : r === 10 ? 'K' : String(r));
+};
 const esCredito = (nombreForma: any) => /^cr[eé]dito$/i.test(String(nombreForma || '').trim());
 const etiquetaTipo = (t: Tipo) => (t === 'guia' ? 'Guía de despacho electrónica' : t === 'boleta' ? 'Boleta electrónica' : 'Factura electrónica');
 
@@ -158,6 +173,60 @@ export class BsaleLibreService {
       }));
   }
 
+  /* Datos de una cotización para armar su documento (2026-10-07): boleta o
+     factura del particular desde Trazabilidad, o guía desde la cotización
+     adjudicada que no tiene orden de compra. Las líneas salen de sus ítems
+     (precio neto unitario, con el flete repartido, igual que su total); los
+     ítems sin SKU se informan aparte porque no pueden ir en Bsale. */
+  async desdeCotizacion(userId: string, idRaw: any) {
+    await this.facturacion.exigirRol(userId);
+    const id = Number(idRaw);
+    if (!(id > 0)) throw new BadRequestException('Indica la cotización.');
+    const db = this.supabase.getClient();
+    const { data: lic } = await db
+      .from('licitaciones')
+      .select('id, id_licitacion, nombre_entidad, rut_entidad, giro, direccion, comuna, email, tipo_cliente, estado')
+      .eq('id', id)
+      .maybeSingle();
+    if (!lic) throw new BadRequestException(`No existe la cotización #${id}.`);
+    const { data: items } = await db.from('items_licitacion').select('producto, sku, cantidad, valor_unitario, orden').eq('licitacion_id', id).order('orden', { ascending: true });
+    const lineas: { sku: string; producto: string; cantidad: number; neto_unitario: number }[] = [];
+    const sinSku: string[] = [];
+    for (const it of (items as any[]) || []) {
+      const cantidad = Number(it?.cantidad) || 0;
+      if (!(cantidad > 0)) continue;
+      const sku = normSku(it?.sku);
+      const nombre = String(it?.producto || '').trim();
+      if (!sku) { sinSku.push(nombre.slice(0, 80) || 'Ítem sin nombre'); continue; }
+      const neto = Math.round(Number(it?.valor_unitario) || 0);
+      const previa = lineas.find((l) => l.sku === sku);
+      if (previa) {
+        // Mismo SKU dos veces: una sola línea con el precio promedio ponderado.
+        const total = previa.neto_unitario * previa.cantidad + neto * cantidad;
+        previa.cantidad += cantidad;
+        previa.neto_unitario = Math.round(total / previa.cantidad);
+      } else {
+        lineas.push({ sku, producto: nombre, cantidad, neto_unitario: neto });
+      }
+    }
+    const particular = /particular/i.test(String((lic as any).tipo_cliente || ''));
+    const l: any = lic;
+    // Hay particulares con RUT de relleno (000000000): se deja vacío para que
+    // la boleta vaya a consumidor final y no se cree un cliente inválido en Bsale.
+    const rut = rutValido(l.rut_entidad) ? rutBsale(l.rut_entidad) : '';
+    return {
+      cotizacion: { id: l.id, codigo: l.id_licitacion || null, cliente: l.nombre_entidad || '', particular, estado: l.estado || '' },
+      rut_descartado: !rut && String(l.rut_entidad || '').trim() ? String(l.rut_entidad) : null,
+      cliente: {
+        rut, razon_social: String(l.nombre_entidad || ''), giro: String(l.giro || ''),
+        direccion: String(l.direccion || ''), comuna: String(l.comuna || ''), ciudad: String(l.comuna || ''), email: String(l.email || ''),
+      },
+      lineas,
+      sin_sku: sinSku,
+      tipo_sugerido: particular ? 'boleta' : 'factura',
+    };
+  }
+
   // ── Armado y validación ────────────────────────────────────────────────
 
   private async armar(body: any) {
@@ -226,11 +295,11 @@ export class BsaleLibreService {
     let licCot: any = null;
     if (!ventaDirecta && body?.cotizacion_id != null && String(body.cotizacion_id).trim() !== '') {
       const id = Number(body.cotizacion_id);
-      const { data: lic } = id > 0 ? await this.supabase.getClient().from('licitaciones').select('id, id_licitacion, nombre_entidad, rut_entidad').eq('id', id).maybeSingle() : { data: null };
+      const { data: lic } = id > 0 ? await this.supabase.getClient().from('licitaciones').select('id, id_licitacion, nombre_entidad, rut_entidad, tipo_cliente').eq('id', id).maybeSingle() : { data: null };
       if (!lic) problemas.push({ codigo: 'cotizacion', mensaje: `No existe la cotización #${body.cotizacion_id}.` });
       else {
         licCot = lic;
-        cotizacion = { id: lic.id, codigo: lic.id_licitacion || null, cliente: lic.nombre_entidad || '' };
+        cotizacion = { id: lic.id, codigo: lic.id_licitacion || null, cliente: lic.nombre_entidad || '', particular: /particular/i.test(String(lic.tipo_cliente || '')) };
         if (normRut(lic.rut_entidad) && rut && normRut(lic.rut_entidad) !== normRut(rut)) {
           avisos.push({ codigo: 'rut_cotizacion', mensaje: `La cotización #${lic.id} es de ${lic.nombre_entidad} (RUT ${lic.rut_entidad}), distinto del cliente del documento.` });
         }
@@ -419,15 +488,20 @@ export class BsaleLibreService {
           const { data: ocs } = await this.supabase.getClient().from('licitacion_documentos').select('id').eq('licitacion_id', b.cotizacion.id).eq('tipo', 'orden_compra');
           const creado = await this.licitaciones.createDocumento({
             licitacion_id: b.cotizacion.id, tipo: 'guia_despacho', numero: String(doc.number), monto: null, fecha_oc: b.fecha_emision,
-            deriva_de_id: (ocs || []).length === 1 ? (ocs as any[])[0].id : null, empresa_despacho: null, n_seguimiento: null,
+            deriva_de_id: (ocs || []).length === 1 ? (ocs as any[])[0].id : null,
+            empresa_despacho: String(body?.seguimiento?.empresa || '').trim().slice(0, 60) || null,
+            n_seguimiento: String(body?.seguimiento?.numero || '').trim().slice(0, 80) || null,
             bucket: pdf ? 'guia-despacho' : null, storage_path: pdf?.path || null, file_name: pdf ? `Guía ${doc.number}.pdf` : null,
             mime_type: pdf ? 'application/pdf' : null, size_bytes: pdf?.size || null, bsale_id: Number(doc.id) || null, bsale_url: doc.urlPdf || doc.urlPublicView || null,
           });
           return Number((creado as any)?.id) || null;
         }
         const etiqueta = b.tipo === 'boleta' ? 'Boleta' : 'Factura';
+        // Cliente particular: su documento es "Factura o Boleta" (así lo leen Trazabilidad y Pagos).
+        const comoParticular = b.cotizacion.particular === true;
         const fila = await this.insertarTolerante('licitacion_documentos', {
-          licitacion_id: b.cotizacion.id, tipo: 'factura', numero: String(doc.number), monto: Number(doc.netAmount ?? b.totales.neto) || null, fecha_oc: null,
+          licitacion_id: b.cotizacion.id, tipo: comoParticular ? 'factura_boleta' : 'factura', numero: String(doc.number),
+          monto: Number(doc.netAmount ?? b.totales.neto) || null, fecha_oc: comoParticular ? b.fecha_emision : null,
           fecha_factura: b.fecha_emision, deriva_de_id: null, guias_ids: null, bucket: pdf ? 'factura' : null, storage_path: pdf?.path || null,
           file_name: pdf ? `${etiqueta} ${doc.number}.pdf` : null, mime_type: pdf ? 'application/pdf' : null, size_bytes: pdf?.size || null,
           bsale_id: Number(doc.id) || null, bsale_url: doc.urlPdf || doc.urlPublicView || null, ...(b.tipo === 'boleta' ? { descripcion: 'Boleta electrónica' } : {}),

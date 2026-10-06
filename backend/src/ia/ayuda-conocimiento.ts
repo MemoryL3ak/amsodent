@@ -297,7 +297,18 @@ se escribe el motivo y se elige qué pasa con el dinero (rebajar la deuda,
 devolver el dinero o sin movimiento); simular y después emitir. Bsale
 reingresa el stock. Si está en una cotización, la nota de crédito queda ahí
 colgada de la factura y Seguimiento de Pagos la descuenta. No se anula dos
-veces. Las GUÍAS se anulan en Bsale (no hay forma documentada por la API). Una factura libre sin guía descuenta stock en Bsale; si
+veces. COMPROBANTE AL EMITIR: con la factura o boleta emitida y registrada
+aparece "Agregar N° de comprobante de pago" (N°, fecha, monto con IVA, medio);
+queda como pago de ese documento y, si cubre el total, lo deja pagado.
+EMITIR BOLETA / FACTURA en Trazabilidad: en un cliente particular con la
+factura pendiente, arma la boleta o factura con el cliente y los productos de
+la cotización y la registra ahí (ítems sin SKU se avisan: no van en Bsale).
+GUÍA DESDE LA COTIZACIÓN: en el Detalle de una cotización ADJUDICADA, el botón
+"Emitir guía de despacho" (sección Documentos): con una OC sale de ella; con
+varias pregunta de cuál; sin OC (particular) se arma con los productos de la
+cotización. Empresa de transporte y N° de seguimiento son opcionales: si no se
+tienen, la guía muestra "+ N° de seguimiento" para agregarlo después (despacho
+interno no: lleva su correlativo AMSO). Las GUÍAS se anulan en Bsale (no hay forma documentada por la API). Una factura libre sin guía descuenta stock en Bsale; si
 referencia una guía, no. Un producto sin SKU o cuyo SKU no está en Bsale no
 puede ir en ningún documento. El borrador de factura abre
 un borrador armado desde la guía que ya existe en Bsale: mismo cliente, mismos
@@ -322,6 +333,11 @@ nuevo. Nada se emite solo: siempre es ese botón.
 ### Seguimiento de Pagos (/seguimiento-pagos)
 DOS PESTAÑAS: "Cliente particular" y "Entidad pública". Cada una muestra sus
 facturas, sus KPIs y su propio flujo de pago (la pestaña elegida se recuerda).
+ORDEN: primero las que faltan por pagar, al final las pagadas. OJO en la
+columna Estado (solo pagadas): abre los comprobantes de esa factura (tipo, N°,
+fecha, monto bruto, medio) con su archivo. Una factura cuyos pagos cargados
+suman el total cuenta como PAGADA aunque nadie la haya marcado; el sistema la
+marca sola al registrar el pago que la completa.
 El semáforo de cobro: 8 KPIs clickeables (total, pagadas, en plazo, por vencer,
 vencidas, factoring —en la pestaña de particulares, "En cuotas"—, notas de
 crédito, cierre forzado) que abren el detalle de sus filas. Vencimiento =

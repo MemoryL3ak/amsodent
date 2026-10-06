@@ -488,6 +488,8 @@ export class BsaleDespachosService {
     body: {
       licitacion_id: number; oc_doc_id: number; lineas: { sku: string; cantidad: number }[];
       despacho?: { direccion?: string; comuna?: string; ciudad?: string; destinatario?: string; tipo_traslado_id?: number };
+      // Empresa de transporte y N° de seguimiento: solo para el sistema, no van a Bsale.
+      seguimiento?: { empresa?: string; numero?: string };
       cliente?: Record<string, any>; fecha_emision?: string; huella?: string; simular?: boolean;
     },
   ) {
@@ -587,8 +589,9 @@ export class BsaleDespachosService {
           monto: null,
           fecha_oc: fecha,
           deriva_de_id: b.oc.id,
-          empresa_despacho: null,
-          n_seguimiento: null,
+          // Empresa de transporte y N° de seguimiento (opcionales: el N° se puede agregar después).
+          empresa_despacho: String(body?.seguimiento?.empresa || '').trim().slice(0, 60) || null,
+          n_seguimiento: String(body?.seguimiento?.numero || '').trim().slice(0, 80) || null,
           bucket: pdf ? 'guia-despacho' : null,
           storage_path: pdf?.path || null,
           file_name: pdf ? `Guía ${doc.number}.pdf` : null,
