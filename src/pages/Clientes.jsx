@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
 import { Link, useNavigate } from "react-router-dom";
+import { Trash2 } from "lucide-react";
 import ConfirmModal from "../components/ConfirmModal";
 import useAuth from "../hooks/useAuth";
 import BotonLimpiarFiltros from "../components/BotonLimpiarFiltros";
@@ -221,26 +222,26 @@ export default function Clientes() {
       {/* TABLA */}
       <div className="table-wrap">
         <div className="table-scroll" style={{ maxHeight: "calc(100vh - 320px)" }}>
-          {/* minWidth = suma de los anchos del colgroup. Sin él, con
-              table-layout:fixed + width:100%, en pantallas más angostas que
-              esa suma la única columna sin ancho (Nombre) se quedaba con 0 px:
-              el nombre del cliente desaparecía y su encabezado se montaba
-              sobre el de RUT. Ahora la tabla conserva su ancho y el
-              contenedor hace scroll horizontal. */}
+          {/* minWidth = suma de los anchos del colgroup + un mínimo para
+              Nombre (la única sin ancho, que absorbe el sobrante). Sin él, con
+              table-layout:fixed, en pantallas angostas Nombre quedaba en 0 px.
+              (2026-10-07) Antes sumaban 1610px y en un notebook de 13" había
+              que desplazarse de lado: ahora Comuna y Región van en una
+              columna, las acciones son compactas y Contacto se oculta bajo
+              1320px (está en la ficha). */}
           <table
-            className="data-table"
-            style={{ tableLayout: "fixed", width: "100%", minWidth: esAdmin ? 1610 : 1440 }}
+            className="data-table tabla-compacta clientes-table"
+            style={{ tableLayout: "fixed", width: "100%", minWidth: esAdmin ? 880 : 760 }}
           >
             <colgroup>
-              <col style={{ width: 130 }} />
-              <col style={{ width: 260 }} />
-              <col style={{ width: 150 }} />
-              <col style={{ width: 120 }} />
-              <col style={{ width: 180 }} />
-              <col style={{ width: 150 }} />
-              <col style={{ width: 180 }} />
-              {esAdmin && <col style={{ width: 170 }} />}
-              <col style={{ width: 270 }} />
+              <col style={{ width: 112 }} />
+              <col />
+              <col style={{ width: 128 }} />
+              <col style={{ width: 92 }} />
+              <col style={{ width: 170 }} />
+              <col className="col-contacto" style={{ width: 150 }} />
+              {esAdmin && <col style={{ width: 130 }} />}
+              <col style={{ width: 118 }} />
             </colgroup>
             <thead>
               <tr>
@@ -248,9 +249,8 @@ export default function Clientes() {
                 <th>Nombre</th>
                 <th>Tipo</th>
                 <th>Estado</th>
-                <th>Región</th>
-                <th>Comuna</th>
-                <th>Contacto</th>
+                <th>Comuna · Región</th>
+                <th className="col-contacto">Contacto</th>
                 {esAdmin && <th>Vendedor asignado</th>}
                 <th style={{ textAlign: "right" }}>Acción</th>
               </tr>
@@ -284,9 +284,11 @@ export default function Clientes() {
                       </span>
                     )}
                   </td>
-                  <td style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.region}</td>
-                  <td style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.comuna}</td>
-                  <td style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={c.contacto}>{c.contacto}</td>
+                  <td style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={[c.comuna, c.region].filter(Boolean).join(" · ")}>
+                    {c.comuna || "—"}
+                    {c.region ? <span style={{ color: "var(--text-muted)" }}> · {c.region}</span> : null}
+                  </td>
+                  <td className="col-contacto" style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={c.contacto}>{c.contacto}</td>
                   {esAdmin && (
                     <td style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                       {esClienteParticular(c) || c.vendedor_asignado ? (
@@ -302,14 +304,17 @@ export default function Clientes() {
                         to={`/clientes/${c.id}`}
                         className="btn btn-primary btn-sm"
                       >
-                        Ver perfil
+                        Perfil
                       </Link>
                       <button
                         type="button"
                         onClick={() => solicitarEliminacion(c)}
                         className="btn btn-danger btn-sm"
+                        title="Eliminar cliente"
+                        aria-label="Eliminar cliente"
+                        style={{ padding: "0 8px" }}
                       >
-                        Eliminar
+                        <Trash2 size={14} />
                       </button>
                     </div>
                   </td>
@@ -318,7 +323,7 @@ export default function Clientes() {
 
               {clientesFiltrados.length === 0 && (
                 <tr>
-                  <td colSpan={esAdmin ? 9 : 8} style={{ textAlign: "center", padding: "60px 0", color: "var(--text-muted)" }}>
+                  <td colSpan={esAdmin ? 8 : 7} style={{ textAlign: "center", padding: "60px 0", color: "var(--text-muted)" }}>
                     No hay clientes que coincidan con el filtro.
                   </td>
                 </tr>

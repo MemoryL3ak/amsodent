@@ -72,7 +72,7 @@ export default function CampanasProductos() {
           <div style={{ padding: "40px 24px", color: "var(--text-muted)" }}>Cargando…</div>
         ) : (
           <div className="table-scroll" style={{ maxHeight: "calc(100vh - 260px)" }}>
-            <table className="data-table">
+            <table className="data-table tabla-texto">
               <thead>
                 <tr>
                   <th>Nombre</th>

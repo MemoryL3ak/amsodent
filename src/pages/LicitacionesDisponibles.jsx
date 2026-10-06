@@ -1310,17 +1310,18 @@ export default function LicitacionesDisponibles({ embedded = false }) {
           // razonable para «Nombre». Con 1180 las fijas sumaban 1162 y a
           // «Nombre» le quedaban 18px: el título de la licitación —lo primero
           // que se lee— era la columna más apretada de la tabla.
-          <table className="data-table table-clip" style={{ width: "100%", minWidth: 1320, tableLayout: "fixed" }}>
+          // (2026-10-07) 1320 → 950: con 1320 un notebook de 13" debía
+          // desplazarse de lado. Tipo va bajo el ID y Región bajo el Organismo
+          // (dos columnas menos); Nombre conserva ~180px en 1280 y crece después.
+          <table className="data-table table-clip tabla-compacta" style={{ width: "100%", minWidth: 950, tableLayout: "fixed" }}>
             <thead>
               <tr>
-                <th style={{ textAlign: "center", width: 56 }}>Tomar</th>
-                <th style={{ textAlign: "left", whiteSpace: "nowrap", width: 140 }}>ID Licitación</th>
-                <th style={{ textAlign: "left", minWidth: 240 }}>Nombre</th>
-                <th style={{ textAlign: "left", width: 170 }}>Organismo</th>
-                <th style={{ textAlign: "left", width: 130 }}>Región</th>
-                <th style={{ textAlign: "right", whiteSpace: "nowrap", width: 110 }}>Monto</th>
-                <th style={{ textAlign: "left", width: 90 }}>Tipo</th>
-                <th style={{ textAlign: "left", whiteSpace: "nowrap", width: 140 }}>
+                <th style={{ textAlign: "center", width: 50 }}>Tomar</th>
+                <th style={{ textAlign: "left", whiteSpace: "nowrap", width: 126 }}>ID Licitación</th>
+                <th style={{ textAlign: "left", minWidth: 180 }}>Nombre</th>
+                <th style={{ textAlign: "left", width: 158 }}>Organismo · Región</th>
+                <th style={{ textAlign: "right", whiteSpace: "nowrap", width: 104 }}>Monto</th>
+                <th style={{ textAlign: "left", whiteSpace: "nowrap", width: 118 }}>
                   <button
                     type="button"
                     onClick={() => setOrdenCierre((o) => (o === "asc" ? "desc" : o === "desc" ? null : "asc"))}
@@ -1340,8 +1341,8 @@ export default function LicitacionesDisponibles({ embedded = false }) {
                       : <ArrowUpDown size={12} style={{ opacity: 0.35 }} />}
                   </button>
                 </th>
-                <th style={{ textAlign: "left", width: 132 }}>Estado</th>
-                <th style={{ textAlign: "left", width: 112 }}>Acciones</th>
+                <th style={{ textAlign: "left", width: 124 }}>Estado</th>
+                <th style={{ textAlign: "left", width: 108 }}>Acciones</th>
               </tr>
             </thead>
             <tbody>
@@ -1391,20 +1392,24 @@ export default function LicitacionesDisponibles({ embedded = false }) {
                         <ExternalLink size={13} />
                       </button>
                     </div>
+                    {row?.datos?.tipo && (
+                      <div className="truncar" title={row.datos.tipo} style={{ fontSize: 11, fontWeight: 500, color: "var(--text-muted)" }}>{row.datos.tipo}</div>
+                    )}
                   </td>
                   <td style={{ whiteSpace: "normal", wordBreak: "break-word", userSelect: "text" }}>{row.nombre || <span style={{ color: "var(--text-muted)" }}>—</span>}</td>
-                  <td title={row?.datos?.organismo || ""} style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", fontSize: 12.5 }}>{row?.datos?.organismo || <span style={{ color: "var(--text-muted)" }}>—</span>}</td>
-                  <td title={row?.datos?.region || ""} style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", fontSize: 12.5 }}>{row?.datos?.region || <span style={{ color: "var(--text-muted)" }}>—</span>}</td>
+                  <td title={[row?.datos?.organismo, row?.datos?.region].filter(Boolean).join(" · ")} style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", fontSize: 12.5 }}>
+                    <div className="truncar">{row?.datos?.organismo || <span style={{ color: "var(--text-muted)" }}>—</span>}</div>
+                    {row?.datos?.region && <div className="truncar" style={{ fontSize: 11.5, color: "var(--text-muted)" }}>{row.datos.region}</div>}
+                  </td>
                   <td style={{ textAlign: "right", whiteSpace: "nowrap", fontSize: 12.5, fontWeight: 600 }}>{row?.datos?.monto || <span style={{ color: "var(--text-muted)", fontWeight: 400 }}>—</span>}</td>
-                  <td style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", fontSize: 12.5 }}>{row?.datos?.tipo || <span style={{ color: "var(--text-muted)" }}>—</span>}</td>
-                  <td style={{ whiteSpace: "nowrap", fontSize: 12.5 }}>
+                  <td style={{ fontSize: 12.5, whiteSpace: "normal" }}>
                     {(() => {
                       const c = parseCierre(row?.datos?.cierre);
                       if (!c) return <span style={{ color: "var(--text-muted)" }}>—</span>;
                       const vig = estaVigente(row);
                       const conHora = cierreTraeHora(row?.datos?.cierre);
                       return (
-                        <span style={{ display: "inline-flex", alignItems: "center", gap: 5, color: vig ? "var(--text)" : "var(--danger)", fontWeight: vig ? 500 : 700 }}>
+                        <span style={{ display: "inline-flex", alignItems: "center", flexWrap: "wrap", gap: "2px 5px", color: vig ? "var(--text)" : "var(--danger)", fontWeight: vig ? 500 : 700 }}>
                           {fmtFechaHora(c, conHora)}
                           {!vig && <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 999, background: "#fee2e2", color: "#b91c1c" }}>Vencida</span>}
                         </span>
@@ -1984,21 +1989,21 @@ export default function LicitacionesDisponibles({ embedded = false }) {
               : "Sin resultados para esa búsqueda."}
           </div>
         ) : (
-          <table className="data-table" style={{ width: "100%", minWidth: 1100 }}>
-            {/* Encabezado fijo al hacer scroll dentro de la tabla. */}
+          <table className="data-table tabla-compacta tabla-explorador-mp" style={{ width: "100%", minWidth: 900 }}>
+            {/* Encabezado fijo al hacer scroll dentro de la tabla.
+                (2026-10-07) Tipo va bajo el Código, Región bajo el Organismo y
+                Ofertas cae bajo 1300px: así cabe en un notebook de 13". */}
             <thead style={{ position: "sticky", top: 0, zIndex: 2, background: "var(--surface)", boxShadow: "0 1px 0 var(--border)" }}>
               <tr>
-                <th style={{ textAlign: "left", whiteSpace: "nowrap", width: 160 }}>Código</th>
-                <th style={{ textAlign: "left", width: 70 }} title="Tipo de proceso según el código: Ágil = Compra Ágil; LE/LP/LQ… = licitación pública por tramo de monto">Tipo</th>
+                <th style={{ textAlign: "left", whiteSpace: "nowrap", width: 136 }} title="Debajo, el tipo de proceso según el código: Ágil = Compra Ágil; LE/LP/LQ… = licitación pública por tramo de monto">Código</th>
                 {/* minWidth: las demás columnas son nowrap de ancho fijo; sin
                     un piso, en pantallas chicas el Nombre (único que quiebra
                     línea) quedaba de una letra por renglón. Con el piso la
                     tabla crece y el contenedor hace scroll horizontal. */}
-                <th style={{ textAlign: "left", minWidth: 260 }}>Nombre</th>
-                <th style={{ textAlign: "left", width: 200 }}>Organismo</th>
-                <th style={{ textAlign: "left", width: 120 }}>Región</th>
-                <th style={{ textAlign: "right", whiteSpace: "nowrap", width: 110 }}>Monto (CLP)</th>
-                <th style={{ textAlign: "left", whiteSpace: "nowrap", width: 130 }}>
+                <th style={{ textAlign: "left", minWidth: 200 }}>Nombre</th>
+                <th style={{ textAlign: "left", width: 168 }}>Organismo · Región</th>
+                <th style={{ textAlign: "right", whiteSpace: "nowrap", width: 108 }}>Monto (CLP)</th>
+                <th style={{ textAlign: "left", whiteSpace: "nowrap", width: 118 }}>
                   <button
                     type="button"
                     onClick={() => setMpOrdenCierre((o) => (o === "asc" ? "desc" : o === "desc" ? null : "asc"))}
@@ -2018,8 +2023,8 @@ export default function LicitacionesDisponibles({ embedded = false }) {
                       : <ArrowUpDown size={12} style={{ opacity: 0.35 }} />}
                   </button>
                 </th>
-                <th style={{ textAlign: "left", width: 130 }}>Estado</th>
-                <th style={{ textAlign: "center", width: 64 }}>Ofertas</th>
+                <th style={{ textAlign: "left", width: 116 }}>Estado</th>
+                <th className="col-ofertas" style={{ textAlign: "center", width: 64 }}>Ofertas</th>
                 <th style={{ textAlign: "left", width: 100 }}>Acciones</th>
               </tr>
             </thead>
@@ -2061,11 +2066,10 @@ export default function LicitacionesDisponibles({ embedded = false }) {
                           {cotizada ? "Cotizada" : esMia ? "Tomada por ti" : `Tomada · ${(disp.tomada_por || "").split("@")[0]}`}
                         </div>
                       )}
-                    </td>
-                    {/* Tipo de proceso deducido del sufijo del código (COT,
-                        LE, LP…). Distingue de un vistazo una Compra Ágil de una
-                        licitación pública, y de qué tramo de monto es. */}
-                    <td style={{ whiteSpace: "nowrap" }}>
+                      {/* Tipo de proceso deducido del sufijo del código (COT,
+                          LE, LP…). Distingue de un vistazo una Compra Ágil de una
+                          licitación pública, y de qué tramo de monto es. */}
+                      <div style={{ marginTop: 3 }}>
                       <span
                         title={item.tipo_sigla ? `${item.tipo_sigla} · ${item.tipo_label}` : "Tipo no reconocido"}
                         style={{
@@ -2077,6 +2081,7 @@ export default function LicitacionesDisponibles({ embedded = false }) {
                       >
                         {item.tipo_familia === "compra_agil" ? "Ágil" : (item.tipo_sigla || "—")}
                       </span>
+                      </div>
                     </td>
                     <td style={{ whiteSpace: "normal", wordBreak: "break-word", fontSize: 12.5 }}>
                       {item.nombre || "—"}
@@ -2092,8 +2097,10 @@ export default function LicitacionesDisponibles({ embedded = false }) {
                         </div>
                       )}
                     </td>
-                    <td title={item.organismo} style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", fontSize: 12.5, maxWidth: 200 }}>{item.organismo || "—"}</td>
-                    <td style={{ whiteSpace: "nowrap", fontSize: 12.5 }}>{item.region || "—"}</td>
+                    <td title={[item.organismo, item.region].filter(Boolean).join(" · ")} style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", fontSize: 12.5, maxWidth: 168 }}>
+                      <div className="truncar">{item.organismo || "—"}</div>
+                      {item.region && <div className="truncar" style={{ fontSize: 11.5, color: "var(--text-muted)" }}>{item.region}</div>}
+                    </td>
                     <td style={{ textAlign: "right", whiteSpace: "nowrap", fontWeight: 600, fontSize: 12.5 }}>
                       {item.monto_clp != null ? `$${Number(item.monto_clp).toLocaleString("es-CL")}` : "—"}
                     </td>
@@ -2103,7 +2110,7 @@ export default function LicitacionesDisponibles({ embedded = false }) {
                         {item.estado || "—"}
                       </span>
                     </td>
-                    <td style={{ textAlign: "center", fontSize: 12.5 }}>{item.ofertas ?? "—"}</td>
+                    <td className="col-ofertas" style={{ textAlign: "center", fontSize: 12.5 }}>{item.ofertas ?? "—"}</td>
                     {/* stopPropagation: los botones no deben abrir la ficha
                         de la fila al hacer clic. */}
                     <td onClick={(e) => e.stopPropagation()}>

@@ -295,7 +295,9 @@ export default function ComunidadRegistros() {
 
       <div className="table-wrap">
         <div className="table-scroll" style={{ maxHeight: "calc(100vh - 320px)" }}>
-          <table className="data-table">
+          {/* (2026-10-07) tabla-texto: nombre, correo, universidad… parten línea;
+              con todo en una línea la tabla no cabía en un notebook de 13". */}
+          <table className="data-table tabla-compacta tabla-texto">
             <thead>
               <tr>
                 <th>Nombre</th>

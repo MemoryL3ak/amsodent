@@ -395,7 +395,10 @@ export default function MonitoreoSistema() {
           border: 1px solid var(--border); border-radius: 10px; background: var(--surface, #fff);
           overflow: auto; max-height: 62vh;
         }
-        .mon-tabla { width: 100%; border-collapse: collapse; font-size: 13px; }
+        /* table-layout fixed: Detalle (sin ancho) toma lo que sobra y se corta con
+           "…". Antes su nowrap la dejaba en 420px y en un notebook de 13" la tabla
+           se salía de la pantalla. */
+        .mon-tabla { width: 100%; border-collapse: collapse; font-size: 13px; table-layout: fixed; }
         .mon-tabla thead th {
           position: sticky; top: 0; background: var(--surface, #fff); z-index: 1;
           text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .04em;
@@ -404,7 +407,7 @@ export default function MonitoreoSistema() {
         .mon-tabla tbody td { padding: 7px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
         .mon-tabla tbody tr:hover { background: rgba(0,0,0,.02); }
         .mon-badge { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
-        .mon-detalle { max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .mon-detalle { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .mon-vacio { text-align: center; color: var(--text-muted); padding: 34px 10px !important; }
         .mon-fila-nueva { animation: mon-entrada 2.5s ease-out; }
         @keyframes mon-entrada { 0% { background: #dcfce7; } 100% { background: transparent; } }

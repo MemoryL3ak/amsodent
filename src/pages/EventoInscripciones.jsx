@@ -410,19 +410,19 @@ export default function EventoInscripciones() {
 
       {/* Tabla */}
       <div style={{ border: "1px solid var(--border)", borderRadius: 10, overflowX: "auto", background: "var(--surface)", marginTop: 12 }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, whiteSpace: "nowrap" }}>
+        <table className="tabla-texto-simple" style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
           <thead>
             <tr style={{ background: "var(--bg)", color: "var(--text-muted)", textAlign: "left" }}>
-              <th style={{ padding: "9px 12px" }}>Evento</th>
-              <th style={{ padding: "9px 12px" }}>Nombre</th>
-              <th style={{ padding: "9px 12px" }}>Teléfono</th>
-              <th style={{ padding: "9px 12px" }}>Correo</th>
-              <th style={{ padding: "9px 12px" }}>Especialidad</th>
-              <th style={{ padding: "9px 12px" }}>Profesor / Universidad</th>
-              <th style={{ padding: "9px 12px" }}>Asistencia</th>
-              <th style={{ padding: "9px 12px" }}>Confirmación</th>
-              <th style={{ padding: "9px 12px" }}>Inscrito</th>
-              <th style={{ padding: "9px 12px" }} />
+              <th style={{ padding: "9px 9px" }}>Evento</th>
+              <th style={{ padding: "9px 9px" }}>Nombre</th>
+              <th style={{ padding: "9px 9px" }}>Teléfono</th>
+              <th style={{ padding: "9px 9px" }}>Correo</th>
+              <th style={{ padding: "9px 9px" }}>Especialidad</th>
+              <th style={{ padding: "9px 9px" }}>Profesor / Universidad</th>
+              <th style={{ padding: "9px 9px" }}>Asistencia</th>
+              <th style={{ padding: "9px 9px" }}>Confirmación</th>
+              <th style={{ padding: "9px 9px" }}>Inscrito</th>
+              <th style={{ padding: "9px 9px" }} />
             </tr>
           </thead>
           <tbody>
@@ -435,34 +435,34 @@ export default function EventoInscripciones() {
             ) : (
               filtrada.map((p) => (
                 <tr key={p.id} style={{ borderTop: "1px solid var(--border)" }}>
-                  <td style={{ padding: "7px 12px" }}>
+                  <td style={{ padding: "7px 9px", whiteSpace: "nowrap" }}>
                     {["vina", "brasil"].includes(p.evento || "santiago")
                       ? <Badge color="#7c3aed" bg="#ede9fe">Viña del Mar</Badge>
                       : <Badge color="#1e9295" bg="#e6f6f6">Santiago</Badge>}
                   </td>
-                  <td style={{ padding: "7px 12px", fontWeight: 600 }}>{p.nombre} {p.apellido}</td>
-                  <td style={{ padding: "7px 12px" }}>{p.telefono}</td>
-                  <td style={{ padding: "7px 12px" }}>{p.correo}</td>
-                  <td style={{ padding: "7px 12px" }}>{p.especialidad}</td>
-                  <td style={{ padding: "7px 12px" }}>
+                  <td style={{ padding: "7px 9px", fontWeight: 600, minWidth: 110 }}>{p.nombre} {p.apellido}</td>
+                  <td style={{ padding: "7px 9px", whiteSpace: "nowrap" }}>{p.telefono}</td>
+                  <td style={{ padding: "7px 9px", overflowWrap: "anywhere", minWidth: 118 }}>{p.correo}</td>
+                  <td style={{ padding: "7px 9px" }}>{p.especialidad}</td>
+                  <td style={{ padding: "7px 9px" }}>
                     {p.es_profesor ? (
                       <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
                         <GraduationCap size={14} style={{ color: "var(--primary)" }} /> {p.universidad || "Sí"}
                       </span>
                     ) : "—"}
                   </td>
-                  <td style={{ padding: "7px 12px" }}>
+                  <td style={{ padding: "7px 9px", whiteSpace: "nowrap" }}>
                     {p.confirma_asistencia
                       ? <Badge color="#16a34a" bg="#dcfce7">Confirmada</Badge>
                       : <Badge color="#b45309" bg="#fef3c7">Por confirmar</Badge>}
                   </td>
-                  <td style={{ padding: "7px 12px" }}>
+                  <td style={{ padding: "7px 9px", whiteSpace: "nowrap" }}>
                     {p.correo_enviado
                       ? <Badge color="#16a34a" bg="#dcfce7">Correo enviado</Badge>
                       : <Badge color="#dc2626" bg="#fee2e2">Sin correo</Badge>}
                   </td>
-                  <td style={{ padding: "7px 12px", color: "var(--text-muted)" }}>{fmtFecha(p.created_at)}</td>
-                  <td style={{ padding: "7px 12px", textAlign: "right" }}>
+                  <td style={{ padding: "7px 9px", color: "var(--text-muted)", minWidth: 92 }}>{fmtFecha(p.created_at)}</td>
+                  <td style={{ padding: "7px 9px", textAlign: "right" }}>
                     <button
                       className="btn btn-sm btn-ghost"
                       title="Reenviar correo de confirmación"
@@ -538,15 +538,15 @@ export default function EventoInscripciones() {
 
       {/* Tabla de invitaciones */}
       <div style={{ border: "1px solid var(--border)", borderRadius: 10, overflowX: "auto", background: "var(--surface)", marginTop: 12 }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, whiteSpace: "nowrap" }}>
+        <table className="tabla-texto-simple" style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
           <thead>
             <tr style={{ background: "var(--bg)", color: "var(--text-muted)", textAlign: "left" }}>
-              <th style={{ padding: "9px 12px" }}>Correo</th>
-              <th style={{ padding: "9px 12px" }}>Evento</th>
-              <th style={{ padding: "9px 12px" }}>Estado</th>
-              <th style={{ padding: "9px 12px" }}>Agregado por</th>
-              <th style={{ padding: "9px 12px" }}>Agregado</th>
-              <th style={{ padding: "9px 12px" }} />
+              <th style={{ padding: "9px 9px" }}>Correo</th>
+              <th style={{ padding: "9px 9px" }}>Evento</th>
+              <th style={{ padding: "9px 9px" }}>Estado</th>
+              <th style={{ padding: "9px 9px" }}>Agregado por</th>
+              <th style={{ padding: "9px 9px" }}>Agregado</th>
+              <th style={{ padding: "9px 9px" }} />
             </tr>
           </thead>
           <tbody>
@@ -559,13 +559,13 @@ export default function EventoInscripciones() {
             ) : (
               invitaciones.map((inv) => (
                 <tr key={inv.id} style={{ borderTop: "1px solid var(--border)" }}>
-                  <td style={{ padding: "7px 12px", fontWeight: 600 }}>{inv.correo}</td>
-                  <td style={{ padding: "7px 12px" }}>
+                  <td style={{ padding: "7px 9px", fontWeight: 600 }}>{inv.correo}</td>
+                  <td style={{ padding: "7px 9px" }}>
                     {["vina", "brasil"].includes(inv.evento)
                       ? <Badge color="#7c3aed" bg="#ede9fe">Viña del Mar</Badge>
                       : <Badge color="#1e9295" bg="#e6f6f6">Santiago</Badge>}
                   </td>
-                  <td style={{ padding: "7px 12px" }}>
+                  <td style={{ padding: "7px 9px" }}>
                     {inv.enviado ? (
                       <Badge color="#16a34a" bg="#dcfce7">Enviada{inv.enviado_at ? ` · ${fmtFecha(inv.enviado_at)}` : ""}</Badge>
                     ) : inv.error ? (
@@ -574,9 +574,9 @@ export default function EventoInscripciones() {
                       <Badge color="#b45309" bg="#fef3c7">Enviando…</Badge>
                     )}
                   </td>
-                  <td style={{ padding: "7px 12px", color: "var(--text-muted)" }}>{inv.agregado_por || "—"}</td>
-                  <td style={{ padding: "7px 12px", color: "var(--text-muted)" }}>{fmtFecha(inv.created_at)}</td>
-                  <td style={{ padding: "7px 12px", textAlign: "right" }}>
+                  <td style={{ padding: "7px 9px", color: "var(--text-muted)" }}>{inv.agregado_por || "—"}</td>
+                  <td style={{ padding: "7px 9px", color: "var(--text-muted)" }}>{fmtFecha(inv.created_at)}</td>
+                  <td style={{ padding: "7px 9px", textAlign: "right" }}>
                     <button
                       className="btn btn-sm btn-ghost"
                       title="Enviar / reenviar la invitación"

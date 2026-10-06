@@ -826,20 +826,24 @@ export default function Productos() {
       {/* TABLA */}
       <div className="table-wrap">
         <div className="table-scroll" style={{maxHeight: 760}}>
-          <table className="data-table" style={{tableLayout: "fixed", width: "100%", minWidth: 1340}}>
+          <table className="data-table tabla-compacta productos-table" style={{tableLayout: "fixed", width: "100%", minWidth: 880}}>
             {/* SKU · Producto · Marca · Categoría · Formato · Precio Neto ·
                 Precio Bruto · Acciones. Sin comentarios inline dentro del
                 colgroup: el espacio antes de {} genera un text node inválido
-                como hijo de <colgroup> (warning de hidratación de React). */}
+                como hijo de <colgroup> (warning de hidratación de React).
+                (2026-10-07) Sumaban 1340px: en un notebook de 13" había que
+                desplazarse de lado. Producto absorbe el sobrante y bajo 1440px
+                Formato y Precio Bruto pasan a ir dentro de Producto y Neto
+                (anchos en styles.css, .productos-table). */}
             <colgroup>
-              <col style={{width: 110}} />
-              <col style={{width: 300}} />
-              <col style={{width: 140}} />
-              <col style={{width: 140}} />
-              <col style={{width: 100}} />
-              <col style={{width: 130}} />
-              <col style={{width: 130}} />
-              <col style={{width: 290}} />
+              <col className="pc-sku" />
+              <col />
+              <col className="pc-marca" />
+              <col className="pc-categoria" />
+              <col className="pc-formato col-formato" />
+              <col className="pc-precio" />
+              <col className="pc-precio col-bruto" />
+              <col className="pc-acciones" />
             </colgroup>
             <thead>
               <tr>
@@ -855,7 +859,7 @@ export default function Productos() {
                 <th style={{cursor:"pointer", userSelect:"none"}} onClick={() => toggleSort("categoria")}>
                   Categoría{sortIndicator("categoria")}
                 </th>
-                <th style={{cursor:"pointer", userSelect:"none"}} onClick={() => toggleSort("formato")}>
+                <th className="col-formato" style={{cursor:"pointer", userSelect:"none"}} onClick={() => toggleSort("formato")}>
                   Formato{sortIndicator("formato")}
                 </th>
                 <th style={{ userSelect: "none", padding: 0 }}>
@@ -892,7 +896,7 @@ export default function Productos() {
                     </select>
                   </div>
                 </th>
-                <th>Precio Bruto</th>
+                <th className="col-bruto">Precio Bruto</th>
                 <th>Acciones</th>
               </tr>
             </thead>
@@ -912,10 +916,11 @@ export default function Productos() {
                     <td style={{whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>{p.sku}</td>
                     <td style={{whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}} title={p.nombre}>
                       {p.nombre}
+                      {p.formato && <div className="productos-inline truncar" style={{fontSize: 11.5, color: "var(--text-muted)"}}>{p.formato}</div>}
                     </td>
                     <td style={{whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>{p.marca || "—"}</td>
                     <td style={{whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>{p.categoria}</td>
-                    <td style={{whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>{p.formato}</td>
+                    <td className="col-formato" style={{whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>{p.formato}</td>
                     <td style={{fontWeight: 600}}>
                       <div style={{lineHeight: 1.4}}>
                         <div>${precioNormal.toLocaleString("es-CL")}</div>
@@ -931,6 +936,9 @@ export default function Productos() {
                             <span style={{fontSize: 11, fontWeight: 500}}>(Margen {Number(porMargen.campana.margen_pct).toLocaleString("es-CL")}%)</span>
                           </div>
                         )}
+                        <div className="productos-inline" style={{fontSize: 11.5, fontWeight: 500, color: "var(--text-soft)"}}>
+                          ${Math.round(precioNormal * 1.19).toLocaleString("es-CL")} c/IVA
+                        </div>
                         {p.precio_actualizado_at && (
                           <div
                             title="Última actualización de precio (costo o listas)"
@@ -943,7 +951,7 @@ export default function Productos() {
                     </td>
 
 
-                    <td style={{fontWeight: 600}}>
+                    <td className="col-bruto" style={{fontWeight: 600}}>
                       {/* Punto 34: bruto (neto × 1.19) — IVA incluido */}
                       <div style={{lineHeight: 1.4}}>
                         <div>${Math.round(precioNormal * 1.19).toLocaleString("es-CL")}</div>
@@ -987,7 +995,7 @@ export default function Productos() {
                           }
                         >
                           <FileDown size={14} />
-                          {generandoFichaId === p.id ? "Generando…" : "Ficha"}
+                          <span className="productos-ficha-texto">{generandoFichaId === p.id ? "Generando…" : "Ficha"}</span>
                         </button>
                         <Link
                           to={`/productos/editar/${p.id}`}

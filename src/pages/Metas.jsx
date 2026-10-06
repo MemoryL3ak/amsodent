@@ -1169,7 +1169,7 @@ export default function Metas() {
           {/* TABLE */}
           <div className="table-wrap" style={{ boxShadow: "none", border: "none", borderRadius: 0 }}>
             <div className="table-scroll">
-              <table className="data-table" style={{ minWidth: "980px" }}>
+              <table className="data-table tabla-compacta cabecera-flexible" style={{ minWidth: "900px" }}>
                 <thead>
                   <tr>
                     <th>Vendedor</th>
@@ -1225,7 +1225,7 @@ export default function Metas() {
                                 const canal = normalizeCanal(e.target.value);
                                 setCanalDraftMap((prev) => ({ ...prev, [r.email]: canal }));
                               }}
-                              style={{ marginTop: "6px", minWidth: "210px", fontSize: "12px", padding: "4px 8px" }}
+                              style={{ marginTop: "6px", width: "100%", minWidth: "140px", maxWidth: "220px", fontSize: "12px", padding: "4px 8px" }}
                               title="Canal del vendedor (se guarda con «Guardar metas»)"
                             >
                               <option value="">Sin canal</option>
@@ -1241,7 +1241,7 @@ export default function Metas() {
                         </td>
                         <td style={{ textAlign: "right" }}>
                           {splitCfg ? (
-                            <div style={{ display: "flex", flexDirection: "column", gap: "8px", alignItems: "flex-end", width: "224px", marginLeft: "auto" }}>
+                            <div style={{ display: "flex", flexDirection: "column", gap: "8px", alignItems: "flex-end", width: "140px", marginLeft: "auto" }}>
                               <div style={{ width: "100%" }}>
                                 <div style={{ fontSize: "10px", color: "var(--text-muted)", marginBottom: "4px" }}>{splitCfg.firstLabel}</div>
                                 <input
@@ -1284,13 +1284,13 @@ export default function Metas() {
                                 setMetasSplitDraftMap((prev) => { if (!prev[r.email]) return prev; const next = { ...prev }; delete next[r.email]; return next; });
                                 setMetasDraftMap((prev) => ({ ...prev, [r.email]: v }));
                               }}
-                              className="input" style={{ textAlign: "right", width: "176px" }}
+                              className="input" style={{ textAlign: "right", width: "136px" }}
                             />
                           )}
                         </td>
                         <td style={{ textAlign: "right" }}>
                           {splitCfg ? (
-                            <div style={{ display: "flex", flexDirection: "column", gap: "8px", alignItems: "flex-end", width: "150px", marginLeft: "auto" }}>
+                            <div style={{ display: "flex", flexDirection: "column", gap: "8px", alignItems: "flex-end", width: "112px", marginLeft: "auto" }}>
                               <div style={{ width: "100%" }}>
                                 <div style={{ fontSize: "10px", color: "var(--text-muted)", marginBottom: "4px" }}>{splitCfg.firstLabel}</div>
                                 <input
@@ -1367,7 +1367,7 @@ export default function Metas() {
                                 </div>
                               </div>
                             </td>
-                            <td style={{ minWidth: "200px" }}>
+                            <td style={{ minWidth: "130px" }}>
                               <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
                                 <div>
                                   <div style={{ fontSize: "10px", color: "var(--text-muted)", marginBottom: "2px" }}>{r.split.firstLabel}</div>
@@ -1440,7 +1440,7 @@ export default function Metas() {
                               {fmtCLP(r.avanceNeto)}
                             </td>
                             <td style={{ textAlign: "right", fontWeight: 600, color: "var(--primary-dark)" }}>{fmtCLP(r.avanceBruto)}</td>
-                            <td style={{ minWidth: "200px" }}>
+                            <td style={{ minWidth: "130px" }}>
                               <div style={{ height: "8px", borderRadius: "4px", background: "var(--bg)", border: "1px solid var(--border)", overflow: "hidden" }}>
                                 <div style={{ height: "100%", borderRadius: "4px", background: barColorCumplimiento(pct), width: `${clamp(pct, 0, 100)}%` }} />
                               </div>

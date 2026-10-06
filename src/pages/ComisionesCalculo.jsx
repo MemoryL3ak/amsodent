@@ -419,7 +419,9 @@ export default function ComisionesCalculo({ perfiles }) {
               </div>
             )}
             <div style={{ overflowX: "auto" }}>
-              <table className="data-table" style={{ minWidth: 1280, width: "100%" }}>
+              {/* 14 columnas numéricas: no caben en 13" ni compactas; se desplaza
+                  dentro de su recuadro (la página no). (2026-10-07) 1280 → 1100. */}
+              <table className="data-table tabla-compacta" style={{ minWidth: 1100, width: "100%" }}>
                 <thead>
                   <tr>
                     <th style={{ textAlign: "left" }}>Vendedor</th>

@@ -614,11 +614,11 @@ export default function Inventario() {
                 {filtroAlerta === "sin_producto" ? "Todos los SKUs de Bsale están creados en el sistema." : "Sin productos para el filtro."}
               </div>
             ) : (
-              <table className="data-table" style={{ width: "100%", minWidth: 1080 }}>
+              <table className="data-table tabla-compacta" style={{ width: "100%", minWidth: 870 /* 2026-10-07: era 1080, no cabía en 13" */ }}>
                 <thead>
                   <tr>
                     <th style={{ textAlign: "left", whiteSpace: "nowrap" }}>SKU</th>
-                    <th style={{ textAlign: "left", minWidth: 220 }}>Producto</th>
+                    <th style={{ textAlign: "left", minWidth: 200 }}>Producto</th>
                     <th style={{ textAlign: "left" }}>Categoría</th>
                     <th style={{ textAlign: "right", whiteSpace: "nowrap", cursor: "pointer" }} onClick={() => toggleOrden("stock")} title="Ordenar por stock">
                       <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>Stock <FlechaOrden campo="stock" /></span>

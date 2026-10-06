@@ -346,17 +346,19 @@ export default function SorteoRegistros() {
       {/* Tabla */}
       <div className="table-wrap">
         <div className="table-scroll">
-          <table className="data-table">
+          {/* (2026-10-07) tabla-texto: nombre, correo, universidad… parten línea;
+              con todo en una línea la tabla no cabía en un notebook de 13". */}
+          <table className="data-table tabla-compacta tabla-texto">
             <thead>
               <tr>
-                <th style={{ width: 56 }}>#</th>
+                <th style={{ width: 44 }}>#</th>
                 <th>Nombre</th>
                 <th>Correo</th>
-                <th style={{ width: 130 }}>Perfil</th>
+                <th style={{ width: 112 }}>Perfil</th>
                 <th>Universidad / Clínica</th>
-                <th style={{ width: 180 }}>Especialidad</th>
+                <th style={{ width: 140 }}>Especialidad</th>
                 <th style={{ width: 110 }}>Nos conocía</th>
-                <th style={{ width: 170 }}>Registro</th>
+                <th style={{ width: 120 }}>Registro</th>
                 <th style={{ width: 80 }}>Acciones</th>
               </tr>
             </thead>
@@ -431,7 +433,7 @@ export default function SorteoRegistros() {
                         <span className="badge badge-neutral">No</span>
                       )}
                     </td>
-                    <td style={{ fontSize: 12.5, color: "var(--text-soft)", whiteSpace: "nowrap" }}>
+                    <td style={{ fontSize: 12.5, color: "var(--text-soft)" }}>
                       <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
                         <Calendar size={12} />
                         {p.created_at ? new Date(p.created_at).toLocaleString("es-CL") : "—"}

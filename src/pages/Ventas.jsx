@@ -856,7 +856,9 @@ export default function Ventas({ embedded = false }) {
             </div>
             <div className="table-wrap" style={{ boxShadow: "none", border: "none", borderRadius: 0 }}>
               <div className="table-scroll">
-                <table className="data-table" style={{ minWidth: "1100px" }}>
+                {/* (2026-10-07) minWidth 1100 → 880 y celdas compactas: son casi todas
+                    columnas numéricas y en un notebook de 13" obligaba a desplazarse. */}
+                <table className="data-table tabla-compacta" style={{ minWidth: "880px" }}>
                   <thead>
                     <tr>
                       <th>Vendedor</th>
