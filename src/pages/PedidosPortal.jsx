@@ -623,24 +623,26 @@ export default function PedidosPortal() {
       {/* Tabla compacta: una fila por pedido, detalle expandible */}
       <div className="table-wrap" style={{ marginTop: 12 }}>
         <div className="table-scroll">
-          <table className="data-table">
+          {/* (2026-10-07) Ancho fijo por columna: antes el nombre del cliente y
+              de la sucursal estiraban la tabla y en un notebook de 13" había
+              que desplazarse de lado. El origen va bajo el N° de pedido; cliente
+              e ítems se cortan con "…" (el texto completo queda en el title). */}
+          <table className="data-table tabla-compacta" style={{ tableLayout: "fixed", width: "100%", minWidth: 860 }}>
             <colgroup>
-              <col style={{ width: 36 }} />
-              <col style={{ width: "9%" }} />
-              <col style={{ width: "23%" }} />
-              <col style={{ width: "11%" }} />
-              <col style={{ width: "18%" }} />
-              <col style={{ width: "9%" }} />
-              <col style={{ width: "11%" }} />
-              <col style={{ width: "9%" }} />
-              <col style={{ width: "10%" }} />
+              <col style={{ width: 34 }} />
+              <col style={{ width: 128 }} />
+              <col />
+              <col />
+              <col style={{ width: 116 }} />
+              <col style={{ width: 132 }} />
+              <col style={{ width: 142 }} />
+              <col style={{ width: 132 }} />
             </colgroup>
             <thead>
               <tr>
                 <th />
                 <th style={{ textAlign: "left" }}>Pedido</th>
                 <th style={{ textAlign: "left" }}>Cliente</th>
-                <th style={{ textAlign: "left" }}>Origen</th>
                 <th style={{ textAlign: "left" }}>Ítems</th>
                 <th style={{ textAlign: "right" }}>Total ref.</th>
                 <th style={{ textAlign: "left" }}>Etapa</th>
@@ -651,7 +653,7 @@ export default function PedidosPortal() {
             <tbody>
               {visibles.length === 0 ? (
                 <tr>
-                  <td colSpan={9} style={{ textAlign: "center", padding: "50px 0", color: "var(--text-muted)" }}>
+                  <td colSpan={8} style={{ textAlign: "center", padding: "50px 0", color: "var(--text-muted)" }}>
                     No hay pedidos que coincidan con los filtros.
                   </td>
                 </tr>
@@ -682,19 +684,19 @@ export default function PedidosPortal() {
                         <td style={{ whiteSpace: "nowrap" }}>
                           <div style={{ fontWeight: 700, color: "var(--text)" }}>N° {s.id}</div>
                           <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{fmtFechaHora(s.created_at)}</div>
+                          <div style={{ marginTop: 3 }}><BadgeOrigen origen={origen} compacto /></div>
                         </td>
-                        <td>
-                          <div style={{ fontWeight: 600, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 340 }}>
+                        <td title={[s.razon_social, s.sucursal_nombre].filter(Boolean).join(" · ")}>
+                          <div style={{ fontWeight: 600, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                             {s.razon_social || "Cliente sin nombre"}
                           </div>
-                          <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
+                          <div style={{ fontSize: 11, color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                             {formatearRutVisual(s.rut) || "—"}
                             {s.sucursal_nombre ? ` · ${s.sucursal_nombre}` : ""}
                           </div>
                         </td>
-                        <td><BadgeOrigen origen={origen} compacto /></td>
                         <td>
-                          <div style={{ fontSize: 12.5, color: "#475569", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 280 }} title={resumenItems}>
+                          <div style={{ fontSize: 12.5, color: "#475569", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={resumenItems}>
                             <strong>{items.length}</strong> ítem{items.length === 1 ? "" : "s"}
                             {resumenItems ? ` — ${resumenItems}` : ""}
                           </div>
@@ -725,15 +727,16 @@ export default function PedidosPortal() {
                             className="input"
                             value={s.estado || "pendiente"}
                             onChange={(e) => cambiarEstado(s, e.target.value)}
-                            style={{ width: "auto", height: 28, fontSize: 12, fontWeight: 700, background: em.bg, color: em.fg, border: "none", borderRadius: 999, padding: "0 10px" }}
+                            style={{ width: "auto", maxWidth: "100%", height: 28, fontSize: 12, fontWeight: 700, background: em.bg, color: em.fg, border: "none", borderRadius: 999, padding: "0 10px" }}
                             title="Cambiar el estado del pedido"
                           >
                             {ESTADOS.map((e) => <option key={e.value} value={e.value}>{e.label}</option>)}
                           </select>
                         </td>
                         <td onClick={(e) => e.stopPropagation()} style={{ whiteSpace: "nowrap" }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 2, minWidth: 0 }}>
                           {s.cotizacion ? (
-                            <Link to={`/detalle/${s.cotizacion.id}`} className="table-link" style={{ fontWeight: 600, fontSize: 12.5 }} title={`Estado: ${s.cotizacion.estado || "—"}`}>
+                            <Link to={`/detalle/${s.cotizacion.id}`} className="table-link truncar" style={{ fontWeight: 600, fontSize: 12.5 }} title={`#${s.cotizacion.id}${s.cotizacion.id_licitacion ? ` · ${s.cotizacion.id_licitacion}` : ""} — estado: ${s.cotizacion.estado || "—"}`}>
                               #{s.cotizacion.id}{s.cotizacion.id_licitacion && s.cotizacion.id_licitacion !== String(s.cotizacion.id) ? ` · ${s.cotizacion.id_licitacion}` : ""}
                             </Link>
                           ) : (
@@ -745,10 +748,11 @@ export default function PedidosPortal() {
                             type="button"
                             onClick={() => descargarPdfPedido(s)}
                             title="Descargar el detalle del pedido en PDF"
-                            style={{ background: "none", border: "none", cursor: "pointer", color: "var(--primary-dark)", padding: 4, marginLeft: 6, verticalAlign: "middle" }}
+                            style={{ background: "none", border: "none", cursor: "pointer", color: "var(--primary-dark)", padding: 4, marginLeft: 4, flexShrink: 0 }}
                           >
                             <FileDown size={15} />
                           </button>
+                          </div>
                         </td>
                       </tr>
 

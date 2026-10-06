@@ -3198,9 +3198,12 @@ export default function Trazabilidad() {
                                 onCambiar={(nuevo) => cambiarEstadoEntrega(lic.id, nuevo)}
                               />
                             )}
-                            <div style={{ display: "flex", flexDirection: (uploadingFor === lic.id || lic.ciclo_cerrado) ? "column" : "row", gap: 6, alignItems: "stretch" }}>
+                            {/* (2026-10-07) flexWrap: en un notebook de 13" la columna mide
+                                ~150px y "Forzar cierre + Documento" o "Ciclo cerrado + Reabrir"
+                                en una sola línea se salían de la tabla. */}
+                            <div style={{ display: "flex", flexDirection: (uploadingFor === lic.id || lic.ciclo_cerrado) ? "column" : "row", flexWrap: "wrap", gap: 6, alignItems: "stretch" }}>
                             {lic.ciclo_cerrado ? (
-                              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 6 }}>
                                 <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
                                   <span className="badge badge-success" style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
                                     <CheckCircle2 size={13} /> Ciclo cerrado
@@ -3234,7 +3237,7 @@ export default function Trazabilidad() {
                                 <button
                                   type="button"
                                   className="btn btn-secondary btn-sm"
-                                  style={{ flex: 1, width: "100%", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6 }}
+                                  style={{ flex: "1 1 auto", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6 }}
                                   onClick={() => setForzandoCierre(lic)}
                                 >
                                   <Check size={14} /> Forzar Cierre
@@ -3394,7 +3397,7 @@ export default function Trazabilidad() {
                                   type="button"
                                   onClick={() => iniciarUploadFactura(lic.id)}
                                   className="btn btn-primary btn-sm"
-                                  style={{ flex: 1, width: "100%", display: "inline-flex", alignItems: "center", justifyContent: "center" }}
+                                  style={{ flex: "1 1 auto", display: "inline-flex", alignItems: "center", justifyContent: "center" }}
                                 >
                                   <Upload size={12} style={{ marginRight: 4 }} /> Documento
                                 </button>

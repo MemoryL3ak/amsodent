@@ -606,7 +606,7 @@ export default function DetalleCliente() {
         </div>
 
         {/* ─── CENTRO ─── */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 18, minWidth: 0 }}>
+        <div className="ficha-centro" style={{ display: "flex", flexDirection: "column", gap: 18, minWidth: 0 }}>
           {/* Tabs */}
           <div style={{ display: "flex", gap: 4, borderBottom: "1px solid var(--border)", flexWrap: "wrap" }}>
             {TABS.map((t) => (

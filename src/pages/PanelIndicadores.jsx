@@ -1503,23 +1503,25 @@ export default function PanelIndicadores() {
               </div>
             ) : (
               <div style={{ padding: "6px 24px 18px", overflowX: "auto", maxHeight: 420, overflowY: "auto" }}>
-                <table className="data-table" style={{ width: "100%", fontSize: 13 }}>
+                <table className="data-table tabla-compacta" style={{ width: "100%", fontSize: 13 }}>
                   <thead>
                     <tr>
                       <th>Cotización</th><th>Cliente</th><th>Vendedor</th><th>N° OC</th><th>Fecha OC</th>
                       <th style={{ textAlign: "right" }}>Monto OC</th>
                       <th style={{ textAlign: "right" }}>Consumido</th>
                       <th style={{ textAlign: "right" }}>Saldo</th>
-                      <th style={{ width: 130 }}>% consumido</th>
+                      <th style={{ width: 110 }}>% consumido</th>
                     </tr>
                   </thead>
                   <tbody>
                     {ocsConSaldo.filas.map((f) => (
                       <tr key={f.licId}>
                         <td><a className="table-link" href={`/detalle/${f.licId}`} target="_blank" rel="noreferrer">{f.codigo}</a></td>
-                        <td>{f.cliente}</td>
+                        {/* (2026-10-07) Cliente y N° OC parten línea: con nombres largos
+                            de organismos la tabla se salía en un notebook de 13". */}
+                        <td style={{ whiteSpace: "normal", minWidth: 128 }}>{f.cliente}</td>
                         <td>{f.vendedor}</td>
-                        <td>{f.numeroOC}</td>
+                        <td style={{ whiteSpace: "normal", overflowWrap: "anywhere", minWidth: 96 }}>{f.numeroOC}</td>
                         <td>{f.fechaOC || "—"}</td>
                         <td style={{ textAlign: "right" }}>{fmtCLP(f.oc)}</td>
                         <td style={{ textAlign: "right" }}>{fmtCLP(f.consumido)}</td>

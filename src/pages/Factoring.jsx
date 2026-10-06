@@ -425,7 +425,9 @@ export default function Factoring() {
         }}
       >
         <div className="table-scroll" style={{ maxHeight: "calc(100vh - 400px)" }}>
-          <table className="data-table" style={{ minWidth: "1080px" }}>
+          {/* (2026-10-07) minWidth 1080 → 920 y celdas compactas: en un notebook de
+              13" la tabla obligaba a desplazarse de lado. */}
+          <table className="data-table tabla-compacta" style={{ minWidth: "920px" }}>
             <thead>
               <tr>
                 <th style={{ textAlign: "left" }}>Cotización / Cliente</th>

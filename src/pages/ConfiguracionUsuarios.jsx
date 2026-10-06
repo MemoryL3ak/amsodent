@@ -235,7 +235,7 @@ export default function ConfiguracionUsuarios() {
                       {u.permission_profile_id ? (perfilesMap[u.permission_profile_id] || "—") : "Por rol"}
                     </td>
                     <td>
-                      <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px" }}>
+                      <div style={{ display: "flex", justifyContent: "flex-end", flexWrap: "wrap", gap: "6px" }}>
                         <button
                           className="btn btn-sm btn-ghost"
                           onClick={() => setModalResetClave(u)}

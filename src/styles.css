@@ -670,6 +670,17 @@ body {
   padding: 28px 32px 40px;
   flex: 1;
 }
+/* Monitores grandes (2026-10-07): sin tope, en 2560px todo se estiraba —
+   tarjetas de 560px, filtros de 360px y columnas con huecos enormes — y la
+   pantalla se veía vacía y con letra chica. Con tope, desde ~2000px el
+   contenido se ve como en un monitor de 1920 y el sobrante queda a los lados.
+   En 1920 o menos no cambia nada (el área útil ya es menor que el tope). */
+.content > .page {
+  width: 100%;
+  max-width: 1760px;
+  margin-left: auto;
+  margin-right: auto;
+}
 
 /* ── Page header ─────────────────────────────────────────────── */
 .page-header {
@@ -852,6 +863,18 @@ body {
 @media (max-width: 1400px) {
   .stats-360 .stat-value { font-size: 23px; }
   .stats-360 .stat-value.stat-value-money { font-size: 19px; }
+}
+/* (2026-10-07) En un notebook de 13" la columna central mide ~420px: cinco
+   tarjetas en fila quedaban de 75px y los montos se veían como "$…". Se
+   reparten según el ancho de la COLUMNA (no de la pantalla): 5 → 3+2 → 2+2+1
+   (la última ocupa la fila entera, sin quedar huérfana). */
+.ficha-centro { container-type: inline-size; }
+@container (max-width: 720px) {
+  .stats-row.stats-360 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@container (max-width: 400px) {
+  .stats-row.stats-360 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .stats-row.stats-360 .stat-card:last-child:nth-child(odd) { grid-column: 1 / -1; }
 }
 
 /* ── Bitácora / Agenda (dashboard) ──────────────────────────────────────── */
@@ -1401,8 +1424,11 @@ select.input {
    que forzaba el ancho de la columna. */
 .data-table.cotizaciones-table th:nth-child(4) { width: 96px; white-space: normal; }  /* Adjudicación */
 .data-table.cotizaciones-table th:nth-child(5) { width: 100px; white-space: normal; } /* Monto */
-/* Comuna (col 6) queda SIN width: es la que absorbe el espacio libre, pero
-   con tope para que un nombre largo no empuje al Estado bajo la Acción. */
+/* Comuna (col 6) con tope para que un nombre largo no empuje al Estado bajo la
+   Acción. (2026-10-07) Antes iba SIN width y absorbía TODO el espacio libre: en
+   un monitor grande quedaba un hueco de 600px entre Comuna y Estado. Con width
+   en todas las columnas, el sobrante se reparte entre ellas en proporción. */
+.data-table.cotizaciones-table th:nth-child(6) { width: 130px; }
 .data-table.cotizaciones-table td:nth-child(6) {
   max-width: 118px;
   overflow: hidden;
@@ -1453,6 +1479,16 @@ select.input {
   white-space: nowrap;
   vertical-align: middle;
 }
+/* (2026-10-07) Una celda con max-width propio quiere decir "este texto puede ser
+   largo". Con el nowrap de arriba el max-width no recorta: el texto se salía
+   de la celda y quedaba ENCIMA de las columnas vecinas (cliente en Asignación
+   de cartera, nombre en Campañas de margen y Ofertas). Ahora parte en líneas.
+   Las que truncan a propósito (ellipsis) o fijan su white-space no cambian. */
+.data-table td[style*="max-width"]:not([style*="ellipsis"]):not([style*="white-space"]) {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  min-width: 140px;
+}
 
 .data-table tbody tr:last-child td { border-bottom: none; }
 
@@ -1474,6 +1510,44 @@ select.input {
 }
 .data-table.table-fit td { font-size: 12.5px; }
 .data-table.table-fit th { padding-left: 9px; padding-right: 9px; }
+
+/* Tablas compactas (2026-10-07): menos aire lateral para que las tablas de
+   muchas columnas quepan en un notebook de 13" (Clientes, Pedidos del portal…). */
+.data-table.tabla-compacta th,
+.data-table.tabla-compacta td { padding-left: 10px; padding-right: 10px; }
+/* Encabezados que pueden partirse en dos líneas ("Meta (cantidad)"): el texto
+   del encabezado deja de fijar el ancho de la columna. */
+.data-table.cabecera-flexible th { white-space: normal; }
+/* Tablas de registros (sorteo, comunidad…): el texto parte línea en vez de
+   ensanchar la tabla. break-word no achica el mínimo de la columna (un correo
+   largo no se parte letra por letra salvo que no quepa). */
+.data-table.tabla-texto td { white-space: normal; overflow-wrap: break-word; }
+
+/* Productos: anchos por columna; Producto (sin clase) absorbe el sobrante.
+   Bajo 1440px Formato y Precio Bruto se ocultan y se ven dentro de Producto y
+   de Neto (.productos-inline), y la Ficha queda solo con su ícono. */
+.productos-table col.pc-sku { width: 100px; }
+.productos-table col.pc-marca,
+.productos-table col.pc-categoria { width: 120px; }
+.productos-table col.pc-formato { width: 96px; }
+.productos-table col.pc-precio { width: 132px; }
+.productos-table col.pc-acciones { width: 244px; }
+.productos-table .productos-inline { display: none; }
+@media (max-width: 1440px) {
+  .productos-table .col-formato,
+  .productos-table .col-bruto { display: none; }
+  .productos-table .productos-inline { display: block; }
+  .productos-table col.pc-acciones { width: 210px; }
+  .productos-table .productos-ficha-texto { display: none; }
+}
+/* Explorador de Mercado Público: la columna Ofertas cae bajo 1300px. */
+@media (max-width: 1300px) {
+  .tabla-explorador-mp .col-ofertas { display: none; }
+}
+/* Clientes: Contacto (también en la ficha) cae bajo 1320px. */
+@media (max-width: 1320px) {
+  .data-table.clientes-table .col-contacto { display: none; }
+}
 
 /* Variante "recortar": para tablas con `table-layout: fixed` y celdas que no
    parten línea. Sin esto el texto largo de una celda se DERRAMA encima de la
@@ -3002,7 +3076,7 @@ img, video, canvas { height: auto; }
    eso no se aprieta más (las celdas partían el texto letra por letra y los
    botones no cabían): conserva este ancho y se desplaza dentro de
    .table-scroll. La página nunca scrollea de lado. */
-.pagos-table.table-fit { min-width: 980px; }
+.pagos-table.table-fit { min-width: 930px; }
 .pagos-table.table-fit th,
 .pagos-table.table-fit td { padding-left: 7px; padding-right: 7px; }
 .pagos-table.table-fit th:first-child,

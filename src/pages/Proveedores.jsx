@@ -283,7 +283,7 @@ export default function Proveedores() {
           <span style={{ fontSize: 12, color: "var(--text-muted)", whiteSpace: "nowrap" }}>{filtrada.length} proveedor(es)</span>
         </div>
         <div style={{ overflowX: "auto" }}>
-          <table className="data-table" style={{ width: "100%", minWidth: 720 }}>
+          <table className="data-table tabla-compacta tabla-texto" style={{ width: "100%", minWidth: 720 }}>
             <thead>
               <tr>
                 <th style={{ textAlign: "left" }}>Razón Social</th>

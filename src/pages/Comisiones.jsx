@@ -88,7 +88,7 @@ function TablaComision({ titulo, color, icon: Icon, cols, filas, onChange }) {
         <strong style={{ fontSize: 14, color: "var(--text)" }}>{titulo}</strong>
       </div>
       <div style={{ overflowX: "auto" }}>
-        <table className="data-table" style={{ width: "100%" }}>
+        <table className="data-table tabla-compacta" style={{ width: "100%" }}>
           <thead>
             <tr>
               {cols.map((c) => <th key={c.key} style={{ textAlign: "left", color, background: `${color}0e` }}>{c.label}</th>)}
