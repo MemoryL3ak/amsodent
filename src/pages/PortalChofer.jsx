@@ -21,7 +21,7 @@ const TOKEN_KEY = "portal_chofer_token";
 const CHOFER_KEY = "portal_chofer_data";
 const TEAL = "#1e9295";
 const TEAL_LIGHT = "#28aeb1";
-const LOGO = "https://amsodentmedical.cl/wp-content/uploads/2025/12/Amsodent-1.png";
+const LOGO = "/logo-amsodent.png";
 // Precisión máxima aceptable (metros). Por encima descartamos la lectura para
 // no plotear posiciones de WiFi/IP (cientos de metros). GPS de celular ~5-30m.
 const PRECISION_MAX_M = 150;

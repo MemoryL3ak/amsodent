@@ -25,7 +25,7 @@ import { api } from '../lib/api';
 import { colors } from '../lib/theme';
 
 // Mismo logo que el login del web.
-const LOGO_URL = 'https://amsodentmedical.cl/wp-content/uploads/2025/12/Amsodent-1.png';
+const LOGO_URL = 'https://amsodent.vercel.app/logo-amsodent.png';
 
 type Modulo = {
   route:

@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
 import { MailingsService } from '../mailings/mailings.service';
+import { LOGO_AMSODENT_URL } from '../correos/logo';
 
 // Comunidad Amsodent: registro público (portal /comunidad, al que apunta el
 // QR) con rate-limit por IP, correo de BIENVENIDA vía SMTP (MailingsService)
@@ -22,7 +23,8 @@ const RATE_MAX_HITS = 8;
 // URL pública del frontend, para armar el link del formulario (QR y correos).
 const APP_URL = (process.env.PUBLIC_APP_URL || 'https://amsodent.vercel.app').replace(/\/+$/, '');
 const RUTA_PORTAL = '/comunidad';
-const LOGO_URL = 'https://amsodentmedical.cl/wp-content/uploads/2025/12/Amsodent-1.png';
+// El logo vive en el sistema (el del sitio web ya no existe): ver correos/logo.ts.
+const LOGO_URL = LOGO_AMSODENT_URL;
 const TIENDA_URL = 'https://amsodentmedical.cl';
 
 // Evento vigente del QR: Amsodent participa como auspiciador y el formulario

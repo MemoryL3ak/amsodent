@@ -5,7 +5,7 @@
 //     ajustado a la página) con la identidad de Amsodent, directamente como archivo.
 
 const LOGO_URL =
-  "https://amsodentmedical.cl/wp-content/uploads/2025/12/Amsodent-1.png";
+  "/logo-amsodent.png";
 
 const C = {
   teal: "#0f766e",

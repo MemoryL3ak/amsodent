@@ -1,5 +1,6 @@
 import { Injectable, BadRequestException, Logger } from '@nestjs/common';
-import { SupabaseService } from '../supabase/supabase.service';
+import { SupabaseService } from '../supabase/supabase.service';
+import { LOGO_AMSODENT_URL } from './logo';
 
 // Etiquetas legibles para cada rol — se muestran en la firma si el usuario no
 // definió uno libre en `firma_cargo`.
@@ -149,8 +150,8 @@ export class FirmasService {
 // ── Generador de la firma por defecto ──────────────────────────────────
 // HTML usando <table> + estilos inline + logo corporativo real. Diseñada
 // para máxima compatibilidad con Gmail, Outlook, Apple Mail, etc.
-const LOGO_URL =
-  'https://amsodentmedical.cl/wp-content/uploads/2025/12/Amsodent-1.png';
+// El logo vive en el sistema (el del sitio web ya no existe): ver correos/logo.ts.
+const LOGO_URL = LOGO_AMSODENT_URL;
 const ACENTO = '#25b7bd'; // turquesa del logo
 const ACENTO_OSC = '#178a8f';
 const ACENTO_SUAVE = '#e7f8f8';

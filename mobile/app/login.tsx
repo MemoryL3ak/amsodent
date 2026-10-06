@@ -17,7 +17,7 @@ import { useAuth } from '../lib/auth';
 import { colors } from '../lib/theme';
 
 // Mismo logo que usa el login del web.
-const LOGO_URL = 'https://amsodentmedical.cl/wp-content/uploads/2025/12/Amsodent-1.png';
+const LOGO_URL = 'https://amsodent.vercel.app/logo-amsodent.png';
 
 export default function LoginScreen() {
   const { signIn } = useAuth();
