@@ -1,5 +1,5 @@
 import { Injectable, BadRequestException, Logger } from '@nestjs/common';
-import { SupabaseService } from '../supabase/supabase.service';
+import { SupabaseService } from '../supabase/supabase.service';
 import { LOGO_AMSODENT_URL } from './logo';
 
 // Etiquetas legibles para cada rol — se muestran en la firma si el usuario no
