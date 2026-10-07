@@ -308,7 +308,25 @@ GUÍA DESDE LA COTIZACIÓN: en el Detalle de una cotización ADJUDICADA, el bot�
 varias pregunta de cuál; sin OC (particular) se arma con los productos de la
 cotización. Empresa de transporte y N° de seguimiento son opcionales: si no se
 tienen, la guía muestra "+ N° de seguimiento" para agregarlo después (despacho
-interno no: lleva su correlativo AMSO). Las GUÍAS se anulan en Bsale (no hay forma documentada por la API). Una factura libre sin guía descuenta stock en Bsale; si
+interno no: lleva su correlativo AMSO). OBSERVACIÓN DE LA GUÍA: la
+observación de cada producto de la cotización se propone en el campo
+«Observación» (atributo adicional) de la guía en Bsale; editable antes de
+simular, hasta 250 caracteres (sirve también para instrucciones de entrega).
+NOTAS DE CRÉDITO: tres modos — anular completa, devolución parcial (cuánto de
+cada producto, reingresa ese stock) y ajuste de precio (rebaja por unidad, no
+mueve stock); varias mientras quede saldo. NOTA DE DÉBITO: aumenta lo que el
+cliente debe por una factura (intereses, diferencia de precio…), líneas de
+texto libre y el motivo en la referencia; queda en la cotización y Seguimiento
+de Pagos la suma al saldo. TRAZABILIDAD → pestaña FACTURAS: guías por facturar
+con «Emitir factura», todas las facturas/boletas con su estado en Bsale y los
+botones «N. crédito» / «N. débito», «Nueva factura» y notas por N°. ESTADO EN
+BSALE: etiquetas «Anulada en Bsale», «SII pendiente», «Rechazada SII» o «No
+está en Bsale» junto a guías y facturas (Trazabilidad, Pagos, cotización).
+VENTA DIRECTA: pagada al emitir pide el N° de comprobante (salvo efectivo) y
+queda en la pestaña «Venta directa» con su cotización. CLIENTE NUEVO EN BSALE:
+si el RUT no está, una ventana pide los datos que Bsale exige y lo crea
+(«Simular» / «Crear en Bsale»). FICHAS TÉCNICAS EN ZIP: en la cotización
+(todas las de sus productos) y en Productos (las filtradas con ficha completa). Las GUÍAS se anulan en Bsale (no hay forma documentada por la API). Una factura libre sin guía descuenta stock en Bsale; si
 referencia una guía, no. Un producto sin SKU o cuyo SKU no está en Bsale no
 puede ir en ningún documento. El borrador de factura abre
 un borrador armado desde la guía que ya existe en Bsale: mismo cliente, mismos

@@ -37,7 +37,7 @@ function tonoDias(dias) {
   return { color: "#15803d", bg: "#dcfce7", texto };
 }
 
-const TIPOS_DOC = { factura: "Factura", boleta: "Boleta", guia: "Guía", nota_venta: "Orden", nota_credito: "Nota de crédito" };
+const TIPOS_DOC = { factura: "Factura", boleta: "Boleta", guia: "Guía", nota_venta: "Orden", nota_credito: "Nota de crédito", nota_debito: "Nota de débito" };
 
 const ESTADOS = {
   emitida: { texto: "Emitida", color: "#15803d", bg: "#dcfce7" },

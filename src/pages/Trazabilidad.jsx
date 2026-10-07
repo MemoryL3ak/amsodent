@@ -71,11 +71,12 @@ function SLABadge({ fechaOc }) {
     </span>
   );
 }
-import { Upload, Eye, Trash2, ArrowUpDown, ArrowUp, ArrowDown, Calendar, FileCheck, ChevronDown, Truck, Download, Clock, CheckCircle2, Check, Pencil, X, AlertTriangle, Package } from "lucide-react";
+import { Upload, Eye, Trash2, ArrowUpDown, ArrowUp, ArrowDown, Calendar, FileCheck, ChevronDown, Truck, Download, Clock, CheckCircle2, Check, Pencil, X, AlertTriangle, Package, Receipt, Workflow } from "lucide-react";
 import { SunflowerIcon } from "../components/DamarIAWidget";
 import EmitirFacturaBsale from "../components/EmitirFacturaBsale";
 import DocumentoLibreBsale from "../components/DocumentoLibreBsale";
 import EstadoBsaleBadge from "../components/EstadoBsale";
+import FacturasTrazabilidad from "../components/FacturasTrazabilidad";
 import { useEstadosBsale } from "../lib/estadosBsale";
 
 // Mapping empresa courier → builder de URL de tracking. Si la empresa no
@@ -259,6 +260,7 @@ const DOC_TIPO_LABEL = {
   webpay: "Webpay",
   info_despacho: "Info de despacho",
   nota_credito: "Nota de crédito",
+  nota_debito: "Nota de débito",
   cierre_forzado: "Cierre forzado",
   multa: "Multa",
   portal_cliente: "Documento del portal",
@@ -573,6 +575,9 @@ export default function Trazabilidad() {
   const [puedeEmitirBsale, setPuedeEmitirBsale] = useState(false);
   // Estado en Bsale (anulada, SII pendiente/rechazado, no está en Bsale) de guías y facturas.
   const estadosBsale = useEstadosBsale();
+  /* (2026-10-07) Pestañas: «Seguimiento» (el ciclo OC → guía → factura de
+     siempre) y «Facturas» (emitir facturas y notas de crédito/débito). */
+  const [pestanaTraz, setPestanaTraz] = useStickyState("trazabilidad.pestana", "seguimiento");
   const [facturaNumero, setFacturaNumero] = useState("");
   const [facturaFecha, setFacturaFecha] = useState("");
   const [facturaMonto, setFacturaMonto] = useState(""); // monto NETO de la factura (solo dígitos)
@@ -2382,6 +2387,29 @@ export default function Trazabilidad() {
         </div>
       </div>
 
+      <div className="pagos-tabs" role="tablist" aria-label="Vista de Trazabilidad">
+        {[
+          { value: "seguimiento", label: "Seguimiento", Icono: Workflow },
+          { value: "facturas", label: "Facturas", Icono: Receipt },
+        ].map((p) => (
+          <button key={p.value} type="button" role="tab" aria-selected={pestanaTraz === p.value} className={pestanaTraz === p.value ? "activo" : ""} onClick={() => setPestanaTraz(p.value)}>
+            <p.Icono size={15} />
+            {p.label}
+          </button>
+        ))}
+      </div>
+
+      {pestanaTraz === "facturas" ? (
+        <FacturasTrazabilidad
+          lics={data}
+          documentosMap={documentosMap}
+          puedeEmitir={puedeEmitirBsale && !soloLectura}
+          estadosBsale={estadosBsale}
+          onRefrescar={(licId) => refrescarDocumentosLic(licId)}
+          onAviso={(tipo, mensaje) => setToast({ type: tipo, message: mensaje })}
+        />
+      ) : (
+      <>
       {/* Stats — totales de documentos creados dentro del filtro activo */}
       {(() => {
         const totalOCs = dataFiltrada.reduce((acc, l) => acc + getOrdenes(l.id).length, 0);
@@ -3480,6 +3508,8 @@ export default function Trazabilidad() {
             </div>
           </div>
         </div>
+      )}
+      </>
       )}
     </div>
   );

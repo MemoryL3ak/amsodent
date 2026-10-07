@@ -679,6 +679,7 @@ const DOC_TIPOS = {
   efectivo: "Efectivo",
   info_despacho: "Información de Despacho",
   nota_credito: "Nota de Crédito",
+  nota_debito: "Nota de Débito",
   cierre_forzado: "Respaldo Cierre Forzado",
 };
 /* (2026-09-16) Estados del envío para cliente particular. Van del armado del
