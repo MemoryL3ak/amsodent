@@ -5,14 +5,14 @@ import useAuth from "../hooks/useAuth";
 import Toast from "../components/Toast";
 import ConfirmModal from "../components/ConfirmModal";
 import DropdownSelect from "../components/ui/DropdownSelect";
-import { calcularLista3 } from "../lib/listas";
 import {
   campanaAlcanza,
   normSku,
   estadoCampanaMargen,
   hoyEnChile,
   margenDePrecio,
-  precioDesdeMargen,
+  precioConDescuento,
+  precioListaDe,
 } from "../lib/campanasMargen";
 import { AlertTriangle, Pause, Pencil, Play, Plus, Trash2, X } from "lucide-react";
 
@@ -44,28 +44,23 @@ const fechaCorta = (d) => {
   return m ? `${m[3]}-${m[2]}-${m[1]}` : "—";
 };
 
-function precioDeLista(prod, lista) {
-  if (String(lista) === "3") {
-    const explicito = Number(prod.lista3 ?? 0);
-    return explicito > 0 ? explicito : calcularLista3(prod.lista2);
-  }
-  return Number(prod[`lista${lista}`] ?? 0);
-}
 
-/* Qué le hace una regla al catálogo: a cuántos productos alcanza, cuántos
-   suben o bajan respecto de su precio de lista, y el detalle para mostrar. */
+/* Qué le hace una regla al catálogo: a cuántos productos alcanza y con qué
+   margen quedan tras el descuento (2026-10-07: el % es un descuento sobre el
+   precio de lista). */
 function simular(productos, regla) {
   const filas = [];
   for (const p of productos) {
     if (!campanaAlcanza(p, regla)) continue;
-    const campana = precioDesdeMargen(p.costo, regla.margen_pct);
+    const lista = precioListaDe(p, regla.lista_precios);
+    const campana = precioConDescuento(lista, regla.margen_pct);
     if (!(campana > 0)) continue;
-    const lista = precioDeLista(p, regla.lista_precios);
-    filas.push({ p, lista, campana, dif: lista > 0 ? ((campana - lista) / lista) * 100 : null });
+    const margenQueda = Number(p.costo) > 0 ? margenDePrecio(p.costo, campana) : null;
+    filas.push({ p, lista, campana, dif: lista > 0 ? ((campana - lista) / lista) * 100 : null, margenQueda });
   }
-  const sube = filas.filter((f) => f.campana > f.lista).length;
-  const baja = filas.filter((f) => f.campana < f.lista).length;
-  return { filas, total: filas.length, sube, baja, igual: filas.length - sube - baja };
+  const bajoCosto = filas.filter((f) => f.margenQueda !== null && f.margenQueda < 0).length;
+  const bajo20 = filas.filter((f) => f.margenQueda !== null && f.margenQueda >= 0 && f.margenQueda < 20).length;
+  return { filas, total: filas.length, bajoCosto, bajo20, sinCosto: filas.filter((f) => f.margenQueda === null).length };
 }
 
 // Dos vigencias se cruzan si ninguna termina antes de que empiece la otra.
@@ -202,7 +197,7 @@ export default function CampanasMargen() {
         <div>
           <h1 className="page-title">Campañas de margen</h1>
           <p className="page-subtitle">
-            Un margen para marcas o categorías completas, o para una lista de SKUs, sobre una lista de precios y por un período. Al terminar, vuelve solo el precio de lista.
+            Un descuento sobre el precio de lista para marcas o categorías completas, o para una lista de SKUs, por un período. Al terminar, vuelve solo el precio de lista.
           </p>
         </div>
         {esAdmin && (
@@ -236,7 +231,7 @@ export default function CampanasMargen() {
               <th>Campaña</th>
               <th>Lista</th>
               <th>Alcance</th>
-              <th>Margen</th>
+              <th>Descuento</th>
               <th>Vigencia</th>
               <th>Estado</th>
               <th>Productos</th>
@@ -315,7 +310,7 @@ export default function CampanasMargen() {
       </div>
 
       <p style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 10, lineHeight: 1.5 }}>
-        El precio de campaña se calcula al cotizar, desde el costo vigente del producto. Si un producto tiene además una campaña por producto
+        El precio de campaña se calcula al cotizar: precio de lista menos el descuento de la campaña. Si un producto tiene además una campaña por producto
         (precio fijo por SKU), manda esa. Si dos campañas de margen alcanzan al mismo producto en la misma lista, manda la más nueva.
       </p>
 
@@ -379,23 +374,24 @@ function ModalCampana({ inicial, productos, otras, onCerrar, onGuardada }) {
 
   /* SKUs: se pegan tal cual vienen de un Excel o un correo (separados por
      coma, punto y coma, espacio o salto de línea). Se avisa cuáles no están en
-     el catálogo activo y cuáles no tienen costo (no entran a la campaña). */
+     el catálogo activo y cuáles no tienen precio en la lista elegida (no
+     entran: el descuento sale del precio de lista). */
   const [skusTexto, setSkusTexto] = useState((f.skus || []).join(", "));
   const skusInfo = useMemo(() => {
     const porSku = new Map(productos.map((p) => [normSku(p.sku), p]));
     const lista = Array.isArray(f.skus) ? f.skus : [];
     const noEstan = lista.filter((s) => !porSku.has(normSku(s)));
-    const sinCosto = lista.filter((s) => porSku.has(normSku(s)) && !(Number(porSku.get(normSku(s)).costo) > 0));
+    const sinCosto = lista.filter((s) => porSku.has(normSku(s)) && !(precioListaDe(porSku.get(normSku(s)), f.lista_precios) > 0));
     return { total: lista.length, noEstan, sinCosto };
-  }, [productos, f.skus]);
+  }, [productos, f.skus, f.lista_precios]);
   function aplicarSkus(texto) {
     setSkusTexto(texto);
     const lista = [...new Set(texto.split(/[\s,;]+/).map((x) => normSku(x)).filter(Boolean))];
     set("skus")(lista);
   }
-  // Ejemplos: los que más cambian respecto de su precio de lista.
+  // Ejemplos: los que quedan con menos margen tras el descuento.
   const ejemplos = useMemo(
-    () => (sim ? [...sim.filas].sort((a, b) => Math.abs(b.dif ?? 0) - Math.abs(a.dif ?? 0)).slice(0, 6) : []),
+    () => (sim ? [...sim.filas].sort((a, b) => (a.margenQueda ?? 999) - (b.margenQueda ?? 999)).slice(0, 6) : []),
     [sim],
   );
 
@@ -415,7 +411,7 @@ function ModalCampana({ inicial, productos, otras, onCerrar, onGuardada }) {
     e.preventDefault();
     if (guardando) return;
     if (!f.nombre.trim()) { setError("Ponle un nombre a la campaña."); return; }
-    if (!margenValido) { setError("Indica el margen, entre 0 y 94,99 %."); return; }
+    if (!margenValido) { setError("Indica el descuento, entre 0 y 94,99 %."); return; }
     if (!f.desde || !f.hasta) { setError("Indica las fechas de inicio y término."); return; }
     if (f.hasta < f.desde) { setError("La fecha de término no puede ser anterior al inicio."); return; }
     setError("");
@@ -472,8 +468,8 @@ function ModalCampana({ inicial, productos, otras, onCerrar, onGuardada }) {
               <DropdownSelect value={f.lista_precios} onChange={set("lista_precios")} options={LISTAS} minWidth={200} />
             </div>
             <div className="field" style={{ flex: "1 1 110px", minWidth: 0 }}>
-              <label className="field-label">Margen % <span style={{ color: "var(--danger)" }}>*</span></label>
-              <input className="input" inputMode="decimal" value={f.margen_pct} onChange={(e) => set("margen_pct")(e.target.value.replace(/[^\d.,]/g, ""))} placeholder="Ej: 25" />
+              <label className="field-label">Descuento % <span style={{ color: "var(--danger)" }}>*</span></label>
+              <input className="input" inputMode="decimal" value={f.margen_pct} onChange={(e) => set("margen_pct")(e.target.value.replace(/[^\d.,]/g, ""))} placeholder="Ej: 10" title="Descuento sobre el precio de lista elegido" />
             </div>
             <div className="field" style={{ flex: "1 1 140px", minWidth: 0 }}>
               <label className="field-label">Desde <span style={{ color: "var(--danger)" }}>*</span></label>
@@ -530,7 +526,7 @@ function ModalCampana({ inicial, productos, otras, onCerrar, onGuardada }) {
             <div className="field-hint">
               {skusInfo.total === 0
                 ? "Solo estos productos entran a la campaña; si además pones marcas o categorías, deben cumplirlas."
-                : `${skusInfo.total} SKU${skusInfo.total === 1 ? "" : "s"}${skusInfo.noEstan.length ? ` · ${skusInfo.noEstan.length} no está${skusInfo.noEstan.length === 1 ? "" : "n"} en el catálogo activo: ${skusInfo.noEstan.slice(0, 8).join(", ")}${skusInfo.noEstan.length > 8 ? "…" : ""}` : ""}${skusInfo.sinCosto.length ? ` · ${skusInfo.sinCosto.length} sin costo (no entra${skusInfo.sinCosto.length === 1 ? "" : "n"}): ${skusInfo.sinCosto.slice(0, 8).join(", ")}${skusInfo.sinCosto.length > 8 ? "…" : ""}` : ""}`}
+                : `${skusInfo.total} SKU${skusInfo.total === 1 ? "" : "s"}${skusInfo.noEstan.length ? ` · ${skusInfo.noEstan.length} no está${skusInfo.noEstan.length === 1 ? "" : "n"} en el catálogo activo: ${skusInfo.noEstan.slice(0, 8).join(", ")}${skusInfo.noEstan.length > 8 ? "…" : ""}` : ""}${skusInfo.sinCosto.length ? ` · ${skusInfo.sinCosto.length} sin precio en Lista ${f.lista_precios} (no entra${skusInfo.sinCosto.length === 1 ? "" : "n"}): ${skusInfo.sinCosto.slice(0, 8).join(", ")}${skusInfo.sinCosto.length > 8 ? "…" : ""}` : ""}`}
             </div>
           </div>
 
@@ -542,14 +538,13 @@ function ModalCampana({ inicial, productos, otras, onCerrar, onGuardada }) {
           {/* Simulación: qué le hace esta regla al catálogo, antes de guardar. */}
           <div style={{ border: "1px solid var(--border)", borderRadius: 10, padding: 12, background: "var(--bg)", display: "flex", flexDirection: "column", gap: 10 }}>
             <strong style={{ fontSize: 13 }}>Qué va a pasar</strong>
-            {!sim && <div style={{ fontSize: 12.5, color: "var(--text-muted)" }}>Indica el margen para ver a qué productos alcanza y cómo quedan sus precios.</div>}
+            {!sim && <div style={{ fontSize: 12.5, color: "var(--text-muted)" }}>Indica el descuento para ver a qué productos alcanza y con qué margen quedan.</div>}
             {sim && (
               <>
                 <div style={{ fontSize: 13, color: "var(--text)", lineHeight: 1.5 }}>
-                  Alcanza a <strong>{sim.total.toLocaleString("es-CL")} producto{sim.total === 1 ? "" : "s"}</strong> en Lista {f.lista_precios}:{" "}
-                  <span style={{ color: "#15803d", fontWeight: 600 }}>{sim.baja.toLocaleString("es-CL")} bajan</span>,{" "}
-                  <span style={{ color: "#b91c1c", fontWeight: 600 }}>{sim.sube.toLocaleString("es-CL")} suben</span>
-                  {sim.igual > 0 ? ` y ${sim.igual.toLocaleString("es-CL")} quedan igual` : ""} respecto de su precio de lista.
+                  Alcanza a <strong>{sim.total.toLocaleString("es-CL")} producto{sim.total === 1 ? "" : "s"}</strong> en Lista {f.lista_precios}, con {Number(margen).toLocaleString("es-CL")} % de descuento sobre su precio de lista.
+                  {sim.bajoCosto > 0 && <span style={{ color: "#b91c1c", fontWeight: 600 }}> {sim.bajoCosto.toLocaleString("es-CL")} quedarían bajo su costo.</span>}
+                  {sim.bajo20 > 0 && <span style={{ color: "#b45309", fontWeight: 600 }}> {sim.bajo20.toLocaleString("es-CL")} quedan con menos de 20 % de margen.</span>}
                 </div>
                 {ejemplos.length > 0 && (
                   <div className="table-wrap" style={{ margin: 0 }}>
@@ -559,11 +554,11 @@ function ModalCampana({ inicial, productos, otras, onCerrar, onGuardada }) {
                           <th>Producto</th>
                           <th>Costo</th>
                           <th>Lista {f.lista_precios} hoy</th>
-                          <th style={{ textAlign: "left" }}>En campaña</th>
+                          <th style={{ textAlign: "left" }}>En campaña · margen</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {ejemplos.map(({ p, lista, campana, dif }) => {
+                        {ejemplos.map(({ p, lista, campana, dif, margenQueda }) => {
                           const mHoy = margenDePrecio(p.costo, lista);
                           return (
                             <tr key={p.id}>
@@ -579,8 +574,13 @@ function ModalCampana({ inicial, productos, otras, onCerrar, onGuardada }) {
                               <td style={{ whiteSpace: "nowrap", textAlign: "left", fontWeight: 700 }}>
                                 {pesos(campana)}
                                 {dif !== null && (
-                                  <span style={{ fontWeight: 600, color: dif < 0 ? "#15803d" : dif > 0 ? "#b91c1c" : "var(--text-muted)" }}>
+                                  <span style={{ fontWeight: 600, color: "var(--text-muted)" }}>
                                     {" "}({dif > 0 ? "+" : ""}{dif.toFixed(1)}%)
+                                  </span>
+                                )}
+                                {margenQueda !== null && (
+                                  <span style={{ fontWeight: 700, color: margenQueda < 0 ? "#b91c1c" : margenQueda < 20 ? "#b45309" : "#15803d" }}>
+                                    {" "}· {margenQueda.toFixed(1)}%
                                   </span>
                                 )}
                               </td>
@@ -592,13 +592,13 @@ function ModalCampana({ inicial, productos, otras, onCerrar, onGuardada }) {
                   </div>
                 )}
                 {sim.total > ejemplos.length && (
-                  <div style={{ fontSize: 11.5, color: "var(--text-muted)" }}>Se muestran los {ejemplos.length} productos que más cambian de precio.</div>
+                  <div style={{ fontSize: 11.5, color: "var(--text-muted)" }}>Se muestran los {ejemplos.length} productos que quedan con menos margen.</div>
                 )}
               </>
             )}
-            {sim && sim.total === 0 && aviso("Ningún producto con costo cumple esta combinación de marcas, categorías y SKUs: la campaña no tendría efecto.")}
+            {sim && sim.total === 0 && aviso("Ningún producto con precio en esta lista cumple esta combinación de marcas, categorías y SKUs: la campaña no tendría efecto.")}
             {sim && todoElCatalogo && sim.total > 0 && aviso("Sin marcas, categorías ni SKUs, la campaña aplica a TODO el catálogo.")}
-            {margenValido && margen < 20 && aviso("Con menos de 20 % de margen, las cotizaciones quedan «Pendiente Aprobación» y necesitan que alguien las apruebe.")}
+            {sim && sim.bajo20 + sim.bajoCosto > 0 && aviso("Los productos que quedan con menos de 20 % de margen dejan la cotización «Pendiente Aprobación»: alguien tiene que aprobarla.")}
             {cruces.map(({ c, comunes }) => (
               <div key={c.id}>
                 {aviso(`Se cruza con «${c.nombre}» (${Number(c.margen_pct).toLocaleString("es-CL")} %, ${fechaCorta(c.desde)} → ${fechaCorta(c.hasta)}) en ${comunes.toLocaleString("es-CL")} producto${comunes === 1 ? "" : "s"}. Mientras coincidan, manda la campaña más nueva.`)}

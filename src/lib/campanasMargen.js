@@ -6,9 +6,15 @@
    de la pantalla de campañas, Crear y Detalle de cotización y la grilla de
    Productos, para que todos muestren exactamente el mismo número.
 
-   Margen sobre el precio de venta — el mismo que mide la cotización:
-       margen = (precio − costo) / precio      ⇒      precio = costo / (1 − margen)
+   (2026-10-07) El % de la campaña es un DESCUENTO sobre el precio de lista,
+   no un margen fijo. Pedido de Ariel: "el % de margen corresponde al
+   descuento, no al que se seteará fijo". Así:
+       precio de campaña = precio de lista × (1 − descuento)
+   (la columna sigue llamándose margen_pct en la base). El margen que queda se
+   sigue midiendo sobre la venta, igual que en la cotización:
+       margen = (precio − costo) / precio
 */
+import { calcularLista3 } from "./listas";
 
 const norm = (v) =>
   String(v ?? "")
@@ -16,6 +22,23 @@ const norm = (v) =>
     .replace(/[̀-ͯ]/g, "")
     .trim()
     .toLowerCase();
+
+/** Precio de lista del producto en la lista "1" | "2" | "3" (la 3 se calcula de la 2 si no viene). */
+export function precioListaDe(prod, lista) {
+  if (String(lista) === "3") {
+    const explicito = Number(prod?.lista3 ?? 0);
+    return explicito > 0 ? explicito : calcularLista3(prod?.lista2);
+  }
+  return Number(prod?.[`lista${String(lista).replace(/\D/g, "")}`] ?? 0);
+}
+
+/** Precio con el descuento de la campaña (en %). 0 si no hay precio o el descuento no es válido. */
+export function precioConDescuento(precioLista, descuentoPct) {
+  const p = Number(precioLista || 0);
+  const d = Number(descuentoPct);
+  if (!(p > 0) || !Number.isFinite(d) || d < 0 || d >= 95) return 0;
+  return Math.round(p * (1 - d / 100));
+}
 
 /** Precio neto que deja `margenPct` de margen sobre la venta. 0 si no se puede. */
 export function precioDesdeMargen(costo, margenPct) {
@@ -39,11 +62,10 @@ export const normSku = (v) => String(v ?? "").replace(/\s+/g, "").toUpperCase();
    significan "todos"; con más de un filtro, el producto debe cumplirlos
    todos (con SKUs y nada más, la campaña es solo para esos productos). Se
    compara sin tildes ni mayúsculas: el catálogo tiene la misma marca escrita
-   de varias formas. Un producto sin costo queda fuera — sin costo no hay cómo
-   calcular un precio por margen. */
+   de varias formas. (Desde 2026-10-07 el descuento sale del precio de lista:
+   ya no hace falta que el producto tenga costo; sin precio de lista no aplica.) */
 export function campanaAlcanza(prod, campana) {
   if (!prod || !campana) return false;
-  if (!(Number(prod.costo) > 0)) return false;
   const marcas = Array.isArray(campana.marcas) ? campana.marcas : [];
   const categorias = Array.isArray(campana.categorias) ? campana.categorias : [];
   const skus = Array.isArray(campana.skus) ? campana.skus : [];
@@ -63,7 +85,7 @@ export function precioCampanaMargen(prod, listado, campanas) {
   for (const c of campanas) {
     if (String(c.lista_precios) !== lista) continue;
     if (!campanaAlcanza(prod, c)) continue;
-    const precio = precioDesdeMargen(prod.costo, c.margen_pct);
+    const precio = precioConDescuento(precioListaDe(prod, lista), c.margen_pct);
     if (precio > 0) return { precio, campana: c };
   }
   return null;

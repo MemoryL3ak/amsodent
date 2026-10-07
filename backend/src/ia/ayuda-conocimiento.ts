@@ -231,19 +231,20 @@ SKU sale de esa lista. Crear campañas es solo admin.
 
 ### Campañas de margen (/campanas-margen)
 Campaña por MARCA, CATEGORÍA y/o lista de SKUs, sobre una lista de precios
-(1, 2 o 3) y con vigencia. En vez de fijar un precio por SKU, fija un MARGEN: mientras está
-vigente, el precio de esos productos en esa lista es costo / (1 − margen)
-(margen sobre el precio de venta, el mismo que mide la cotización). No
+(1, 2 o 3) y con vigencia. En vez de fijar un precio por SKU, aplica un % de
+DESCUENTO sobre el precio de lista (desde 2026-10-07; antes era un margen fijo):
+mientras está vigente, el precio de esos productos en esa lista es precio de
+lista × (1 − descuento). Ej.: 10 % sobre $10.000 → $9.000. No
 reescribe el catálogo: al terminar la vigencia vuelve solo el precio de lista.
-Al crearla se ve una simulación: a cuántos productos alcanza, cuántos suben o
-bajan y los que más cambian. Marcas, categorías o SKUs vacíos = todos; con más
+Al crearla se ve una simulación: a cuántos productos alcanza y con qué margen
+queda cada uno; avisa los que quedan bajo su costo o con menos de 20 %. Marcas, categorías o SKUs vacíos = todos; con más
 de un filtro, el producto debe cumplirlos todos (solo SKUs = solo esos
 productos). Los SKUs se pegan como texto (coma, espacio o salto de línea) y la
-pantalla avisa cuáles no están en el catálogo o no tienen costo. Productos sin
-costo quedan fuera. Orden al
+pantalla avisa cuáles no están en el catálogo. Productos sin precio en esa
+lista quedan fuera. Orden al
 cotizar: campaña por producto (SKU) → campaña de margen → precio de lista; si
-dos campañas de margen alcanzan al mismo producto manda la más nueva. Con
-margen bajo 20% las cotizaciones quedan "Pendiente Aprobación". Se puede
+dos campañas de margen alcanzan al mismo producto manda la más nueva. Si tras
+el descuento queda margen bajo 20%, la cotización queda "Pendiente Aprobación". Se puede
 pausar y reanudar. La ve quien ve Campañas; crear y cambiar es solo admin.
 
 ## MÓDULOS — GRUPO POST-VENTA
