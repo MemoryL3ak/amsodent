@@ -110,3 +110,29 @@ export function hoyEnChile(ahora = new Date()) {
     day: "2-digit",
   }).format(ahora);
 }
+
+/* Marcas y categorías del catálogo, con cuántos productos tiene cada una.
+   Se agrupan sin tildes ni mayúsculas (la misma marca está escrita de varias
+   formas) y se muestra la escritura más usada. Para los selectores. */
+export function opcionesCatalogo(productos) {
+  const sinTildes = (v) => String(v ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase();
+  const armar = (campo) => {
+    const grupos = new Map();
+    for (const p of productos || []) {
+      const crudo = String(p?.[campo] || "").trim();
+      if (!crudo || crudo === "-") continue;
+      const k = sinTildes(crudo);
+      if (!grupos.has(k)) grupos.set(k, { n: 0, formas: new Map() });
+      const g = grupos.get(k);
+      g.n += 1;
+      g.formas.set(crudo, (g.formas.get(crudo) || 0) + 1);
+    }
+    return [...grupos.values()]
+      .map((g) => {
+        const forma = [...g.formas.entries()].sort((a, b) => b[1] - a[1])[0][0];
+        return { value: forma, label: `${forma} (${g.n})`, n: g.n };
+      })
+      .sort((a, b) => a.value.localeCompare(b.value, "es"));
+  };
+  return { marcas: armar("marca"), categorias: armar("categoria") };
+}

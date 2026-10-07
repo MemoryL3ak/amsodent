@@ -349,6 +349,8 @@ export const GRUPOS_MANUAL = [
         funciones: [
           "Campaña = nombre + lista de precios (1, 2 o 3) + descuento % + fechas + marcas, categorías y/o SKUs (vacío = todos; con más de un filtro, el producto debe cumplirlos todos). Los SKUs se pegan tal cual vienen de un Excel y la pantalla avisa cuáles no están en el catálogo.",
           "Simulación antes de guardar: a cuántos productos alcanza y con qué margen queda cada uno tras el descuento; avisa los que quedarían bajo su costo o con menos de 20 % de margen.",
+          "Pestaña «Productos y margen»: el catálogo completo con filtros (texto, marcas, categorías, lista, en campaña o no, y por margen) y KPIs de lo filtrado — margen promedio al precio de lista y con las campañas vigentes, cuántos quedan bajo 20 % y cuántos no tienen costo (no entran al promedio). Ordena por menor margen.",
+          "Descuento masivo (admin): un % sobre el precio de lista de los productos filtrados. «Simular» muestra el margen promedio antes y después y los que quedarían bajo 20 % o bajo su costo; «Crear campaña» abre la campaña ya armada (por marca/categoría si solo se filtró por eso, si no por los SKUs filtrados) para ponerle nombre y fechas.",
           "Al cotizar manda primero la campaña por producto (SKU), después la campaña de margen y al final el precio de lista. Entre dos campañas de margen que alcancen al mismo producto manda la más nueva.",
           "Pausar y reanudar sin borrar; en Productos el precio de campaña se muestra bajo el de lista.",
         ],

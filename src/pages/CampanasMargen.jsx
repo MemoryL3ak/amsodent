@@ -5,6 +5,8 @@ import useAuth from "../hooks/useAuth";
 import Toast from "../components/Toast";
 import ConfirmModal from "../components/ConfirmModal";
 import DropdownSelect from "../components/ui/DropdownSelect";
+import MargenProductos from "../components/MargenProductos";
+import { useStickyState } from "../lib/useStickyState";
 import {
   campanaAlcanza,
   normSku,
@@ -13,15 +15,18 @@ import {
   margenDePrecio,
   precioConDescuento,
   precioListaDe,
+  opcionesCatalogo,
 } from "../lib/campanasMargen";
-import { AlertTriangle, Pause, Pencil, Play, Plus, Trash2, X } from "lucide-react";
+import { AlertTriangle, ListChecks, Megaphone, Pause, Pencil, Play, Plus, Trash2, X } from "lucide-react";
 
 /* ── Campañas de margen por marca y categoría (2026-10-01) ─────────────────
    Las campañas de siempre fijan un precio producto por producto. Acá se define
    una REGLA: "a los productos de estas marcas y/o categorías, en esta lista,
    véndelos con este margen, entre estas fechas". Mientras está vigente, ese
    precio reemplaza al de lista al cotizar; al terminar vuelve solo el de lista.
-   No se reescribe el catálogo. El cálculo vive en src/lib/campanasMargen.js. */
+   No se reescribe el catálogo. El cálculo vive en src/lib/campanasMargen.js.
+   (2026-10-07) Pestaña «Productos y margen»: el catálogo filtrado con su
+   margen promedio y el descuento masivo (components/MargenProductos.jsx). */
 
 const LISTAS = [
   { value: "1", label: "Lista 1" },
@@ -90,6 +95,7 @@ export default function CampanasMargen() {
   const [toast, setToast] = useState(null);
   const [form, setForm] = useState(null); // regla en edición (o nueva)
   const [aEliminar, setAEliminar] = useState(null);
+  const [pestana, setPestana] = useStickyState("campanasMargen.pestana", "campanas");
   const hoy = hoyEnChile();
 
   // `recarga` se incrementa para volver a pedir la lista tras guardar.
@@ -134,10 +140,11 @@ export default function CampanasMargen() {
     return productos.reduce((acc, p) => acc + (vigentes.some((c) => campanaAlcanza(p, c)) ? 1 : 0), 0);
   }, [productos, vigentes]);
 
-  function nueva() {
+  function nueva(prellenado = {}) {
     setForm({
       id: null, nombre: "", descripcion: "", lista_precios: "1", margen_pct: "",
       marcas: [], categorias: [], skus: [], desde: hoy, hasta: "", activa: true,
+      ...prellenado,
     });
   }
   function editar(c) {
@@ -202,13 +209,29 @@ export default function CampanasMargen() {
         </div>
         {esAdmin && (
           <div className="page-actions">
-            <button type="button" className="btn btn-primary" onClick={nueva}>
+            <button type="button" className="btn btn-primary" onClick={() => nueva()}>
               <Plus size={15} /> Nueva campaña
             </button>
           </div>
         )}
       </div>
 
+      <div className="pagos-tabs" role="tablist" aria-label="Vista de Campañas de margen">
+        {[
+          { value: "campanas", label: "Campañas", Icono: Megaphone },
+          { value: "productos", label: "Productos y margen", Icono: ListChecks },
+        ].map((p) => (
+          <button key={p.value} type="button" role="tab" aria-selected={pestana === p.value} className={pestana === p.value ? "activo" : ""} onClick={() => setPestana(p.value)}>
+            <p.Icono size={15} />
+            {p.label}
+          </button>
+        ))}
+      </div>
+
+      {pestana === "productos" ? (
+        <MargenProductos productos={productos} campanas={lista} esAdmin={esAdmin} onCrearCampana={(prellenado) => nueva(prellenado)} />
+      ) : (
+      <>
       <div className="stats-row stats-3">
         <div className="stat-card">
           <div className="stat-label">Vigentes hoy</div>
@@ -313,6 +336,8 @@ export default function CampanasMargen() {
         El precio de campaña se calcula al cotizar: precio de lista menos el descuento de la campaña. Si un producto tiene además una campaña por producto
         (precio fijo por SKU), manda esa. Si dos campañas de margen alcanzan al mismo producto en la misma lista, manda la más nueva.
       </p>
+      </>
+      )}
 
       {form && (
         <ModalCampana
@@ -340,27 +365,7 @@ function ModalCampana({ inicial, productos, otras, onCerrar, onGuardada }) {
   // Marcas y categorías del catálogo, con cuántos productos tiene cada una.
   // Se agrupan sin tildes ni mayúsculas (la misma marca está escrita de varias
   // formas) y se muestra la escritura más usada.
-  const opciones = useMemo(() => {
-    const armar = (campo) => {
-      const grupos = new Map();
-      for (const p of productos) {
-        const crudo = String(p[campo] || "").trim();
-        if (!crudo || crudo === "-") continue;
-        const k = norm(crudo);
-        if (!grupos.has(k)) grupos.set(k, { n: 0, formas: new Map() });
-        const g = grupos.get(k);
-        g.n += 1;
-        g.formas.set(crudo, (g.formas.get(crudo) || 0) + 1);
-      }
-      return [...grupos.values()]
-        .map((g) => {
-          const forma = [...g.formas.entries()].sort((a, b) => b[1] - a[1])[0][0];
-          return { value: forma, label: `${forma} (${g.n})` };
-        })
-        .sort((a, b) => a.value.localeCompare(b.value, "es"));
-    };
-    return { marcas: armar("marca"), categorias: armar("categoria") };
-  }, [productos]);
+  const opciones = useMemo(() => opcionesCatalogo(productos), [productos]);
 
   const seleccion = (lista, valores) =>
     valores.map((v) => lista.find((o) => norm(o.value) === norm(v)) || { value: v, label: v });

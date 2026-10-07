@@ -249,7 +249,13 @@ mientras está vigente, el precio de esos productos en esa lista es precio de
 lista × (1 − descuento). Ej.: 10 % sobre $10.000 → $9.000. No
 reescribe el catálogo: al terminar la vigencia vuelve solo el precio de lista.
 Al crearla se ve una simulación: a cuántos productos alcanza y con qué margen
-queda cada uno; avisa los que quedan bajo su costo o con menos de 20 %. Marcas, categorías o SKUs vacíos = todos; con más
+queda cada uno; avisa los que quedan bajo su costo o con menos de 20 %.
+Pestaña «Productos y margen»: catálogo completo con filtros (texto, marcas,
+categorías, lista, en campaña, margen) y KPIs del filtro: margen promedio a
+precio de lista y con campañas vigentes, cuántos bajo 20 % y sin costo.
+Descuento masivo (admin): % sobre la lista de los filtrados, «Simular» (margen
+antes/después) y «Crear campaña» (abre la campaña armada por marca/categoría o
+por los SKUs filtrados para ponerle nombre y fechas). Marcas, categorías o SKUs vacíos = todos; con más
 de un filtro, el producto debe cumplirlos todos (solo SKUs = solo esos
 productos). Los SKUs se pegan como texto (coma, espacio o salto de línea) y la
 pantalla avisa cuáles no están en el catálogo. Productos sin precio en esa
