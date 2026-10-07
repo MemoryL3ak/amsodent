@@ -22,6 +22,9 @@ import Select, { components } from "react-select";
 import ProductoPickerModal from "../components/ProductoPickerModal";
 import CalculadoraFlete from "../components/CalculadoraFlete";
 import BotonFichaTecnica from "../components/BotonFichaTecnica";
+import BotonDescargarFichas from "../components/BotonDescargarFichas";
+import EstadoBsaleBadge from "../components/EstadoBsale";
+import { useEstadosBsale } from "../lib/estadosBsale";
 import EmitirDespachoBsale from "../components/EmitirDespachoBsale";
 import DocumentoLibreBsale from "../components/DocumentoLibreBsale";
 import { generarPDFcotizacion } from "../utils/generarPDFcotizacion";
@@ -914,6 +917,8 @@ export default function EditarLicitacion() {
      compra la guía sale de ella; sin OC (particular), de los productos de la
      cotización. El N° de seguimiento puede ir después. */
   const [puedeBsale, setPuedeBsale] = useState(false);
+  // Estado en Bsale de las facturas, boletas y guías de la cotización.
+  const estadosBsale = useEstadosBsale();
   const [guiaOc, setGuiaOc] = useState(null); // { ocId } | null
   const [guiaLibre, setGuiaLibre] = useState(false);
   const [elegirOc, setElegirOc] = useState(false);
@@ -4280,8 +4285,25 @@ export default function EditarLicitacion() {
 
       {/* ÍTEMS */}
       <div className="surface">
-        <div className="surface-header">
+        <div className="surface-header" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
           <h3 className="surface-title">Ítems</h3>
+          {/* (2026-10-07) Todas las fichas técnicas de los productos de la
+              cotización en un ZIP (los que están en el catálogo). */}
+          <BotonDescargarFichas
+            productos={(() => {
+              const vistos = new Set();
+              const lista = [];
+              for (const it of items) {
+                const sku = String(it.sku || "").trim();
+                const nombre = String(it.producto || "").trim();
+                const p = (sku && productos.find((x) => String(x.sku || "").trim() === sku)) || (nombre && productos.find((x) => String(x.nombre || "").trim() === nombre)) || null;
+                if (p?.id && !vistos.has(p.id)) { vistos.add(p.id); lista.push(p); }
+              }
+              return lista;
+            })()}
+            nombreZip={`fichas-tecnicas-${(idLicitacionInput || id || "").toString().trim()}`}
+            onAviso={(tipo, mensaje) => setToast({ type: tipo, message: mensaje })}
+          />
         </div>
         <div className="surface-body">
       <DndContext
@@ -5436,7 +5458,12 @@ export default function EditarLicitacion() {
                           value={docEditNumero}
                           onChange={(e) => setDocEditNumero(e.target.value)}
                         />
-                      ) : (doc.numero || "-")}
+                      ) : (
+                        <>
+                          {doc.numero || "-"}
+                          <EstadoBsaleBadge estado={estadosBsale?.[doc.id]} style={{ display: "block", width: "fit-content", marginTop: 2 }} />
+                        </>
+                      )}
                     </td>
                     <td className="px-3 py-2 text-sm">
                       {editando && (doc.tipo === "orden_compra" || doc.tipo === "factura_boleta" || doc.tipo === "efectivo") ? (

@@ -185,6 +185,13 @@ export default function VistaPreviaBsale({ vista, solicitud, titulo = "Así qued
           </div>
         </div>
         {esGuia && !vista.despacho && <div style={{ fontSize: 11, color: "#6b7280", marginTop: 6 }}>Sin dirección de despacho.</div>}
+        {/* (2026-10-07) Atributo adicional «Observación» (Bsale lo imprime en la guía). */}
+        {vista.observacion && (
+          <div className="dte-caja" style={{ marginTop: 10 }}>
+            <div style={{ ...etiqueta, marginBottom: 4 }}>Observación</div>
+            <div style={{ fontSize: 12, overflowWrap: "anywhere" }}>{vista.observacion}</div>
+          </div>
+        )}
       </div>
 
       {(vista.notas || []).length > 0 && (

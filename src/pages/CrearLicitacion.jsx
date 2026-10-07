@@ -13,6 +13,7 @@ import ProductoPickerModal from "../components/ProductoPickerModal";
 import ModalValidarTransitorio from "../components/ModalValidarTransitorio";
 import CalculadoraFlete from "../components/CalculadoraFlete";
 import BotonFichaTecnica from "../components/BotonFichaTecnica";
+import BotonDescargarFichas from "../components/BotonDescargarFichas";
 
 import {
   DndContext,
@@ -3249,8 +3250,25 @@ export default function CrearLicitacion() {
 
       {/* ÍTEMS */}
       <div className="surface">
-        <div className="surface-header">
+        <div className="surface-header" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
           <h3 className="surface-title">Ítems</h3>
+          {/* (2026-10-07) Todas las fichas técnicas de los productos de la
+              cotización en un ZIP (los que están en el catálogo). */}
+          <BotonDescargarFichas
+            productos={(() => {
+              const vistos = new Set();
+              const lista = [];
+              for (const it of items) {
+                const sku = String(it.sku || "").trim();
+                const nombre = String(it.producto || "").trim();
+                const p = (sku && productos.find((x) => String(x.sku || "").trim() === sku)) || (nombre && productos.find((x) => String(x.nombre || "").trim() === nombre)) || null;
+                if (p?.id && !vistos.has(p.id)) { vistos.add(p.id); lista.push(p); }
+              }
+              return lista;
+            })()}
+            nombreZip={`fichas-tecnicas-${(idLicitacionInput || "nueva-cotizacion").toString().trim()}`}
+            onAviso={(tipo, mensaje) => setToast({ type: tipo, message: mensaje })}
+          />
         </div>
         <div className="surface-body">
 

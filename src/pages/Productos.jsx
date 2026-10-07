@@ -19,6 +19,7 @@ import {
   Undo2,
 } from "lucide-react";
 import Toast from "../components/Toast";
+import BotonDescargarFichas from "../components/BotonDescargarFichas";
 import { descargarFichaTecnica } from "../utils/generarFichaTecnica";
 import { calcularLista3 } from "../lib/listas";
 import { precioCampanaMargen } from "../lib/campanasMargen";
@@ -693,6 +694,16 @@ export default function Productos() {
               <History size={14} /> Historial de cargas
             </button>
           )}
+          {/* (2026-10-07) Fichas técnicas de los productos filtrados (solo los
+              que tienen la ficha completa) en un ZIP. */}
+          <BotonDescargarFichas
+            productos={productosFiltrados.filter(fichaTecnicaCompleta)}
+            nombreZip={`fichas-tecnicas-${new Date().toISOString().slice(0, 10)}`}
+            etiqueta="Descargar fichas"
+            className="btn btn-secondary"
+            titulo="Descargar en un ZIP las fichas técnicas de los productos filtrados que tienen la ficha completa"
+            onAviso={(tipo, mensaje) => setToast({ type: tipo, message: mensaje })}
+          />
           <Link to="/productos/nuevo" className="btn btn-primary">
             + Crear Producto
           </Link>

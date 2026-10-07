@@ -1,6 +1,7 @@
-import { Body, Controller, Get, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { AuthGuard } from '../auth/auth.guard';
 import { BsaleFacturacionService } from './bsale-facturacion.service';
+import { BsaleEstadosService } from './bsale-estados.service';
 
 // Emisión de facturas en Bsale (módulo Facturación y botón en Trazabilidad).
 // Exige sesión; quién puede emitir lo decide el servicio por rol
@@ -8,7 +9,17 @@ import { BsaleFacturacionService } from './bsale-facturacion.service';
 @Controller('bsale/facturas')
 @UseGuards(AuthGuard)
 export class BsaleFacturacionController {
-  constructor(private facturacion: BsaleFacturacionService) {}
+  constructor(
+    private facturacion: BsaleFacturacionService,
+    private estadosBsale: BsaleEstadosService,
+  ) {}
+
+  // Estado en Bsale (vigente/anulado, SII) de cada factura, boleta y guía del
+  // sistema. Solo lectura: lo ve cualquiera con sesión (Trazabilidad, Pagos).
+  @Get('estados')
+  estados(@Query('refrescar') refrescar?: string) {
+    return this.estadosBsale.estados({ refrescar: refrescar === '1' });
+  }
 
   // ¿Está configurado, puede este usuario y en qué modo (real o simulación)?
   @Get('estado')

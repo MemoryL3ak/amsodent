@@ -4,7 +4,7 @@ import { LicitacionesService } from '../licitaciones/licitaciones.service';
 import {
   BsaleFacturacionService, EMISOR, fechaAEpoch, folioCotizacion, normOc, normRut, ocDeReferencia, referenciaGuia, referenciaOcFactura, referenciaOcGuia, referenciaParaBsale, referenciaVista, sumarDias, totalesDe,
 } from './bsale-facturacion.service';
-import { BsaleDespachosService } from './bsale-despachos.service';
+import { BsaleDespachosService, OBSERVACION_MAX, observacionSugerida } from './bsale-despachos.service';
 
 /* ── Guías, facturas y boletas LIBRES en Bsale (2026-10-03) ──────────────────
    Pedido de Ariel: "necesito la opción de crear guías y facturas de manera
@@ -189,8 +189,8 @@ export class BsaleLibreService {
       .eq('id', id)
       .maybeSingle();
     if (!lic) throw new BadRequestException(`No existe la cotización #${id}.`);
-    const { data: items } = await db.from('items_licitacion').select('producto, sku, cantidad, valor_unitario, orden').eq('licitacion_id', id).order('orden', { ascending: true });
-    const lineas: { sku: string; producto: string; cantidad: number; neto_unitario: number }[] = [];
+    const { data: items } = await db.from('items_licitacion').select('producto, sku, cantidad, valor_unitario, orden, observacion').eq('licitacion_id', id).order('orden', { ascending: true });
+    const lineas: { sku: string; producto: string; cantidad: number; neto_unitario: number; observacion: string }[] = [];
     const sinSku: string[] = [];
     for (const it of (items as any[]) || []) {
       const cantidad = Number(it?.cantidad) || 0;
@@ -199,14 +199,16 @@ export class BsaleLibreService {
       const nombre = String(it?.producto || '').trim();
       if (!sku) { sinSku.push(nombre.slice(0, 80) || 'Ítem sin nombre'); continue; }
       const neto = Math.round(Number(it?.valor_unitario) || 0);
+      const obs = String(it?.observacion || '').trim();
       const previa = lineas.find((l) => l.sku === sku);
       if (previa) {
         // Mismo SKU dos veces: una sola línea con el precio promedio ponderado.
         const total = previa.neto_unitario * previa.cantidad + neto * cantidad;
         previa.cantidad += cantidad;
         previa.neto_unitario = Math.round(total / previa.cantidad);
+        if (obs && !previa.observacion.includes(obs)) previa.observacion = [previa.observacion, obs].filter(Boolean).join(' / ');
       } else {
-        lineas.push({ sku, producto: nombre, cantidad, neto_unitario: neto });
+        lineas.push({ sku, producto: nombre, cantidad, neto_unitario: neto, observacion: obs });
       }
     }
     const particular = /particular/i.test(String((lic as any).tipo_cliente || ''));
@@ -223,6 +225,9 @@ export class BsaleLibreService {
       },
       lineas,
       sin_sku: sinSku,
+      // Para el atributo «Observación» de la guía en Bsale (editable en pantalla).
+      observacion_sugerida: observacionSugerida(lineas),
+      observacion_max: OBSERVACION_MAX,
       tipo_sugerido: particular ? 'boleta' : 'factura',
     };
   }
@@ -376,7 +381,11 @@ export class BsaleLibreService {
       }
     }
 
+    // Observación de la guía → atributo adicional en Bsale (2026-10-07).
+    const observacion = tipo === 'guia' ? String(body?.observacion ?? '').replace(/\s+/g, ' ').trim() : '';
+    if (observacion.length > OBSERVACION_MAX) problemas.push({ codigo: 'observacion_larga', mensaje: `La observación tiene ${observacion.length} caracteres; en Bsale caben hasta ${OBSERVACION_MAX}. Acórtala.` });
     const borrador = {
+      observacion,
       tipo, venta_directa: ventaDirecta, tipo_documento_id: tipoDocumentoId, cliente, lineas, totales, fecha_emision: fecha, referencias, despacho,
       traslado: traslado ? { id: traslado.id, nombre: traslado.nombre } : null,
       forma_pago: formaPago ? { id: formaPago.id, nombre: formaPago.nombre } : null, dias_vencimiento: dias, credito,
@@ -386,7 +395,7 @@ export class BsaleLibreService {
     const huella = this.facturacion.huellaDe({
       cliente: { id: cliente?.id || cliente?.rut || 'consumidor-final' }, tipo_documento_id: tipoDocumentoId,
       lineas: lineas.map((l) => ({ detalle_id: l.variante_id, cantidad: l.cantidad, neto: l.neto_unitario })),
-      referencias: [...referencias.map((r) => ({ codigo_sii: r.codigo_sii, folio: r.folio, numero: r.numero })), { codigo_sii: 0, numero: `${tipo}|${ventaDirecta}|${fecha}|${JSON.stringify(despacho)}|${formaPago?.id}|${dias}|${descuentaStock}|${cotizacion?.id || ''}|${cliente?.nuevo ? JSON.stringify(cliente) : ''}` }],
+      referencias: [...referencias.map((r) => ({ codigo_sii: r.codigo_sii, folio: r.folio, numero: r.numero })), { codigo_sii: 0, numero: `${tipo}|${ventaDirecta}|${fecha}|${JSON.stringify(despacho)}|${formaPago?.id}|${dias}|${descuentaStock}|${cotizacion?.id || ''}|${cliente?.nuevo ? JSON.stringify(cliente) : ''}|${observacion}` }],
       totales,
     });
     return { ...borrador, huella };
@@ -464,7 +473,11 @@ export class BsaleLibreService {
             ...cli, details, payments: [{ paymentTypeId: b.forma_pago.id, amount: b.totales.total, recordDate: emision }], ...(references.length ? { references } : {}), salesId,
             ...(b.descuenta_stock ? { dispatch: 1 } : {}),
           };
-    const vista = this.vista(b);
+    const obs = b.tipo === 'guia' ? await this.despachos.observacionParaBsale(b.observacion, b.tipo_documento_id) : { texto: '', atributo: null, aviso: null };
+    if (obs.atributo) solicitud.dynamicAttributes = [obs.atributo];
+    const vista: any = this.vista(b);
+    if (obs.texto) vista.observacion = obs.texto;
+    if (obs.aviso) vista.notas = [...vista.notas, obs.aviso];
     if (!real) {
       return { simulacion: true, emision_apagada: !simular, solicitud, totales: b.totales, vista, huella: b.huella, avisos: b.avisos };
     }
@@ -510,6 +523,8 @@ export class BsaleLibreService {
       },
       verificar: async (doc: any) => {
         const avisos: string[] = [];
+        const sinObs = obs.atributo ? await this.despachos.avisoObservacion(Number(doc.id), doc.number, obs.texto) : null;
+        if (sinObs) avisos.push(sinObs);
         if (!b.referencias.length) return avisos;
         try {
           const completo = await this.facturacion.apiGet(`/documents/${Number(doc.id)}.json?expand=[references]`);

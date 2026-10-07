@@ -208,6 +208,11 @@ export class BsaleFacturacionService {
 
   // La emisión real está activa salvo que se apague con BSALE_EMISION=off
   // (interruptor de emergencia: deja solo la simulación).
+  // ¿Hay token de Bsale? (para lecturas que no exigen rol, como los estados)
+  get configurado(): boolean {
+    return !!this.token;
+  }
+
   get emisionActiva(): boolean {
     return (process.env.BSALE_EMISION || '').trim().toLowerCase() !== 'off';
   }
@@ -440,7 +445,7 @@ export class BsaleFacturacionService {
     const tope = Math.min(Math.max(Number(limite) || 300, 1), 1000);
     let r: any = await db
       .from('bsale_emisiones')
-      .select('id, clave, tipo, origen_doc_id, estado, numero, neto, total, fecha_emision, url_pdf, bsale_id, licitacion_id, guias_doc_ids, usuario, error, created_at, updated_at')
+      .select('id, clave, tipo, origen_doc_id, estado, numero, neto, total, fecha_emision, url_pdf, bsale_id, licitacion_id, documento_id, guias_doc_ids, usuario, error, created_at, updated_at')
       .order('id', { ascending: false })
       .limit(tope);
     if (r.error && /tipo|origen_doc_id/.test(String(r.error.message)) && /column|schema cache/i.test(String(r.error.message))) {
@@ -452,6 +457,16 @@ export class BsaleFacturacionService {
     }
     if (r.error) return { registro_listo: false, filas: [] };
     const emisiones: any[] = r.data || [];
+
+    /* Emisiones sin cotización pero con su documento registrado (las ventas
+       directas anteriores al 2026-10-07 quedaron así): la cotización sale del
+       documento, para que aparezcan asociadas en «Venta directa». */
+    const sinLic = emisiones.filter((e) => !e.licitacion_id && e.documento_id).map((e) => Number(e.documento_id));
+    if (sinLic.length) {
+      const { data: ds } = await db.from('licitacion_documentos').select('id, licitacion_id').in('id', sinLic);
+      const licDe = new Map((ds || []).map((d: any) => [Number(d.id), Number(d.licitacion_id) || null]));
+      for (const e of emisiones) if (!e.licitacion_id && e.documento_id) e.licitacion_id = licDe.get(Number(e.documento_id)) || null;
+    }
 
     // Anulaciones hechas desde el sistema: la clave de la nota de crédito es
     // AMS-NC-<id en Bsale del documento anulado>.

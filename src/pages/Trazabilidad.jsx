@@ -75,6 +75,8 @@ import { Upload, Eye, Trash2, ArrowUpDown, ArrowUp, ArrowDown, Calendar, FileChe
 import { SunflowerIcon } from "../components/DamarIAWidget";
 import EmitirFacturaBsale from "../components/EmitirFacturaBsale";
 import DocumentoLibreBsale from "../components/DocumentoLibreBsale";
+import EstadoBsaleBadge from "../components/EstadoBsale";
+import { useEstadosBsale } from "../lib/estadosBsale";
 
 // Mapping empresa courier → builder de URL de tracking. Si la empresa no
 // tiene URL o no hay número, devuelve "" (no renderizamos el link).
@@ -569,6 +571,8 @@ export default function Trazabilidad() {
   const [emitirBoleta, setEmitirBoleta] = useState(null); // { licId } | null
   // ¿Puede este usuario emitir? Lo decide el backend (rol + integración).
   const [puedeEmitirBsale, setPuedeEmitirBsale] = useState(false);
+  // Estado en Bsale (anulada, SII pendiente/rechazado, no está en Bsale) de guías y facturas.
+  const estadosBsale = useEstadosBsale();
   const [facturaNumero, setFacturaNumero] = useState("");
   const [facturaFecha, setFacturaFecha] = useState("");
   const [facturaMonto, setFacturaMonto] = useState(""); // monto NETO de la factura (solo dígitos)
@@ -3002,6 +3006,7 @@ export default function Trazabilidad() {
                                     ? formatearFechaCorta(guia.fecha_oc || guia.created_at)
                                     : ""}
                                 </div>
+                                <EstadoBsaleBadge estado={estadosBsale?.[guia.id]} style={{ marginTop: 2 }} />
                               </div>
                             ) : (
                               <span style={{ color: "var(--text-muted)" }}>—</span>
@@ -3067,6 +3072,7 @@ export default function Trazabilidad() {
                                   ? `Neto $${Number(factura.monto).toLocaleString("es-CL")}`
                                   : "Sin monto"}
                               </div>
+                              <EstadoBsaleBadge estado={estadosBsale?.[factura.id]} style={{ marginTop: 2 }} />
                               {/* Estado de cobro (flag de Seguimiento de Pagos); el orden
                                   de la tabla prioriza el ciclo incompleto (falta guía /
                                   factura primero, luego impagas, al final lo completo). */}
