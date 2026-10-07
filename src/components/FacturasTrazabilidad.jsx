@@ -7,6 +7,7 @@ import DocumentoLibreBsale from "./DocumentoLibreBsale";
 import AnularDocumentoBsale from "./AnularDocumentoBsale";
 import NotaDebitoBsale from "./NotaDebitoBsale";
 import EstadoBsaleBadge from "./EstadoBsale";
+import DropdownSelect from "./ui/DropdownSelect";
 
 /* ── Trazabilidad → Facturas (2026-10-07) ────────────────────────────────────
    Pedido de Ariel: "crear una pestaña llamada Facturas en la sección de
@@ -17,7 +18,11 @@ import EstadoBsaleBadge from "./EstadoBsale";
    · Facturas y boletas de las cotizaciones adjudicadas, con su estado en
      Bsale, sus notas de crédito/débito y los botones para emitir otra.
    Arriba: nueva factura libre y notas por N° (para documentos que no están en
-   ninguna cotización). Quien no emite en Bsale ve las listas sin botones. */
+   ninguna cotización). Quien no emite en Bsale ve las listas sin botones.
+   (2026-10-07) "Al emitir una NC debemos ver reflejada esta anulación": una
+   factura cuyas notas de crédito suman su total queda «Anulada con NC N°»
+   (atenuada, sin cobro pendiente y sin botones de notas); con NC menor, «NC
+   parcial». Cuenta las NC del sistema y las hechas a mano en Bsale. */
 
 const clp = (n) => `$${Math.round(Number(n) || 0).toLocaleString("es-CL")}`;
 const fechaCL = (iso) => {
@@ -50,6 +55,7 @@ export default function FacturasTrazabilidad({ lics = [], documentosMap = {}, pu
   const [nuevaFactura, setNuevaFactura] = useState(false);
   const [notaCredito, setNotaCredito] = useState(null); // { documentoId } | {} (por N°)
   const [notaDebito, setNotaDebito] = useState(null);
+  const [filtro, setFiltro] = useState("todas");
 
   async function cargarPendientes() {
     if (!puedeEmitir) return;
@@ -77,13 +83,32 @@ export default function FacturasTrazabilidad({ lics = [], documentosMap = {}, pu
         if (f.tipo !== "factura" && f.tipo !== "factura_boleta") continue;
         const nc = notas("nota_credito", f.id);
         const nd = notas("nota_debito", f.id);
+        const est = estadosBsale?.[f.id];
+        // NC: las registradas en la cotización (BRUTO) y las que Bsale conoce (también las hechas allá).
+        const ncSistema = nc.reduce((a, d) => a + Number(d.monto || 0), 0);
+        // Los N° de Bsale mandan (a mano a veces se cargó «FACTURA 460 ANULACION PARCIAL» como N°).
+        const numsSistema = nc.map((d) => String(d.numero || "").trim()).filter(Boolean);
+        const numsBsale = (est?.nc?.numeros || []).map(String);
+        const ncNumeros = numsBsale.length ? [...new Set([...numsBsale, ...numsSistema.filter((n) => /^\d+$/.test(n))])] : numsSistema;
+        // Hecha en Bsale y no registrada en la cotización: Bsale acredita más de lo registrado.
+        const ncSoloBsale = Number(est?.nc?.total || 0) > ncSistema + 2 ? numsBsale.filter((n) => !numsSistema.includes(n)) : [];
+        const ncTotal = Math.max(ncSistema, Number(est?.nc?.total || 0));
+        const bruto = Math.round(Number(f.monto || 0) * 1.19);
+        const anuladaNc = !!est?.nc?.completa || (bruto > 0 && ncSistema >= bruto - 2);
         filas.push({
           ...f,
           lic,
-          esBoleta: /boleta/i.test(String(f.descripcion || "")) || estadosBsale?.[f.id]?.clase === "boleta",
+          est,
+          bruto,
+          esBoleta: /boleta/i.test(String(f.descripcion || "")) || est?.clase === "boleta",
           nc,
           nd,
-          ncTotal: nc.reduce((a, d) => a + Number(d.monto || 0), 0),
+          ncTotal,
+          ncNumeros,
+          ncSoloBsale,
+          ncTexto: est?.nc_texto || [],
+          anuladaNc,
+          anulada: anuladaNc || est?.estado === "anulado",
           ndTotal: nd.reduce((a, d) => a + Number(d.monto || 0), 0),
         });
       }
@@ -92,15 +117,26 @@ export default function FacturasTrazabilidad({ lics = [], documentosMap = {}, pu
     return filas;
   }, [lics, documentosMap, estadosBsale]);
 
+  const FILTROS = {
+    todas: () => true,
+    vigentes: (f) => !f.anulada,
+    anuladas: (f) => f.anulada,
+    nc_parcial: (f) => !f.anulada && f.ncTotal > 0,
+    con_nd: (f) => f.nd.length > 0,
+  };
+  const cuenta = (k) => facturas.filter(FILTROS[k]).length;
   const factFiltradas = useMemo(
-    () => (!texto ? facturas : facturas.filter((f) => sinTildes(`${f.numero} ${f.lic?.nombre_entidad} #${f.lic?.id} ${f.lic?.id_licitacion}`).includes(texto))),
-    [facturas, texto],
+    () => facturas
+      .filter(FILTROS[filtro] || FILTROS.todas)
+      .filter((f) => !texto || sinTildes(`${f.numero} ${f.lic?.nombre_entidad} #${f.lic?.id} ${f.lic?.id_licitacion} ${f.ncNumeros.join(" ")}`).includes(texto)),
+    [facturas, texto, filtro], // eslint-disable-line react-hooks/exhaustive-deps
   );
   const pendFiltradas = useMemo(
     () => (!texto ? pendientes || [] : (pendientes || []).filter((p) => sinTildes(`${p.guia_numero} ${p.cliente} #${p.licitacion_id} ${p.codigo} ${p.oc_numero}`).includes(texto))),
     [pendientes, texto],
   );
   useEffect(() => { setPaginaFact(1); setPaginaPend(1); }, [texto]);
+  useEffect(() => { setPaginaFact(1); }, [filtro]);
 
   const pagFact = Math.min(paginaFact, Math.max(1, Math.ceil(factFiltradas.length / POR_PAGINA)));
   const pagPend = Math.min(paginaPend, Math.max(1, Math.ceil(pendFiltradas.length / 10)));
@@ -231,8 +267,22 @@ export default function FacturasTrazabilidad({ lics = [], documentosMap = {}, pu
 
       {/* Facturas y boletas */}
       <div className="surface">
-        <div className="surface-header">
+        <div className="surface-header" style={{ flexWrap: "wrap", gap: 8 }}>
           <h3 className="surface-title">Facturas y boletas ({factFiltradas.length})</h3>
+          <DropdownSelect
+            value={filtro}
+            onChange={setFiltro}
+            minWidth={210}
+            title="Filtrar por estado de la factura"
+            style={{ width: 230, maxWidth: "100%" }}
+            options={[
+              { value: "todas", label: `Todas (${facturas.length})` },
+              { value: "vigentes", label: `Vigentes (${cuenta("vigentes")})` },
+              { value: "anuladas", label: `Anuladas (${cuenta("anuladas")})`, color: "#b91c1c", detalle: "Con nota de crédito por el total, o anuladas en Bsale" },
+              { value: "nc_parcial", label: `Con NC parcial (${cuenta("nc_parcial")})`, color: "#b45309" },
+              { value: "con_nd", label: `Con nota de débito (${cuenta("con_nd")})`, color: "#6d28d9" },
+            ]}
+          />
         </div>
         <div className="table-scroll">
           <table className="data-table tabla-compacta tabla-texto tabla-facturas-traz" style={{ width: "100%", minWidth: 860 }}>
@@ -249,47 +299,62 @@ export default function FacturasTrazabilidad({ lics = [], documentosMap = {}, pu
             </thead>
             <tbody>
               {visiblesFact.length === 0 ? (
-                <tr><td colSpan={puedeEmitir ? 7 : 6} style={{ textAlign: "center", padding: 26, color: "var(--text-muted)" }}>{texto ? "Ningún documento calza con la búsqueda." : "No hay facturas ni boletas en las cotizaciones adjudicadas."}</td></tr>
+                <tr><td colSpan={puedeEmitir ? 7 : 6} style={{ textAlign: "center", padding: 26, color: "var(--text-muted)" }}>{texto || filtro !== "todas" ? "Ningún documento calza con la búsqueda o el filtro." : "No hay facturas ni boletas en las cotizaciones adjudicadas."}</td></tr>
               ) : (
                 visiblesFact.map((f) => {
-                  const est = estadosBsale?.[f.id];
-                  const anulada = est?.estado === "anulado";
-                  const bruto = Math.round(Number(f.monto || 0) * 1.19);
+                  const { est, anulada, bruto } = f;
+                  // Si la NC se registró en la cotización pero Bsale aún no la cuenta, la etiqueta igual dice «Anulada con NC».
+                  const estBadge = f.anuladaNc && !est?.nc?.completa
+                    ? { ...(est || {}), estado: est?.estado === "anulado" ? "anulado" : "vigente", clase: f.esBoleta ? "boleta" : "factura", numero: f.numero, nc: { total: f.ncTotal, numeros: f.ncNumeros, completa: true } }
+                    : est;
+                  const motivoBloqueo = f.anuladaNc ? `Anulada con nota de crédito${f.ncNumeros.length ? ` N° ${f.ncNumeros.join(", ")}` : ""}` : "Anulada en Bsale";
                   return (
-                    <tr key={f.id}>
+                    <tr key={f.id} className={anulada ? "fila-anulada" : undefined}>
                       <td style={{ whiteSpace: "nowrap" }}>
                         <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{f.tipo === "factura" ? "Factura" : f.esBoleta ? "Boleta" : "Factura o boleta"}</div>
-                        <div style={{ fontWeight: 600 }}>N° {f.numero || "S/N"}</div>
-                        <EstadoBsaleBadge estado={est} style={{ marginTop: 2 }} />
+                        <div style={{ fontWeight: 600, textDecoration: anulada ? "line-through" : "none" }}>N° {f.numero || "S/N"}</div>
+                        <EstadoBsaleBadge estado={estBadge} style={{ marginTop: 2 }} />
                       </td>
                       <td style={{ whiteSpace: "nowrap" }}>{fechaCL(f.fecha_factura || f.created_at)}</td>
                       <td>
                         <Link to={`/detalle/${f.lic.id}`} className="table-link" style={{ fontWeight: 600 }}>#{f.lic.id}</Link>
                         <div style={{ fontSize: 12.5 }}>{f.lic.nombre_entidad || "—"}</div>
                       </td>
-                      <td style={{ textAlign: "right", whiteSpace: "nowrap", fontWeight: 600 }}>{f.monto ? clp(bruto) : "—"}</td>
+                      <td style={{ textAlign: "right", whiteSpace: "nowrap", fontWeight: 600, textDecoration: anulada ? "line-through" : "none" }}>{f.monto ? clp(bruto) : "—"}</td>
                       <td style={{ textAlign: "right", whiteSpace: "nowrap", fontSize: 12 }}>
-                        {f.nc.length > 0 && <div style={{ color: "#b91c1c" }} title={f.nc.map((n) => `NC ${n.numero}`).join(", ")}>− {clp(f.ncTotal)} <span style={{ color: "var(--text-muted)" }}>NC</span></div>}
+                        {f.ncTotal > 0 && (
+                          <div style={{ color: "#b91c1c" }} title={f.ncNumeros.map((n) => `NC ${n}`).join(", ")}>
+                            − {clp(f.ncTotal)} <span style={{ color: "var(--text-muted)" }}>NC{f.ncNumeros.length ? ` ${f.ncNumeros.join(", ")}` : ""}</span>
+                          </div>
+                        )}
+                        {f.ncSoloBsale.length > 0 && <div style={{ fontSize: 10.5, color: "var(--text-muted)" }} title="Emitida directamente en Bsale: no está registrada en la cotización">NC {f.ncSoloBsale.join(", ")} hecha en Bsale</div>}
+                        {f.ncTexto.length > 0 && <div style={{ fontSize: 10.5, color: "var(--text-muted)" }} title="Nota de crédito que solo corrige texto (giro, dirección, forma de pago): no cambia el monto">NC {f.ncTexto.join(", ")} corrige texto</div>}
                         {f.nd.length > 0 && <div style={{ color: "#6d28d9" }} title={f.nd.map((n) => `ND ${n.numero}`).join(", ")}>+ {clp(f.ndTotal)} <span style={{ color: "var(--text-muted)" }}>ND</span></div>}
-                        {!f.nc.length && !f.nd.length && <span style={{ color: "var(--text-muted)" }}>—</span>}
+                        {!(f.ncTotal > 0) && !f.nd.length && !f.ncTexto.length && <span style={{ color: "var(--text-muted)" }}>—</span>}
                       </td>
                       <td style={{ whiteSpace: "nowrap" }}>
-                        {f.pagada
-                          ? <span style={{ fontSize: 11, fontWeight: 700, color: "#15803d" }}>✓ Pagada</span>
-                          : <span style={{ fontSize: 11, fontWeight: 700, color: "#b45309", background: "#fef3c7", padding: "1px 7px", borderRadius: 999 }}>Pendiente</span>}
+                        {anulada
+                          ? <span style={{ fontSize: 11, fontWeight: 700, color: "#475569", background: "#f1f5f9", padding: "1px 7px", borderRadius: 999 }} title="Una factura anulada ya no se cobra">Anulada</span>
+                          : f.pagada
+                            ? <span style={{ fontSize: 11, fontWeight: 700, color: "#15803d" }}>✓ Pagada</span>
+                            : <span style={{ fontSize: 11, fontWeight: 700, color: "#b45309", background: "#fef3c7", padding: "1px 7px", borderRadius: 999 }}>Pendiente</span>}
                       </td>
                       {puedeEmitir && (
                         <td style={{ textAlign: "right" }}>
+                          {anulada ? (
+                            <span className="sin-notas-anulada" style={{ fontSize: 11.5, color: "var(--text-muted)" }} title={motivoBloqueo}>Sin notas: anulada</span>
+                          ) : (
                           <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", flexWrap: "wrap" }}>
-                            <button type="button" className="btn btn-secondary btn-sm" onClick={() => setNotaCredito({ documentoId: f.id, licId: f.lic.id })} disabled={anulada} title={anulada ? "Anulada en Bsale" : "Nota de crédito: anular, devolver parte o ajustar el precio"}>
+                            <button type="button" className="btn btn-secondary btn-sm" onClick={() => setNotaCredito({ documentoId: f.id, licId: f.lic.id })} title="Nota de crédito: anular, devolver parte o ajustar el precio">
                               <Ban size={13} /> N. crédito
                             </button>
                             {!f.esBoleta && (
-                              <button type="button" className="btn btn-secondary btn-sm" onClick={() => setNotaDebito({ documentoId: f.id, licId: f.lic.id })} disabled={anulada} title={anulada ? "Anulada en Bsale" : "Nota de débito: cobrar intereses, diferencias de precio u otros cargos"}>
+                              <button type="button" className="btn btn-secondary btn-sm" onClick={() => setNotaDebito({ documentoId: f.id, licId: f.lic.id })} title="Nota de débito: cobrar intereses, diferencias de precio u otros cargos">
                                 <FilePlus2 size={13} /> N. débito
                               </button>
                             )}
                           </div>
+                          )}
                         </td>
                       )}
                     </tr>

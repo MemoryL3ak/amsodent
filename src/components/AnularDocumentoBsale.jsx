@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
 import { AlertTriangle, Ban, CheckCircle2, ExternalLink, Info, Loader2, Search, X } from "lucide-react";
 import { api } from "../lib/api";
+import { refrescarEstadosBsale } from "../lib/estadosBsale";
 import DropdownSelect from "./ui/DropdownSelect";
 import VistaPreviaBsale from "./VistaPreviaBsale";
 
@@ -135,7 +136,10 @@ export default function AnularDocumentoBsale({ bsaleId = null, documentoId = nul
       const r = await api.post("/bsale/anulaciones/emitir", { ...cuerpo, ...(accion === "simular" ? { simular: true } : { huella }) });
       setResultado(r);
       if (r?.simulacion) { setSimuladoCon(firma); setHuella(r.huella || null); }
-      if (r?.emitida) onEmitida?.({ ...r, original: o });
+      if (r?.emitida) {
+        refrescarEstadosBsale(); // la factura se ve anulada / con NC en todas las pantallas
+        onEmitida?.({ ...r, original: o });
+      }
     } catch (e) {
       setError(e?.message || (accion === "simular" ? "No se pudo simular." : "No se pudo emitir la nota de crédito."));
     } finally {

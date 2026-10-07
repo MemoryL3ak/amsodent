@@ -8,6 +8,7 @@ import EmitirFacturaBsale from "../components/EmitirFacturaBsale";
 import EmitirDespachoBsale from "../components/EmitirDespachoBsale";
 import DocumentoLibreBsale from "../components/DocumentoLibreBsale";
 import AnularDocumentoBsale from "../components/AnularDocumentoBsale";
+import { useEstadosBsale } from "../lib/estadosBsale";
 
 /* ── Facturación (2026-10-02) ────────────────────────────────────────────────
    Sección para emitir en Bsale la factura de una guía de despacho.
@@ -87,6 +88,8 @@ export default function Facturacion() {
   // Anular con nota de crédito (2026-10-03): { bsaleId? } — vacío = buscar por N°.
   const [anular, setAnular] = useState(null);
   const [emitidas, setEmitidas] = useState({ registro_listo: true, filas: [] });
+  // Estado en Bsale por documento: suma las NC hechas a mano en Bsale (2026-10-07).
+  const estadosBsale = useEstadosBsale();
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState("");
   const [toast, setToast] = useState(null);
@@ -538,14 +541,26 @@ export default function Facturacion() {
                         <td style={{ verticalAlign: "middle", fontSize: 12, whiteSpace: "normal", overflowWrap: "anywhere" }}>{f.usuario || "—"}</td>
                         <td style={{ verticalAlign: "middle", whiteSpace: "normal" }}>
                           <span style={pastilla(est)}>{est.texto}</span>
-                          {f.anulada_por && <span style={{ ...pastilla({ color: "#b91c1c", bg: "#fee2e2" }), marginLeft: 6 }}>Anulada · NC {f.anulada_por}</span>}
-                          {f.estado === "emitida" && (f.tipo === "factura" || f.tipo === "boleta") && f.bsale_id && !f.anulada_por && (
-                            <div style={{ marginTop: 5 }}>
-                              <button type="button" className="btn btn-secondary btn-sm" onClick={() => setAnular({ bsaleId: f.bsale_id })} title="Anular con nota de crédito en Bsale">
-                                <Ban size={12} /> Anular
-                              </button>
-                            </div>
-                          )}
+                          {(() => {
+                            /* Nota de crédito (2026-10-07): «Anulada» solo si las NC suman el total;
+                               si no, «NC parcial». Suma las del sistema y las hechas en Bsale. */
+                            const eb = f.documento_id ? estadosBsale?.[f.documento_id] : null;
+                            const anulada = f.anulada_por || (eb?.nc?.completa ? eb.nc.numeros.join(", ") || "NC" : null);
+                            const parcial = !anulada && (f.nc_parcial || (eb?.nc && !eb.nc.completa ? eb.nc : null));
+                            return (
+                              <>
+                                {anulada && <span style={{ ...pastilla({ color: "#b91c1c", bg: "#fee2e2" }), marginLeft: 6 }}>Anulada · NC {anulada}</span>}
+                                {parcial && <span style={{ ...pastilla({ color: "#92400e", bg: "#fef3c7" }), marginLeft: 6 }} title="Nota de crédito por parte del documento">NC parcial {clp(parcial.total)}{parcial.numeros?.length ? ` · N° ${parcial.numeros.join(", ")}` : ""}</span>}
+                                {f.estado === "emitida" && (f.tipo === "factura" || f.tipo === "boleta") && f.bsale_id && !anulada && (
+                                  <div style={{ marginTop: 5 }}>
+                                    <button type="button" className="btn btn-secondary btn-sm" onClick={() => setAnular({ bsaleId: f.bsale_id })} title={parcial ? "Otra nota de crédito: anular el resto, devolver o ajustar" : "Anular con nota de crédito en Bsale"}>
+                                      <Ban size={12} /> {parcial ? "N. crédito" : "Anular"}
+                                    </button>
+                                  </div>
+                                )}
+                              </>
+                            );
+                          })()}
                           {f.error && (
                             <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 3, overflowWrap: "anywhere", maxWidth: 260 }} title={f.error}>
                               {f.error.length > 110 ? `${f.error.slice(0, 110)}…` : f.error}

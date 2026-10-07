@@ -3821,3 +3821,7 @@ a.ayuda-ruta-chip:hover { background: var(--primary-mid); }
   .cab-producto-ficha .bft-texto { display: none; }
   .cab-producto-ficha .boton-ficha-tecnica { padding: 3px 6px !important; }
 }
+
+/* Factura anulada con nota de crédito o en Bsale (Trazabilidad → Facturas, 2026-10-07):
+   en gris, con la etiqueta «Anulada con NC» a la vista. */
+.data-table tr.fila-anulada > td { color: var(--text-muted); background: #f8fafc; }
