@@ -1,4 +1,5 @@
 import { useState } from "react";
+import AvisoCorreoDocumento from "./AvisoCorreoDocumento";
 
 /* ── Vista previa de un documento para Bsale (2026-10-02, formato 2026-10-03) ──
    Lo que "Simular" muestra: el documento como quedaría, con el formato de un
@@ -186,6 +187,8 @@ export default function VistaPreviaBsale({ vista, solicitud, titulo = "Así qued
         </div>
         {esGuia && !vista.despacho && <div style={{ fontSize: 11, color: "#6b7280", marginTop: 6 }}>Sin dirección de despacho.</div>}
         {/* (2026-10-07) Atributo adicional «Observación» (Bsale lo imprime en la guía). */}
+        {/* (2026-10-07) Guía, factura y boleta se envían solas al cliente. */}
+        {vista.correo && <div style={{ marginTop: 10 }}><AvisoCorreoDocumento correo={vista.correo} /></div>}
         {vista.observacion && (
           <div className="dte-caja" style={{ marginTop: 10 }}>
             <div style={{ ...etiqueta, marginBottom: 4 }}>Observación</div>

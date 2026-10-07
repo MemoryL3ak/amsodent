@@ -675,6 +675,53 @@ export function plantillaAgradecimientoInfoDespacho(
   };
 }
 
+/* Factura o boleta emitida en Bsale (2026-10-07): sale sola al emitirla,
+   con el PDF adjunto. Pedido de Ariel: "al generar una guía y/o
+   factura/boleta se deben enviar los documentos por correo automáticamente". */
+export type DatosDocumentoTributario = {
+  tipoDocumento: 'Factura' | 'Boleta';
+  numero: string;
+  nombreCliente: string;
+  numeroCotizacion?: string;
+  total?: number | null;
+  vendedorNombre?: string;
+  vendedorCorreo?: string;
+  vendedorCelular?: string;
+};
+
+export function plantillaDocumentoTributario(datos: DatosDocumentoTributario): PlantillaResultado {
+  const cliente = String(datos.nombreCliente || '').trim() || 'Estimado cliente';
+  const tipo = datos.tipoDocumento;
+  const numero = String(datos.numero || '').trim();
+  const cotizacion = String(datos.numeroCotizacion || '').trim();
+  const total = Number(datos.total) > 0 ? `$${Math.round(Number(datos.total)).toLocaleString('es-CL')}` : '';
+  const vendedor = String(datos.vendedorNombre || '').trim() || 'Equipo AMSODENT';
+  const filasArr = [
+    filaDato('🧾', `N° ${tipo}`, numero || 'S/N'),
+    cotizacion ? filaDato('📋', 'N° Cotización', cotizacion) : '',
+    total ? filaDato('💲', 'Total (IVA incluido)', total) : '',
+    filaDato('📅', 'Fecha', fechaLarga(), true),
+  ].filter(Boolean);
+  const filas = filasArr
+    .map((f, i) => (i === filasArr.length - 1 ? f.replace(new RegExp(`border-bottom:1px solid ${C.bordeTenue};`, 'g'), '') : f))
+    .join('');
+  const contenido = `
+    ${insignia(`<span style="color:${C.acentoOsc};font-weight:700;">✓</span>`)}
+    ${titulo(`Tu ${tipo.toLowerCase()} electrónica`, `Adjuntamos la ${tipo.toLowerCase()} N° ${escapeHtml(numero || 'S/N')} en PDF.`)}
+    <p style="margin:0 0 14px;">Estimado(a) <strong>${escapeHtml(cliente)}</strong>,</p>
+    <p style="margin:0 0 20px;color:${C.suave};">
+      Gracias por tu compra en <strong style="color:${C.texto};">Amsodent Medical</strong>.
+      Te enviamos la ${tipo.toLowerCase()} electrónica de tu pedido; también queda disponible en el SII.
+    </p>
+    ${tarjetaDatos(`Detalle de la ${tipo.toLowerCase()}`, filas)}
+    ${nota('💬&nbsp;&nbsp;Ante cualquier consulta sobre este documento, puedes responder directamente a este correo.')}
+    ${firma(vendedor, String(datos.vendedorCorreo || '').trim(), String(datos.vendedorCelular || '').trim())}`;
+  return {
+    asunto: `${tipo} electrónica N° ${numero || 'S/N'}${cotizacion ? ` · Cotización ${cotizacion}` : ''} · Amsodent Medical`,
+    html: envolver({ preheader: `Adjuntamos tu ${tipo.toLowerCase()} N° ${numero}.`, contenido }),
+  };
+}
+
 // Botón principal (CTA) turquesa centrado.
 function botonCta(texto: string, href: string): string {
   if (!href) return '';

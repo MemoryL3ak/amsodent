@@ -6,6 +6,7 @@ import { api } from "../lib/api";
 import DateFilter from "./DateFilter";
 import DropdownSelect from "./ui/DropdownSelect";
 import VistaPreviaBsale from "./VistaPreviaBsale";
+import AvisoCorreoDocumento from "./AvisoCorreoDocumento";
 import CamposSeguimientoGuia from "./CamposSeguimientoGuia";
 import CampoObservacionGuia, { OBSERVACION_GUIA_MAX } from "./CampoObservacionGuia";
 import CrearClienteBsale from "./CrearClienteBsale";
@@ -281,6 +282,7 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
                     ? "El documento se emitió pero la cotización no se pudo crear: revisa el aviso de abajo."
                     : resultado.registrada ? "Quedó registrada en la cotización indicada." : "No se indicó cotización: queda en Bsale y en el historial de Emitidas."}
               </div>
+              <AvisoCorreoDocumento correo={resultado.correo} emitido />
               {(resultado.avisos || []).map((a, i) => <div key={i} style={{ fontSize: 12.5, color: "#92400e" }}>{a}</div>)}
               {resultado.url_pdf && <a href={resultado.url_pdf} target="_blank" rel="noopener noreferrer" className="btn btn-secondary btn-sm" style={{ alignSelf: "flex-start", textDecoration: "none" }}><ExternalLink size={13} /> Ver en Bsale</a>}
               {resultado.comprobante && (

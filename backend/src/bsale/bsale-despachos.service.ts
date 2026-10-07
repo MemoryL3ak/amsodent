@@ -1,6 +1,7 @@
-import { BadGatewayException, BadRequestException, ConflictException, Injectable, Logger } from '@nestjs/common';
+import { BadGatewayException, BadRequestException, ConflictException, Injectable, Logger, Optional } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
 import { LicitacionesService } from '../licitaciones/licitaciones.service';
+import { CorreosService } from '../correos/correos.service';
 import { BsaleService } from './bsale.service';
 import {
   BsaleFacturacionService,
@@ -88,7 +89,15 @@ export class BsaleDespachosService {
     private facturacion: BsaleFacturacionService,
     private bsale: BsaleService,
     private licitaciones: LicitacionesService,
+    // Opcional para las pruebas: sin él no se envía el correo automático.
+    @Optional() private correos?: CorreosService,
   ) {}
+
+  /** A quién se enviaría el documento (lo muestra la simulación). */
+  async correoPrevio(licitacionId: number | null, para?: string | null) {
+    if (!this.correos) return null;
+    return this.correos.destinatarioDocumento(licitacionId, para || null);
+  }
 
   // ── Lista "Por despachar" ──────────────────────────────────────────────
 
@@ -647,11 +656,14 @@ export class BsaleDespachosService {
         ...(obs.aviso ? [obs.aviso] : []),
       ],
     });
+    // (2026-10-07) La guía se envía sola al cliente: la simulación dice a quién.
+    (vista as any).correo = await this.correoPrevio(b.cotizacion.id);
     if (!real) return { simulacion: true, emision_apagada: body?.simular !== true, solicitud, totales, vista };
 
     return this.emitirReal({
       usuario, clave, salesId, tipo: 'guia', ruta: '/shippings.json', solicitud, vista,
       licitacionId: b.cotizacion.id, origenDocId: b.oc.id,
+      correo: { tipo: 'guia' },
       lineas: elegidas.map((l) => ({ sku: l.sku, cantidad: l.cantidad, neto_unitario: l.neto_unitario })),
       registrar: async (doc: any, pdf: any) => {
         // La guía queda en Trazabilidad como si se hubiera subido a mano (y avisa al vendedor).
@@ -766,6 +778,8 @@ export class BsaleDespachosService {
     solicitud: Record<string, any>; vista: any; licitacionId: number | null; origenDocId: number | null; lineas: any[];
     registrar: (doc: any, pdf: { path: string; size: number } | null) => Promise<number | null>;
     verificar: (doc: any) => Promise<string[]>; sinPdf?: boolean; bucket?: string;
+    // (2026-10-07) Guía, factura o boleta: se envía sola al cliente con el PDF.
+    correo?: { tipo: 'guia' | 'factura' | 'boleta'; para?: string | null };
   }) {
     const db = this.supabase.getClient();
     const fila = {
@@ -856,6 +870,11 @@ export class BsaleDespachosService {
       this.logger.error(`${p.tipo} ${emitida.numero} emitida en Bsale pero NO registrada en el sistema: ${e?.message || e}`);
       avisos.push(`El documento ${emitida.numero} se emitió en Bsale pero no quedó registrado en la cotización (${String(e?.message || e).slice(0, 120)}). Regístralo a mano en Trazabilidad.`);
     }
-    return { emitida: true, registrada: !!documentoId, tipo: p.tipo, numero: emitida.numero, neto: emitida.neto, total: emitida.total, url_pdf: emitida.url_pdf, documento_id: documentoId, vista: p.vista, avisos };
+    let correo: any = null;
+    if (p.correo && documentoId && this.correos) {
+      correo = await this.correos.enviarDocumentoEmitido({ documentoId, tipo: p.correo.tipo, para: p.correo.para || null, total: emitida.total });
+      if (!correo?.enviado && correo?.motivo) avisos.push(`Correo al cliente: ${correo.motivo}`);
+    }
+    return { emitida: true, registrada: !!documentoId, tipo: p.tipo, numero: emitida.numero, neto: emitida.neto, total: emitida.total, url_pdf: emitida.url_pdf, documento_id: documentoId, vista: p.vista, avisos, correo };
   }
 }

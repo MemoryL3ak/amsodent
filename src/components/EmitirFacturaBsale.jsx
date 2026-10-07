@@ -5,6 +5,7 @@ import { api } from "../lib/api";
 import DateFilter from "./DateFilter";
 import DropdownSelect from "./ui/DropdownSelect";
 import VistaPreviaBsale from "./VistaPreviaBsale";
+import AvisoCorreoDocumento from "./AvisoCorreoDocumento";
 import RegistrarComprobanteRapido from "./RegistrarComprobanteRapido";
 
 /* ── Emitir factura en Bsale (2026-10-02) ────────────────────────────────────
@@ -171,6 +172,7 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
                 Neto {clp(resultado.neto)} · Total {clp(resultado.total)}.{" "}
                 {resultado.registrada ? "Quedó registrada en la cotización, enlazada a su guía." : ""}
               </div>
+              <AvisoCorreoDocumento correo={resultado.correo} emitido />
               {(resultado.avisos || []).map((a, i) => (
                 <div key={i} style={{ fontSize: 12.5, color: "#92400e" }}>{a}</div>
               ))}

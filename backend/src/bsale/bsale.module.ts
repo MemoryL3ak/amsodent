@@ -13,11 +13,13 @@ import { BsaleAnulacionesController } from './bsale-anulaciones.controller';
 import { BsaleAnulacionesService } from './bsale-anulaciones.service';
 import { BsaleEstadosService } from './bsale-estados.service';
 import { LicitacionesModule } from '../licitaciones/licitaciones.module';
+import { CorreosModule } from '../correos/correos.module';
 
 @Module({
   // LicitacionesModule: la guía emitida en Bsale se registra en Trazabilidad con
   // el mismo servicio que una subida a mano (y avisa al vendedor igual).
-  imports: [LicitacionesModule],
+  // CorreosModule: guía, factura y boleta se envían solas al cliente (2026-10-07).
+  imports: [LicitacionesModule, CorreosModule],
   controllers: [BsaleController, BsaleFacturacionController, BsaleDespachosController, BsaleLibreController, BsaleAnulacionesController],
   providers: [BsaleService, BsaleCron, BsaleFacturacionService, BsaleDespachosService, BsaleLibreService, BsaleProductosService, BsaleAnulacionesService, BsaleEstadosService],
   // Productos: un producto nuevo con SKU (o al que se le asigna uno) se crea en Bsale.
