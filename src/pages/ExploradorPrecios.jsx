@@ -1,9 +1,11 @@
 import { useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { api } from "../lib/api";
 import Toast from "../components/Toast";
 import BotonLimpiarFiltros from "../components/BotonLimpiarFiltros";
 import DropdownSelect from "../components/ui/DropdownSelect";
-import { Search, ExternalLink, Store, TrendingDown, TrendingUp, AlertTriangle } from "lucide-react";
+import CrearProductoExplorador from "../components/CrearProductoExplorador";
+import { Search, ExternalLink, Store, TrendingDown, TrendingUp, AlertTriangle, PackagePlus, PackageCheck } from "lucide-react";
 
 /* ── Explorador de Precios — plataforma interna (2026-09-24) ───────────────
    El mismo buscador que el cliente tiene en su portal, ahora acá y solo para
@@ -18,7 +20,12 @@ import { Search, ExternalLink, Store, TrendingDown, TrendingUp, AlertTriangle } 
    La diferencia con la versión del cliente no es el buscador, es para qué se
    usa: acá el dato que importa es dónde queda NUESTRO precio, así que arriba
    va el resumen de la búsqueda (mínimo del mercado, nuestro precio y la
-   brecha) y las tarjetas se ordenan con Amsodent primero, igual que allá. */
+   brecha) y las tarjetas se ordenan con Amsodent primero, igual que allá.
+
+   (2026-10-07) «Crear producto» en cada tarjeta: lo crea como Transitorio con
+   el link de la tienda como referencia. El servidor marca los resultados cuyo
+   link ya está en un producto («Ya creado»): ahí no se ofrece crear otro. El
+   explorador del portal del cliente no tiene este botón. */
 
 const fmtMoneda = (n) => {
   const v = Number(n);
@@ -33,6 +40,7 @@ export default function ExploradorPrecios() {
   const [tiendaFiltro, setTiendaFiltro] = useState("");
   const [soloConHistorial, setSoloConHistorial] = useState(false);
   const [toast, setToast] = useState(null);
+  const [creando, setCreando] = useState(null); // resultado del que se crea el producto
 
   async function buscar(e) {
     e?.preventDefault?.();
@@ -102,6 +110,18 @@ export default function ExploradorPrecios() {
   return (
     <div className="page">
       {toast && <Toast type={toast.type} message={toast.message} onClose={() => setToast(null)} />}
+      {creando && (
+        <CrearProductoExplorador
+          item={creando}
+          onCerrar={() => setCreando(null)}
+          onCreado={(r) => {
+            // La tarjeta pasa a «Ya creado» sin volver a buscar.
+            setResultado((res) => res && { ...res, items: res.items.map((x) => (x.url === creando.url ? { ...x, producto_creado: r.producto } : x)) });
+            setToast({ type: "success", message: `Producto «${r.producto.nombre}» creado como Transitorio.${r.avisos?.length ? " " + r.avisos[0] : ""}` });
+            setCreando(null);
+          }}
+        />
+      )}
 
       <div className="page-header">
         <div>
@@ -326,15 +346,36 @@ export default function ExploradorPrecios() {
                       )}
                     </div>
 
-                    <a
-                      href={it.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="table-link"
-                      style={{ marginTop: "auto", fontSize: 12.5, display: "inline-flex", alignItems: "center", gap: 5 }}
-                    >
-                      Ver en tienda <ExternalLink size={13} />
-                    </a>
+                    <div className="explorador-acciones" style={{ marginTop: "auto", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, flexWrap: "wrap" }}>
+                      <a
+                        href={it.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="table-link"
+                        style={{ fontSize: 12.5, display: "inline-flex", alignItems: "center", gap: 5 }}
+                      >
+                        Ver en tienda <ExternalLink size={13} />
+                      </a>
+                      {it.producto_creado ? (
+                        <Link
+                          to={`/productos/editar/${it.producto_creado.id}`}
+                          className="producto-ya-creado"
+                          title={`Ya hay un producto con este link: «${it.producto_creado.nombre}»${it.producto_creado.sku ? ` (SKU ${it.producto_creado.sku})` : ""}`}
+                          style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 700, color: "#15803d", background: "#dcfce7", padding: "2px 8px", borderRadius: 999, textDecoration: "none", whiteSpace: "nowrap" }}
+                        >
+                          <PackageCheck size={12} /> Ya creado{it.producto_creado.estado ? ` · ${it.producto_creado.estado}` : ""}
+                        </Link>
+                      ) : (
+                        <button
+                          type="button"
+                          className="btn btn-secondary btn-sm"
+                          onClick={() => setCreando(it)}
+                          title="Crear este producto en el catálogo como Transitorio, con el link de la tienda como referencia"
+                        >
+                          <PackagePlus size={13} /> Crear producto
+                        </button>
+                      )}
+                    </div>
                   </div>
                 );
               })}

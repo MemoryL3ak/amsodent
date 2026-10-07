@@ -687,6 +687,13 @@ girasol 🌻). Hoy ayuda en:
 - COBRANZA ESTILO GMAIL: en Cobranza → Historial de gestiones, cada correo
   enviado guarda su hilo de Gmail; "Ver conversación completa" muestra el
   correo enviado y TODAS las respuestas del cliente en la misma vista.
+- EXPLORADOR DE PRECIOS INTERNO (/explorador-precios, solo admin): el mismo
+  buscador del portal desde la plataforma. Cada tarjeta tiene «Crear producto»:
+  lo crea como TRANSITORIO (sin SKU) con nombre, categoría y formato (marca,
+  costo y listas opcionales), el link de la tienda en «link de referencia» y su
+  imagen; «Simular» revisa sin crear. Si ya hay un producto con ese link (se
+  compara sin ?srsltid, www ni barra final), la tarjeta dice «Ya creado» y
+  enlaza a su ficha. El explorador del portal cliente no tiene ese botón.
 - CARRITO DEL PORTAL: en el Explorador de Precios del portal cliente, el botón
   "Agregar" junta productos en "Mi pedido". Checkout en 2 pasos: primero se
   edita el carrito (cantidades, nota) y "Revisar pedido" abre el resumen
