@@ -319,6 +319,22 @@ export const GRUPOS_MANUAL = [
         ],
       },
       {
+        id: "venta-directa",
+        titulo: "Venta directa",
+        icono: "Banknote",
+        ruta: "/venta-directa",
+        acceso: { tipo: "algunModulo", keys: ["venta_directa", "facturacion"] },
+        quien: "Administración, contabilidad y jefatura de ventas especial",
+        resumen: "Boletas y facturas al instante, con el listado de todas las ventas directas, su pago y sus notas.",
+        funciones: [
+          "«Nueva boleta» / «Nueva factura»: se emite en Bsale y crea sola la cotización (adjudicada, cliente particular) con esos productos. Pagada al emitir pide el N° de comprobante (salvo efectivo); si el cliente no está en Bsale se crea desde una ventana.",
+          "Listado de TODAS las ventas directas: fecha, documento (con su PDF y estado en Bsale), cliente y cotización, total con las notas de crédito y débito, y pago (Pagada, Por cobrar, Anulada o Sin emitir). Filtros por documento y pago; los KPIs filtran al hacer clic.",
+          "Cada fila se despliega: condición de venta, pago y comprobantes, notas de crédito (también las hechas a mano en Bsale y las que solo corrigen texto), notas de débito, guías y quién la emitió, con el enlace a la cotización.",
+          "Documentos de cada venta: «N. crédito» (anular, devolver parte o ajustar el precio) y, en facturas, «N. débito». Una venta anulada ya no ofrece notas.",
+          "No ofrece guía de despacho: la venta directa ya rebaja el stock al emitirse y en Bsale una guía lo rebaja de nuevo.",
+        ],
+      },
+      {
         id: "campanas-margen",
         titulo: "Campañas de margen",
         icono: "Megaphone",

@@ -57,6 +57,7 @@ import {
   LifeBuoy,
   HeartHandshake,
   Store,
+  HandCoins,
 } from "lucide-react";
 import NotificacionesMenu from "./NotificacionesMenu";
 import RecordatoriosCorreo from "./RecordatoriosCorreo";
@@ -206,6 +207,9 @@ export default function SidebarLayout() {
   const comercialNav = [
     puede("cotizaciones") && { to: "/listar",      icon: ClipboardList, label: "Cotizaciones" },
     puede("crear_cotizacion") && { to: "/crear",       icon: FilePlus,      label: "Nueva Cotización" },
+    // (2026-10-07) Boletas y facturas al instante, con su listado y sus notas.
+    // Quien tiene Facturación también la ve: emitir exige el mismo rol.
+    (puede("venta_directa") || puede("facturacion")) && { to: "/venta-directa", icon: HandCoins, label: "Venta directa" },
     // Antes vivía como pestaña del Chat Grupal; conserva el mismo permiso para
     // que la vean exactamente quienes ya la veían ahí.
     puede("chat") && { to: "/licitaciones-disponibles", icon: Inbox, label: "Mercado Público" },
