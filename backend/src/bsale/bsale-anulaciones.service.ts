@@ -1,7 +1,7 @@
 import { BadRequestException, ConflictException, Injectable, Logger } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
 import { LicitacionesService } from '../licitaciones/licitaciones.service';
-import { BsaleFacturacionService, EMISOR, epochAFecha, fechaAEpoch, normRut } from './bsale-facturacion.service';
+import { BsaleFacturacionService, EMISOR, epochAFecha, fechaAEpoch, normRut, totalesDe } from './bsale-facturacion.service';
 import { BsaleDespachosService } from './bsale-despachos.service';
 
 /* ── Anular facturas y boletas en Bsale con nota de crédito (2026-10-03) ─────
@@ -25,12 +25,30 @@ import { BsaleDespachosService } from './bsale-despachos.service';
    · Las GUÍAS no: no hay forma documentada de anularlas por la API; se anulan
      en Bsale (en la cuenta hay 25 anuladas así).
    `/returns.json` no recibe `salesId`: si la respuesta se pierde, la emisión
-   queda "incierta" y no se reintenta hasta revisar en Bsale (emitirReal). */
+   queda "incierta" y no se reintenta hasta revisar en Bsale (emitirReal).
+
+   (2026-10-07) Pedido de Ariel: "permitir generar notas de crédito y notas de
+   débito a las facturas emitidas". La nota de crédito tiene tres modos (los
+   documenta docs.bsale.dev/devoluciones):
+   · total: anula el documento completo (lo de antes).
+   · parcial: devuelve parte de las cantidades; Bsale reingresa ese stock.
+   · ajuste: rebaja de precio por unidad (priceAdjustment: 1), sin devolver
+     productos ni mover stock.
+   Se pueden emitir varias parciales/ajustes mientras quede saldo; por línea
+   no se devuelve más de lo que queda (las de ajuste no devuelven unidades). */
 
 const DTE_FACTURA = 33;
 const DTE_BOLETA = 39;
 const DTE_NC = 61;
+const DTE_ND = 56;
+const IVA_ID = 1; // "IVA 19%" en la cuenta de Amsodent (igual que en despachos y libre)
 const DTE_GUIA = 52;
+
+export const MODOS_NC = [
+  { id: 'total', nombre: 'Anular completa', detalle: 'Anula todo el documento y reingresa todo su stock.' },
+  { id: 'parcial', nombre: 'Devolución parcial', detalle: 'Devuelve parte de los productos: se elige cuánto de cada línea y Bsale reingresa ese stock.' },
+  { id: 'ajuste', nombre: 'Ajuste de precio', detalle: 'Rebaja el precio por unidad sin devolver productos (no mueve stock).' },
+];
 
 // Qué pasa con el dinero (campo `type` de la devolución en Bsale).
 export const TIPOS_DEVOLUCION = [
@@ -122,15 +140,10 @@ export class BsaleAnulacionesService {
     return f ? { documento_id: Number(f.id), licitacion_id: Number(f.licitacion_id) } : null;
   }
 
-  // ── Borrador ──────────────────────────────────────────────────────────
-
-  async preparar(userId: string, q: { bsale_id?: any; documento_id?: any; tipo?: any; numero?: any }) {
-    await this.facturacion.exigirRol(userId);
-    const problemas: Problema[] = [];
-    const avisos: Problema[] = [];
+  /* Ubica el documento en Bsale: por su id, por el documento del sistema
+     (Trazabilidad) o por tipo + N°. */
+  private async ubicar(q: { bsale_id?: any; documento_id?: any; tipo?: any; numero?: any }) {
     const db = this.supabase.getClient();
-
-    // 1) Ubicar el documento en Bsale
     let doc: any = null;
     let documentoId: number | null = Number(q?.documento_id) || null;
     if (Number(q?.bsale_id) > 0) {
@@ -157,6 +170,19 @@ export class BsaleAnulacionesService {
       if (encontrado) doc = await this.documentoBsale(Number(encontrado.id));
     }
     if (!doc?.id) throw new BadRequestException('No se encontró el documento en Bsale. Revisa el tipo y el N°.');
+    return { doc, documentoId };
+  }
+
+  // ── Borrador ──────────────────────────────────────────────────────────
+
+  async preparar(userId: string, q: { bsale_id?: any; documento_id?: any; tipo?: any; numero?: any }) {
+    await this.facturacion.exigirRol(userId);
+    const problemas: Problema[] = [];
+    const avisos: Problema[] = [];
+    const db = this.supabase.getClient();
+
+    // 1) Ubicar el documento en Bsale
+    const { doc, documentoId } = await this.ubicar(q);
 
     // 2) ¿Se puede anular?
     const tipos = await this.tiposPorSii();
@@ -169,15 +195,19 @@ export class BsaleAnulacionesService {
     if (!ncTipo) problemas.push({ codigo: 'sin_nc', mensaje: 'La cuenta de Bsale no tiene activa la nota de crédito electrónica.' });
 
     const previas = await this.devolucionesDe(Number(doc.id));
-    if (previas.length) {
-      const devuelto = previas.reduce((a, r) => a + (Number(r.amount) || 0), 0);
-      const total = devuelto >= Number(doc.totalAmount || 0);
-      problemas.push({
-        codigo: total ? 'ya_anulado' : 'nc_parcial',
-        mensaje: total
-          ? `Este documento ya está anulado en Bsale (devolución por $${devuelto.toLocaleString('es-CL')}).`
-          : `Este documento ya tiene una nota de crédito parcial por $${devuelto.toLocaleString('es-CL')}: complétala en Bsale.`,
-      });
+    const devueltoMonto = previas.reduce((a, r) => a + (Number(r.amount) || 0), 0);
+    const saldoDisponible = Math.max(0, Number(doc.totalAmount || 0) - devueltoMonto);
+    if (previas.length && saldoDisponible <= 2) {
+      problemas.push({ codigo: 'ya_anulado', mensaje: `Este documento ya está anulado en Bsale (notas de crédito por $${devueltoMonto.toLocaleString('es-CL')}).` });
+    } else if (previas.length) {
+      avisos.push({ codigo: 'nc_previas', mensaje: `Ya tiene nota${previas.length === 1 ? '' : 's'} de crédito por $${devueltoMonto.toLocaleString('es-CL')}: queda un saldo de $${saldoDisponible.toLocaleString('es-CL')} para otra nota parcial o de ajuste.` });
+    }
+    // Unidades ya devueltas por línea (las de ajuste de precio no devuelven unidades).
+    const devueltoPorDetalle = new Map<number, number>();
+    for (const r of previas) {
+      if (Number(r?.priceAdjustment) === 1) continue;
+      const dets = await this.facturacion.todos(`/returns/${Number(r.id)}/details.json`).catch(() => [] as any[]);
+      for (const d of dets) devueltoPorDetalle.set(Number(d.documentDetailId), (devueltoPorDetalle.get(Number(d.documentDetailId)) || 0) + (Number(d.quantity) || 0));
     }
 
     // 3) Líneas: se devuelve todo. Bsale entrega el detalle de a 25 líneas:
@@ -193,6 +223,8 @@ export class BsaleAnulacionesService {
       cantidad: Number(d.quantity || 0),
       neto_unitario: Number(d.netUnitValue || 0),
       neto: Number(d.netAmount ?? Number(d.quantity || 0) * Number(d.netUnitValue || 0)) || 0,
+      devuelto: devueltoPorDetalle.get(Number(d.id)) || 0,
+      disponible: Math.max(0, Number(d.quantity || 0) - (devueltoPorDetalle.get(Number(d.id)) || 0)),
     }));
     if (!lineas.length) problemas.push({ codigo: 'sin_lineas', mensaje: 'El documento no tiene líneas en Bsale.' });
     // Bsale a veces no trae el nombre en el detalle: se busca la variante.
@@ -228,6 +260,8 @@ export class BsaleAnulacionesService {
         oficina_id: Number(doc.office?.id) || 1,
       },
       nc_tipo_id: Number(ncTipo?.id) || null,
+      modos: MODOS_NC,
+      saldo: { devuelto: devueltoMonto, disponible: saldoDisponible },
       tipos_devolucion: TIPOS_DEVOLUCION,
       tipo_devolucion: credito ? 2 : 3,
       cotizacion,
@@ -241,6 +275,166 @@ export class BsaleAnulacionesService {
     };
   }
 
+  // ── Nota de débito (2026-10-07) ──────────────────────────────────────
+  /* Aumenta lo que el cliente debe por una factura (intereses, diferencia de
+     precio, flete no cobrado…). En Bsale es un documento más (tipo 56, POST
+     /documents.json) con líneas de texto libre y la referencia a la factura.
+     La cuenta nunca había emitido una: tras emitir se relee para confirmar la
+     referencia y el total. Queda en la cotización como `nota_debito` (BRUTO,
+     igual que la nota de crédito) y Seguimiento de Pagos la suma al saldo. */
+  async prepararDebito(userId: string, q: { bsale_id?: any; documento_id?: any; numero?: any }) {
+    await this.facturacion.exigirRol(userId);
+    const problemas: Problema[] = [];
+    const avisos: Problema[] = [];
+    const db = this.supabase.getClient();
+    const { doc, documentoId } = await this.ubicar({ ...q, tipo: 'factura' });
+    const tipos = await this.tiposPorSii();
+    const tipoDoc = [...tipos.values()].find((t) => Number(t.id) === Number(doc.document_type?.id));
+    const sii = Number(tipoDoc?.codeSii) || 0;
+    if (sii !== DTE_FACTURA) problemas.push({ codigo: 'tipo', mensaje: `La nota de débito se emite sobre facturas electrónicas (este es ${tipoDoc?.name || 'otro tipo de documento'}).` });
+    if (Number(doc.state) !== 0) problemas.push({ codigo: 'inactivo', mensaje: 'La factura está anulada (inactiva) en Bsale.' });
+    const ndTipo = tipos.get(DTE_ND);
+    if (!ndTipo) problemas.push({ codigo: 'sin_nd', mensaje: 'La cuenta de Bsale no tiene activa la nota de débito electrónica.' });
+    const registro = await this.registroDe(doc, documentoId);
+    let cotizacion: any = null;
+    if (registro) {
+      const { data: lic } = await db.from('licitaciones').select('id, id_licitacion, nombre_entidad').eq('id', registro.licitacion_id).maybeSingle();
+      cotizacion = lic ? { id: Number((lic as any).id), codigo: (lic as any).id_licitacion || null, cliente: (lic as any).nombre_entidad || '' } : null;
+    } else {
+      avisos.push({ codigo: 'sin_registro', mensaje: 'La factura no está en ninguna cotización del sistema: la nota de débito quedará solo en Bsale y en Emitidas.' });
+    }
+    const c = doc.client || null;
+    return {
+      original: {
+        bsale_id: Number(doc.id),
+        tipo: nombreTipo(sii),
+        codigo_sii: sii,
+        numero: String(doc.number),
+        fecha: epochAFecha(doc.emissionDate),
+        url: doc.urlPdf || doc.urlPublicView || null,
+        cliente_id: Number(c?.id) || null,
+        cliente: c ? { rut: String(c.code || ''), razon_social: String(c.company || `${c.firstName || ''} ${c.lastName || ''}`).trim(), giro: String(c.activity || ''), direccion: String(c.address || ''), comuna: String(c.municipality || ''), ciudad: String(c.city || '') } : null,
+        totales: { neto: Number(doc.netAmount || 0), iva: Number(doc.taxAmount || 0), total: Number(doc.totalAmount || 0) },
+        oficina_id: Number(doc.office?.id) || 1,
+      },
+      nd_tipo_id: Number(ndTipo?.id) || null,
+      cotizacion,
+      registro,
+      problemas,
+      avisos,
+      fecha_emision: hoyEnChile(),
+      modo: this.facturacion.emisionActiva ? 'activa' : 'simulacion',
+      huella: this.facturacion.huellaDe({ cliente: { id: c?.id || c?.code || 'sin-cliente' }, tipo_documento_id: Number(doc.id), lineas: [], referencias: [{ codigo_sii: DTE_FACTURA, numero: String(doc.number) }], totales: { total: Number(doc.totalAmount || 0), estado: Number(doc.state) } as any }),
+    };
+  }
+
+  async emitirDebito(usuario: { id: string; email: string }, body: any) {
+    const simular = body?.simular === true;
+    const real = this.facturacion.emisionActiva && !simular;
+    const b: any = await this.prepararDebito(usuario.id, { bsale_id: body?.bsale_id, documento_id: body?.documento_id, numero: body?.numero });
+    const motivo = texto(body?.motivo, 90); // el SII admite 90 caracteres en la razón de la referencia
+    if (motivo.length < 5) b.problemas.push({ codigo: 'motivo', mensaje: 'Escribe el motivo (sale en la referencia a la factura).' });
+    const lineas = (Array.isArray(body?.lineas) ? body.lineas : [])
+      .map((l: any) => ({ descripcion: texto(l?.descripcion, 120), cantidad: Number(l?.cantidad), neto_unitario: Math.round(Number(l?.neto_unitario)) }))
+      .filter((l: any) => l.descripcion || l.cantidad || l.neto_unitario);
+    if (!lineas.length) b.problemas.push({ codigo: 'sin_lineas', mensaje: 'Agrega al menos una línea con su descripción, cantidad y valor neto.' });
+    if (lineas.length > 20) b.problemas.push({ codigo: 'muchas_lineas', mensaje: 'Una nota de débito admite hasta 20 líneas.' });
+    lineas.forEach((l: any, i: number) => {
+      if (!l.descripcion) b.problemas.push({ codigo: 'descripcion', mensaje: `Línea ${i + 1}: falta la descripción.` });
+      if (!(l.cantidad > 0)) b.problemas.push({ codigo: 'cantidad', mensaje: `Línea ${i + 1}: la cantidad debe ser mayor que 0.` });
+      if (!(l.neto_unitario > 0)) b.problemas.push({ codigo: 'valor', mensaje: `Línea ${i + 1}: el valor neto debe ser mayor que $0.` });
+    });
+    const dias = Math.round(Number(body?.dias_vencimiento ?? 30));
+    if (!Number.isFinite(dias) || dias < 0 || dias > 365) b.problemas.push({ codigo: 'plazo', mensaje: 'El plazo debe estar entre 0 y 365 días.' });
+    const o = b.original;
+    if (b.problemas.length) {
+      if (simular) return { simulacion: true, bloqueada: true, problemas: b.problemas, avisos: b.avisos, original: o, huella: b.huella };
+      throw new BadRequestException(`No se puede emitir la nota de débito: ${b.problemas.map((p: Problema) => p.mensaje).join(' ')}`);
+    }
+    if (!simular && (!body?.huella || body.huella !== b.huella)) {
+      throw new ConflictException('La factura cambió en Bsale desde la simulación. Simula de nuevo antes de emitir.');
+    }
+    const totales = totalesDe(lineas.map((l: any) => ({ neto: Math.round(l.cantidad * l.neto_unitario) })));
+    const emision = fechaAEpoch(b.fecha_emision);
+    const vence = new Date(`${b.fecha_emision}T12:00:00Z`);
+    vence.setUTCDate(vence.getUTCDate() + dias);
+    const clave = `AMS-ND-${o.bsale_id}`;
+    const { data: previas } = await this.supabase.getClient().from('bsale_emisiones').select('id').eq('clave', clave).eq('estado', 'emitida');
+    const salesId = `${clave}-${(previas || []).length}`;
+    const solicitud: Record<string, any> = {
+      documentTypeId: b.nd_tipo_id,
+      officeId: o.oficina_id,
+      emissionDate: emision,
+      expirationDate: fechaAEpoch(vence.toISOString().slice(0, 10)),
+      declareSii: 1,
+      ...(o.cliente_id
+        ? { clientId: o.cliente_id }
+        : o.cliente?.rut
+          ? { client: { code: o.cliente.rut, company: o.cliente.razon_social, activity: o.cliente.giro || undefined, address: o.cliente.direccion || undefined, municipality: o.cliente.comuna || undefined, city: o.cliente.ciudad || undefined } }
+          : {}),
+      details: lineas.map((l: any) => ({ comment: l.descripcion, quantity: l.cantidad, netUnitValue: l.neto_unitario, taxId: `[${IVA_ID}]` })),
+      references: [{ number: o.numero, referenceDate: fechaAEpoch(o.fecha), reason: motivo, codeSii: DTE_FACTURA }],
+      salesId,
+    };
+    const doc = o.tipo.toLowerCase();
+    const vista = {
+      tipo: 'Nota de débito electrónica',
+      sii: true,
+      descuenta_stock: false,
+      stock_texto: 'No mueve stock',
+      emisor: EMISOR,
+      cliente: o.cliente || {},
+      lineas: lineas.map((l: any) => ({ sku: '', producto: l.descripcion, cantidad: l.cantidad, neto_unitario: l.neto_unitario, neto: Math.round(l.cantidad * l.neto_unitario) })),
+      totales,
+      referencias: [{ tipo: o.tipo, folio: o.numero, fecha: o.fecha, razon: motivo }],
+      fecha_emision: b.fecha_emision,
+      vencimiento: vence.toISOString().slice(0, 10),
+      notas: [
+        `Aumenta en $${totales.total.toLocaleString('es-CL')} lo que el cliente debe por la ${doc} N° ${o.numero}.`,
+        b.cotizacion
+          ? `Quedará registrada en la cotización #${b.cotizacion.id} colgada de esa ${doc}: Seguimiento de Pagos la suma al saldo.`
+          : 'La factura no está en ninguna cotización: la nota de débito queda solo en Bsale y en Emitidas.',
+      ],
+    };
+    if (!real) return { simulacion: true, emision_apagada: !simular, solicitud, vista, huella: b.huella, avisos: b.avisos, totales };
+
+    return this.despachos.emitirReal({
+      usuario, clave, salesId, tipo: 'nota_debito', ruta: '/documents.json', solicitud, vista,
+      licitacionId: b.cotizacion?.id || null, origenDocId: b.registro?.documento_id || null,
+      lineas: lineas.map((l: any) => ({ sku: '', cantidad: l.cantidad, neto_unitario: l.neto_unitario })),
+      bucket: 'factura',
+      registrar: async (nd: any, pdf: any) => {
+        if (!b.registro) return null;
+        try {
+          const creado = await this.licitaciones.createDocumento({
+            licitacion_id: b.registro.licitacion_id, tipo: 'nota_debito', numero: String(nd.number),
+            // En BRUTO, como la nota de crédito: Seguimiento de Pagos la suma al saldo de la factura.
+            monto: Number(nd.totalAmount) || Number(totales.total) || null,
+            fecha_oc: b.fecha_emision, deriva_de_id: b.registro.documento_id, descripcion: `Nota de débito de ${doc} N° ${o.numero}: ${motivo}`,
+            bucket: pdf ? 'factura' : null, storage_path: pdf?.path || null, file_name: pdf ? `Nota de débito ${nd.number}.pdf` : null,
+            mime_type: pdf ? 'application/pdf' : null, size_bytes: pdf?.size || null, bsale_id: Number(nd.id) || null, bsale_url: nd.urlPdf || nd.urlPublicView || null,
+          });
+          return Number((creado as any)?.id) || null;
+        } catch (e: any) {
+          if (/tipo_check|check constraint/i.test(String(e?.message || ''))) throw new Error('falta aplicar la migración 20261007_documentos_nota_debito en Supabase');
+          throw e;
+        }
+      },
+      verificar: async (nd: any) => {
+        const avisos: string[] = [];
+        try {
+          const completo = await this.facturacion.apiGet(`/documents/${Number(nd.id)}.json?expand=[references]`);
+          const refs: any[] = completo?.references?.items || [];
+          if (!refs.some((r: any) => String(r?.number) === String(o.numero))) avisos.push(`La nota de débito ${nd.number} salió SIN la referencia a la ${doc} ${o.numero}: agrégala en Bsale.`);
+          if (Number.isFinite(Number(completo?.totalAmount)) && Math.abs(Number(completo.totalAmount) - totales.total) > 2) {
+            avisos.push(`Bsale calculó $${Number(completo.totalAmount).toLocaleString('es-CL')} y la simulación decía $${totales.total.toLocaleString('es-CL')}.`);
+          }
+        } catch { /* la verificación no frena nada */ }
+        return avisos;
+      },
+    });
+  }
+
   // ── Simular / emitir ──────────────────────────────────────────────────
 
   async emitir(usuario: { id: string; email: string }, body: any) {
@@ -248,19 +442,48 @@ export class BsaleAnulacionesService {
     const real = this.facturacion.emisionActiva && !simular;
     const b: any = await this.preparar(usuario.id, { bsale_id: body?.bsale_id, documento_id: body?.documento_id, tipo: body?.tipo, numero: body?.numero });
     const motivo = texto(body?.motivo, 250);
-    if (motivo.length < 5) b.problemas.push({ codigo: 'motivo', mensaje: 'Escribe el motivo de la anulación (sale impreso en la nota de crédito).' });
+    if (motivo.length < 5) b.problemas.push({ codigo: 'motivo', mensaje: 'Escribe el motivo (sale impreso en la nota de crédito).' });
     const tipoDev = TIPOS_DEVOLUCION.find((t) => t.id === Number(body?.tipo_devolucion ?? b.tipo_devolucion));
     if (!tipoDev) b.problemas.push({ codigo: 'tipo_devolucion', mensaje: 'Elige qué pasa con el dinero.' });
-    if (b.problemas.length) {
-      if (simular) return { simulacion: true, bloqueada: true, problemas: b.problemas, avisos: b.avisos, original: b.original, huella: b.huella };
-      throw new BadRequestException(`No se puede anular: ${b.problemas.map((p: Problema) => p.mensaje).join(' ')}`);
+    const modo: 'total' | 'parcial' | 'ajuste' = body?.modo === 'parcial' || body?.modo === 'ajuste' ? body.modo : 'total';
+    const o = b.original;
+
+    // Líneas de la nota según el modo (valor = neto unitario que se acredita).
+    const elegidas: any[] = [];
+    if (modo === 'total') {
+      if (b.previas.length) b.problemas.push({ codigo: 'nc_parcial', mensaje: 'Este documento ya tiene notas de crédito: para el saldo usa una devolución parcial o un ajuste de precio.' });
+      for (const l of o.lineas) elegidas.push({ ...l, valor: l.neto_unitario });
+    } else {
+      for (const p of Array.isArray(body?.lineas) ? body.lineas : []) {
+        const l = o.lineas.find((x: any) => x.detalle_id === Number(p?.detalle_id));
+        const cant = Number(p?.cantidad);
+        if (!l || !(cant > 0)) continue;
+        const nombre = l.sku || l.producto || `línea ${l.detalle_id}`;
+        if (modo === 'parcial') {
+          if (cant > l.disponible + 1e-9) b.problemas.push({ codigo: 'cantidad', mensaje: `${nombre}: se pueden devolver hasta ${l.disponible} (ya se devolvieron ${l.devuelto} de ${l.cantidad}).` });
+          elegidas.push({ ...l, cantidad: cant, valor: l.neto_unitario });
+        } else {
+          const rebaja = Math.round(Number(p?.neto_unitario));
+          if (cant > l.cantidad + 1e-9) b.problemas.push({ codigo: 'cantidad', mensaje: `${nombre}: la factura tiene ${l.cantidad} unidades.` });
+          if (!(rebaja > 0) || rebaja > l.neto_unitario) b.problemas.push({ codigo: 'rebaja', mensaje: `${nombre}: la rebaja por unidad debe ser mayor que $0 y no más que su precio neto ($${Number(l.neto_unitario).toLocaleString('es-CL')}).` });
+          elegidas.push({ ...l, cantidad: cant, valor: rebaja });
+        }
+      }
+      if (!elegidas.length) b.problemas.push({ codigo: 'sin_lineas', mensaje: modo === 'parcial' ? 'Indica qué productos y cuántas unidades se devuelven.' : 'Indica a qué productos se les rebaja el precio y cuánto por unidad.' });
     }
-    // La huella cubre el documento; el motivo y el tipo van en la firma de la pantalla.
+    const totales = modo === 'total' ? o.totales : totalesDe(elegidas.map((l) => ({ neto: Math.round(l.cantidad * l.valor) })));
+    if (modo !== 'total' && totales.total > Number(b.saldo?.disponible ?? o.totales.total) + 2) {
+      b.problemas.push({ codigo: 'supera_saldo', mensaje: `La nota de crédito ($${totales.total.toLocaleString('es-CL')}) supera el saldo del documento ($${Number(b.saldo.disponible).toLocaleString('es-CL')}).` });
+    }
+    if (b.problemas.length) {
+      if (simular) return { simulacion: true, bloqueada: true, problemas: b.problemas, avisos: b.avisos, original: o, huella: b.huella };
+      throw new BadRequestException(`No se puede emitir la nota de crédito: ${b.problemas.map((p: Problema) => p.mensaje).join(' ')}`);
+    }
+    // La huella cubre el documento; modo, líneas, motivo y tipo van en la firma de la pantalla.
     if (!simular && (!body?.huella || body.huella !== b.huella)) {
-      throw new ConflictException('El documento cambió en Bsale desde la simulación. Simula de nuevo antes de anular.');
+      throw new ConflictException('El documento cambió en Bsale desde la simulación. Simula de nuevo antes de emitir.');
     }
 
-    const o = b.original;
     const emision = fechaAEpoch(b.fecha_emision);
     const solicitud: Record<string, any> = {
       documentTypeId: b.nc_tipo_id,
@@ -270,52 +493,63 @@ export class BsaleAnulacionesService {
       expirationDate: emision,
       motive: motivo,
       declareSii: 1,
-      priceAdjustment: 0,
+      priceAdjustment: modo === 'ajuste' ? 1 : 0,
       editTexts: 0,
       type: tipoDev!.id,
       ...(o.cliente?.rut
         ? { client: { code: o.cliente.rut, company: o.cliente.razon_social, activity: o.cliente.giro || undefined, address: o.cliente.direccion || undefined, municipality: o.cliente.comuna || undefined, city: o.cliente.ciudad || undefined } }
         : {}),
-      details: o.lineas.map((l: any) => ({ documentDetailId: l.detalle_id, quantity: l.cantidad, unitValue: l.neto_unitario })),
+      details: elegidas.map((l: any) => ({ documentDetailId: l.detalle_id, quantity: l.cantidad, unitValue: l.valor })),
     };
+    const doc = o.tipo.toLowerCase();
+    const razon = modo === 'total' ? 'Anula documento de referencia' : modo === 'parcial' ? 'Devolución parcial' : 'Corrige montos (ajuste de precio)';
     const vista = {
       tipo: 'Nota de crédito electrónica',
       sii: true,
       descuenta_stock: false,
-      stock_texto: 'Reingresa stock',
+      stock_texto: modo === 'ajuste' ? 'No mueve stock' : 'Reingresa stock',
       emisor: EMISOR,
       cliente: o.cliente || {},
-      lineas: o.lineas.map((l: any) => ({ sku: l.sku, producto: l.producto, cantidad: l.cantidad, neto_unitario: l.neto_unitario, neto: l.neto })),
-      totales: o.totales,
-      referencias: [{ tipo: o.tipo, folio: o.numero, fecha: o.fecha, razon: `Anula documento de referencia · ${motivo}` }],
+      lineas: elegidas.map((l: any) => ({ sku: l.sku, producto: l.producto, cantidad: l.cantidad, neto_unitario: l.valor, neto: Math.round(l.cantidad * l.valor) })),
+      totales,
+      referencias: [{ tipo: o.tipo, folio: o.numero, fecha: o.fecha, razon: `${razon} · ${motivo}` }],
       forma_pago: tipoDev!.nombre,
       forma_pago_titulo: 'Qué pasa con el dinero',
       fecha_emision: b.fecha_emision,
       notas: [
-        `Anula completa la ${o.tipo.toLowerCase()} N° ${o.numero} por $${Number(o.totales.total).toLocaleString('es-CL')}.`,
-        'Bsale reingresa al stock las cantidades devueltas.',
+        modo === 'total'
+          ? `Anula completa la ${doc} N° ${o.numero} por $${Number(o.totales.total).toLocaleString('es-CL')}.`
+          : modo === 'parcial'
+            ? `Devolución parcial de la ${doc} N° ${o.numero}: $${totales.total.toLocaleString('es-CL')} de $${Number(o.totales.total).toLocaleString('es-CL')}.`
+            : `Ajuste de precio de la ${doc} N° ${o.numero}: rebaja $${totales.total.toLocaleString('es-CL')} sin devolver productos.`,
+        modo === 'ajuste' ? 'No mueve stock: es solo una corrección de montos.' : 'Bsale reingresa al stock las cantidades devueltas.',
         b.cotizacion
-          ? `Quedará registrada en la cotización #${b.cotizacion.id} como nota de crédito de esa ${o.tipo.toLowerCase()}: Seguimiento de Pagos la descuenta del saldo.`
+          ? `Quedará registrada en la cotización #${b.cotizacion.id} como nota de crédito de esa ${doc}: Seguimiento de Pagos la descuenta del saldo.`
           : 'El documento no está en ninguna cotización: la nota de crédito queda solo en Bsale y en Emitidas.',
       ],
     };
-    if (!real) return { simulacion: true, emision_apagada: !simular, solicitud, vista, huella: b.huella, avisos: b.avisos, totales: o.totales };
+    if (!real) return { simulacion: true, emision_apagada: !simular, solicitud, vista, huella: b.huella, avisos: b.avisos, totales, modo };
 
     const clave = `AMS-NC-${o.bsale_id}`;
     const { data: previas } = await this.supabase.getClient().from('bsale_emisiones').select('id').eq('clave', clave).eq('estado', 'emitida');
     const salesId = `${clave}-${(previas || []).length}`;
+    const descripcion = modo === 'total'
+      ? `Anula ${doc} N° ${o.numero}: ${motivo}`
+      : modo === 'parcial'
+        ? `Devolución parcial de ${doc} N° ${o.numero}: ${motivo}`
+        : `Ajuste de precio de ${doc} N° ${o.numero}: ${motivo}`;
     return this.despachos.emitirReal({
       usuario, clave, salesId, tipo: 'nota_credito', ruta: '/returns.json', solicitud, vista,
       licitacionId: b.cotizacion?.id || null, origenDocId: b.registro?.documento_id || null,
-      lineas: o.lineas.map((l: any) => ({ sku: l.sku, cantidad: l.cantidad, neto_unitario: l.neto_unitario })),
+      lineas: elegidas.map((l: any) => ({ sku: l.sku, cantidad: l.cantidad, neto_unitario: l.valor })),
       bucket: 'factura',
       registrar: async (nc: any, pdf: any) => {
         if (!b.registro) return null;
         const creado = await this.licitaciones.createDocumento({
           licitacion_id: b.registro.licitacion_id, tipo: 'nota_credito', numero: String(nc.number),
           // Las notas de crédito se guardan en BRUTO (así se cargan a mano y así las descuenta Seguimiento de Pagos).
-          monto: Number(nc.totalAmount) || Number(o.totales.total) || null,
-          fecha_oc: b.fecha_emision, deriva_de_id: b.registro.documento_id, descripcion: `Anula ${o.tipo.toLowerCase()} N° ${o.numero}: ${motivo}`,
+          monto: Number(nc.totalAmount) || Number(totales.total) || null,
+          fecha_oc: b.fecha_emision, deriva_de_id: b.registro.documento_id, descripcion,
           bucket: pdf ? 'factura' : null, storage_path: pdf?.path || null, file_name: pdf ? `Nota de crédito ${nc.number}.pdf` : null,
           mime_type: pdf ? 'application/pdf' : null, size_bytes: pdf?.size || null, bsale_id: Number(nc.id) || null, bsale_url: nc.urlPdf || nc.urlPublicView || null,
         });
@@ -323,8 +557,8 @@ export class BsaleAnulacionesService {
       },
       verificar: async (nc: any) => {
         const avisos: string[] = [];
-        if (Number(nc?.totalAmount) && Math.abs(Number(nc.totalAmount) - Number(o.totales.total)) > 2) {
-          avisos.push(`La nota de crédito ${nc.number} salió por $${Number(nc.totalAmount).toLocaleString('es-CL')} y el documento era de $${Number(o.totales.total).toLocaleString('es-CL')}: revísala en Bsale.`);
+        if (Number(nc?.totalAmount) && Math.abs(Number(nc.totalAmount) - Number(totales.total)) > 2) {
+          avisos.push(`La nota de crédito ${nc.number} salió por $${Number(nc.totalAmount).toLocaleString('es-CL')} y debía ser de $${Number(totales.total).toLocaleString('es-CL')}: revísala en Bsale.`);
         }
         return avisos;
       },

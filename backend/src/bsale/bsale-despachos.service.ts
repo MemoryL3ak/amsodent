@@ -762,7 +762,7 @@ export class BsaleDespachosService {
   // ── Emisión real (común) ───────────────────────────────────────────────
 
   async emitirReal(p: {
-    usuario: { id: string; email: string }; clave: string; salesId: string; tipo: 'guia' | 'nota_venta' | 'factura' | 'boleta' | 'nota_credito'; ruta: string;
+    usuario: { id: string; email: string }; clave: string; salesId: string; tipo: 'guia' | 'nota_venta' | 'factura' | 'boleta' | 'nota_credito' | 'nota_debito'; ruta: string;
     solicitud: Record<string, any>; vista: any; licitacionId: number | null; origenDocId: number | null; lineas: any[];
     registrar: (doc: any, pdf: { path: string; size: number } | null) => Promise<number | null>;
     verificar: (doc: any) => Promise<string[]>; sinPdf?: boolean; bucket?: string;

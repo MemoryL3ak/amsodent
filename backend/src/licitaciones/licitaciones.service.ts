@@ -2636,7 +2636,7 @@ export class LicitacionesService {
       .from('licitacion_documentos')
       .select('id, tipo, monto, deriva_de_id, pagada, fecha_oc, forma_pago')
       .eq('licitacion_id', licitacionId)
-      .in('tipo', ['factura', 'factura_boleta', 'nota_credito', ...PAGOS]);
+      .in('tipo', ['factura', 'factura_boleta', 'nota_credito', 'nota_debito', ...PAGOS]);
     if (error) return false;
     const docs: any[] = data || [];
     const facturas = docs.filter((d) => d.tipo === 'factura' || d.tipo === 'factura_boleta');
@@ -2655,7 +2655,11 @@ export class LicitacionesService {
     const notas = docs
       .filter((d) => d.tipo === 'nota_credito' && Number(d.deriva_de_id) === Number(objetivo.id))
       .reduce((a, d) => a + (Number(d.monto) || 0) / 1.19, 0);
-    const base = (Number(objetivo.monto) || 0) - notas;
+    // Nota de débito (2026-10-07): suma a lo que se debe (bruta, como la de crédito).
+    const debitos = docs
+      .filter((d) => d.tipo === 'nota_debito' && Number(d.deriva_de_id) === Number(objetivo.id))
+      .reduce((a, d) => a + (Number(d.monto) || 0) / 1.19, 0);
+    const base = (Number(objetivo.monto) || 0) - notas + debitos;
     if (!(base > 0) || pagado < base - 5) return false;
     const ultimo = [...pagos].sort((a, b) => String(b.fecha_oc || '').localeCompare(String(a.fecha_oc || '')))[0];
     const { error: errUp } = await db

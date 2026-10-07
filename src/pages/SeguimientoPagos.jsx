@@ -253,7 +253,7 @@ function fmtCLP(value) {
    diferencia legítima más chica que se ha visto, ronda los $100. */
 const TOLERANCIA_SALDO = 5;
 
-function calcularCuentas({ facturas, licMap, montoOcMap, pagosMap, notasCreditoMap, multasMap, guiasMap }) {
+function calcularCuentas({ facturas, licMap, montoOcMap, pagosMap, notasCreditoMap, notasDebitoMap, multasMap, guiasMap }) {
   const porFactura = {};
   const porLic = {};
 
@@ -288,6 +288,8 @@ function calcularCuentas({ facturas, licMap, montoOcMap, pagosMap, notasCreditoM
         recibido: 0,
         comision: 0,
         nc: 0,
+        // Nota de débito (2026-10-07): suma a lo que se debe de la factura (bruta).
+        nd: 0,
         multas: 0,
         abonos: 0,
         // Medio del último pago imputado. Para el cliente particular la
@@ -296,7 +298,7 @@ function calcularCuentas({ facturas, licMap, montoOcMap, pagosMap, notasCreditoM
       };
     });
     const porId = new Map(cuentas.map((c) => [c.id, c]));
-    const faltaDe = (c) => c.base - c.nc - c.multas - c.recibido - c.comision;
+    const faltaDe = (c) => c.base + c.nd - c.nc - c.multas - c.recibido - c.comision;
 
     const repartir = (docs, aplicar, montoDe) => {
       const sueltos = [];
@@ -321,6 +323,7 @@ function calcularCuentas({ facturas, licMap, montoOcMap, pagosMap, notasCreditoM
       }
     };
 
+    repartir(notasDebitoMap?.[lid], (c, _d, m) => { c.nd += m; }, (d) => Number(d?.monto || 0));
     repartir(notasCreditoMap?.[lid], (c, _d, m) => { c.nc += m; }, (d) => Number(d?.monto || 0));
     repartir(multasMap?.[lid], (c, _d, m) => { c.multas += m; }, (d) => Number(d?.monto || 0));
     // Pagos: lo recibido se guarda NETO (× 1,19 al leer). La comisión del
@@ -349,6 +352,7 @@ function calcularCuentas({ facturas, licMap, montoOcMap, pagosMap, notasCreditoM
         comision: c.comision,
         pagado,
         nc: c.nc,
+        nd: c.nd,
         multas: c.multas,
         abonos: c.abonos,
         medio: c.medio,
@@ -358,8 +362,8 @@ function calcularCuentas({ facturas, licMap, montoOcMap, pagosMap, notasCreditoM
            factura con saldo NEGATIVO por lo que la orden nunca facturó; en una
            orden cerrada eso no es un pago en exceso, es saldo que ya no cuenta. */
         saldo: lic.ciclo_cerrado
-          ? Math.max(0, Math.round(c.base - c.nc - c.multas - pagado))
-          : Math.round(c.base - c.nc - c.multas - pagado),
+          ? Math.max(0, Math.round(c.base + c.nd - c.nc - c.multas - pagado))
+          : Math.round(c.base + c.nd - c.nc - c.multas - pagado),
       };
     }
 
@@ -435,6 +439,7 @@ export default function SeguimientoPagos() {
   }, [pagosMap]);
   // Notas de crédito por cotización: lista (para ver/abrir) y suma (descuenta del monto).
   const [notasCreditoMap, setNotasCreditoMap] = useState({});
+  const [notasDebitoMap, setNotasDebitoMap] = useState({});
   const [notasCreditoSumMap, setNotasCreditoSumMap] = useState({});
   const [multasMap, setMultasMap] = useState({});       // lic_id → [docs multa]
   // Suma de órdenes de compra por cotización (monto a cobrar de la columna Monto).
@@ -617,6 +622,7 @@ export default function SeguimientoPagos() {
         const guiasLic = {};
         const ocNums = {};
         const ncList = {};
+        const ndList = {};
         const ncSum = {};
         const multaList = {};
         const empresaMap = {};
@@ -629,7 +635,7 @@ export default function SeguimientoPagos() {
             // particular (transferencia/comprobante, webpay y efectivo).
             filter: {
               licitacion_ids: ids,
-              tipo: ["orden_compra", "factura", "factura_boleta", "comprobante_pago", "webpay", "efectivo", "nota_credito", "multa", "guia_despacho", "cierre_forzado"],
+              tipo: ["orden_compra", "factura", "factura_boleta", "comprobante_pago", "webpay", "efectivo", "nota_credito", "nota_debito", "multa", "guia_despacho", "cierre_forzado"],
             },
             fields: "*",
           });
@@ -665,6 +671,11 @@ export default function SeguimientoPagos() {
               ncSum[lid] = (ncSum[lid] || 0) + Number(d.monto || 0);
               return;
             }
+            if (d.tipo === "nota_debito") {
+              // Nota de débito (bruta): aumenta lo que se debe de la factura.
+              (ndList[lid] = ndList[lid] || []).push(d);
+              return;
+            }
             if (d.tipo === "multa") {
               // Multa cursada a Amsodent: descuenta del monto a cobrar igual
               // que una nota de crédito (bruta, tal cual se digita).
@@ -697,6 +708,7 @@ export default function SeguimientoPagos() {
         setGuiaByIdMap(guiaById);
         setGuiasLicMap(guiasLic);
         setNotasCreditoMap(ncList);
+        setNotasDebitoMap(ndList);
         setNotasCreditoSumMap(ncSum);
         setMultasMap(multaList);
         const ocNumFinal = {};
@@ -767,8 +779,8 @@ export default function SeguimientoPagos() {
      era la orden de compra entera, y por eso una factura pagada de una OC con
      saldo sin facturar aparecía "pendiente de pago" (ver calcularCuentas). */
   const cuentas = useMemo(
-    () => calcularCuentas({ facturas, licMap, montoOcMap, pagosMap, notasCreditoMap, multasMap, guiasMap: guiasLicMap }),
-    [facturas, licMap, montoOcMap, pagosMap, notasCreditoMap, multasMap, guiasLicMap],
+    () => calcularCuentas({ facturas, licMap, montoOcMap, pagosMap, notasCreditoMap, notasDebitoMap, multasMap, guiasMap: guiasLicMap }),
+    [facturas, licMap, montoOcMap, pagosMap, notasCreditoMap, notasDebitoMap, multasMap, guiasLicMap],
   );
   // Ids de las facturas de cada cotización (para saber si un pago está
   // vinculado a alguna de ellas).
