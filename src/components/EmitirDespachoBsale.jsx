@@ -6,6 +6,7 @@ import DateFilter from "./DateFilter";
 import DropdownSelect from "./ui/DropdownSelect";
 import VistaPreviaBsale from "./VistaPreviaBsale";
 import AvisoCorreoDocumento from "./AvisoCorreoDocumento";
+import BotonImprimirCarta from "./BotonImprimirCarta";
 import CamposSeguimientoGuia from "./CamposSeguimientoGuia";
 import CampoObservacionGuia, { OBSERVACION_GUIA_MAX } from "./CampoObservacionGuia";
 
@@ -160,11 +161,14 @@ export default function EmitirDespachoBsale({ tipo = "guia", licitacionId, ocDoc
               </div>
               <AvisoCorreoDocumento correo={resultado.correo} emitido />
               {(resultado.avisos || []).map((a, i) => <div key={i} style={{ fontSize: 12.5, color: "#92400e" }}>{a}</div>)}
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
               {resultado.url_pdf && (
-                <a href={resultado.url_pdf} target="_blank" rel="noopener noreferrer" className="btn btn-secondary btn-sm" style={{ alignSelf: "flex-start", textDecoration: "none" }}>
+                <a href={resultado.url_pdf} target="_blank" rel="noopener noreferrer" className="btn btn-secondary btn-sm" style={{ textDecoration: "none" }}>
                   <ExternalLink size={13} /> Ver en Bsale
                 </a>
               )}
+              {resultado.bsale_id && <BotonImprimirCarta bsaleId={resultado.bsale_id} etiqueta="Imprimir en carta" />}
+              </div>
             </div>
           )}
           {resultado?.simulacion && (

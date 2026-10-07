@@ -1257,6 +1257,7 @@ export class BsaleFacturacionService {
       neto: emision.neto,
       total: emision.total,
       url_pdf: emision.url_pdf,
+      bsale_id: Number(emision.bsale_id) || null,
       documento_id: (creado as any).id,
       emitida_por: email,
       avisos,

@@ -8,6 +8,7 @@ import AnularDocumentoBsale from "./AnularDocumentoBsale";
 import NotaDebitoBsale from "./NotaDebitoBsale";
 import EstadoBsaleBadge from "./EstadoBsale";
 import DropdownSelect from "./ui/DropdownSelect";
+import BotonImprimirCarta from "./BotonImprimirCarta";
 
 /* ── Trazabilidad → Facturas (2026-10-07) ────────────────────────────────────
    Pedido de Ariel: "crear una pestaña llamada Facturas en la sección de
@@ -312,7 +313,10 @@ export default function FacturasTrazabilidad({ lics = [], documentosMap = {}, pu
                     <tr key={f.id} className={anulada ? "fila-anulada" : undefined}>
                       <td style={{ whiteSpace: "nowrap" }}>
                         <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{f.tipo === "factura" ? "Factura" : f.esBoleta ? "Boleta" : "Factura o boleta"}</div>
-                        <div style={{ fontWeight: 600, textDecoration: anulada ? "line-through" : "none" }}>N° {f.numero || "S/N"}</div>
+                        <div style={{ fontWeight: 600, textDecoration: anulada ? "line-through" : "none", display: "flex", alignItems: "center", gap: 4 }}>
+                          N° {f.numero || "S/N"}
+                          <BotonImprimirCarta bsaleId={f.bsale_id || est?.bsale_id} compacto />
+                        </div>
                         <EstadoBsaleBadge estado={estBadge} style={{ marginTop: 2 }} />
                       </td>
                       <td style={{ whiteSpace: "nowrap" }}>{fechaCL(f.fecha_factura || f.created_at)}</td>

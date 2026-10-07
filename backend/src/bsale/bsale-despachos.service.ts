@@ -875,6 +875,6 @@ export class BsaleDespachosService {
       correo = await this.correos.enviarDocumentoEmitido({ documentoId, tipo: p.correo.tipo, para: p.correo.para || null, total: emitida.total });
       if (!correo?.enviado && correo?.motivo) avisos.push(`Correo al cliente: ${correo.motivo}`);
     }
-    return { emitida: true, registrada: !!documentoId, tipo: p.tipo, numero: emitida.numero, neto: emitida.neto, total: emitida.total, url_pdf: emitida.url_pdf, documento_id: documentoId, vista: p.vista, avisos, correo };
+    return { emitida: true, registrada: !!documentoId, tipo: p.tipo, numero: emitida.numero, neto: emitida.neto, total: emitida.total, url_pdf: emitida.url_pdf, bsale_id: emitida.bsale_id, documento_id: documentoId, vista: p.vista, avisos, correo };
   }
 }

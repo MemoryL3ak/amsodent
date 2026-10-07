@@ -1,7 +1,8 @@
-import { Body, Controller, Get, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseIntPipe, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { AuthGuard } from '../auth/auth.guard';
 import { BsaleFacturacionService } from './bsale-facturacion.service';
 import { BsaleEstadosService } from './bsale-estados.service';
+import { BsaleImpresionService } from './bsale-impresion.service';
 
 // Emisión de facturas en Bsale (módulo Facturación y botón en Trazabilidad).
 // Exige sesión; quién puede emitir lo decide el servicio por rol
@@ -12,6 +13,7 @@ export class BsaleFacturacionController {
   constructor(
     private facturacion: BsaleFacturacionService,
     private estadosBsale: BsaleEstadosService,
+    private impresion: BsaleImpresionService,
   ) {}
 
   // Estado en Bsale (vigente/anulado, SII) de cada factura, boleta y guía del
@@ -19,6 +21,13 @@ export class BsaleFacturacionController {
   @Get('estados')
   estados(@Query('refrescar') refrescar?: string) {
     return this.estadosBsale.estados({ refrescar: refrescar === '1' });
+  }
+
+  // (2026-10-07) Datos para imprimir el documento en hoja carta (la boleta y la
+  // nota de débito de la cuenta salen en rollo térmico). Solo lectura.
+  @Get('impresion/:bsaleId')
+  impresionCarta(@Param('bsaleId', ParseIntPipe) bsaleId: number) {
+    return this.impresion.datos(bsaleId);
   }
 
   // ¿Está configurado, puede este usuario y en qué modo (real o simulación)?
