@@ -157,6 +157,10 @@ export default function AnalisisMercadoPublico() {
      en curso—. Se avisa en pantalla para que no parezca pérdida de datos. */
   const fechaPeriodo = (f) => f.fecha_adjudicacion;
   const [expandida, setExpandida] = useState(null);
+  /* (2026-10-07) La tabla dibujaba las ~2.500 fichas de una vez y cada tecla
+     del buscador las volvía a dibujar todas: ahora de a 200, con «Mostrar
+     más». El límite vuelve a 200 al cambiar cualquier filtro u orden. */
+  const [limiteDe, setLimiteDe] = useState({ clave: "", n: 200 });
   const [donaPorMonto, setDonaPorMonto] = useState(false);
   // Orden de la tabla: por defecto las adjudicaciones más recientes primero.
   const [orden, setOrden] = useState({ campo: "adjudicacion", dir: "desc" });
@@ -217,9 +221,9 @@ export default function AnalisisMercadoPublico() {
   async function cargar() {
     setLoading(true);
     try {
-      const est = await api.get("/mercado-publico/estado");
+      // (2026-10-07) En paralelo: antes el estado se esperaba antes de pedir los resultados.
+      const [est] = await Promise.all([api.get("/mercado-publico/estado"), cargarResultados()]);
       setEstadoApi(est);
-      await cargarResultados();
     } catch (e) {
       setToast({ type: "error", message: e?.message || "Error cargando el análisis." });
     } finally {
@@ -695,6 +699,9 @@ export default function AnalisisMercadoPublico() {
       return (va - vb) * dir;
     });
   }, [filtradas, orden]);
+  // Cambia al filtrar (otra cantidad) o al reordenar: el límite vuelve a 200.
+  const claveLimite = JSON.stringify([filtradas.length, orden]);
+  const limiteFilas = limiteDe.clave === claveLimite ? limiteDe.n : 200;
 
   function toggleOrden(campo) {
     setOrden((o) => (o.campo === campo ? { campo, dir: o.dir === "asc" ? "desc" : "asc" } : { campo, dir: "desc" }));
@@ -1095,7 +1102,7 @@ export default function AnalisisMercadoPublico() {
                   : "Sin resultados con los filtros actuales."}
               </td></tr>
             ) : (
-              ordenadas.map((f) => {
+              ordenadas.slice(0, limiteFilas).map((f) => {
                 const cl = CLASES[f.clase];
                 const abierta = expandida === f.id;
                 return (
@@ -1107,6 +1114,13 @@ export default function AnalisisMercadoPublico() {
           </tbody>
         </table>
       </div>
+      {!loading && ordenadas.length > limiteFilas && (
+        <div className="mp-mostrar-mas" style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 10, padding: "10px 0 2px", flexWrap: "wrap", fontSize: 12.5, color: "var(--text-muted)" }}>
+          <span>Mostrando {limiteFilas.toLocaleString("es-CL")} de {ordenadas.length.toLocaleString("es-CL")} procesos.</span>
+          <button type="button" className="btn btn-secondary btn-sm" onClick={() => setLimiteDe({ clave: claveLimite, n: limiteFilas + 200 })}>Mostrar 200 más</button>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={() => setLimiteDe({ clave: claveLimite, n: ordenadas.length })}>Mostrar todos</button>
+        </div>
+      )}
 
       {/* ── Análisis de productos (agregado desde los ítems de cada ficha) ── */}
       <div style={{ marginBottom: 16 }}>
@@ -1355,7 +1369,9 @@ function FilaProceso({ f, cl, abierta, onToggle }) {
   const det = f.detalle || {};
   const cotizaciones = det.cotizaciones || [];
   const comparacion = det.comparacion_items || [];
-  const tieneDetalle = cotizaciones.length > 0 || comparacion.length > 0;
+  // La lista llega resumida (sin las cotizaciones): toda ficha se puede abrir y
+  // su detalle se pide al desplegarla.
+  const tieneDetalle = det.resumido || cotizaciones.length > 0 || comparacion.length > 0;
 
   return (
     <>
@@ -1420,8 +1436,25 @@ function FilaProceso({ f, cl, abierta, onToggle }) {
   );
 }
 
+// Detalles ya traídos (por id de la ficha): volver a abrir una fila no repite la consulta.
+const detallesTraidos = new Map();
+
 function DetalleProceso({ f }) {
-  const det = f.detalle || {};
+  const resumido = !!f.detalle?.resumido;
+  const [completo, setCompleto] = useState(() => (resumido ? detallesTraidos.get(f.id) || null : f.detalle));
+  const [errorDet, setErrorDet] = useState("");
+  useEffect(() => {
+    if (!resumido || completo) return undefined;
+    let vivo = true;
+    api.get(`/mercado-publico/resultados/${f.id}/detalle`)
+      .then((r) => { const d = r?.detalle || {}; detallesTraidos.set(f.id, d); if (vivo) setCompleto(d); })
+      .catch((e) => { if (vivo) setErrorDet(e?.message || "No se pudo cargar el detalle."); });
+    return () => { vivo = false; };
+  }, [f.id, resumido, completo]);
+  if (resumido && !completo) {
+    return <div style={{ fontSize: 12.5, color: errorDet ? "#b91c1c" : "var(--text-muted)", padding: "6px 0" }}>{errorDet || "Cargando el detalle de la ficha…"}</div>;
+  }
+  const det = completo || {};
   const cotizaciones = [...(det.cotizaciones || [])].sort((a, b) => (a.monto_total ?? Infinity) - (b.monto_total ?? Infinity));
   const comparacion = det.comparacion_items || [];
   const nuestra = cotizaciones.find((c) => c.nuestra);

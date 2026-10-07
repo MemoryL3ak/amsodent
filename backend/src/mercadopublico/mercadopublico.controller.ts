@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Body, Query, UseGuards, Param, ParseIntPipe } from '@nestjs/common';
 import { MercadopublicoService } from './mercadopublico.service';
 import { MercadopublicoCron } from './mercadopublico.cron';
 import { AdminGuard } from '../auth/admin.guard';
@@ -28,6 +28,12 @@ export class MercadopublicoController {
   @Get('resultados')
   resultados(@Query('desde') desde?: string) {
     return this.mpService.resultados(desde);
+  }
+
+  // (2026-10-07) Detalle completo de una ficha: lo pide el panel al desplegarla.
+  @Get('resultados/:id/detalle')
+  detalleResultado(@Param('id', ParseIntPipe) id: number) {
+    return this.mpService.detalleResultado(id);
   }
 
   // Consulta la API oficial para los procesos aún sin resultado final.
