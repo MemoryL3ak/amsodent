@@ -17,9 +17,11 @@ import {
   AlertCircle,
   History,
   Undo2,
+  CloudUpload,
 } from "lucide-react";
 import Toast from "../components/Toast";
 import BotonDescargarFichas from "../components/BotonDescargarFichas";
+import EnviarPendientesBsale from "../components/EnviarPendientesBsale";
 import { descargarFichaTecnica } from "../utils/generarFichaTecnica";
 import { calcularLista3 } from "../lib/listas";
 import { precioCampanaMargen } from "../lib/campanasMargen";
@@ -287,6 +289,7 @@ export default function Productos() {
   // Punto 37: modal de carga masiva
   const [cargaMasivaOpen, setCargaMasivaOpen] = useState(false);
   const [historialOpen, setHistorialOpen] = useState(false);
+  const [pendientesBsaleOpen, setPendientesBsaleOpen] = useState(false);
 
   const [generandoFichaId, setGenerandoFichaId] = useState(null);
   const [toast, setToast] = useState(null);
@@ -704,11 +707,24 @@ export default function Productos() {
             titulo="Descargar en un ZIP las fichas técnicas de los productos filtrados que tienen la ficha completa"
             onAviso={(tipo, mensaje) => setToast({ type: tipo, message: mensaje })}
           />
+          {/* (2026-10-07) Transitorios sin SKU y demás productos que aún no están en Bsale. */}
+          {rolNorm === "admin" && (
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => setPendientesBsaleOpen(true)}
+              title="Enviar a Bsale los productos que aún no están allá (transitorios sin SKU incluidos)"
+              style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
+            >
+              <CloudUpload size={14} /> Pendientes en Bsale
+            </button>
+          )}
           <Link to="/productos/nuevo" className="btn btn-primary">
             + Crear Producto
           </Link>
         </div>
       </div>
+      {pendientesBsaleOpen && <EnviarPendientesBsale onCerrar={() => setPendientesBsaleOpen(false)} />}
 
       {/* FILTROS */}
       <div className="filter-bar" style={{zIndex: 20, position: "relative"}}>

@@ -207,7 +207,12 @@ precios netos (lista 1 → WEB-PARTICULAR, lista 2 → PRECIO MP). Si el SKU ya
 existe en Bsale solo se enlaza. La ficha del producto dice si está en Bsale y
 tiene el botón "Enviar a Bsale" para reintentar. En la carga masiva los nuevos
 se crean en Bsale en segundo plano. Cambiar después un precio NO lo cambia en
-Bsale.
+Bsale. TRANSITORIOS (2026-10-07): un producto SIN SKU también se crea en Bsale
+(variante sin código); si allá hay uno con el mismo nombre se enlaza. Al
+asignarle el SKU después, se le pone a esa misma variante. «Pendientes en
+Bsale» (admin, en Productos) envía los que quedaron sin enviar: Simular cuenta
+cuántos (por defecto solo los sin SKU) y «Enviar a Bsale» los procesa de a uno
+en segundo plano mostrando el avance.
 
 ### Inventario (/inventario) — solo admin
 Stock por SKU + libro de movimientos auditable (entrada / salida / ajuste, con

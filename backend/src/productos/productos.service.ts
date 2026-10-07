@@ -12,10 +12,11 @@ export class ProductosService {
     @Optional() private bsaleProductos?: BsaleProductosService,
   ) {}
 
-  /* Un producto con SKU se crea en Bsale (pedido de Ariel, 2026-10-03). Nunca
-     frena el guardado: el resultado viaja en `bsale` para mostrarlo. */
+  /* El producto se crea en Bsale (pedido de Ariel, 2026-10-03; desde el
+     2026-10-07 también los transitorios sin SKU). Nunca frena el guardado:
+     el resultado viaja en `bsale` para mostrarlo. */
   private async enviarABsale(producto: any, motivo: string) {
-    if (!this.bsaleProductos || !String(producto?.sku || '').trim()) return null;
+    if (!this.bsaleProductos) return null;
     try {
       return await this.bsaleProductos.sincronizar(producto, { motivo });
     } catch (e: any) {
@@ -28,9 +29,20 @@ export class ProductosService {
     const { data, error } = await this.supabase.getClient().from('productos').select('*').eq('id', id).maybeSingle();
     if (error) throw new BadRequestException(error.message);
     if (!data) throw new NotFoundException('Producto no encontrado');
-    if (!String((data as any).sku || '').trim()) throw new BadRequestException('El producto no tiene SKU: asígnale uno antes de enviarlo a Bsale.');
     if (!this.bsaleProductos) throw new BadRequestException('La integración con Bsale no está disponible.');
     return this.bsaleProductos.sincronizar(data as any, { motivo: 'reenvío desde la ficha' });
+  }
+
+  /* Productos que aún no están en Bsale (2026-10-07): simular cuenta cuántos;
+     el envío real corre en segundo plano y se consulta su avance. */
+  async pendientesBsale(simular: boolean, usuario: string | null, soloSinSku = true) {
+    if (!this.bsaleProductos) throw new BadRequestException('La integración con Bsale no está disponible.');
+    return this.bsaleProductos.enviarPendientes({ simular, usuario, soloSinSku });
+  }
+
+  estadoPendientesBsale() {
+    if (!this.bsaleProductos) throw new BadRequestException('La integración con Bsale no está disponible.');
+    return this.bsaleProductos.estadoPendientes();
   }
 
   async findAll() {
@@ -716,7 +728,13 @@ export class ProductosService {
     // SKU recién asignado (o cambiado): el producto se crea en Bsale.
     const skuAhora = String((data as any)?.sku || '').replace(/\s+/g, '').toUpperCase();
     const skuAntes = String(anterior?.sku || '').replace(/\s+/g, '').toUpperCase();
-    const bsale = skuAhora && skuAhora !== skuAntes ? await this.enviarABsale(data, skuAntes ? `SKU cambiado (antes ${skuAntes})` : 'SKU asignado') : null;
+    // Con SKU nuevo o cambiado se envía (si era transitorio en Bsale, se le pone el SKU a su variante);
+    // un transitorio sin SKU que aún no está en Bsale se envía al editarlo (2026-10-07).
+    const bsale = skuAhora && skuAhora !== skuAntes
+      ? await this.enviarABsale(data, skuAntes ? `SKU cambiado (antes ${skuAntes})` : 'SKU asignado')
+      : !skuAhora && !(data as any)?.bsale_variant_id && String((data as any)?.estado || '') !== 'Inactivo'
+        ? await this.enviarABsale(data, 'transitorio editado')
+        : null;
     return { ...(data as any), propagado, ...(bsale ? { bsale } : {}) };
   }
 

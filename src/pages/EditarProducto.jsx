@@ -983,10 +983,11 @@ try {
                   {!puedeEditarSKU && (
                     <p style={{fontSize:12, color:"var(--text-muted)", marginTop:4}}>Solo admin o jefe de ventas puede editar el SKU.</p>
                   )}
-                  {skuOriginal && (
+                  {/* (2026-10-07) También los transitorios sin SKU: van a Bsale con su variante sin código. */}
+                  {id && (
                     <div style={{ fontSize: 12, marginTop: 6, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                       {producto.bsale_variant_id ? (
-                        <span style={{ color: "#15803d", fontWeight: 600 }}>En Bsale · variante {producto.bsale_variant_id}</span>
+                        <span style={{ color: "#15803d", fontWeight: 600 }}>En Bsale · variante {producto.bsale_variant_id}{skuOriginal ? "" : " (sin SKU)"}</span>
                       ) : producto.bsale_sync_error ? (
                         <span style={{ color: "#b91c1c", overflowWrap: "anywhere" }}>No se pudo enviar a Bsale: {producto.bsale_sync_error}</span>
                       ) : (
