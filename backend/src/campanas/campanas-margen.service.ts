@@ -117,7 +117,8 @@ export class CampanasMargenService {
 
     const margen = Number(body?.margen_pct);
     if (!Number.isFinite(margen) || margen < 0 || margen >= 95) {
-      throw new BadRequestException('El margen debe estar entre 0 y 94,99 %.');
+      // (2026-10-07) El % es un descuento sobre el precio de lista (columna margen_pct).
+      throw new BadRequestException('El descuento debe estar entre 0 y 94,99 %.');
     }
 
     const desde = String(body?.desde || '').slice(0, 10);
