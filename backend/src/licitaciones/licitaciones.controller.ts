@@ -206,6 +206,14 @@ export class LicitacionesController {
     return this.licitacionesService.mercadoPublicoDetalle(codigo);
   }
 
+  // (2026-10-07) Guías de despacho del usuario que no tienen N° de
+  // seguimiento: las muestra un aviso que insiste hasta completarlas.
+  // Debe declararse ANTES de @Get(':id').
+  @Get('guias/sin-seguimiento')
+  guiasSinSeguimiento(@Req() req: any) {
+    return this.licitacionesService.guiasSinSeguimiento(String(req?.user?.email || ''));
+  }
+
   @Get(':id/hijas')
   getHijas(@Param('id', ParseIntPipe) id: number) {
     return this.licitacionesService.getHijas(id);

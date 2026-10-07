@@ -332,7 +332,13 @@ GUÍA DESDE LA COTIZACIÓN: en el Detalle de una cotización ADJUDICADA, el bot�
 varias pregunta de cuál; sin OC (particular) se arma con los productos de la
 cotización. Empresa de transporte y N° de seguimiento son opcionales: si no se
 tienen, la guía muestra "+ N° de seguimiento" para agregarlo después (despacho
-interno no: lleva su correlativo AMSO). OBSERVACIÓN DE LA GUÍA: la
+interno no: lleva su correlativo AMSO). AVISO DE GUÍAS SIN SEGUIMIENTO: al
+vendedor de la cotización (o a quien emitió la guía en Bsale) le aparece una
+ventana con sus guías de los últimos 60 días sin N° de seguimiento, para
+completarlas ahí (empresa + N°) o marcar «Lo retiró el cliente»; vuelve cada 5
+minutos hasta completarlas, «Recordarme en 2 horas» la pospone. No cuenta
+despacho interno, «Retirado en tienda» ni guías anuladas en Bsale.
+OBSERVACIÓN DE LA GUÍA: la
 observación de cada producto de la cotización se propone en el campo
 «Observación» (atributo adicional) de la guía en Bsale; editable antes de
 simular, hasta 250 caracteres (sirve también para instrucciones de entrega).

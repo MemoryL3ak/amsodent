@@ -3196,6 +3196,55 @@ export class LicitacionesService {
     };
   }
 
+  /* ── Guías sin N° de seguimiento (2026-10-07) ──────────────────────────────
+     Pedido de Ariel: "cuando una guía de despacho se haya ingresado sin número
+     de seguimiento, debemos persistir a través de un popup para que el usuario
+     correspondiente edite la guía asociando el número de seguimiento".
+     Responsable = el vendedor de la cotización (vendedor_correo o, si no hay,
+     quien la creó) o quien la emitió en Bsale. Solo guías recientes (60 días:
+     las antiguas sin seguimiento son historia, ~90 de transporte «Otro») y
+     nunca las de Despacho interno (llevan su correlativo AMSO) ni las de una
+     cotización «Retirado en tienda». */
+  async guiasSinSeguimiento(email: string, dias = 60) {
+    const yo = String(email || '').trim().toLowerCase();
+    if (!yo) return { guias: [], dias };
+    const db = this.supabase.getClient();
+    const desde = new Date(Date.now() - dias * 864e5).toISOString();
+    const { data: guias, error } = await db
+      .from('licitacion_documentos')
+      .select('id, licitacion_id, numero, empresa_despacho, n_seguimiento, created_at, fecha_oc, bsale_id')
+      .eq('tipo', 'guia_despacho')
+      .gte('created_at', desde)
+      .order('created_at', { ascending: false })
+      .limit(2000);
+    if (error) throw new BadRequestException(error.message);
+    const sin = (guias || []).filter((g: any) => !String(g.n_seguimiento || '').trim() && !/interno/i.test(String(g.empresa_despacho || '')));
+    if (!sin.length) return { guias: [], dias };
+    const licIds = [...new Set(sin.map((g: any) => Number(g.licitacion_id)).filter(Boolean))];
+    const { data: lics } = await db.from('licitaciones').select('id, id_licitacion, nombre_entidad, vendedor_correo, creado_por, estado_envio').in('id', licIds);
+    const licDe = new Map((lics || []).map((l: any) => [Number(l.id), l]));
+    // Quién la emitió en Bsale (si la tabla de emisiones no existe, se omite).
+    const emisor = new Map<number, string>();
+    try {
+      const { data: em } = await db.from('bsale_emisiones').select('documento_id, usuario').in('documento_id', sin.map((g: any) => Number(g.id))).eq('estado', 'emitida');
+      for (const e of em || []) if ((e as any).documento_id) emisor.set(Number((e as any).documento_id), String((e as any).usuario || '').toLowerCase());
+    } catch { /* sin registro de emisiones */ }
+    const out: any[] = [];
+    for (const g of sin) {
+      const l: any = licDe.get(Number(g.licitacion_id));
+      if (!l || l.estado_envio === 'retirado') continue;
+      const vendedor = String(l.vendedor_correo || l.creado_por || '').trim().toLowerCase();
+      const emitio = emisor.get(Number(g.id)) || '';
+      if (vendedor !== yo && emitio !== yo) continue;
+      out.push({
+        id: Number(g.id), numero: g.numero || null, licitacion_id: Number(g.licitacion_id), codigo: l.id_licitacion || null,
+        cliente: l.nombre_entidad || '', empresa_despacho: g.empresa_despacho || '', fecha: String(g.fecha_oc || g.created_at || '').slice(0, 10),
+        bsale_id: g.bsale_id || null, motivo: vendedor === yo ? 'vendedor' : 'emisor',
+      });
+    }
+    return { guias: out, dias };
+  }
+
   async updateDocumento(docId: number, body: Record<string, any>, email?: string) {
     /* (2026-09-24) La observación de la OC se pisaba sin dejar rastro: no se
        sabía de cuándo era ni quién la escribió. Ahora cada edición estampa
