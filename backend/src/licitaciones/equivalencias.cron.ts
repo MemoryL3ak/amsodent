@@ -163,7 +163,9 @@ export class EquivalenciasCron implements OnModuleInit, OnModuleDestroy {
         .from('notificaciones')
         .select('user_email')
         .eq('tipo', 'equivalencias_pendientes')
-        .gte('created_at', corteVentana);
+        // (2026-10-07) La columna es creado_at: con created_at la consulta fallaba,
+        // no había deduplicación y el aviso se repetía en cada pasada.
+        .gte('creado_at', corteVentana);
       const yaAvisados = new Set((recientes || []).map((n: any) => String(n.user_email || '').toLowerCase()));
 
       // 5) Una notificación por usuario, con los códigos a la vista.
