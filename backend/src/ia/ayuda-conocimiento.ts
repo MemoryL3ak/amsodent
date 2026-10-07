@@ -321,8 +321,13 @@ texto libre y el motivo en la referencia; queda en la cotización y Seguimiento
 de Pagos la suma al saldo. TRAZABILIDAD → pestaña FACTURAS: guías por facturar
 con «Emitir factura», todas las facturas/boletas con su estado en Bsale y los
 botones «N. crédito» / «N. débito», «Nueva factura» y notas por N°. ESTADO EN
-BSALE: etiquetas «Anulada en Bsale», «SII pendiente», «Rechazada SII» o «No
-está en Bsale» junto a guías y facturas (Trazabilidad, Pagos, cotización).
+BSALE: etiquetas «Anulada en Bsale», «Anulada con NC N°» (sus notas de crédito
+suman el total: ya no se cobra), «NC parcial $…», «SII pendiente», «Rechazada
+SII» o «No está en Bsale» junto a guías y facturas (Trazabilidad, Pagos,
+cotización, Facturación). Cuentan también las NC hechas a mano en Bsale; las que
+solo corrigen texto (giro, dirección) no cambian el monto. En la pestaña
+Facturas la anulada se ve en gris, con «Anulada» en Pago y sin botones de
+notas, y un filtro separa vigentes / anuladas / NC parcial / con nota de débito.
 VENTA DIRECTA: pagada al emitir pide el N° de comprobante (salvo efectivo) y
 queda en la pestaña «Venta directa» con su cotización. CLIENTE NUEVO EN BSALE:
 si el RUT no está, una ventana pide los datos que Bsale exige y lo crea

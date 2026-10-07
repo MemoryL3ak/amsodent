@@ -468,13 +468,28 @@ export class BsaleFacturacionService {
       for (const e of emisiones) if (!e.licitacion_id && e.documento_id) e.licitacion_id = licDe.get(Number(e.documento_id)) || null;
     }
 
-    // Anulaciones hechas desde el sistema: la clave de la nota de crédito es
-    // AMS-NC-<id en Bsale del documento anulado>.
-    const anuladoPor = new Map<number, string>();
+    // Notas de crédito hechas desde el sistema: la clave es AMS-NC-<id en Bsale
+    // del documento>. Desde 2026-10-07 hay NC parciales: el documento queda
+    // «anulado» solo si sus NC suman el total; si no, «NC parcial». (Una NC sin
+    // total registrado es de antes de las parciales: anulaba completo.)
+    const ncPor = new Map<number, { total: number; numeros: string[]; sinTotal: boolean }>();
     for (const e of emisiones) {
       const m = String(e.clave || '').match(/^AMS-NC-(\d+)$/);
-      if (e.tipo === 'nota_credito' && e.estado === 'emitida' && m) anuladoPor.set(Number(m[1]), String(e.numero || ''));
+      if (e.tipo !== 'nota_credito' || e.estado !== 'emitida' || !m) continue;
+      const x = ncPor.get(Number(m[1])) || { total: 0, numeros: [], sinTotal: false };
+      x.total += Number(e.total) || 0;
+      if (!(Number(e.total) > 0)) x.sinTotal = true;
+      if (e.numero) x.numeros.push(String(e.numero));
+      ncPor.set(Number(m[1]), x);
     }
+    const ncDe = (e: any) => {
+      const nc = e.bsale_id ? ncPor.get(Number(e.bsale_id)) : null;
+      if (!nc) return { anulada_por: null, nc_parcial: null };
+      const completa = nc.sinTotal || !(Number(e.total) > 0) || nc.total >= Number(e.total) - 2;
+      return completa
+        ? { anulada_por: nc.numeros.join(', ') || 'NC', nc_parcial: null }
+        : { anulada_por: null, nc_parcial: { total: nc.total, numeros: nc.numeros } };
+    };
 
     const licIds = [...new Set(emisiones.map((e) => Number(e.licitacion_id)).filter((id) => id > 0))];
     const guiaIds = [...new Set(emisiones.flatMap((e) => (e.guias_doc_ids || []).map(Number)))];
@@ -496,7 +511,8 @@ export class BsaleFacturacionService {
         // Venta directa (boleta o factura que crea su propia cotización).
         venta_directa: String(e.clave || '').startsWith('AMS-V-'),
         bsale_id: Number(e.bsale_id) || null,
-        anulada_por: e.bsale_id && anuladoPor.has(Number(e.bsale_id)) ? anuladoPor.get(Number(e.bsale_id)) || 'NC' : null,
+        ...ncDe(e),
+        documento_id: e.documento_id || null,
         origen_doc_id: e.origen_doc_id || null,
         estado: e.estado,
         numero: e.numero || null,

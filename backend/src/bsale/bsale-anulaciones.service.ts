@@ -3,6 +3,7 @@ import { SupabaseService } from '../supabase/supabase.service';
 import { LicitacionesService } from '../licitaciones/licitaciones.service';
 import { BsaleFacturacionService, EMISOR, epochAFecha, fechaAEpoch, normRut, totalesDe } from './bsale-facturacion.service';
 import { BsaleDespachosService } from './bsale-despachos.service';
+import { BsaleEstadosService } from './bsale-estados.service';
 
 /* ── Anular facturas y boletas en Bsale con nota de crédito (2026-10-03) ─────
    Pedido de Ariel: "implementa lo de anular documentos". En Chile una factura
@@ -73,6 +74,7 @@ export class BsaleAnulacionesService {
     private facturacion: BsaleFacturacionService,
     private despachos: BsaleDespachosService,
     private licitaciones: LicitacionesService,
+    private estados: BsaleEstadosService,
   ) {}
 
   // ── Encontrar el documento ────────────────────────────────────────────
@@ -538,7 +540,7 @@ export class BsaleAnulacionesService {
       : modo === 'parcial'
         ? `Devolución parcial de ${doc} N° ${o.numero}: ${motivo}`
         : `Ajuste de precio de ${doc} N° ${o.numero}: ${motivo}`;
-    return this.despachos.emitirReal({
+    const r = await this.despachos.emitirReal({
       usuario, clave, salesId, tipo: 'nota_credito', ruta: '/returns.json', solicitud, vista,
       licitacionId: b.cotizacion?.id || null, origenDocId: b.registro?.documento_id || null,
       lineas: elegidas.map((l: any) => ({ sku: l.sku, cantidad: l.cantidad, neto_unitario: l.valor })),
@@ -563,5 +565,8 @@ export class BsaleAnulacionesService {
         return avisos;
       },
     });
+    // La factura se ve anulada / con NC de inmediato (pestaña Facturas, Pagos, cotización).
+    if ((r as any)?.emitida) this.estados.anotarNotaCredito(Number(o.bsale_id), { numero: (r as any).numero ?? null, total: Number((r as any).total) || Number(totales.total) || null });
+    return r;
   }
 }
