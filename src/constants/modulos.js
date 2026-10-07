@@ -10,6 +10,9 @@ export const MODULOS = [
   { key: "bitacora", label: "Bitácora actividades", grupo: "Comercial" },
   { key: "productos", label: "Productos", grupo: "Comercial" },
   { key: "campanas", label: "Campañas", grupo: "Comercial" },
+  // Venta directa (2026-10-07): listado y documentos de las ventas directas.
+  // Emitir exige además rol admin, contabilidad o jefe de ventas especial.
+  { key: "venta_directa", label: "Venta directa", grupo: "Comercial" },
   { key: "trazabilidad", label: "Trazabilidad", grupo: "Post-venta" },
   { key: "seguimiento_pagos", label: "Seguimiento de Pagos", grupo: "Post-venta" },
   { key: "cobranza", label: "Cobranza", grupo: "Post-venta" },
@@ -57,10 +60,10 @@ const BASE = ["cotizaciones", "crear_cotizacion", "clientes", "mis_clientes", "b
 // Fallback por rol (debe reflejar backend/src/auth/permisos.ts).
 const ROLE_DEFAULTS = {
   jefe_ventas: [...BASE, "trazabilidad", "metas", "panel_indicadores", "resumen_comercial", "cotizaciones_vendedor"],
-  jefe_ventas_especial: [...BASE, "trazabilidad", "seguimiento_pagos", "cobranza", "factoring", "facturacion", "metas", "panel_indicadores", "resumen_comercial", "cotizaciones_vendedor"],
+  jefe_ventas_especial: [...BASE, "trazabilidad", "seguimiento_pagos", "cobranza", "factoring", "facturacion", "venta_directa", "metas", "panel_indicadores", "resumen_comercial", "cotizaciones_vendedor"],
   ventas: [...BASE, "metas"],
   ventas_especial: [...BASE, "metas", "sorteo", "monitoreo_stock"],
-  contabilidad: ["mi_correo", "chat", "seguimiento_pagos", "cobranza", "facturacion", "metas"],
+  contabilidad: ["mi_correo", "chat", "seguimiento_pagos", "cobranza", "facturacion", "venta_directa", "metas"],
 };
 
 export function esAdminRol(rol) {

@@ -531,6 +531,99 @@ export class BsaleFacturacionService {
     };
   }
 
+  /* ── Módulo Venta directa (2026-10-07) ─────────────────────────────────
+     Pedido de Ariel: "crear el módulo comercial de Venta directa. Acá se debe
+     visualizar el listado de venta directa y creación de documentos
+     correspondientes". TODAS las ventas directas (clave AMS-V-…, no solo las
+     últimas 300 emisiones de Facturación), cada una con su cotización, si está
+     pagada, y lo que tiene registrado: notas de crédito y débito (en BRUTO),
+     guías y comprobantes de pago. Las NC hechas a mano en Bsale las suma el
+     front con el estado en Bsale. */
+  async ventasDirectas(userId: string) {
+    await this.exigirRol(userId);
+    const db = this.supabase.getClient();
+    const ventas: any[] = [];
+    for (let desde = 0; desde < 20000; desde += 1000) {
+      const r: any = await db
+        .from('bsale_emisiones')
+        .select('id, clave, tipo, estado, numero, neto, total, fecha_emision, url_pdf, bsale_id, licitacion_id, documento_id, usuario, error, created_at, updated_at')
+        .like('clave', 'AMS-V-%')
+        .order('id', { ascending: false })
+        .range(desde, desde + 999);
+      if (r.error) return { registro_listo: false, filas: [] };
+      ventas.push(...(r.data || []));
+      if (!r.data || r.data.length < 1000) break;
+    }
+
+    // Documentos y cotizaciones de esas ventas (de a 300 ids por consulta).
+    const porLotes = async (ids: number[], fn: (lote: number[]) => Promise<any[]>) => {
+      const out: any[] = [];
+      for (let i = 0; i < ids.length; i += 300) out.push(...(await fn(ids.slice(i, i + 300))));
+      return out;
+    };
+    const sinLic = [...new Set(ventas.filter((e) => !e.licitacion_id && e.documento_id).map((e) => Number(e.documento_id)))];
+    if (sinLic.length) {
+      const ds = await porLotes(sinLic, async (l) => (await db.from('licitacion_documentos').select('id, licitacion_id').in('id', l)).data || []);
+      const licDe = new Map(ds.map((d: any) => [Number(d.id), Number(d.licitacion_id) || null]));
+      for (const e of ventas) if (!e.licitacion_id && e.documento_id) e.licitacion_id = licDe.get(Number(e.documento_id)) || null;
+    }
+    const licIds = [...new Set(ventas.map((e) => Number(e.licitacion_id)).filter((id) => id > 0))];
+    const lics = new Map<number, any>();
+    for (const l of await porLotes(licIds, async (lote) => (await db.from('licitaciones').select('id, id_licitacion, nombre_entidad, rut_entidad, condicion_venta').in('id', lote)).data || [])) {
+      lics.set(Number(l.id), l);
+    }
+    const docs = await porLotes(licIds, async (lote) =>
+      (await db.from('licitacion_documentos').select('id, licitacion_id, tipo, numero, monto, pagada, fecha_pago, forma_pago, deriva_de_id, fecha_oc, created_at').in('licitacion_id', lote)).data || []);
+    const docsDe = new Map<number, any[]>();
+    for (const d of docs) {
+      const k = Number(d.licitacion_id);
+      if (!docsDe.has(k)) docsDe.set(k, []);
+      (docsDe.get(k) as any[]).push(d);
+    }
+
+    const sumar = (lista: any[]) => (lista.length ? { total: lista.reduce((a, d) => a + (Number(d.monto) || 0), 0), numeros: lista.map((d) => String(d.numero || '')).filter(Boolean) } : null);
+    return {
+      registro_listo: true,
+      filas: ventas.map((e) => {
+        const lic = lics.get(Number(e.licitacion_id)) || null;
+        const dl = docsDe.get(Number(e.licitacion_id)) || [];
+        const doc = dl.find((d) => Number(d.id) === Number(e.documento_id))
+          || dl.find((d) => d.tipo === 'factura_boleta' && String(d.numero) === String(e.numero)) || null;
+        const hijos = (tipo: string) => (doc ? dl.filter((d) => d.tipo === tipo && Number(d.deriva_de_id) === Number(doc.id)) : []);
+        const nc = sumar(hijos('nota_credito'));
+        const total = Number(e.total) || null;
+        return {
+          id: e.id,
+          tipo: e.tipo === 'factura' ? 'factura' : 'boleta',
+          estado: e.estado,
+          error: e.estado === 'emitida' ? null : e.error || null,
+          numero: e.numero || null,
+          fecha: e.fecha_emision || String(e.updated_at || e.created_at || '').slice(0, 10) || null,
+          neto: Number(e.neto) || null,
+          total,
+          url_pdf: e.url_pdf || null,
+          bsale_id: Number(e.bsale_id) || null,
+          documento_id: doc ? Number(doc.id) : Number(e.documento_id) || null,
+          licitacion_id: Number(e.licitacion_id) || null,
+          codigo: lic?.id_licitacion || null,
+          cliente: lic?.nombre_entidad || '',
+          rut: lic?.rut_entidad || null,
+          credito: /cr[eé]dito/i.test(String(lic?.condicion_venta || '')),
+          condicion: lic?.condicion_venta || null,
+          pagada: !!doc?.pagada,
+          fecha_pago: doc?.fecha_pago || null,
+          forma_pago: doc?.forma_pago || null,
+          nc,
+          nd: sumar(hijos('nota_debito')),
+          anulada: !!nc && !!total && nc.total >= total - 2,
+          guias: dl.filter((d) => d.tipo === 'guia_despacho').map((d) => ({ id: Number(d.id), numero: String(d.numero || '') })),
+          comprobantes: hijos('comprobante_pago').map((d) => ({ numero: String(d.numero || ''), monto: Number(d.monto) || null, forma_pago: d.forma_pago || null })),
+          usuario: e.usuario || null,
+        };
+      }),
+    };
+  }
+
   // ── Borrador ────────────────────────────────────────────────────────────
 
   async preparar(userId: string, licitacionId: number, guiaDocIdsIn: number[]) {

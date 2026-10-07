@@ -39,6 +39,13 @@ export class BsaleFacturacionController {
     return this.facturacion.emitidas(String(req?.user?.id || ''));
   }
 
+  // Módulo Venta directa (2026-10-07): todas las ventas directas con su
+  // cotización, pago, notas y guías. Mismo rol que emitir.
+  @Get('ventas-directas')
+  ventasDirectas(@Req() req: any) {
+    return this.facturacion.ventasDirectas(String(req?.user?.id || ''));
+  }
+
   // Borrador de la factura a partir de las guías elegidas. No escribe nada.
   @Post('preparar')
   preparar(@Req() req: any, @Body() body: { licitacion_id: number; guia_ids: number[] }) {

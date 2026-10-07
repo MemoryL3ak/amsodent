@@ -229,6 +229,18 @@ precios al cotizar y se destacan en Productos. Al crear una campaña se elige la
 LISTA DE PRECIOS asociada (1, 2 o 3): el precio unitario de referencia de cada
 SKU sale de esa lista. Crear campañas es solo admin.
 
+### Venta directa (/venta-directa)
+Módulo comercial (2026-10-07) para boletas y facturas al instante: «Nueva
+boleta» / «Nueva factura» emite en Bsale y crea sola la cotización con esos
+productos. Lista TODAS las ventas directas con documento (PDF y estado en
+Bsale), cliente y cotización, total con notas de crédito y débito y pago
+(Pagada, Por cobrar, Anulada, Sin emitir); filtros por documento y pago. Cada
+fila se despliega con condición, comprobantes, notas (también las hechas a mano
+en Bsale), guías y quién la emitió. Por venta: «N. crédito» y, en facturas,
+«N. débito». No ofrece guía: la venta directa ya rebaja stock y una guía en
+Bsale lo rebaja otra vez. La ven quienes tienen Venta directa o Facturación;
+emitir exige rol administración, contabilidad o jefatura de ventas especial.
+
 ### Campañas de margen (/campanas-margen)
 Campaña por MARCA, CATEGORÍA y/o lista de SKUs, sobre una lista de precios
 (1, 2 o 3) y con vigencia. En vez de fijar un precio por SKU, aplica un % de

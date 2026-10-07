@@ -57,6 +57,7 @@ import SeguimientoPagos from "./pages/SeguimientoPagos";
 import Cobranza from "./pages/Cobranza";
 import Factoring from "./pages/Factoring";
 import Facturacion from "./pages/Facturacion";
+import VentaDirecta from "./pages/VentaDirecta";
 import BitacoraCotizaciones from "./pages/BitacoraCotizaciones";
 import Buzon from "./pages/Buzon";
 
@@ -241,6 +242,16 @@ export default function App() {
             element={
               <RequireModulo modulo="facturacion">
                 <Facturacion />
+              </RequireModulo>
+            }
+          />
+          {/* Comercial → Venta directa (2026-10-07). Quien tiene Facturación
+              también entra: emitir exige el mismo rol. */}
+          <Route
+            path="venta-directa"
+            element={
+              <RequireModulo modulo={["venta_directa", "facturacion"]}>
+                <VentaDirecta />
               </RequireModulo>
             }
           />
