@@ -24,6 +24,7 @@ import CalculadoraFlete from "../components/CalculadoraFlete";
 import BotonFichaTecnica from "../components/BotonFichaTecnica";
 import BotonDescargarFichas from "../components/BotonDescargarFichas";
 import EstadoBsaleBadge from "../components/EstadoBsale";
+import BotonImprimirCarta from "../components/BotonImprimirCarta";
 import { useEstadosBsale } from "../lib/estadosBsale";
 import EmitirDespachoBsale from "../components/EmitirDespachoBsale";
 import DocumentoLibreBsale from "../components/DocumentoLibreBsale";
@@ -5462,6 +5463,10 @@ export default function EditarLicitacion() {
                       ) : (
                         <>
                           {doc.numero || "-"}
+                          {/* (2026-10-07) Imprimir en hoja carta los documentos que están en Bsale. */}
+                          {["guia_despacho", "factura", "factura_boleta", "nota_credito", "nota_debito"].includes(doc.tipo) && (
+                            <BotonImprimirCarta bsaleId={doc.bsale_id || estadosBsale?.[doc.id]?.bsale_id} compacto style={{ marginLeft: 4, verticalAlign: "middle" }} />
+                          )}
                           <EstadoBsaleBadge estado={estadosBsale?.[doc.id]} style={{ display: "block", width: "fit-content", marginTop: 2 }} />
                         </>
                       )}

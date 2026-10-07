@@ -357,6 +357,12 @@ cotización, Facturación). Cuentan también las NC hechas a mano en Bsale; las 
 solo corrigen texto (giro, dirección) no cambian el monto. En la pestaña
 Facturas la anulada se ve en gris, con «Anulada» en Pago y sin botones de
 notas, y un filtro separa vigentes / anuladas / NC parcial / con nota de débito.
+IMPRIMIR EN CARTA: en la cuenta de Bsale la boleta («BOLETA ELECTRÓNICA T») y
+la nota de débito salen en rollo térmico de 80 mm (factura, guía y nota de
+crédito ya salen en hoja). El ícono de impresora junto al N° del documento
+(Facturación, Venta directa, Trazabilidad → Facturas, documentos de la
+cotización) arma el documento en hoja carta con su timbre electrónico y la
+resolución del SII, para imprimirlo en formato normal.
 CORREO AUTOMÁTICO: al emitir guía, factura o boleta que queda en una
 cotización, se envía sola al correo del cliente con el PDF (guía: plantilla y
 copias de siempre; factura/boleta: la suya), desde la casilla del vendedor si

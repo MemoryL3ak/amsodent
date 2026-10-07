@@ -12,6 +12,7 @@ import { BsaleProductosService } from './bsale-productos.service';
 import { BsaleAnulacionesController } from './bsale-anulaciones.controller';
 import { BsaleAnulacionesService } from './bsale-anulaciones.service';
 import { BsaleEstadosService } from './bsale-estados.service';
+import { BsaleImpresionService } from './bsale-impresion.service';
 import { LicitacionesModule } from '../licitaciones/licitaciones.module';
 import { CorreosModule } from '../correos/correos.module';
 
@@ -21,7 +22,7 @@ import { CorreosModule } from '../correos/correos.module';
   // CorreosModule: guía, factura y boleta se envían solas al cliente (2026-10-07).
   imports: [LicitacionesModule, CorreosModule],
   controllers: [BsaleController, BsaleFacturacionController, BsaleDespachosController, BsaleLibreController, BsaleAnulacionesController],
-  providers: [BsaleService, BsaleCron, BsaleFacturacionService, BsaleDespachosService, BsaleLibreService, BsaleProductosService, BsaleAnulacionesService, BsaleEstadosService],
+  providers: [BsaleService, BsaleCron, BsaleFacturacionService, BsaleDespachosService, BsaleLibreService, BsaleProductosService, BsaleAnulacionesService, BsaleEstadosService, BsaleImpresionService],
   // Productos: un producto nuevo con SKU (o al que se le asigna uno) se crea en Bsale.
   exports: [BsaleProductosService],
 })
