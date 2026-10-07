@@ -9,6 +9,7 @@ import {
   plantillaAgradecimientoOC,
   plantillaGuiaDespacho,
   plantillaAgradecimientoInfoDespacho,
+  plantillaDocumentoTributario,
 } from './correos.templates';
 
 export type TipoPlantilla =
@@ -355,6 +356,77 @@ export class CorreosService {
     }
 
     throw new BadRequestException(`Tipo de plantilla no soportado: ${tipo}`);
+  }
+
+  /* ── Documento emitido en Bsale → correo al cliente (2026-10-07) ──────────
+     Pedido de Ariel: "al generar una guía y/o factura/boleta se deben enviar
+     los documentos por correo automáticamente". Se llama al terminar de
+     emitir, con el documento ya registrado en la cotización y su PDF en
+     Storage. La guía usa la misma plantilla que se manda a mano (con sus
+     copias); la factura/boleta, la suya. Sale desde la casilla del vendedor
+     si la conectó; si no, por la cuenta compartida con responder-a al
+     vendedor. Nunca lanza: devuelve si se envió y, si no, por qué.
+     `BSALE_CORREO_AUTO=off` lo apaga. */
+  static correoAutoActivo(): boolean {
+    return String(process.env.BSALE_CORREO_AUTO || 'on').toLowerCase() !== 'off';
+  }
+
+  /** A quién iría el correo de un documento de esta cotización (para la simulación). */
+  async destinatarioDocumento(licitacionId: number | null, paraForzado?: string | null) {
+    const activo = CorreosService.correoAutoActivo();
+    let para = String(paraForzado || '').trim().toLowerCase();
+    if (!para && licitacionId) {
+      try { para = String((await this.getLicitacion(Number(licitacionId))).email || '').trim().toLowerCase(); } catch { para = ''; }
+    }
+    return { activo, para: RE_EMAIL.test(para) ? para : null };
+  }
+
+  async enviarDocumentoEmitido(opts: { documentoId: number; tipo: 'guia' | 'factura' | 'boleta'; para?: string | null; total?: number | null }) {
+    if (!CorreosService.correoAutoActivo()) return { enviado: false, motivo: 'El envío automático de documentos está apagado en el servidor.' };
+    try {
+      const doc: any = await this.getDocumento(Number(opts.documentoId));
+      const licId = Number(doc.licitacion_id) || 0;
+      if (!licId) return { enviado: false, motivo: 'El documento no quedó en una cotización.' };
+      if (!doc.bucket || !doc.storage_path) return { enviado: false, motivo: 'No hay PDF guardado del documento para adjuntar.' };
+      let para = String(opts.para || '').trim().toLowerCase();
+      let asunto = '';
+      let cuerpoHtml = '';
+      let cc: string[] = [];
+      if (opts.tipo === 'guia') {
+        const p = await this.getPlantilla('guia_despacho_enviar', licId, doc.id);
+        para = para || String(p.para || '').trim().toLowerCase();
+        asunto = p.asunto;
+        cuerpoHtml = p.cuerpoHtml;
+        cc = Array.isArray(p.cc) ? p.cc : [];
+      } else {
+        const lic: any = await this.getLicitacion(licId);
+        para = para || String(lic.email || '').trim().toLowerCase();
+        const t = plantillaDocumentoTributario({
+          tipoDocumento: opts.tipo === 'boleta' ? 'Boleta' : 'Factura',
+          numero: String(doc.numero || ''),
+          nombreCliente: String(lic.nombre_entidad || lic.contacto || ''),
+          numeroCotizacion: String(lic.id_licitacion || lic.id || ''),
+          total: opts.total ?? null,
+          vendedorNombre: String(lic.vendedor_nombre || ''),
+          vendedorCorreo: this.correoVendedor(lic),
+          vendedorCelular: String(lic.vendedor_celular || ''),
+        });
+        asunto = t.asunto;
+        cuerpoHtml = t.html;
+      }
+      if (!RE_EMAIL.test(para)) return { enviado: false, motivo: 'La cotización no tiene correo del cliente: envíalo a mano desde la cotización.' };
+      const r: any = await this.enviar({ licitacionId: licId, para, cc, asunto, cuerpoHtml, adjuntarDocumentoId: doc.id });
+      if (opts.tipo === 'guia') {
+        // El recordatorio «enviar la guía al cliente» ya está cumplido.
+        await this.supabase.getClient().from('notificaciones').update({ leida_at: new Date().toISOString() })
+          .eq('tipo', 'guia_despacho_enviar').is('leida_at', null).filter('metadata->>documento_id', 'eq', String(doc.id));
+      }
+      this.logger.log(`Correo automático: ${opts.tipo} ${doc.numero} → ${para} (${r?.modo || 'smtp'})`);
+      return { enviado: true, para, cc, modo: r?.modo || null, de: r?.de || null };
+    } catch (e: any) {
+      this.logger.warn(`Correo automático del documento ${opts.documentoId} no enviado: ${e?.message || e}`);
+      return { enviado: false, motivo: `No se pudo enviar el correo: ${String(e?.message || e).slice(0, 160)}` };
+    }
   }
 
   // Descarga el PDF de un documento desde Storage para adjuntarlo al correo.

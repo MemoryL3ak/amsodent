@@ -537,6 +537,11 @@ export class BsaleLibreService {
     const vista: any = this.vista(b);
     if (obs.texto) vista.observacion = obs.texto;
     if (obs.aviso) vista.notas = [...vista.notas, obs.aviso];
+    // (2026-10-07) Guía, factura o boleta se envían solas al cliente (si queda en
+    // una cotización: la venta directa crea la suya). Sin cotización no se envía.
+    vista.correo = b.cotizacion || b.venta_directa
+      ? await this.despachos.correoPrevio(b.cotizacion?.id || null, b.cliente?.email || null)
+      : { activo: false, para: null, motivo: 'Sin cotización: el documento no se envía por correo.' };
     if (!real) {
       return { simulacion: true, emision_apagada: !simular, solicitud, totales: b.totales, vista, huella: b.huella, avisos: b.avisos };
     }
@@ -549,6 +554,7 @@ export class BsaleLibreService {
       licitacionId: b.cotizacion?.id || null, origenDocId: null,
       lineas: b.lineas.map((l: any) => ({ sku: l.sku, cantidad: l.cantidad, neto_unitario: l.neto_unitario })),
       bucket: esGuia ? 'guia-despacho' : 'factura',
+      ...(b.cotizacion || b.venta_directa ? { correo: { tipo: b.tipo, para: b.cliente?.email || null } } : {}),
       registrar: async (doc: any, pdf: any) => {
         if (b.venta_directa) {
           const res = await this.registrarVentaDirecta(b, doc, pdf, usuario);

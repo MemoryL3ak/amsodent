@@ -5,9 +5,11 @@ import {
   ForbiddenException,
   Injectable,
   Logger,
+  Optional,
 } from '@nestjs/common';
 import { createHash } from 'crypto';
 import { SupabaseService } from '../supabase/supabase.service';
+import { CorreosService } from '../correos/correos.service';
 
 /* ── Emisión de facturas en Bsale desde el sistema (2026-10-02) ──────────────
    La factura se arma A PARTIR DE LA GUÍA DE DESPACHO que ya existe en Bsale,
@@ -194,7 +196,11 @@ export function armarSolicitud(
 export class BsaleFacturacionService {
   private readonly logger = new Logger(BsaleFacturacionService.name);
 
-  constructor(private supabase: SupabaseService) {}
+  constructor(
+    private supabase: SupabaseService,
+    // (2026-10-07) La factura emitida se envía sola al cliente. Opcional para las pruebas.
+    @Optional() private correos?: CorreosService,
+  ) {}
 
   // ── Configuración ───────────────────────────────────────────────────────
 
@@ -1001,6 +1007,7 @@ export class BsaleFacturacionService {
         fecha_vencimiento: sumarDias(fecha, dias),
         // Lo que verá la persona: el documento como quedaría, en palabras.
         vista: {
+          correo: this.correos ? await this.correos.destinatarioDocumento(licId) : null,
           tipo: 'Factura electrónica',
           sii: true,
           descuenta_stock: false,
@@ -1237,6 +1244,12 @@ export class BsaleFacturacionService {
       .from('bsale_emisiones')
       .update({ documento_id: (creado as any).id, updated_at: new Date().toISOString() })
       .eq('id', emision.id);
+    // (2026-10-07) La factura se envía sola al cliente con su PDF.
+    let correo: any = null;
+    if (this.correos) {
+      correo = await this.correos.enviarDocumentoEmitido({ documentoId: Number((creado as any).id), tipo: 'factura', total: Number(emision.total) || null });
+      if (!correo?.enviado && correo?.motivo) avisos.push(`Correo al cliente: ${correo.motivo}`);
+    }
     return {
       emitida: true,
       registrada: true,
@@ -1247,6 +1260,7 @@ export class BsaleFacturacionService {
       documento_id: (creado as any).id,
       emitida_por: email,
       avisos,
+      correo,
     };
   }
 }

@@ -357,6 +357,11 @@ cotización, Facturación). Cuentan también las NC hechas a mano en Bsale; las 
 solo corrigen texto (giro, dirección) no cambian el monto. En la pestaña
 Facturas la anulada se ve en gris, con «Anulada» en Pago y sin botones de
 notas, y un filtro separa vigentes / anuladas / NC parcial / con nota de débito.
+CORREO AUTOMÁTICO: al emitir guía, factura o boleta que queda en una
+cotización, se envía sola al correo del cliente con el PDF (guía: plantilla y
+copias de siempre; factura/boleta: la suya), desde la casilla del vendedor si
+la conectó. La simulación dice a quién irá; sin correo en la cotización, avisa
+para enviarlo a mano. Enviar la guía cumple su recordatorio.
 VENTA DIRECTA: pagada al emitir pide el N° de comprobante (salvo efectivo) y
 queda en la pestaña «Venta directa» con su cotización. CLIENTE NUEVO EN BSALE:
 si el RUT no está, una ventana pide los datos que Bsale exige y lo crea

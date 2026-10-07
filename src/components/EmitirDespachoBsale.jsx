@@ -5,6 +5,7 @@ import { api } from "../lib/api";
 import DateFilter from "./DateFilter";
 import DropdownSelect from "./ui/DropdownSelect";
 import VistaPreviaBsale from "./VistaPreviaBsale";
+import AvisoCorreoDocumento from "./AvisoCorreoDocumento";
 import CamposSeguimientoGuia from "./CamposSeguimientoGuia";
 import CampoObservacionGuia, { OBSERVACION_GUIA_MAX } from "./CampoObservacionGuia";
 
@@ -157,6 +158,7 @@ export default function EmitirDespachoBsale({ tipo = "guia", licitacionId, ocDoc
                 {resultado.total ? `Total ${clp(resultado.total)}. ` : ""}
                 {resultado.registrada ? (esGuia ? "Quedó en Trazabilidad como guía de esta orden de compra; desde ahí se emite la factura." : "La orden de compra quedó enlazada a su nota de venta.") : ""}
               </div>
+              <AvisoCorreoDocumento correo={resultado.correo} emitido />
               {(resultado.avisos || []).map((a, i) => <div key={i} style={{ fontSize: 12.5, color: "#92400e" }}>{a}</div>)}
               {resultado.url_pdf && (
                 <a href={resultado.url_pdf} target="_blank" rel="noopener noreferrer" className="btn btn-secondary btn-sm" style={{ alignSelf: "flex-start", textDecoration: "none" }}>
