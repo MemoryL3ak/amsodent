@@ -39,6 +39,8 @@ import {
   Truck,
   RefreshCw,
   Tag,
+  History,
+  ClipboardCheck,
 } from "lucide-react";
 
 import DropdownSelect from "../components/ui/DropdownSelect";
@@ -1397,6 +1399,12 @@ function PantallaDeclaracion({ cliente, setToast }) {
 
   // Ubicaciones del cliente (bodega/caja/estante), gestionadas por él.
   const [ubicaciones, setUbicaciones] = useState([]);
+  // (2026-10-07) Buscador de la tabla, historial de movimientos (admin) y
+  // resumen de cambios antes de guardar.
+  const [busquedaStock, setBusquedaStock] = useState("");
+  const [movimientos, setMovimientos] = useState({});
+  const [historialDe, setHistorialDe] = useState(null);
+  const [confirmarGuardar, setConfirmarGuardar] = useState(null);
   const [mostrarUbicaciones, setMostrarUbicaciones] = useState(false);
 
   async function cargarUbicaciones() {
@@ -1562,6 +1570,18 @@ function PantallaDeclaracion({ cliente, setToast }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sucursalId]);
 
+  // Últimos 5 movimientos por producto (solo el administrador de la cuenta).
+  async function cargarMovimientos() {
+    if (!esAdminPortal || !sucursalId) return;
+    try {
+      const r = await apiRequest(`/stock-clientes/mis-movimientos?sucursal_id=${sucursalId}`);
+      setMovimientos(r?.movimientos || {});
+    } catch {
+      setMovimientos({});
+    }
+  }
+  useEffect(() => { cargarMovimientos(); /* al cambiar de sucursal */ }, [sucursalId, esAdminPortal]); // eslint-disable-line react-hooks/exhaustive-deps
+
   function crearItemVacio() {
     return {
       nombre: "",
@@ -1648,6 +1668,15 @@ function PantallaDeclaracion({ cliente, setToast }) {
     return { totales: tot, itemsCriticos: criticos, itemsBajos: bajos };
   }, [items]);
 
+  // (2026-10-07) «Guardar stock» primero muestra el resumen de cambios.
+  function pedirConfirmacion() {
+    if (!items.some((it) => String(it.nombre || "").trim())) {
+      setToast({ type: "warning", mensaje: "Agregue al menos un producto antes de guardar." });
+      return;
+    }
+    setConfirmarGuardar(resumenCambiosStock(baseline, items));
+  }
+
   async function guardar() {
     const limpios = items
       .map((it) => {
@@ -1696,6 +1725,8 @@ function PantallaDeclaracion({ cliente, setToast }) {
       });
       // El estado guardado pasa a ser la nueva línea base para "Cancelar cambios".
       setBaseline(items.map((o) => ({ ...o })));
+      setConfirmarGuardar(null);
+      cargarMovimientos();
       // refresca el historial
       const decls = await apiRequest("/stock-clientes/mis-declaraciones").catch(() => []);
       setHistorial(Array.isArray(decls) ? decls : []);
@@ -2017,24 +2048,45 @@ function PantallaDeclaracion({ cliente, setToast }) {
         {/* Selector de sucursal (catálogo por dirección) */}
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", padding: "0 0 14px", borderBottom: "1px solid #eef2f7", marginBottom: 14 }}>
           <span style={{ fontSize: 13, fontWeight: 600, color: "#334155" }}>Sucursal:</span>
-          <select
+          <DropdownSelect
             value={sucursalId ?? ""}
-            onChange={(e) => setSucursalId(e.target.value || null)}
-            style={{ height: 38, padding: "0 12px", border: "1px solid #cbd5e1", borderRadius: 8, fontSize: 13.5, minWidth: 220, background: "#fff", cursor: "pointer" }}
-          >
-            {sucursales.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.nombre}{s.direccion ? ` — ${s.direccion}` : ""}
-              </option>
-            ))}
-          </select>
+            onChange={(v) => setSucursalId(v || null)}
+            minWidth={240}
+            style={{ width: 260, flex: "0 1 260px", minWidth: 180, maxWidth: "100%", height: 38, fontSize: 13.5, borderRadius: 8 }}
+            options={sucursales.map((s) => ({ value: s.id, label: s.nombre, detalle: s.direccion || undefined }))}
+          />
           {sucursalActual?.comuna && (
             <span style={{ fontSize: 12, color: "#64748b" }}>{sucursalActual.comuna}</span>
           )}
           <button onClick={() => setMostrarUbicaciones(true)} style={styles.btnSecundarioOutline} className="btn-hover" title="Crear o editar tus ubicaciones (bodega, caja, etc.)">
             <MapPin size={15} /> Gestionar ubicaciones
           </button>
+          {/* (2026-10-07) Buscador de productos de la tabla. */}
+          <div className="buscador-stock" style={{ position: "relative", flex: "1 1 220px", minWidth: 180, maxWidth: 360, marginLeft: "auto" }}>
+            <Search size={14} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "#94a3b8" }} />
+            <input
+              value={busquedaStock}
+              onChange={(e) => setBusquedaStock(e.target.value)}
+              placeholder="Buscar producto, SKU, marca o ubicación…"
+              aria-label="Buscar en el inventario"
+              style={{ width: "100%", height: 38, padding: "0 30px 0 30px", border: "1px solid #cbd5e1", borderRadius: 8, fontSize: 13.5, boxSizing: "border-box" }}
+            />
+            {busquedaStock && (
+              <button type="button" onClick={() => setBusquedaStock("")} title="Limpiar búsqueda" style={{ position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)", border: 0, background: "transparent", cursor: "pointer", color: "#64748b", padding: 2, display: "inline-flex" }}>
+                <X size={14} />
+              </button>
+            )}
+          </div>
         </div>
+        {busquedaStock.trim() && (
+          <div style={{ fontSize: 12.5, color: "#64748b", margin: "-6px 0 10px" }}>
+            {(() => {
+              const n = filtrarStock(items, busquedaStock, ubicaciones).filter(({ it }) => String(it.nombre || "").trim()).length;
+              const total = items.filter((it) => String(it.nombre || "").trim()).length;
+              return `Mostrando ${n} de ${total} productos.`;
+            })()}
+          </div>
+        )}
 
         <div style={styles.tablaWrap}>
           <table style={styles.tabla}>
@@ -2077,7 +2129,7 @@ function PantallaDeclaracion({ cliente, setToast }) {
               </tr>
             </thead>
             <tbody>
-              {items.map((it, idx) => {
+              {filtrarStock(items, busquedaStock, ubicaciones).map(({ it, idx }) => {
                 const sem = semaforoColor(it.stock_actual, it.stock_minimo, it.stock_bajo);
                 const badge = SEMAFORO_BADGES[sem];
                 const Icono = badge.icono;
@@ -2145,16 +2197,15 @@ function PantallaDeclaracion({ cliente, setToast }) {
                       />
                     </td>
                     <td style={styles.td}>
-                      <select
+                      <DropdownSelect
                         value={it.ubicacion_id ?? ""}
-                        onChange={(e) => actualizarItem(idx, "ubicacion_id", e.target.value)}
-                        style={{ ...styles.cellInput, cursor: "pointer" }}
-                      >
-                        <option value="">—</option>
-                        {ubicaciones.map((u) => (
-                          <option key={u.id} value={u.id}>{u.nombre}</option>
-                        ))}
-                      </select>
+                        onChange={(v) => actualizarItem(idx, "ubicacion_id", v)}
+                        className=""
+                        minWidth={170}
+                        placeholder="—"
+                        style={{ ...styles.cellInput, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 4, textAlign: "left" }}
+                        options={[{ value: "", label: "—" }, ...ubicaciones.map((u) => ({ value: u.id, label: u.nombre }))]}
+                      />
                     </td>
                     <td style={styles.td}>
                       <input
@@ -2241,7 +2292,19 @@ function PantallaDeclaracion({ cliente, setToast }) {
                         <span style={{ color: "#cbd5e1", fontSize: 12 }}>—</span>
                       )}
                     </td>
-                    <td style={{ ...styles.td, textAlign: "center" }}>
+                    <td style={{ ...styles.td, textAlign: "center", whiteSpace: "nowrap" }}>
+                      {esAdminPortal && tieneNombre && (
+                        <button
+                          type="button"
+                          onClick={() => setHistorialDe(it)}
+                          style={{ ...styles.btnEliminar, color: "#0e7490", marginRight: 2 }}
+                          title="Últimos 5 movimientos de stock"
+                          aria-label="Historial de movimientos"
+                          className="btn-historial-stock"
+                        >
+                          <History size={14} />
+                        </button>
+                      )}
                       <button
                         type="button"
                         onClick={() => eliminarItem(idx)}
@@ -2316,7 +2379,7 @@ function PantallaDeclaracion({ cliente, setToast }) {
               </button>
             )}
             <button
-              onClick={guardar}
+              onClick={pedirConfirmacion}
               disabled={guardando}
               style={styles.btnPrimarioCompacto}
               className="btn-guardar-shine"
@@ -2327,6 +2390,24 @@ function PantallaDeclaracion({ cliente, setToast }) {
           </div>
         </div>
       </div>
+      )}
+
+      {historialDe && (
+        <ModalHistorialStock
+          producto={historialDe}
+          movimientos={movimientos[claveProductoStock(historialDe)] || null}
+          guardado={baseline.some((b) => claveProductoStock(b) === claveProductoStock(historialDe))}
+          onCerrar={() => setHistorialDe(null)}
+        />
+      )}
+      {confirmarGuardar && (
+        <ModalConfirmarStock
+          resumen={confirmarGuardar}
+          ubicaciones={ubicaciones}
+          guardando={guardando}
+          onCancelar={() => setConfirmarGuardar(null)}
+          onConfirmar={guardar}
+        />
       )}
 
       {mostrarCargaMasiva && (
@@ -6602,6 +6683,192 @@ const cargaStyles = {
     lineHeight: 1.4,
   },
 };
+
+/* ── Gestión de Stock: buscador, historial y resumen de cambios (2026-10-07) ──
+   Pedidos de Ariel: "agregar un buscador para los productos", "en cada
+   producto, un historial de los últimos 5 movimientos (solo rol admin)" y
+   "antes de guardar stock, un resumen de los cambios en un popup con la opción
+   de confirmar". La clave de un producto es su SKU o, sin SKU, su nombre sin
+   tildes ni mayúsculas: la misma que usa el servidor para los movimientos. */
+function claveProductoStock(it) {
+  const sku = String(it?.sku || "").replace(/\s+/g, "").toUpperCase();
+  if (sku) return `sku:${sku}`;
+  const nombre = String(it?.nombre || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/\s+/g, " ").trim();
+  return nombre ? `n:${nombre}` : "";
+}
+
+const sinTildesStock = (v) => String(v ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+
+// Filas visibles con su índice real (la edición va por índice). Las filas sin
+// nombre (recién agregadas) siempre se ven, para no esconder lo que se escribe.
+function filtrarStock(items, texto, ubicaciones) {
+  const t = sinTildesStock(String(texto || "").trim());
+  const conIdx = items.map((it, idx) => ({ it, idx }));
+  if (!t) return conIdx;
+  const ubic = new Map((ubicaciones || []).map((u) => [String(u.id), u.nombre]));
+  return conIdx.filter(({ it }) => !String(it.nombre || "").trim()
+    || sinTildesStock(`${it.nombre} ${it.sku} ${it.marca} ${it.unidad} ${ubic.get(String(it.ubicacion_id)) || ""}`).includes(t));
+}
+
+const CAMPOS_STOCK = [
+  { campo: "stock_actual", etiqueta: "Stock actual", numero: true },
+  { campo: "stock_bajo", etiqueta: "Stock bajo", numero: true },
+  { campo: "stock_minimo", etiqueta: "Stock crítico", numero: true },
+  { campo: "precio_unitario", etiqueta: "Precio unit.", numero: true, dinero: true },
+  { campo: "ubicacion_id", etiqueta: "Ubicación" },
+  { campo: "marca", etiqueta: "Marca" },
+  { campo: "unidad", etiqueta: "Formato" },
+  { campo: "nombre", etiqueta: "Producto" },
+];
+
+function resumenCambiosStock(baseline, items) {
+  const llenos = (arr) => (arr || []).filter((it) => String(it.nombre || "").trim());
+  const antes = new Map();
+  for (const it of llenos(baseline)) { const k = claveProductoStock(it); if (k && !antes.has(k)) antes.set(k, it); }
+  const despues = new Map();
+  for (const it of llenos(items)) { const k = claveProductoStock(it); if (k && !despues.has(k)) despues.set(k, it); }
+  const normal = (c, v) => (c.numero ? (v === "" || v == null ? 0 : Number(String(v).replace(/[^\d.-]/g, "")) || 0) : String(v ?? "").trim());
+  const nuevos = [...despues.entries()].filter(([k]) => !antes.has(k)).map(([, it]) => it);
+  const eliminados = [...antes.entries()].filter(([k]) => !despues.has(k)).map(([, it]) => it);
+  const modificados = [];
+  for (const [k, d] of despues) {
+    const a = antes.get(k);
+    if (!a) continue;
+    const cambios = CAMPOS_STOCK.filter((c) => normal(c, a[c.campo]) !== normal(c, d[c.campo])).map((c) => ({ ...c, antes: a[c.campo], despues: d[c.campo] }));
+    if (cambios.length) modificados.push({ it: d, cambios });
+  }
+  return { nuevos, eliminados, modificados, total: llenos(items).length };
+}
+
+function ModalConfirmarStock({ resumen, ubicaciones, guardando, onCancelar, onConfirmar }) {
+  const { nuevos, eliminados, modificados, total } = resumen;
+  const ubic = new Map((ubicaciones || []).map((u) => [String(u.id), u.nombre]));
+  const valor = (c, v) => {
+    if (c.campo === "ubicacion_id") return ubic.get(String(v)) || (v ? `#${v}` : "—");
+    if (c.dinero) return Number(v) > 0 ? fmtMoneda(Number(v)) : "—";
+    return v === "" || v == null ? "—" : String(v);
+  };
+  const sinCambios = !nuevos.length && !eliminados.length && !modificados.length;
+  const fila = { padding: "7px 10px", borderBottom: "1px solid #f1f5f9", fontSize: 13 };
+  return (
+    <div style={modalStyles.overlay} onClick={guardando ? undefined : onCancelar}>
+      <div className="modal-confirmar-stock" style={{ ...modalStyles.card, maxWidth: 640 }} onClick={(e) => e.stopPropagation()}>
+        <div style={modalStyles.header}>
+          <div style={modalStyles.headerIcono}><ClipboardCheck size={20} /></div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={modalStyles.eyebrow}>Stock</div>
+            <div style={modalStyles.titulo}>Revise los cambios antes de guardar</div>
+            <div style={modalStyles.sub}>
+              {sinCambios
+                ? "No hay cambios respecto de lo guardado. Se registrará igual una declaración con la fecha de hoy (confirma que el stock sigue igual)."
+                : `${total} producto${total === 1 ? "" : "s"} en total: ${nuevos.length} nuevo${nuevos.length === 1 ? "" : "s"}, ${modificados.length} modificado${modificados.length === 1 ? "" : "s"} y ${eliminados.length} eliminado${eliminados.length === 1 ? "" : "s"}.`}
+            </div>
+          </div>
+          <button onClick={onCancelar} style={modalStyles.btnCerrar} title="Volver a editar" disabled={guardando}><X size={18} /></button>
+        </div>
+        <div style={{ ...modalStyles.body, gap: 12 }}>
+          {modificados.length > 0 && (
+            <div className="resumen-modificados">
+              <div style={{ fontSize: 12, fontWeight: 800, color: "#0e7490", textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 6 }}>Modificados ({modificados.length})</div>
+              <div style={{ border: "1px solid #e2e8f0", borderRadius: 10, overflow: "hidden" }}>
+                {modificados.map(({ it, cambios }, i) => (
+                  <div key={i} style={fila}>
+                    <div style={{ fontWeight: 700, color: "#0f172a", overflowWrap: "anywhere" }}>{it.nombre}{it.sku ? <span style={{ fontWeight: 400, color: "#64748b" }}> · {it.sku}</span> : null}</div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: "2px 14px", marginTop: 2, color: "#334155" }}>
+                      {cambios.map((c) => {
+                        const dif = c.campo === "stock_actual" ? (Number(c.despues) || 0) - (Number(c.antes) || 0) : null;
+                        return (
+                          <span key={c.campo}>
+                            {c.etiqueta}: <span style={{ color: "#94a3b8", textDecoration: "line-through" }}>{valor(c, c.antes)}</span> → <b>{valor(c, c.despues)}</b>
+                            {dif ? <span style={{ color: dif < 0 ? "#b91c1c" : "#15803d", fontWeight: 700 }}> ({dif > 0 ? "+" : ""}{dif})</span> : null}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {nuevos.length > 0 && (
+            <div className="resumen-nuevos">
+              <div style={{ fontSize: 12, fontWeight: 800, color: "#15803d", textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 6 }}>Nuevos ({nuevos.length})</div>
+              <div style={{ border: "1px solid #e2e8f0", borderRadius: 10, overflow: "hidden" }}>
+                {nuevos.map((it, i) => (
+                  <div key={i} style={{ ...fila, display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                    <span style={{ overflowWrap: "anywhere" }}>{it.nombre}{it.sku ? <span style={{ color: "#64748b" }}> · {it.sku}</span> : null}</span>
+                    <span>Stock <b>{it.stock_actual === "" ? 0 : it.stock_actual}</b></span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {eliminados.length > 0 && (
+            <div className="resumen-eliminados">
+              <div style={{ fontSize: 12, fontWeight: 800, color: "#b91c1c", textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 6 }}>Se quitan de la lista ({eliminados.length})</div>
+              <div style={{ border: "1px solid #fecaca", borderRadius: 10, overflow: "hidden" }}>
+                {eliminados.map((it, i) => (
+                  <div key={i} style={{ ...fila, color: "#7f1d1d", overflowWrap: "anywhere" }}>{it.nombre}{it.sku ? ` · ${it.sku}` : ""}</div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap", padding: "14px 22px", borderTop: "1px solid #f1f5f9" }}>
+          <button type="button" onClick={onCancelar} disabled={guardando} style={styles.btnSecundario} className="btn-hover">Volver a editar</button>
+          <button type="button" onClick={onConfirmar} disabled={guardando} style={styles.btnPrimarioCompacto} className="btn-guardar-shine">
+            <Save size={15} /> {guardando ? "Guardando…" : "Confirmar y guardar"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ModalHistorialStock({ producto, movimientos, guardado, onCerrar }) {
+  const lista = Array.isArray(movimientos) ? movimientos : [];
+  const fecha = (iso) => {
+    const d = new Date(iso);
+    return Number.isNaN(d.getTime()) ? "—" : d.toLocaleString("es-CL", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+  };
+  return (
+    <div style={modalStyles.overlay} onClick={onCerrar}>
+      <div className="modal-historial-stock" style={{ ...modalStyles.card, maxWidth: 520 }} onClick={(e) => e.stopPropagation()}>
+        <div style={modalStyles.header}>
+          <div style={modalStyles.headerIcono}><History size={20} /></div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={modalStyles.eyebrow}>Últimos 5 movimientos</div>
+            <div style={{ ...modalStyles.titulo, overflowWrap: "anywhere" }}>{producto?.nombre}</div>
+            <div style={modalStyles.sub}>{producto?.sku ? `SKU ${producto.sku} · ` : ""}Cada vez que se guardó el stock con un valor distinto.</div>
+          </div>
+          <button onClick={onCerrar} style={modalStyles.btnCerrar} title="Cerrar"><X size={18} /></button>
+        </div>
+        <div style={modalStyles.body}>
+          {!guardado ? (
+            <div style={{ fontSize: 13, color: "#64748b" }}>Este producto aún no se ha guardado: su historial empieza al presionar «Guardar stock».</div>
+          ) : lista.length === 0 ? (
+            <div style={{ fontSize: 13, color: "#64748b" }}>Sin movimientos registrados todavía.</div>
+          ) : (
+            <div style={{ border: "1px solid #e2e8f0", borderRadius: 10, overflow: "hidden" }}>
+              {lista.map((m, i) => (
+                <div key={i} style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", padding: "9px 12px", borderBottom: i < lista.length - 1 ? "1px solid #f1f5f9" : 0, fontSize: 13 }}>
+                  <div>
+                    <div style={{ fontWeight: 700, color: "#0f172a" }}>
+                      {m.antes == null ? <>Alta con <b>{m.despues}</b></> : <>{m.antes} → <b>{m.despues}</b></>}
+                      {m.diferencia ? <span style={{ color: m.diferencia < 0 ? "#b91c1c" : "#15803d" }}> ({m.diferencia > 0 ? "+" : ""}{m.diferencia})</span> : null}
+                    </div>
+                    <div style={{ fontSize: 12, color: "#64748b" }}>{m.usuario ? `Por ${m.usuario}` : "Usuario no registrado"}</div>
+                  </div>
+                  <div style={{ fontSize: 12, color: "#64748b", whiteSpace: "nowrap" }}>{fecha(m.fecha)}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 const modalStyles = {
   overlay: {

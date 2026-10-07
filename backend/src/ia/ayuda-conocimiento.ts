@@ -527,7 +527,11 @@ recuperaciones de contraseña.
   cotizaciones, documentos y puede subir archivos.
 - /portal-cliente — Portal de Stock del cliente: acuerdo de confidencialidad,
   inventario propio con semáforo, y generación de solicitudes de cotización
-  que llegan al sistema. Incluye el Explorador de precios: el cliente busca un
+  que llegan al sistema. GESTIÓN DE STOCK: buscador por producto, SKU, marca
+  o ubicación; «Guardar stock» muestra antes un resumen de cambios (nuevos,
+  modificados con antes → después, quitados) para confirmar; el administrador
+  de la cuenta ve en cada producto los últimos 5 movimientos de stock (quién y
+  cuándo; el «quién» se registra desde octubre 2026). Incluye el Explorador de precios: el cliente busca un
   insumo por palabra clave y el portal compara en vivo los precios de las
   tiendas dentales chilenas online (la tienda propia amsodentmedical.cl SIEMPRE
   primera y destacada, más Orbis, Gexa, SP Dental, Clandent, J-Dent, Techdent y

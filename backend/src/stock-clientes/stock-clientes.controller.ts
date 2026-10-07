@@ -397,6 +397,16 @@ export class StockClientesController {
     return await this.stockClientes.cotizacionDeLicitacion(id, req.stockPortal.rut);
   }
 
+  // (2026-10-07) Últimos 5 movimientos de stock por producto. Solo el
+  // administrador de la cuenta del portal.
+  @UseGuards(StockPortalGuard)
+  @Get('mis-movimientos')
+  async misMovimientos(@Req() req: any, @Query('sucursal_id') sucursalId?: string) {
+    this.exigirAdminPortal(req, 'El historial de movimientos es solo para el administrador de la cuenta.');
+    await this.modulos.exigir(req.stockPortal.rut, 'declaracion');
+    return await this.stockClientes.movimientosProductos(req.stockPortal.rut, sucursalId ? Number(sucursalId) : null);
+  }
+
   @UseGuards(StockPortalGuard)
   @Post('declaracion')
   async crearDeclaracion(@Req() req: any, @Body() body: any) {

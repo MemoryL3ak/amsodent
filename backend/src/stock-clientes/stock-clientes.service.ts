@@ -1477,23 +1477,29 @@ export class StockClientesService {
 
     // 1) Inserta snapshot de la declaración
     const ahora = new Date().toISOString();
-    const { data: declaracion, error: errIns } = await client
-      .from('stock_declaraciones')
-      .insert({
-        rut: rutN,
-        sucursal_id: sucursalId,
-        razon_social: payload.razon_social || null,
-        fecha: ahora,
-        total_items: itemsLimpios.length,
-        total_verdes: totales.verdes,
-        total_amarillos: totales.amarillos,
-        total_rojos: totales.rojos,
-        items: itemsLimpios,
-        ip_address: meta.ip || null,
-        user_agent: meta.user_agent || null,
-      })
-      .select()
-      .single();
+    const filaDeclaracion: Record<string, any> = {
+      rut: rutN,
+      sucursal_id: sucursalId,
+      razon_social: payload.razon_social || null,
+      fecha: ahora,
+      total_items: itemsLimpios.length,
+      total_verdes: totales.verdes,
+      total_amarillos: totales.amarillos,
+      total_rojos: totales.rojos,
+      items: itemsLimpios,
+      ip_address: meta.ip || null,
+      user_agent: meta.user_agent || null,
+      // (2026-10-07) Quién declaró: lo muestra el historial de movimientos.
+      usuario_email: (payload as any).usuario_email || null,
+      usuario_nombre: (payload as any).usuario_nombre || null,
+    };
+    let ins: any = await client.from('stock_declaraciones').insert(filaDeclaracion).select().single();
+    if (ins.error && /usuario_(email|nombre)/.test(String(ins.error.message)) && /column|schema cache/i.test(String(ins.error.message))) {
+      // Migración 20261007_stock_declaraciones_usuario pendiente: se guarda sin usuario.
+      const { usuario_email: _e, usuario_nombre: _n, ...sinUsuario } = filaDeclaracion;
+      ins = await client.from('stock_declaraciones').insert(sinUsuario).select().single();
+    }
+    const { data: declaracion, error: errIns } = ins;
     if (errIns) throw new BadRequestException(errIns.message);
 
     // 2) Sincroniza la lista persistente del cliente. Para no perder los
@@ -2316,6 +2322,57 @@ export class StockClientesService {
         : null,
       mensajes_no_leidos: noLeidos[r.id] || 0,
     }));
+  }
+
+  /* ── Historial de movimientos por producto (2026-10-07) ──────────────────
+     Pedido de Ariel: "en Gestión de Stock, en cada producto, un historial de
+     los últimos 5 movimientos (solo rol admin)". No hay tabla de movimientos:
+     cada «Guardar stock» deja una declaración con la lista completa. Se
+     comparan las declaraciones de la sucursal, de la más antigua a la más
+     nueva, y cada vez que el stock actual de un producto cambia (o aparece
+     por primera vez) hay un movimiento. Producto = su SKU o, sin SKU, su
+     nombre (sin tildes ni mayúsculas): la misma clave que usa el portal. */
+  static claveProducto(it: any): string {
+    const sku = String(it?.sku || '').replace(/\s+/g, '').toUpperCase();
+    if (sku) return `sku:${sku}`;
+    const nombre = String(it?.nombre || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+    return nombre ? `n:${nombre}` : '';
+  }
+
+  async movimientosProductos(rut: string, sucursalId: number | null, porProducto = 5, maxDeclaraciones = 120) {
+    const rutN = normalizarRut(rut);
+    const client = this.supabase.getClient();
+    const consulta = (cols: string) => {
+      let q = client.from('stock_declaraciones').select(cols).eq('rut', rutN);
+      if (sucursalId) q = q.eq('sucursal_id', sucursalId);
+      return q.order('fecha', { ascending: false }).limit(maxDeclaraciones);
+    };
+    let r: any = await consulta('id, fecha, items, usuario_email, usuario_nombre');
+    if (r.error && /usuario_/.test(String(r.error.message))) r = await consulta('id, fecha, items');
+    if (r.error) throw new BadRequestException(r.error.message);
+    const decls: any[] = (r.data || []).slice().reverse(); // de la más antigua a la más nueva
+    const ultimo = new Map<string, number>();
+    const movimientos: Record<string, any[]> = {};
+    for (const d of decls) {
+      const vistos = new Set<string>();
+      for (const it of Array.isArray(d.items) ? d.items : []) {
+        const k = StockClientesService.claveProducto(it);
+        if (!k || vistos.has(k)) continue;
+        vistos.add(k);
+        const ahora = Number(it.stock_actual) || 0;
+        const antes = ultimo.has(k) ? (ultimo.get(k) as number) : null;
+        if (antes === null || antes !== ahora) {
+          (movimientos[k] ||= []).push({
+            fecha: d.fecha, antes, despues: ahora, diferencia: antes === null ? null : ahora - antes,
+            usuario: d.usuario_nombre || d.usuario_email || null,
+          });
+        }
+        ultimo.set(k, ahora);
+      }
+    }
+    // Los más recientes primero, hasta `porProducto`.
+    for (const k of Object.keys(movimientos)) movimientos[k] = movimientos[k].reverse().slice(0, porProducto);
+    return { movimientos, declaraciones: decls.length };
   }
 
   async listarMisDeclaraciones(rut: string, sucursalId?: number | null, limit = 30) {
