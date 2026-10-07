@@ -22,7 +22,20 @@ import { BsaleFacturacionService } from './bsale-facturacion.service';
    Nunca frena el guardado del producto: si Bsale falla, el producto queda en
    el sistema y el resultado se devuelve para mostrarlo (y se anota en
    productos.bsale_sync_error cuando la migración 20261006 está aplicada).
-   `BSALE_PRODUCTOS=off` lo apaga. */
+   `BSALE_PRODUCTOS=off` lo apaga.
+
+   (2026-10-07) Pedido de Ariel: "si hay un transitorio sin SKU, se debe enviar
+   a Bsale; si un producto se crea completo en Amsodent, se debe enviar a
+   Bsale". En Bsale el código (SKU) de la variante es OPCIONAL
+   (docs.bsale.dev/variantes), así que:
+     · Sin SKU: si ya tiene variante anotada, nada. Si en Bsale hay un producto
+       con el MISMO nombre (exacto, sin tildes ni mayúsculas; el filtro `name`
+       de Bsale es parcial), se enlaza a él. Si no, se crea producto y
+       variante sin código, con sus precios.
+     · Con SKU y una variante ya anotada (fue transitorio): se le pone el SKU a
+       ESA variante (PUT /variants/{id}.json) y se relee para confirmar; no se
+       crea otro producto. Si Bsale no lo toma, se avisa para hacerlo a mano.
+   Los pendientes (sin variante anotada) se envían en lote desde Productos. */
 
 const LISTAS: { lista: number; nombre: string; campo: string }[] = [
   { lista: 2, nombre: 'WEB-PARTICULAR', campo: 'lista1' },
@@ -31,7 +44,7 @@ const LISTAS: { lista: number; nombre: string; campo: string }[] = [
 const TIPO_SIN_TIPO = 1;
 
 export type ResultadoBsale = {
-  estado: 'creado' | 'ya_existia' | 'sin_sku' | 'apagada' | 'error';
+  estado: 'creado' | 'ya_existia' | 'enlazado' | 'sku_asignado' | 'sin_sku' | 'apagada' | 'error';
   mensaje?: string;
   variante_id?: number | null;
   producto_id?: number | null;
@@ -82,21 +95,38 @@ export class BsaleProductosService {
   async sincronizar(producto: Record<string, any>, opts: { motivo?: string } = {}): Promise<ResultadoBsale> {
     const sku = normSku(producto?.sku);
     const id = Number(producto?.id) || null;
-    if (!sku) return { estado: 'sin_sku' };
     if (!this.activa) return { estado: 'apagada', mensaje: 'El envío de productos a Bsale está apagado en el servidor.' };
     const ahora = new Date().toISOString();
+    const varianteAnotada = Number(producto?.bsale_variant_id) || null;
     let productoBsaleId: number | null = null;
     try {
-      const existente = await this.facturacion.apiGet(`/variants.json?code=${encodeURIComponent(sku)}&expand=[product]`);
-      const v = existente?.items?.[0];
-      if (v) {
-        const res: ResultadoBsale = { estado: 'ya_existia', variante_id: Number(v.id) || null, producto_id: Number(v.product?.id) || null, nombre_bsale: String(v.product?.name || '').trim() };
-        await this.anotar(id, { bsale_variant_id: res.variante_id, bsale_product_id: res.producto_id, bsale_sync_at: ahora, bsale_sync_error: null });
-        return res;
+      if (sku) {
+        const existente = await this.facturacion.apiGet(`/variants.json?code=${encodeURIComponent(sku)}&expand=[product]`);
+        const v = existente?.items?.[0];
+        if (v) {
+          const res: ResultadoBsale = { estado: 'ya_existia', variante_id: Number(v.id) || null, producto_id: Number(v.product?.id) || null, nombre_bsale: String(v.product?.name || '').trim() };
+          if (varianteAnotada && varianteAnotada !== res.variante_id) {
+            res.avisos = [`Este producto estaba enlazado a la variante ${varianteAnotada} (sin SKU) y el SKU ${sku} ya existe en la variante ${res.variante_id}: quedó enlazado a esta; revisa la otra en Bsale.`];
+          }
+          await this.anotar(id, { bsale_variant_id: res.variante_id, bsale_product_id: res.producto_id, bsale_sync_at: ahora, bsale_sync_error: null });
+          return res;
+        }
+        // Fue transitorio y ya está en Bsale sin código: se le pone el SKU a esa variante.
+        if (varianteAnotada) return await this.ponerSku(producto, varianteAnotada, sku, ahora);
+      } else {
+        if (varianteAnotada) {
+          return { estado: 'ya_existia', variante_id: varianteAnotada, producto_id: Number(producto?.bsale_product_id) || null, mensaje: 'Ya está en Bsale (sin SKU).' };
+        }
+        const igual = await this.buscarPorNombre(producto?.nombre);
+        if (igual) {
+          await this.anotar(id, { bsale_variant_id: igual.variante_id, bsale_product_id: igual.producto_id, bsale_sync_at: ahora, bsale_sync_error: null });
+          this.logger.log(`Producto #${id} sin SKU enlazado al producto ${igual.producto_id} de Bsale (mismo nombre)${opts.motivo ? ` · ${opts.motivo}` : ''}`);
+          return { estado: 'enlazado', ...igual };
+        }
       }
 
       const tipo = await this.tipoPara(producto.categoria);
-      const nombre = String(producto.nombre || '').trim().slice(0, 150) || sku;
+      const nombre = String(producto.nombre || '').trim().slice(0, 150) || sku || `Producto ${id}`;
       const descripcion = [producto.marca, producto.formato].map((x) => String(x || '').trim()).filter(Boolean).join(' · ').slice(0, 200);
       const prod = await this.facturacion.apiPost('/products.json', {
         name: nombre, description: descripcion, classification: 0, ledgerAccount: '', costCenter: '',
@@ -107,7 +137,7 @@ export class BsaleProductosService {
 
       const variante = await this.facturacion.apiPost('/variants.json', {
         productId: productoBsaleId, description: String(producto.formato || '').trim().slice(0, 80),
-        unlimitedStock: 0, allowNegativeStock: 1, code: sku,
+        unlimitedStock: 0, allowNegativeStock: 1, ...(sku ? { code: sku } : {}),
       });
       const varianteId = Number(variante?.id) || null;
       if (!varianteId) throw new Error(`Bsale creó el producto ${productoBsaleId} pero no devolvió la variante.`);
@@ -136,15 +166,113 @@ export class BsaleProductosService {
       } catch { /* solo una verificación */ }
 
       await this.anotar(id, { bsale_variant_id: varianteId, bsale_product_id: productoBsaleId, bsale_sync_at: ahora, bsale_sync_error: null });
-      this.logger.log(`Producto ${sku} creado en Bsale (producto ${productoBsaleId}, variante ${varianteId}, tipo ${tipo.nombre}${precios.length ? `, precios en ${precios.map((p) => p.nombre).join(' y ')}` : ''})${opts.motivo ? ` · ${opts.motivo}` : ''}`);
+      this.logger.log(`Producto ${sku || `#${id} (sin SKU)`} creado en Bsale (producto ${productoBsaleId}, variante ${varianteId}, tipo ${tipo.nombre}${precios.length ? `, precios en ${precios.map((p) => p.nombre).join(' y ')}` : ''})${opts.motivo ? ` · ${opts.motivo}` : ''}`);
       return { estado: 'creado', variante_id: varianteId, producto_id: productoBsaleId, tipo_producto: tipo.nombre, precios, avisos };
     } catch (e: any) {
       const detalle = String(e?.message || e).slice(0, 300);
       const mensaje = productoBsaleId ? `${detalle} (el producto ${productoBsaleId} quedó creado en Bsale sin variante: revísalo allá)` : detalle;
       await this.anotar(id, { bsale_sync_error: mensaje.slice(0, 500), bsale_sync_at: ahora });
-      this.logger.warn(`Producto ${sku} no se pudo enviar a Bsale: ${mensaje}`);
+      this.logger.warn(`Producto ${sku || `#${id} (sin SKU)`} no se pudo enviar a Bsale: ${mensaje}`);
       return { estado: 'error', mensaje };
     }
+  }
+
+  /* Producto de Bsale con el mismo nombre (exacto, sin tildes ni mayúsculas).
+     El filtro `name` de Bsale busca por parte del nombre: se compara acá. */
+  private async buscarPorNombre(nombreSistema: any): Promise<{ variante_id: number; producto_id: number; nombre_bsale: string } | null> {
+    const nombre = String(nombreSistema || '').trim();
+    if (nombre.length < 4) return null;
+    const r = await this.facturacion.apiGet(`/products.json?name=${encodeURIComponent(nombre.slice(0, 150))}&limit=25&state=0`);
+    const igual = (r?.items || []).find((p: any) => sinAcentos(p?.name) === sinAcentos(nombre));
+    if (!igual?.id) return null;
+    const vars = await this.facturacion.apiGet(`/variants.json?productid=${Number(igual.id)}&state=0`);
+    const v = (vars?.items || [])[0];
+    if (!v?.id) return null;
+    return { variante_id: Number(v.id), producto_id: Number(igual.id), nombre_bsale: String(igual.name || '').trim() };
+  }
+
+  /* La variante se creó sin código (era transitorio): se le pone el SKU y se
+     relee para confirmar que Bsale lo tomó. */
+  private async ponerSku(producto: Record<string, any>, varianteId: number, sku: string, ahora: string): Promise<ResultadoBsale> {
+    const id = Number(producto?.id) || null;
+    const actual = await this.facturacion.apiGet(`/variants/${varianteId}.json?expand=[product]`);
+    if (!actual?.id) {
+      // La variante ya no está: se olvida y se crea de nuevo con el SKU.
+      return this.sincronizar({ ...producto, bsale_variant_id: null, bsale_product_id: null }, { motivo: `la variante ${varianteId} ya no existe en Bsale` });
+    }
+    const productId = Number(actual?.product?.id || producto?.bsale_product_id) || null;
+    await this.facturacion.apiEnviar('PUT', `/variants/${varianteId}.json`, { id: varianteId, productId, description: actual.description ?? '', code: sku });
+    const releida = await this.facturacion.apiGet(`/variants/${varianteId}.json`);
+    if (normSku(releida?.code) === sku) {
+      await this.anotar(id, { bsale_variant_id: varianteId, bsale_product_id: productId, bsale_sync_at: ahora, bsale_sync_error: null });
+      this.logger.log(`SKU ${sku} puesto a la variante ${varianteId} de Bsale (producto #${id}, antes transitorio)`);
+      return { estado: 'sku_asignado', variante_id: varianteId, producto_id: productId, mensaje: `Se le puso el SKU ${sku} a la variante que ya estaba en Bsale.` };
+    }
+    const mensaje = `La variante ${varianteId} está en Bsale sin SKU y Bsale no tomó el código ${sku}: ponlo a mano en Bsale.`;
+    await this.anotar(id, { bsale_sync_error: mensaje, bsale_sync_at: ahora });
+    return { estado: 'error', mensaje, variante_id: varianteId, producto_id: productId };
+  }
+
+  /* ── Pendientes: productos que aún no están en Bsale (2026-10-07) ──
+     Sin variante anotada y no inactivos. Primero los sin SKU (transitorios),
+     después los con SKU (que en general ya están allá: solo se anota su id).
+     Se envían de a uno, en segundo plano; el estado se consulta aparte. */
+  private lote: { corriendo: boolean; total: number; hechos: number; resumen: Record<string, number>; inicio: string; fin: string | null; ultimo_error: string | null; usuario: string | null } | null = null;
+
+  async listarPendientes(): Promise<any[]> {
+    const db = this.supabase.getClient();
+    const out: any[] = [];
+    for (let desde = 0; desde < 50000; desde += 1000) {
+      const { data, error } = await db
+        .from('productos')
+        .select('id, sku, nombre, marca, formato, categoria, estado, lista1, lista2, bsale_variant_id, bsale_product_id, bsale_sync_error')
+        .is('bsale_variant_id', null)
+        .order('id', { ascending: true })
+        .range(desde, desde + 999);
+      if (error) throw new Error(/bsale_/.test(error.message) ? 'Falta aplicar la migración 20261006_productos_bsale.' : error.message);
+      out.push(...(data || []).filter((p: any) => String(p.estado || '') !== 'Inactivo'));
+      if (!data || data.length < 1000) break;
+    }
+    return out.sort((a, b) => Number(!!normSku(a.sku)) - Number(!!normSku(b.sku)) || a.id - b.id);
+  }
+
+  async enviarPendientes(opts: { simular?: boolean; usuario?: string | null; tope?: number; soloSinSku?: boolean } = {}) {
+    if (this.lote?.corriendo) return { ya_corriendo: true, estado: this.lote };
+    const todos = await this.listarPendientes();
+    const sinSku = todos.filter((p) => !normSku(p.sku)).length;
+    // «Solo sin SKU»: los transitorios; los con SKU en general ya están en Bsale y solo se enlazan.
+    const pendientes = opts.soloSinSku ? todos.filter((p) => !normSku(p.sku)) : todos;
+    const resumenPrevio = { total: pendientes.length, sin_sku: sinSku, con_sku: todos.length - sinSku, solo_sin_sku: !!opts.soloSinSku, con_error_previo: pendientes.filter((p) => p.bsale_sync_error).length };
+    if (opts.simular || !pendientes.length) {
+      return { simulacion: !!opts.simular, activa: this.activa, ...resumenPrevio, muestra: pendientes.slice(0, 8).map((p) => ({ id: p.id, sku: p.sku || null, nombre: p.nombre, estado: p.estado })) };
+    }
+    if (!this.activa) return { activa: false, ...resumenPrevio, mensaje: 'El envío de productos a Bsale está apagado en el servidor.' };
+    const tope = Math.max(1, Math.min(Number(opts.tope) || pendientes.length, 5000));
+    const lista = pendientes.slice(0, tope);
+    this.lote = { corriendo: true, total: lista.length, hechos: 0, resumen: { creados: 0, enlazados: 0, ya_existian: 0, sku_asignados: 0, errores: 0, omitidos: 0 }, inicio: new Date().toISOString(), fin: null, ultimo_error: null, usuario: opts.usuario || null };
+    const lote = this.lote;
+    void (async () => {
+      for (const p of lista) {
+        try {
+          const r = await this.sincronizar(p, { motivo: 'envío de pendientes' });
+          const k = r.estado === 'creado' ? 'creados' : r.estado === 'enlazado' ? 'enlazados' : r.estado === 'ya_existia' ? 'ya_existian' : r.estado === 'sku_asignado' ? 'sku_asignados' : r.estado === 'error' ? 'errores' : 'omitidos';
+          lote.resumen[k]++;
+          if (r.estado === 'error') lote.ultimo_error = `#${p.id} ${String(p.nombre || '').slice(0, 40)}: ${String(r.mensaje || '').slice(0, 160)}`;
+        } catch (e: any) {
+          lote.resumen.errores++;
+          lote.ultimo_error = `#${p.id}: ${String(e?.message || e).slice(0, 160)}`;
+        }
+        lote.hechos++;
+      }
+      lote.corriendo = false;
+      lote.fin = new Date().toISOString();
+      this.logger.log(`Pendientes a Bsale: ${JSON.stringify(lote.resumen)} (${lote.total} productos, por ${lote.usuario})`);
+    })();
+    return { iniciado: true, ...resumenPrevio, estado: this.lote };
+  }
+
+  estadoPendientes() {
+    return { estado: this.lote, activa: this.activa };
   }
 
   /* Varios productos, uno tras otro (la API de Bsale corta las llamadas
@@ -155,8 +283,8 @@ export class BsaleProductosService {
     for (const p of productos.slice(0, tope)) {
       resumen.total++;
       const r = await this.sincronizar(p, opts);
-      if (r.estado === 'creado') resumen.creados++;
-      else if (r.estado === 'ya_existia') resumen.ya_existian++;
+      if (r.estado === 'creado' || r.estado === 'sku_asignado') resumen.creados++;
+      else if (r.estado === 'ya_existia' || r.estado === 'enlazado') resumen.ya_existian++;
       else if (r.estado === 'error') resumen.errores++;
       else resumen.omitidos++;
     }

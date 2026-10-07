@@ -260,6 +260,7 @@ export const GRUPOS_MANUAL = [
           "Carga masiva por planilla con historial y rollback (deshace esa carga y las posteriores).",
           "Ficha técnica en PDF con logo, marca de agua e imagen; filtros de completitud (SKU / peso / medidas). Al crear un producto queda a la vista con «Abrir ficha técnica», «Descargar PDF» y «Ver / editar producto».",
           "Bsale: un producto nuevo con SKU, o uno al que se le asigna SKU, se crea solo en Bsale (producto, variante con ese SKU y precios netos: lista 1 → WEB-PARTICULAR, lista 2 → PRECIO MP; el tipo de producto es la categoría). Si el SKU ya estaba en Bsale solo se enlaza. La ficha muestra si está en Bsale y tiene «Enviar a Bsale» para reintentar. En la carga masiva los productos nuevos se crean en Bsale en segundo plano.",
+          "Transitorios en Bsale (desde octubre 2026): un producto sin SKU también se crea en Bsale, con su variante sin código; si ya hay uno con el mismo nombre se enlaza. Cuando después se le asigna el SKU, se le pone a esa misma variante (no se duplica). «Pendientes en Bsale» (admin) envía los que quedaron sin enviar: Simular cuenta cuántos y «Enviar a Bsale» los manda de a uno en segundo plano, con el avance a la vista.",
           "Precios de campaña vigente destacados (ver módulo Campañas).",
           "«Descargar fichas»: un ZIP con las fichas técnicas de los productos filtrados que tienen la ficha completa (respeta los filtros). Con muchas pide confirmar: cada ficha se arma en el navegador y se puede cancelar.",
         ],

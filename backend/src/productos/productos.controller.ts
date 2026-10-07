@@ -71,6 +71,19 @@ export class ProductosController {
   }
 
   // Reenvía el producto a Bsale (lo crea allá si su SKU no existe).
+  // (2026-10-07) Productos que aún no están en Bsale: simular o enviarlos todos.
+  @Post('bsale/pendientes')
+  @UseGuards(AdminGuard)
+  pendientesBsale(@Body() body: { simular?: boolean; solo_sin_sku?: boolean }, @Req() req: any) {
+    return this.productosService.pendientesBsale(body?.simular === true, req?.user?.email || null, body?.solo_sin_sku !== false);
+  }
+
+  @Get('bsale/pendientes/estado')
+  @UseGuards(AdminGuard)
+  estadoPendientesBsale() {
+    return this.productosService.estadoPendientesBsale();
+  }
+
   @Post(':id/bsale')
   reenviarABsale(@Param('id', ParseIntPipe) id: number) {
     return this.productosService.reenviarABsale(id);
