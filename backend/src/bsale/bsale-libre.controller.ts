@@ -39,6 +39,12 @@ export class BsaleLibreController {
     return this.libre.desdeCotizacion(String(req?.user?.id || ''), id);
   }
 
+  // Crea en Bsale un cliente que no existe (o lo simula con simular: true).
+  @Post('clientes')
+  crearCliente(@Req() req: any, @Body() body: any) {
+    return this.libre.crearCliente({ id: String(req?.user?.id || ''), email: String(req?.user?.email || '').trim().toLowerCase() }, body);
+  }
+
   // Simula (simular: true) o emite el documento armado a mano.
   @Post('emitir')
   emitir(@Req() req: any, @Body() body: any) {

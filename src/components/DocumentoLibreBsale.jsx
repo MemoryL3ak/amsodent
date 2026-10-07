@@ -8,6 +8,7 @@ import DropdownSelect from "./ui/DropdownSelect";
 import VistaPreviaBsale from "./VistaPreviaBsale";
 import CamposSeguimientoGuia from "./CamposSeguimientoGuia";
 import CampoObservacionGuia, { OBSERVACION_GUIA_MAX } from "./CampoObservacionGuia";
+import CrearClienteBsale from "./CrearClienteBsale";
 import RegistrarComprobanteRapido from "./RegistrarComprobanteRapido";
 
 /* ── Guía o factura LIBRE en Bsale (2026-10-03) ──────────────────────────────
@@ -54,6 +55,10 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
   const [fecha, setFecha] = useState("");
   const [despacho, setDespacho] = useState({ destinatario: "", direccion: "", comuna: "", ciudad: "", tipo_traslado_id: "" });
   const [formaPago, setFormaPago] = useState("");
+  // N° de comprobante del pago (2026-10-07): se pide al crear la boleta/factura.
+  const [comprobante, setComprobante] = useState("");
+  // Ventana para crear en Bsale un cliente que no está (2026-10-07).
+  const [crearCliente, setCrearCliente] = useState(null);
   const [dias, setDias] = useState("30");
   const [descuentaStock, setDescuentaStock] = useState(true);
   const [refOc, setRefOc] = useState({ numero: "", fecha: "" });
@@ -107,6 +112,8 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
       const c = await api.get(`/bsale/libre/cliente?rut=${encodeURIComponent(r)}`);
       setCliente(c);
       setRut(c.rut || r);
+      // No está en Bsale: se abre la ventana para crearlo con todos sus datos.
+      if (c?.nuevo) setCrearCliente(c);
       setSugerencias([]);
       setQCliente("");
       if (esGuia) setDespacho((d) => ({ ...d, destinatario: d.destinatario || c.razon_social || "", direccion: d.direccion || c.direccion || "", comuna: d.comuna || c.comuna || "", ciudad: d.ciudad || c.ciudad || "" }));
@@ -166,6 +173,10 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
   // Venta directa: el plazo solo aplica si la factura queda a crédito.
   const formaElegida = (opciones?.formas_pago || []).find((f) => String(f.id) === String(formaPago));
   const aCredito = !!formaElegida?.credito;
+  // Venta directa pagada al emitir: obligatorio (salvo efectivo). Desde una cotización: opcional.
+  const pideComprobante = !esGuia && !aCredito && (ventaDirecta || !!cotizacionId);
+  const esEfectivo = /efectivo/i.test(formaElegida?.nombre || "");
+  const comprobanteObligatorio = pideComprobante && ventaDirecta && !esEfectivo;
   const diasEfectivos = esGuia ? 0 : esBoleta ? 0 : ventaDirecta && !aCredito ? 0 : Number(dias);
 
   const totales = useMemo(() => {
@@ -204,7 +215,7 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
     setEnviando(accion);
     setError("");
     try {
-      const r = await api.post("/bsale/libre/emitir", { ...cuerpo(), ...(accion === "simular" ? { simular: true } : { huella, ...(esGuia ? { seguimiento } : {}) }) });
+      const r = await api.post("/bsale/libre/emitir", { ...cuerpo(), ...(pideComprobante ? { comprobante: comprobante.trim() } : {}), ...(accion === "simular" ? { simular: true } : { huella, ...(esGuia ? { seguimiento } : {}) }) });
       setResultado(r);
       if (r?.simulacion) { setSimuladoCon(firma); setHuella(r.huella || null); }
       if (r?.emitida) onEmitida?.(r);
@@ -218,7 +229,7 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
   const apagada = opciones && opciones.modo !== "activa";
   const cerrar = () => { if (!enviando) onCerrar?.(); };
   const obsMax = desde?.observacion_max || OBSERVACION_GUIA_MAX;
-  const listoParaSimular = !!opciones && !enviando && (!!cliente || esBoleta) && lineas.length > 0 && !!fecha && (!esGuia || observacion.trim().length <= obsMax);
+  const listoParaSimular = !!opciones && !enviando && (!!cliente || esBoleta) && lineas.length > 0 && !!fecha && (!esGuia || observacion.trim().length <= obsMax) && (!comprobanteObligatorio || !!comprobante.trim());
   const puedeEmitir = listoParaSimular && !apagada && simulacionVigente && confirmo;
   const nombreDoc = esGuia ? "guía" : esBoleta ? "boleta" : "factura";
   const titulo = ventaDirecta
@@ -272,7 +283,12 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
               </div>
               {(resultado.avisos || []).map((a, i) => <div key={i} style={{ fontSize: 12.5, color: "#92400e" }}>{a}</div>)}
               {resultado.url_pdf && <a href={resultado.url_pdf} target="_blank" rel="noopener noreferrer" className="btn btn-secondary btn-sm" style={{ alignSelf: "flex-start", textDecoration: "none" }}><ExternalLink size={13} /> Ver en Bsale</a>}
-              {!esGuia && resultado.registrada && resultado.documento_id && !resultado.cotizacion?.pagada && (
+              {resultado.comprobante && (
+                <div style={{ fontSize: 12.5, color: "#166534" }}>
+                  Comprobante N° {resultado.comprobante.numero} registrado{resultado.comprobante.pagada ? `: la ${esBoleta ? "boleta" : "factura"} quedó pagada.` : "."}
+                </div>
+              )}
+              {!esGuia && resultado.registrada && resultado.documento_id && !resultado.cotizacion?.pagada && !resultado.comprobante && (
                 <RegistrarComprobanteRapido
                   licitacionId={resultado.cotizacion?.id || Number(cotizacion) || null}
                   documentoId={resultado.documento_id}
@@ -343,6 +359,19 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
                 </div>
               )}
 
+              {crearCliente && (
+                <CrearClienteBsale
+                  inicial={crearCliente}
+                  onCerrar={() => setCrearCliente(null)}
+                  onCreado={(c) => {
+                    setCliente(c);
+                    setRut(c.rut || rut);
+                    setCrearCliente(null);
+                    if (esGuia) setDespacho((d) => ({ ...d, destinatario: d.destinatario || c.razon_social || "", direccion: d.direccion || c.direccion || "", comuna: d.comuna || c.comuna || "", ciudad: d.ciudad || c.ciudad || "" }));
+                  }}
+                />
+              )}
+
               {/* Cliente */}
               <div style={caja}>
                 <span style={etiqueta}>{esBoleta ? "Cliente (opcional en una boleta)" : "Cliente"}</span>
@@ -372,8 +401,13 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
                   <div style={{ marginTop: 10 }}>
                     {cliente.nuevo ? (
                       <>
-                        <div style={{ fontSize: 12.5, color: "#92400e", marginBottom: 6 }}>
-                          {esBoleta ? "Este RUT no está en Bsale: se creará con estos datos. En una boleta basta el nombre." : "Este RUT no está en Bsale: se creará con estos datos. Razón social, giro, dirección y comuna son obligatorios."}
+                        <div style={{ fontSize: 12.5, color: "#92400e", marginBottom: 6, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                          <span style={{ flex: "1 1 260px", minWidth: 0 }}>
+                            {esBoleta ? "Este RUT no está en Bsale: créalo ahora o se creará al emitir con estos datos (en una boleta basta el nombre)." : "Este RUT no está en Bsale: créalo ahora o se creará al emitir con estos datos (razón social, giro, dirección y comuna obligatorios)."}
+                          </span>
+                          <button type="button" className="btn btn-primary btn-sm" onClick={() => setCrearCliente(cliente)} disabled={!!enviando}>
+                            Crear cliente en Bsale
+                          </button>
                         </div>
                         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
                           {campo(cliente, setCliente, "razon_social", "Razón social", { style: { width: "100%" } })}
@@ -482,9 +516,27 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
                         <input className="input" inputMode="numeric" value={dias} onChange={(e) => setDias(e.target.value.replace(/[^\d]/g, "").slice(0, 3))} disabled={!!enviando} style={{ width: "100%" }} />
                       </label>
                     )}
+                    {pideComprobante && (
+                      <label className="campo-comprobante" style={{ flex: "1 1 180px", minWidth: 0 }}>
+                        <span style={etiqueta}>N° de comprobante{comprobanteObligatorio ? " *" : ""}</span>
+                        <input
+                          className="input"
+                          value={comprobante}
+                          onChange={(e) => setComprobante(e.target.value.slice(0, 60))}
+                          disabled={!!enviando}
+                          placeholder={comprobanteObligatorio ? "N° de operación o voucher" : ventaDirecta ? "Opcional en efectivo" : "Si ya pagó (opcional)"}
+                          style={{ width: "100%", borderColor: comprobanteObligatorio && !comprobante.trim() ? "#fca5a5" : undefined }}
+                        />
+                      </label>
+                    )}
                     {ventaDirecta && (
                       <div style={{ flex: "2 1 220px", minWidth: 0, fontSize: 12, color: "var(--text-muted)", alignSelf: "center" }}>
-                        {aCredito ? "A crédito: el documento queda por cobrar en Seguimiento de Pagos." : "Pagada al emitir: el pago queda registrado en la cotización."}
+                        {aCredito ? "A crédito: el documento queda por cobrar en Seguimiento de Pagos." : "Pagada al emitir: el pago queda registrado en la cotización con este N° de comprobante."}
+                      </div>
+                    )}
+                    {!ventaDirecta && pideComprobante && (
+                      <div style={{ flex: "2 1 220px", minWidth: 0, fontSize: 12, color: "var(--text-muted)", alignSelf: "center" }}>
+                        Si el cliente ya pagó, con el N° de comprobante el pago queda registrado y el documento pagado.
                       </div>
                     )}
                   </>

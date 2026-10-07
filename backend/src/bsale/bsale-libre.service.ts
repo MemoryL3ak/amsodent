@@ -142,6 +142,54 @@ export class BsaleLibreService {
     };
   }
 
+  /* Crear el cliente en Bsale desde el sistema (2026-10-07). Pedido de Ariel:
+     en la venta directa, si el RUT no está en Bsale, una ventana con todos
+     los campos que Bsale pide para crearlo. Empresa: razón social y giro;
+     persona: nombres y apellidos. Dirección, comuna y ciudad siempre. Como
+     toda acción en Bsale: se puede simular, y con la emisión apagada solo
+     se simula. Si el RUT ya existe, devuelve el que hay (no duplica). */
+  async crearCliente(usuario: { id: string; email: string }, body: any) {
+    await this.facturacion.exigirRol(usuario.id);
+    if (!rutValido(body?.rut)) throw new BadRequestException('El RUT no es válido (revisa el dígito verificador).');
+    const rut = rutBsale(body.rut);
+    const existente = await this.despachos.clientePorRut(rut);
+    if (existente) return { ya_existia: true, cliente: this.clienteDeBsale(existente) };
+    const persona = body?.tipo === 'persona';
+    const c = {
+      razon_social: texto(body?.razon_social, 120), nombres: texto(body?.nombres, 60), apellidos: texto(body?.apellidos, 60),
+      giro: texto(body?.giro, 80), direccion: texto(body?.direccion, 120), comuna: texto(body?.comuna, 60), ciudad: texto(body?.ciudad, 60),
+      email: texto(body?.email, 120), telefono: texto(body?.telefono, 30),
+    };
+    const faltan: string[] = [];
+    if (persona) {
+      if (!c.nombres) faltan.push('los nombres');
+      if (!c.apellidos) faltan.push('los apellidos');
+    } else {
+      if (!c.razon_social) faltan.push('la razón social');
+      if (!c.giro) faltan.push('el giro');
+    }
+    if (!c.direccion) faltan.push('la dirección');
+    if (!c.comuna) faltan.push('la comuna');
+    if (!c.ciudad) faltan.push('la ciudad');
+    if (c.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(c.email)) faltan.push('un correo válido');
+    if (faltan.length) throw new BadRequestException(`Falta ${faltan.join(', ')}.`);
+    const solicitud: Record<string, any> = {
+      code: rut,
+      companyOrPerson: persona ? 0 : 1,
+      ...(persona ? { firstName: c.nombres, lastName: c.apellidos } : { company: c.razon_social }),
+      ...(c.giro ? { activity: c.giro } : {}),
+      address: c.direccion, municipality: c.comuna, city: c.ciudad,
+      ...(c.email ? { email: c.email } : {}),
+      ...(c.telefono ? { phone: c.telefono } : {}),
+    };
+    if (body?.simular === true || !this.facturacion.emisionActiva) {
+      return { simulacion: true, emision_apagada: body?.simular !== true, solicitud };
+    }
+    const creado = await this.facturacion.apiEnviar('POST', '/clients.json', solicitud);
+    this.logger.log(`Cliente ${rut} creado en Bsale (id ${creado?.id}) por ${usuario.email}`);
+    return { creado: true, cliente: this.clienteDeBsale(creado) };
+  }
+
   private clienteDeBsale(c: any) {
     return {
       id: Number(c.id), nuevo: false, rut: String(c.code || ''),
@@ -337,6 +385,7 @@ export class BsaleLibreService {
     let traslado: any = null;
     let credito = false;
     let pagadaAhora = false;
+    let comprobante = '';
     if (tipo === 'guia') {
       const td = await this.despachos.tipoDocumento(String(DTE_GUIA), /gu[ií]a/i);
       tipoDocumentoId = Number(td?.id) || 0;
@@ -372,6 +421,15 @@ export class BsaleLibreService {
       if (refGuia && descuentaStock) avisos.push({ codigo: 'stock_doble', mensaje: 'La factura referencia una guía y además descuenta stock: si la guía ya lo descontó, saldría dos veces.' });
       if (!refGuia && !descuentaStock) avisos.push({ codigo: 'sin_stock', mensaje: 'La factura no descuenta stock: el stock en Bsale quedará como está.' });
       pagadaAhora = ventaDirecta && !!formaPago && !credito;
+      /* N° de comprobante del pago (2026-10-07). Pedido de Ariel: "al crear
+         una boleta/factura nos debe solicitar ingresar el N° de comprobante".
+         En la venta directa pagada al emitir es obligatorio (salvo efectivo,
+         que no tiene comprobante); desde una cotización es opcional y, si
+         viene, el documento queda pagado. A crédito no aplica. */
+      comprobante = credito ? '' : texto(body?.comprobante, 60);
+      if (pagadaAhora && !comprobante && medioDePago(formaPago?.nombre) !== 'efectivo') {
+        problemas.push({ codigo: 'falta_comprobante', mensaje: `Indica el N° de comprobante del pago (${formaPago?.nombre}).` });
+      }
       // A crédito rige el mismo freno por mora que al cotizar.
       if (ventaDirecta && credito && rut) {
         try {
@@ -386,6 +444,7 @@ export class BsaleLibreService {
     if (observacion.length > OBSERVACION_MAX) problemas.push({ codigo: 'observacion_larga', mensaje: `La observación tiene ${observacion.length} caracteres; en Bsale caben hasta ${OBSERVACION_MAX}. Acórtala.` });
     const borrador = {
       observacion,
+      comprobante,
       tipo, venta_directa: ventaDirecta, tipo_documento_id: tipoDocumentoId, cliente, lineas, totales, fecha_emision: fecha, referencias, despacho,
       traslado: traslado ? { id: traslado.id, nombre: traslado.nombre } : null,
       forma_pago: formaPago ? { id: formaPago.id, nombre: formaPago.nombre } : null, dias_vencimiento: dias, credito,
@@ -484,6 +543,7 @@ export class BsaleLibreService {
 
     const esGuia = b.tipo === 'guia';
     let creada: any = null;
+    let comprobanteRegistrado: { numero: string; pagada: boolean } | null = null;
     const r = await this.despachos.emitirReal({
       usuario, clave, salesId, tipo: b.tipo, ruta: esGuia ? '/shippings.json' : '/documents.json', solicitud, vista,
       licitacionId: b.cotizacion?.id || null, origenDocId: null,
@@ -519,7 +579,20 @@ export class BsaleLibreService {
           file_name: pdf ? `${etiqueta} ${doc.number}.pdf` : null, mime_type: pdf ? 'application/pdf' : null, size_bytes: pdf?.size || null,
           bsale_id: Number(doc.id) || null, bsale_url: doc.urlPdf || doc.urlPublicView || null, ...(b.tipo === 'boleta' ? { descripcion: 'Boleta electrónica' } : {}),
         });
-        return Number(fila?.id) || null;
+        const docId = Number(fila?.id) || null;
+        if (docId && b.comprobante && !b.credito) {
+          try {
+            const pago: any = await this.licitaciones.createDocumento({
+              licitacion_id: b.cotizacion.id, tipo: 'comprobante_pago', numero: b.comprobante, monto: Number(doc.netAmount ?? b.totales.neto) || b.totales.neto,
+              fecha_oc: b.fecha_emision, deriva_de_id: docId, forma_pago: b.medio_pago,
+              descripcion: `Pago de la ${b.tipo} ${doc.number} (${b.forma_pago?.nombre || 'pago'}), registrado al emitirla.`,
+            });
+            comprobanteRegistrado = { numero: b.comprobante, pagada: !!pago?.factura_pagada };
+          } catch (e: any) {
+            this.logger.warn(`${etiqueta} ${doc.number}: el comprobante ${b.comprobante} no se pudo registrar: ${e?.message || e}`);
+          }
+        }
+        return docId;
       },
       verificar: async (doc: any) => {
         const avisos: string[] = [];
@@ -537,7 +610,7 @@ export class BsaleLibreService {
         return avisos;
       },
     });
-    return { ...r, cotizacion: creada };
+    return { ...r, cotizacion: creada, comprobante: comprobanteRegistrado };
   }
 
   // ── Venta directa: la cotización que antes se armaba a mano ────────────
@@ -601,7 +674,7 @@ export class BsaleLibreService {
     if (b.pagada_ahora && documentoId) {
       try {
         await this.insertarTolerante('licitacion_documentos', {
-          licitacion_id: licId, tipo: 'comprobante_pago', numero: `Pago ${b.forma_pago.nombre}`, monto: b.totales.neto, fecha_oc: hoy,
+          licitacion_id: licId, tipo: 'comprobante_pago', numero: b.comprobante || `Pago ${b.forma_pago.nombre}`, monto: b.totales.neto, fecha_oc: hoy,
           deriva_de_id: documentoId, forma_pago: b.medio_pago, descripcion: `Pago recibido al emitir la ${b.tipo} (${b.forma_pago.nombre}).`,
         });
       } catch (e: any) {
