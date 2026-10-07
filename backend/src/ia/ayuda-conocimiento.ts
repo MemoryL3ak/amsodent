@@ -642,6 +642,17 @@ el admin.
 Presencia en tiempo real: en línea, inactivo, conectado en horario (09-19),
 desconectado.
 
+### Monitoreo de Alertas (/monitoreo-alertas)
+Para administración y jefaturas de ventas (módulo monitoreo_alertas): las
+alertas de la campana de cada persona en un período (7, 30, 90 días o 6 meses)
+con % leídas, tiempo de lectura y CUMPLIMIENTO, evaluado contra lo que pide cada
+alerta: cierre próximo → postulada (si cerró sin postular: incumplida);
+resultados → resultado registrado; aprobación por peso → resuelta; equivalencias
+→ alternativa creada; cobranza → factura pagada o gestión registrada después
+del aviso; factoring/factura vencida → pagada; correos (OC, guía, despacho) →
+enviados o descartados. Las demás (cambios de estado MP, adjudicadas,
+aprobadas…) son informativas. Tabla por persona (un clic filtra) y detalle.
+
 ### Monitoreo de Asistencia (/monitoreo-marcajes)
 Mantenedor de oficinas (coordenadas + radio en metros + trabajadores asignados)
 y tabla de todos los marcajes con distancia a la oficina.

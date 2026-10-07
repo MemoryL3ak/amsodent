@@ -58,6 +58,7 @@ import Cobranza from "./pages/Cobranza";
 import Factoring from "./pages/Factoring";
 import Facturacion from "./pages/Facturacion";
 import VentaDirecta from "./pages/VentaDirecta";
+import MonitoreoAlertas from "./pages/MonitoreoAlertas";
 import BitacoraCotizaciones from "./pages/BitacoraCotizaciones";
 import Buzon from "./pages/Buzon";
 
@@ -180,6 +181,15 @@ export default function App() {
 
           {/* MONITOREO */}
           <Route path="monitoreo" element={<MonitoreoUsuarios />} />
+          {/* Monitoreo de alertas por vendedor y su cumplimiento (2026-10-07). */}
+          <Route
+            path="monitoreo-alertas"
+            element={
+              <RequireModulo modulo="monitoreo_alertas">
+                <MonitoreoAlertas />
+              </RequireModulo>
+            }
+          />
 
           {/* USUARIOS */}
           <Route path="usuarios" element={<ConfiguracionUsuarios />} />

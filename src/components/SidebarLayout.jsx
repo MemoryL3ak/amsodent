@@ -58,6 +58,7 @@ import {
   HeartHandshake,
   Store,
   HandCoins,
+  BellRing,
 } from "lucide-react";
 import NotificacionesMenu from "./NotificacionesMenu";
 import RecordatoriosCorreo from "./RecordatoriosCorreo";
@@ -301,6 +302,8 @@ export default function SidebarLayout() {
     esAdmin && { to: "/recursos-humanos", icon: Users, label: "Recursos Humanos" },
     puede("usuarios") && { to: "/usuarios",          icon: UserCog,  label: "Usuarios" },
     puede("monitoreo_usuarios") && { to: "/monitoreo",         icon: Activity, label: "Monitoreo de Usuarios" },
+    // (2026-10-07) Alertas de cada vendedor y su cumplimiento.
+    puede("monitoreo_alertas") && { to: "/monitoreo-alertas", icon: BellRing, label: "Monitoreo de Alertas" },
     puede("monitoreo_asistencia") && { to: "/monitoreo-marcajes", icon: MapPin,   label: "Monitoreo de Asistencia" },
     esAdmin && { to: "/monitoreo-sistema", icon: Gauge, label: "Monitoreo del Sistema" },
   ].filter(Boolean);

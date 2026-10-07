@@ -919,6 +919,20 @@ export const GRUPOS_MANUAL = [
           "Monitoreo del Sistema (solo admin): logs en vivo, errores con trace ID y lo que hizo el usuario antes del error.",
         ],
       },
+      {
+        id: "monitoreo-alertas",
+        titulo: "Monitoreo de Alertas",
+        icono: "Bell",
+        ruta: "/monitoreo-alertas",
+        acceso: { tipo: "modulo", key: "monitoreo_alertas" },
+        quien: "Administración y jefaturas de ventas",
+        resumen: "Las alertas que recibe cada persona en su campana y si se cumplieron.",
+        funciones: [
+          "Período de 7, 30, 90 días o 6 meses. KPIs: alertas, % leídas (y en cuánto tiempo se leen), % de cumplimiento de las que piden una acción, pendientes e incumplidas; cada KPI filtra el detalle.",
+          "Por persona: alertas, % leídas, tiempo de lectura, cuántas piden acción, pendientes, incumplidas y % de cumplimiento. Un clic filtra el detalle por esa persona.",
+          "Cumplimiento según lo que pide cada alerta: cierre próximo → postulada (si cerró sin postular, incumplida); resultados → resultado registrado; aprobación por peso → resuelta; equivalencias → alternativa creada; cobranza → factura pagada o gestión registrada después del aviso; factoring / factura vencida → pagada; correos (OC, guía, despacho) → enviados o descartados. Las demás son informativas: solo cuenta si se leyeron.",
+        ],
+      },
     ],
   },
 ];

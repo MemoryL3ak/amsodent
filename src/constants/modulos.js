@@ -51,6 +51,8 @@ export const MODULOS = [
   { key: "usuarios", label: "Usuarios", grupo: "Administración" },
   { key: "monitoreo_usuarios", label: "Monitoreo de Usuarios", grupo: "Administración" },
   { key: "monitoreo_asistencia", label: "Monitoreo de Asistencia", grupo: "Administración" },
+  // Monitoreo de alertas (2026-10-07): alertas de cada vendedor y su cumplimiento.
+  { key: "monitoreo_alertas", label: "Monitoreo de Alertas", grupo: "Administración" },
 ];
 
 export const MODULO_KEYS = MODULOS.map((m) => m.key);
@@ -59,8 +61,8 @@ const BASE = ["cotizaciones", "crear_cotizacion", "clientes", "mis_clientes", "b
 
 // Fallback por rol (debe reflejar backend/src/auth/permisos.ts).
 const ROLE_DEFAULTS = {
-  jefe_ventas: [...BASE, "trazabilidad", "metas", "panel_indicadores", "resumen_comercial", "cotizaciones_vendedor"],
-  jefe_ventas_especial: [...BASE, "trazabilidad", "seguimiento_pagos", "cobranza", "factoring", "facturacion", "venta_directa", "metas", "panel_indicadores", "resumen_comercial", "cotizaciones_vendedor"],
+  jefe_ventas: [...BASE, "trazabilidad", "metas", "panel_indicadores", "resumen_comercial", "cotizaciones_vendedor", "monitoreo_alertas"],
+  jefe_ventas_especial: [...BASE, "trazabilidad", "seguimiento_pagos", "cobranza", "factoring", "facturacion", "venta_directa", "metas", "panel_indicadores", "resumen_comercial", "cotizaciones_vendedor", "monitoreo_alertas"],
   ventas: [...BASE, "metas"],
   ventas_especial: [...BASE, "metas", "sorteo", "monitoreo_stock"],
   contabilidad: ["mi_correo", "chat", "seguimiento_pagos", "cobranza", "facturacion", "venta_directa", "metas"],
