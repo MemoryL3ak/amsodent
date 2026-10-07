@@ -62,6 +62,7 @@ import {
 import NotificacionesMenu from "./NotificacionesMenu";
 import RecordatoriosCorreo from "./RecordatoriosCorreo";
 import RecordatoriosCierre from "./RecordatoriosCierre";
+import RecordatoriosSeguimiento from "./RecordatoriosSeguimiento";
 import GoogleAuthSync from "./GoogleAuthSync";
 import DamarIAWidget from "./DamarIAWidget";
 import useChatNoLeidos from "../hooks/useChatNoLeidos";
@@ -441,6 +442,8 @@ export default function SidebarLayout() {
       <GoogleAuthSync />
       <RecordatoriosCorreo />
       <RecordatoriosCierre />
+      {/* (2026-10-07) Guías sin N° de seguimiento: insiste hasta completarlas. */}
+      <RecordatoriosSeguimiento />
       {esAdmin && <DamarIAWidget />}
       <AvisoMensajeChat
         aviso={avisoChat}
