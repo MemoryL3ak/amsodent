@@ -7,6 +7,7 @@ import DateFilter from "./DateFilter";
 import DropdownSelect from "./ui/DropdownSelect";
 import VistaPreviaBsale from "./VistaPreviaBsale";
 import CamposSeguimientoGuia from "./CamposSeguimientoGuia";
+import CampoObservacionGuia, { OBSERVACION_GUIA_MAX } from "./CampoObservacionGuia";
 import RegistrarComprobanteRapido from "./RegistrarComprobanteRapido";
 
 /* ── Guía o factura LIBRE en Bsale (2026-10-03) ──────────────────────────────
@@ -60,6 +61,8 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
   const [cotizacion, setCotizacion] = useState(cotizacionId ? String(cotizacionId) : "");
   const [desde, setDesde] = useState(null); // datos de la cotización de origen
   const [seguimiento, setSeguimiento] = useState({ empresa: "", numero: "" });
+  // Atributo adicional «Observación» de la guía en Bsale.
+  const [observacion, setObservacion] = useState("");
 
   useEffect(() => {
     let vivo = true;
@@ -122,6 +125,7 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
       .then(async (r) => {
         if (!vivo || !r) return;
         setDesde(r);
+        setObservacion(r.observacion_sugerida || "");
         if (tipo !== "guia" && r.tipo_sugerido && !esGuia) setTipoDoc(r.tipo_sugerido);
         setLineas((r.lineas || []).map((l) => ({ sku: l.sku, producto: l.producto, formato: "", cantidad: String(l.cantidad), neto_unitario: String(l.neto_unitario), lista1: null, lista2: null, stock: null, deCotizacion: true })));
         if (r.cliente?.rut) {
@@ -177,7 +181,7 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
     lineas: lineas.map((l) => ({ sku: l.sku, producto: l.producto, cantidad: Number(l.cantidad), neto_unitario: Number(l.neto_unitario) })),
     fecha_emision: fecha,
     ...(esGuia
-      ? { despacho: { ...despacho, tipo_traslado_id: Number(despacho.tipo_traslado_id) } }
+      ? { despacho: { ...despacho, tipo_traslado_id: Number(despacho.tipo_traslado_id) }, observacion }
       : { forma_pago_id: Number(formaPago), dias_vencimiento: diasEfectivos, ...(ventaDirecta ? {} : { descuenta_stock: descuentaStock }) }),
     referencias: ventaDirecta
       ? []
@@ -213,7 +217,8 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
 
   const apagada = opciones && opciones.modo !== "activa";
   const cerrar = () => { if (!enviando) onCerrar?.(); };
-  const listoParaSimular = !!opciones && !enviando && (!!cliente || esBoleta) && lineas.length > 0 && !!fecha;
+  const obsMax = desde?.observacion_max || OBSERVACION_GUIA_MAX;
+  const listoParaSimular = !!opciones && !enviando && (!!cliente || esBoleta) && lineas.length > 0 && !!fecha && (!esGuia || observacion.trim().length <= obsMax);
   const puedeEmitir = listoParaSimular && !apagada && simulacionVigente && confirmo;
   const nombreDoc = esGuia ? "guía" : esBoleta ? "boleta" : "factura";
   const titulo = ventaDirecta
@@ -497,6 +502,7 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
                 </div>
               )}
               {esGuia && <CamposSeguimientoGuia valor={seguimiento} onChange={setSeguimiento} disabled={!!enviando} />}
+              {esGuia && <CampoObservacionGuia valor={observacion} onChange={setObservacion} sugerida={desde?.observacion_sugerida || ""} max={obsMax} disabled={!!enviando} />}
               {!ventaDirecta && !esBoleta && <div style={caja}>
                 <span style={etiqueta}>Referencias y registro (opcional)</span>
                 <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 8 }}>

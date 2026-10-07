@@ -11,6 +11,7 @@ import { BsaleLibreService } from './bsale-libre.service';
 import { BsaleProductosService } from './bsale-productos.service';
 import { BsaleAnulacionesController } from './bsale-anulaciones.controller';
 import { BsaleAnulacionesService } from './bsale-anulaciones.service';
+import { BsaleEstadosService } from './bsale-estados.service';
 import { LicitacionesModule } from '../licitaciones/licitaciones.module';
 
 @Module({
@@ -18,7 +19,7 @@ import { LicitacionesModule } from '../licitaciones/licitaciones.module';
   // el mismo servicio que una subida a mano (y avisa al vendedor igual).
   imports: [LicitacionesModule],
   controllers: [BsaleController, BsaleFacturacionController, BsaleDespachosController, BsaleLibreController, BsaleAnulacionesController],
-  providers: [BsaleService, BsaleCron, BsaleFacturacionService, BsaleDespachosService, BsaleLibreService, BsaleProductosService, BsaleAnulacionesService],
+  providers: [BsaleService, BsaleCron, BsaleFacturacionService, BsaleDespachosService, BsaleLibreService, BsaleProductosService, BsaleAnulacionesService, BsaleEstadosService],
   // Productos: un producto nuevo con SKU (o al que se le asigna uno) se crea en Bsale.
   exports: [BsaleProductosService],
 })

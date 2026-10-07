@@ -11,6 +11,8 @@ import { Eye, CheckCircle2, Circle, AlertTriangle, ArrowUpDown, ArrowUp, ArrowDo
 import BotonLimpiarFiltros from "../components/BotonLimpiarFiltros";
 import SeguimientoPagoParticular from "../components/SeguimientoPagoParticular";
 import { MEDIOS_PARTICULAR, OPCIONES_CUOTAS, esPagoTarjeta, limitarCuotas, planDeFactura, soloDigitos } from "../lib/pagosParticular";
+import EstadoBsaleBadge from "../components/EstadoBsale";
+import { useEstadosBsale } from "../lib/estadosBsale";
 
 // Normaliza el nombre de archivo para el storage (sin acentos ni símbolos).
 function normalizarNombreArchivo(nombre) {
@@ -454,6 +456,8 @@ export default function SeguimientoPagos() {
   const [toast, setToast] = useState(null);
   // Comprobantes de pago de una factura pagada (ojo de la columna Estado).
   const [verPagos, setVerPagos] = useState(null);
+  // Estado en Bsale de cada factura/boleta (anulada, SII pendiente, no está en Bsale).
+  const estadosBsale = useEstadosBsale();
   const [confirmDesmarcar, setConfirmDesmarcar] = useState(null);
 
   // Nota de crédito o multa que se está cargando a una factura.
@@ -2375,6 +2379,7 @@ export default function SeguimientoPagos() {
                             <Eye size={13} />
                           </button>
                         </div>
+                        <EstadoBsaleBadge estado={estadosBsale?.[f.id]} style={{ marginTop: 2 }} />
                       </td>
                       <td style={{ verticalAlign: "middle", color: "var(--text-muted)" }}>
                         {f.fecha_factura

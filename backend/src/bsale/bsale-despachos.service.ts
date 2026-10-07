@@ -48,6 +48,28 @@ const hoyEnChile = () =>
   new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Santiago', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
 const normSku = (v: any) => String(v ?? '').replace(/\s+/g, '').toUpperCase();
 const texto = (v: any, max = 200) => String(v ?? '').trim().slice(0, max);
+
+/* Observación de la guía (2026-10-07). Pedido de Ariel: la observación que se
+   escribe en cada producto de la cotización va al atributo adicional
+   «Observación» de la guía en Bsale. Ese campo ya lo usaban a mano para
+   instrucciones de entrega (horario de bodega, fono): el texto se propone con
+   las observaciones de los productos y se puede editar antes de simular. El
+   más largo escrito a mano en Bsale tenía 208 caracteres: tope de 250. */
+export const OBSERVACION_MAX = 250;
+export function observacionSugerida(lineas: { sku?: string; producto?: string; observacion?: string }[]): string {
+  const vistas = new Set<string>();
+  const partes: string[] = [];
+  for (const l of lineas || []) {
+    const obs = String(l?.observacion || '').replace(/\s+/g, ' ').trim();
+    if (!obs) continue;
+    const quien = String(l?.sku || '').trim() || String(l?.producto || '').trim().slice(0, 40);
+    const parte = quien ? `${quien}: ${obs}` : obs;
+    if (vistas.has(parte)) continue;
+    vistas.add(parte);
+    partes.push(parte);
+  }
+  return partes.join(' · ');
+}
 // RUT como lo guarda Bsale: sin puntos, con guion.
 const rutBsale = (v: any) => {
   const limpio = normRut(v);
@@ -59,6 +81,7 @@ export class BsaleDespachosService {
   private readonly logger = new Logger(BsaleDespachosService.name);
   private cacheVariantes = new Map<string, { ts: number; variante: any | null }>();
   private cacheTraslados: { ts: number; tipos: any[] } | null = null;
+  private cacheAtributos: { ts: number; items: any[] } | null = null;
 
   constructor(
     private supabase: SupabaseService,
@@ -210,7 +233,7 @@ export class BsaleDespachosService {
     if (!oc) throw new BadRequestException('La orden de compra no pertenece a esta cotización.');
     const { data: items, error: errItems } = await db
       .from('items_licitacion')
-      .select('id, sku, producto, formato, cantidad, valor_unitario, orden')
+      .select('id, sku, producto, formato, cantidad, valor_unitario, orden, observacion')
       .eq('licitacion_id', licId)
       .order('orden', { ascending: true });
     if (errItems) throw new BadRequestException(errItems.message);
@@ -318,6 +341,7 @@ export class BsaleDespachosService {
         en_bsale: !!(variante || detalleNota),
         variante_id: variante ? Number(variante.id) : null,
         detalle_id: detalleNota ? Number(detalleNota.id) : null,
+        observacion: String(it.observacion || '').trim(),
       });
     }
     if (sinSku.length) avisos.push({ codigo: 'items_sin_sku', mensaje: `${sinSku.length} producto${sinSku.length === 1 ? '' : 's'} de la cotización no tiene${sinSku.length === 1 ? '' : 'n'} SKU y no puede${sinSku.length === 1 ? '' : 'n'} ir en la guía: ${sinSku.slice(0, 4).join('; ')}${sinSku.length > 4 ? '…' : ''}. Asígnales SKU en la cotización.` });
@@ -362,6 +386,9 @@ export class BsaleDespachosService {
       },
       tipos_traslado: traslados,
       referencias: ocNumero ? [referenciaOcGuia(folioCotizacion(lic), ocNumero, String(oc.fecha_oc || '').slice(0, 10) || null)] : [],
+      // Texto propuesto para el atributo «Observación» de la guía en Bsale.
+      observacion_sugerida: observacionSugerida(lineasEmitibles),
+      observacion_max: OBSERVACION_MAX,
       fecha_emision: hoy,
       fecha_minima: String(oc.fecha_oc || '').slice(0, 10) || sumarDias(hoy, -30),
       fecha_maxima: hoy,
@@ -472,6 +499,46 @@ export class BsaleDespachosService {
     return { client: c, clienteNuevo: c };
   }
 
+  /* Atributo dinámico «Observación» del tipo de documento: en Bsale la guía
+     (tipo 8) tiene uno de texto, y la factura el suyo. Se busca por nombre y
+     tipo de documento, no por un id fijo. Sin él la observación no se envía. */
+  async atributoObservacion(tipoDocumentoId: number): Promise<number | null> {
+    if (!this.cacheAtributos || Date.now() - this.cacheAtributos.ts > 10 * 60 * 1000) {
+      const items = await this.facturacion.todos('/dynamic_attributes.json').catch(() => null);
+      if (!items) return null;
+      this.cacheAtributos = { ts: Date.now(), items };
+    }
+    const a = this.cacheAtributos.items.find(
+      (x: any) => Number(x?.state) === 0 && Number(x?.document_type?.id) === Number(tipoDocumentoId) && /observaci/i.test(String(x?.name || '')),
+    );
+    return a ? Number(a.id) : null;
+  }
+
+  /* Texto validado + atributo listo para la solicitud a Bsale. */
+  async observacionParaBsale(valor: any, tipoDocumentoId: number): Promise<{ texto: string; atributo: { description: string; dynamicAttributeId: number } | null; aviso: string | null }> {
+    const t = String(valor ?? '').replace(/\s+/g, ' ').trim();
+    if (!t) return { texto: '', atributo: null, aviso: null };
+    if (t.length > OBSERVACION_MAX) throw new BadRequestException(`La observación tiene ${t.length} caracteres; en Bsale caben hasta ${OBSERVACION_MAX}. Acórtala.`);
+    const id = await this.atributoObservacion(tipoDocumentoId);
+    if (!id) return { texto: t, atributo: null, aviso: 'Bsale no tiene el atributo «Observación» para este documento: la observación no se envía.' };
+    return { texto: t, atributo: { description: t, dynamicAttributeId: id }, aviso: null };
+  }
+
+  /* ¿Bsale guardó la Observación? La API de guías (/shippings) no documenta
+     los atributos dinámicos: se confirma leyendo el documento emitido y, si no
+     quedó, se avisa para agregarla a mano (como con la referencia a la OC). */
+  async avisoObservacion(docId: number, numero: any, texto: string): Promise<string | null> {
+    if (!texto) return null;
+    try {
+      const r = await this.facturacion.apiGet(`/documents/${Number(docId)}/attributes.json`);
+      const obs = (r?.items || []).find((a: any) => /observaci/i.test(String(a?.name || '')));
+      if (String(obs?.value || '').replace(/\s+/g, ' ').trim() === texto) return null;
+    } catch {
+      return null; // la verificación no frena nada
+    }
+    return `La guía ${numero} quedó sin la Observación en Bsale: agrégala a mano («${texto.slice(0, 80)}${texto.length > 80 ? '…' : ''}»).`;
+  }
+
   private vista(b: any, extra: Record<string, any>) {
     return {
       emisor: EMISOR,
@@ -490,6 +557,8 @@ export class BsaleDespachosService {
       despacho?: { direccion?: string; comuna?: string; ciudad?: string; destinatario?: string; tipo_traslado_id?: number };
       // Empresa de transporte y N° de seguimiento: solo para el sistema, no van a Bsale.
       seguimiento?: { empresa?: string; numero?: string };
+      // Atributo adicional «Observación» en Bsale (sin enviar = la propuesta del borrador).
+      observacion?: string;
       cliente?: Record<string, any>; fecha_emision?: string; huella?: string; simular?: boolean;
     },
   ) {
@@ -560,7 +629,10 @@ export class BsaleDespachosService {
       references: b.referencias.map((r: any) => referenciaParaBsale(r, emision)),
       salesId,
     };
+    const obs = await this.observacionParaBsale(body?.observacion === undefined ? b.observacion_sugerida : body.observacion, b.tipo_documento_id);
+    if (obs.atributo) solicitud.dynamicAttributes = [obs.atributo];
     const vista = this.vista(b, {
+      observacion: obs.texto || null,
       tipo: 'Guía de despacho electrónica',
       sii: true,
       descuenta_stock: true,
@@ -572,6 +644,7 @@ export class BsaleDespachosService {
       notas: [
         b.orden_bsale ? `Las líneas salen de la orden ${b.orden_bsale.numero} registrada en Bsale.` : 'Los precios son los de la cotización.',
         'Bsale descuenta el stock al emitir la guía.',
+        ...(obs.aviso ? [obs.aviso] : []),
       ],
     });
     if (!real) return { simulacion: true, emision_apagada: body?.simular !== true, solicitud, totales, vista };
@@ -615,6 +688,8 @@ export class BsaleDespachosService {
             avisos.push(`Bsale calculó $${Number(completo.totalAmount).toLocaleString('es-CL')} y el borrador decía $${totales.total.toLocaleString('es-CL')}.`);
           }
         } catch { /* la verificación no frena nada */ }
+        const sinObs = obs.atributo ? await this.avisoObservacion(Number(doc.id), doc.number, obs.texto) : null;
+        if (sinObs) avisos.push(sinObs);
         return avisos;
       },
     });
@@ -768,7 +843,15 @@ export class BsaleDespachosService {
     let documentoId: number | null = null;
     try {
       documentoId = await p.registrar(doc, pdf);
-      await db.from('bsale_emisiones').update({ documento_id: documentoId, updated_at: new Date().toISOString() }).eq('id', emisionId);
+      /* (2026-10-07) La venta directa crea su cotización al registrar: el
+         registro de la emisión nació sin ella y la pestaña «Venta directa» no
+         la mostraba. Se toma de la cotización donde quedó el documento. */
+      let licitacionId = p.licitacionId;
+      if (!licitacionId && documentoId) {
+        const { data: d } = await db.from('licitacion_documentos').select('licitacion_id').eq('id', documentoId).maybeSingle();
+        licitacionId = Number((d as any)?.licitacion_id) || null;
+      }
+      await db.from('bsale_emisiones').update({ documento_id: documentoId, ...(licitacionId ? { licitacion_id: licitacionId } : {}), updated_at: new Date().toISOString() }).eq('id', emisionId);
     } catch (e: any) {
       this.logger.error(`${p.tipo} ${emitida.numero} emitida en Bsale pero NO registrada en el sistema: ${e?.message || e}`);
       avisos.push(`El documento ${emitida.numero} se emitió en Bsale pero no quedó registrado en la cotización (${String(e?.message || e).slice(0, 120)}). Regístralo a mano en Trazabilidad.`);
