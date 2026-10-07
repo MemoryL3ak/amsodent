@@ -158,14 +158,31 @@ export class MercadopublicoService {
      Con `desde` (ISO) devuelve solo las fichas consultadas después de ese
      instante. Es el modo incremental que usa la sincronización para refrescar
      entre tandas sin volver a bajar el panel completo. */
+  /* (2026-10-07) Pedido de Ariel: "revisar el módulo de análisis de Mercado
+     Público, está muy lenta la carga". Medido con los datos reales: 2.447
+     fichas, ~10 s y 22 MB de JSON, el 90 % en `detalle` (las cotizaciones de
+     cada competidor con sus productos, los productos solicitados, la
+     convocatoria…) que la tabla no usa. Ahora la lista trae solo las columnas
+     que usa el panel y, del detalle, lo que necesita el análisis de productos
+     (comparacion_items y el monto adjudicado). El detalle completo de una
+     ficha se pide al desplegarla (detalleResultado). Además: caché de 5
+     minutos de la lista completa (se borra al sincronizar) y los datos
+     internos se piden en paralelo. */
+  private static readonly COLS_LISTA =
+    'id, licitacion_id, codigo_mp, tipo, estado_mp, participamos, ganamos, ganador_rut, ganador_nombre, ganador_es_emt, ' +
+    'monto_nuestro, monto_ganador, organismo, fecha_cierre, consultado_at, fecha_adjudicacion, ' +
+    'comparacion_items:detalle->comparacion_items, monto_nuestro_adjudicado:detalle->monto_nuestro_adjudicado';
+  private cacheLista: { ts: number; datos: any[] } | null = null;
+
   async resultados(desde?: string) {
     const client = this.supabase.getClient();
     // Se descarta un `desde` inválido en vez de fallar: peor que un refresco
     // caro es un refresco que devuelve un error a mitad de sincronización.
     const corte = desde && !Number.isNaN(Date.parse(desde)) ? new Date(desde).toISOString() : null;
+    if (!corte && this.cacheLista && Date.now() - this.cacheLista.ts < 5 * 60 * 1000) return this.cacheLista.datos;
     let query = client
       .from('mp_resultados')
-      .select('*')
+      .select(MercadopublicoService.COLS_LISTA)
       .order('consultado_at', { ascending: false })
       // 5.000 se quedaba corto: hay 3.337 cotizaciones con código de Mercado
       // Público y el margen se agotaba en meses, truncando el panel sin avisar.
@@ -189,22 +206,56 @@ export class MercadopublicoService {
     const ids = lista.map((r: any) => r.licitacion_id);
     const porId = new Map<any, any>();
     const TANDA_IDS = 500;
-    for (let i = 0; i < ids.length; i += TANDA_IDS) {
-      const { data: lics, error: errLics } = await client
-        .from('licitaciones')
-        .select('id, id_licitacion, nombre, nombre_entidad, estado, total_con_iva, total_sin_iva, vendedor_nombre, creado_por, fecha, created_at')
-        .in('id', ids.slice(i, i + TANDA_IDS));
+    const tandas: any[][] = [];
+    for (let i = 0; i < ids.length; i += TANDA_IDS) tandas.push(ids.slice(i, i + TANDA_IDS));
+    // En paralelo (antes, una tras otra: ~7 viajes seguidos con 3.300 fichas).
+    const respuestas = await Promise.all(tandas.map((t) => client
+      .from('licitaciones')
+      .select('id, id_licitacion, nombre, nombre_entidad, estado')
+      .in('id', t)));
+    for (const { data: lics, error: errLics } of respuestas) {
       if (errLics) throw new BadRequestException(errLics.message);
-      for (const l of lics || []) porId.set(l.id, l);
+      for (const l of lics || []) porId.set((l as any).id, l);
     }
 
-    return lista.map((r: any) => ({ ...r, interna: porId.get(r.licitacion_id) || null }));
+    // Misma forma que antes para el panel: `detalle` con lo que usa la lista.
+    const datos = lista.map((r: any) => {
+      const { comparacion_items, monto_nuestro_adjudicado, ...resto } = r;
+      return {
+        ...resto,
+        detalle: { comparacion_items: Array.isArray(comparacion_items) ? comparacion_items : [], monto_nuestro_adjudicado: monto_nuestro_adjudicado ?? null, resumido: true },
+        interna: porId.get(r.licitacion_id) || null,
+      };
+    });
+    if (!corte) this.cacheLista = { ts: Date.now(), datos };
+    return datos;
+  }
+
+  /* Detalle completo de UNA ficha (cotizaciones de cada competidor, ítems…):
+     lo pide el panel al desplegar la fila. Sin los productos de cada
+     cotización, que el panel no muestra. */
+  async detalleResultado(id: number) {
+    const { data, error } = await this.supabase.getClient().from('mp_resultados').select('id, detalle').eq('id', Number(id)).maybeSingle();
+    if (error) throw new BadRequestException(error.message);
+    if (!data) throw new BadRequestException('Ficha no encontrada.');
+    const d: any = (data as any).detalle || {};
+    return {
+      id: (data as any).id,
+      detalle: {
+        ...d,
+        cotizaciones: (Array.isArray(d.cotizaciones) ? d.cotizaciones : []).map(({ productos, ...c }: any) => c),
+        productos_solicitados: undefined,
+        convocatoria: undefined,
+      },
+    };
   }
 
   /* ── Sincronización: consulta la API para los procesos pendientes ──
      Rango configurable (desde/hasta, fecha de creación de la cotización
      interna, formato YYYY-MM-DD); sin rango parte del día 1 del mes anterior. */
   async sincronizar(body?: { desde?: string; hasta?: string; lote?: number; forzar?: boolean | string }) {
+    // Lo que se sincroniza cambia la lista: la caché del panel se descarta.
+    this.cacheLista = null;
     if (!this.ticket) {
       throw new BadRequestException(
         'Falta configurar MP_API_TICKET en el backend. El ticket se solicita gratis en chilecompra.cl/api con Clave Única.',
