@@ -8,5 +8,7 @@ import { BsaleModule } from '../bsale/bsale.module';
   imports: [BsaleModule],
   controllers: [ProductosController],
   providers: [ProductosService],
+  // El explorador de precios crea productos transitorios con el mismo servicio (2026-10-07).
+  exports: [ProductosService],
 })
 export class ProductosModule {}

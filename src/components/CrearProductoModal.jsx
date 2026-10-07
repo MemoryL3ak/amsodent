@@ -14,6 +14,7 @@ import {
   Upload,
 } from "lucide-react";
 import { api } from "../lib/api";
+import { CATEGORIAS_PRODUCTO } from "../constants/categoriasProducto";
 import { FACTOR_LISTA_3, calcularLista3 } from "../lib/listas";
 
 // Paleta de la plataforma
@@ -23,25 +24,8 @@ const TEAL_DEEP = "#0e6e74";
 const TEAL_SOFT = "#e8f7f7";
 const TEAL_MID = "#b2e4e5";
 
-const CATEGORIAS = [
-  "Prevención e Higiene",
-  "Consumibles",
-  "Blanqueamiento",
-  "Operatoria",
-  "Endodoncia",
-  "Periodoncia",
-  "Cirugía",
-  "Ortodoncia",
-  "Equipos y Otros",
-  "Esterilización",
-  "Fresas y Pulido",
-  "Instrumental",
-  "Radiología",
-  "Impresión",
-  "Laboratorio",
-  "Insumos Médicos",
-  "Desinfección",
-];
+// La lista vive en constants/ (también la usa el Explorador de Precios, 2026-10-07).
+const CATEGORIAS = CATEGORIAS_PRODUCTO;
 
 function formatearCLDesdeString(value) {
   const digits = String(value ?? "").replace(/\D/g, "");

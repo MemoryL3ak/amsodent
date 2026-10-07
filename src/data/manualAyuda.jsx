@@ -684,6 +684,21 @@ export const GRUPOS_MANUAL = [
         ],
       },
       {
+        id: "explorador-precios",
+        titulo: "Explorador de Precios",
+        icono: "PackageSearch",
+        ruta: "/explorador-precios",
+        acceso: { tipo: "admin" },
+        quien: "Solo administradores",
+        resumen: "El buscador de precios de las tiendas dentales del portal, desde la plataforma: dónde queda nuestro precio frente al mercado.",
+        funciones: [
+          "Busca un insumo y compara en vivo los precios de las tiendas configuradas (Acceso Portal Clientes → Tiendas del Explorador), con Amsodent primero, el mínimo del mercado, nuestra brecha y el histórico de cada producto.",
+          "«Crear producto» en cada tarjeta: crea ese producto en el catálogo como «Transitorio» (sin SKU) con lo mínimo — nombre, categoría y formato; marca, costo y listas opcionales —, el link de la tienda como referencia y su imagen. «Simular» revisa sin crear; el freno de duplicados por nombre es el de siempre.",
+          "«Ya creado»: si algún producto ya tiene ese link de referencia (aunque se haya pegado con ?srsltid, www o la barra final), la tarjeta lo dice y enlaza a su ficha en vez de ofrecer crear otro.",
+          "El Explorador del portal del cliente no tiene «Crear producto»: allí el cliente arma su pedido.",
+        ],
+      },
+      {
         id: "panel-ejecutivos",
         titulo: "Panel de Ejecutivos",
         icono: "BarChart3",

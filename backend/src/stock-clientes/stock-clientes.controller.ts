@@ -15,6 +15,7 @@ import {
 import { Throttle } from '@nestjs/throttler';
 import { StockClientesService, rolDeToken } from './stock-clientes.service';
 import { ExploradorService } from './explorador.service';
+import { ExploradorProductosService } from './explorador-productos.service';
 import { PedidosFlujoService } from './pedidos-flujo.service';
 import { WebpayService } from './webpay.service';
 import { OfertasPortalService } from './ofertas-portal.service';
@@ -32,6 +33,7 @@ export class StockClientesController {
     private webpay: WebpayService,
     private ofertas: OfertasPortalService,
     private modulos: PortalModulosService,
+    private exploradorProductos: ExploradorProductosService,
   ) {}
 
   /* ── Módulos del portal (2026-10-05) ── Qué secciones ve la cuenta. */
@@ -502,7 +504,17 @@ export class StockClientesController {
   @UseGuards(AdminGuard)
   @Get('explorador/interno')
   async explorarPreciosInterno(@Query('q') q: string) {
-    return await this.explorador.buscar(q, 'plataforma');
+    // (2026-10-07) Cada resultado dice si ya hay un producto con ese link.
+    return await this.exploradorProductos.anotar(await this.explorador.buscar(q, 'plataforma'));
+  }
+
+  /* (2026-10-07) Crear un producto transitorio desde un resultado del
+     explorador interno (el del portal no lo tiene). simular: true revisa sin
+     crear. */
+  @UseGuards(AdminGuard)
+  @Post('explorador/interno/crear-producto')
+  async crearProductoExplorador(@Req() req: any, @Body() body: any) {
+    return await this.exploradorProductos.crear({ email: req?.user?.email || null }, body);
   }
 
   // Mantenedor de tiendas del explorador (2026-09-10, solo admin): permite
