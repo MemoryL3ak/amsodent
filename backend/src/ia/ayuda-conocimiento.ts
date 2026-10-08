@@ -347,7 +347,9 @@ cada producto, reingresa ese stock) y ajuste de precio (rebaja por unidad, no
 mueve stock); varias mientras quede saldo. NOTA DE DÉBITO: aumenta lo que el
 cliente debe por una factura (intereses, diferencia de precio…), líneas de
 texto libre y el motivo en la referencia; queda en la cotización y Seguimiento
-de Pagos la suma al saldo. TRAZABILIDAD → pestaña FACTURAS: guías por facturar
+de Pagos la suma al saldo. TRAZABILIDAD → pestaña FACTURAS: KPIs que filtran al
+hacer clic (guías por facturar y su neto, con más de 7 días, facturado este
+mes, por cobrar, pagado este mes, anuladas/con NC); guías por facturar
 con «Emitir factura», todas las facturas/boletas con su estado en Bsale y los
 botones «N. crédito» / «N. débito», «Nueva factura» y notas por N°. ESTADO EN
 BSALE: etiquetas «Anulada en Bsale», «Anulada con NC N°» (sus notas de crédito

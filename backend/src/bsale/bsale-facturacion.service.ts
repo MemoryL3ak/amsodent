@@ -432,6 +432,7 @@ export class BsaleFacturacionService {
           rut: lic.rut_entidad || '',
           oc_numero: oc?.numero ? String(oc.numero) : null,
           oc_neto: Number(oc?.monto) || null,
+          guia_neto: Number(g.monto) || null,
           guia_folio: folioGuia(g.numero) || null,
           // Sin un folio reconocible no se puede buscar la guía en Bsale.
           emitible: !!folioGuia(g.numero),

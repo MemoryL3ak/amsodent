@@ -586,7 +586,9 @@ export default function AnalisisMercadoPublico() {
   const cargarGlobal = useCallback(() => {
     api.get("/licitaciones/mercado-publico/analisis-productos")
       .then(setGlobal)
-      .catch(() => setGlobal(null));
+      // (2026-10-08) El motivo real a la vista: p. ej. «Falta aplicar la migración
+      // 20260904…». Antes se tragaba y decía que nadie lo había corrido.
+      .catch((e) => setGlobal({ error_carga: e?.message || "No se pudo consultar el análisis global." }));
   }, []);
   useEffect(() => { cargarGlobal(); }, [cargarGlobal]);
   useEffect(() => {
@@ -1268,7 +1270,9 @@ export default function AnalisisMercadoPublico() {
           ) : !(global?.guardado?.filas || []).length ? (
             <Vacio
               texto={
-                global?.estado === "error"
+                global?.error_carga
+                  ? `No se pudo cargar el análisis global: ${global.error_carga}`
+                  : global?.estado === "error"
                   ? (global?.puede_refrescar ? "Sin resultado todavía. Puedes volver a intentarlo con «Actualizar análisis»." : "Sin resultado todavía.")
                   : global?.automatico?.activa
                     ? `Aún no se ha corrido el análisis global. Se genera solo cada día a las ${global.automatico.hora}${global?.puede_refrescar ? ", o ahora con «Actualizar análisis»" : ""}.`
