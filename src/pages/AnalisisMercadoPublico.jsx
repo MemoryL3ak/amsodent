@@ -1283,9 +1283,9 @@ export default function AnalisisMercadoPublico() {
             />
           ) : (
             <>
-              <div style={{ border: "1px solid var(--border)", borderRadius: 8, overflowX: "auto" }}>
+              <div className="mp-tabla-global" style={{ border: "1px solid var(--border)", borderRadius: 8, overflow: "auto", maxHeight: 520 }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, background: "var(--surface)", minWidth: 820 }}>
-                  <thead>
+                  <thead style={{ position: "sticky", top: 0, zIndex: 1 }}>
                     <tr style={{ background: "var(--bg)", color: "var(--text-muted)", textAlign: "left" }}>
                       <th style={{ padding: "6px 10px" }}>Producto</th>
                       <th style={{ padding: "6px 10px", textAlign: "right" }}>Procesos</th>
@@ -2262,9 +2262,12 @@ function EstadoMpCotizaciones({ setToast }) {
             {datos.filas.length === 0 ? (
               <Vacio texto="No hay cotizaciones abiertas con código de Mercado Público." />
             ) : (
-              <div style={{ border: "1px solid var(--border)", borderRadius: 8, overflowX: "auto" }}>
+              // (2026-10-08) Con scroll propio (antes la tabla se estiraba hasta abajo) y las
+              // que piden atención primero: desactualizadas, luego las que no se pudieron
+              // consultar, al final las que están al día.
+              <div className="mp-tabla-estado" style={{ border: "1px solid var(--border)", borderRadius: 8, overflow: "auto", maxHeight: 440 }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, background: "var(--surface)", minWidth: 820 }}>
-                  <thead>
+                  <thead style={{ position: "sticky", top: 0, zIndex: 1 }}>
                     <tr style={{ background: "var(--bg)", color: "var(--text-muted)", textAlign: "left" }}>
                       <th style={{ padding: "6px 10px", width: 34 }} />
                       <th style={{ padding: "6px 10px" }}>Cotización</th>
@@ -2275,7 +2278,7 @@ function EstadoMpCotizaciones({ setToast }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {datos.filas.map((f) => (
+                    {[...datos.filas].sort((a, b) => (b.discrepancia ? 2 : b.error ? 1 : 0) - (a.discrepancia ? 2 : a.error ? 1 : 0)).map((f) => (
                       <tr key={f.id} style={{ borderTop: "1px solid var(--border)", background: f.discrepancia ? "#fffbeb" : undefined }}>
                         <td style={{ padding: "5px 10px", textAlign: "center" }}>
                           {f.discrepancia && (
