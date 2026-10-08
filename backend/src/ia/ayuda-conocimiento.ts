@@ -750,7 +750,9 @@ girasol 🌻). Hoy ayuda en:
   costo y listas opcionales), el link de la tienda en «link de referencia» y su
   imagen; «Simular» revisa sin crear. Si ya hay un producto con ese link (se
   compara sin ?srsltid, www ni barra final), la tarjeta dice «Ya creado» y
-  enlaza a su ficha. El explorador del portal cliente no tiene ese botón.
+  enlaza a su ficha. En los resultados de nuestra web se revisa también el SKU:
+  si existe en el catálogo está creado; si no, se crea CON ese SKU (Transitorio)
+  y se enlaza en Bsale. El explorador del portal cliente no tiene ese botón.
 - CARRITO DEL PORTAL: en el Explorador de Precios del portal cliente, el botón
   "Agregar" junta productos en "Mi pedido". Checkout en 2 pasos: primero se
   edita el carrito (cantidades, nota) y "Revisar pedido" abre el resumen
