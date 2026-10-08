@@ -2210,8 +2210,8 @@ export default function Trazabilidad() {
       const licIdActual = uploadingFor;
       cancelarUploadFactura();
       await refrescarDocumentosLic(licIdActual);
-      // Al cargar una guía, avisar al detector de correos pendientes.
-      if (esGuia) window.dispatchEvent(new Event("correos:check"));
+      // Al cargar una guía o una factura, avisar al detector de correos pendientes (abre la ventana para enviarla).
+      window.dispatchEvent(new Event("correos:check"));
     } catch (e) {
       console.error("Error subiendo documento:", e);
       const detalle = [e?.code, e?.message].filter(Boolean).join(" - ");

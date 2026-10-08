@@ -365,11 +365,12 @@ crédito ya salen en hoja). El ícono de impresora junto al N° del documento
 (Facturación, Venta directa, Trazabilidad → Facturas, documentos de la
 cotización) arma el documento en hoja carta con su timbre electrónico y la
 resolución del SII, para imprimirlo en formato normal.
-CORREO AUTOMÁTICO: al emitir guía, factura o boleta que queda en una
-cotización, se envía sola al correo del cliente con el PDF (guía: plantilla y
-copias de siempre; factura/boleta: la suya), desde la casilla del vendedor si
-la conectó. La simulación dice a quién irá; sin correo en la cotización, avisa
-para enviarlo a mano. Enviar la guía cumple su recordatorio.
+CORREO AL CLIENTE: nada se envía solo. Al emitir en Bsale o cargar a mano una
+guía, factura o boleta se abre la ventana de correo prellenada (destinatario,
+copias, asunto, texto y PDF adjunto) y la persona agrega o quita destinatarios,
+edita el texto, suma o saca adjuntos y presiona Enviar; sale desde su casilla
+si la conectó. Si la cierra sin enviar, vuelve como recordatorio (se puede
+posponer). La simulación dice a quién irá.
 VENTA DIRECTA: pagada al emitir pide el N° de comprobante (salvo efectivo) y
 queda en la pestaña «Venta directa» con su cotización. CLIENTE NUEVO EN BSALE:
 si el RUT no está, una ventana pide los datos que Bsale exige y lo crea

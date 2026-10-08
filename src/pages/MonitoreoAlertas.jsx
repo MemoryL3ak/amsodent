@@ -25,6 +25,7 @@ const TIPOS = {
   factura_vencida: "Factura vencida",
   oc_agradecimiento: "Correo de agradecimiento OC",
   guia_despacho_enviar: "Enviar guía de despacho",
+  factura_enviar: "Enviar factura o boleta",
   info_despacho_agradecimiento: "Correo de despacho",
   mp_estado_auto: "Cambio de estado en MP",
   mp_adjudicada: "Adjudicada en MP",

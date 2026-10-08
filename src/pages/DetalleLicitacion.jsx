@@ -1963,7 +1963,7 @@ export default function EditarLicitacion() {
       await cargarDocumentosLicitacion();
       // Fase 1 correos: avisar al detector global para que revise si hay un
       // correo pendiente (agradecimiento OC / envío de guía) recién generado.
-      if (tipo === "orden_compra" || tipo === "guia_despacho") {
+      if (tipo === "orden_compra" || tipo === "guia_despacho" || tipo === "factura" || tipo === "factura_boleta") {
         window.dispatchEvent(new Event("correos:check"));
       }
     } catch (e) {

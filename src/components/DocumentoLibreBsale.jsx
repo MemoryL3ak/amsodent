@@ -229,7 +229,8 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
   }
 
   const apagada = opciones && opciones.modo !== "activa";
-  const cerrar = () => { if (!enviando) onCerrar?.(); };
+  // (2026-10-08) Emitido el documento, al cerrar se abre la ventana de correo para enviárselo al cliente.
+  const cerrar = () => { if (enviando) return; if (resultado?.emitida) window.dispatchEvent(new Event("correos:check")); onCerrar?.(); };
   const obsMax = desde?.observacion_max || OBSERVACION_GUIA_MAX;
   const listoParaSimular = !!opciones && !enviando && (!!cliente || esBoleta) && lineas.length > 0 && !!fecha && (!esGuia || observacion.trim().length <= obsMax) && (!comprobanteObligatorio || !!comprobante.trim());
   const puedeEmitir = listoParaSimular && !apagada && simulacionVigente && confirmo;

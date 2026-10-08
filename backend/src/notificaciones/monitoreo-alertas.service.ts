@@ -26,7 +26,7 @@ import { SupabaseService } from '../supabase/supabase.service';
 
 export type EstadoAlerta = 'cumplida' | 'pendiente' | 'incumplida' | 'informativa';
 const CERRADOS = ['adjudicada', 'perdida', 'descartada', 'cancelada', 'desierta'];
-const TIPOS_CORREO = ['oc_agradecimiento', 'guia_despacho_enviar', 'info_despacho_agradecimiento'];
+const TIPOS_CORREO = ['oc_agradecimiento', 'guia_despacho_enviar', 'info_despacho_agradecimiento', 'factura_enviar'];
 const TIPOS_FACTURA = ['factoring_por_vencer', 'factoring_vencido', 'factura_vencida'];
 const MAX_DIAS = 366;
 
