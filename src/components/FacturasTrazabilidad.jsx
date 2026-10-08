@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { Ban, FileCheck, FilePlus2, Receipt, RefreshCw, Search } from "lucide-react";
 import { pedirPendientesFacturar } from "../lib/pendientesFacturar";
@@ -23,7 +23,10 @@ import BotonImprimirCarta from "./BotonImprimirCarta";
    (2026-10-07) "Al emitir una NC debemos ver reflejada esta anulación": una
    factura cuyas notas de crédito suman su total queda «Anulada con NC N°»
    (atenuada, sin cobro pendiente y sin botones de notas); con NC menor, «NC
-   parcial». Cuenta las NC del sistema y las hechas a mano en Bsale. */
+   parcial». Cuenta las NC del sistema y las hechas a mano en Bsale.
+   (2026-10-08) KPIs arriba ("la hiciste muy vacía, no tiene KPIs"): guías por
+   facturar y su neto, las atrasadas (más de 7 días), facturado este mes, por
+   cobrar, pagado este mes y anuladas/con NC. Cada tarjeta filtra su tabla. */
 
 const clp = (n) => `$${Math.round(Number(n) || 0).toLocaleString("es-CL")}`;
 const fechaCL = (iso) => {
@@ -57,6 +60,9 @@ export default function FacturasTrazabilidad({ lics = [], documentosMap = {}, pu
   const [notaCredito, setNotaCredito] = useState(null); // { documentoId } | {} (por N°)
   const [notaDebito, setNotaDebito] = useState(null);
   const [filtro, setFiltro] = useState("todas");
+  const [filtroPend, setFiltroPend] = useState("todas"); // todas | atrasadas
+  const refGuias = useRef(null);
+  const refFacturas = useRef(null);
 
   async function cargarPendientes(refrescar = false) {
     if (!puedeEmitir) return;
@@ -117,11 +123,19 @@ export default function FacturasTrazabilidad({ lics = [], documentosMap = {}, pu
     return filas;
   }, [lics, documentosMap, estadosBsale]);
 
+  const mes = new Date().toISOString().slice(0, 7);
+  const delMes = (f) => String(f.fecha_factura || f.created_at || "").slice(0, 7) === mes;
+  // Lo que vale la factura hoy: total − NC + ND (con IVA).
+  const saldoDe = (f) => Math.max(0, f.bruto - (f.ncTotal || 0) + (f.ndTotal || 0));
   const FILTROS = {
     todas: () => true,
     vigentes: (f) => !f.anulada,
+    mes: (f) => !f.anulada && delMes(f),
+    por_cobrar: (f) => !f.anulada && !f.pagada,
+    pagadas: (f) => !f.anulada && f.pagada,
     anuladas: (f) => f.anulada,
     nc_parcial: (f) => !f.anulada && f.ncTotal > 0,
+    con_nc: (f) => f.anulada || f.ncTotal > 0,
     con_nd: (f) => f.nd.length > 0,
   };
   const cuenta = (k) => facturas.filter(FILTROS[k]).length;
@@ -131,12 +145,43 @@ export default function FacturasTrazabilidad({ lics = [], documentosMap = {}, pu
       .filter((f) => !texto || sinTildes(`${f.numero} ${f.lic?.nombre_entidad} #${f.lic?.id} ${f.lic?.id_licitacion} ${f.ncNumeros.join(" ")}`).includes(texto)),
     [facturas, texto, filtro], // eslint-disable-line react-hooks/exhaustive-deps
   );
+  const atrasada = (p) => Number(p.dias) > 7;
   const pendFiltradas = useMemo(
-    () => (!texto ? pendientes || [] : (pendientes || []).filter((p) => sinTildes(`${p.guia_numero} ${p.cliente} #${p.licitacion_id} ${p.codigo} ${p.oc_numero}`).includes(texto))),
-    [pendientes, texto],
+    () => (pendientes || [])
+      .filter((p) => filtroPend !== "atrasadas" || atrasada(p))
+      .filter((p) => !texto || sinTildes(`${p.guia_numero} ${p.cliente} #${p.licitacion_id} ${p.codigo} ${p.oc_numero}`).includes(texto)),
+    [pendientes, texto, filtroPend],
   );
   useEffect(() => { setPaginaFact(1); setPaginaPend(1); }, [texto]);
   useEffect(() => { setPaginaFact(1); }, [filtro]);
+  useEffect(() => { setPaginaPend(1); }, [filtroPend]);
+
+  // KPIs de la pestaña (sobre todo, sin el buscador).
+  const kpis = useMemo(() => {
+    const pend = pendientes || [];
+    const suma = (lista, fn) => lista.reduce((a, x) => a + (Number(fn(x)) || 0), 0);
+    const facturadasMes = facturas.filter(FILTROS.mes);
+    const porCobrar = facturas.filter(FILTROS.por_cobrar);
+    const pagadasMes = facturas.filter((f) => FILTROS.pagadas(f) && String(f.fecha_pago || "").slice(0, 7) === mes);
+    return {
+      porFacturar: pend.length,
+      porFacturarNeto: suma(pend, (p) => p.guia_neto),
+      atrasadas: pend.filter(atrasada).length,
+      facturadasMes: facturadasMes.length,
+      facturadasMesTotal: suma(facturadasMes, (f) => f.bruto),
+      porCobrar: porCobrar.length,
+      porCobrarTotal: suma(porCobrar, saldoDe),
+      pagadasMes: pagadasMes.length,
+      pagadasMesTotal: suma(pagadasMes, saldoDe),
+      anuladas: facturas.filter(FILTROS.anuladas).length,
+      ncParcial: facturas.filter(FILTROS.nc_parcial).length,
+    };
+  }, [pendientes, facturas]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const irA = (ref) => ref.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  const filtrarFacturas = (k) => { setFiltro(filtro === k ? "todas" : k); irA(refFacturas); };
+  const filtrarGuias = (k) => { setFiltroPend(filtroPend === k ? "todas" : k); irA(refGuias); };
+  const activa = (cond) => (cond ? { outline: "2px solid var(--primary)", outlineOffset: -2 } : {});
 
   const pagFact = Math.min(paginaFact, Math.max(1, Math.ceil(factFiltradas.length / POR_PAGINA)));
   const pagPend = Math.min(paginaPend, Math.max(1, Math.ceil(pendFiltradas.length / 10)));
@@ -179,6 +224,44 @@ export default function FacturasTrazabilidad({ lics = [], documentosMap = {}, pu
         />
       )}
 
+      {/* KPIs: cada tarjeta filtra su tabla (otro clic la deja en «todas»). */}
+      <div className="stats-row stats-6 kpis-facturas" style={{ marginBottom: 0 }}>
+        <div className="stat-card" style={{ cursor: "pointer" }} onClick={() => filtrarGuias("todas")} title="Ir a las guías por facturar">
+          <div className="stat-label">Guías por facturar</div>
+          <div className="stat-value">{pendientes == null ? "…" : kpis.porFacturar}</div>
+          {kpis.porFacturarNeto > 0 && <div className="stat-money">{clp(kpis.porFacturarNeto)}</div>}
+          <div className="stat-sub">{kpis.porFacturarNeto > 0 ? "neto despachado sin factura" : "guías despachadas sin factura"}</div>
+        </div>
+        <div className="stat-card" style={{ cursor: "pointer", ...activa(filtroPend === "atrasadas") }} onClick={() => filtrarGuias("atrasadas")} title="Ver solo las guías con más de 7 días sin factura">
+          <div className="stat-label">Con más de 7 días</div>
+          <div className="stat-value" style={{ color: kpis.atrasadas ? "var(--danger)" : undefined }}>{pendientes == null ? "…" : kpis.atrasadas}</div>
+          <div className="stat-sub">guías que urge facturar</div>
+        </div>
+        <div className="stat-card" style={{ cursor: "pointer", ...activa(filtro === "mes") }} onClick={() => filtrarFacturas("mes")} title="Ver las facturas y boletas de este mes">
+          <div className="stat-label">Facturado este mes</div>
+          <div className="stat-value">{kpis.facturadasMes}</div>
+          <div className="stat-money">{clp(kpis.facturadasMesTotal)}</div>
+          <div className="stat-sub">con IVA · sin anuladas</div>
+        </div>
+        <div className="stat-card" style={{ cursor: "pointer", ...activa(filtro === "por_cobrar") }} onClick={() => filtrarFacturas("por_cobrar")} title="Ver las facturas sin pago registrado">
+          <div className="stat-label">Por cobrar</div>
+          <div className="stat-value" style={{ color: kpis.porCobrar ? "#b45309" : undefined }}>{kpis.porCobrar}</div>
+          <div className="stat-money">{clp(kpis.porCobrarTotal)}</div>
+          <div className="stat-sub">facturas sin pago · con sus notas</div>
+        </div>
+        <div className="stat-card" style={{ cursor: "pointer", ...activa(filtro === "pagadas") }} onClick={() => filtrarFacturas("pagadas")} title="Ver las facturas pagadas">
+          <div className="stat-label">Pagado este mes</div>
+          <div className="stat-value" style={{ color: "#15803d" }}>{kpis.pagadasMes}</div>
+          <div className="stat-money">{clp(kpis.pagadasMesTotal)}</div>
+          <div className="stat-sub">facturas con pago registrado este mes</div>
+        </div>
+        <div className="stat-card" style={{ cursor: "pointer", ...activa(filtro === "con_nc") }} onClick={() => filtrarFacturas("con_nc")} title="Ver las anuladas y las que tienen nota de crédito">
+          <div className="stat-label">Anuladas / con NC</div>
+          <div className="stat-value" style={{ color: kpis.anuladas ? "#b91c1c" : undefined }}>{kpis.anuladas}</div>
+          <div className="stat-sub">{kpis.ncParcial ? `anuladas · ${kpis.ncParcial} con NC parcial` : "con nota de crédito por el total"}</div>
+        </div>
+      </div>
+
       {/* Barra superior */}
       <div className="filter-bar" style={{ alignItems: "center" }}>
         <label className="filter-field" style={{ flex: "2 1 260px", minWidth: 0 }}>
@@ -205,9 +288,12 @@ export default function FacturasTrazabilidad({ lics = [], documentosMap = {}, pu
 
       {/* Por facturar */}
       {puedeEmitir && (
-        <div className="surface">
-          <div className="surface-header">
-            <h3 className="surface-title">Guías por facturar {pendientes ? `(${pendFiltradas.length})` : ""}</h3>
+        <div className="surface" ref={refGuias}>
+          <div className="surface-header" style={{ flexWrap: "wrap", gap: 8 }}>
+            <h3 className="surface-title">
+              Guías por facturar {pendientes ? `(${pendFiltradas.length})` : ""}
+              {filtroPend === "atrasadas" && <span style={{ fontSize: 12, fontWeight: 600, color: "#b91c1c", marginLeft: 8 }}>solo con más de 7 días · <button type="button" className="table-link" onClick={() => setFiltroPend("todas")} style={{ border: 0, background: "none", padding: 0, cursor: "pointer", font: "inherit" }}>ver todas</button></span>}
+            </h3>
             <button type="button" className="btn btn-ghost btn-sm" onClick={() => cargarPendientes(true)} disabled={cargandoPend} title="Volver a consultar">
               <RefreshCw size={13} className={cargandoPend ? "spin" : ""} /> Actualizar
             </button>
@@ -268,7 +354,7 @@ export default function FacturasTrazabilidad({ lics = [], documentosMap = {}, pu
       )}
 
       {/* Facturas y boletas */}
-      <div className="surface">
+      <div className="surface" ref={refFacturas}>
         <div className="surface-header" style={{ flexWrap: "wrap", gap: 8 }}>
           <h3 className="surface-title">Facturas y boletas ({factFiltradas.length})</h3>
           <DropdownSelect
@@ -280,8 +366,12 @@ export default function FacturasTrazabilidad({ lics = [], documentosMap = {}, pu
             options={[
               { value: "todas", label: `Todas (${facturas.length})` },
               { value: "vigentes", label: `Vigentes (${cuenta("vigentes")})` },
+              { value: "mes", label: `De este mes (${cuenta("mes")})` },
+              { value: "por_cobrar", label: `Por cobrar (${cuenta("por_cobrar")})`, color: "#b45309" },
+              { value: "pagadas", label: `Pagadas (${cuenta("pagadas")})`, color: "#15803d" },
               { value: "anuladas", label: `Anuladas (${cuenta("anuladas")})`, color: "#b91c1c", detalle: "Con nota de crédito por el total, o anuladas en Bsale" },
               { value: "nc_parcial", label: `Con NC parcial (${cuenta("nc_parcial")})`, color: "#b45309" },
+              { value: "con_nc", label: `Anuladas o con NC (${cuenta("con_nc")})`, color: "#b91c1c" },
               { value: "con_nd", label: `Con nota de débito (${cuenta("con_nd")})`, color: "#6d28d9" },
             ]}
           />
