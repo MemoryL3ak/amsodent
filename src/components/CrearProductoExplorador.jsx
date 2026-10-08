@@ -30,7 +30,9 @@ export default function CrearProductoExplorador({ item, onCreado, onCerrar }) {
     setError("");
     try {
       const r = await api.post("/stock-clientes/explorador/interno/crear-producto", {
-        url: item.url, imagen: item.imagen || null, ...f, ...(accion === "simular" ? { simular: true } : {}), ...extra,
+        // De nuestra web va el SKU: el servidor revisa que no exista y lo deja en el producto.
+        url: item.url, imagen: item.imagen || null, tienda: item.tienda || null, sku: item.tienda === "amsodent" ? item.sku || null : null,
+        ...f, ...(accion === "simular" ? { simular: true } : {}), ...extra,
       });
       setResultado(r);
       if (r?.creado) onCreado?.(r);
@@ -65,7 +67,11 @@ export default function CrearProductoExplorador({ item, onCreado, onCerrar }) {
         <div style={{ padding: "14px 18px", borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
           <div>
             <strong style={{ fontSize: 15, display: "inline-flex", alignItems: "center", gap: 6 }}><PackagePlus size={16} /> Crear producto transitorio</strong>
-            <div style={{ fontSize: 12.5, color: "var(--text-muted)" }}>Queda sin SKU y en estado «Transitorio», con el link de la tienda como referencia. Lo demás se completa después en Productos.</div>
+            <div style={{ fontSize: 12.5, color: "var(--text-muted)" }}>
+              {item?.tienda === "amsodent" && item?.sku
+                ? <>Queda con el SKU <b>{item.sku}</b> de nuestra web, en estado «Transitorio» (falta la ficha), con el link como referencia. Si el SKU ya está en Bsale, se enlaza a esa variante.</>
+                : "Queda sin SKU y en estado «Transitorio», con el link de la tienda como referencia. Lo demás se completa después en Productos."}
+            </div>
           </div>
           <button type="button" className="btn btn-ghost" onClick={onCerrar} style={{ padding: 6, flexShrink: 0 }} title="Cerrar"><X size={16} /></button>
         </div>
@@ -125,7 +131,7 @@ export default function CrearProductoExplorador({ item, onCreado, onCerrar }) {
           )}
           {resultado?.simulacion && !resultado.bloqueada && (
             <div className="simulacion-producto" style={{ border: "1px solid #bbf7d0", background: "#f0fdf4", borderRadius: 10, padding: "8px 12px", fontSize: 12.5, color: "#166534" }}>
-              <CheckCircle2 size={13} style={{ verticalAlign: -2 }} /> Simulación: se crearía «{resultado.producto?.nombre}» como Transitorio en {resultado.producto?.categoria} ({resultado.producto?.formato}), sin SKU. No se creó nada.
+              <CheckCircle2 size={13} style={{ verticalAlign: -2 }} /> Simulación: se crearía «{resultado.producto?.nombre}» como Transitorio en {resultado.producto?.categoria} ({resultado.producto?.formato}), {resultado.producto?.sku ? `con el SKU ${resultado.producto.sku}` : "sin SKU"}. No se creó nada.
             </div>
           )}
           {avisos.length > 0 && !existente && (

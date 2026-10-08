@@ -16,7 +16,14 @@ import { ProductosService } from '../productos/productos.service';
      duplicados por nombre + marca + formato y la misma marca canónica.
    · "Ya creado" = algún producto tiene ese link en link_referencia. Los
      vendedores pegan links con ?srsltid=… (Google), con o sin www y con la
-     barra final: se comparan normalizados (host sin www + ruta, sin query). */
+     barra final: se comparan normalizados (host sin www + ruta, sin query).
+   · (2026-10-08) Pedido de Ariel: "crear productos siempre y cuando no
+     existan en nuestro listado; en los de la página de Amsodent, verificar
+     si ese SKU no existe". Los resultados de nuestra web traen NUESTRO SKU:
+     si ya hay un producto con él, está creado (y no se ofrece crear otro).
+     Si no está, se crea con ese SKU (queda Transitorio igual: le falta la
+     ficha) y, como el SKU ya vive en Bsale, el producto se enlaza allá. Los
+     SKU de otras tiendas son códigos de ellas: no se comparan. */
 
 export const CATEGORIAS_PRODUCTO = [
   'Prevención e Higiene', 'Consumibles', 'Blanqueamiento', 'Operatoria', 'Endodoncia', 'Periodoncia', 'Cirugía', 'Ortodoncia',
@@ -42,6 +49,7 @@ export function normalizarLink(url: any): string {
 }
 
 type Creado = { id: number; nombre: string; estado: string | null; sku: string | null };
+const normSku = (v: any) => String(v ?? '').replace(/\s+/g, '').toUpperCase();
 
 const texto = (v: any, max: number) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
 const monto = (v: any): number | null => {
@@ -53,36 +61,55 @@ const monto = (v: any): number | null => {
 @Injectable()
 export class ExploradorProductosService {
   private readonly logger = new Logger(ExploradorProductosService.name);
-  private cache: { ts: number; porLink: Map<string, Creado> } | null = null;
+  private cache: { ts: number; porLink: Map<string, Creado>; porSku: Map<string, Creado> } | null = null;
 
   constructor(
     private supabase: SupabaseService,
     private productos: ProductosService,
   ) {}
 
-  /* Productos con link de referencia, por link normalizado (caché de 1 minuto;
-     se borra al crear uno). Son ~900: se leen de a 1000. */
-  private async porLink(): Promise<Map<string, Creado>> {
-    if (this.cache && Date.now() - this.cache.ts < 60 * 1000) return this.cache.porLink;
+  /* Catálogo indexado por link de referencia normalizado y por SKU (caché de
+     1 minuto; se borra al crear uno). ~5.700 productos, de a 1000. */
+  private async indices(): Promise<{ porLink: Map<string, Creado>; porSku: Map<string, Creado> }> {
+    if (this.cache && Date.now() - this.cache.ts < 60 * 1000) return this.cache;
     const db = this.supabase.getClient();
     const porLink = new Map<string, Creado>();
+    const porSku = new Map<string, Creado>();
     for (let desde = 0; desde < 50000; desde += 1000) {
       const { data, error } = await db
         .from('productos')
         .select('id, nombre, estado, sku, link_referencia')
-        .not('link_referencia', 'is', null)
         .order('id', { ascending: true })
         .range(desde, desde + 999);
-      if (error) { this.logger.warn(`No se pudieron leer los links de referencia: ${error.message}`); break; }
+      if (error) { this.logger.warn(`No se pudo leer el catálogo para el explorador: ${error.message}`); break; }
       for (const p of data || []) {
+        if (String((p as any).estado || '') === 'Inactivo') continue;
+        const c: Creado = { id: Number((p as any).id), nombre: (p as any).nombre, estado: (p as any).estado ?? null, sku: (p as any).sku ?? null };
         const k = normalizarLink((p as any).link_referencia);
-        // Si dos productos comparten link, manda el primero creado.
-        if (k && !porLink.has(k)) porLink.set(k, { id: Number((p as any).id), nombre: (p as any).nombre, estado: (p as any).estado ?? null, sku: (p as any).sku ?? null });
+        // Si dos productos comparten link o SKU, manda el primero creado.
+        if (k && !porLink.has(k)) porLink.set(k, c);
+        const s = normSku((p as any).sku);
+        if (s && !porSku.has(s)) porSku.set(s, c);
       }
       if (!data || data.length < 1000) break;
     }
-    this.cache = { ts: Date.now(), porLink };
-    return porLink;
+    this.cache = { ts: Date.now(), porLink, porSku };
+    return this.cache;
+  }
+
+  private async porLink(): Promise<Map<string, Creado>> {
+    return (await this.indices()).porLink;
+  }
+
+  /* El producto del catálogo que corresponde a un resultado: por link (toda
+     tienda) o, en nuestra web, por SKU (el principal o el de una variante). */
+  private existente(it: any, idx: { porLink: Map<string, Creado>; porSku: Map<string, Creado> }): Creado | null {
+    const porLink = idx.porLink.get(normalizarLink(it?.url));
+    if (porLink) return porLink;
+    if (String(it?.tienda || '') !== 'amsodent') return null;
+    const skus = [it?.sku, ...(Array.isArray(it?.variantes) ? it.variantes.map((v: any) => v?.sku) : [])].map(normSku).filter(Boolean);
+    for (const s of skus) { const p = idx.porSku.get(s); if (p) return p; }
+    return null;
   }
 
   /* Marca en el resultado del explorador los que ya están creados. No toca el
@@ -90,11 +117,11 @@ export class ExploradorProductosService {
   async anotar(resultado: any) {
     const items: any[] = Array.isArray(resultado?.items) ? resultado.items : [];
     if (!items.length) return resultado;
-    const porLink = await this.porLink();
+    const idx = await this.indices();
     return {
       ...resultado,
       items: items.map((it) => {
-        const p = porLink.get(normalizarLink(it?.url));
+        const p = this.existente(it, idx);
         return p ? { ...it, producto_creado: p } : it;
       }),
     };
@@ -138,14 +165,17 @@ export class ExploradorProductosService {
       if (Number.isNaN(v)) problemas.push({ codigo: k, mensaje: `${etiqueta} debe ser un monto en pesos.` });
     }
 
-    // ¿Ya existe un producto con este link?
-    const existente = url ? (await this.porLink()).get(normalizarLink(url)) || null : null;
+    // ¿Ya existe un producto con este link o, en nuestra web, con este SKU?
+    const esAmsodent = String(body?.tienda || '') === 'amsodent';
+    const skuWeb = esAmsodent ? normSku(body?.sku) : '';
+    const existente = url ? this.existente({ url, tienda: body?.tienda, sku: body?.sku }, await this.indices()) : null;
     if (existente) {
       return { ya_existe: true, producto: existente, problemas: [{ codigo: 'ya_existe', mensaje: `Ya está creado: «${existente.nombre}» (${existente.sku ? `SKU ${existente.sku}` : 'sin SKU'}, ${existente.estado || 'sin estado'}).` }] };
     }
 
     const fila: Record<string, any> = {
-      sku: null, estado: 'Transitorio', nombre, marca, categoria, formato, link_referencia: url,
+      // De nuestra web viene nuestro SKU: queda con él (y se enlaza en Bsale). De otras tiendas, sin SKU.
+      sku: skuWeb || null, estado: 'Transitorio', nombre, marca, categoria, formato, link_referencia: url,
       ...(costo != null && !Number.isNaN(costo) ? { costo } : {}),
       ...(lista1 != null && !Number.isNaN(lista1) ? { lista1 } : {}),
       ...(lista2 != null && !Number.isNaN(lista2) ? { lista2 } : {}),
@@ -155,6 +185,7 @@ export class ExploradorProductosService {
     if (!(lista1 && lista1 > 0) || !(lista2 && lista2 > 0)) avisos.push('Sin precio de lista: complétalo en Productos antes de cotizarlo.');
     if (!(costo && costo > 0)) avisos.push('Sin costo: el margen de la cotización no se podrá calcular hasta completarlo.');
     if (problemas.length) return { simulacion: simular, bloqueada: true, problemas, avisos };
+    if (skuWeb) avisos.unshift(`Queda con el SKU ${skuWeb} de nuestra web; si ya existe en Bsale, se enlaza a esa variante.`);
     if (simular) return { simulacion: true, problemas, avisos, producto: fila, imagen: body?.imagen || null };
 
     let creado: any;
@@ -174,6 +205,8 @@ export class ExploradorProductosService {
       if (error) avisos.push(`El producto quedó creado, pero sin imagen (${error.message}): súbela desde Productos.`);
     }
     this.logger.log(`Explorador: producto transitorio #${creado?.id} «${nombre}» desde ${url} por ${usuario?.email}`);
-    return { creado: true, producto: { id: Number(creado?.id), nombre: creado?.nombre ?? nombre, estado: creado?.estado ?? 'Transitorio', sku: null }, avisos };
+    const bsale = creado?.bsale;
+    if (bsale?.estado === 'error') avisos.push(`No se pudo enlazar en Bsale: ${bsale.mensaje || 'error'}.`);
+    return { creado: true, producto: { id: Number(creado?.id), nombre: creado?.nombre ?? nombre, estado: creado?.estado ?? 'Transitorio', sku: skuWeb || null }, avisos, bsale: bsale ? { estado: bsale.estado, variante_id: bsale.variante_id ?? null } : null };
   }
 }
