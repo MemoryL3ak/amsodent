@@ -68,6 +68,8 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
   const [cotizacion, setCotizacion] = useState(cotizacionId ? String(cotizacionId) : "");
   const [desde, setDesde] = useState(null); // datos de la cotización de origen
   const [seguimiento, setSeguimiento] = useState({ empresa: "", numero: "" });
+  // (2026-10-08) Venta directa: «Emitir guía de despacho» marcada por defecto.
+  const [conGuia, setConGuia] = useState(!!ventaDirecta);
   // Atributo adicional «Observación» de la guía en Bsale.
   const [observacion, setObservacion] = useState("");
 
@@ -118,7 +120,7 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
       if (c?.nuevo) setCrearCliente(c);
       setSugerencias([]);
       setQCliente("");
-      if (esGuia) setDespacho((d) => ({ ...d, destinatario: d.destinatario || c.razon_social || "", direccion: d.direccion || c.direccion || "", comuna: d.comuna || c.comuna || "", ciudad: d.ciudad || c.ciudad || "" }));
+      if (esGuia || ventaDirecta) setDespacho((d) => ({ ...d, destinatario: d.destinatario || c.razon_social || "", direccion: d.direccion || c.direccion || "", comuna: d.comuna || c.comuna || "", ciudad: d.ciudad || c.ciudad || "" }));
     } catch (e) {
       setError(e?.message || "No se pudo buscar el cliente.");
     } finally {
@@ -148,7 +150,7 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
               : c;
             setCliente(lleno);
             setRut(lleno.rut || r.cliente.rut);
-            if (esGuia) setDespacho((d) => ({ ...d, destinatario: d.destinatario || lleno.razon_social || "", direccion: d.direccion || lleno.direccion || r.cliente.direccion || "", comuna: d.comuna || lleno.comuna || r.cliente.comuna || "", ciudad: d.ciudad || lleno.ciudad || r.cliente.ciudad || "" }));
+            if (esGuia || ventaDirecta) setDespacho((d) => ({ ...d, destinatario: d.destinatario || lleno.razon_social || "", direccion: d.direccion || lleno.direccion || r.cliente.direccion || "", comuna: d.comuna || lleno.comuna || r.cliente.comuna || "", ciudad: d.ciudad || lleno.ciudad || r.cliente.ciudad || "" }));
           } catch { /* el RUT queda escrito para buscarlo a mano */ }
         } else if (esGuia) {
           // Sin RUT válido: el despacho igual sale de la cotización.
@@ -179,6 +181,8 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
   const pideComprobante = !esGuia && !aCredito && (ventaDirecta || !!cotizacionId);
   const esEfectivo = /efectivo/i.test(formaElegida?.nombre || "");
   const comprobanteObligatorio = pideComprobante && ventaDirecta && !esEfectivo;
+  // La guía necesita un receptor con RUT: a consumidor final no hay guía.
+  const guiaPosible = ventaDirecta && (!esBoleta || !!cliente);
   const diasEfectivos = esGuia ? 0 : esBoleta ? 0 : ventaDirecta && !aCredito ? 0 : Number(dias);
 
   const totales = useMemo(() => {
@@ -189,7 +193,7 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
 
   const cuerpo = () => ({
     tipo: tipoDoc,
-    ...(ventaDirecta ? { venta_directa: true } : {}),
+    ...(ventaDirecta ? { venta_directa: true, con_guia: conGuia && guiaPosible, ...(conGuia && guiaPosible ? { despacho: { destinatario: despacho.destinatario, direccion: despacho.direccion, comuna: despacho.comuna, ciudad: despacho.ciudad, tipo_traslado_id: 1 } } : {}) } : {}),
     cliente: cliente ? { rut: cliente.rut, razon_social: cliente.razon_social, giro: cliente.giro, direccion: cliente.direccion, comuna: cliente.comuna, ciudad: cliente.ciudad, email: cliente.email } : { rut: esBoleta ? "" : rut },
     lineas: lineas.map((l) => ({ sku: l.sku, producto: l.producto, cantidad: Number(l.cantidad), neto_unitario: Number(l.neto_unitario) })),
     fecha_emision: fecha,
@@ -217,7 +221,7 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
     setEnviando(accion);
     setError("");
     try {
-      const r = await api.post("/bsale/libre/emitir", { ...cuerpo(), ...(pideComprobante ? { comprobante: comprobante.trim() } : {}), ...(accion === "simular" ? { simular: true } : { huella, ...(esGuia ? { seguimiento } : {}) }) });
+      const r = await api.post("/bsale/libre/emitir", { ...cuerpo(), ...(pideComprobante ? { comprobante: comprobante.trim() } : {}), ...(accion === "simular" ? { simular: true } : { huella, ...(esGuia || (conGuia && guiaPosible) ? { seguimiento } : {}) }) });
       setResultado(r);
       if (r?.simulacion) { setSimuladoCon(firma); setHuella(r.huella || null); }
       if (r?.emitida) onEmitida?.(r);
@@ -284,6 +288,17 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
                     ? "El documento se emitió pero la cotización no se pudo crear: revisa el aviso de abajo."
                     : resultado.registrada ? "Quedó registrada en la cotización indicada." : "No se indicó cotización: queda en Bsale y en el historial de Emitidas."}
               </div>
+              {resultado.guia && (resultado.guia.emitida ? (
+                <div className="guia-venta-ok" style={{ fontSize: 13, color: "#166534" }}>
+                  Guía de despacho N° {resultado.guia.numero} emitida con las mismas líneas y registrada en la cotización.
+                  {resultado.guia.url_pdf && <> <a href={resultado.guia.url_pdf} target="_blank" rel="noopener noreferrer" className="table-link">Ver la guía en Bsale</a></>}
+                  {(resultado.guia.avisos || []).map((a, i) => <div key={i} style={{ fontSize: 12.5, color: "#92400e" }}>{a}</div>)}
+                </div>
+              ) : (
+                <div className="guia-venta-error" style={{ fontSize: 12.5, color: "#92400e" }}>
+                  La guía de despacho no se pudo emitir: {resultado.guia.error}. La {esBoleta ? "boleta" : "factura"} quedó emitida sin rebajar stock: emite la guía desde la cotización con «Emitir guía».
+                </div>
+              ))}
               <AvisoCorreoDocumento correo={resultado.correo} emitido />
               {(resultado.avisos || []).map((a, i) => <div key={i} style={{ fontSize: 12.5, color: "#92400e" }}>{a}</div>)}
               <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
@@ -374,7 +389,7 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
                     setCliente(c);
                     setRut(c.rut || rut);
                     setCrearCliente(null);
-                    if (esGuia) setDespacho((d) => ({ ...d, destinatario: d.destinatario || c.razon_social || "", direccion: d.direccion || c.direccion || "", comuna: d.comuna || c.comuna || "", ciudad: d.ciudad || c.ciudad || "" }));
+                    if (esGuia || ventaDirecta) setDespacho((d) => ({ ...d, destinatario: d.destinatario || c.razon_social || "", direccion: d.direccion || c.direccion || "", comuna: d.comuna || c.comuna || "", ciudad: d.ciudad || c.ciudad || "" }));
                   }}
                 />
               )}
@@ -560,7 +575,30 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
                   </div>
                 </div>
               )}
-              {esGuia && <CamposSeguimientoGuia valor={seguimiento} onChange={setSeguimiento} disabled={!!enviando} />}
+              {ventaDirecta && (
+                <div style={caja} className="caja-guia-venta">
+                  <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontWeight: 600, fontSize: 13 }}>
+                    <input type="checkbox" checked={conGuia && guiaPosible} onChange={(e) => setConGuia(e.target.checked)} disabled={!!enviando || !guiaPosible} />
+                    Emitir guía de despacho
+                  </label>
+                  <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4 }}>
+                    {!guiaPosible
+                      ? "Sin cliente (consumidor final) no se puede emitir guía de despacho: la boleta rebaja el stock al emitirse. Indica el cliente para despachar con guía."
+                      : conGuia
+                      ? "Se emite enseguida de la boleta/factura con las mismas líneas (traslado «Operación constituye venta»). El stock lo rebaja la guía, no la boleta/factura."
+                      : "Sin guía (retiro en tienda): la boleta/factura rebaja el stock al emitirse."}
+                  </div>
+                  {conGuia && guiaPosible && (
+                    <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 8 }}>
+                      {campo(despacho, setDespacho, "destinatario", "Destinatario", { style: { width: "100%" } })}
+                      {campo(despacho, setDespacho, "direccion", "Dirección de entrega", { style: { width: "100%" } })}
+                      {campo(despacho, setDespacho, "comuna", "Comuna")}
+                      {campo(despacho, setDespacho, "ciudad", "Ciudad")}
+                    </div>
+                  )}
+                </div>
+              )}
+              {(esGuia || (conGuia && guiaPosible)) && <CamposSeguimientoGuia valor={seguimiento} onChange={setSeguimiento} disabled={!!enviando} />}
               {esGuia && <CampoObservacionGuia valor={observacion} onChange={setObservacion} sugerida={desde?.observacion_sugerida || ""} max={obsMax} disabled={!!enviando} />}
               {!ventaDirecta && !esBoleta && <div style={caja}>
                 <span style={etiqueta}>Referencias y registro (opcional)</span>

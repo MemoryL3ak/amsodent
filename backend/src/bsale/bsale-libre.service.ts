@@ -57,6 +57,8 @@ const rutValido = (v: any) => {
   return limpio.slice(-1) === (r === 11 ? '0' : r === 10 ? 'K' : String(r));
 };
 const esCredito = (nombreForma: any) => /^cr[eé]dito$/i.test(String(nombreForma || '').trim());
+// Tipo de traslado de la guía de una venta directa: «Operación constituye venta».
+const TRASLADO_VENTA = 1;
 const etiquetaTipo = (t: Tipo) => (t === 'guia' ? 'Guía de despacho electrónica' : t === 'boleta' ? 'Boleta electrónica' : 'Factura electrónica');
 
 /* La forma de pago de Bsale traducida al medio que usa Seguimiento de Pagos
@@ -286,6 +288,11 @@ export class BsaleLibreService {
     const tipo: Tipo = body?.tipo === 'factura' ? 'factura' : body?.tipo === 'boleta' ? 'boleta' : 'guia';
     const ventaDirecta = body?.venta_directa === true;
     const esBoleta = tipo === 'boleta';
+    /* (2026-10-08) Pedido de Ariel: en la venta directa, casilla «Emitir guía de
+       despacho» marcada por defecto. Con ella la boleta/factura va SIN despacho
+       inmediato (dispatch) y el stock lo rebaja la guía, que se emite enseguida
+       desde las líneas del documento: así no sale dos veces. */
+    const conGuia = ventaDirecta && tipo !== 'guia' && body?.con_guia !== false;
     const problemas: Problema[] = [];
     const avisos: Problema[] = [];
     if (ventaDirecta && tipo === 'guia') problemas.push({ codigo: 'venta_guia', mensaje: 'La venta directa emite boleta o factura, no guía.' });
@@ -386,6 +393,7 @@ export class BsaleLibreService {
     let credito = false;
     let pagadaAhora = false;
     let comprobante = '';
+    let guiaVenta: any = null;
     if (tipo === 'guia') {
       const td = await this.despachos.tipoDocumento(String(DTE_GUIA), /gu[ií]a/i);
       tipoDocumentoId = Number(td?.id) || 0;
@@ -417,10 +425,24 @@ export class BsaleLibreService {
       if (!Number.isFinite(dias) || dias < 0 || dias > 365) problemas.push({ codigo: 'plazo', mensaje: 'El plazo de vencimiento debe estar entre 0 y 365 días.' });
       // Una factura que no viene de una guía es la que mueve el stock. La venta directa siempre lo mueve.
       const refGuia = referencias.some((r) => r.codigo_sii === DTE_GUIA);
-      descuentaStock = ventaDirecta ? true : body?.descuenta_stock == null ? !refGuia : body.descuenta_stock === true;
+      descuentaStock = ventaDirecta ? !conGuia : body?.descuenta_stock == null ? !refGuia : body.descuenta_stock === true;
       if (refGuia && descuentaStock) avisos.push({ codigo: 'stock_doble', mensaje: 'La factura referencia una guía y además descuenta stock: si la guía ya lo descontó, saldría dos veces.' });
-      if (!refGuia && !descuentaStock) avisos.push({ codigo: 'sin_stock', mensaje: 'La factura no descuenta stock: el stock en Bsale quedará como está.' });
+      if (!refGuia && !descuentaStock && !conGuia) avisos.push({ codigo: 'sin_stock', mensaje: 'La factura no descuenta stock: el stock en Bsale quedará como está.' });
       pagadaAhora = ventaDirecta && !!formaPago && !credito;
+      if (conGuia) {
+        const tg = await this.despachos.tipoDocumento(String(DTE_GUIA), /gu[ií]a/i);
+        const d = body?.despacho || {};
+        const despachoGuia = {
+          direccion: texto(d.direccion ?? cliente?.direccion, 120), comuna: texto(d.comuna ?? cliente?.comuna, 60), ciudad: texto(d.ciudad ?? cliente?.ciudad, 60),
+          destinatario: texto(d.destinatario ?? cliente?.razon_social, 120), tipo_traslado_id: Number(d.tipo_traslado_id) || TRASLADO_VENTA,
+        };
+        const traslados = await this.despachos.tiposTraslado();
+        const trasladoGuia = traslados.find((t) => t.id === despachoGuia.tipo_traslado_id) || null;
+        if (!tg) problemas.push({ codigo: 'sin_tipo_guia', mensaje: 'La cuenta de Bsale no tiene activa la guía de despacho electrónica: desmarca «Emitir guía de despacho».' });
+        if (sinCliente) problemas.push({ codigo: 'guia_sin_cliente', mensaje: 'La guía de despacho necesita un cliente con RUT: indícalo o desmarca «Emitir guía de despacho».' });
+        if (!despachoGuia.direccion || !despachoGuia.comuna || !despachoGuia.ciudad || !despachoGuia.destinatario) problemas.push({ codigo: 'despacho_guia', mensaje: 'Para la guía de despacho completa destinatario, dirección, comuna y ciudad (o desmarca «Emitir guía de despacho»).' });
+        guiaVenta = { tipo_documento_id: Number(tg?.id) || 0, despacho: despachoGuia, traslado: trasladoGuia };
+      }
       /* N° de comprobante del pago (2026-10-07). Pedido de Ariel: "al crear
          una boleta/factura nos debe solicitar ingresar el N° de comprobante".
          En la venta directa pagada al emitir es obligatorio (salvo efectivo,
@@ -446,6 +468,7 @@ export class BsaleLibreService {
       observacion,
       comprobante,
       tipo, venta_directa: ventaDirecta, tipo_documento_id: tipoDocumentoId, cliente, lineas, totales, fecha_emision: fecha, referencias, despacho,
+      con_guia: conGuia, guia: guiaVenta,
       traslado: traslado ? { id: traslado.id, nombre: traslado.nombre } : null,
       forma_pago: formaPago ? { id: formaPago.id, nombre: formaPago.nombre } : null, dias_vencimiento: dias, credito,
       medio_pago: formaPago ? medioDePago(formaPago.nombre) : null, pagada_ahora: pagadaAhora,
@@ -454,7 +477,7 @@ export class BsaleLibreService {
     const huella = this.facturacion.huellaDe({
       cliente: { id: cliente?.id || cliente?.rut || 'consumidor-final' }, tipo_documento_id: tipoDocumentoId,
       lineas: lineas.map((l) => ({ detalle_id: l.variante_id, cantidad: l.cantidad, neto: l.neto_unitario })),
-      referencias: [...referencias.map((r) => ({ codigo_sii: r.codigo_sii, folio: r.folio, numero: r.numero })), { codigo_sii: 0, numero: `${tipo}|${ventaDirecta}|${fecha}|${JSON.stringify(despacho)}|${formaPago?.id}|${dias}|${descuentaStock}|${cotizacion?.id || ''}|${cliente?.nuevo ? JSON.stringify(cliente) : ''}|${observacion}` }],
+      referencias: [...referencias.map((r) => ({ codigo_sii: r.codigo_sii, folio: r.folio, numero: r.numero })), { codigo_sii: 0, numero: `${tipo}|${ventaDirecta}|${fecha}|${JSON.stringify(despacho)}|${formaPago?.id}|${dias}|${descuentaStock}|${conGuia}|${conGuia ? JSON.stringify(guiaVenta?.despacho) : ''}|${cotizacion?.id || ''}|${cliente?.nuevo ? JSON.stringify(cliente) : ''}|${observacion}` }],
       totales,
     });
     return { ...borrador, huella };
@@ -476,8 +499,13 @@ export class BsaleLibreService {
       fecha_emision: b.fecha_emision,
       vencimiento: b.tipo === 'factura' ? b.vencimiento : null,
       despacho: b.despacho ? { ...b.despacho, tipo_traslado: b.traslado?.nombre || null } : null,
+      guia: b.guia ? { ...b.guia.despacho, tipo_traslado: b.guia.traslado?.nombre || null } : null,
       notas: [
-        b.tipo === 'guia' ? 'Bsale descuenta el stock al emitir la guía.' : b.descuenta_stock ? `La ${b.tipo} descuenta el stock en Bsale${b.venta_directa ? '' : ' (no viene de una guía)'}.` : 'La factura no mueve stock.',
+        b.tipo === 'guia'
+          ? 'Bsale descuenta el stock al emitir la guía.'
+          : b.con_guia
+            ? `Enseguida se emite la guía de despacho con las mismas líneas (${b.guia?.traslado?.nombre || 'Operación constituye venta'}) a ${b.guia?.despacho?.direccion || '—'}, ${b.guia?.despacho?.comuna || '—'}: el stock lo rebaja la guía, no la ${b.tipo}.`
+            : b.descuenta_stock ? `La ${b.tipo} descuenta el stock en Bsale${b.venta_directa ? '' : ' (no viene de una guía)'}.` : 'La factura no mueve stock.',
         b.venta_directa
           ? `Al emitir se crea en el sistema una cotización particular adjudicada a nombre de ${nombreCliente}, con estos ítems y el documento registrado${b.pagada_ahora ? ` y pagado (${b.forma_pago?.nombre}).` : ' con el pago pendiente (crédito): aparecerá en Seguimiento de Pagos.'}`
           : b.cotizacion ? `Quedará registrada en la cotización #${b.cotizacion.id}${b.cotizacion.codigo ? ` (${b.cotizacion.codigo})` : ''}.` : 'No se indicó cotización: quedará solo en Bsale y en el historial de Emitidas.',
@@ -616,7 +644,74 @@ export class BsaleLibreService {
         return avisos;
       },
     });
-    return { ...r, cotizacion: creada, comprobante: comprobanteRegistrado };
+    // (2026-10-08) Venta directa con guía: se emite enseguida desde las líneas del documento.
+    let guia: any = null;
+    if (b.con_guia && r?.emitida && r?.bsale_id) guia = await this.emitirGuiaDeVenta(usuario, b, r, clave, creada, body);
+    return { ...r, cotizacion: creada, comprobante: comprobanteRegistrado, guia };
+  }
+
+  /* Guía de despacho de la venta directa, desde las líneas del documento recién
+     emitido (Bsale: `details` con el detailId del documento origen y
+     «Operación constituye venta»). Si falla, la boleta/factura ya está
+     emitida SIN rebajar stock: se avisa y queda «Emitir guía» en la cotización. */
+  private async emitirGuiaDeVenta(usuario: { id: string; email: string }, b: any, docEmitido: any, claveBase: string, cotizacion: any, body: any) {
+    try {
+      const g = b.guia;
+      const lineasDoc: any[] = await this.facturacion.todos(`/documents/${Number(docEmitido.bsale_id)}/details.json`, '');
+      const details = lineasDoc.map((d: any) => ({ detailId: Number(d.id), quantity: Number(d.quantity) || 0 })).filter((d) => d.detailId && d.quantity > 0);
+      if (!details.length) throw new Error('Bsale no devolvió las líneas del documento emitido.');
+      const clienteId = b.cliente?.id || (b.cliente?.rut ? (await this.despachos.clientePorRut(b.cliente.rut))?.id : null);
+      const emision = fechaAEpoch(b.fecha_emision);
+      const claveG = `${claveBase}-G`;
+      const { data: previas } = await this.supabase.getClient().from('bsale_emisiones').select('id').eq('clave', claveG).eq('estado', 'emitida');
+      const salesId = `${claveG}-${(previas || []).length}`;
+      const solicitud: Record<string, any> = {
+        documentTypeId: g.tipo_documento_id, emissionDate: emision, expirationDate: emision, declareSii: 1,
+        shippingTypeId: g.despacho.tipo_traslado_id, address: g.despacho.direccion, municipality: g.despacho.comuna, city: g.despacho.ciudad, recipient: g.despacho.destinatario,
+        ...(clienteId ? { clientId: clienteId } : {}), details, salesId,
+      };
+      const obs = await this.despachos.observacionParaBsale(String(body?.observacion || ''), g.tipo_documento_id);
+      if (obs.atributo) solicitud.dynamicAttributes = [obs.atributo];
+      const vista: any = this.vista({
+        ...b, tipo: 'guia', tipo_documento_id: g.tipo_documento_id, despacho: g.despacho, traslado: g.traslado, descuenta_stock: true, con_guia: false, guia: null, referencias: [],
+        venta_directa: false, cotizacion: cotizacion ? { id: cotizacion.id, codigo: cotizacion.codigo } : null,
+      });
+      const r = await this.despachos.emitirReal({
+        usuario, clave: claveG, salesId, tipo: 'guia', ruta: '/shippings.json', solicitud, vista,
+        licitacionId: cotizacion?.id || null, origenDocId: docEmitido.documento_id || null,
+        lineas: b.lineas.map((l: any) => ({ sku: l.sku, cantidad: l.cantidad, neto_unitario: l.neto_unitario })),
+        bucket: 'guia-despacho',
+        correo: { tipo: 'guia', para: b.cliente?.email || null },
+        registrar: async (doc: any, pdf: any) => {
+          if (!cotizacion?.id) return null;
+          const creado = await this.licitaciones.createDocumento({
+            licitacion_id: cotizacion.id, tipo: 'guia_despacho', numero: String(doc.number), monto: Number(doc.netAmount) || b.totales.neto || null, fecha_oc: b.fecha_emision,
+            deriva_de_id: null,
+            empresa_despacho: String(body?.seguimiento?.empresa || '').trim().slice(0, 60) || null,
+            n_seguimiento: String(body?.seguimiento?.numero || '').trim().slice(0, 80) || null,
+            bucket: pdf ? 'guia-despacho' : null, storage_path: pdf?.path || null, file_name: pdf ? `Guía ${doc.number}.pdf` : null,
+            mime_type: pdf ? 'application/pdf' : null, size_bytes: pdf?.size || null, bsale_id: Number(doc.id) || null, bsale_url: doc.urlPdf || doc.urlPublicView || null,
+          });
+          const guiaId = Number((creado as any)?.id) || null;
+          // La boleta/factura queda enlazada a su guía: así no aparece en «Guías por facturar».
+          if (guiaId && docEmitido.documento_id) {
+            await this.supabase.getClient().from('licitacion_documentos').update({ guias_ids: [guiaId] }).eq('id', Number(docEmitido.documento_id));
+          }
+          return guiaId;
+        },
+        verificar: async (doc: any) => {
+          const avisos: string[] = [];
+          const sinObs = obs.atributo ? await this.despachos.avisoObservacion(Number(doc.id), doc.number, obs.texto) : null;
+          if (sinObs) avisos.push(sinObs);
+          return avisos;
+        },
+      });
+      return { emitida: true, numero: r.numero, url_pdf: r.url_pdf, documento_id: r.documento_id, avisos: r.avisos || [] };
+    } catch (e: any) {
+      const error = String(e?.message || e).slice(0, 200);
+      this.logger.warn(`Venta directa ${docEmitido.numero}: la guía no se pudo emitir: ${error}`);
+      return { emitida: false, error };
+    }
   }
 
   // ── Venta directa: la cotización que antes se armaba a mano ────────────
