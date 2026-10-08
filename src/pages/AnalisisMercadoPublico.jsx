@@ -2182,17 +2182,38 @@ function EstadoMpCotizaciones({ setToast }) {
   const [error, setError] = useState("");
   const [elegidas, setElegidas] = useState(() => new Set());
 
+  /* (2026-10-08) Por tandas de 5 (el servidor consulta Mercado Público de a
+     una: su API rechaza consultas en paralelo). Cada tanda se suma a la tabla
+     apenas llega, con el avance a la vista, y se puede detener. */
+  const TANDA = 5;
+  const TOPE = 40;
+  const detenerRef = useRef(false);
   async function revisar() {
     setCargando(true); setError(""); setElegidas(new Set());
+    detenerRef.current = false;
+    let acumulado = null;
     try {
-      const r = await api.post("/licitaciones/mercado-publico/diagnostico-estados", { limite: 40 });
-      setDatos(r);
-      // Las discrepancias vienen marcadas: se preseleccionan para no obligar
-      // a tildarlas una por una, pero se pueden destildar.
-      setElegidas(new Set((r.filas || []).filter((f) => f.discrepancia).map((f) => f.id)));
+      for (let desde = 0; desde < TOPE; desde += TANDA) {
+        const r = await api.post("/licitaciones/mercado-publico/diagnostico-estados", { limite: TANDA, desde });
+        const vistos = new Set((acumulado?.filas || []).map((f) => f.id));
+        const filas = [...(acumulado?.filas || []), ...(r.filas || []).filter((f) => !vistos.has(f.id))];
+        const tope = Math.min(TOPE, Number(r.candidatas) || TOPE);
+        acumulado = {
+          ...r, filas, revisadas: filas.length, tope,
+          con_discrepancia: filas.filter((f) => f.discrepancia).length,
+          con_error: filas.filter((f) => f.error).length,
+          en_curso: true,
+        };
+        setDatos(acumulado);
+        // Las discrepancias vienen marcadas: se preseleccionan para no obligar
+        // a tildarlas una por una, pero se pueden destildar.
+        setElegidas(new Set(filas.filter((f) => f.discrepancia).map((f) => f.id)));
+        if (detenerRef.current || filas.length >= tope || !(r.filas || []).length) break;
+      }
+      setDatos((d) => (d ? { ...d, en_curso: false, detenida: detenerRef.current } : d));
     } catch (e) {
-      setError(e?.message || "No se pudo consultar Mercado Público.");
-      setDatos(null);
+      if (!acumulado) { setError(e?.message || "No se pudo consultar Mercado Público."); setDatos(null); }
+      else { setDatos({ ...acumulado, en_curso: false, error_parcial: e?.message || "Mercado Público dejó de responder." }); }
     } finally {
       setCargando(false);
     }
@@ -2238,9 +2259,14 @@ function EstadoMpCotizaciones({ setToast }) {
                 {aplicando ? "Aplicando…" : `Actualizar ${elegidas.size}`}
               </button>
             )}
+            {cargando && (
+              <button className="btn btn-ghost btn-sm" onClick={() => { detenerRef.current = true; }} style={{ fontSize: 11.5 }} title="Para en la tanda actual y deja lo revisado hasta ahora">
+                Detener
+              </button>
+            )}
             <button className="btn btn-secondary btn-sm" onClick={revisar} disabled={cargando} style={{ fontSize: 11.5, display: "inline-flex", alignItems: "center", gap: 5 }}>
               <RefreshCw size={12} className={cargando ? "girando" : undefined} />
-              {cargando ? "Consultando…" : "Revisar en Mercado Público"}
+              {cargando ? `Consultando… ${datos?.revisadas || 0} de ${datos?.tope || TOPE}` : "Revisar en Mercado Público"}
             </button>
           </div>
         }
@@ -2252,6 +2278,8 @@ function EstadoMpCotizaciones({ setToast }) {
         ) : (
           <>
             <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 10 }}>
+              {datos.en_curso ? `Revisando de a una (Mercado Público no acepta consultas en paralelo): ${datos.revisadas} de ${datos.tope} · ` : datos.detenida ? "Detenido: " : ""}
+              {datos.error_parcial ? <span style={{ color: "#b91c1c" }}>{datos.error_parcial} · </span> : null}
               {datos.revisadas} de {datos.candidatas} cotizaciones abiertas con código de Mercado Público ·{" "}
               <strong style={{ color: datos.con_discrepancia ? "#b45309" : "#15803d" }}>
                 {datos.con_discrepancia} con el estado desactualizado

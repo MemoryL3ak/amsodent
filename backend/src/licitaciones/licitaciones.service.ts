@@ -2875,27 +2875,36 @@ export class LicitacionesService {
     const rutNuestro = String(process.env.MP_RUT_EMPRESA || '').replace(/[^0-9kK]/g, '').toUpperCase();
 
     const filas: any[] = [];
-    // (2026-10-08) De a 3, no de a 8: con 8 a la vez el gateway de Mercado
-    // Público cortaba 28 de 40 consultas («tardó demasiado»). Tarda más, pero
-    // responde.
-    const CONCURRENCIA = 3;
-    for (let i = 0; i < aRevisar.length; i += CONCURRENCIA) {
-      await Promise.all(aRevisar.slice(i, i + CONCURRENCIA).map(async (lic: any) => {
-        const codigo = String(lic.id_licitacion).trim();
-        const base = {
-          id: lic.id,
-          id_licitacion: codigo,
-          cliente: lic.nombre_entidad,
-          estado_actual: lic.estado,
-          total: lic.total_con_iva,
-        };
+    /* (2026-10-08) De a UNA. La API de Mercado Público responde 429 «peticiones
+       simultáneas» cuando el mismo ticket consulta en paralelo: con 8 a la vez
+       caían 28 de 40 y con 3 seguía fallando. Pausa corta entre consultas y, si
+       igual llega el 429, se espera y se reintenta una vez. La pantalla pide
+       por tandas chicas (limite + desde) y va mostrando lo que llega. */
+    const pausa = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    for (const lic of aRevisar) {
+      const codigo = String(lic.id_licitacion).trim();
+      const base = {
+        id: lic.id,
+        id_licitacion: codigo,
+        cliente: lic.nombre_entidad,
+        estado_actual: lic.estado,
+        total: lic.total_con_iva,
+      };
+      let info: any = null;
+      let error: string | null = null;
+      for (let intento = 0; intento < 2; intento++) {
         try {
-          const info = await this.estadoMpDeCodigo(codigo, ticket, rutNuestro);
-          filas.push({ ...base, ...info, ...this.compararEstadoMp(lic.estado, info) });
+          info = await this.estadoMpDeCodigo(codigo, ticket, rutNuestro);
+          error = null;
+          break;
         } catch (e: any) {
-          filas.push({ ...base, error: String(e?.message || e).slice(0, 160) });
+          error = String(e?.message || e).slice(0, 160);
+          if (!e?.mpSimultaneas) break;
+          await pausa(3000);
         }
-      }));
+      }
+      filas.push(info ? { ...base, ...info, ...this.compararEstadoMp(lic.estado, info) } : { ...base, error });
+      await pausa(350);
     }
 
     filas.sort((a, b) => (b.discrepancia ? 1 : 0) - (a.discrepancia ? 1 : 0));
