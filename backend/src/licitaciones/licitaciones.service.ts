@@ -2843,7 +2843,10 @@ export class LicitacionesService {
     const rutNuestro = String(process.env.MP_RUT_EMPRESA || '').replace(/[^0-9kK]/g, '').toUpperCase();
 
     const filas: any[] = [];
-    const CONCURRENCIA = 8;
+    // (2026-10-08) De a 3, no de a 8: con 8 a la vez el gateway de Mercado
+    // Público cortaba 28 de 40 consultas («tardó demasiado»). Tarda más, pero
+    // responde.
+    const CONCURRENCIA = 3;
     for (let i = 0; i < aRevisar.length; i += CONCURRENCIA) {
       await Promise.all(aRevisar.slice(i, i + CONCURRENCIA).map(async (lic: any) => {
         const codigo = String(lic.id_licitacion).trim();

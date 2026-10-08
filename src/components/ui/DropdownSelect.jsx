@@ -29,7 +29,14 @@ export default function DropdownSelect({
     if (disabled) return;
     if (!open && btnRef.current) {
       const r = btnRef.current.getBoundingClientRect();
-      setCoords({ left: r.left, top: r.bottom + 4, width: r.width });
+      // (2026-10-08) Si abajo no cabe (ventanas bajas, pantallas de 13"), el menú
+      // se abre hacia arriba o se acorta: antes se salía por el borde y había
+      // opciones imposibles de alcanzar.
+      const alto = window.innerHeight;
+      const abajo = alto - r.bottom - 8;
+      const arriba = r.top - 8;
+      const haciaArriba = abajo < 200 && arriba > abajo;
+      setCoords({ left: r.left, top: r.bottom + 4, bottom: alto - r.top + 4, width: r.width, arriba: haciaArriba, altoMax: Math.max(120, Math.min(300, haciaArriba ? arriba : abajo)) });
     }
     setOpen((o) => !o);
   }
@@ -83,8 +90,10 @@ export default function DropdownSelect({
       </button>
       {open && coords && createPortal(
         <>
-          <div onMouseDown={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 11000 }} />
-          <div ref={menuRef} style={{ position: "fixed", left: coords.left, top: coords.top, minWidth: Math.max(minWidth, coords.width), maxWidth: "min(92vw, 520px)", zIndex: 11001, background: "var(--surface, #fff)", border: "1px solid var(--border, #e2e8f0)", borderRadius: 10, boxShadow: "var(--shadow-lg, 0 18px 40px -12px rgba(15,23,42,.25))", padding: 4, maxHeight: 300, overflowY: "auto" }}>
+          {/* (2026-10-08) Por encima de toda ventana (las hay hasta 13000; solo los avisos flotantes van más arriba):
+              dentro de «Crear producto» (11050) el menú quedaba detrás de la ventana. */}
+          <div onMouseDown={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 20000 }} />
+          <div ref={menuRef} style={{ position: "fixed", left: coords.left, ...(coords.arriba ? { bottom: coords.bottom } : { top: coords.top }), minWidth: Math.max(minWidth, coords.width), maxWidth: "min(92vw, 520px)", zIndex: 20001, background: "var(--surface, #fff)", border: "1px solid var(--border, #e2e8f0)", borderRadius: 10, boxShadow: "var(--shadow-lg, 0 18px 40px -12px rgba(15,23,42,.25))", padding: 4, maxHeight: coords.altoMax || 300, overflowY: "auto" }}>
             {options.map((op) => {
               const isSel = String(op.value) === String(value ?? "");
               return (
