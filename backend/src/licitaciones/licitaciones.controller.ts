@@ -7,11 +7,16 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { LicitacionesService } from './licitaciones.service';
 import { AuthGuard } from '../auth/auth.guard';
 import { AdminGuard } from '../auth/admin.guard';
+import { CobranzaGuard } from '../auth/cobranza.guard';
+import { DevolucionesService } from './devoluciones.service';
 
 @Controller('licitaciones')
 @UseGuards(AuthGuard)
 export class LicitacionesController {
-  constructor(private licitacionesService: LicitacionesService) {}
+  constructor(
+    private licitacionesService: LicitacionesService,
+    private devoluciones: DevolucionesService,
+  ) {}
 
   @Get()
   findAll(@Query() filters: any) {
@@ -321,6 +326,27 @@ export class LicitacionesController {
   @Delete('documentos/:docId')
   deleteDocumento(@Param('docId', ParseIntPipe) docId: number) {
     return this.licitacionesService.deleteDocumento(docId);
+  }
+
+  // ── Dinero de las notas de crédito (2026-10-08): devolución al cliente o
+  // saldo a favor. Lo registra quien cobra (admin, contabilidad, jefatura de
+  // ventas especial), desde Trazabilidad → Facturas.
+  @Get('devoluciones/nota/:ncId')
+  @UseGuards(CobranzaGuard)
+  cuentaNotaCredito(@Param('ncId', ParseIntPipe) ncId: number) {
+    return this.devoluciones.candidatasSaldoFavor(ncId);
+  }
+
+  @Post('devoluciones')
+  @UseGuards(CobranzaGuard)
+  registrarDevolucion(@Req() req: any, @Body() body: any) {
+    return this.devoluciones.registrarDevolucion({ id: String(req?.user?.id || ''), email: String(req?.user?.email || '').trim().toLowerCase() }, body);
+  }
+
+  @Post('devoluciones/saldo-favor')
+  @UseGuards(CobranzaGuard)
+  usarSaldoFavor(@Req() req: any, @Body() body: any) {
+    return this.devoluciones.usarSaldoFavor({ id: String(req?.user?.id || ''), email: String(req?.user?.email || '').trim().toLowerCase() }, body);
   }
 
   // Storage

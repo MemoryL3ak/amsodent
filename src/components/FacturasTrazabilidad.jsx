@@ -9,6 +9,8 @@ import NotaDebitoBsale from "./NotaDebitoBsale";
 import EstadoBsaleBadge from "./EstadoBsale";
 import DropdownSelect from "./ui/DropdownSelect";
 import BotonImprimirCarta from "./BotonImprimirCarta";
+import { DineroFactura, RegistrarDevolucionModal, UsarSaldoFavorModal } from "./DineroNotaCredito";
+import { dineroDeFactura, PAGOS } from "../lib/dineroNotaCredito";
 
 /* ── Trazabilidad → Facturas (2026-10-07) ────────────────────────────────────
    Pedido de Ariel: "crear una pestaña llamada Facturas en la sección de
@@ -26,7 +28,12 @@ import BotonImprimirCarta from "./BotonImprimirCarta";
    parcial». Cuenta las NC del sistema y las hechas a mano en Bsale.
    (2026-10-08) KPIs arriba ("la hiciste muy vacía, no tiene KPIs"): guías por
    facturar y su neto, las atrasadas (más de 7 días), facturado este mes, por
-   cobrar, pagado este mes y anuladas/con NC. Cada tarjeta filtra su tabla. */
+   cobrar, pagado este mes y anuladas/con NC. Cada tarjeta filtra su tabla.
+   (2026-10-08) "Toda la trazabilidad de la anulación queda acá": la celda
+   «Pago y dinero» dice qué pasó con el dinero de cada nota de crédito (se
+   decide al emitirla): devolución pendiente → «Registrar devolución»; saldo a
+   favor → «Aplicar a una factura»; devuelto / aplicado con fecha, medio y N°.
+   Las cuentas las hace DineroNotaCredito.jsx (igual que el servidor). */
 
 const clp = (n) => `$${Math.round(Number(n) || 0).toLocaleString("es-CL")}`;
 const fechaCL = (iso) => {
@@ -59,7 +66,13 @@ export default function FacturasTrazabilidad({ lics = [], documentosMap = {}, pu
   const [nuevaFactura, setNuevaFactura] = useState(false);
   const [notaCredito, setNotaCredito] = useState(null); // { documentoId } | {} (por N°)
   const [notaDebito, setNotaDebito] = useState(null);
-  const [filtro, setFiltro] = useState("todas");
+  const [devolucion, setDevolucion] = useState(null); // { nota, factura }: registrar la devolución del dinero
+  const [saldoFavor, setSaldoFavor] = useState(null); // { nota, factura }: aplicar el saldo a favor
+  // El aviso de devolución pendiente llega con ?filtro=devolucion_pendiente.
+  const [filtro, setFiltro] = useState(() => {
+    const f = new URLSearchParams(window.location.search).get("filtro");
+    return ["devolucion_pendiente", "saldo_favor", "anuladas", "por_cobrar", "pagadas", "con_nc"].includes(f) ? f : "todas";
+  });
   const [filtroPend, setFiltroPend] = useState("todas"); // todas | atrasadas
   const refGuias = useRef(null);
   const refFacturas = useRef(null);
@@ -82,6 +95,9 @@ export default function FacturasTrazabilidad({ lics = [], documentosMap = {}, pu
   // Facturas y boletas de las cotizaciones adjudicadas, con sus notas.
   const facturas = useMemo(() => {
     const filas = [];
+    // Saldos a favor aplicados: pagos (en cualquier cotización) que apuntan a una NC.
+    const usosPorNc = {};
+    for (const docsLic of Object.values(documentosMap || {})) for (const d of docsLic || []) if (PAGOS.includes(d.tipo) && d.origen_doc_id) (usosPorNc[d.origen_doc_id] = usosPorNc[d.origen_doc_id] || []).push(d);
     for (const lic of lics || []) {
       const docs = documentosMap[lic.id] || [];
       const notas = (tipo, id) => docs.filter((d) => d.tipo === tipo && d.deriva_de_id === id);
@@ -101,6 +117,7 @@ export default function FacturasTrazabilidad({ lics = [], documentosMap = {}, pu
         const ncTotal = Math.max(ncSistema, Number(est?.nc?.total || 0));
         const bruto = Math.round(Number(f.monto || 0) * 1.19);
         const anuladaNc = !!est?.nc?.completa || (bruto > 0 && ncSistema >= bruto - 2);
+        const dinero = dineroDeFactura(f, docs, usosPorNc);
         filas.push({
           ...f,
           lic,
@@ -116,6 +133,9 @@ export default function FacturasTrazabilidad({ lics = [], documentosMap = {}, pu
           anuladaNc,
           anulada: anuladaNc || est?.estado === "anulado",
           ndTotal: nd.reduce((a, d) => a + Number(d.monto || 0), 0),
+          dinero,
+          pendienteDevolver: dinero.pendienteDevolver,
+          saldoFavor: dinero.saldoFavor,
         });
       }
     }
@@ -137,6 +157,8 @@ export default function FacturasTrazabilidad({ lics = [], documentosMap = {}, pu
     nc_parcial: (f) => !f.anulada && f.ncTotal > 0,
     con_nc: (f) => f.anulada || f.ncTotal > 0,
     con_nd: (f) => f.nd.length > 0,
+    devolucion_pendiente: (f) => f.pendienteDevolver > 0 || f.dinero?.sinDecision > 0,
+    saldo_favor: (f) => f.saldoFavor > 0,
   };
   const cuenta = (k) => facturas.filter(FILTROS[k]).length;
   const factFiltradas = useMemo(
@@ -175,6 +197,9 @@ export default function FacturasTrazabilidad({ lics = [], documentosMap = {}, pu
       pagadasMesTotal: suma(pagadasMes, saldoDe),
       anuladas: facturas.filter(FILTROS.anuladas).length,
       ncParcial: facturas.filter(FILTROS.nc_parcial).length,
+      devolucionesPendientes: facturas.filter(FILTROS.devolucion_pendiente).length,
+      devolucionesPendientesTotal: suma(facturas.filter(FILTROS.devolucion_pendiente), (f) => f.pendienteDevolver + (f.dinero?.sinDecision || 0)),
+      saldosFavor: facturas.filter(FILTROS.saldo_favor).length,
     };
   }, [pendientes, facturas]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -214,6 +239,22 @@ export default function FacturasTrazabilidad({ lics = [], documentosMap = {}, pu
           modoInicial={notaCredito.documentoId ? "parcial" : "total"}
           onCerrar={() => setNotaCredito(null)}
           onEmitida={(r) => despuesDeEmitir(notaCredito.licId || null, `Nota de crédito ${r.numero} emitida en Bsale.`)}
+        />
+      )}
+      {devolucion && (
+        <RegistrarDevolucionModal
+          nota={devolucion.nota}
+          factura={devolucion.factura}
+          onCerrar={() => setDevolucion(null)}
+          onHecho={(r) => { onRefrescar?.(devolucion.factura.lic.id); onAviso?.("success", r?.factura_pagada === false ? "Devolución registrada: la factura queda sin pago." : "Devolución registrada."); }}
+        />
+      )}
+      {saldoFavor && (
+        <UsarSaldoFavorModal
+          nota={saldoFavor.nota}
+          factura={saldoFavor.factura}
+          onCerrar={() => setSaldoFavor(null)}
+          onHecho={(r) => { onRefrescar?.(saldoFavor.factura.lic.id); if (r?.destino?.licitacion_id) onRefrescar?.(r.destino.licitacion_id); onAviso?.("success", `Saldo a favor aplicado a la factura N° ${r?.destino?.numero || ""}${r?.factura_pagada ? ": quedó pagada" : ""}.`); }}
         />
       )}
       {notaDebito && (
@@ -258,7 +299,13 @@ export default function FacturasTrazabilidad({ lics = [], documentosMap = {}, pu
         <div className="stat-card" style={{ cursor: "pointer", ...activa(filtro === "con_nc") }} onClick={() => filtrarFacturas("con_nc")} title="Ver las anuladas y las que tienen nota de crédito">
           <div className="stat-label">Anuladas / con NC</div>
           <div className="stat-value" style={{ color: kpis.anuladas ? "#b91c1c" : undefined }}>{kpis.anuladas}</div>
-          <div className="stat-sub">{kpis.ncParcial ? `anuladas · ${kpis.ncParcial} con NC parcial` : "con nota de crédito por el total"}</div>
+          <div className="stat-sub">
+            {kpis.devolucionesPendientes
+              ? <span style={{ color: "#b91c1c", fontWeight: 600 }}>{kpis.devolucionesPendientes} {kpis.devolucionesPendientes === 1 ? "devolución pendiente" : "devoluciones pendientes"} · {clp(kpis.devolucionesPendientesTotal)}</span>
+              : kpis.saldosFavor
+                ? <span style={{ color: "#1d4ed8" }}>{kpis.saldosFavor} con saldo a favor del cliente</span>
+                : kpis.ncParcial ? `anuladas · ${kpis.ncParcial} con NC parcial` : "con nota de crédito por el total"}
+          </div>
         </div>
       </div>
 
@@ -373,6 +420,8 @@ export default function FacturasTrazabilidad({ lics = [], documentosMap = {}, pu
               { value: "nc_parcial", label: `Con NC parcial (${cuenta("nc_parcial")})`, color: "#b45309" },
               { value: "con_nc", label: `Anuladas o con NC (${cuenta("con_nc")})`, color: "#b91c1c" },
               { value: "con_nd", label: `Con nota de débito (${cuenta("con_nd")})`, color: "#6d28d9" },
+              { value: "devolucion_pendiente", label: `Devolución pendiente (${cuenta("devolucion_pendiente")})`, color: "#b91c1c", detalle: "El cliente había pagado y falta devolverle el dinero" },
+              { value: "saldo_favor", label: `Con saldo a favor (${cuenta("saldo_favor")})`, color: "#1d4ed8", detalle: "Dinero del cliente por aplicar a otra factura" },
             ]}
           />
         </div>
@@ -385,7 +434,7 @@ export default function FacturasTrazabilidad({ lics = [], documentosMap = {}, pu
                 <th>Cotización / cliente</th>
                 <th style={{ textAlign: "right" }}>Total</th>
                 <th style={{ textAlign: "right" }}>Notas</th>
-                <th>Pago</th>
+                <th>Pago y dinero</th>
                 {puedeEmitir && <th style={{ textAlign: "right" }}>Acción</th>}
               </tr>
             </thead>
@@ -427,12 +476,16 @@ export default function FacturasTrazabilidad({ lics = [], documentosMap = {}, pu
                         {f.nd.length > 0 && <div style={{ color: "#6d28d9" }} title={f.nd.map((n) => `ND ${n.numero}`).join(", ")}>+ {clp(f.ndTotal)} <span style={{ color: "var(--text-muted)" }}>ND</span></div>}
                         {!(f.ncTotal > 0) && !f.nd.length && !f.ncTexto.length && <span style={{ color: "var(--text-muted)" }}>—</span>}
                       </td>
-                      <td style={{ whiteSpace: "nowrap" }}>
-                        {anulada
-                          ? <span style={{ fontSize: 11, fontWeight: 700, color: "#475569", background: "#f1f5f9", padding: "1px 7px", borderRadius: 999 }} title="Una factura anulada ya no se cobra">Anulada</span>
-                          : f.pagada
-                            ? <span style={{ fontSize: 11, fontWeight: 700, color: "#15803d" }}>✓ Pagada</span>
-                            : <span style={{ fontSize: 11, fontWeight: 700, color: "#b45309", background: "#fef3c7", padding: "1px 7px", borderRadius: 999 }}>Pendiente</span>}
+                      <td style={{ minWidth: 150, verticalAlign: "top" }}>
+                        <div style={{ whiteSpace: "nowrap" }}>
+                          {anulada
+                            ? <span style={{ fontSize: 11, fontWeight: 700, color: "#475569", background: "#f1f5f9", padding: "1px 7px", borderRadius: 999 }} title="Una factura anulada ya no se cobra">Anulada</span>
+                            : f.pagada
+                              ? <span style={{ fontSize: 11, fontWeight: 700, color: "#15803d" }}>✓ Pagada</span>
+                              : <span style={{ fontSize: 11, fontWeight: 700, color: "#b45309", background: "#fef3c7", padding: "1px 7px", borderRadius: 999 }}>Pendiente</span>}
+                        </div>
+                        {/* Qué pasó con el dinero de cada nota de crédito (2026-10-08) */}
+                        <DineroFactura f={f} puedeOperar={puedeEmitir} onRegistrar={(nota) => setDevolucion({ nota, factura: f })} onAplicar={(nota) => setSaldoFavor({ nota, factura: f })} />
                       </td>
                       {puedeEmitir && (
                         <td style={{ textAlign: "right" }}>

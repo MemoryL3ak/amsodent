@@ -579,6 +579,11 @@ export default function Trazabilidad() {
   /* (2026-10-07) Pestañas: «Seguimiento» (el ciclo OC → guía → factura de
      siempre) y «Facturas» (emitir facturas y notas de crédito/débito). */
   const [pestanaTraz, setPestanaTraz] = useStickyState("trazabilidad.pestana", "seguimiento");
+  // (2026-10-08) El aviso de devolución pendiente enlaza a /trazabilidad?pestana=facturas.
+  useEffect(() => {
+    const p = new URLSearchParams(window.location.search).get("pestana");
+    if (p === "facturas" || p === "seguimiento") setPestanaTraz(p);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const [facturaNumero, setFacturaNumero] = useState("");
   const [facturaFecha, setFacturaFecha] = useState("");
   const [facturaMonto, setFacturaMonto] = useState(""); // monto NETO de la factura (solo dígitos)

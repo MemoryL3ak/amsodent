@@ -4,6 +4,7 @@ import { LicitacionesService } from '../licitaciones/licitaciones.service';
 import { BsaleFacturacionService, EMISOR, epochAFecha, fechaAEpoch, normRut, totalesDe } from './bsale-facturacion.service';
 import { BsaleDespachosService } from './bsale-despachos.service';
 import { BsaleEstadosService } from './bsale-estados.service';
+import { DevolucionesService, DineroNc } from '../licitaciones/devoluciones.service';
 
 /* ── Anular facturas y boletas en Bsale con nota de crédito (2026-10-03) ─────
    Pedido de Ariel: "implementa lo de anular documentos". En Chile una factura
@@ -51,12 +52,21 @@ export const MODOS_NC = [
   { id: 'ajuste', nombre: 'Ajuste de precio', detalle: 'Rebaja el precio por unidad sin devolver productos (no mueve stock).' },
 ];
 
-// Qué pasa con el dinero (campo `type` de la devolución en Bsale).
-export const TIPOS_DEVOLUCION = [
-  { id: 2, nombre: 'Rebajar la deuda del cliente', detalle: 'Venta a crédito: el documento deja de cobrarse.' },
-  { id: 0, nombre: 'Devolver el dinero', detalle: 'Se le devuelve el pago al cliente (sale de caja en Bsale).' },
-  { id: 3, nombre: 'Sin movimiento de dinero', detalle: 'Solo se anula el documento; el pago, si lo hubo, se gestiona aparte.' },
+/* Qué pasa con el dinero (2026-10-08). Pedido de Ariel: "si se devolverá el
+   dinero o se dejará como saldo a favor se determina en el proceso de emisión
+   de la NC". `bsale` es el campo `type` de la devolución en Bsale (0 devuelve
+   dinero de caja, 2 rebaja la deuda, 3 no mueve dinero); `id` es lo que la
+   nota de crédito guarda en `dinero` y lo que Trazabilidad → Facturas usa
+   para mostrar la devolución pendiente o el saldo a favor (DevolucionesService). */
+export const TIPOS_DEVOLUCION: { id: DineroNc; bsale: number; nombre: string; detalle: string }[] = [
+  { id: 'devolver', bsale: 0, nombre: 'Devolver el dinero al cliente', detalle: 'Ya pagó: queda una devolución pendiente en Trazabilidad → Facturas hasta registrar la transferencia o el efectivo devuelto.' },
+  { id: 'saldo_favor', bsale: 3, nombre: 'Dejar saldo a favor del cliente', detalle: 'Ya pagó y el monto queda a su favor: se aplica a otra factura suya desde Trazabilidad → Facturas.' },
+  { id: 'rebajar_deuda', bsale: 2, nombre: 'Rebajar la deuda (no había pagado)', detalle: 'Venta a crédito o sin pago: el documento deja de cobrarse; no hay dinero que devolver.' },
+  { id: 'sin_movimiento', bsale: 3, nombre: 'Sin movimiento de dinero', detalle: 'Solo se anula el documento; el dinero, si lo hubo, se gestiona aparte.' },
 ];
+// Lo que mandaba la pantalla antes (el `type` de Bsale a secas).
+const LEGADO_DINERO: Record<string, DineroNc> = { '0': 'devolver', '2': 'rebajar_deuda', '3': 'sin_movimiento' };
+export const dineroDe = (v: any) => TIPOS_DEVOLUCION.find((t) => t.id === String(v ?? '')) || TIPOS_DEVOLUCION.find((t) => t.id === LEGADO_DINERO[String(v ?? '')]) || null;
 
 type Problema = { codigo: string; mensaje: string };
 
@@ -75,6 +85,7 @@ export class BsaleAnulacionesService {
     private despachos: BsaleDespachosService,
     private licitaciones: LicitacionesService,
     private estados: BsaleEstadosService,
+    private devoluciones: DevolucionesService,
   ) {}
 
   // ── Encontrar el documento ────────────────────────────────────────────
@@ -247,6 +258,18 @@ export class BsaleAnulacionesService {
     }
 
     const credito = (doc.payments?.items || doc.payments || []).some?.((p: any) => /cr[eé]dito/i.test(String(p?.name || p?.payment_type?.name || '')));
+    // Lo que el cliente tiene pagado de este documento en el sistema: decide qué pasa con el dinero.
+    let pago: { bruto: number; fecha: string | null; medio: string | null } = { bruto: 0, fecha: null, medio: null };
+    if (registro) {
+      try {
+        const cf = await this.devoluciones.cuentaFactura(registro.documento_id);
+        const ultimo = [...cf.pagos].sort((a: any, b: any) => String(b.fecha_oc || '').localeCompare(String(a.fecha_oc || '')))[0];
+        pago = {
+          bruto: Math.max(0, cf.pagado_bruto - cf.devuelto_bruto), fecha: ultimo?.fecha_oc || null,
+          medio: ultimo?.forma_pago || (ultimo?.tipo === 'webpay' ? 'Webpay' : ultimo?.tipo === 'efectivo' ? 'Efectivo' : null),
+        };
+      } catch { /* sin cuenta en el sistema: se decide a mano */ }
+    }
     const c = doc.client || null;
     return {
       original: {
@@ -265,7 +288,8 @@ export class BsaleAnulacionesService {
       modos: MODOS_NC,
       saldo: { devuelto: devueltoMonto, disponible: saldoDisponible },
       tipos_devolucion: TIPOS_DEVOLUCION,
-      tipo_devolucion: credito ? 2 : 3,
+      tipo_devolucion: pago.bruto > 0 ? 'devolver' : credito ? 'rebajar_deuda' : 'sin_movimiento',
+      pago,
       cotizacion,
       registro,
       previas: previas.map((r) => ({ id: Number(r.id), monto: Number(r.amount) || 0, nota_credito_id: Number(r.credit_note?.id) || null, motivo: String(r.motive || '') })),
@@ -445,7 +469,7 @@ export class BsaleAnulacionesService {
     const b: any = await this.preparar(usuario.id, { bsale_id: body?.bsale_id, documento_id: body?.documento_id, tipo: body?.tipo, numero: body?.numero });
     const motivo = texto(body?.motivo, 250);
     if (motivo.length < 5) b.problemas.push({ codigo: 'motivo', mensaje: 'Escribe el motivo (sale impreso en la nota de crédito).' });
-    const tipoDev = TIPOS_DEVOLUCION.find((t) => t.id === Number(body?.tipo_devolucion ?? b.tipo_devolucion));
+    const tipoDev = dineroDe(body?.tipo_devolucion ?? b.tipo_devolucion);
     if (!tipoDev) b.problemas.push({ codigo: 'tipo_devolucion', mensaje: 'Elige qué pasa con el dinero.' });
     const modo: 'total' | 'parcial' | 'ajuste' = body?.modo === 'parcial' || body?.modo === 'ajuste' ? body.modo : 'total';
     const o = b.original;
@@ -497,7 +521,7 @@ export class BsaleAnulacionesService {
       declareSii: 1,
       priceAdjustment: modo === 'ajuste' ? 1 : 0,
       editTexts: 0,
-      type: tipoDev!.id,
+      type: tipoDev!.bsale,
       ...(o.cliente?.rut
         ? { client: { code: o.cliente.rut, company: o.cliente.razon_social, activity: o.cliente.giro || undefined, address: o.cliente.direccion || undefined, municipality: o.cliente.comuna || undefined, city: o.cliente.ciudad || undefined } }
         : {}),
@@ -525,6 +549,13 @@ export class BsaleAnulacionesService {
             ? `Devolución parcial de la ${doc} N° ${o.numero}: $${totales.total.toLocaleString('es-CL')} de $${Number(o.totales.total).toLocaleString('es-CL')}.`
             : `Ajuste de precio de la ${doc} N° ${o.numero}: rebaja $${totales.total.toLocaleString('es-CL')} sin devolver productos.`,
         modo === 'ajuste' ? 'No mueve stock: es solo una corrección de montos.' : 'Bsale reingresa al stock las cantidades devueltas.',
+        tipoDev!.id === 'devolver' && Number(b.pago?.bruto) > 0
+          ? `El cliente tiene pagados $${Number(b.pago.bruto).toLocaleString('es-CL')}: quedará una devolución pendiente de hasta $${Math.min(Number(b.pago.bruto), totales.total).toLocaleString('es-CL')} en Trazabilidad → Facturas hasta que se registre.`
+          : tipoDev!.id === 'saldo_favor' && Number(b.pago?.bruto) > 0
+            ? `El cliente tiene pagados $${Number(b.pago.bruto).toLocaleString('es-CL')}: hasta $${Math.min(Number(b.pago.bruto), totales.total).toLocaleString('es-CL')} quedarán a su favor para aplicarlos a otra factura desde Trazabilidad → Facturas.`
+            : tipoDev!.id === 'devolver' || tipoDev!.id === 'saldo_favor'
+              ? 'El sistema no tiene pagos registrados de este documento: no quedará dinero pendiente de devolver.'
+              : `Dinero: ${tipoDev!.nombre.toLowerCase()}.`,
         b.cotizacion
           ? `Quedará registrada en la cotización #${b.cotizacion.id} como nota de crédito de esa ${doc}: Seguimiento de Pagos la descuenta del saldo.`
           : 'El documento no está en ninguna cotización: la nota de crédito queda solo en Bsale y en Emitidas.',
@@ -552,6 +583,8 @@ export class BsaleAnulacionesService {
           // Las notas de crédito se guardan en BRUTO (así se cargan a mano y así las descuenta Seguimiento de Pagos).
           monto: Number(nc.totalAmount) || Number(totales.total) || null,
           fecha_oc: b.fecha_emision, deriva_de_id: b.registro.documento_id, descripcion,
+          // Qué pasa con el dinero (2026-10-08): lo lee Trazabilidad → Facturas.
+          dinero: tipoDev!.id,
           bucket: pdf ? 'factura' : null, storage_path: pdf?.path || null, file_name: pdf ? `Nota de crédito ${nc.number}.pdf` : null,
           mime_type: pdf ? 'application/pdf' : null, size_bytes: pdf?.size || null, bsale_id: Number(nc.id) || null, bsale_url: nc.urlPdf || nc.urlPublicView || null,
         });
@@ -567,6 +600,25 @@ export class BsaleAnulacionesService {
     });
     // La factura se ve anulada / con NC de inmediato (pestaña Facturas, Pagos, cotización).
     if ((r as any)?.emitida) this.estados.anotarNotaCredito(Number(o.bsale_id), { numero: (r as any).numero ?? null, total: Number((r as any).total) || Number(totales.total) || null });
-    return r;
+    // (2026-10-08) Qué quedó en manos del cliente: devolución pendiente (con
+    // aviso a admin y contabilidad) o saldo a favor. Lo calcula DevolucionesService.
+    let pendienteDevolver = 0;
+    let saldoFavor = 0;
+    if ((r as any)?.emitida && (r as any)?.documento_id) {
+      try {
+        const cn = await this.devoluciones.cuentaNotaCredito(Number((r as any).documento_id));
+        pendienteDevolver = cn.pendiente_devolver;
+        saldoFavor = cn.saldo_favor;
+        if (pendienteDevolver > 0) {
+          await this.devoluciones.avisarDevolucionPendiente({
+            ncId: Number((r as any).documento_id), facturaId: Number(b.registro.documento_id), licitacionId: b.cotizacion?.id || null, monto: pendienteDevolver,
+            cliente: b.cotizacion?.cliente || o.cliente?.razon_social || '', numeroNc: String((r as any).numero ?? ''), numeroFactura: String(o.numero), etiqueta: doc,
+          });
+        }
+      } catch (e: any) {
+        this.logger.warn(`NC ${(r as any).numero}: no se pudo calcular el dinero pendiente: ${e?.message || e}`);
+      }
+    }
+    return { ...(r as any), dinero: tipoDev!.id, pendiente_devolver: pendienteDevolver, saldo_favor: saldoFavor };
   }
 }

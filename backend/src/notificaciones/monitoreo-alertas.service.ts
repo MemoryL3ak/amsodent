@@ -28,6 +28,7 @@ export type EstadoAlerta = 'cumplida' | 'pendiente' | 'incumplida' | 'informativ
 const CERRADOS = ['adjudicada', 'perdida', 'descartada', 'cancelada', 'desierta'];
 const TIPOS_CORREO = ['oc_agradecimiento', 'guia_despacho_enviar', 'info_despacho_agradecimiento', 'factura_enviar'];
 const TIPOS_FACTURA = ['factoring_por_vencer', 'factoring_vencido', 'factura_vencida'];
+const PAGOS = ['comprobante_pago', 'webpay', 'efectivo'];
 const MAX_DIAS = 366;
 
 const num = (v: any) => (Number.isFinite(Number(v)) && Number(v) > 0 ? Number(v) : null);
@@ -77,6 +78,7 @@ export class MonitoreoAlertasService {
     // Qué hay que mirar para decidir el cumplimiento.
     const licIds: number[] = [];
     const facturaIds: number[] = [];
+    const ncIds: number[] = [];
     for (const n of notifs) {
       const m = n.metadata || {};
       if (num(m.licitacion_id)) licIds.push(num(m.licitacion_id) as number);
@@ -86,6 +88,7 @@ export class MonitoreoAlertasService {
         if (num(it?.licitacion_id)) licIds.push(Number(it.licitacion_id));
       }
       if (TIPOS_FACTURA.includes(n.tipo) && num(m.documento_id)) facturaIds.push(Number(m.documento_id));
+      if (n.tipo === 'devolucion_pendiente' && num(m.nc_id)) ncIds.push(Number(m.nc_id));
     }
     const lics = new Map<number, any>();
     for (const l of await this.porIds('licitaciones', 'id, id_licitacion, nombre_entidad, estado, postulada, fecha_hora_cierre', 'id', licIds)) lics.set(Number(l.id), l);
@@ -95,6 +98,13 @@ export class MonitoreoAlertasService {
     }
     const facturas = new Map<number, any>();
     for (const f of await this.porIds('licitacion_documentos', 'id, pagada, fecha_pago', 'id', facturaIds)) facturas.set(Number(f.id), f);
+    // Devolución pendiente (2026-10-08): cumplida cuando lo devuelto o aplicado como saldo a favor cubre el monto avisado (bruto).
+    const salidasNc = new Map<number, number>();
+    for (const d of await this.porIds('licitacion_documentos', 'id, tipo, monto, origen_doc_id', 'origen_doc_id', ncIds)) {
+      if (d.tipo !== 'devolucion' && !PAGOS.includes(String(d.tipo))) continue;
+      const k = Number(d.origen_doc_id);
+      salidasNc.set(k, (salidasNc.get(k) || 0) + Math.round((Number(d.monto) || 0) * 1.19));
+    }
     const gestiones = new Map<string, string[]>();
     for (const g of await this.porIds('cobranza_gestiones', 'documento_id, created_at', 'documento_id', facturaIds.map(String))) {
       const k = String(g.documento_id);
@@ -145,6 +155,13 @@ export class MonitoreoAlertasService {
           return hechas === items.length
             ? { estado: 'cumplida', detalle: `${items.length === 1 ? 'La factura quedó pagada o gestionada' : `Las ${items.length} facturas quedaron pagadas o gestionadas`}.` }
             : { estado: 'pendiente', detalle: `${hechas} de ${items.length} facturas pagadas o con gestión registrada después del aviso.` };
+        }
+        case 'devolucion_pendiente': {
+          const hecho = salidasNc.get(Number(m.nc_id)) || 0;
+          const monto = Number(m.monto) || 0;
+          const clp = (x: number) => `$${Math.round(x).toLocaleString('es-CL')}`;
+          if (monto > 0 && hecho >= monto - 5) return { estado: 'cumplida', detalle: `Devuelto o aplicado ${clp(hecho)}.` };
+          return { estado: 'pendiente', detalle: hecho > 0 ? `Devuelto ${clp(hecho)} de ${clp(monto)}.` : 'Falta registrar la devolución.' };
         }
         default:
           if (TIPOS_FACTURA.includes(n.tipo)) {
