@@ -19,8 +19,8 @@ export class LicitacionesController {
   }
 
   @Get('with-fields')
-  findAllWithFields(@Query('fields') fields: string) {
-    return this.licitacionesService.findAllWithFields(fields || '*');
+  findAllWithFields(@Query('fields') fields: string, @Query('estado') estado?: string) {
+    return this.licitacionesService.findAllWithFields(fields || '*', estado || null);
   }
 
   // Próximo correlativo (max(id) + 1). Aproximado: si otra persona inserta entre

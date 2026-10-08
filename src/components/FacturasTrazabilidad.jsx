@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { Ban, FileCheck, FilePlus2, Receipt, RefreshCw, Search } from "lucide-react";
-import { api } from "../lib/api";
+import { pedirPendientesFacturar } from "../lib/pendientesFacturar";
 import EmitirFacturaBsale from "./EmitirFacturaBsale";
 import DocumentoLibreBsale from "./DocumentoLibreBsale";
 import AnularDocumentoBsale from "./AnularDocumentoBsale";
@@ -58,12 +58,11 @@ export default function FacturasTrazabilidad({ lics = [], documentosMap = {}, pu
   const [notaDebito, setNotaDebito] = useState(null);
   const [filtro, setFiltro] = useState("todas");
 
-  async function cargarPendientes() {
+  async function cargarPendientes(refrescar = false) {
     if (!puedeEmitir) return;
     setCargandoPend(true);
     try {
-      const r = await api.get("/bsale/facturas/pendientes");
-      setPendientes(r?.filas || []);
+      setPendientes(await pedirPendientesFacturar({ refrescar }));
     } catch {
       setPendientes([]);
     } finally {
@@ -146,7 +145,7 @@ export default function FacturasTrazabilidad({ lics = [], documentosMap = {}, pu
 
   const despuesDeEmitir = (licId, mensaje) => {
     if (licId) onRefrescar?.(licId);
-    cargarPendientes();
+    cargarPendientes(true);
     if (mensaje) onAviso?.("success", mensaje);
   };
 
@@ -209,7 +208,7 @@ export default function FacturasTrazabilidad({ lics = [], documentosMap = {}, pu
         <div className="surface">
           <div className="surface-header">
             <h3 className="surface-title">Guías por facturar {pendientes ? `(${pendFiltradas.length})` : ""}</h3>
-            <button type="button" className="btn btn-ghost btn-sm" onClick={cargarPendientes} disabled={cargandoPend} title="Volver a consultar">
+            <button type="button" className="btn btn-ghost btn-sm" onClick={() => cargarPendientes(true)} disabled={cargandoPend} title="Volver a consultar">
               <RefreshCw size={13} className={cargandoPend ? "spin" : ""} /> Actualizar
             </button>
           </div>
@@ -250,8 +249,10 @@ export default function FacturasTrazabilidad({ lics = [], documentosMap = {}, pu
                           type="button"
                           className="btn btn-primary btn-sm"
                           onClick={() => setEmitirDesdeGuia({ licId: p.licitacion_id, guiaId: p.guia_id })}
-                          disabled={!p.emitible}
-                          title={p.emitible ? `Emitir en Bsale la factura de la guía ${p.guia_numero}` : "El N° de la guía no tiene un folio reconocible: corrígelo en Trazabilidad"}
+                          disabled={!p.emitible || estadosBsale?.[p.guia_id]?.estado === "anulado"}
+                          title={estadosBsale?.[p.guia_id]?.estado === "anulado"
+                            ? `La guía ${p.guia_numero} está anulada en Bsale: no se factura`
+                            : p.emitible ? `Emitir en Bsale la factura de la guía ${p.guia_numero}` : "El N° de la guía no tiene un folio reconocible: corrígelo en Trazabilidad"}
                         >
                           <FileCheck size={13} /> Emitir factura
                         </button>

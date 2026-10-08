@@ -78,6 +78,7 @@ import DocumentoLibreBsale from "../components/DocumentoLibreBsale";
 import EstadoBsaleBadge from "../components/EstadoBsale";
 import FacturasTrazabilidad from "../components/FacturasTrazabilidad";
 import { useEstadosBsale } from "../lib/estadosBsale";
+import { pedirPendientesFacturar } from "../lib/pendientesFacturar";
 
 // Mapping empresa courier → builder de URL de tracking. Si la empresa no
 // tiene URL o no hay número, devuelve "" (no renderizamos el link).
@@ -685,7 +686,12 @@ export default function Trazabilidad() {
     if (cargando || soloLectura) return;
     let vivo = true;
     api.get("/bsale/facturas/estado")
-      .then((e) => { if (vivo) setPuedeEmitirBsale(!!e?.puede); })
+      .then((e) => {
+        if (vivo) setPuedeEmitirBsale(!!e?.puede);
+        // (2026-10-08) Las guías por facturar se piden ya, en paralelo con la
+        // carga de la página: la pestaña Facturas las encuentra listas.
+        if (e?.puede) pedirPendientesFacturar().catch(() => {});
+      })
       .catch(() => { /* backend sin la función: el botón no aparece */ });
     return () => { vivo = false; };
   }, [cargando, soloLectura]);
@@ -700,7 +706,8 @@ export default function Trazabilidad() {
       // Cotizaciones adjudicadas
       let rows;
       try {
-        const licitaciones = await api.get("/licitaciones/with-fields?fields=id,id_licitacion,nombre,nombre_entidad,estado,fecha_adjudicada,total_con_iva,total_sin_iva,creado_por,comuna,tipo_compra,tipo_cliente,estado_entrega,ciclo_cerrado,monto_forzado");
+        // Solo las adjudicadas (el servidor filtra: antes llegaban todas).
+        const licitaciones = await api.get("/licitaciones/with-fields?estado=Adjudicada&fields=id,id_licitacion,nombre,nombre_entidad,estado,fecha_adjudicada,total_con_iva,total_sin_iva,creado_por,comuna,tipo_compra,tipo_cliente,estado_entrega,ciclo_cerrado,monto_forzado");
         rows = (licitaciones || []).filter((l) => l.estado === "Adjudicada");
       } catch (error) {
         console.error("Error cargando cotizaciones:", error);

@@ -1390,13 +1390,17 @@ export class LicitacionesService {
     return partes[partes.length - 1];
   }
 
-  async findAllWithFields(fields: string) {
-    const ejecutar = (sel: string) =>
-      this.supabase.getClient()
+  async findAllWithFields(fields: string, estado?: string | null) {
+    // (2026-10-08) `estado` opcional: Trazabilidad traía las ~5.700 cotizaciones
+    // (2,5 MB) solo para quedarse con las ~550 adjudicadas en el navegador.
+    const filtroEstado = estado && /^[\p{L} ]{3,40}$/u.test(String(estado)) ? String(estado) : null;
+    const ejecutar = (sel: string) => {
+      let q = this.supabase.getClient()
         .from('licitaciones')
-        .select(sel)
-        .range(0, 20000)
-        .order('id', { ascending: false });
+        .select(sel);
+      if (filtroEstado) q = q.eq('estado', filtroEstado);
+      return q.range(0, 20000).order('id', { ascending: false });
+    };
 
     let { data, error } = await ejecutar(fields);
 
