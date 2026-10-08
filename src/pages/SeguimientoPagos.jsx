@@ -635,7 +635,7 @@ export default function SeguimientoPagos() {
             // particular (transferencia/comprobante, webpay y efectivo).
             filter: {
               licitacion_ids: ids,
-              tipo: ["orden_compra", "factura", "factura_boleta", "comprobante_pago", "webpay", "efectivo", "nota_credito", "nota_debito", "multa", "guia_despacho", "cierre_forzado"],
+              tipo: ["orden_compra", "factura", "factura_boleta", "comprobante_pago", "webpay", "efectivo", "nota_credito", "nota_debito", "multa", "guia_despacho", "cierre_forzado", "devolucion"],
             },
             fields: "*",
           });
@@ -689,6 +689,12 @@ export default function SeguimientoPagos() {
               const fa = String(d.fecha_oc || d.created_at || "");
               const fp = prev ? String(prev.fecha_oc || prev.created_at || "") : "";
               if (!prev || fa > fp) cierreMap[lid] = d;
+              return;
+            }
+            if (d.tipo === "devolucion") {
+              // (2026-10-08) Dinero devuelto al cliente tras una nota de crédito:
+              // un pago con signo contrario (neto, como los comprobantes).
+              (pagosList[lid] = pagosList[lid] || []).push({ ...d, monto: -Number(d.monto || 0), devolucion: true });
               return;
             }
             // Comprobantes de pago (transferencia/webpay/efectivo): acumulamos

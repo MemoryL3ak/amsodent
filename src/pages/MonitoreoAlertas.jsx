@@ -23,6 +23,7 @@ const TIPOS = {
   factoring_por_vencer: "Factoring por vencer",
   factoring_vencido: "Factoring vencido",
   factura_vencida: "Factura vencida",
+  devolucion_pendiente: "Devolución pendiente al cliente",
   oc_agradecimiento: "Correo de agradecimiento OC",
   guia_despacho_enviar: "Enviar guía de despacho",
   factura_enviar: "Enviar factura o boleta",

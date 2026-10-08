@@ -128,7 +128,7 @@ export default function AnularDocumentoBsale({ bsaleId = null, documentoId = nul
         bsale_id: o.bsale_id,
         ...(documentoId ? { documento_id: documentoId } : {}),
         motivo: motivo.trim(),
-        tipo_devolucion: Number(tipoDev),
+        tipo_devolucion: tipoDev,
         modo,
         ...(modo === "parcial" ? { lineas: elegidas.map((l) => ({ detalle_id: l.detalle_id, cantidad: l.cantidad })) } : {}),
         ...(modo === "ajuste" ? { lineas: elegidas.map((l) => ({ detalle_id: l.detalle_id, cantidad: l.cantidad, neto_unitario: l.valor })) } : {}),
@@ -175,6 +175,16 @@ export default function AnularDocumentoBsale({ bsaleId = null, documentoId = nul
                   ? <>Quedó registrada en la cotización <Link to={`/detalle/${borrador.cotizacion.id}`} className="table-link" style={{ fontWeight: 700 }}>#{borrador.cotizacion.id}</Link>: Seguimiento de Pagos la descuenta del saldo.</>
                   : "El documento no estaba en ninguna cotización: queda en Bsale y en Emitidas."}
               </div>
+              {resultado.pendiente_devolver > 0 && (
+                <div className="aviso-devolucion" style={{ fontSize: 13, fontWeight: 600, color: "#b91c1c" }}>
+                  Queda una devolución pendiente de {clp(resultado.pendiente_devolver)}: regístrala en Trazabilidad → Facturas cuando se le devuelva el dinero al cliente (admin y contabilidad ya tienen el aviso).
+                </div>
+              )}
+              {resultado.saldo_favor > 0 && (
+                <div className="aviso-saldo-favor" style={{ fontSize: 13, fontWeight: 600, color: "#1d4ed8" }}>
+                  El cliente queda con {clp(resultado.saldo_favor)} a favor: aplícalo a otra factura suya desde Trazabilidad → Facturas.
+                </div>
+              )}
               {(resultado.avisos || []).map((a, i) => <div key={i} style={{ fontSize: 12.5, color: "#92400e" }}>{a}</div>)}
               {resultado.url_pdf && <a href={resultado.url_pdf} target="_blank" rel="noopener noreferrer" className="btn btn-secondary btn-sm" style={{ alignSelf: "flex-start", textDecoration: "none" }}><ExternalLink size={13} /> Ver en Bsale</a>}
             </div>
@@ -346,6 +356,13 @@ export default function AnularDocumentoBsale({ bsaleId = null, documentoId = nul
                     <span style={etiqueta}>Qué pasa con el dinero</span>
                     <DropdownSelect value={tipoDev} onChange={setTipoDev} options={(borrador.tipos_devolucion || []).map((t) => ({ value: String(t.id), label: t.nombre }))} disabled={!!enviando} minWidth={220} style={{ width: "100%" }} />
                     {tipoElegido && <div style={{ fontSize: 11.5, color: "var(--text-muted)", marginTop: 4 }}>{tipoElegido.detalle}</div>}
+                    {borrador.pago && (
+                      <div className="pago-registrado" style={{ fontSize: 11.5, marginTop: 4, color: borrador.pago.bruto > 0 ? "#b45309" : "var(--text-muted)" }}>
+                        {borrador.pago.bruto > 0
+                          ? `El cliente tiene pagados ${clp(borrador.pago.bruto)}${borrador.pago.fecha ? ` (${String(borrador.pago.fecha).slice(0, 10).split("-").reverse().join("-")}${borrador.pago.medio ? `, ${borrador.pago.medio}` : ""})` : ""}: elige si se le devuelven o quedan a su favor.`
+                          : "Sin pagos registrados en el sistema para este documento."}
+                      </div>
+                    )}
                   </div>
                 </div>
               )}

@@ -2587,6 +2587,12 @@ export class LicitacionesService {
       // cliente particular): mismo criterio.
       if (msg.includes('valor_cuota')) { delete bodyWithout.valor_cuota; removed = true; }
       if (msg.includes('detalle_pago')) { delete bodyWithout.detalle_pago; removed = true; }
+      // Migración 20261008 (qué pasa con el dinero de la nota de crédito): mismo criterio.
+      if (msg.includes('dinero')) { delete bodyWithout.dinero; removed = true; }
+      // Un tipo nuevo (p. ej. 'devolucion') que la base aún no acepta: decirlo claro, no «violates check constraint».
+      if (msg.includes('licitacion_documentos_tipo_check')) {
+        throw new BadRequestException(`El tipo de documento «${body.tipo}» todavía no está habilitado en la base: falta aplicar la migración 20261008_documentos_devolucion.`);
+      }
       if (removed) {
         const { data: d2, error: e2 } = await this.supabase.getClient()
           .from('licitacion_documentos')
@@ -2640,7 +2646,7 @@ export class LicitacionesService {
       .from('licitacion_documentos')
       .select('id, tipo, monto, deriva_de_id, pagada, fecha_oc, forma_pago')
       .eq('licitacion_id', licitacionId)
-      .in('tipo', ['factura', 'factura_boleta', 'nota_credito', 'nota_debito', ...PAGOS]);
+      .in('tipo', ['factura', 'factura_boleta', 'nota_credito', 'nota_debito', 'devolucion', ...PAGOS]);
     if (error) return false;
     const docs: any[] = data || [];
     const facturas = docs.filter((d) => d.tipo === 'factura' || d.tipo === 'factura_boleta');
@@ -2655,7 +2661,11 @@ export class LicitacionesService {
           (facturas.length === 1 && (d.deriva_de_id == null || !idsFacturas.has(Number(d.deriva_de_id))))),
     );
     if (!pagos.length) return false;
-    const pagado = pagos.reduce((a, d) => a + (Number(d.monto) || 0), 0);
+    // (2026-10-08) Lo devuelto al cliente (devoluciones, en neto) se resta de lo pagado.
+    const devuelto = docs
+      .filter((d) => d.tipo === 'devolucion' && (Number(d.deriva_de_id) === Number(objetivo.id) || (facturas.length === 1 && d.deriva_de_id == null)))
+      .reduce((a, d) => a + (Number(d.monto) || 0), 0);
+    const pagado = pagos.reduce((a, d) => a + (Number(d.monto) || 0), 0) - devuelto;
     const notas = docs
       .filter((d) => d.tipo === 'nota_credito' && Number(d.deriva_de_id) === Number(objetivo.id))
       .reduce((a, d) => a + (Number(d.monto) || 0) / 1.19, 0);

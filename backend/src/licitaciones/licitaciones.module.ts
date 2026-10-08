@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { LicitacionesController } from './licitaciones.controller';
 import { LicitacionesService } from './licitaciones.service';
+import { DevolucionesService } from './devoluciones.service';
 import { MpExploracionCron } from './mp-exploracion.cron';
 import { EquivalenciasCron } from './equivalencias.cron';
 import { FacturasVencidasCron } from './facturas-vencidas.cron';
@@ -18,7 +19,7 @@ import { FeriadosModule } from '../feriados/feriados.module';
   // FeriadosModule: días hábiles del calendario de cobranza (FacturasVencidasCron).
   imports: [MailingsModule, MercadopublicoModule, ChatModule, FeriadosModule],
   controllers: [LicitacionesController],
-  providers: [LicitacionesService, MpExploracionCron, EquivalenciasCron, FacturasVencidasCron, MpEstadosCron, MpAnalisisGlobalCron],
-  exports: [LicitacionesService],
+  providers: [LicitacionesService, DevolucionesService, MpExploracionCron, EquivalenciasCron, FacturasVencidasCron, MpEstadosCron, MpAnalisisGlobalCron],
+  exports: [LicitacionesService, DevolucionesService],
 })
 export class LicitacionesModule {}
