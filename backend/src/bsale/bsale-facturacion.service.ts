@@ -10,6 +10,7 @@ import {
 import { createHash } from 'crypto';
 import { SupabaseService } from '../supabase/supabase.service';
 import { CorreosService } from '../correos/correos.service';
+import { LicitacionesService } from '../licitaciones/licitaciones.service';
 
 /* ── Emisión de facturas en Bsale desde el sistema (2026-10-02) ──────────────
    La factura se arma A PARTIR DE LA GUÍA DE DESPACHO que ya existe en Bsale,
@@ -198,8 +199,9 @@ export class BsaleFacturacionService {
 
   constructor(
     private supabase: SupabaseService,
-    // (2026-10-07) La factura emitida se envía sola al cliente. Opcional para las pruebas.
+    // (2026-10-08) Al registrar la factura queda el aviso que abre la ventana de correo. Opcionales para las pruebas.
     @Optional() private correos?: CorreosService,
+    @Optional() private licitaciones?: LicitacionesService,
   ) {}
 
   // ── Configuración ───────────────────────────────────────────────────────
@@ -1245,11 +1247,13 @@ export class BsaleFacturacionService {
       .from('bsale_emisiones')
       .update({ documento_id: (creado as any).id, updated_at: new Date().toISOString() })
       .eq('id', emision.id);
-    // (2026-10-07) La factura se envía sola al cliente con su PDF.
+    // (2026-10-08) Nunca se envía sola: queda el aviso que abre la ventana de
+    // correo con la factura prellenada, y la persona revisa y envía.
     let correo: any = null;
-    if (this.correos) {
-      correo = await this.correos.enviarDocumentoEmitido({ documentoId: Number((creado as any).id), tipo: 'factura', total: Number(emision.total) || null });
-      if (!correo?.enviado && correo?.motivo) avisos.push(`Correo al cliente: ${correo.motivo}`);
+    if (this.licitaciones) {
+      await this.licitaciones.avisarCorreoDocumento(Number((creado as any).id), { tipo: 'factura', licitacion_id: licId, numero });
+      const dest = this.correos ? await this.correos.destinatarioDocumento(licId) : null;
+      correo = { ventana: true, para: dest?.para || null };
     }
     return {
       emitida: true,

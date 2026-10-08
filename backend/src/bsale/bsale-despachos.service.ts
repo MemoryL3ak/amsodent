@@ -778,7 +778,7 @@ export class BsaleDespachosService {
     solicitud: Record<string, any>; vista: any; licitacionId: number | null; origenDocId: number | null; lineas: any[];
     registrar: (doc: any, pdf: { path: string; size: number } | null) => Promise<number | null>;
     verificar: (doc: any) => Promise<string[]>; sinPdf?: boolean; bucket?: string;
-    // (2026-10-07) Guía, factura o boleta: se envía sola al cliente con el PDF.
+    // (2026-10-08) Guía, factura o boleta: al quedar registrada se abre la ventana de correo (nunca sale sola).
     correo?: { tipo: 'guia' | 'factura' | 'boleta'; para?: string | null };
   }) {
     const db = this.supabase.getClient();
@@ -870,10 +870,20 @@ export class BsaleDespachosService {
       this.logger.error(`${p.tipo} ${emitida.numero} emitida en Bsale pero NO registrada en el sistema: ${e?.message || e}`);
       avisos.push(`El documento ${emitida.numero} se emitió en Bsale pero no quedó registrado en la cotización (${String(e?.message || e).slice(0, 120)}). Regístralo a mano en Trazabilidad.`);
     }
+    /* (2026-10-08) Pedido de Ariel: "no debe enviarse automático: se levanta un
+       popup para enviar el correo y el usuario le da Enviar, pudiendo añadir y
+       quitar info, documentos o destinatarios". Queda el aviso que abre esa
+       ventana (idempotente: si el registro ya avisó, no se repite). */
     let correo: any = null;
-    if (p.correo && documentoId && this.correos) {
-      correo = await this.correos.enviarDocumentoEmitido({ documentoId, tipo: p.correo.tipo, para: p.correo.para || null, total: emitida.total });
-      if (!correo?.enviado && correo?.motivo) avisos.push(`Correo al cliente: ${correo.motivo}`);
+    if (p.correo && documentoId) {
+      const { data: licDoc } = await db.from('licitacion_documentos').select('licitacion_id, tipo, numero').eq('id', documentoId).maybeSingle();
+      if ((licDoc as any)?.licitacion_id) {
+        if (typeof (this.licitaciones as any)?.avisarCorreoDocumento === 'function') {
+          await this.licitaciones.avisarCorreoDocumento(documentoId, { tipo: (licDoc as any).tipo, licitacion_id: (licDoc as any).licitacion_id, numero: (licDoc as any).numero });
+        }
+        const dest = this.correos ? await this.correos.destinatarioDocumento(Number((licDoc as any).licitacion_id), p.correo.para || null) : null;
+        correo = { ventana: true, para: dest?.para || null };
+      }
     }
     return { emitida: true, registrada: !!documentoId, tipo: p.tipo, numero: emitida.numero, neto: emitida.neto, total: emitida.total, url_pdf: emitida.url_pdf, bsale_id: emitida.bsale_id, documento_id: documentoId, vista: p.vista, avisos, correo };
   }

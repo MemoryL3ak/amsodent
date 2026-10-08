@@ -130,7 +130,8 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
     }
   }
 
-  const cerrar = () => { if (!enviando) onCerrar?.(); };
+  // (2026-10-08) Emitido el documento, al cerrar se abre la ventana de correo para enviárselo al cliente.
+  const cerrar = () => { if (enviando) return; if (resultado?.emitida) window.dispatchEvent(new Event("correos:check")); onCerrar?.(); };
   const completo = !cargando && !enviando && borrador && !bloqueada && fecha && dias !== "" && forma;
   const puedeSimular = completo;
   // Emitir solo después de simular estos mismos datos (o al registrar una ya emitida).

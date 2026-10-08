@@ -117,7 +117,8 @@ export default function EmitirDespachoBsale({ tipo = "guia", licitacionId, ocDoc
     }
   }
 
-  const cerrar = () => { if (!enviando) onCerrar?.(); };
+  // (2026-10-08) Emitido el documento, al cerrar se abre la ventana de correo para enviárselo al cliente.
+  const cerrar = () => { if (enviando) return; if (resultado?.emitida) window.dispatchEvent(new Event("correos:check")); onCerrar?.(); };
   const faltaDespacho = esGuia && despacho && (!despacho.direccion?.trim() || !despacho.comuna?.trim() || !despacho.ciudad?.trim() || !despacho.destinatario?.trim() || !despacho.tipo_traslado_id);
   const faltaCliente = cliente?.nuevo && (!cliente.rut?.trim() || !cliente.razon_social?.trim() || !cliente.giro?.trim() || !cliente.direccion?.trim() || !cliente.comuna?.trim());
   const obsMax = borrador?.observacion_max || OBSERVACION_GUIA_MAX;

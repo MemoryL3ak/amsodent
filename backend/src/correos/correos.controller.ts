@@ -21,7 +21,7 @@ function idDe(req: any): string {
   return String(req?.user?.id || '').trim();
 }
 
-const TIPOS_VALIDOS: TipoPlantilla[] = ['oc_agradecimiento', 'guia_despacho_enviar'];
+const TIPOS_VALIDOS: TipoPlantilla[] = ['oc_agradecimiento', 'guia_despacho_enviar', 'info_despacho_agradecimiento', 'factura_enviar'];
 
 @Controller('correos')
 export class CorreosController {

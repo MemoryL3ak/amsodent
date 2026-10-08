@@ -12,7 +12,8 @@ import CorreoComposer from "./CorreoComposer";
 // (lo dispara DetalleLicitacion tras subir una OC o guía).
 
 const POLL_MS = 45_000;
-const TIPOS_CORREO = ["oc_agradecimiento", "guia_despacho_enviar", "info_despacho_agradecimiento"];
+// (2026-10-08) factura_enviar: factura o boleta recién cargada o emitida en Bsale.
+const TIPOS_CORREO = ["oc_agradecimiento", "guia_despacho_enviar", "info_despacho_agradecimiento", "factura_enviar"];
 
 // El popup de recordatorios (correo de agradecimiento de la OC y guía de
 // despacho) SIEMPRE permite posponer/cerrar, sin importar el tiempo transcurrido
@@ -22,12 +23,14 @@ const TITULOS = {
   oc_agradecimiento: "Correo de agradecimiento pendiente",
   guia_despacho_enviar: "Guía de despacho por enviar",
   info_despacho_agradecimiento: "Correo de agradecimiento pendiente",
+  factura_enviar: "Factura o boleta por enviar",
 };
 
 const LABEL_ENVIAR = {
   oc_agradecimiento: "Enviar ahora",
   guia_despacho_enviar: "Enviar notificación al cliente",
   info_despacho_agradecimiento: "Enviar ahora",
+  factura_enviar: "Enviar al cliente",
 };
 
 export default function RecordatoriosCorreo() {

@@ -2680,6 +2680,17 @@ export class LicitacionesService {
   // Crea una notificación para que el vendedor envíe un correo al cliente:
   //  - primera OC de la cotización → correo de agradecimiento
   //  - cualquier guía de despacho  → envío de guía al cliente
+  /* Documento registrado desde Bsale sin pasar por createDocumento (factura
+     desde guías, venta directa): deja el mismo aviso que una carga a mano, y
+     ese aviso abre la ventana de correo (2026-10-08). Nunca lanza. */
+  async avisarCorreoDocumento(docId: number, body: Record<string, any>) {
+    try {
+      await this.notificarCorreoPendiente(docId, body);
+    } catch (e: any) {
+      console.warn(`[correos-hook] ${e?.message || e}`);
+    }
+  }
+
   private async notificarCorreoPendiente(docId: number, body: Record<string, any>) {
     const log = (m: string) => console.log(`[correos-hook] ${m}`);
     if (!docId) {
@@ -2697,6 +2708,7 @@ export class LicitacionesService {
       | 'oc_agradecimiento'
       | 'guia_despacho_enviar'
       | 'info_despacho_agradecimiento'
+      | 'factura_enviar'
       | null = null;
     if (tipo === 'orden_compra') {
       // Solo la PRIMERA orden de compra de la cotización.
@@ -2717,6 +2729,10 @@ export class LicitacionesService {
       // Cliente particular: al cargar la info de despacho, agradecimiento con
       // los datos del despacho.
       tipoCorreo = 'info_despacho_agradecimiento';
+    } else if (tipo === 'factura' || tipo === 'factura_boleta') {
+      // (2026-10-08) Factura o boleta, cargada a mano o emitida en Bsale: se
+      // abre la ventana para enviársela al cliente (nunca sale sola).
+      tipoCorreo = 'factura_enviar';
     } else {
       log(`tipo "${tipo}" no dispara correo — no se notifica`);
       return;
@@ -2747,7 +2763,23 @@ export class LicitacionesService {
         ? `Se cargó la primera orden de compra${numero ? ` ${numero}` : ''} de ${cliente}. Envía el correo de agradecimiento.`
         : tipoCorreo === 'info_despacho_agradecimiento'
           ? `Se cargó la información de despacho de ${cliente}. Envía el correo de agradecimiento al cliente.`
-          : `Se cargó la guía de despacho${numero ? ` ${numero}` : ''} de ${cliente}. Envía la guía al cliente.`;
+          : tipoCorreo === 'factura_enviar'
+            ? `Quedó registrada la ${tipo === 'factura_boleta' ? 'boleta/factura' : 'factura'}${numero ? ` N° ${numero}` : ''} de ${cliente}. Envíasela al cliente.`
+            : `Se cargó la guía de despacho${numero ? ` ${numero}` : ''} de ${cliente}. Envía la guía al cliente.`;
+
+    // Idempotente (2026-10-08): un documento emitido en Bsale puede avisar
+    // desde dos lugares. Si ya hay un aviso sin leer de este documento, no se repite.
+    const { data: previa } = await this.supabase.getClient()
+      .from('notificaciones')
+      .select('id')
+      .eq('tipo', tipoCorreo)
+      .is('leida_at', null)
+      .filter('metadata->>documento_id', 'eq', String(docId))
+      .limit(1);
+    if ((previa || []).length) {
+      log(`aviso ${tipoCorreo} ya existe para doc=${docId} — no se repite`);
+      return;
+    }
 
     const { error } = await this.supabase.getClient()
       .from('notificaciones')
