@@ -14,7 +14,9 @@ import { SupabaseService } from '../supabase/supabase.service';
    8 s, User-Agent identificable y caché en memoria de 10 minutos por
    consulta (búsquedas repetidas no vuelven a golpear los sitios). */
 
-type Tienda = { id: string; nombre: string; tipo: 'shopify' | 'woo' | 'odoo' | 'amsodent'; base: string };
+type Tienda = { id: string; nombre: string; tipo: 'shopify' | 'woo' | 'odoo' | 'amsodent'; base: string; region?: string | null };
+// Región sin tildes ni mayúsculas, para comparar lo que escribe cada tabla ("Metropolitana de Santiago" = "metropolitana de santiago").
+const normRegion = (v: any) => String(v || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/^region\s+/, '').replace(/\s+/g, ' ').trim();
 
 // Fallback si la tabla explorador_tiendas aún no existe (migración pendiente)
 // o quedó vacía. Desde el 2026-09-10 la lista viva se administra en el
@@ -63,6 +65,8 @@ type Hallazgo = {
      propio SKU y precio, así que hay que saber cuál quiere el cliente. Solo
      se llena para la tienda de Amsodent. */
   variantes?: Array<{ id: number | string; sku: string | null; etiqueta: string; precio: number }>;
+  // (2026-10-09) Encontrado por la ficha del catálogo (descripción, presentación…), no por el nombre.
+  por_ficha?: boolean;
   // Datos de la web que solo usa este servicio para resolver las variantes.
   web_id?: number;
   variable?: boolean;
@@ -172,7 +176,15 @@ export class ExploradorService {
      conviene mostrarle al cliente las mismas tiendas que miramos nosotros, asi
      que cada tienda declara su ambito. 'ambos' es el valor por omision y
      mantiene el comportamiento de antes. */
-  private async tiendasActivas(ambito: 'cliente' | 'plataforma' = 'cliente'): Promise<Tienda[]> {
+  /* (2026-10-09) `region`: solo las tiendas sin región (venden a todo Chile)
+     y las de esa región. Sin región, todas. */
+  private async tiendasActivas(ambito: 'cliente' | 'plataforma' = 'cliente', region?: string | null): Promise<Tienda[]> {
+    const todas = await this.tiendasActivasTodas(ambito);
+    const r = normRegion(region);
+    return r ? todas.filter((t) => !t.region || normRegion(t.region) === r) : todas;
+  }
+
+  private async tiendasActivasTodas(ambito: 'cliente' | 'plataforma' = 'cliente'): Promise<Tienda[]> {
     const cache = this.tiendasCache as any;
     if (cache && cache.ambito === ambito && Date.now() - cache.ts < 5 * 60 * 1000) {
       return cache.tiendas;
@@ -198,6 +210,7 @@ export class ExploradorService {
           nombre: String(t.nombre || t.id),
           tipo: t.tipo,
           base: String(t.base_url).replace(/\/+$/, ''),
+          region: String(t.region || '').trim() || null,
         }));
       if (tiendas.length) {
         this.tiendasCache = { ts: Date.now(), tiendas, ambito } as any;
@@ -219,15 +232,15 @@ export class ExploradorService {
     this.storeApiRota.clear();
   }
 
-  async buscar(qRaw: string, ambito: 'cliente' | 'plataforma' = 'cliente') {
+  async buscar(qRaw: string, ambito: 'cliente' | 'plataforma' = 'cliente', region?: string | null) {
     const q = String(qRaw || '').trim().slice(0, 60);
     if (q.length < 3) throw new BadRequestException('Escribe al menos 3 letras para buscar.');
 
-    const key = `${ambito}|${q.toLowerCase()}`;
+    const key = `${ambito}|${normRegion(region)}|${q.toLowerCase()}`;
     const enCache = this.cache.get(key);
     if (enCache && Date.now() - enCache.ts < CACHE_MS) return enCache.data;
 
-    const tiendas = await this.tiendasActivas(ambito);
+    const tiendas = await this.tiendasActivas(ambito, region);
     const porTienda = await Promise.all(
       tiendas.map((t) =>
         this.buscarEnTienda(t, q).catch((e) => {
@@ -253,6 +266,7 @@ export class ExploradorService {
 
     const data = {
       consulta: q,
+      region: normRegion(region) ? String(region) : null,
       total: items.length,
       tiendas_consultadas: tiendas.map((t) => t.nombre),
       tiendas_sin_respuesta: tiendasCaidas,
@@ -265,6 +279,80 @@ export class ExploradorService {
       if (masVieja) this.cache.delete(masVieja[0]);
     }
     return data;
+  }
+
+  /* (2026-10-09) Región del cliente del portal, para elegir sus tiendas. */
+  async regionDeCliente(rut: string): Promise<string | null> {
+    const limpio = String(rut || '').replace(/[^0-9kK]/g, '').toUpperCase();
+    if (!limpio) return null;
+    try {
+      const cuerpo = limpio.slice(0, -1);
+      const dv = limpio.slice(-1);
+      const conPuntos = cuerpo.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+      const { data } = await this.supabase.getClient().from('clientes').select('region').in('rut', [`${conPuntos}-${dv}`, `${cuerpo}-${dv}`, limpio, String(rut)]).limit(1);
+      return String((data as any)?.[0]?.region || '').trim() || null;
+    } catch {
+      return null;
+    }
+  }
+
+  /* (2026-10-09) Lo que la ficha del producto en su tienda dice de él: nombre,
+     marca, SKU, descripción e imagen. Para precargar «Crear producto» con el
+     máximo de campos (pedido de Ariel). Cada tipo de tienda lo publica de una
+     forma; lo que no se encuentra queda vacío y se completa a mano. */
+  async detalleProducto(urlRaw: string, tiendaId?: string | null) {
+    const url = String(urlRaw || '').trim().split('#')[0];
+    if (!/^https?:\/\/[^\s]+$/i.test(url)) throw new BadRequestException('Falta el link del producto.');
+    const tiendas = await this.tiendasActivasTodas('plataforma');
+    const t = tiendas.find((x) => x.id === String(tiendaId || '')) || tiendas.find((x) => url.startsWith(x.base)) || null;
+    const tipo = t?.tipo || (/\/products\//.test(url) ? 'shopify' : /\/producto\//.test(url) && /amsodent/i.test(url) ? 'amsodent' : 'woo');
+    const out: { nombre: string | null; marca: string | null; sku: string | null; descripcion: string | null; imagen: string | null; tipo: string } = { nombre: null, marca: null, sku: null, descripcion: null, imagen: null, tipo };
+    const limpiar = (html: any) => String(html || '').replace(/<br\s*\/?>/gi, '\n').replace(/<\/(p|li|div|h\d)>/gi, '\n').replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/[ \t]+/g, ' ').replace(/\s*\n\s*/g, '\n').trim().slice(0, 2000) || null;
+    try {
+      if (tipo === 'shopify') {
+        const j = await this.fetchJson(`${url.split('?')[0].replace(/\/$/, '')}.js`);
+        out.nombre = limpiarNombre(j?.title || '') || null;
+        out.marca = String(j?.vendor || '').trim() || null;
+        out.sku = String(j?.variants?.[0]?.sku || '').trim() || null;
+        out.descripcion = limpiar(j?.description);
+        out.imagen = j?.featured_image || j?.images?.[0] || null;
+      } else if (tipo === 'woo') {
+        const base = t?.base || url.replace(/^(https?:\/\/[^/]+).*$/, '$1');
+        const slug = url.split('?')[0].replace(/\/$/, '').split('/').pop() || '';
+        const arr = await this.fetchJson(`${base}/wp-json/wc/store/v1/products?slug=${encodeURIComponent(slug)}`);
+        const p = Array.isArray(arr) ? arr[0] : null;
+        if (p) {
+          out.nombre = limpiarNombre(p.name || '') || null;
+          out.sku = String(p.sku || '').trim() || null;
+          out.descripcion = limpiar([p.short_description, p.description].filter(Boolean).join('\n'));
+          out.imagen = p?.images?.[0]?.src || null;
+          const marca = (p.attributes || []).find((a: any) => /marca|brand/i.test(String(a?.name || '')));
+          out.marca = String(marca?.terms?.[0]?.name || p?.brands?.[0]?.name || '').trim() || null;
+        }
+      } else if (tipo === 'amsodent') {
+        const html = await this.fetchTexto(url);
+        const flight = flightDeNext(html);
+        const i = flight.indexOf('"variantes":[');
+        const datos: any = i >= 0 ? objetoQueContiene(flight, i) : null;
+        out.nombre = limpiarNombre(datos?.nombre || datos?.name || '') || null;
+        out.marca = String(datos?.marca || datos?.brand || '').trim() || null;
+        out.sku = String(datos?.sku || datos?.variantes?.[0]?.sku || '').trim() || null;
+        out.descripcion = limpiar(datos?.descripcion || datos?.description || datos?.descripcionCorta || '');
+        const m = html.match(/<meta[^>]+name="description"[^>]+content="([^"]*)"/i);
+        if (!out.descripcion && m) out.descripcion = limpiar(m[1]);
+      } else {
+        const html = await this.fetchTexto(url);
+        const m = html.match(/<meta[^>]+(?:name|property)="(?:description|og:description)"[^>]+content="([^"]*)"/i);
+        out.descripcion = m ? limpiar(m[1]) : null;
+        const marca = html.match(/itemprop="brand"[^>]*>\s*(?:<[^>]+>\s*)*([^<]{2,60})</i);
+        out.marca = marca ? marca[1].trim() : null;
+        const t2 = html.match(/<meta[^>]+property="og:title"[^>]+content="([^"]*)"/i);
+        out.nombre = t2 ? limpiarNombre(t2[1]) : null;
+      }
+    } catch (e: any) {
+      this.logger.warn(`Explorador: sin detalle para ${url}: ${String(e?.message || e).slice(0, 120)}`);
+    }
+    return out;
   }
 
   private async fetchJson(url: string): Promise<any> {
@@ -333,6 +421,8 @@ export class ExploradorService {
 
     const AMBITOS = ['ambos', 'cliente', 'plataforma'];
     const ambito = AMBITOS.includes(String(body?.ambito || '')) ? String(body.ambito) : 'ambos';
+    // (2026-10-09) Región a la que vende la tienda; vacío = todo Chile.
+    const region = String((body as any)?.region ?? '').trim().slice(0, 60) || null;
 
     const fila: Record<string, any> = {
       id, nombre, tipo, base_url: base, activa, orden,
@@ -341,11 +431,20 @@ export class ExploradorService {
     let { data, error } = await this.supabase
       .getClient()
       .from('explorador_tiendas')
-      .upsert([{ ...fila, nota, ambito }], { onConflict: 'id' })
+      .upsert([{ ...fila, nota, ambito, region }], { onConflict: 'id' })
       .select()
       .single();
-    // `nota` llegó con la migración 20260916 y `ambito` con la 20261001; si
-    // alguna no está aplicada, se guarda igual el resto en vez de fallar.
+    // `nota` llegó con la migración 20260916, `ambito` con la 20261001 y
+    // `region` con la 20261009; si alguna no está aplicada, se guarda igual el
+    // resto en vez de fallar.
+    if (error && /region/i.test(error.message) && /column|schema cache/i.test(error.message)) {
+      ({ data, error } = await this.supabase
+        .getClient()
+        .from('explorador_tiendas')
+        .upsert([{ ...fila, nota, ambito }], { onConflict: 'id' })
+        .select()
+        .single());
+    }
     if (error && /nota|ambito/i.test(error.message) && /column|schema cache/i.test(error.message)) {
       ({ data, error } = await this.supabase
         .getClient()
@@ -417,7 +516,7 @@ export class ExploradorService {
     if (t.tipo === 'amsodent' || t.id === 'amsodent') return this.buscarEnWebAmsodent(t, enc);
     if (t.tipo === 'shopify') {
       const json = await this.fetchJson(
-        `${t.base}/search/suggest.json?q=${enc}&resources%5Btype%5D=product&resources%5Blimit%5D=${MAX_POR_TIENDA}`,
+        `${t.base}/search/suggest.json?q=${enc}&resources%5Btype%5D=product&resources%5Blimit%5D=${MAX_POR_TIENDA}&resources%5Boptions%5D%5Bfields%5D=title,body,product_type,tag,vendor,variants.sku,variants.title`,
       );
       const productos: any[] = json?.resources?.results?.products || [];
       return {
@@ -676,7 +775,50 @@ export class ExploradorService {
     return variantes;
   }
 
+  /* (2026-10-09) Pedido de Ariel: "ampliar la búsqueda a la descripción,
+     descripción corta, etc.". La web busca por nombre; acá se suma lo que
+     calza por la ficha de nuestro catálogo (descripción, presentación,
+     composición, uso): con su SKU se le pide a la web ese producto. */
   private async buscarEnWebAmsodent(t: Tienda, enc: string): Promise<{ items: Hallazgo[] }> {
+    const principal = await this.catalogoAmsodent(t, enc);
+    const q = decodeURIComponent(enc);
+    const skus = await this.skusPorFicha(q, principal.items.map((i) => i.sku).filter(Boolean) as string[]);
+    if (!skus.length || principal.items.length >= MAX_POR_TIENDA) return { items: principal.items };
+    const extra = await Promise.all(skus.map((sku) => this.catalogoAmsodent(t, encodeURIComponent(sku)).catch(() => ({ items: [] as Hallazgo[] }))));
+    const vistos = new Set(principal.items.map((i) => i.url));
+    const items = [...principal.items];
+    for (const r of extra) for (const it of r.items) if (!vistos.has(it.url) && items.length < MAX_POR_TIENDA) { vistos.add(it.url); items.push({ ...it, por_ficha: true }); }
+    return { items };
+  }
+
+  /* SKUs del catálogo cuya ficha (no el nombre) menciona lo buscado. */
+  private async skusPorFicha(q: string, yaEncontrados: string[]): Promise<string[]> {
+    const texto = q.replace(/[%_,()]/g, ' ').replace(/\s+/g, ' ').trim();
+    if (texto.length < 3) return [];
+    try {
+      const patron = `%${texto}%`;
+      const { data, error } = await this.supabase
+        .getClient()
+        .from('productos')
+        .select('sku, nombre')
+        .not('sku', 'is', null)
+        .neq('estado', 'Inactivo')
+        .or(`descripcion.ilike.${patron},presentacion.ilike.${patron},composicion.ilike.${patron},uso_indicaciones.ilike.${patron},datos_clave.ilike.${patron}`)
+        .limit(12);
+      if (error) return [];
+      const ya = new Set(yaEncontrados.map((s) => String(s).toUpperCase()));
+      const n = ExploradorService.normNombre(texto);
+      return (data || [])
+        .map((p: any) => String(p.sku || '').trim().toUpperCase())
+        .filter((sku: string, i: number, arr: string[]) => sku && !ya.has(sku) && arr.indexOf(sku) === i)
+        .filter((sku: string) => !ExploradorService.normNombre((data || []).find((p: any) => String(p.sku || '').trim().toUpperCase() === sku)?.nombre).includes(n))
+        .slice(0, 4);
+    } catch {
+      return [];
+    }
+  }
+
+  private async catalogoAmsodent(t: Tienda, enc: string): Promise<{ items: Hallazgo[] }> {
     const html = await this.fetchTexto(`${t.base}/catalogo?q=${enc}`);
     const flight = flightDeNext(html);
     // Productos de la grilla: los objetos con nombre, precio y la marca de variantes.

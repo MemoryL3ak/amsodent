@@ -222,6 +222,8 @@ export default function SidebarLayout() {
     esAdmin && { to: "/asignacion-cartera", icon: Briefcase, label: "Asignación de cartera" },
     puede("bitacora") && { to: "/bitacora-actividades", icon: CalendarDays, label: "Bitácora actividades" },
     puede("productos") && { to: "/productos",   icon: Package,       label: "Productos" },
+    // (2026-10-09) Explorador de productos: en Comercial y para todos los roles (antes «Explorador de Precios», solo admin, en Reportes).
+    { to: "/explorador-precios", icon: Store, label: "Explorador de Productos" },
     puede("campanas") && { to: "/campanas",    icon: Megaphone,     label: "Campañas" },
     // (2026-10-01) Margen por marca / categoría sobre una lista, con vigencia.
     puede("campanas") && { to: "/campanas-margen", icon: Percent, label: "Campañas de margen" },
@@ -266,8 +268,6 @@ export default function SidebarLayout() {
       ],
     },
     esAdmin && { to: "/analisis-mercado-publico", icon: Scale, label: "Análisis Mercado Público" },
-    // (2026-09-24) El explorador del portal del cliente, ahora tambien acá.
-    esAdmin && { to: "/explorador-precios", icon: Store, label: "Explorador de Precios" },
     puede("reporteria") && { to: "/reporteria", icon: FilePieChart, label: "Reportería" },
     (puede("cotizaciones_vendedor") || puede("resumen_comercial")) && { to: "/cotizaciones-vendedor", icon: BarChart3, label: "Panel de Ejecutivos" },
   ].filter(Boolean);

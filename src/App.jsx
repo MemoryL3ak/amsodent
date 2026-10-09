@@ -471,19 +471,10 @@ export default function App() {
             }
           />
 
-          {/* EXPLORADOR DE PRECIOS — solo admin (2026-09-24). Es el mismo
-              buscador del portal del cliente, traído a la plataforma. Va con
-              RequireRole y no con RequireModulo porque no es un permiso que se
-              reparta por perfil: consume cuota de scraping y expone lo que
-              cobra la competencia. */}
-          <Route
-            path="explorador-precios"
-            element={
-              <RequireRole allow={["admin"]}>
-                <ExploradorPrecios />
-              </RequireRole>
-            }
-          />
+          {/* EXPLORADOR DE PRODUCTOS (antes de Precios, 2026-09-24). Es el mismo
+              buscador del portal del cliente, traído a la plataforma.
+              (2026-10-09) Pedido de Ariel: para todos los roles con sesión. */}
+          <Route path="explorador-precios" element={<ExploradorPrecios />} />
 
           {/* ACCESO AL PORTAL DEL CLIENTE — solo admin */}
           <Route

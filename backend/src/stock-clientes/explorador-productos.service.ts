@@ -161,9 +161,13 @@ export class ExploradorProductosService {
     const costo = monto(body?.costo);
     const lista1 = monto(body?.lista1);
     const lista2 = monto(body?.lista2);
-    for (const [k, v, etiqueta] of [['costo', costo, 'El costo'], ['lista1', lista1, 'La lista 1'], ['lista2', lista2, 'La lista 2']] as const) {
+    // (2026-10-09) Pedido de Ariel: todos los campos obligatorios salvo la marca.
+    for (const [k, v, etiqueta] of [['costo', costo, 'El costo neto'], ['lista1', lista1, 'La lista 1'], ['lista2', lista2, 'La lista 2']] as const) {
       if (Number.isNaN(v)) problemas.push({ codigo: k, mensaje: `${etiqueta} debe ser un monto en pesos.` });
+      else if (!(Number(v) > 0)) problemas.push({ codigo: k, mensaje: `${etiqueta} es obligatorio.` });
     }
+    const descripcion = String(body?.descripcion ?? '').replace(/\r/g, '').trim().slice(0, 2000);
+    if (!descripcion) problemas.push({ codigo: 'descripcion', mensaje: 'Escribe la descripción del producto (la trae la tienda cuando la publica).' });
 
     // ¿Ya existe un producto con este link o, en nuestra web, con este SKU?
     const esAmsodent = String(body?.tienda || '') === 'amsodent';
@@ -175,15 +179,13 @@ export class ExploradorProductosService {
 
     const fila: Record<string, any> = {
       // De nuestra web viene nuestro SKU: queda con él (y se enlaza en Bsale). De otras tiendas, sin SKU.
-      sku: skuWeb || null, estado: 'Transitorio', nombre, marca, categoria, formato, link_referencia: url,
+      sku: skuWeb || null, estado: 'Transitorio', nombre, marca, categoria, formato, link_referencia: url, descripcion,
       ...(costo != null && !Number.isNaN(costo) ? { costo } : {}),
       ...(lista1 != null && !Number.isNaN(lista1) ? { lista1 } : {}),
       ...(lista2 != null && !Number.isNaN(lista2) ? { lista2 } : {}),
       creado_por: usuario?.email || null,
     };
     const avisos: string[] = [];
-    if (!(lista1 && lista1 > 0) || !(lista2 && lista2 > 0)) avisos.push('Sin precio de lista: complétalo en Productos antes de cotizarlo.');
-    if (!(costo && costo > 0)) avisos.push('Sin costo: el margen de la cotización no se podrá calcular hasta completarlo.');
     if (problemas.length) return { simulacion: simular, bloqueada: true, problemas, avisos };
     if (skuWeb) avisos.unshift(`Queda con el SKU ${skuWeb} de nuestra web; si ya existe en Bsale, se enlaza a esa variante.`);
     if (simular) return { simulacion: true, problemas, avisos, producto: fila, imagen: body?.imagen || null };

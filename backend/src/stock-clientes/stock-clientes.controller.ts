@@ -503,7 +503,9 @@ export class StockClientesController {
   @Get('explorador')
   async explorarPrecios(@Req() req: any, @Query('q') q: string) {
     await this.modulos.exigir(req.stockPortal.rut, 'explorador');
-    return await this.explorador.buscar(q, 'cliente');
+    // (2026-10-09) Solo las tiendas que venden a la región del cliente (o a todo Chile).
+    const region = await this.explorador.regionDeCliente(String(req.stockPortal.rut || ''));
+    return await this.explorador.buscar(q, 'cliente', region);
   }
 
   /* (2026-09-24) El mismo explorador, pero desde la plataforma interna. Va por
@@ -511,17 +513,26 @@ export class StockClientesController {
      consume el portal del cliente y no exige sesion de la plataforma, asi que
      colgar de ella una pantalla de admin dejaria el control de acceso solo en
      el frontend. El motor de busqueda es el mismo. */
-  @UseGuards(AdminGuard)
+  // (2026-10-09) Abierto a todos los roles con sesión (pedido de Ariel); antes solo admin.
+  @UseGuards(AuthGuard)
   @Get('explorador/interno')
-  async explorarPreciosInterno(@Query('q') q: string) {
+  async explorarPreciosInterno(@Query('q') q: string, @Query('region') region?: string) {
     // (2026-10-07) Cada resultado dice si ya hay un producto con ese link.
-    return await this.exploradorProductos.anotar(await this.explorador.buscar(q, 'plataforma'));
+    return await this.exploradorProductos.anotar(await this.explorador.buscar(q, 'plataforma', region || null));
+  }
+
+  /* (2026-10-09) Lo que la tienda publica del producto (marca, SKU, descripción…)
+     para precargar «Crear producto». */
+  @UseGuards(AuthGuard)
+  @Get('explorador/interno/detalle')
+  async detalleProductoExplorador(@Query('url') url: string, @Query('tienda') tienda?: string) {
+    return await this.explorador.detalleProducto(url, tienda || null);
   }
 
   /* (2026-10-07) Crear un producto transitorio desde un resultado del
      explorador interno (el del portal no lo tiene). simular: true revisa sin
      crear. */
-  @UseGuards(AdminGuard)
+  @UseGuards(AuthGuard)
   @Post('explorador/interno/crear-producto')
   async crearProductoExplorador(@Req() req: any, @Body() body: any) {
     return await this.exploradorProductos.crear({ email: req?.user?.email || null }, body);

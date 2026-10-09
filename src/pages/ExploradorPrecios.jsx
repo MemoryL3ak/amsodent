@@ -5,6 +5,7 @@ import Toast from "../components/Toast";
 import BotonLimpiarFiltros from "../components/BotonLimpiarFiltros";
 import DropdownSelect from "../components/ui/DropdownSelect";
 import CrearProductoExplorador from "../components/CrearProductoExplorador";
+import { REGIONES_CHILE } from "../constants/regiones";
 import { Search, ExternalLink, Store, TrendingDown, TrendingUp, AlertTriangle, PackagePlus, PackageCheck } from "lucide-react";
 
 /* ── Explorador de Precios — plataforma interna (2026-09-24) ───────────────
@@ -38,6 +39,8 @@ export default function ExploradorPrecios() {
   const [error, setError] = useState("");
   const [resultado, setResultado] = useState(null);
   const [tiendaFiltro, setTiendaFiltro] = useState("");
+  // (2026-10-09) Región del cliente: solo las tiendas que le venden (o a todo Chile).
+  const [region, setRegion] = useState("");
   const [soloConHistorial, setSoloConHistorial] = useState(false);
   const [toast, setToast] = useState(null);
   const [creando, setCreando] = useState(null); // resultado del que se crea el producto
@@ -53,7 +56,7 @@ export default function ExploradorPrecios() {
     setError("");
     setTiendaFiltro("");
     try {
-      const r = await api.get(`/stock-clientes/explorador/interno?q=${encodeURIComponent(termino)}`);
+      const r = await api.get(`/stock-clientes/explorador/interno?q=${encodeURIComponent(termino)}${region ? `&region=${encodeURIComponent(region)}` : ""}`);
       setResultado(r);
       if (r?.tiendas_sin_respuesta?.length) {
         setToast({
@@ -125,7 +128,7 @@ export default function ExploradorPrecios() {
 
       <div className="page-header">
         <div>
-          <h1 className="page-title">Explorador de Precios</h1>
+          <h1 className="page-title">Explorador de Productos</h1>
           <p className="page-subtitle">
             Compara nuestro precio contra el de la competencia, en vivo. Las tiendas que
             se consultan se administran en Acceso al Portal.
@@ -150,6 +153,15 @@ export default function ExploradorPrecios() {
               onChange={(e) => setQ(e.target.value)}
             />
           </div>
+        </div>
+        <div className="filter-field" style={{ minWidth: 200 }}>
+          <label className="filter-label">Región del cliente</label>
+          <DropdownSelect
+            value={region}
+            onChange={setRegion}
+            options={[{ value: "", label: "Todo Chile" }, ...Object.keys(REGIONES_CHILE).map((r) => ({ value: r, label: r }))]}
+            minWidth={200}
+          />
         </div>
         <button type="submit" className="btn btn-primary" disabled={cargando} style={{ height: 36 }}>
           {cargando ? "Consultando tiendas…" : "Buscar"}
