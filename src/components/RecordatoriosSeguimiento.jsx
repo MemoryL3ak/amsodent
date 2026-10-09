@@ -12,19 +12,26 @@ import DropdownSelect from "./ui/DropdownSelect";
    El backend dice cuáles son del usuario (vendedor de la cotización o quien la
    emitió en Bsale; últimos 60 días; nunca Despacho interno ni «Retirado en
    tienda»). Se descartan las anuladas en Bsale. El aviso vuelve cada 5
-   minutos hasta completarlas; «Recordarme en 2 horas» lo pospone. Cada guía
-   se completa ahí mismo (empresa + N°) o se marca «Lo retiró el cliente». */
+   minutos hasta completarlas; «Recordarme en N horas» lo pospone, cada vez
+   más (2, 4, 6 y 8 horas; pedido del 2026-10-09). Cada guía se completa ahí
+   mismo (empresa + N°) o se marca «Lo retiró el cliente». */
 
 const POLL_MS = 5 * 60 * 1000;
-const POSPONER_MS = 2 * 60 * 60 * 1000;
+// Horas de cada posposición: la primera 2, después 4, 6 y 8 (se queda en 8).
+const POSPONER_HORAS = [2, 4, 6, 8];
 const EMPRESAS = [
   { value: "Starken", label: "Starken" },
   { value: "Blue Express", label: "Blue Express" },
   { value: "Despacho interno", label: "Despacho interno", detalle: "Reparto propio: no lleva N° de courier" },
+  { value: "Entrega inmediata", label: "Entrega inmediata", detalle: "Entrega en el momento: sin N° de seguimiento" },
   { value: "Otro", label: "Otro transporte" },
 ];
+const sinNumero = (empresa) => empresa === "Despacho interno" || empresa === "Entrega inmediata";
 const claveAplazo = "seguimiento.pospuesto_hasta";
+const claveVeces = "seguimiento.pospuesto_veces";
 const leerAplazo = () => { try { return Number(localStorage.getItem(claveAplazo) || 0); } catch { return 0; } };
+const leerVeces = () => { try { return Math.max(0, Number(localStorage.getItem(claveVeces) || 0)); } catch { return 0; } };
+const horasProximas = () => POSPONER_HORAS[Math.min(leerVeces(), POSPONER_HORAS.length - 1)];
 const fechaCL = (d) => { const [y, m, dd] = String(d || "").slice(0, 10).split("-"); return y && m && dd ? `${dd}-${m}-${y}` : "—"; };
 
 export default function RecordatoriosSeguimiento() {
@@ -46,6 +53,8 @@ export default function RecordatoriosSeguimiento() {
       }
       setGuias(lista);
       setOculto(false);
+      // Sin pendientes, la escala de posposiciones vuelve a empezar.
+      if (!lista.length) { try { localStorage.removeItem(claveVeces); } catch { /* sin almacenamiento */ } }
     } catch {
       // silencioso: es un aviso
     }
@@ -66,7 +75,7 @@ export default function RecordatoriosSeguimiento() {
 
   async function guardar(g) {
     const v = valor(g);
-    const interno = v.empresa === "Despacho interno";
+    const interno = sinNumero(v.empresa);
     if (!v.empresa) { setError(`Elige la empresa de transporte de la guía ${g.numero || ""}.`); return; }
     if (!interno && !String(v.numero || "").trim()) { setError(`Escribe el N° de seguimiento de la guía ${g.numero || ""}.`); return; }
     setGuardando(g.id);
@@ -95,9 +104,14 @@ export default function RecordatoriosSeguimiento() {
   }
 
   function posponer() {
-    try { localStorage.setItem(claveAplazo, String(Date.now() + POSPONER_MS)); } catch { /* sin almacenamiento: solo se oculta ahora */ }
+    const horas = horasProximas();
+    try {
+      localStorage.setItem(claveAplazo, String(Date.now() + horas * 60 * 60 * 1000));
+      localStorage.setItem(claveVeces, String(leerVeces() + 1));
+    } catch { /* sin almacenamiento: solo se oculta ahora */ }
     setOculto(true);
   }
+  const horas = horasProximas();
 
   return createPortal(
     <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,.45)", zIndex: 10820, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
@@ -107,12 +121,12 @@ export default function RecordatoriosSeguimiento() {
             <strong style={{ fontSize: 15, display: "inline-flex", alignItems: "center", gap: 6 }}><Truck size={16} /> {guias.length === 1 ? "Una guía sin N° de seguimiento" : `${guias.length} guías sin N° de seguimiento`}</strong>
             <div style={{ fontSize: 12.5, color: "var(--text-muted)" }}>Complétalas para que Trazabilidad y el cliente puedan seguir el despacho. Este aviso vuelve hasta que estén completas.</div>
           </div>
-          <button type="button" className="btn btn-ghost" onClick={posponer} style={{ padding: 6, flexShrink: 0 }} title="Recordarme en 2 horas"><X size={16} /></button>
+          <button type="button" className="btn btn-ghost" onClick={posponer} style={{ padding: 6, flexShrink: 0 }} title={`Recordarme en ${horas} horas`}><X size={16} /></button>
         </div>
         <div style={{ padding: "12px 18px", display: "flex", flexDirection: "column", gap: 10 }}>
           {guias.map((g) => {
             const v = valor(g);
-            const interno = v.empresa === "Despacho interno";
+            const interno = sinNumero(v.empresa);
             return (
               <div key={g.id} className="guia-sin-seguimiento" style={{ border: "1px solid var(--border)", borderRadius: 10, padding: "10px 12px", display: "flex", flexDirection: "column", gap: 8 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap", fontSize: 13 }}>
@@ -143,7 +157,7 @@ export default function RecordatoriosSeguimiento() {
           {error && <div style={{ border: "1px solid #fecaca", background: "#fef2f2", color: "#b91c1c", borderRadius: 10, padding: "8px 12px", fontSize: 13 }}>{error}</div>}
         </div>
         <div style={{ padding: "10px 18px", borderTop: "1px solid var(--border)", display: "flex", justifyContent: "flex-end" }}>
-          <button type="button" className="btn btn-secondary" onClick={posponer}>Recordarme en 2 horas</button>
+          <button type="button" className="btn btn-secondary" onClick={posponer}>Recordarme en {horas} horas</button>
         </div>
       </div>
     </div>,

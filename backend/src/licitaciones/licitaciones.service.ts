@@ -3276,7 +3276,8 @@ export class LicitacionesService {
       .order('created_at', { ascending: false })
       .limit(2000);
     if (error) throw new BadRequestException(error.message);
-    const sin = (guias || []).filter((g: any) => !String(g.n_seguimiento || '').trim() && !/interno/i.test(String(g.empresa_despacho || '')));
+    // Sin N°: nunca las de Despacho interno (correlativo AMSO) ni las de Entrega inmediata (2026-10-09: entrega en el momento).
+    const sin = (guias || []).filter((g: any) => !String(g.n_seguimiento || '').trim() && !/interno|inmediata/i.test(String(g.empresa_despacho || '')));
     if (!sin.length) return { guias: [], dias };
     const licIds = [...new Set(sin.map((g: any) => Number(g.licitacion_id)).filter(Boolean))];
     const { data: lics } = await db.from('licitaciones').select('id, id_licitacion, nombre_entidad, vendedor_correo, creado_por, estado_envio').in('id', licIds);
@@ -3314,6 +3315,15 @@ export class LicitacionesService {
         observacion_actualizada_at: new Date().toISOString(),
         observacion_actualizada_por: email || 'sistema',
       };
+    }
+
+    // (2026-10-09) Al pasar una guía a «Despacho interno» desde su fila, el
+    // correlativo AMSO se asigna igual que al crearla.
+    if (String(body?.empresa_despacho || '').trim().toLowerCase() === 'despacho interno' && !String(body?.n_seguimiento || '').trim()) {
+      try {
+        const { data: corr, error: corrErr } = await this.supabase.getClient().rpc('siguiente_correlativo_despacho');
+        if (!corrErr && corr) body = { ...body, n_seguimiento: corr };
+      } catch { /* sin secuencia: queda sin correlativo */ }
     }
 
     const intentar = (payload: Record<string, any>) =>

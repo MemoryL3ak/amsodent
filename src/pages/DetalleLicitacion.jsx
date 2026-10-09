@@ -670,6 +670,28 @@ const opcionesComuna = (regionSeleccionada) =>
 
 const OPCIONES_COND_VENTA = ["30 días", "Contado"];
 const STORAGE_KEY_PREFIX = "editar_licitacion_draft_";
+/* (2026-10-09) Empresas de transporte de una guía. «Despacho interno» recibe el
+   correlativo AMSO; «Entrega inmediata» es la entrega en el momento, sin N° de
+   seguimiento (pedido de Ariel). Mismo listado en Trazabilidad, en las
+   ventanas de emisión (CamposSeguimientoGuia) y en el recordatorio. */
+const EMPRESAS_DESPACHO_OPCIONES = [
+  { value: "Starken", label: "Starken" },
+  { value: "Blue Express", label: "Blue Express" },
+  { value: "Despacho interno", label: "Despacho interno", detalle: "Reparto propio: correlativo AMSO automático" },
+  { value: "Entrega inmediata", label: "Entrega inmediata", detalle: "Sin N° de seguimiento" },
+  { value: "Otro", label: "Otro transporte" },
+];
+const SIN_NUMERO_SEGUIMIENTO = ["Despacho interno", "Entrega inmediata"];
+const sinNumeroSeguimiento = (empresa) => SIN_NUMERO_SEGUIMIENTO.some((e) => e.toLowerCase() === String(empresa || "").trim().toLowerCase());
+// Etiqueta del documento: una factura_boleta dice Boleta o Factura según lo registrado.
+const etiquetaDocumento = (doc) => {
+  if (doc?.tipo === "factura_boleta") {
+    const d = String(doc.descripcion || "");
+    if (/boleta/i.test(d)) return "Boleta";
+    if (/factura/i.test(d)) return "Factura";
+  }
+  return DOC_TIPOS[doc?.tipo] || doc?.tipo;
+};
 const DOC_TIPOS = {
   orden_compra: "Orden de Compra",
   guia_despacho: "Guía de Despacho",
@@ -1186,7 +1208,7 @@ export default function EditarLicitacion() {
     () =>
       opcionesDeriva.map((d) => ({
         value: String(d.id),
-        label: `${DOC_TIPOS[d.tipo] || d.tipo}${d.numero ? ` - ${d.numero}` : ""}`,
+        label: `${etiquetaDocumento(d)}${d.numero ? ` - ${d.numero}` : ""}`,
       })),
     [opcionesDeriva]
   );
@@ -1710,7 +1732,7 @@ export default function EditarLicitacion() {
         setToast({ type: "error", message: "Debes seleccionar la empresa de despacho." });
         return;
       }
-      const esInterno = empresa === "Despacho interno";
+      const esInterno = sinNumeroSeguimiento(empresa);
       setSubiendoDoc(true);
       try {
         // Documento adjunto OPCIONAL.
@@ -1909,7 +1931,7 @@ export default function EditarLicitacion() {
 
       const esGuia = tipo === "guia_despacho";
       const empresaGuia = esGuia ? (docEmpresa || "").trim() : null;
-      const esDespachoInterno = empresaGuia === "Despacho interno";
+      const esDespachoInterno = sinNumeroSeguimiento(empresaGuia);
       const esFacturaBoleta = tipo === "factura_boleta";
       const esComprobantePago = tipo === "comprobante_pago";
       const esWebpay = tipo === "webpay";
@@ -5184,23 +5206,16 @@ export default function EditarLicitacion() {
             <>
               <div className="md:col-span-3">
                 <label className="block text-sm font-medium text-gray-700 mb-1">Empresa *</label>
-                <select
-                  className={`${inputClass} text-sm`}
+                <DropdownSelect
                   value={docEmpresa}
-                  onChange={(e) => {
-                    const next = e.target.value;
-                    setDocEmpresa(next);
-                    if (next === "Despacho interno") setDocNumSeguimiento("");
-                  }}
+                  onChange={(next) => { setDocEmpresa(next); if (sinNumeroSeguimiento(next)) setDocNumSeguimiento(""); }}
+                  options={EMPRESAS_DESPACHO_OPCIONES}
                   disabled={subiendoDoc}
-                >
-                  <option value="Starken">Starken</option>
-                  <option value="Blue Express">Blue Express</option>
-                  <option value="Despacho interno">Despacho interno</option>
-                  <option value="Otro">Otro</option>
-                </select>
+                  minWidth={160}
+                  style={{ width: "100%" }}
+                />
               </div>
-              {docEmpresa !== "Despacho interno" && (
+              {!sinNumeroSeguimiento(docEmpresa) && (
                 <div className="md:col-span-3">
                   <label className="block text-sm font-medium text-gray-700 mb-1">N° Seguimiento</label>
                   <input
@@ -5218,6 +5233,11 @@ export default function EditarLicitacion() {
                   <p className="text-xs text-gray-500">
                     Se generará automáticamente un N° de seguimiento interno (AMSO…) al guardar.
                   </p>
+                </div>
+              )}
+              {docEmpresa === "Entrega inmediata" && (
+                <div className="md:col-span-3 flex items-end">
+                  <p className="text-xs text-gray-500">Entrega en el momento: queda sin N° de seguimiento.</p>
                 </div>
               )}
               <div className="md:col-span-3">
@@ -5358,23 +5378,16 @@ export default function EditarLicitacion() {
             </div>
             <div className="md:col-span-3">
               <label className="block text-sm font-medium text-gray-700 mb-1">Empresa *</label>
-              <select
-                className={`${inputClass} text-sm`}
+              <DropdownSelect
                 value={docEmpresa}
-                onChange={(e) => {
-                  const next = e.target.value;
-                  setDocEmpresa(next);
-                  if (next === "Despacho interno") setDocNumSeguimiento("");
-                }}
+                onChange={(next) => { setDocEmpresa(next); if (sinNumeroSeguimiento(next)) setDocNumSeguimiento(""); }}
+                options={EMPRESAS_DESPACHO_OPCIONES}
                 disabled={subiendoDoc}
-              >
-                <option value="Starken">Starken</option>
-                <option value="Blue Express">Blue Express</option>
-                <option value="Despacho interno">Despacho interno</option>
-                <option value="Otro">Otro</option>
-              </select>
+                minWidth={160}
+                style={{ width: "100%" }}
+              />
             </div>
-            {docEmpresa !== "Despacho interno" && (
+            {!sinNumeroSeguimiento(docEmpresa) && (
               <div className="md:col-span-6">
                 <label className="block text-sm font-medium text-gray-700 mb-1">N° Seguimiento</label>
                 <input
@@ -5450,7 +5463,7 @@ export default function EditarLicitacion() {
                 const editando = docEditando?.id === doc.id;
                 return (
                   <tr key={doc.id}>
-                    <td className="px-3 py-2 text-sm">{DOC_TIPOS[doc.tipo] || doc.tipo}</td>
+                    <td className="px-3 py-2 text-sm">{etiquetaDocumento(doc)}</td>
                     <td className="px-3 py-2 text-sm">
                       {editando ? (
                         <input
@@ -5491,7 +5504,7 @@ export default function EditarLicitacion() {
                     </td>
                     <td className="px-3 py-2 text-sm">
                       {docOrigen
-                        ? `${DOC_TIPOS[docOrigen.tipo] || docOrigen.tipo}${docOrigen.numero ? ` - ${docOrigen.numero}` : ""}`
+                        ? `${etiquetaDocumento(docOrigen)}${docOrigen.numero ? ` - ${docOrigen.numero}` : ""}`
                         : "-"}
                     </td>
                     <td className="px-3 py-2 text-sm">
@@ -5527,37 +5540,41 @@ export default function EditarLicitacion() {
                             </div>
                           )}
                           {/* (2026-10-07) Guía sin N° de seguimiento: se agrega cuando se tenga. */}
-                          {doc.tipo === "guia_despacho" && !doc.n_seguimiento && String(doc.empresa_despacho || "").toLowerCase() !== "despacho interno" && (puedeBsale || puedeEditarDocAvanzado) && (
+                          {doc.tipo === "guia_despacho" && !doc.n_seguimiento && !sinNumeroSeguimiento(doc.empresa_despacho) && (puedeBsale || puedeEditarDocAvanzado) && (
                             seguimientoEdit?.id === doc.id ? (
                               <div className="agregar-seguimiento" style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", marginTop: 6 }}>
-                                {!doc.empresa_despacho && (
-                                  <DropdownSelect
-                                    value={seguimientoEdit.empresa}
-                                    onChange={(v) => setSeguimientoEdit((x) => ({ ...x, empresa: v }))}
-                                    options={[{ value: "", label: "Empresa…" }, { value: "Starken", label: "Starken" }, { value: "Blue Express", label: "Blue Express" }, { value: "Otro", label: "Otro" }]}
-                                    minWidth={130}
-                                    style={{ minWidth: 130, fontSize: 12.5 }}
-                                  />
-                                )}
-                                <input
-                                  type="text"
-                                  className="input text-sm"
-                                  style={{ minWidth: 150, flex: "1 1 150px" }}
-                                  value={seguimientoEdit.numero}
-                                  onChange={(e) => setSeguimientoEdit((x) => ({ ...x, numero: e.target.value.slice(0, 80) }))}
-                                  placeholder="N° de seguimiento"
+                                {/* (2026-10-09) Empresa siempre editable, sin opción falsa; con Despacho interno o Entrega inmediata no hay N°. */}
+                                <DropdownSelect
+                                  value={seguimientoEdit.empresa}
+                                  onChange={(v) => setSeguimientoEdit((x) => ({ ...x, empresa: v, numero: sinNumeroSeguimiento(v) ? "" : x.numero }))}
+                                  options={EMPRESAS_DESPACHO_OPCIONES}
+                                  placeholder="Empresa"
+                                  minWidth={150}
+                                  style={{ minWidth: 150, fontSize: 12.5 }}
                                   disabled={guardandoSeguimiento}
                                 />
+                                {!sinNumeroSeguimiento(seguimientoEdit.empresa) && (
+                                  <input
+                                    type="text"
+                                    className="input text-sm"
+                                    style={{ minWidth: 150, flex: "1 1 150px" }}
+                                    value={seguimientoEdit.numero}
+                                    onChange={(e) => setSeguimientoEdit((x) => ({ ...x, numero: e.target.value.slice(0, 80) }))}
+                                    placeholder="N° de seguimiento"
+                                    disabled={guardandoSeguimiento}
+                                  />
+                                )}
                                 <button
                                   type="button"
                                   className="btn btn-primary btn-sm"
-                                  disabled={guardandoSeguimiento || !seguimientoEdit.numero.trim()}
+                                  disabled={guardandoSeguimiento || (sinNumeroSeguimiento(seguimientoEdit.empresa) ? !seguimientoEdit.empresa : !seguimientoEdit.numero.trim())}
                                   onClick={async () => {
                                     setGuardandoSeguimiento(true);
                                     try {
+                                      const sinNumero = sinNumeroSeguimiento(seguimientoEdit.empresa);
                                       await api.put(`/licitaciones/documentos/${doc.id}`, {
-                                        n_seguimiento: seguimientoEdit.numero.trim(),
-                                        ...(!doc.empresa_despacho && seguimientoEdit.empresa ? { empresa_despacho: seguimientoEdit.empresa } : {}),
+                                        n_seguimiento: sinNumero ? null : seguimientoEdit.numero.trim(),
+                                        ...(seguimientoEdit.empresa ? { empresa_despacho: seguimientoEdit.empresa } : {}),
                                       });
                                       setSeguimientoEdit(null);
                                       setToast({ type: "success", message: "N° de seguimiento guardado." });

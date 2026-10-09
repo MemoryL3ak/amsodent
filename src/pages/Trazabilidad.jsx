@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { useStickyState } from "../lib/useStickyState";
 import { api } from "../lib/api";
 import { Link } from "react-router-dom";
+import DropdownSelect from "../components/ui/DropdownSelect";
 import useAuth from "../hooks/useAuth";
 import Toast from "../components/Toast";
 import BotonLimpiarFiltros from "../components/BotonLimpiarFiltros";
@@ -2166,7 +2167,7 @@ export default function Trazabilidad() {
       formData.append("file", file);
       await api.postForm(`/licitaciones/storage/upload?bucket=${bucket}&path=${encodeURIComponent(storagePath)}`, formData);
 
-      const esDespachoInterno = guiaEmpresa === "Despacho interno";
+      const esDespachoInterno = guiaEmpresa === "Despacho interno" || guiaEmpresa === "Entrega inmediata";
       const payload = esGuia
         ? {
             licitacion_id: Number(uploadingFor),
@@ -3339,21 +3340,20 @@ export default function Trazabilidad() {
                                       }
                                       onChange={(op) => setGuiaOcId(op?.value || "")}
                                     />
-                                    <select
-                                      className="input"
+                                    <DropdownSelect
                                       value={guiaEmpresa}
-                                      onChange={(e) => {
-                                        setGuiaEmpresa(e.target.value);
-                                        if (e.target.value === "Despacho interno") setGuiaSeguimiento("");
-                                      }}
+                                      onChange={(v) => { setGuiaEmpresa(v); if (v === "Despacho interno" || v === "Entrega inmediata") setGuiaSeguimiento(""); }}
+                                      options={[
+                                        { value: "Starken", label: "Starken" },
+                                        { value: "Blue Express", label: "Blue Express" },
+                                        { value: "Despacho interno", label: "Despacho interno", detalle: "Correlativo AMSO automático" },
+                                        { value: "Entrega inmediata", label: "Entrega inmediata", detalle: "Sin N° de seguimiento" },
+                                        { value: "Otro", label: "Otro transporte" },
+                                      ]}
                                       disabled={subiendoFactura}
-                                    >
-                                      <option value="Starken">Starken</option>
-                                      <option value="Blue Express">Blue Express</option>
-                                      <option value="Despacho interno">Despacho interno</option>
-                                      <option value="Otro">Otro</option>
-                                    </select>
-                                    {guiaEmpresa !== "Despacho interno" && (
+                                      minWidth={160}
+                                    />
+                                    {guiaEmpresa !== "Despacho interno" && guiaEmpresa !== "Entrega inmediata" && (
                                       <input
                                         type="text"
                                         className="input"

@@ -157,7 +157,7 @@ export default function VentaDirecta() {
       <div className="page-header" style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
         <div>
           <h1 className="page-title">Venta directa</h1>
-          <p className="page-subtitle">Boletas y facturas al instante: se emiten en Bsale y crean su cotización con esos productos. Aquí está cada venta con su pago y sus notas.</p>
+          <p className="page-subtitle">Boletas y facturas al instante: se emiten en Bsale y crean su cotización con esos productos. Aquí está cada venta con su pago y sus notas.{datos.solo_mias ? " Ves solo tus ventas; administración ve todas." : ""}</p>
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           {puede && (

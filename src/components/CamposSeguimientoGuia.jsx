@@ -9,14 +9,17 @@ const EMPRESAS_DESPACHO = [
   { value: "", label: "Sin definir todavía" },
   { value: "Starken", label: "Starken" },
   { value: "Blue Express", label: "Blue Express" },
-  { value: "Despacho interno", label: "Despacho interno" },
-  { value: "Otro", label: "Otro" },
+  { value: "Despacho interno", label: "Despacho interno", detalle: "Correlativo AMSO automático" },
+  { value: "Entrega inmediata", label: "Entrega inmediata", detalle: "Sin N° de seguimiento" },
+  { value: "Otro", label: "Otro transporte" },
 ];
+const SIN_NUMERO = ["Despacho interno", "Entrega inmediata"];
 const etiqueta = { fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px", color: "var(--text-muted)", display: "block", marginBottom: 4 };
 
 export default function CamposSeguimientoGuia({ valor, onChange, disabled }) {
   const v = valor || { empresa: "", numero: "" };
   const interno = v.empresa === "Despacho interno";
+  const sinNumero = SIN_NUMERO.includes(v.empresa);
   return (
     <div className="campos-seguimiento-guia" style={{ border: "1px solid var(--border)", borderRadius: 10, padding: "10px 12px" }}>
       <span style={etiqueta}>Transporte (solo para el sistema)</span>
@@ -25,14 +28,14 @@ export default function CamposSeguimientoGuia({ valor, onChange, disabled }) {
           <span style={etiqueta}>Empresa</span>
           <DropdownSelect
             value={v.empresa}
-            onChange={(empresa) => onChange?.({ ...v, empresa, numero: empresa === "Despacho interno" ? "" : v.numero })}
+            onChange={(empresa) => onChange?.({ ...v, empresa, numero: SIN_NUMERO.includes(empresa) ? "" : v.numero })}
             options={EMPRESAS_DESPACHO}
             disabled={disabled}
             minWidth={180}
             style={{ width: "100%" }}
           />
         </div>
-        {!interno && (
+        {!sinNumero && (
           <label style={{ flex: "1 1 180px", minWidth: 0 }}>
             <span style={etiqueta}>N° de seguimiento (opcional)</span>
             <input
@@ -47,6 +50,7 @@ export default function CamposSeguimientoGuia({ valor, onChange, disabled }) {
         )}
       </div>
       {interno && <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 6 }}>Al emitir se asigna el correlativo de despacho interno (AMSO…).</div>}
+      {v.empresa === "Entrega inmediata" && <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 6 }}>Entrega en el momento: la guía queda sin N° de seguimiento.</div>}
     </div>
   );
 }

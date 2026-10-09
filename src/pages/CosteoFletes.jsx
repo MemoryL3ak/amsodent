@@ -33,6 +33,7 @@ const normEmpresa = (v) => {
   if (s.includes("blue")) return "Blue";
   if (s.includes("starken")) return "Starken";
   if (s.includes("interno")) return "Despacho interno";
+  if (s.includes("inmediata")) return "Entrega inmediata";
   return String(v || "").trim();
 };
 
