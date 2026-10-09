@@ -59,6 +59,7 @@ import Factoring from "./pages/Factoring";
 import Facturacion from "./pages/Facturacion";
 import VentaDirecta from "./pages/VentaDirecta";
 import MonitoreoAlertas from "./pages/MonitoreoAlertas";
+import AlertasPendientes from "./pages/AlertasPendientes";
 import BitacoraCotizaciones from "./pages/BitacoraCotizaciones";
 import Buzon from "./pages/Buzon";
 
@@ -187,6 +188,15 @@ export default function App() {
             element={
               <RequireModulo modulo="monitoreo_alertas">
                 <MonitoreoAlertas />
+              </RequireModulo>
+            }
+          />
+          {/* (2026-10-09) Lo que cada vendedor tiene pendiente, mismo permiso. */}
+          <Route
+            path="alertas-pendientes"
+            element={
+              <RequireModulo modulo="monitoreo_alertas">
+                <AlertasPendientes />
               </RequireModulo>
             }
           />

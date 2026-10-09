@@ -31,6 +31,12 @@ export class MercadopublicoController {
   }
 
   // (2026-10-07) Detalle completo de una ficha: lo pide el panel al desplegarla.
+  // (2026-10-09) Análisis por producto del período, armado en el servidor (antes viajaban los ítems de todas las fichas).
+  @Get('resultados/productos')
+  resultadosProductos(@Query('desde') desde?: string, @Query('hasta') hasta?: string) {
+    return this.mpService.resultadosProductos(desde, hasta);
+  }
+
   @Get('resultados/:id/detalle')
   detalleResultado(@Param('id', ParseIntPipe) id: number) {
     return this.mpService.detalleResultado(id);

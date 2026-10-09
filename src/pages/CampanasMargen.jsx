@@ -394,9 +394,10 @@ function ModalCampana({ inicial, productos, otras, onCerrar, onGuardada }) {
     const lista = [...new Set(texto.split(/[\s,;]+/).map((x) => normSku(x)).filter(Boolean))];
     set("skus")(lista);
   }
-  // Ejemplos: los que quedan con menos margen tras el descuento.
+  // (2026-10-09) Todos los productos alcanzados, del menor margen al mayor
+  // (antes solo 6: "al crear campaña solo figuran algunos").
   const ejemplos = useMemo(
-    () => (sim ? [...sim.filas].sort((a, b) => (a.margenQueda ?? 999) - (b.margenQueda ?? 999)).slice(0, 6) : []),
+    () => (sim ? [...sim.filas].sort((a, b) => (a.margenQueda ?? 999) - (b.margenQueda ?? 999)) : []),
     [sim],
   );
 
@@ -552,8 +553,8 @@ function ModalCampana({ inicial, productos, otras, onCerrar, onGuardada }) {
                   {sim.bajo20 > 0 && <span style={{ color: "#b45309", fontWeight: 600 }}> {sim.bajo20.toLocaleString("es-CL")} quedan con menos de 20 % de margen.</span>}
                 </div>
                 {ejemplos.length > 0 && (
-                  <div className="table-wrap" style={{ margin: 0 }}>
-                    <table className="data-table" style={{ minWidth: 520, fontSize: 12.5 }}>
+                  <div className="table-wrap" style={{ margin: 0, maxHeight: 360, overflow: "auto" }}>
+                    <table className="data-table tabla-productos-campana" style={{ minWidth: 520, fontSize: 12.5 }}>
                       <thead>
                         <tr>
                           <th>Producto</th>
@@ -596,9 +597,7 @@ function ModalCampana({ inicial, productos, otras, onCerrar, onGuardada }) {
                     </table>
                   </div>
                 )}
-                {sim.total > ejemplos.length && (
-                  <div style={{ fontSize: 11.5, color: "var(--text-muted)" }}>Se muestran los {ejemplos.length} productos que quedan con menos margen.</div>
-                )}
+                <div style={{ fontSize: 11.5, color: "var(--text-muted)" }}>{ejemplos.length.toLocaleString("es-CL")} producto{ejemplos.length === 1 ? "" : "s"}, del menor margen al mayor.</div>
               </>
             )}
             {sim && sim.total === 0 && aviso("Ningún producto con precio en esta lista cumple esta combinación de marcas, categorías y SKUs: la campaña no tendría efecto.")}

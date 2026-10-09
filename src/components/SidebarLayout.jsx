@@ -304,6 +304,8 @@ export default function SidebarLayout() {
     puede("monitoreo_usuarios") && { to: "/monitoreo",         icon: Activity, label: "Monitoreo de Usuarios" },
     // (2026-10-07) Alertas de cada vendedor y su cumplimiento.
     puede("monitoreo_alertas") && { to: "/monitoreo-alertas", icon: BellRing, label: "Monitoreo de Alertas" },
+    // (2026-10-09) Pedido de Ariel: módulo de alertas pendientes por vendedor.
+    puede("monitoreo_alertas") && { to: "/alertas-pendientes", icon: BellRing, label: "Alertas pendientes" },
     puede("monitoreo_asistencia") && { to: "/monitoreo-marcajes", icon: MapPin,   label: "Monitoreo de Asistencia" },
     esAdmin && { to: "/monitoreo-sistema", icon: Gauge, label: "Monitoreo del Sistema" },
   ].filter(Boolean);

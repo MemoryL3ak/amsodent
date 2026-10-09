@@ -509,68 +509,19 @@ export default function AnalisisMercadoPublico() {
        línea: ganado_por_nosotros); si no, hereda la clase del proceso.
      · Los precios son PROMEDIOS unitarios; el "monto adjudicado" es
        precio ganador × cantidad (lo que efectivamente movió el producto). */
-  const analisisProductos = useMemo(() => {
-    const mapa = new Map();
-    for (const f of enRango) {
-      const items = f?.detalle?.comparacion_items || [];
-      for (const it of items) {
-        const nombre = String(it?.nombre || "").trim();
-        const codigo = String(it?.codigo_producto || "").trim();
-        const key = (codigo || nombre).toLowerCase();
-        if (!key) continue;
-        const e = mapa.get(key) || {
-          nombre: nombre || codigo,
-          codigo,
-          procesos: new Set(),
-          ganados: 0,
-          perdidos: 0,
-          precioNuestroSum: 0, precioNuestroN: 0,
-          precioGanadorSum: 0, precioGanadorN: 0,
-          montoAdjudicado: 0,
-        };
-        // Nos quedamos con la descripción más completa que aparezca.
-        if (nombre && nombre.length > String(e.nombre || "").length) e.nombre = nombre;
-        e.procesos.add(f.codigo_mp || f.licitacion_id);
-
-        let resultado = null;
-        if (typeof it.ganado_por_nosotros === "boolean") resultado = it.ganado_por_nosotros ? "ganado" : "perdido";
-        else if (f.clase === "ganada") resultado = "ganado";
-        else if (f.clase === "perdida") resultado = "perdido";
-        if (resultado === "ganado") e.ganados += 1;
-        else if (resultado === "perdido") e.perdidos += 1;
-
-        const pn = Number(it.nuestro_precio);
-        if (Number.isFinite(pn) && pn > 0) { e.precioNuestroSum += pn; e.precioNuestroN += 1; }
-        const pg = Number(it.precio_ganador);
-        if (Number.isFinite(pg) && pg > 0) {
-          e.precioGanadorSum += pg;
-          e.precioGanadorN += 1;
-          const cant = Number(it.cantidad_ganador ?? it.nuestra_cantidad ?? 1) || 1;
-          e.montoAdjudicado += pg * cant;
-        }
-        mapa.set(key, e);
-      }
-    }
-    return [...mapa.values()]
-      .map((e) => {
-        const precioNuestro = e.precioNuestroN ? e.precioNuestroSum / e.precioNuestroN : null;
-        const precioGanador = e.precioGanadorN ? e.precioGanadorSum / e.precioGanadorN : null;
-        return {
-          nombre: e.nombre,
-          codigo: e.codigo,
-          procesos: e.procesos.size,
-          ganados: e.ganados,
-          perdidos: e.perdidos,
-          precioNuestro,
-          precioGanador,
-          brecha: precioNuestro != null && precioGanador > 0
-            ? ((precioNuestro - precioGanador) / precioGanador) * 100
-            : null,
-          montoAdjudicado: Math.round(e.montoAdjudicado),
-        };
-      })
-      .sort((a, b) => b.procesos - a.procesos || b.montoAdjudicado - a.montoAdjudicado);
-  }, [enRango]);
+  /* (2026-10-09) Lo arma el servidor (/mercado-publico/resultados/productos)
+     para el rango de adjudicación elegido: así la lista ya no trae los ítems
+     de las 2.500 fichas (1 MB) y el panel abre más rápido. Misma cuenta que
+     antes se hacía aquí. */
+  const [analisisProductos, setAnalisisProductos] = useState([]);
+  useEffect(() => {
+    let vivo = true;
+    const qs = [syncDesde && `desde=${encodeURIComponent(syncDesde)}`, syncHasta && `hasta=${encodeURIComponent(syncHasta)}`].filter(Boolean).join("&");
+    api.get(`/mercado-publico/resultados/productos${qs ? `?${qs}` : ""}`)
+      .then((r) => { if (vivo) setAnalisisProductos(Array.isArray(r?.productos) ? r.productos : []); })
+      .catch(() => { if (vivo) setAnalisisProductos([]); });
+    return () => { vivo = false; };
+  }, [syncDesde, syncHasta, resultados]);
 
   const [busquedaProd, setBusquedaProd] = useState("");
   const [prodVerTodos, setProdVerTodos] = useState(false);

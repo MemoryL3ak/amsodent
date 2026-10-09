@@ -1,0 +1,32 @@
+/* Nombre legible de cada tipo de alerta (campana / notificaciones). Lo usan
+   Monitoreo de Alertas y Alertas pendientes por vendedor (2026-10-09). */
+export const TIPOS_ALERTA = {
+  cierre_proximo: "Cierre de cotización próximo",
+  resultados_publicados: "Resultados publicados",
+  aprobacion_peso: "Aprobación por peso",
+  equivalencias_pendientes: "Equivalencias sin alternativa",
+  cobranza_accion: "Acción de cobranza",
+  factoring_por_vencer: "Factoring por vencer",
+  factoring_vencido: "Factoring vencido",
+  factura_vencida: "Factura vencida",
+  devolucion_pendiente: "Devolución pendiente al cliente",
+  oc_agradecimiento: "Correo de agradecimiento OC",
+  guia_despacho_enviar: "Enviar guía de despacho",
+  factura_enviar: "Enviar factura o boleta",
+  info_despacho_agradecimiento: "Correo de despacho",
+  mp_estado_auto: "Cambio de estado en MP",
+  mp_adjudicada: "Adjudicada en MP",
+  cotizacion_aprobada: "Cotización aprobada",
+  portal_upload: "Documento subido por el cliente",
+  stock_solicitud_cotizacion: "Solicitud de cotización (portal)",
+  stock_cotizacion_mensaje: "Mensaje del cliente (portal)",
+  stock_critico: "Stock crítico de cliente",
+  stock_bajo: "Stock bajo de cliente",
+  pedido_portal_aprobado: "Pedido del portal aprobado",
+  pedido_portal_pagado: "Pedido del portal pagado",
+  pedido_portal_sos: "SOS del portal",
+  chat_invitacion: "Invitación a sala de chat",
+  chat_sala_eliminada: "Sala de chat eliminada",
+  monitor_alerta: "Alerta del sistema",
+};
+export const etiquetaTipo = (t) => TIPOS_ALERTA[t] || t;

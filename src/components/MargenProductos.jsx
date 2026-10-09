@@ -50,6 +50,9 @@ export default function MargenProductos({ productos = [], campanas = [], esAdmin
   const [lista, setLista] = useState("1");
   const [enCampana, setEnCampana] = useState("todos");
   const [margenFiltro, setMargenFiltro] = useState("todos");
+  // (2026-10-09) Rango de margen (%) con las campañas vigentes: desde / hasta.
+  const [margenMin, setMargenMin] = useState("");
+  const [margenMax, setMargenMax] = useState("");
   const [orden, setOrden] = useState("margen_asc");
   const [paginaDe, setPaginaDe] = useState({ clave: "", n: 1 });
   const [descuento, setDescuento] = useState("");
@@ -91,6 +94,8 @@ export default function MargenProductos({ productos = [], campanas = [], esAdmin
       if (margenFiltro === "bajo_costo" && !(f.margenFinal != null && f.margenFinal < 0)) return false;
       if (margenFiltro === "sin_costo" && f.costo > 0) return false;
       if (margenFiltro === "sin_precio" && f.precioLista > 0) return false;
+      if (margenMin !== "" && !(f.margenFinal != null && f.margenFinal >= Number(margenMin))) return false;
+      if (margenMax !== "" && !(f.margenFinal != null && f.margenFinal <= Number(margenMax))) return false;
       return true;
     });
     const valor = (f) => (f.margenFinal == null ? Infinity : f.margenFinal);
@@ -98,15 +103,19 @@ export default function MargenProductos({ productos = [], campanas = [], esAdmin
     else if (orden === "margen_desc") out.sort((a, b) => (b.margenFinal ?? -Infinity) - (a.margenFinal ?? -Infinity));
     else out.sort((a, b) => String(a.p.nombre || "").localeCompare(String(b.p.nombre || ""), "es"));
     return out;
-  }, [filas, marcas, categorias, texto, enCampana, margenFiltro, orden]);
+  }, [filas, marcas, categorias, texto, enCampana, margenFiltro, margenMin, margenMax, orden]);
 
   const kpis = useMemo(() => {
     const conMargen = filtradas.filter((f) => f.margenLista != null);
     const conFinal = filtradas.filter((f) => f.margenFinal != null);
+    // (2026-10-09) Margen promedio al precio de Lista 2, sea cual sea la lista elegida.
+    const margenesL2 = filtradas.map((f) => { const p2 = precioListaDe(f.p, "2"); return f.costo > 0 && p2 > 0 ? margenDePrecio(f.costo, p2) : null; }).filter((m) => m != null);
     return {
       total: filtradas.length,
       conCosto: conMargen.length,
       margenLista: promedio(conMargen.map((f) => f.margenLista)),
+      margenLista2: promedio(margenesL2),
+      conLista2: margenesL2.length,
       margenFinal: promedio(conFinal.map((f) => f.margenFinal)),
       enCampana: filtradas.filter((f) => f.campana).length,
       bajo20: conFinal.filter((f) => f.margenFinal < 20).length,
@@ -116,7 +125,7 @@ export default function MargenProductos({ productos = [], campanas = [], esAdmin
   }, [filtradas]);
 
   // Al cambiar un filtro vuelve a la página 1 y se descarta la simulación anterior.
-  const clave = JSON.stringify([texto, marcas, categorias, lista, enCampana, margenFiltro]);
+  const clave = JSON.stringify([texto, marcas, categorias, lista, enCampana, margenFiltro, margenMin, margenMax]);
   const pagina = paginaDe.clave === clave ? paginaDe.n : 1;
   const setPagina = (n) => setPaginaDe({ clave, n });
   const simulado = simuladoDe && simuladoDe.clave === clave ? simuladoDe.r : null;
@@ -124,8 +133,8 @@ export default function MargenProductos({ productos = [], campanas = [], esAdmin
   const paginas = Math.max(1, Math.ceil(filtradas.length / POR_PAGINA));
   const pag = Math.min(pagina, paginas);
   const visibles = filtradas.slice((pag - 1) * POR_PAGINA, pag * POR_PAGINA);
-  const hayFiltros = q !== "" || marcas.length > 0 || categorias.length > 0 || enCampana !== "todos" || margenFiltro !== "todos";
-  const limpiar = () => { setQ(""); setMarcas([]); setCategorias([]); setEnCampana("todos"); setMargenFiltro("todos"); };
+  const hayFiltros = q !== "" || marcas.length > 0 || categorias.length > 0 || enCampana !== "todos" || margenFiltro !== "todos" || margenMin !== "" || margenMax !== "";
+  const limpiar = () => { setQ(""); setMarcas([]); setCategorias([]); setEnCampana("todos"); setMargenFiltro("todos"); setMargenMin(""); setMargenMax(""); };
 
   // ── Descuento masivo ──
   const d = descuento === "" ? NaN : Number(String(descuento).replace(",", "."));
@@ -172,7 +181,7 @@ export default function MargenProductos({ productos = [], campanas = [], esAdmin
 
   return (
     <div className="margen-productos" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-      <div className="stats-row stats-5" style={{ marginBottom: 0 }}>
+      <div className="stats-row stats-6" style={{ marginBottom: 0 }}>
         <div className="stat-card">
           <div className="stat-label">Productos</div>
           <div className="stat-value">{kpis.total.toLocaleString("es-CL")}</div>
@@ -182,6 +191,11 @@ export default function MargenProductos({ productos = [], campanas = [], esAdmin
           <div className="stat-label">Margen promedio · lista</div>
           <div className="stat-value" style={{ color: colorMargen(kpis.margenLista) }}>{pct(kpis.margenLista)}</div>
           <div className="stat-sub">al precio de Lista {lista}, sin campañas</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-label">Margen promedio · Lista 2</div>
+          <div className="stat-value" style={{ color: colorMargen(kpis.margenLista2) }}>{pct(kpis.margenLista2)}</div>
+          <div className="stat-sub">{kpis.conLista2.toLocaleString("es-CL")} con costo y precio en Lista 2</div>
         </div>
         <div className="stat-card">
           <div className="stat-label">Margen promedio · hoy</div>
@@ -238,6 +252,13 @@ export default function MargenProductos({ productos = [], campanas = [], esAdmin
               { value: "sin_precio", label: `Sin precio en Lista ${lista}` },
             ]}
           />
+        </div>
+        <div className="filter-field" style={{ flex: "0 1 170px", minWidth: 0 }}>
+          <label className="filter-label">Margen % desde / hasta</label>
+          <div style={{ display: "flex", gap: 4 }}>
+            <input className="input margen-desde" inputMode="decimal" value={margenMin} onChange={(e) => setMargenMin(e.target.value.replace(/[^\d.,-]/g, "").replace(",", "."))} placeholder="mín" style={{ width: "50%", minWidth: 0 }} title="Margen mínimo (%), con las campañas vigentes" />
+            <input className="input margen-hasta" inputMode="decimal" value={margenMax} onChange={(e) => setMargenMax(e.target.value.replace(/[^\d.,-]/g, "").replace(",", "."))} placeholder="máx" style={{ width: "50%", minWidth: 0 }} title="Margen máximo (%)" />
+          </div>
         </div>
         <BotonLimpiarFiltros hay={hayFiltros} onLimpiar={limpiar} />
       </div>
