@@ -9,7 +9,6 @@ import AvisoCorreoDocumento from "./AvisoCorreoDocumento";
 import BotonImprimirCarta from "./BotonImprimirCarta";
 import CamposSeguimientoGuia from "./CamposSeguimientoGuia";
 import CampoObservacionGuia, { OBSERVACION_GUIA_MAX } from "./CampoObservacionGuia";
-import { componerObservacion } from "../lib/observacionGuia";
 
 /* ── Emitir guía de despacho / registrar orden en Bsale (2026-10-02) ─────────
    Ventana del módulo Facturación para una orden de compra:
@@ -95,11 +94,7 @@ export default function EmitirDespachoBsale({ tipo = "guia", licitacionId, ocDoc
     return { neto, iva, total: neto + iva };
   }, [lineasElegidas]);
   const excesos = useMemo(() => (borrador?.lineas || []).filter((l) => esGuia && Number(cantidades[l.sku]) > l.pendiente + 1e-9), [borrador, cantidades, esGuia]);
-  // Lo que irá al atributo «Observación»: general · SKU: observación de cada producto que va en la guía.
-  const observacionFinal = useMemo(
-    () => (esGuia ? componerObservacion(observacion, lineasElegidas.map((l) => ({ sku: l.sku, producto: l.producto, observacion: obsLineas[l.sku] ?? l.observacion ?? "" }))) : ""),
-    [esGuia, observacion, lineasElegidas, obsLineas],
-  );
+
   const opcionesTraslado = useMemo(() => (borrador?.tipos_traslado || []).map((t) => ({ value: String(t.id), label: t.nombre })), [borrador]);
 
   function cambiarCantidad(sku, v) {
@@ -140,7 +135,7 @@ export default function EmitirDespachoBsale({ tipo = "guia", licitacionId, ocDoc
   const faltaDespacho = esGuia && despacho && (!despacho.direccion?.trim() || !despacho.comuna?.trim() || !despacho.ciudad?.trim() || !despacho.destinatario?.trim() || !despacho.tipo_traslado_id);
   const faltaCliente = cliente?.nuevo && (!cliente.rut?.trim() || !cliente.razon_social?.trim() || !cliente.giro?.trim() || !cliente.direccion?.trim() || !cliente.comuna?.trim());
   const obsMax = borrador?.observacion_max || OBSERVACION_GUIA_MAX;
-  const completo = !cargando && !enviando && borrador && !bloqueada && fecha && !excesos.length && !faltaDespacho && !faltaCliente && (esGuia ? lineasElegidas.length > 0 && observacionFinal.length <= obsMax : true);
+  const completo = !cargando && !enviando && borrador && !bloqueada && fecha && !excesos.length && !faltaDespacho && !faltaCliente && (esGuia ? lineasElegidas.length > 0 && observacion.trim().length <= obsMax : true);
   const puedeEmitir = completo && !apagada && simulacionVigente && confirmo;
   const titulo = esGuia ? "Emitir guía de despacho en Bsale" : "Registrar la orden en Bsale";
   const verbo = esGuia ? "Emitir guía" : "Registrar orden";
@@ -310,7 +305,7 @@ export default function EmitirDespachoBsale({ tipo = "guia", licitacionId, ocDoc
                                 <tr className="fila-observacion-linea" style={{ opacity: cant > 0 ? 1 : 0.55 }}>
                                   <td colSpan={8} style={{ padding: "0 10px 8px", borderTop: 0 }}>
                                     <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                                      <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px", color: "var(--text-muted)", whiteSpace: "nowrap" }} title="De la cotización; se puede completar. Va en el atributo «Observación» de la guía.">
+                                      <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px", color: "var(--text-muted)", whiteSpace: "nowrap" }} title="De la cotización; se puede completar. Va en la línea de este producto en la guía (nota del detalle en Bsale).">
                                         Observación {l.sku}
                                       </span>
                                       <input
@@ -318,7 +313,8 @@ export default function EmitirDespachoBsale({ tipo = "guia", licitacionId, ocDoc
                                         value={obsLinea}
                                         onChange={(e) => setObsLineas((prev) => ({ ...prev, [l.sku]: e.target.value }))}
                                         disabled={!!enviando || cant <= 0}
-                                        placeholder={cant > 0 ? "Observación de este producto para la guía (opcional)" : "No va en esta guía"}
+                                        maxLength={obsMax}
+                                        placeholder={cant > 0 ? "Observación de este producto: sale en su línea de la guía (opcional)" : "No va en esta guía"}
                                         style={{ flex: "1 1 240px", minWidth: 0, height: 28, padding: "2px 8px", fontSize: 12.5 }}
                                       />
                               {obsCotizacion[l.sku] && obsLinea !== obsCotizacion[l.sku] && cant > 0 && (
@@ -370,7 +366,7 @@ export default function EmitirDespachoBsale({ tipo = "guia", licitacionId, ocDoc
                     </div>
                   )}
                   {esGuia && <CamposSeguimientoGuia valor={seguimiento} onChange={setSeguimiento} disabled={!!enviando} />}
-                  {esGuia && <CampoObservacionGuia valor={observacion} onChange={setObservacion} compuesta={observacionFinal} max={obsMax} disabled={!!enviando} />}
+                  {esGuia && <CampoObservacionGuia valor={observacion} onChange={setObservacion} porProducto max={obsMax} disabled={!!enviando} />}
                   <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.45 }}>
                     {borrador.referencias?.length ? `Referencia a la orden de compra: folio ${borrador.referencias[0].folio} · razón ${borrador.referencias[0].numero}. ` : ""}
                     {esGuia ? "Bsale descuenta el stock al emitir la guía; la factura se emite después desde la guía." : "La nota de venta no va al SII ni mueve stock."}

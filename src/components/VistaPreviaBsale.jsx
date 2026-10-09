@@ -156,7 +156,10 @@ export default function VistaPreviaBsale({ vista, solicitud, titulo = "Así qued
                   <tr key={`${l.sku}-${i}`}>
                     {conGuia && <td style={{ whiteSpace: "nowrap" }}>{l.guia}</td>}
                     <td style={{ whiteSpace: "nowrap", fontWeight: 600 }}>{l.sku || "—"}</td>
-                    <td style={{ overflowWrap: "anywhere" }}>{l.producto || "—"}</td>
+                    <td style={{ overflowWrap: "anywhere" }}>
+                      {l.producto || "—"}
+                      {l.observacion && <div className="obs-linea" style={{ fontSize: 11, color: "#374151", marginTop: 2 }}>{l.observacion}</div>}
+                    </td>
                     <td className="num">{num(l.cantidad)}</td>
                     {conPendiente && <td className="num" style={{ color: l.pendiente_despues > 0 ? "#b45309" : "#6b7280" }}>{num(l.pendiente_despues)}</td>}
                     <td className="num">{clp(l.neto_unitario)}</td>

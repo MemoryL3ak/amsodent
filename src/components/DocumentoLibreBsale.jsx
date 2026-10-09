@@ -10,7 +10,6 @@ import AvisoCorreoDocumento from "./AvisoCorreoDocumento";
 import BotonImprimirCarta from "./BotonImprimirCarta";
 import CamposSeguimientoGuia from "./CamposSeguimientoGuia";
 import CampoObservacionGuia, { OBSERVACION_GUIA_MAX } from "./CampoObservacionGuia";
-import { componerObservacion } from "../lib/observacionGuia";
 import CrearClienteBsale from "./CrearClienteBsale";
 import RegistrarComprobanteRapido from "./RegistrarComprobanteRapido";
 
@@ -187,9 +186,8 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
   const comprobanteObligatorio = pideComprobante && ventaDirecta && !esEfectivo;
   // La guía necesita un receptor con RUT: a consumidor final no hay guía.
   const guiaPosible = ventaDirecta && (!esBoleta || !!cliente);
-  // Hay guía (libre, de la cotización o de la venta directa): observación general + por producto.
+  // Hay guía (libre, de la cotización o de la venta directa): observación general + una por producto (en su línea).
   const conObsGuia = esGuia || (ventaDirecta && conGuia && guiaPosible);
-  const observacionFinal = useMemo(() => (conObsGuia ? componerObservacion(observacion, lineas) : ""), [conObsGuia, observacion, lineas]);
   const diasEfectivos = esGuia ? 0 : esBoleta ? 0 : ventaDirecta && !aCredito ? 0 : Number(dias);
 
   const totales = useMemo(() => {
@@ -243,7 +241,7 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
   // (2026-10-08) Emitido el documento, al cerrar se abre la ventana de correo para enviárselo al cliente.
   const cerrar = () => { if (enviando) return; if (resultado?.emitida) window.dispatchEvent(new Event("correos:check")); onCerrar?.(); };
   const obsMax = desde?.observacion_max || OBSERVACION_GUIA_MAX;
-  const listoParaSimular = !!opciones && !enviando && (!!cliente || esBoleta) && lineas.length > 0 && !!fecha && (!conObsGuia || observacionFinal.length <= obsMax) && (!comprobanteObligatorio || !!comprobante.trim());
+  const listoParaSimular = !!opciones && !enviando && (!!cliente || esBoleta) && lineas.length > 0 && !!fecha && (!conObsGuia || observacion.trim().length <= obsMax) && (!comprobanteObligatorio || !!comprobante.trim());
   const puedeEmitir = listoParaSimular && !apagada && simulacionVigente && confirmo;
   const nombreDoc = esGuia ? "guía" : esBoleta ? "boleta" : "factura";
   const titulo = ventaDirecta
@@ -515,7 +513,7 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
                           <tr className="fila-observacion-linea">
                             <td colSpan="6" style={{ padding: "0 10px 8px", borderTop: 0 }}>
                               <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                                <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px", color: "var(--text-muted)", whiteSpace: "nowrap" }} title="Va en el atributo «Observación» de la guía en Bsale">
+                                <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px", color: "var(--text-muted)", whiteSpace: "nowrap" }} title="Va en la línea de este producto en la guía (nota del detalle en Bsale)">
                                   Observación {l.sku}
                                 </span>
                                 <input
@@ -523,7 +521,8 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
                                   value={l.observacion || ""}
                                   onChange={(e) => cambiarObsLinea(l.sku, e.target.value)}
                                   disabled={!!enviando}
-                                  placeholder={l.deCotizacion ? "Observación de este producto para la guía (de la cotización; se puede completar)" : "Observación de este producto para la guía (opcional)"}
+                                  maxLength={obsMax}
+                                  placeholder={l.deCotizacion ? "Observación de este producto: sale en su línea de la guía (de la cotización; se puede completar)" : "Observación de este producto: sale en su línea de la guía (opcional)"}
                                   style={{ flex: "1 1 240px", minWidth: 0, height: 28, padding: "2px 8px", fontSize: 12.5 }}
                                 />
                               </div>
@@ -627,7 +626,7 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
                 </div>
               )}
               {(esGuia || (conGuia && guiaPosible)) && <CamposSeguimientoGuia valor={seguimiento} onChange={setSeguimiento} disabled={!!enviando} />}
-              {conObsGuia && <CampoObservacionGuia valor={observacion} onChange={setObservacion} compuesta={observacionFinal} max={obsMax} disabled={!!enviando} />}
+              {conObsGuia && <CampoObservacionGuia valor={observacion} onChange={setObservacion} porProducto max={obsMax} disabled={!!enviando} />}
               {!ventaDirecta && !esBoleta && <div style={caja}>
                 <span style={etiqueta}>Referencias y registro (opcional)</span>
                 <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 8 }}>
