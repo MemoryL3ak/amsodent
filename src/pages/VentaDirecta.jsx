@@ -10,6 +10,7 @@ import AnularDocumentoBsale from "../components/AnularDocumentoBsale";
 import NotaDebitoBsale from "../components/NotaDebitoBsale";
 import EstadoBsaleBadge from "../components/EstadoBsale";
 import BotonImprimirCarta from "../components/BotonImprimirCarta";
+import BotonImprimirTermica from "../components/BotonImprimirTermica";
 import { useEstadosBsale } from "../lib/estadosBsale";
 
 /* ── Comercial → Venta directa (2026-10-07) ─────────────────────────────────
@@ -281,6 +282,7 @@ export default function VentaDirecta() {
                         <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
                           <span style={{ fontWeight: 700, textDecoration: f.anulada ? "line-through" : "none" }}>N° {f.numero || "—"}</span>
                           {f.url_pdf && <a href={f.url_pdf} target="_blank" rel="noopener noreferrer" title="Ver el documento en Bsale" style={{ color: "var(--primary)", display: "inline-flex" }}><ExternalLink size={13} /></a>}
+                          {f.estado === "emitida" && <BotonImprimirTermica urlPdf={f.url_pdf} compacto />}
                           {f.estado === "emitida" && <BotonImprimirCarta bsaleId={f.bsale_id} compacto />}
                         </div>
                         <EstadoBsaleBadge estado={f.eb} style={{ marginTop: 2 }} />

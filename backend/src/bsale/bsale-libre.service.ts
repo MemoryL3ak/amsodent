@@ -735,7 +735,7 @@ export class BsaleLibreService {
           return avisos;
         },
       });
-      return { emitida: true, numero: r.numero, url_pdf: r.url_pdf, documento_id: r.documento_id, avisos: r.avisos || [] };
+      return { emitida: true, numero: r.numero, url_pdf: r.url_pdf, bsale_id: r.bsale_id || null, documento_id: r.documento_id, avisos: r.avisos || [] };
     } catch (e: any) {
       const error = String(e?.message || e).slice(0, 200);
       this.logger.warn(`Venta directa ${docEmitido.numero}: la guía no se pudo emitir: ${error}`);

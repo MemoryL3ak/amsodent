@@ -25,6 +25,7 @@ import BotonFichaTecnica from "../components/BotonFichaTecnica";
 import BotonDescargarFichas from "../components/BotonDescargarFichas";
 import EstadoBsaleBadge from "../components/EstadoBsale";
 import BotonImprimirCarta from "../components/BotonImprimirCarta";
+import BotonImprimirTermica from "../components/BotonImprimirTermica";
 import { useEstadosBsale } from "../lib/estadosBsale";
 import EmitirDespachoBsale from "../components/EmitirDespachoBsale";
 import DocumentoLibreBsale from "../components/DocumentoLibreBsale";
@@ -2992,7 +2993,8 @@ export default function EditarLicitacion() {
   /* ============================================================
      EXPORTAR PDF
 ============================================================ */
-  async function exportarPDF() {
+  // (2026-10-09) modo "carta" = el PDF de siempre; "termica" = ticket de 80 mm para impresora térmica.
+  async function exportarPDF(modo = "carta") {
     if (guardando || generandoPDF) return;
     if (estado === "Pendiente Aprobación" || estado === "Pendiente Aprobación Peso") {
       setToast({
@@ -3061,7 +3063,7 @@ export default function EditarLicitacion() {
         ? formatearFechaCorta(primeraOC.fecha_oc)
         : "";
 
-      await generarPDFcotizacion({
+      const datosPdf = {
         numero_licitacion: id,
         id_licitacion: idLicitacionInput,
         fecha_emision: fechaEmision,
@@ -3142,9 +3144,15 @@ export default function EditarLicitacion() {
         afecto: formatear(totalNeto),
         iva: formatear(totalIVA),
         total_con_iva: formatear(totalConIVA),
-      });
+      };
+      if (modo === "termica") {
+        const m = await import("../lib/imprimirCotizacionTermica");
+        await m.imprimirCotizacionTermica(datosPdf);
+      } else {
+        await generarPDFcotizacion(datosPdf);
+      }
 
-      setToast({ type: "success", message: "PDF generado correctamente." });
+      setToast({ type: "success", message: modo === "termica" ? "Vista para impresora térmica abierta." : "PDF generado correctamente." });
     } finally {
       setGenerandoPDF(false);
     }
@@ -5478,7 +5486,10 @@ export default function EditarLicitacion() {
                           {doc.numero || "-"}
                           {/* (2026-10-07) Imprimir en hoja carta los documentos que están en Bsale. */}
                           {["guia_despacho", "factura", "factura_boleta", "nota_credito", "nota_debito"].includes(doc.tipo) && (
-                            <BotonImprimirCarta bsaleId={doc.bsale_id || estadosBsale?.[doc.id]?.bsale_id} compacto style={{ marginLeft: 4, verticalAlign: "middle" }} />
+                            <>
+                              <BotonImprimirTermica urlPdf={doc.bsale_url || estadosBsale?.[doc.id]?.url} compacto style={{ marginLeft: 4, verticalAlign: "middle" }} />
+                              <BotonImprimirCarta bsaleId={doc.bsale_id || estadosBsale?.[doc.id]?.bsale_id} compacto style={{ marginLeft: 2, verticalAlign: "middle" }} />
+                            </>
                           )}
                           <EstadoBsaleBadge estado={estadosBsale?.[doc.id]} style={{ display: "block", width: "fit-content", marginTop: 2 }} />
                         </>
@@ -5706,12 +5717,24 @@ export default function EditarLicitacion() {
 
         {estado !== "Pendiente Aprobación" && estado !== "Pendiente Aprobación Peso" && (
           <button
-            onClick={exportarPDF}
+            onClick={() => exportarPDF("carta")}
             className="btn btn-secondary"
             type="button"
             disabled={guardando || generandoPDF}
+            title="PDF de la cotización en tamaño carta"
           >
-            {generandoPDF ? "Generando…" : "Generar PDF"}
+            {generandoPDF ? "Generando…" : "PDF carta"}
+          </button>
+        )}
+        {estado !== "Pendiente Aprobación" && estado !== "Pendiente Aprobación Peso" && (
+          <button
+            onClick={() => exportarPDF("termica")}
+            className="btn btn-secondary"
+            type="button"
+            disabled={guardando || generandoPDF}
+            title="Vista de la cotización para impresora térmica (rollo de 80 mm)"
+          >
+            Impresora térmica
           </button>
         )}
 

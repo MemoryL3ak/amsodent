@@ -1,13 +1,14 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
-import { AlertTriangle, CheckCircle2, ExternalLink, FileText, Info, Loader2, Plus, Receipt, Search, Trash2, Truck, X } from "lucide-react";
+import { AlertTriangle, CheckCircle2, FileText, Info, Loader2, Mail, Plus, Receipt, Search, Trash2, Truck, X } from "lucide-react";
 import { api } from "../lib/api";
 import DateFilter from "./DateFilter";
 import DropdownSelect from "./ui/DropdownSelect";
 import VistaPreviaBsale from "./VistaPreviaBsale";
 import AvisoCorreoDocumento from "./AvisoCorreoDocumento";
 import BotonImprimirCarta from "./BotonImprimirCarta";
+import BotonImprimirTermica from "./BotonImprimirTermica";
 import CamposSeguimientoGuia from "./CamposSeguimientoGuia";
 import CampoObservacionGuia, { OBSERVACION_GUIA_MAX } from "./CampoObservacionGuia";
 import CrearClienteBsale from "./CrearClienteBsale";
@@ -296,7 +297,10 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
               {resultado.guia && (resultado.guia.emitida ? (
                 <div className="guia-venta-ok" style={{ fontSize: 13, color: "#166534" }}>
                   Guía de despacho N° {resultado.guia.numero} emitida con las mismas líneas y registrada en la cotización.
-                  {resultado.guia.url_pdf && <> <a href={resultado.guia.url_pdf} target="_blank" rel="noopener noreferrer" className="table-link">Ver la guía en Bsale</a></>}
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 4 }}>
+                    <BotonImprimirTermica urlPdf={resultado.guia.url_pdf} etiqueta="Guía térmica" />
+                    {resultado.guia.bsale_id && <BotonImprimirCarta bsaleId={resultado.guia.bsale_id} etiqueta="Guía en carta" />}
+                  </div>
                   {(resultado.guia.avisos || []).map((a, i) => <div key={i} style={{ fontSize: 12.5, color: "#92400e" }}>{a}</div>)}
                 </div>
               ) : (
@@ -306,9 +310,15 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
               ))}
               <AvisoCorreoDocumento correo={resultado.correo} emitido />
               {(resultado.avisos || []).map((a, i) => <div key={i} style={{ fontSize: 12.5, color: "#92400e" }}>{a}</div>)}
-              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                {resultado.url_pdf && <a href={resultado.url_pdf} target="_blank" rel="noopener noreferrer" className="btn btn-secondary btn-sm" style={{ textDecoration: "none" }}><ExternalLink size={13} /> Ver en Bsale</a>}
+              <div className="acciones-emitido" style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                {/* (2026-10-09) Pedido de Ariel: en el resumen, imprimir térmica, imprimir en carta y enviar al cliente. */}
+                <BotonImprimirTermica urlPdf={resultado.url_pdf} etiqueta="Imprimir térmica" />
                 {resultado.bsale_id && <BotonImprimirCarta bsaleId={resultado.bsale_id} etiqueta="Imprimir en carta" />}
+                {resultado.correo?.ventana && (
+                  <button type="button" className="btn btn-primary btn-sm" onClick={cerrar} title="Abre la ventana de correo con el documento adjunto">
+                    <Mail size={13} /> Enviar al cliente
+                  </button>
+                )}
               </div>
               {resultado.comprobante && (
                 <div style={{ fontSize: 12.5, color: "#166534" }}>

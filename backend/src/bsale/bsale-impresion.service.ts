@@ -43,6 +43,14 @@ export class BsaleImpresionService {
     if (!d?.id) throw new NotFoundException('El documento no está en Bsale.');
     const detalles = await this.facturacion.todos(`/documents/${id}/details.json`, '&expand=[variant,product]');
     const { dte } = await this.facturacion.listas();
+    // (2026-10-09) Atributos adicionales del documento («Observación», «Patente»…): salen en el formato carta.
+    let atributos: { nombre: string; valor: string }[] = [];
+    try {
+      const r = await this.facturacion.apiGet(`/documents/${id}/attributes.json`);
+      atributos = ((r?.items || []) as any[])
+        .map((a) => ({ nombre: String(a?.name || '').trim(), valor: String(a?.value || '').replace(/\s+/g, ' ').trim() }))
+        .filter((a) => a.nombre && a.valor);
+    } catch { /* sin atributos: el documento igual se imprime */ }
 
     const tipoNombre = String(d.document_type?.name || '').trim();
     const codigoSii = Number(d.document_type?.codeSii) || 0;
@@ -88,6 +96,8 @@ export class BsaleImpresionService {
         return {
           codigo: String(x.variant?.code || '').trim(),
           descripcion: nombre || 'Detalle',
+          // Nota de la línea (la observación del producto en la guía).
+          nota: nombre ? String(x.note || x.comment || '').replace(/\s+/g, ' ').trim() || null : null,
           cantidad: Number(x.quantity) || 0,
           precio_unitario: Math.round(Number(conIva ? x.totalUnitValue : x.netUnitValue) || 0),
           descuento_pct: Number(x.discountPercentage) || 0,
@@ -95,6 +105,7 @@ export class BsaleImpresionService {
         };
       }),
       precios_con_iva: conIva,
+      observaciones: atributos,
       referencias: ((d.references?.items || []) as any[]).map((r) => {
         const cod = dte.get(Number(r?.dte_code?.id)) || 0;
         return { tipo: NOMBRE_DTE[cod] || `Documento ${cod || ''}`.trim(), folio: String(r.number || ''), fecha: epochAFecha(r.referenceDate), razon: String(r.reason || '') };

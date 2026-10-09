@@ -118,7 +118,7 @@ export function DocumentoCartaBsale({ d }) {
           {(d.lineas || []).map((l, i) => (
             <View key={i} style={s.tr} wrap={false}>
               <Text style={s.cCod}>{l.codigo || "—"}</Text>
-              <Text style={s.cDesc}>{l.descripcion}</Text>
+              <Text style={s.cDesc}>{l.descripcion}{l.nota ? <Text style={{ fontSize: 7, color: "#444" }}>{`\n${l.nota}`}</Text> : null}</Text>
               <Text style={s.cCant}>{Number(l.cantidad).toLocaleString("es-CL")}</Text>
               <Text style={s.cPrecio}>{clp(l.precio_unitario)}</Text>
               <Text style={s.cDesct}>{l.descuento_pct ? `${l.descuento_pct}%` : "—"}</Text>
@@ -126,6 +126,13 @@ export function DocumentoCartaBsale({ d }) {
             </View>
           ))}
         </View>
+
+        {(d.observaciones || []).length > 0 && (
+          <View style={s.caja} wrap={false}>
+            <Text style={{ fontFamily: "Helvetica-Bold", color: AZUL, marginBottom: 3 }}>Observaciones</Text>
+            {d.observaciones.map((o, i) => <Text key={i} style={s.linea}>{o.nombre}: {o.valor}</Text>)}
+          </View>
+        )}
 
         <View style={s.pie} wrap={false}>
           <View style={s.timbreCaja}>
