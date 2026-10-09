@@ -44,7 +44,7 @@ const LISTAS: { lista: number; nombre: string; campo: string }[] = [
 const TIPO_SIN_TIPO = 1;
 
 export type ResultadoBsale = {
-  estado: 'creado' | 'ya_existia' | 'enlazado' | 'sku_asignado' | 'sin_sku' | 'apagada' | 'error';
+  estado: 'creado' | 'ya_existia' | 'enlazado' | 'sku_asignado' | 'actualizado' | 'sin_sku' | 'apagada' | 'error';
   mensaje?: string;
   variante_id?: number | null;
   producto_id?: number | null;
@@ -173,6 +173,61 @@ export class BsaleProductosService {
       const mensaje = productoBsaleId ? `${detalle} (el producto ${productoBsaleId} quedó creado en Bsale sin variante: revísalo allá)` : detalle;
       await this.anotar(id, { bsale_sync_error: mensaje.slice(0, 500), bsale_sync_at: ahora });
       this.logger.warn(`Producto ${sku || `#${id} (sin SKU)`} no se pudo enviar a Bsale: ${mensaje}`);
+      return { estado: 'error', mensaje };
+    }
+  }
+
+  /* (2026-10-09) Pedido de Ariel: "la edición de los productos que tienen SKU se
+     debe enviar a Bsale". El producto YA está en Bsale (variante anotada): se
+     actualizan nombre y descripción del producto, descripción y código de la
+     variante y los precios de las listas. No probado contra Bsale real: si
+     Bsale rechaza el PUT, queda en bsale_sync_error y la ficha lo muestra. */
+  async actualizar(producto: Record<string, any>, opts: { motivo?: string } = {}): Promise<ResultadoBsale> {
+    const sku = normSku(producto?.sku);
+    const id = Number(producto?.id) || null;
+    const varianteId = Number(producto?.bsale_variant_id) || null;
+    const productoBsaleId = Number(producto?.bsale_product_id) || null;
+    if (!this.activa) return { estado: 'apagada', mensaje: 'El envío de productos a Bsale está apagado en el servidor.' };
+    if (!varianteId) return { estado: 'error', mensaje: 'El producto no está enlazado a una variante de Bsale.' };
+    const ahora = new Date().toISOString();
+    try {
+      const avisos: string[] = [];
+      const nombre = String(producto.nombre || '').trim().slice(0, 150) || sku || `Producto ${id}`;
+      const descripcion = [producto.marca, producto.formato].map((x) => String(x || '').trim()).filter(Boolean).join(' · ').slice(0, 200);
+      let productoId = productoBsaleId;
+      if (!productoId) {
+        const v = await this.facturacion.apiGet(`/variants/${varianteId}.json?expand=[product]`);
+        productoId = Number(v?.product?.id) || null;
+      }
+      if (productoId) {
+        const tipo = await this.tipoPara(producto.categoria);
+        await this.facturacion.apiEnviar('PUT', `/products/${productoId}.json`, { id: productoId, name: nombre, description: descripcion, productTypeId: tipo.id });
+      }
+      await this.facturacion.apiEnviar('PUT', `/variants/${varianteId}.json`, {
+        id: varianteId, ...(productoId ? { productId: productoId } : {}), description: String(producto.formato || '').trim().slice(0, 80), ...(sku ? { code: sku } : {}),
+      });
+      const precios: ResultadoBsale['precios'] = [];
+      for (const l of LISTAS) {
+        const neto = Math.round(Number(producto[l.campo]) || 0);
+        if (!(neto > 0)) continue;
+        try {
+          const det = await this.facturacion.apiGet(`/price_lists/${l.lista}/details.json?variantid=${varianteId}`);
+          const d = det?.items?.[0];
+          if (!d?.id) { avisos.push(`La lista ${l.nombre} no tiene fila para esta variante: pon el precio a mano en Bsale.`); continue; }
+          if (Math.round(Number(d.variantValue) || 0) === neto) continue;
+          await this.facturacion.apiEnviar('PUT', `/price_lists/${l.lista}/details/${Number(d.id)}.json`, { variantValue: neto });
+          precios.push({ lista: l.lista, nombre: l.nombre, neto });
+        } catch (e: any) {
+          avisos.push(`No se pudo poner el precio en la lista ${l.nombre}: ${String(e?.message || e).slice(0, 120)}`);
+        }
+      }
+      await this.anotar(id, { ...(productoId && !productoBsaleId ? { bsale_product_id: productoId } : {}), bsale_sync_at: ahora, bsale_sync_error: null });
+      this.logger.log(`Producto ${sku || `#${id}`} actualizado en Bsale (variante ${varianteId}${precios.length ? `, precios en ${precios.map((p) => p.nombre).join(', ')}` : ''})${opts.motivo ? ` · ${opts.motivo}` : ''}`);
+      return { estado: 'actualizado', variante_id: varianteId, producto_id: productoId, precios, avisos };
+    } catch (e: any) {
+      const mensaje = String(e?.message || e).slice(0, 300);
+      await this.anotar(id, { bsale_sync_error: mensaje.slice(0, 500), bsale_sync_at: ahora });
+      this.logger.warn(`Producto ${sku || `#${id}`} no se pudo actualizar en Bsale: ${mensaje}`);
       return { estado: 'error', mensaje };
     }
   }

@@ -67,6 +67,10 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
   const [refOc, setRefOc] = useState({ numero: "", fecha: "" });
   const [refGuia, setRefGuia] = useState({ numero: "", fecha: "" });
   const [cotizacion, setCotizacion] = useState(cotizacionId ? String(cotizacionId) : "");
+  // (2026-10-09) Venta directa enlazada a una cotización existente: se escribe el N° y se carga; no se crea otra.
+  const [cotEnlace, setCotEnlace] = useState("");
+  const [cotLigada, setCotLigada] = useState(null);
+  const cotOrigen = cotizacionId || cotLigada;
   const [desde, setDesde] = useState(null); // datos de la cotización de origen
   const [seguimiento, setSeguimiento] = useState({ empresa: "", numero: "" });
   // (2026-10-08) Venta directa: «Emitir guía de despacho» marcada por defecto.
@@ -131,9 +135,9 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
 
   // Precarga: cliente y productos de la cotización.
   useEffect(() => {
-    if (!cotizacionId) return undefined;
+    if (!cotOrigen) return undefined;
     let vivo = true;
-    api.get(`/bsale/libre/desde-cotizacion?id=${encodeURIComponent(cotizacionId)}`)
+    api.get(`/bsale/libre/desde-cotizacion?id=${encodeURIComponent(cotOrigen)}`)
       .then(async (r) => {
         if (!vivo || !r) return;
         setDesde(r);
@@ -160,9 +164,9 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
       })
       .catch((e) => vivo && setError(e?.message || "No se pudo leer la cotización."));
     return () => { vivo = false; };
-    // Solo al abrir: la cotización viene fija.
+    // Solo al abrir (o al enlazar una cotización en la venta directa).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cotizacionId]);
+  }, [cotOrigen]);
 
   function agregarProducto(p) {
     setLineas((prev) => {
@@ -199,7 +203,7 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
 
   const cuerpo = () => ({
     tipo: tipoDoc,
-    ...(ventaDirecta ? { venta_directa: true, con_guia: conGuia && guiaPosible, ...(conGuia && guiaPosible ? { despacho: { destinatario: despacho.destinatario, direccion: despacho.direccion, comuna: despacho.comuna, ciudad: despacho.ciudad, tipo_traslado_id: 1 }, observacion, observaciones: obsPorSku() } : {}) } : {}),
+    ...(ventaDirecta ? { venta_directa: true, ...(cotLigada ? { cotizacion_id: Number(cotLigada) } : {}), con_guia: conGuia && guiaPosible, ...(conGuia && guiaPosible ? { despacho: { destinatario: despacho.destinatario, direccion: despacho.direccion, comuna: despacho.comuna, ciudad: despacho.ciudad, tipo_traslado_id: 1 }, observacion, observaciones: obsPorSku() } : {}) } : {}),
     cliente: cliente ? { rut: cliente.rut, razon_social: cliente.razon_social, giro: cliente.giro, direccion: cliente.direccion, comuna: cliente.comuna, ciudad: cliente.ciudad, email: cliente.email } : { rut: esBoleta ? "" : rut },
     lineas: lineas.map((l) => ({ sku: l.sku, producto: l.producto, cantidad: Number(l.cantidad), neto_unitario: Number(l.neto_unitario) })),
     fecha_emision: fecha,
@@ -289,7 +293,7 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
               <div style={{ fontSize: 13 }}>
                 {resultado.total ? `Total ${clp(resultado.total)}. ` : ""}
                 {resultado.cotizacion
-                  ? <>Se creó la cotización <Link to={`/detalle/${resultado.cotizacion.id}`} className="table-link" style={{ fontWeight: 700 }}>#{resultado.cotizacion.id}</Link> con estos productos{resultado.cotizacion.pagada ? ", el documento y el pago registrados." : " y el documento registrado (pago pendiente: aparece en Seguimiento de Pagos)."}</>
+                  ? <>{resultado.cotizacion.existente ? "Quedó registrada en la cotización " : "Se creó la cotización "}<Link to={`/detalle/${resultado.cotizacion.id}`} className="table-link" style={{ fontWeight: 700 }}>#{resultado.cotizacion.id}</Link>{resultado.cotizacion.existente ? "" : " con estos productos"}{resultado.cotizacion.pagada ? ", el documento y el pago registrados." : " y el documento registrado (pago pendiente: aparece en Seguimiento de Pagos)."}</>
                   : ventaDirecta
                     ? "El documento se emitió pero la cotización no se pudo crear: revisa el aviso de abajo."
                     : resultado.registrada ? "Quedó registrada en la cotización indicada." : "No se indicó cotización: queda en Bsale y en el historial de Emitidas."}
@@ -368,7 +372,23 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
                 </div>
               )}
 
-              {cotizacionId && desde && (
+              {ventaDirecta && (
+                <div className="enlazar-cotizacion" style={{ ...caja, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end" }}>
+                  <label style={{ flex: "1 1 220px", minWidth: 0 }}>
+                    <span style={etiqueta}>¿Es de una cotización que ya existe? (opcional)</span>
+                    <input className="input" inputMode="numeric" value={cotEnlace} onChange={(e) => setCotEnlace(e.target.value.replace(/[^\d]/g, ""))} placeholder="N° de la cotización" disabled={!!enviando || !!cotLigada} style={{ width: "100%" }} />
+                  </label>
+                  {cotLigada ? (
+                    <button type="button" className="btn btn-secondary btn-sm" onClick={() => { setCotLigada(null); setCotEnlace(""); setDesde(null); setLineas([]); setCliente(null); setRut(""); }} disabled={!!enviando}>Quitar enlace</button>
+                  ) : (
+                    <button type="button" className="btn btn-secondary btn-sm" onClick={() => cotEnlace && setCotLigada(cotEnlace)} disabled={!!enviando || !cotEnlace}>Enlazar</button>
+                  )}
+                  <div style={{ flexBasis: "100%", fontSize: 11.5, color: "var(--text-muted)" }}>
+                    {cotLigada ? `El documento y el pago quedarán en la cotización #${cotLigada}; no se crea otra.` : "Sin cotización se crea una nueva con estos productos."}
+                  </div>
+                </div>
+              )}
+              {cotOrigen && desde && (
                 <div style={{ border: "1px solid #bae6fd", background: "#f0f9ff", borderRadius: 10, padding: "8px 12px", fontSize: 12.5, color: "#0c4a6e" }}>
                   Cotización <b>#{desde.cotizacion.id}</b>{desde.cotizacion.cliente ? ` · ${desde.cotizacion.cliente}` : ""}: se cargaron su cliente y sus {desde.lineas.length} producto{desde.lineas.length === 1 ? "" : "s"} con SKU (precio neto con el flete repartido, igual que su total). Revisa y simula.
                   {desde.rut_descartado && (

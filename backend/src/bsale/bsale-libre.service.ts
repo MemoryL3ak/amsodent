@@ -344,6 +344,9 @@ export class BsaleLibreService {
         observacion: limpiarObservacion(obsPorSku ? obsPorSku.get(sku) ?? l?.observacion : l?.observacion).slice(0, OBSERVACION_MAX),
       });
     }
+    // Stock en Bsale de cada línea (2026-10-09): se avisa cuál no alcanza; Bsale igual deja emitir (stock negativo permitido).
+    const sinStock = await this.despachos.anotarStock(lineas);
+    if (sinStock) avisos.push({ codigo: 'sin_stock', mensaje: sinStock });
     if (!lineas.length) problemas.push({ codigo: 'sin_lineas', mensaje: 'Agrega al menos un producto.' });
     if (lineas.length > 200) problemas.push({ codigo: 'muchas_lineas', mensaje: 'Máximo 200 líneas por documento.' });
     const totales = totalesDe(lineas);
@@ -358,7 +361,8 @@ export class BsaleLibreService {
     // Cotización a la que se cuelga (opcional; la venta directa crea la suya).
     let cotizacion: any = null;
     let licCot: any = null;
-    if (!ventaDirecta && body?.cotizacion_id != null && String(body.cotizacion_id).trim() !== '') {
+    // (2026-10-09) La venta directa también puede enlazarse a una cotización que ya existe: entonces no crea otra.
+    if (body?.cotizacion_id != null && String(body.cotizacion_id).trim() !== '') {
       const id = Number(body.cotizacion_id);
       const { data: lic } = id > 0 ? await this.supabase.getClient().from('licitaciones').select('id, id_licitacion, nombre_entidad, rut_entidad, tipo_cliente').eq('id', id).maybeSingle() : { data: null };
       if (!lic) problemas.push({ codigo: 'cotizacion', mensaje: `No existe la cotización #${body.cotizacion_id}.` });
@@ -502,7 +506,7 @@ export class BsaleLibreService {
       descuenta_stock: b.descuenta_stock,
       emisor: EMISOR,
       cliente: c ? { razon_social: c.razon_social, rut: c.rut, giro: c.giro, direccion: c.direccion, comuna: c.comuna, nuevo: c.nuevo } : {},
-      lineas: b.lineas.map((l: any) => ({ sku: l.sku, producto: l.producto, cantidad: l.cantidad, neto_unitario: l.neto_unitario, neto: l.neto, observacion: b.tipo === 'guia' && b.notas_por_linea ? l.observacion || null : null })),
+      lineas: b.lineas.map((l: any) => ({ sku: l.sku, producto: l.producto, cantidad: l.cantidad, neto_unitario: l.neto_unitario, neto: l.neto, observacion: b.tipo === 'guia' && b.notas_por_linea ? l.observacion || null : null, stock_bsale: l.stock_bsale ?? null })),
       totales: b.totales,
       referencias: b.referencias.map(referenciaVista),
       forma_pago: b.forma_pago?.nombre || null,
@@ -516,7 +520,7 @@ export class BsaleLibreService {
           : b.con_guia
             ? `Enseguida se emite la guía de despacho con las mismas líneas (${b.guia?.traslado?.nombre || 'Operación constituye venta'}) a ${b.guia?.despacho?.direccion || '—'}, ${b.guia?.despacho?.comuna || '—'}: el stock lo rebaja la guía, no la ${b.tipo}.`
             : b.descuenta_stock ? `La ${b.tipo} descuenta el stock en Bsale${b.venta_directa ? '' : ' (no viene de una guía)'}.` : 'La factura no mueve stock.',
-        b.venta_directa
+        b.venta_directa && !b.cotizacion
           ? `Al emitir se crea en el sistema una cotización particular adjudicada a nombre de ${nombreCliente}, con estos ítems y el documento registrado${b.pagada_ahora ? ` y pagado (${b.forma_pago?.nombre}).` : ' con el pago pendiente (crédito): aparecerá en Seguimiento de Pagos.'}`
           : b.cotizacion ? `Quedará registrada en la cotización #${b.cotizacion.id}${b.cotizacion.codigo ? ` (${b.cotizacion.codigo})` : ''}.` : 'No se indicó cotización: quedará solo en Bsale y en el historial de Emitidas.',
       ],
@@ -599,7 +603,7 @@ export class BsaleLibreService {
       ...(b.cotizacion || b.venta_directa ? { correo: { tipo: b.tipo, para: b.cliente?.email || null } } : {}),
       registrar: async (doc: any, pdf: any) => {
         if (b.venta_directa) {
-          const res = await this.registrarVentaDirecta(b, doc, pdf, usuario);
+          const res = b.cotizacion ? await this.registrarVentaEnCotizacion(b, doc, pdf, usuario) : await this.registrarVentaDirecta(b, doc, pdf, usuario);
           creada = res.cotizacion;
           return res.documentoId;
         }
@@ -813,6 +817,43 @@ export class BsaleLibreService {
     }
     this.logger.log(`Venta directa: ${etiqueta} ${numero} → cotización #${licId} (${nombreCliente}) por ${usuario.email}`);
     return { documentoId, cotizacion: { id: licId, codigo: String(licId), nombre: nombreCliente, pagada: b.pagada_ahora } };
+  }
+
+  /* (2026-10-09) Venta directa enlazada a una cotización existente: el documento
+     y el pago quedan en ESA cotización (que pasa a Adjudicada si no lo estaba);
+     no se crea otra. Lo pidió Ariel: "traer el número de una cotización para
+     enlazar inmediatamente". */
+  private async registrarVentaEnCotizacion(b: any, doc: any, pdf: { path: string; size: number } | null, usuario: { id: string; email: string }) {
+    const db = this.supabase.getClient();
+    const licId = Number(b.cotizacion.id);
+    const etiqueta = etiquetaTipo(b.tipo);
+    const numero = String(doc.number);
+    const hoy = b.fecha_emision;
+    const { data: lic } = await db.from('licitaciones').select('id, estado, nombre_entidad').eq('id', licId).maybeSingle();
+    if (lic && !/adjudicada/i.test(String((lic as any).estado || ''))) {
+      await db.from('licitaciones').update({ estado: 'Adjudicada', fecha_adjudicada: new Date().toISOString() }).eq('id', licId);
+    }
+    const documento = await this.insertarTolerante('licitacion_documentos', {
+      licitacion_id: licId, tipo: 'factura_boleta', numero, descripcion: etiqueta, monto: Number(doc.netAmount ?? b.totales.neto) || b.totales.neto,
+      fecha_oc: hoy, fecha_factura: hoy, deriva_de_id: null,
+      bucket: pdf ? 'factura' : null, storage_path: pdf?.path || null, file_name: pdf ? `${etiqueta} ${numero}.pdf` : null,
+      mime_type: pdf ? 'application/pdf' : null, size_bytes: pdf?.size || null,
+      bsale_id: Number(doc.id) || null, bsale_url: doc.urlPdf || doc.urlPublicView || null,
+      pagada: b.pagada_ahora, fecha_pago: b.pagada_ahora ? hoy : null, forma_pago: b.pagada_ahora ? b.medio_pago : null,
+    });
+    const documentoId = Number(documento?.id) || null;
+    if (b.pagada_ahora && documentoId) {
+      try {
+        await this.insertarTolerante('licitacion_documentos', {
+          licitacion_id: licId, tipo: 'comprobante_pago', numero: b.comprobante || `Pago ${b.forma_pago.nombre}`, monto: b.totales.neto, fecha_oc: hoy,
+          deriva_de_id: documentoId, forma_pago: b.medio_pago, descripcion: `Pago recibido al emitir la ${b.tipo} (${b.forma_pago.nombre}).`,
+        });
+      } catch (e: any) {
+        this.logger.warn(`Venta directa ${numero}: el comprobante de pago no se pudo registrar: ${e?.message || e}`);
+      }
+    }
+    this.logger.log(`Venta directa: ${etiqueta} ${numero} → cotización existente #${licId} por ${usuario.email}`);
+    return { documentoId, cotizacion: { id: licId, codigo: b.cotizacion.codigo || String(licId), nombre: (lic as any)?.nombre_entidad || b.cotizacion.cliente || '', pagada: b.pagada_ahora, existente: true } };
   }
 
   /* Inserta tolerando columnas que aún no existen (migraciones pendientes):
