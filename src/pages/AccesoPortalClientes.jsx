@@ -28,6 +28,7 @@ import {
 import { api } from "../lib/api";
 import Toast from "../components/Toast";
 import DropdownSelect from "../components/ui/DropdownSelect";
+import { REGIONES_CHILE } from "../constants/regiones";
 
 const TEAL = "#28aeb1"; // primary de la plataforma (var --primary)
 const TEAL_DARK = "#1e9295"; // var --primary-dark (acentos/textos sobre fondo claro)
@@ -1351,7 +1352,8 @@ function SeccionTiendasExplorador({ onOk, onError }) {
                 <th style={s.th}>Tienda</th>
                 <th style={s.th}>URL</th>
                 <th style={{ ...s.th, width: 100 }}>Tipo</th>
-                <th style={{ ...s.th, width: 130 }}>Se ve en</th>
+                <th style={{ ...s.th, width: 140 }}>Se ve en</th>
+                <th style={{ ...s.th, width: 150 }}>Región</th>
                 <th style={{ ...s.th, width: 110 }}>Estado</th>
                 <th style={{ ...s.th, textAlign: "right", width: 150 }}>Acciones</th>
               </tr>
@@ -1393,13 +1395,17 @@ function SeccionTiendasExplorador({ onOk, onError }) {
                         plataforma interna -- y no siempre conviene mostrarle
                         al cliente las mismas tiendas que miramos nosotros. */}
                     <td style={s.td}>
+                      {/* (2026-10-09) Listbox ajustado a la celda (antes se salía de ella). */}
                       <DropdownSelect
                         value={t.ambito || "ambos"}
                         onChange={(v) => cambiarAmbito(t, v)}
                         disabled={guardandoId === t.id}
                         options={AMBITOS_TIENDA}
+                        minWidth={120}
+                        style={{ width: 128, fontSize: 12.5 }}
                       />
                     </td>
+                    <td style={{ ...s.td, fontSize: 12.5 }}>{t.region || <span style={{ color: "#94a3b8" }}>Todo Chile</span>}</td>
                     <td style={s.td}>
                       <button
                         type="button"
@@ -1458,6 +1464,9 @@ function ModalTiendaExplorador({ tienda, onCerrar, onHecho, onError }) {
   const [orden, setOrden] = useState(tienda?.orden ?? 100);
   const [activa, setActiva] = useState(tienda ? tienda.activa !== false : true);
   const [nota, setNota] = useState(tienda?.nota || "");
+  // (2026-10-09) Antes el modal no tenía «Se ve en» y al editar se perdía (volvía a «Los dos»).
+  const [ambito, setAmbito] = useState(tienda?.ambito || "ambos");
+  const [region, setRegion] = useState(tienda?.region || "");
   const [guardando, setGuardando] = useState(false);
   const [probando, setProbando] = useState(false);
   const [prueba, setPrueba] = useState(null); // resultado de "Probar"
@@ -1491,6 +1500,8 @@ function ModalTiendaExplorador({ tienda, onCerrar, onHecho, onError }) {
         activa,
         orden: Number(orden),
         nota: nota.trim(),
+        ambito,
+        region: region || null,
       });
       onHecho?.(tienda ? "Tienda actualizada." : "Tienda agregada al explorador.");
     } catch (e) {
@@ -1538,6 +1549,26 @@ function ModalTiendaExplorador({ tienda, onCerrar, onHecho, onError }) {
               Activa en el explorador
             </label>
           )}
+        </div>
+
+        <div style={{ display: "flex", gap: 12, marginTop: 12, flexWrap: "wrap" }}>
+          <div style={{ flex: "1 1 160px", minWidth: 0 }}>
+            <label style={s.label}>Se ve en</label>
+            <DropdownSelect value={ambito} onChange={setAmbito} options={AMBITOS_TIENDA} className="" style={s.input} />
+          </div>
+          <div style={{ flex: "1 1 220px", minWidth: 0 }}>
+            <label style={s.label}>Región a la que vende</label>
+            <DropdownSelect
+              value={region}
+              onChange={setRegion}
+              options={[{ value: "", label: "Todo Chile" }, ...Object.keys(REGIONES_CHILE).map((r) => ({ value: r, label: r }))]}
+              className=""
+              style={s.input}
+            />
+          </div>
+        </div>
+        <div style={{ fontSize: 11.5, color: "#94a3b8", marginTop: 4 }}>
+          Con región, la tienda solo se consulta para clientes de esa región (portal) o cuando en el explorador se elige esa región.
         </div>
 
         <label style={{ ...s.label, marginTop: 12 }}>Nota (opcional)</label>
