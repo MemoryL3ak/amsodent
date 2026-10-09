@@ -10,6 +10,7 @@ import DocumentoLibreBsale from "../components/DocumentoLibreBsale";
 import AnularDocumentoBsale from "../components/AnularDocumentoBsale";
 import { useEstadosBsale } from "../lib/estadosBsale";
 import BotonImprimirCarta from "../components/BotonImprimirCarta";
+import BotonImprimirTermica from "../components/BotonImprimirTermica";
 
 /* ── Facturación (2026-10-02) ────────────────────────────────────────────────
    Sección para emitir en Bsale la factura de una guía de despacho.
@@ -525,6 +526,7 @@ export default function Facturacion() {
                               </a>
                             )}
                             {/* (2026-10-07) Imprimir en hoja carta (la boleta de Bsale sale en rollo térmico). */}
+                            {f.estado === "emitida" && f.tipo !== "nota_venta" && <BotonImprimirTermica urlPdf={f.url_pdf} compacto />}
                             {f.estado === "emitida" && f.tipo !== "nota_venta" && <BotonImprimirCarta bsaleId={f.bsale_id} compacto />}
                           </div>
                         </td>

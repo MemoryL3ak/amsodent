@@ -9,6 +9,7 @@ import NotaDebitoBsale from "./NotaDebitoBsale";
 import EstadoBsaleBadge from "./EstadoBsale";
 import DropdownSelect from "./ui/DropdownSelect";
 import BotonImprimirCarta from "./BotonImprimirCarta";
+import BotonImprimirTermica from "./BotonImprimirTermica";
 import { DineroFactura, RegistrarDevolucionModal, UsarSaldoFavorModal } from "./DineroNotaCredito";
 import { dineroDeFactura, PAGOS } from "../lib/dineroNotaCredito";
 
@@ -455,6 +456,7 @@ export default function FacturasTrazabilidad({ lics = [], documentosMap = {}, pu
                         <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{f.tipo === "factura" ? "Factura" : f.esBoleta ? "Boleta" : "Factura o boleta"}</div>
                         <div style={{ fontWeight: 600, textDecoration: anulada ? "line-through" : "none", display: "flex", alignItems: "center", gap: 4 }}>
                           N° {f.numero || "S/N"}
+                          <BotonImprimirTermica urlPdf={f.bsale_url || est?.url} compacto />
                           <BotonImprimirCarta bsaleId={f.bsale_id || est?.bsale_id} compacto />
                         </div>
                         <EstadoBsaleBadge estado={estBadge} style={{ marginTop: 2 }} />

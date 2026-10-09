@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import { AlertTriangle, CheckCircle2, ExternalLink, FileText, Info, Loader2, X } from "lucide-react";
+import { AlertTriangle, CheckCircle2, FileText, Info, Loader2, Mail, X } from "lucide-react";
 import { api } from "../lib/api";
 import DateFilter from "./DateFilter";
 import DropdownSelect from "./ui/DropdownSelect";
 import VistaPreviaBsale from "./VistaPreviaBsale";
 import AvisoCorreoDocumento from "./AvisoCorreoDocumento";
 import BotonImprimirCarta from "./BotonImprimirCarta";
+import BotonImprimirTermica from "./BotonImprimirTermica";
 import RegistrarComprobanteRapido from "./RegistrarComprobanteRapido";
 
 /* ── Emitir factura en Bsale (2026-10-02) ────────────────────────────────────
@@ -178,13 +179,15 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
               {(resultado.avisos || []).map((a, i) => (
                 <div key={i} style={{ fontSize: 12.5, color: "#92400e" }}>{a}</div>
               ))}
-              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-              {resultado.url_pdf && (
-                <a href={resultado.url_pdf} target="_blank" rel="noopener noreferrer" className="btn btn-secondary btn-sm" style={{ textDecoration: "none" }}>
-                  <ExternalLink size={13} /> Ver la factura en Bsale
-                </a>
-              )}
-              {resultado.bsale_id && <BotonImprimirCarta bsaleId={resultado.bsale_id} etiqueta="Imprimir en carta" />}
+              <div className="acciones-emitido" style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                {/* (2026-10-09) Imprimir térmica (PDF de Bsale) o carta, y enviar al cliente sin esperar a cerrar. */}
+                <BotonImprimirTermica urlPdf={resultado.url_pdf} etiqueta="Imprimir térmica" />
+                {resultado.bsale_id && <BotonImprimirCarta bsaleId={resultado.bsale_id} etiqueta="Imprimir en carta" />}
+                {resultado.correo?.ventana && (
+                  <button type="button" className="btn btn-primary btn-sm" onClick={cerrar} title="Abre la ventana de correo con el documento adjunto">
+                    <Mail size={13} /> Enviar al cliente
+                  </button>
+                )}
               </div>
               {resultado.registrada && resultado.documento_id && (
                 <RegistrarComprobanteRapido licitacionId={licitacionId} documentoId={resultado.documento_id} totalBruto={resultado.total} nombreDocumento="la factura" />
