@@ -306,7 +306,7 @@ export class ExploradorService {
     const tiendas = await this.tiendasActivasTodas('plataforma');
     const t = tiendas.find((x) => x.id === String(tiendaId || '')) || tiendas.find((x) => url.startsWith(x.base)) || null;
     const tipo = t?.tipo || (/\/products\//.test(url) ? 'shopify' : /\/producto\//.test(url) && /amsodent/i.test(url) ? 'amsodent' : 'woo');
-    const out: { nombre: string | null; marca: string | null; sku: string | null; descripcion: string | null; imagen: string | null; tipo: string } = { nombre: null, marca: null, sku: null, descripcion: null, imagen: null, tipo };
+    const out: { nombre: string | null; marca: string | null; sku: string | null; presentacion: string | null; descripcion: string | null; imagen: string | null; tipo: string } = { nombre: null, marca: null, sku: null, presentacion: null, descripcion: null, imagen: null, tipo };
     const limpiar = (html: any) => String(html || '').replace(/<br\s*\/?>/gi, '\n').replace(/<\/(p|li|div|h\d)>/gi, '\n').replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/[ \t]+/g, ' ').replace(/\s*\n\s*/g, '\n').trim().slice(0, 2000) || null;
     try {
       if (tipo === 'shopify') {
@@ -324,7 +324,8 @@ export class ExploradorService {
         if (p) {
           out.nombre = limpiarNombre(p.name || '') || null;
           out.sku = String(p.sku || '').trim() || null;
-          out.descripcion = limpiar([p.short_description, p.description].filter(Boolean).join('\n'));
+          out.presentacion = limpiar(p.short_description);
+          out.descripcion = limpiar(p.description) || out.presentacion;
           out.imagen = p?.images?.[0]?.src || null;
           const marca = (p.attributes || []).find((a: any) => /marca|brand/i.test(String(a?.name || '')));
           out.marca = String(marca?.terms?.[0]?.name || p?.brands?.[0]?.name || '').trim() || null;
@@ -337,7 +338,8 @@ export class ExploradorService {
         out.nombre = limpiarNombre(datos?.nombre || datos?.name || '') || null;
         out.marca = String(datos?.marca || datos?.brand || '').trim() || null;
         out.sku = String(datos?.sku || datos?.variantes?.[0]?.sku || '').trim() || null;
-        out.descripcion = limpiar(datos?.descripcion || datos?.description || datos?.descripcionCorta || '');
+        out.presentacion = limpiar(datos?.descripcionCorta || datos?.shortDescription || '');
+        out.descripcion = limpiar(datos?.descripcion || datos?.description || '') || out.presentacion;
         const m = html.match(/<meta[^>]+name="description"[^>]+content="([^"]*)"/i);
         if (!out.descripcion && m) out.descripcion = limpiar(m[1]);
       } else {
