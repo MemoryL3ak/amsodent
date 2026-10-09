@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
 import { AlertTriangle, CheckCircle2, ExternalLink, FileText, Info, Loader2, Plus, Receipt, Search, Trash2, Truck, X } from "lucide-react";
@@ -10,6 +10,7 @@ import AvisoCorreoDocumento from "./AvisoCorreoDocumento";
 import BotonImprimirCarta from "./BotonImprimirCarta";
 import CamposSeguimientoGuia from "./CamposSeguimientoGuia";
 import CampoObservacionGuia, { OBSERVACION_GUIA_MAX } from "./CampoObservacionGuia";
+import { componerObservacion } from "../lib/observacionGuia";
 import CrearClienteBsale from "./CrearClienteBsale";
 import RegistrarComprobanteRapido from "./RegistrarComprobanteRapido";
 
@@ -136,9 +137,9 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
       .then(async (r) => {
         if (!vivo || !r) return;
         setDesde(r);
-        setObservacion(r.observacion_sugerida || "");
+        setObservacion("");
         if (tipo !== "guia" && r.tipo_sugerido && !esGuia) setTipoDoc(r.tipo_sugerido);
-        setLineas((r.lineas || []).map((l) => ({ sku: l.sku, producto: l.producto, formato: "", cantidad: String(l.cantidad), neto_unitario: String(l.neto_unitario), lista1: null, lista2: null, stock: null, deCotizacion: true })));
+        setLineas((r.lineas || []).map((l) => ({ sku: l.sku, producto: l.producto, formato: "", cantidad: String(l.cantidad), neto_unitario: String(l.neto_unitario), lista1: null, lista2: null, stock: null, deCotizacion: true, observacion: l.observacion || "" })));
         if (r.cliente?.rut) {
           setRut(r.cliente.rut);
           try {
@@ -166,13 +167,16 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
   function agregarProducto(p) {
     setLineas((prev) => {
       if (prev.some((l) => l.sku === p.sku)) return prev.map((l) => (l.sku === p.sku ? { ...l, cantidad: String((Number(l.cantidad) || 0) + 1) } : l));
-      return [...prev, { sku: p.sku, producto: p.nombre, formato: p.formato, cantidad: "1", neto_unitario: String(p.lista1 || p.lista2 || ""), lista1: p.lista1, lista2: p.lista2, stock: p.stock }];
+      return [...prev, { sku: p.sku, producto: p.nombre, formato: p.formato, cantidad: "1", neto_unitario: String(p.lista1 || p.lista2 || ""), lista1: p.lista1, lista2: p.lista2, stock: p.stock, observacion: "" }];
     });
     setQProducto("");
     setProductos([]);
   }
   const cambiarLinea = (sku, campo, v) => setLineas((prev) => prev.map((l) => (l.sku === sku ? { ...l, [campo]: v.replace(/[^\d.,]/g, "").replace(",", ".") } : l)));
   const quitarLinea = (sku) => setLineas((prev) => prev.filter((l) => l.sku !== sku));
+  // Observación por producto (2026-10-08): va al atributo «Observación» de la guía en Bsale.
+  const cambiarObsLinea = (sku, v) => setLineas((prev) => prev.map((l) => (l.sku === sku ? { ...l, observacion: v } : l)));
+  const obsPorSku = () => Object.fromEntries(lineas.map((l) => [l.sku, l.observacion || ""]));
 
   // Venta directa: el plazo solo aplica si la factura queda a crédito.
   const formaElegida = (opciones?.formas_pago || []).find((f) => String(f.id) === String(formaPago));
@@ -183,6 +187,9 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
   const comprobanteObligatorio = pideComprobante && ventaDirecta && !esEfectivo;
   // La guía necesita un receptor con RUT: a consumidor final no hay guía.
   const guiaPosible = ventaDirecta && (!esBoleta || !!cliente);
+  // Hay guía (libre, de la cotización o de la venta directa): observación general + por producto.
+  const conObsGuia = esGuia || (ventaDirecta && conGuia && guiaPosible);
+  const observacionFinal = useMemo(() => (conObsGuia ? componerObservacion(observacion, lineas) : ""), [conObsGuia, observacion, lineas]);
   const diasEfectivos = esGuia ? 0 : esBoleta ? 0 : ventaDirecta && !aCredito ? 0 : Number(dias);
 
   const totales = useMemo(() => {
@@ -193,12 +200,12 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
 
   const cuerpo = () => ({
     tipo: tipoDoc,
-    ...(ventaDirecta ? { venta_directa: true, con_guia: conGuia && guiaPosible, ...(conGuia && guiaPosible ? { despacho: { destinatario: despacho.destinatario, direccion: despacho.direccion, comuna: despacho.comuna, ciudad: despacho.ciudad, tipo_traslado_id: 1 } } : {}) } : {}),
+    ...(ventaDirecta ? { venta_directa: true, con_guia: conGuia && guiaPosible, ...(conGuia && guiaPosible ? { despacho: { destinatario: despacho.destinatario, direccion: despacho.direccion, comuna: despacho.comuna, ciudad: despacho.ciudad, tipo_traslado_id: 1 }, observacion, observaciones: obsPorSku() } : {}) } : {}),
     cliente: cliente ? { rut: cliente.rut, razon_social: cliente.razon_social, giro: cliente.giro, direccion: cliente.direccion, comuna: cliente.comuna, ciudad: cliente.ciudad, email: cliente.email } : { rut: esBoleta ? "" : rut },
     lineas: lineas.map((l) => ({ sku: l.sku, producto: l.producto, cantidad: Number(l.cantidad), neto_unitario: Number(l.neto_unitario) })),
     fecha_emision: fecha,
     ...(esGuia
-      ? { despacho: { ...despacho, tipo_traslado_id: Number(despacho.tipo_traslado_id) }, observacion }
+      ? { despacho: { ...despacho, tipo_traslado_id: Number(despacho.tipo_traslado_id) }, observacion, observaciones: obsPorSku() }
       : { forma_pago_id: Number(formaPago), dias_vencimiento: diasEfectivos, ...(ventaDirecta ? {} : { descuenta_stock: descuentaStock }) }),
     referencias: ventaDirecta
       ? []
@@ -236,7 +243,7 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
   // (2026-10-08) Emitido el documento, al cerrar se abre la ventana de correo para enviárselo al cliente.
   const cerrar = () => { if (enviando) return; if (resultado?.emitida) window.dispatchEvent(new Event("correos:check")); onCerrar?.(); };
   const obsMax = desde?.observacion_max || OBSERVACION_GUIA_MAX;
-  const listoParaSimular = !!opciones && !enviando && (!!cliente || esBoleta) && lineas.length > 0 && !!fecha && (!esGuia || observacion.trim().length <= obsMax) && (!comprobanteObligatorio || !!comprobante.trim());
+  const listoParaSimular = !!opciones && !enviando && (!!cliente || esBoleta) && lineas.length > 0 && !!fecha && (!conObsGuia || observacionFinal.length <= obsMax) && (!comprobanteObligatorio || !!comprobante.trim());
   const puedeEmitir = listoParaSimular && !apagada && simulacionVigente && confirmo;
   const nombreDoc = esGuia ? "guía" : esBoleta ? "boleta" : "factura";
   const titulo = ventaDirecta
@@ -489,7 +496,8 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
                     </thead>
                     <tbody>
                       {lineas.map((l) => (
-                        <tr key={l.sku}>
+                        <Fragment key={l.sku}>
+                        <tr>
                           <td style={{ whiteSpace: "nowrap", fontWeight: 600 }}>{l.sku}</td>
                           <td style={{ whiteSpace: "normal", overflowWrap: "anywhere" }}>
                             {l.producto}{l.formato ? <span style={{ color: "var(--text-muted)", fontSize: 11 }}> · {l.formato}</span> : null}
@@ -503,6 +511,26 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
                           <td style={{ textAlign: "right", whiteSpace: "nowrap", fontWeight: 600 }}>{clp((Number(l.cantidad) || 0) * (Number(l.neto_unitario) || 0))}</td>
                           <td style={{ textAlign: "right" }}><button type="button" className="btn btn-ghost btn-sm" onClick={() => quitarLinea(l.sku)} disabled={!!enviando} title="Quitar" style={{ color: "#dc2626", padding: 4 }}><Trash2 size={13} /></button></td>
                         </tr>
+                        {conObsGuia && (
+                          <tr className="fila-observacion-linea">
+                            <td colSpan="6" style={{ padding: "0 10px 8px", borderTop: 0 }}>
+                              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                                <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px", color: "var(--text-muted)", whiteSpace: "nowrap" }} title="Va en el atributo «Observación» de la guía en Bsale">
+                                  Observación {l.sku}
+                                </span>
+                                <input
+                                  className="input observacion-linea"
+                                  value={l.observacion || ""}
+                                  onChange={(e) => cambiarObsLinea(l.sku, e.target.value)}
+                                  disabled={!!enviando}
+                                  placeholder={l.deCotizacion ? "Observación de este producto para la guía (de la cotización; se puede completar)" : "Observación de este producto para la guía (opcional)"}
+                                  style={{ flex: "1 1 240px", minWidth: 0, height: 28, padding: "2px 8px", fontSize: 12.5 }}
+                                />
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                        </Fragment>
                       ))}
                       {lineas.length === 0 && <tr><td colSpan="6" style={{ textAlign: "center", color: "var(--text-muted)", padding: 18 }}><Plus size={13} style={{ verticalAlign: "middle" }} /> Busca un producto arriba para agregarlo.</td></tr>}
                     </tbody>
@@ -599,7 +627,7 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
                 </div>
               )}
               {(esGuia || (conGuia && guiaPosible)) && <CamposSeguimientoGuia valor={seguimiento} onChange={setSeguimiento} disabled={!!enviando} />}
-              {esGuia && <CampoObservacionGuia valor={observacion} onChange={setObservacion} sugerida={desde?.observacion_sugerida || ""} max={obsMax} disabled={!!enviando} />}
+              {conObsGuia && <CampoObservacionGuia valor={observacion} onChange={setObservacion} compuesta={observacionFinal} max={obsMax} disabled={!!enviando} />}
               {!ventaDirecta && !esBoleta && <div style={caja}>
                 <span style={etiqueta}>Referencias y registro (opcional)</span>
                 <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 8 }}>

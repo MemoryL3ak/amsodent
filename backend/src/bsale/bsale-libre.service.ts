@@ -4,7 +4,7 @@ import { LicitacionesService } from '../licitaciones/licitaciones.service';
 import {
   BsaleFacturacionService, EMISOR, fechaAEpoch, folioCotizacion, normOc, normRut, ocDeReferencia, referenciaGuia, referenciaOcFactura, referenciaOcGuia, referenciaParaBsale, referenciaVista, sumarDias, totalesDe,
 } from './bsale-facturacion.service';
-import { BsaleDespachosService, OBSERVACION_MAX, observacionSugerida } from './bsale-despachos.service';
+import { BsaleDespachosService, OBSERVACION_MAX, observacionCompuesta, observacionSugerida } from './bsale-despachos.service';
 
 /* ── Guías, facturas y boletas LIBRES en Bsale (2026-10-03) ──────────────────
    Pedido de Ariel: "necesito la opción de crear guías y facturas de manera
@@ -324,6 +324,10 @@ export class BsaleLibreService {
     const crudas: any[] = Array.isArray(body?.lineas) ? body.lineas : [];
     const lineas: any[] = [];
     const vistos = new Set<string>();
+    // Observación por producto (2026-10-08): la pantalla la manda por SKU; va al atributo «Observación» de la guía.
+    const obsPorSku = body?.observaciones && typeof body.observaciones === 'object'
+      ? new Map<string, any>(Object.keys(body.observaciones).map((k) => [normSku(k), body.observaciones[k]]))
+      : null;
     for (const l of crudas) {
       const sku = normSku(l?.sku);
       if (!sku || vistos.has(sku)) continue;
@@ -337,6 +341,7 @@ export class BsaleLibreService {
       lineas.push({
         sku, producto: texto(l?.producto, 160) || String(variante?.product?.name || ''), cantidad, neto_unitario: neto,
         neto: Math.round(cantidad * neto), en_bsale: !!variante, variante_id: variante ? Number(variante.id) : null,
+        observacion: texto(obsPorSku ? obsPorSku.get(sku) ?? l?.observacion : l?.observacion, OBSERVACION_MAX),
       });
     }
     if (!lineas.length) problemas.push({ codigo: 'sin_lineas', mensaje: 'Agrega al menos un producto.' });
@@ -461,8 +466,12 @@ export class BsaleLibreService {
       }
     }
 
-    // Observación de la guía → atributo adicional en Bsale (2026-10-07).
-    const observacion = tipo === 'guia' ? String(body?.observacion ?? '').replace(/\s+/g, ' ').trim() : '';
+    // Observación de la guía → atributo adicional en Bsale (2026-10-07). Con
+    // `observaciones` por SKU (2026-10-08) el texto se arma general · SKU: texto…;
+    // sin ellas, `observacion` es el texto completo. También para la guía de la venta directa.
+    const observacion = tipo === 'guia' || conGuia
+      ? obsPorSku ? observacionCompuesta(body?.observacion, lineas) : String(body?.observacion ?? '').replace(/\s+/g, ' ').trim()
+      : '';
     if (observacion.length > OBSERVACION_MAX) problemas.push({ codigo: 'observacion_larga', mensaje: `La observación tiene ${observacion.length} caracteres; en Bsale caben hasta ${OBSERVACION_MAX}. Acórtala.` });
     const borrador = {
       observacion,
@@ -580,7 +589,7 @@ export class BsaleLibreService {
     const r = await this.despachos.emitirReal({
       usuario, clave, salesId, tipo: b.tipo, ruta: esGuia ? '/shippings.json' : '/documents.json', solicitud, vista,
       licitacionId: b.cotizacion?.id || null, origenDocId: null,
-      lineas: b.lineas.map((l: any) => ({ sku: l.sku, cantidad: l.cantidad, neto_unitario: l.neto_unitario })),
+      lineas: b.lineas.map((l: any) => ({ sku: l.sku, cantidad: l.cantidad, neto_unitario: l.neto_unitario, ...(l.observacion ? { observacion: l.observacion } : {}) })),
       bucket: esGuia ? 'guia-despacho' : 'factura',
       ...(b.cotizacion || b.venta_directa ? { correo: { tipo: b.tipo, para: b.cliente?.email || null } } : {}),
       registrar: async (doc: any, pdf: any) => {
@@ -670,7 +679,7 @@ export class BsaleLibreService {
         shippingTypeId: g.despacho.tipo_traslado_id, address: g.despacho.direccion, municipality: g.despacho.comuna, city: g.despacho.ciudad, recipient: g.despacho.destinatario,
         ...(clienteId ? { clientId: clienteId } : {}), details, salesId,
       };
-      const obs = await this.despachos.observacionParaBsale(String(body?.observacion || ''), g.tipo_documento_id);
+      const obs = await this.despachos.observacionParaBsale(b.observacion || '', g.tipo_documento_id);
       if (obs.atributo) solicitud.dynamicAttributes = [obs.atributo];
       const vista: any = this.vista({
         ...b, tipo: 'guia', tipo_documento_id: g.tipo_documento_id, despacho: g.despacho, traslado: g.traslado, descuenta_stock: true, con_guia: false, guia: null, referencias: [],
@@ -679,7 +688,7 @@ export class BsaleLibreService {
       const r = await this.despachos.emitirReal({
         usuario, clave: claveG, salesId, tipo: 'guia', ruta: '/shippings.json', solicitud, vista,
         licitacionId: cotizacion?.id || null, origenDocId: docEmitido.documento_id || null,
-        lineas: b.lineas.map((l: any) => ({ sku: l.sku, cantidad: l.cantidad, neto_unitario: l.neto_unitario })),
+        lineas: b.lineas.map((l: any) => ({ sku: l.sku, cantidad: l.cantidad, neto_unitario: l.neto_unitario, ...(l.observacion ? { observacion: l.observacion } : {}) })),
         bucket: 'guia-despacho',
         correo: { tipo: 'guia', para: b.cliente?.email || null },
         registrar: async (doc: any, pdf: any) => {
