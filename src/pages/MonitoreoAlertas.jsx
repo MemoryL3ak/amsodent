@@ -4,6 +4,7 @@ import { RefreshCw } from "lucide-react";
 import { api } from "../lib/api";
 import DropdownSelect from "../components/ui/DropdownSelect";
 import BotonLimpiarFiltros from "../components/BotonLimpiarFiltros";
+import { etiquetaTipo } from "../lib/tiposAlerta";
 
 /* ── Administración → Monitoreo de alertas (2026-10-07) ──────────────────────
    Pedido de Ariel: "generar un módulo para monitorear las alertas que recibe
@@ -14,36 +15,7 @@ import BotonLimpiarFiltros from "../components/BotonLimpiarFiltros";
    tabla por persona y por tipo (un clic filtra el detalle) y el detalle de
    cada alerta con su estado. Las informativas solo cuentan si se leyeron. */
 
-const TIPOS = {
-  cierre_proximo: "Cierre de cotización próximo",
-  resultados_publicados: "Resultados publicados",
-  aprobacion_peso: "Aprobación por peso",
-  equivalencias_pendientes: "Equivalencias sin alternativa",
-  cobranza_accion: "Acción de cobranza",
-  factoring_por_vencer: "Factoring por vencer",
-  factoring_vencido: "Factoring vencido",
-  factura_vencida: "Factura vencida",
-  devolucion_pendiente: "Devolución pendiente al cliente",
-  oc_agradecimiento: "Correo de agradecimiento OC",
-  guia_despacho_enviar: "Enviar guía de despacho",
-  factura_enviar: "Enviar factura o boleta",
-  info_despacho_agradecimiento: "Correo de despacho",
-  mp_estado_auto: "Cambio de estado en MP",
-  mp_adjudicada: "Adjudicada en MP",
-  cotizacion_aprobada: "Cotización aprobada",
-  portal_upload: "Documento subido por el cliente",
-  stock_solicitud_cotizacion: "Solicitud de cotización (portal)",
-  stock_cotizacion_mensaje: "Mensaje del cliente (portal)",
-  stock_critico: "Stock crítico de cliente",
-  stock_bajo: "Stock bajo de cliente",
-  pedido_portal_aprobado: "Pedido del portal aprobado",
-  pedido_portal_pagado: "Pedido del portal pagado",
-  pedido_portal_sos: "SOS del portal",
-  chat_invitacion: "Invitación a sala de chat",
-  chat_sala_eliminada: "Sala de chat eliminada",
-  monitor_alerta: "Alerta del sistema",
-};
-const etiquetaTipo = (t) => TIPOS[t] || t;
+
 const ESTADOS = {
   cumplida: { texto: "Cumplida", color: "#15803d", bg: "#dcfce7" },
   pendiente: { texto: "Pendiente", color: "#b45309", bg: "#fef3c7" },

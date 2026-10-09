@@ -168,11 +168,16 @@ export class MercadopublicoService {
      ficha se pide al desplegarla (detalleResultado). Además: caché de 5
      minutos de la lista completa (se borra al sincronizar) y los datos
      internos se piden en paralelo. */
+  /* (2026-10-09) Segunda pasada por lentitud: de los 2,7 MB que viajaban,
+     1 MB era `comparacion_items` (los ítems de cada ficha), que el panel solo
+     usaba para armar el análisis de productos en el navegador. Ahora ese
+     análisis se arma acá (resultadosProductos) y la lista viaja sin ítems. */
   private static readonly COLS_LISTA =
     'id, licitacion_id, codigo_mp, tipo, estado_mp, participamos, ganamos, ganador_rut, ganador_nombre, ganador_es_emt, ' +
     'monto_nuestro, monto_ganador, organismo, fecha_cierre, consultado_at, fecha_adjudicacion, ' +
-    'comparacion_items:detalle->comparacion_items, monto_nuestro_adjudicado:detalle->monto_nuestro_adjudicado';
+    'monto_nuestro_adjudicado:detalle->monto_nuestro_adjudicado';
   private cacheLista: { ts: number; datos: any[] } | null = null;
+  private cacheItems: { ts: number; filas: any[] } | null = null;
 
   async resultados(desde?: string) {
     const client = this.supabase.getClient();
@@ -220,15 +225,116 @@ export class MercadopublicoService {
 
     // Misma forma que antes para el panel: `detalle` con lo que usa la lista.
     const datos = lista.map((r: any) => {
-      const { comparacion_items, monto_nuestro_adjudicado, ...resto } = r;
+      const { monto_nuestro_adjudicado, ...resto } = r;
       return {
         ...resto,
-        detalle: { comparacion_items: Array.isArray(comparacion_items) ? comparacion_items : [], monto_nuestro_adjudicado: monto_nuestro_adjudicado ?? null, resumido: true },
+        detalle: { monto_nuestro_adjudicado: monto_nuestro_adjudicado ?? null, resumido: true },
         interna: porId.get(r.licitacion_id) || null,
       };
     });
     if (!corte) this.cacheLista = { ts: Date.now(), datos };
     return datos;
+  }
+
+  /* (2026-10-09) Análisis POR PRODUCTO del período (antes lo armaba el panel
+     con los ítems de todas las fichas): en cuántos procesos aparece cada
+     producto, cuántos ganamos o perdimos, a qué precios y cuánto movió. La
+     ficha más reciente de cada código manda; el resultado por ítem manda
+     cuando existe (ganado_por_nosotros) y si no hereda la clase del proceso.
+     `desde`/`hasta` acotan por fecha de adjudicación (las sin fecha quedan
+     fuera cuando hay rango), igual que el panel. */
+  async resultadosProductos(desde?: string, hasta?: string) {
+    const esFecha = (v?: string) => /^\d{4}-\d{2}-\d{2}$/.test(String(v || ''));
+    const d = esFecha(desde) ? String(desde) : null;
+    const h = esFecha(hasta) ? String(hasta) : null;
+    const filas = await this.itemsFichas();
+    // La ficha más reciente de cada código de Mercado Público.
+    const porCodigo = new Map<string, any>();
+    for (const r of filas) {
+      const clave = r.codigo_mp || `sin-codigo:${r.licitacion_id}`;
+      const prev = porCodigo.get(clave);
+      if (!prev || Date.parse(r.consultado_at || 0) > Date.parse(prev.consultado_at || 0)) porCodigo.set(clave, r);
+    }
+    const clasificar = (r: any) => {
+      if (r.ganamos === true) return 'ganada';
+      if (r.ganamos === false && r.participamos === false) return 'sin_participar';
+      if (r.ganamos === false) return 'perdida';
+      if (['desierta', 'cancelada', 'revocada', 'suspendida'].includes(r.estado_mp)) return 'sin_efecto';
+      if (r.estado_mp === 'no_encontrada') return 'no_encontrada';
+      return 'en_curso';
+    };
+    const mapa = new Map<string, any>();
+    let fichas = 0;
+    for (const f of porCodigo.values()) {
+      if (d || h) {
+        const dia = String(f.fecha_adjudicacion || '').slice(0, 10);
+        if (!dia) continue;
+        if (d && dia < d) continue;
+        if (h && dia > h) continue;
+      }
+      fichas += 1;
+      const clase = clasificar(f);
+      for (const it of Array.isArray(f.comparacion_items) ? f.comparacion_items : []) {
+        const nombre = String(it?.nombre || '').trim();
+        const codigo = String(it?.codigo_producto || '').trim();
+        const key = (codigo || nombre).toLowerCase();
+        if (!key) continue;
+        const e = mapa.get(key) || {
+          nombre: nombre || codigo, codigo, procesos: new Set<string>(), ganados: 0, perdidos: 0,
+          precioNuestroSum: 0, precioNuestroN: 0, precioGanadorSum: 0, precioGanadorN: 0, montoAdjudicado: 0,
+        };
+        if (nombre && nombre.length > String(e.nombre || '').length) e.nombre = nombre;
+        e.procesos.add(String(f.codigo_mp || f.licitacion_id));
+        let resultado: string | null = null;
+        if (typeof it.ganado_por_nosotros === 'boolean') resultado = it.ganado_por_nosotros ? 'ganado' : 'perdido';
+        else if (clase === 'ganada') resultado = 'ganado';
+        else if (clase === 'perdida') resultado = 'perdido';
+        if (resultado === 'ganado') e.ganados += 1;
+        else if (resultado === 'perdido') e.perdidos += 1;
+        const pn = Number(it.nuestro_precio);
+        if (Number.isFinite(pn) && pn > 0) { e.precioNuestroSum += pn; e.precioNuestroN += 1; }
+        const pg = Number(it.precio_ganador);
+        if (Number.isFinite(pg) && pg > 0) {
+          e.precioGanadorSum += pg;
+          e.precioGanadorN += 1;
+          const cant = Number(it.cantidad_ganador ?? it.nuestra_cantidad ?? 1) || 1;
+          e.montoAdjudicado += pg * cant;
+        }
+        mapa.set(key, e);
+      }
+    }
+    const productos = [...mapa.values()]
+      .map((e) => {
+        const precioNuestro = e.precioNuestroN ? e.precioNuestroSum / e.precioNuestroN : null;
+        const precioGanador = e.precioGanadorN ? e.precioGanadorSum / e.precioGanadorN : null;
+        return {
+          nombre: e.nombre, codigo: e.codigo, procesos: e.procesos.size, ganados: e.ganados, perdidos: e.perdidos,
+          precioNuestro, precioGanador,
+          brecha: precioNuestro != null && precioGanador != null && precioGanador > 0 ? ((precioNuestro - precioGanador) / precioGanador) * 100 : null,
+          montoAdjudicado: Math.round(e.montoAdjudicado),
+        };
+      })
+      .sort((a, b) => b.procesos - a.procesos || b.montoAdjudicado - a.montoAdjudicado);
+    return { desde: d, hasta: h, fichas, productos };
+  }
+
+  /* Los ítems de todas las fichas (solo lo que usa el análisis), en caché 5 min. */
+  private async itemsFichas(): Promise<any[]> {
+    if (this.cacheItems && Date.now() - this.cacheItems.ts < 5 * 60 * 1000) return this.cacheItems.filas;
+    const { data, error } = await this.supabase
+      .getClient()
+      .from('mp_resultados')
+      .select('licitacion_id, codigo_mp, consultado_at, fecha_adjudicacion, ganamos, participamos, estado_mp, comparacion_items:detalle->comparacion_items')
+      .order('consultado_at', { ascending: false })
+      .range(0, 49999);
+    if (error) {
+      throw new BadRequestException(
+        /does not exist|schema cache/i.test(error.message) ? 'Falta aplicar la migración 20260807_mp_resultados.sql en Supabase.' : error.message,
+      );
+    }
+    const filas = data || [];
+    this.cacheItems = { ts: Date.now(), filas };
+    return filas;
   }
 
   /* Detalle completo de UNA ficha (cotizaciones de cada competidor, ítems…):
@@ -256,6 +362,7 @@ export class MercadopublicoService {
   async sincronizar(body?: { desde?: string; hasta?: string; lote?: number; forzar?: boolean | string }) {
     // Lo que se sincroniza cambia la lista: la caché del panel se descarta.
     this.cacheLista = null;
+    this.cacheItems = null;
     if (!this.ticket) {
       throw new BadRequestException(
         'Falta configurar MP_API_TICKET en el backend. El ticket se solicita gratis en chilecompra.cl/api con Clave Única.',
