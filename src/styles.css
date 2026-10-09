@@ -1440,6 +1440,11 @@ select.input {
 .data-table.cotizaciones-table td:nth-child(7) { white-space: normal; }
 .data-table.cotizaciones-table td:nth-child(7) .badge { white-space: normal; text-align: center; line-height: 1.25; }
 .data-table.cotizaciones-table th:nth-child(8) { width: 124px; } /* Creado por */
+/* (2026-10-09) Acción también con width: era la única columna sin ancho y, con
+   layout auto, se quedaba con TODO el sobrante (en un monitor de 1920 px, un
+   hueco de 800 px a la derecha del botón «Detalle»). Con width en las nueve,
+   el sobrante se reparte en proporción entre todas. */
+.data-table.cotizaciones-table th:nth-child(9) { width: 118px; }
 /* Tramos de densidad: primero menos aire, después cae "Creado por" (el dato
    sigue en el detalle). Así el Estado nunca queda bajo la Acción sticky. */
 @media (max-width: 1320px) {
