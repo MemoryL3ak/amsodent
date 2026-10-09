@@ -1410,8 +1410,8 @@ select.input {
 .data-table.cotizaciones-table th:nth-child(1) { width: 42px; }
 .data-table.cotizaciones-table th:nth-child(2),
 .data-table.cotizaciones-table td:nth-child(2) {
-  width: 145px;
-  max-width: 150px;
+  width: 135px;
+  max-width: 140px;
   overflow: hidden;
   text-overflow: ellipsis;
   font-size: 11.5px;
@@ -1434,12 +1434,24 @@ select.input {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.data-table.cotizaciones-table th:nth-child(7) { width: 124px; } /* Estado */
+/* (2026-10-09) Estado más ancha (y Creado por e ID un poco menos) para que
+   «Pendiente Aprobación Peso» quede en dos líneas en un 13", no en tres. */
+.data-table.cotizaciones-table th:nth-child(7) { width: 150px; } /* Estado */
 /* El badge largo ("Pendiente Aprobación Peso") envuelve a dos líneas en vez
    de forzar el ancho de la columna y esconderse bajo la Acción sticky. */
 .data-table.cotizaciones-table td:nth-child(7) { white-space: normal; }
-.data-table.cotizaciones-table td:nth-child(7) .badge { white-space: normal; text-align: center; line-height: 1.25; }
-.data-table.cotizaciones-table th:nth-child(8) { width: 124px; } /* Creado por */
+/* (2026-10-09) Si tiene que partirse, que se vea como una etiqueta de dos
+   líneas: texto alineado a la izquierda y el punto en la primera línea (antes
+   el texto iba centrado y el punto flotaba al medio). */
+.data-table.cotizaciones-table td:nth-child(7) .badge { white-space: normal; text-align: left; line-height: 1.25; align-items: flex-start; }
+.data-table.cotizaciones-table td:nth-child(7) .badge::before { margin-top: 5px; }
+/* Con pantalla de sobra, Estado es más ancha y la etiqueta más larga
+   («Pendiente Aprobación Peso») cabe en una línea. */
+@media (min-width: 1500px) {
+  .data-table.cotizaciones-table th:nth-child(7) { width: 196px; }
+  .data-table.cotizaciones-table td:nth-child(7) .badge { white-space: nowrap; }
+}
+.data-table.cotizaciones-table th:nth-child(8) { width: 110px; } /* Creado por */
 /* (2026-10-09) Acción también con width: era la única columna sin ancho y, con
    layout auto, se quedaba con TODO el sobrante (en un monitor de 1920 px, un
    hueco de 800 px a la derecha del botón «Detalle»). Con width en las nueve,
