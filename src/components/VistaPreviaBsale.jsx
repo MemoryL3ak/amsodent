@@ -159,6 +159,9 @@ export default function VistaPreviaBsale({ vista, solicitud, titulo = "Así qued
                     <td style={{ overflowWrap: "anywhere" }}>
                       {l.producto || "—"}
                       {l.observacion && <div className="obs-linea" style={{ fontSize: 11, color: "#374151", marginTop: 2 }}>{l.observacion}</div>}
+                      {l.stock_bsale != null && Number(l.stock_bsale) < Number(l.cantidad) && (
+                        <div className="sin-stock-linea" style={{ fontSize: 11, color: "#b91c1c", fontWeight: 700, marginTop: 2 }}>Sin stock en Bsale: hay {Number(l.stock_bsale).toLocaleString("es-CL")}</div>
+                      )}
                     </td>
                     <td className="num">{num(l.cantidad)}</td>
                     {conPendiente && <td className="num" style={{ color: l.pendiente_despues > 0 ? "#b45309" : "#6b7280" }}>{num(l.pendiente_despues)}</td>}

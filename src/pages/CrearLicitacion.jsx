@@ -3344,7 +3344,7 @@ export default function CrearLicitacion() {
                         </select>
                       </div>
                     )}
-                    <div className="grid grid-cols-1 md:grid-cols-[repeat(24,minmax(0,1fr))] gap-4 items-end">
+                    <div className="grid grid-cols-1 md:grid-cols-[repeat(24,minmax(0,1fr))] gap-4 items-end fila-item-cot">
                       <div className="md:col-span-1">
                         <label className="block text-xs text-gray-600 mb-1">
                           Items
@@ -3374,9 +3374,9 @@ export default function CrearLicitacion() {
                       </div>
 
                       <div className={esAdmin ? "md:col-span-4" : "md:col-span-9"}>
-                        <div className="flex items-center justify-between mb-1 cab-producto-ficha" style={{ gap: "4px 6px", flexWrap: "wrap" }}>
-                          <div style={{ display: "inline-flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                          <label className="block text-xs text-gray-600">
+                        <div className="flex items-center justify-between mb-1 cab-producto-ficha" style={{ gap: 6, flexWrap: "nowrap", height: 20, overflow: "hidden" }}>
+                          <div style={{ display: "inline-flex", alignItems: "center", gap: 6, flexWrap: "nowrap", minWidth: 0, flex: "1 1 auto" }}>
+                          <label className="block text-xs text-gray-600" style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }} title="Producto">
                             Producto *
                           </label>
                           {/* Ficha técnica del producto de la línea (2026-10-03). */}
@@ -3394,7 +3394,10 @@ export default function CrearLicitacion() {
                               display: "inline-flex",
                               alignItems: "center",
                               gap: 5,
-                              padding: "3px 10px",
+                              padding: "0 8px",
+                              height: 20,
+                              whiteSpace: "nowrap",
+                              flexShrink: 0,
                               borderRadius: 999,
                               border: "1px solid #25b7bd",
                               background: "#fff",
@@ -3423,7 +3426,7 @@ export default function CrearLicitacion() {
                               <circle cx="11" cy="11" r="8"/>
                               <line x1="21" y1="21" x2="16.65" y2="16.65"/>
                             </svg>
-                            Buscar catálogo
+                            <span className="txt-buscar-catalogo">Buscar catálogo</span>
                           </button>
                         </div>
                         <Select

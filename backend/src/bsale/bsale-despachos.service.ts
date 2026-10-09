@@ -361,6 +361,9 @@ export class BsaleDespachosService {
         observacion: String(it.observacion || '').trim(),
       });
     }
+    // Stock en Bsale de lo que falta por despachar (2026-10-09).
+    const sinStock = await this.anotarStock(lineas.filter((l) => l.en_bsale && l.pendiente > 0).map((l) => Object.assign(l, { cantidad: l.pendiente })));
+    if (sinStock) avisos.push({ codigo: 'sin_stock', mensaje: sinStock });
     if (sinSku.length) avisos.push({ codigo: 'items_sin_sku', mensaje: `${sinSku.length} producto${sinSku.length === 1 ? '' : 's'} de la cotización no tiene${sinSku.length === 1 ? '' : 'n'} SKU y no puede${sinSku.length === 1 ? '' : 'n'} ir en la guía: ${sinSku.slice(0, 4).join('; ')}${sinSku.length > 4 ? '…' : ''}. Asígnales SKU en la cotización.` });
     if (noEnBsale.length) avisos.push({ codigo: 'sku_no_en_bsale', mensaje: `${noEnBsale.length} SKU no está${noEnBsale.length === 1 ? '' : 'n'} en Bsale y no puede${noEnBsale.length === 1 ? '' : 'n'} ir en la guía: ${noEnBsale.slice(0, 6).join(', ')}${noEnBsale.length > 6 ? '…' : ''}.` });
     if (!lineas.length) problemas.push({ codigo: 'sin_lineas', mensaje: 'La cotización no tiene productos con SKU: no hay qué despachar.' });
@@ -531,6 +534,32 @@ export class BsaleDespachosService {
     return a ? Number(a.id) : null;
   }
 
+  /* (2026-10-09) Stock disponible de una variante en Bsale (suma de sucursales).
+     Pedido de Ariel: "cuando no quede stock de un producto, en la simulación
+     debe consultar el stock de cada uno e identificar cuál no tiene". null =
+     no se pudo consultar (no frena nada). */
+  async stockDeVariante(varianteId: number): Promise<number | null> {
+    try {
+      const r = await this.facturacion.apiGet(`/stocks.json?variantid=${Number(varianteId)}&limit=50`);
+      const items: any[] = r?.items || [];
+      return items.reduce((a, s) => a + (Number(s?.quantityAvailable) || 0), 0);
+    } catch {
+      return null;
+    }
+  }
+
+  /* Pone `stock_bsale` en cada línea con variante (de a 4 consultas) y devuelve
+     el aviso de las que no alcanzan, con lo que hay y lo que se pide. */
+  async anotarStock(lineas: { sku: string; variante_id?: number | null; cantidad: number; stock_bsale?: number | null }[]): Promise<string | null> {
+    const con = lineas.filter((l) => l.variante_id);
+    for (let i = 0; i < con.length; i += 4) {
+      await Promise.all(con.slice(i, i + 4).map(async (l) => { l.stock_bsale = await this.stockDeVariante(Number(l.variante_id)); }));
+    }
+    const faltan = lineas.filter((l) => l.stock_bsale != null && Number(l.stock_bsale) < Number(l.cantidad));
+    if (!faltan.length) return null;
+    return `Sin stock suficiente en Bsale: ${faltan.map((l) => `${l.sku} (hay ${Number(l.stock_bsale).toLocaleString('es-CL')}, van ${Number(l.cantidad).toLocaleString('es-CL')})`).join(' · ')}.`;
+  }
+
   /* Texto validado + atributo listo para la solicitud a Bsale. */
   async observacionParaBsale(valor: any, tipoDocumentoId: number): Promise<{ texto: string; atributo: { description: string; dynamicAttributeId: number } | null; aviso: string | null }> {
     const t = String(valor ?? '').replace(/\s+/g, ' ').trim();
@@ -670,13 +699,14 @@ export class BsaleDespachosService {
       sii: true,
       descuenta_stock: true,
       clienteNuevo: (cli as any).clienteNuevo,
-      lineas: elegidas.map((l) => ({ sku: l.sku, producto: l.producto, cantidad: l.cantidad, neto_unitario: l.neto_unitario, neto: l.neto, pendiente_despues: Math.max(0, l.pendiente - l.cantidad), observacion: notasPorLinea ? l.observacion || null : null })),
+      lineas: elegidas.map((l) => ({ sku: l.sku, producto: l.producto, cantidad: l.cantidad, neto_unitario: l.neto_unitario, neto: l.neto, pendiente_despues: Math.max(0, l.pendiente - l.cantidad), observacion: notasPorLinea ? l.observacion || null : null, stock_bsale: l.stock_bsale ?? null })),
       totales,
       fecha_emision: fecha,
       despacho: { ...despacho, tipo_traslado: traslado?.nombre || null },
       notas: [
         b.orden_bsale ? `Las líneas salen de la orden ${b.orden_bsale.numero} registrada en Bsale.` : 'Los precios son los de la cotización.',
         'Bsale descuenta el stock al emitir la guía.',
+        ...(elegidas.some((l) => l.stock_bsale != null && Number(l.stock_bsale) < Number(l.cantidad)) ? [`Sin stock suficiente en Bsale: ${elegidas.filter((l) => l.stock_bsale != null && Number(l.stock_bsale) < Number(l.cantidad)).map((l) => `${l.sku} (hay ${l.stock_bsale}, van ${l.cantidad})`).join(' · ')}.`] : []),
         ...(notasPorLinea && elegidas.some((l) => l.observacion) ? ['La observación de cada producto va en su línea de la guía.'] : []),
         ...(obs.aviso ? [obs.aviso] : []),
       ],

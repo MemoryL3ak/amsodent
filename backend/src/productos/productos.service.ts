@@ -24,6 +24,15 @@ export class ProductosService {
     }
   }
 
+  private async actualizarEnBsale(producto: any, motivo: string) {
+    if (!this.bsaleProductos) return null;
+    try {
+      return await this.bsaleProductos.actualizar(producto, { motivo });
+    } catch (e: any) {
+      return { estado: 'error', mensaje: String(e?.message || e).slice(0, 300) };
+    }
+  }
+
   /* Botón "Enviar a Bsale" de la ficha: reintento a mano. */
   async reenviarABsale(id: number) {
     const { data, error } = await this.supabase.getClient().from('productos').select('*').eq('id', id).maybeSingle();
@@ -682,7 +691,7 @@ export class ProductosService {
       const { data } = await this.supabase
         .getClient()
         .from('productos')
-        .select('sku, costo, nombre')
+        .select('sku, costo, nombre, marca, categoria, formato, lista1, lista2, bsale_variant_id')
         .eq('id', id)
         .maybeSingle();
       anterior = (data as any) || null;
@@ -730,11 +739,18 @@ export class ProductosService {
     const skuAntes = String(anterior?.sku || '').replace(/\s+/g, '').toUpperCase();
     // Con SKU nuevo o cambiado se envía (si era transitorio en Bsale, se le pone el SKU a su variante);
     // un transitorio sin SKU que aún no está en Bsale se envía al editarlo (2026-10-07).
+    // (2026-10-09) Un producto que YA está en Bsale y cambia de nombre, marca,
+    // categoría, formato o precios se actualiza allá (pedido de Ariel).
+    const tocaBsale = ['nombre', 'marca', 'categoria', 'formato', 'lista1', 'lista2'].some(
+      (k) => body?.[k] !== undefined && String(body[k] ?? '').trim() !== String(anterior?.[k] ?? '').trim(),
+    );
     const bsale = skuAhora && skuAhora !== skuAntes
       ? await this.enviarABsale(data, skuAntes ? `SKU cambiado (antes ${skuAntes})` : 'SKU asignado')
       : !skuAhora && !(data as any)?.bsale_variant_id && String((data as any)?.estado || '') !== 'Inactivo'
         ? await this.enviarABsale(data, 'transitorio editado')
-        : null;
+        : (data as any)?.bsale_variant_id && tocaBsale
+          ? await this.actualizarEnBsale(data, 'producto editado')
+          : null;
     return { ...(data as any), propagado, ...(bsale ? { bsale } : {}) };
   }
 

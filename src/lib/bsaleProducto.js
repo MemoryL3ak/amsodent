@@ -23,6 +23,11 @@ export function mensajeBsale(b) {
       return `Ya había en Bsale un producto con el mismo nombre${b.nombre_bsale ? ` («${b.nombre_bsale}»)` : ""}: quedó enlazado a él (variante ${b.variante_id}), sin duplicarlo.`;
     case "sku_asignado":
       return b.mensaje || `Se le puso el SKU a la variante ${b.variante_id} que ya estaba en Bsale.`;
+    case "actualizado": {
+      const precios = (b.precios || []).map((p) => `${p.nombre} ${clp(p.neto)}`).join(", ");
+      const avisos = (b.avisos || []).length ? ` Ojo: ${b.avisos.join(" ")}` : "";
+      return `Actualizado en Bsale (variante ${b.variante_id}${precios ? `; precios: ${precios}` : ""}).${avisos}`;
+    }
     case "error":
       return `No se pudo enviar a Bsale: ${b.mensaje || "error desconocido"}. Puedes reintentar desde la ficha del producto.`;
     case "apagada":

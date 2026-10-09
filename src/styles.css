@@ -3836,7 +3836,16 @@ a.ayuda-ruta-chip:hover { background: var(--primary-mid); }
 .cab-producto-ficha { container-type: inline-size; }
 @container (max-width: 145px) {
   .cab-producto-ficha .bft-texto { display: none; }
-  .cab-producto-ficha .boton-ficha-tecnica { padding: 3px 6px !important; }
+  .cab-producto-ficha .boton-ficha-tecnica { padding: 0 6px !important; }
+}
+/* (2026-10-09) "Los botones se ven descuadrados": la cabecera «Producto *» mide
+   20 px (los botones ya no se parten a otra línea) y las etiquetas de las
+   otras columnas de la fila miden lo mismo, así las cajas de abajo quedan
+   parejas. Con poco ancho «Buscar catálogo» queda solo con la lupa. */
+.fila-item-cot > div > label.block { min-height: 20px; display: flex; align-items: flex-end; }
+@container (max-width: 250px) {
+  .cab-producto-ficha .txt-buscar-catalogo { display: none; }
+  .cab-producto-ficha button[title="Buscar producto en el catálogo"] { padding: 0 6px !important; }
 }
 
 /* Factura anulada con nota de crédito o en Bsale (Trazabilidad → Facturas, 2026-10-07):
