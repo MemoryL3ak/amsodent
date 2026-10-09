@@ -551,6 +551,11 @@ export class BsaleFacturacionService {
   async ventasDirectas(userId: string) {
     await this.exigirRol(userId);
     const db = this.supabase.getClient();
+    // (2026-10-09) Cada vendedor ve solo sus ventas; administración ve todas.
+    const { data: perfil } = await db.from('profiles').select('rol, email').eq('id', userId).maybeSingle();
+    const rol = String((perfil as any)?.rol || '').trim().toLowerCase();
+    const soloMias = !(rol === 'admin' || rol === 'administrador');
+    const miEmail = String((perfil as any)?.email || '').trim().toLowerCase();
     const ventas: any[] = [];
     for (let desde = 0; desde < 20000; desde += 1000) {
       const r: any = await db
@@ -559,10 +564,17 @@ export class BsaleFacturacionService {
         .like('clave', 'AMS-V-%')
         .order('id', { ascending: false })
         .range(desde, desde + 999);
-      if (r.error) return { registro_listo: false, filas: [] };
+      if (r.error) return { registro_listo: false, solo_mias: soloMias, filas: [] };
       ventas.push(...(r.data || []));
       if (!r.data || r.data.length < 1000) break;
     }
+    // (2026-10-09) La guía que la venta directa emite después de la boleta/factura
+    // (clave …-G, tipo guia) no es otra venta: salía listada como una boleta
+    // más. Queda solo como guía de su venta (`guias`).
+    let lista = ventas.filter((e) => e.tipo === 'boleta' || e.tipo === 'factura');
+    if (soloMias) lista = lista.filter((e) => String(e.usuario || '').trim().toLowerCase() === miEmail);
+    ventas.length = 0;
+    ventas.push(...lista);
 
     // Documentos y cotizaciones de esas ventas (de a 300 ids por consulta).
     const porLotes = async (ids: number[], fn: (lote: number[]) => Promise<any[]>) => {
@@ -593,6 +605,7 @@ export class BsaleFacturacionService {
     const sumar = (lista: any[]) => (lista.length ? { total: lista.reduce((a, d) => a + (Number(d.monto) || 0), 0), numeros: lista.map((d) => String(d.numero || '')).filter(Boolean) } : null);
     return {
       registro_listo: true,
+      solo_mias: soloMias,
       filas: ventas.map((e) => {
         const lic = lics.get(Number(e.licitacion_id)) || null;
         const dl = docsDe.get(Number(e.licitacion_id)) || [];
