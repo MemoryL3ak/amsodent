@@ -73,14 +73,12 @@ export function observacionSugerida(lineas: { sku?: string; producto?: string; o
 }
 /* (2026-10-08) Pedido de Ariel: "al crear la guía debe aparecer el campo para
    ver las observaciones y permitir agregar más información por producto, que
-   se envía a los atributos adicionales". La pantalla manda la observación de
-   cada línea (editada) y una general; acá se arma el texto del atributo:
-   general · SKU: texto · SKU: texto. Misma cuenta en src/lib/observacionGuia.js. */
-export function observacionCompuesta(general: any, lineas: { sku?: string; producto?: string; observacion?: string }[]): string {
-  const g = String(general ?? '').replace(/\s+/g, ' ').trim();
-  const porLinea = observacionSugerida(lineas);
-  return [g, porLinea].filter(Boolean).join(' · ');
-}
+   se envía a los atributos adicionales… ese campo también es por ítem". En
+   Bsale la observación de cada producto va en SU línea del documento: se
+   manda como `comment` del detalle y Bsale la guarda como `note` (así están
+   238 guías de la cuenta, p. ej. la 637: «ASOCIADA OC 5610-253-AG26» en una
+   línea). El atributo «Observación» del documento queda para lo general. */
+export const limpiarObservacion = (v: any) => String(v ?? '').replace(/\s+/g, ' ').trim();
 // RUT como lo guarda Bsale: sin puntos, con guion.
 const rutBsale = (v: any) => {
   const limpio = normRut(v);
@@ -576,9 +574,10 @@ export class BsaleDespachosService {
       despacho?: { direccion?: string; comuna?: string; ciudad?: string; destinatario?: string; tipo_traslado_id?: number };
       // Empresa de transporte y N° de seguimiento: solo para el sistema, no van a Bsale.
       seguimiento?: { empresa?: string; numero?: string };
-      // Atributo adicional «Observación» en Bsale. Con `observaciones` (por SKU,
-      // 2026-10-08) el texto se arma: general · SKU: texto…; sin él, `observacion`
-      // es el texto completo (pantallas antiguas) o, si tampoco viene, la propuesta.
+      // Atributo adicional «Observación» del documento (lo general). Con
+      // `observaciones` (por SKU, 2026-10-08) cada texto va en la línea de su
+      // producto; sin él, `observacion` es el texto completo (pantallas
+      // antiguas) o, si tampoco viene, la propuesta con las de los productos.
       observacion?: string;
       observaciones?: Record<string, string>;
       cliente?: Record<string, any>; fecha_emision?: string; huella?: string; simular?: boolean;
@@ -606,11 +605,12 @@ export class BsaleDespachosService {
     const porSkuObs = body?.observaciones && typeof body.observaciones === 'object' ? body.observaciones : null;
     if (porSkuObs) {
       const claves = new Map(Object.keys(porSkuObs).map((k) => [normSku(k), porSkuObs[k]]));
-      for (const l of elegidas) l.observacion = texto(claves.has(l.sku) ? claves.get(l.sku) : l.observacion, OBSERVACION_MAX);
+      for (const l of elegidas) l.observacion = limpiarObservacion(claves.has(l.sku) ? claves.get(l.sku) : l.observacion).slice(0, OBSERVACION_MAX);
     }
-    const textoObservacion = porSkuObs
-      ? observacionCompuesta(body?.observacion, elegidas)
-      : body?.observacion === undefined ? observacionCompuesta('', elegidas) : body.observacion;
+    const notasPorLinea = !!porSkuObs;
+    const textoObservacion = notasPorLinea
+      ? limpiarObservacion(body?.observacion)
+      : body?.observacion === undefined ? observacionSugerida(elegidas) : body.observacion;
 
     const fecha = String(body?.fecha_emision || b.fecha_emision).slice(0, 10);
     if (!Number.isFinite(fechaAEpoch(fecha))) throw new BadRequestException('La fecha de emisión no es válida.');
@@ -654,9 +654,11 @@ export class BsaleDespachosService {
       recipient: despacho.destinatario,
       ...('clientId' in cli ? { clientId: cli.clientId } : { client: cli.client }),
       // Con orden registrada en Bsale, las líneas salen de ella (así Bsale las enlaza).
-      details: elegidas.map((l) =>
-        l.detalle_id ? { detailId: l.detalle_id, quantity: l.cantidad } : { code: l.sku, quantity: l.cantidad, netUnitValue: l.neto_unitario, taxId: `[${IVA_ID}]` },
-      ),
+      details: elegidas.map((l) => ({
+        ...(l.detalle_id ? { detailId: l.detalle_id, quantity: l.cantidad } : { code: l.sku, quantity: l.cantidad, netUnitValue: l.neto_unitario, taxId: `[${IVA_ID}]` }),
+        // Observación del producto → nota de su línea en Bsale (2026-10-08).
+        ...(notasPorLinea && l.observacion ? { comment: l.observacion } : {}),
+      })),
       references: b.referencias.map((r: any) => referenciaParaBsale(r, emision)),
       salesId,
     };
@@ -668,13 +670,14 @@ export class BsaleDespachosService {
       sii: true,
       descuenta_stock: true,
       clienteNuevo: (cli as any).clienteNuevo,
-      lineas: elegidas.map((l) => ({ sku: l.sku, producto: l.producto, cantidad: l.cantidad, neto_unitario: l.neto_unitario, neto: l.neto, pendiente_despues: Math.max(0, l.pendiente - l.cantidad) })),
+      lineas: elegidas.map((l) => ({ sku: l.sku, producto: l.producto, cantidad: l.cantidad, neto_unitario: l.neto_unitario, neto: l.neto, pendiente_despues: Math.max(0, l.pendiente - l.cantidad), observacion: notasPorLinea ? l.observacion || null : null })),
       totales,
       fecha_emision: fecha,
       despacho: { ...despacho, tipo_traslado: traslado?.nombre || null },
       notas: [
         b.orden_bsale ? `Las líneas salen de la orden ${b.orden_bsale.numero} registrada en Bsale.` : 'Los precios son los de la cotización.',
         'Bsale descuenta el stock al emitir la guía.',
+        ...(notasPorLinea && elegidas.some((l) => l.observacion) ? ['La observación de cada producto va en su línea de la guía.'] : []),
         ...(obs.aviso ? [obs.aviso] : []),
       ],
     });
@@ -724,9 +727,33 @@ export class BsaleDespachosService {
         } catch { /* la verificación no frena nada */ }
         const sinObs = obs.atributo ? await this.avisoObservacion(Number(doc.id), doc.number, obs.texto) : null;
         if (sinObs) avisos.push(sinObs);
+        if (notasPorLinea) {
+          const sinNotas = await this.avisoNotasLineas(Number(doc.id), doc.number, elegidas);
+          if (sinNotas) avisos.push(sinNotas);
+        }
         return avisos;
       },
     });
+  }
+
+  /* ¿Bsale guardó la nota de cada línea (`comment` → `note`)? Se confirma
+     leyendo las líneas del documento emitido; la línea se reconoce por la
+     variante (id) o por el SKU. Si falta alguna, se avisa para agregarla a
+     mano. Nunca frena la emisión. */
+  async avisoNotasLineas(docId: number, numero: any, lineas: { sku: string; variante_id?: number | null; observacion?: string }[]): Promise<string | null> {
+    const esperadas = lineas.filter((l) => limpiarObservacion(l.observacion));
+    if (!esperadas.length) return null;
+    try {
+      const items: any[] = await this.facturacion.todos(`/documents/${Number(docId)}/details.json`, '&expand=[variant]');
+      const faltan = esperadas.filter((l) => {
+        const deLaLinea = items.filter((d: any) => (l.variante_id && Number(d?.variant?.id) === Number(l.variante_id)) || (l.sku && normSku(d?.variant?.code) === normSku(l.sku)));
+        return !deLaLinea.some((d: any) => limpiarObservacion(d?.note) === limpiarObservacion(l.observacion));
+      });
+      if (!faltan.length) return null;
+      return `La guía ${numero} quedó sin la observación de ${faltan.map((l) => l.sku).join(', ')} en su línea: agrégala a mano en Bsale.`;
+    } catch {
+      return null; // la verificación no frena nada
+    }
   }
 
   // ── Emisión: orden (nota de venta) ─────────────────────────────────────

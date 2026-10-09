@@ -4,7 +4,7 @@ import { LicitacionesService } from '../licitaciones/licitaciones.service';
 import {
   BsaleFacturacionService, EMISOR, fechaAEpoch, folioCotizacion, normOc, normRut, ocDeReferencia, referenciaGuia, referenciaOcFactura, referenciaOcGuia, referenciaParaBsale, referenciaVista, sumarDias, totalesDe,
 } from './bsale-facturacion.service';
-import { BsaleDespachosService, OBSERVACION_MAX, observacionCompuesta, observacionSugerida } from './bsale-despachos.service';
+import { BsaleDespachosService, OBSERVACION_MAX, limpiarObservacion, observacionSugerida } from './bsale-despachos.service';
 
 /* ── Guías, facturas y boletas LIBRES en Bsale (2026-10-03) ──────────────────
    Pedido de Ariel: "necesito la opción de crear guías y facturas de manera
@@ -341,7 +341,7 @@ export class BsaleLibreService {
       lineas.push({
         sku, producto: texto(l?.producto, 160) || String(variante?.product?.name || ''), cantidad, neto_unitario: neto,
         neto: Math.round(cantidad * neto), en_bsale: !!variante, variante_id: variante ? Number(variante.id) : null,
-        observacion: texto(obsPorSku ? obsPorSku.get(sku) ?? l?.observacion : l?.observacion, OBSERVACION_MAX),
+        observacion: limpiarObservacion(obsPorSku ? obsPorSku.get(sku) ?? l?.observacion : l?.observacion).slice(0, OBSERVACION_MAX),
       });
     }
     if (!lineas.length) problemas.push({ codigo: 'sin_lineas', mensaje: 'Agrega al menos un producto.' });
@@ -466,15 +466,16 @@ export class BsaleLibreService {
       }
     }
 
-    // Observación de la guía → atributo adicional en Bsale (2026-10-07). Con
-    // `observaciones` por SKU (2026-10-08) el texto se arma general · SKU: texto…;
-    // sin ellas, `observacion` es el texto completo. También para la guía de la venta directa.
-    const observacion = tipo === 'guia' || conGuia
-      ? obsPorSku ? observacionCompuesta(body?.observacion, lineas) : String(body?.observacion ?? '').replace(/\s+/g, ' ').trim()
-      : '';
+    // Observación de la guía → atributo adicional del documento (2026-10-07).
+    // Con `observaciones` por SKU (2026-10-08) cada texto va en la línea de su
+    // producto (nota del detalle) y acá queda solo lo general. También para
+    // la guía de la venta directa.
+    const notasPorLinea = !!obsPorSku;
+    const observacion = tipo === 'guia' || conGuia ? limpiarObservacion(body?.observacion) : '';
     if (observacion.length > OBSERVACION_MAX) problemas.push({ codigo: 'observacion_larga', mensaje: `La observación tiene ${observacion.length} caracteres; en Bsale caben hasta ${OBSERVACION_MAX}. Acórtala.` });
     const borrador = {
       observacion,
+      notas_por_linea: notasPorLinea,
       comprobante,
       tipo, venta_directa: ventaDirecta, tipo_documento_id: tipoDocumentoId, cliente, lineas, totales, fecha_emision: fecha, referencias, despacho,
       con_guia: conGuia, guia: guiaVenta,
@@ -486,7 +487,7 @@ export class BsaleLibreService {
     const huella = this.facturacion.huellaDe({
       cliente: { id: cliente?.id || cliente?.rut || 'consumidor-final' }, tipo_documento_id: tipoDocumentoId,
       lineas: lineas.map((l) => ({ detalle_id: l.variante_id, cantidad: l.cantidad, neto: l.neto_unitario })),
-      referencias: [...referencias.map((r) => ({ codigo_sii: r.codigo_sii, folio: r.folio, numero: r.numero })), { codigo_sii: 0, numero: `${tipo}|${ventaDirecta}|${fecha}|${JSON.stringify(despacho)}|${formaPago?.id}|${dias}|${descuentaStock}|${conGuia}|${conGuia ? JSON.stringify(guiaVenta?.despacho) : ''}|${cotizacion?.id || ''}|${cliente?.nuevo ? JSON.stringify(cliente) : ''}|${observacion}` }],
+      referencias: [...referencias.map((r) => ({ codigo_sii: r.codigo_sii, folio: r.folio, numero: r.numero })), { codigo_sii: 0, numero: `${tipo}|${ventaDirecta}|${fecha}|${JSON.stringify(despacho)}|${formaPago?.id}|${dias}|${descuentaStock}|${conGuia}|${conGuia ? JSON.stringify(guiaVenta?.despacho) : ''}|${cotizacion?.id || ''}|${cliente?.nuevo ? JSON.stringify(cliente) : ''}|${observacion}|${lineas.map((l) => l.observacion || '').join('|')}` }],
       totales,
     });
     return { ...borrador, huella };
@@ -501,7 +502,7 @@ export class BsaleLibreService {
       descuenta_stock: b.descuenta_stock,
       emisor: EMISOR,
       cliente: c ? { razon_social: c.razon_social, rut: c.rut, giro: c.giro, direccion: c.direccion, comuna: c.comuna, nuevo: c.nuevo } : {},
-      lineas: b.lineas.map((l: any) => ({ sku: l.sku, producto: l.producto, cantidad: l.cantidad, neto_unitario: l.neto_unitario, neto: l.neto })),
+      lineas: b.lineas.map((l: any) => ({ sku: l.sku, producto: l.producto, cantidad: l.cantidad, neto_unitario: l.neto_unitario, neto: l.neto, observacion: b.tipo === 'guia' && b.notas_por_linea ? l.observacion || null : null })),
       totales: b.totales,
       referencias: b.referencias.map(referenciaVista),
       forma_pago: b.forma_pago?.nombre || null,
@@ -555,7 +556,11 @@ export class BsaleLibreService {
     const clave = `AMS-${b.venta_directa ? 'V' : 'L'}-${letra}-${b.huella}`;
     const { data: previas } = await this.supabase.getClient().from('bsale_emisiones').select('id').eq('clave', clave).eq('estado', 'emitida');
     const salesId = `${clave}-${(previas || []).length}`;
-    const details = b.lineas.map((l: any) => ({ code: l.sku, quantity: l.cantidad, netUnitValue: l.neto_unitario, taxId: `[${IVA_ID}]` }));
+    const details = b.lineas.map((l: any) => ({
+      code: l.sku, quantity: l.cantidad, netUnitValue: l.neto_unitario, taxId: `[${IVA_ID}]`,
+      // Observación del producto → nota de su línea en la guía (2026-10-08).
+      ...(b.tipo === 'guia' && b.notas_por_linea && l.observacion ? { comment: l.observacion } : {}),
+    }));
     const references = b.referencias.map((r: any) => referenciaParaBsale(r, emision));
     const solicitud: Record<string, any> =
       b.tipo === 'guia'
@@ -641,6 +646,10 @@ export class BsaleLibreService {
         const avisos: string[] = [];
         const sinObs = obs.atributo ? await this.despachos.avisoObservacion(Number(doc.id), doc.number, obs.texto) : null;
         if (sinObs) avisos.push(sinObs);
+        if (b.tipo === 'guia' && b.notas_por_linea) {
+          const sinNotas = await this.despachos.avisoNotasLineas(Number(doc.id), doc.number, b.lineas);
+          if (sinNotas) avisos.push(sinNotas);
+        }
         if (!b.referencias.length) return avisos;
         try {
           const completo = await this.facturacion.apiGet(`/documents/${Number(doc.id)}.json?expand=[references]`);
@@ -667,7 +676,14 @@ export class BsaleLibreService {
     try {
       const g = b.guia;
       const lineasDoc: any[] = await this.facturacion.todos(`/documents/${Number(docEmitido.bsale_id)}/details.json`, '');
-      const details = lineasDoc.map((d: any) => ({ detailId: Number(d.id), quantity: Number(d.quantity) || 0 })).filter((d) => d.detailId && d.quantity > 0);
+      // La observación de cada producto va en la línea de la guía (nota del detalle); se reconoce por la variante.
+      const obsPorVariante = new Map<number, string>(b.lineas.filter((l: any) => l.variante_id && l.observacion).map((l: any) => [Number(l.variante_id), String(l.observacion)]));
+      const details = lineasDoc
+        .map((d: any) => {
+          const nota = b.notas_por_linea ? obsPorVariante.get(Number(d?.variant?.id)) : null;
+          return { detailId: Number(d.id), quantity: Number(d.quantity) || 0, ...(nota ? { comment: nota } : {}) };
+        })
+        .filter((d) => d.detailId && d.quantity > 0);
       if (!details.length) throw new Error('Bsale no devolvió las líneas del documento emitido.');
       const clienteId = b.cliente?.id || (b.cliente?.rut ? (await this.despachos.clientePorRut(b.cliente.rut))?.id : null);
       const emision = fechaAEpoch(b.fecha_emision);
@@ -712,6 +728,10 @@ export class BsaleLibreService {
           const avisos: string[] = [];
           const sinObs = obs.atributo ? await this.despachos.avisoObservacion(Number(doc.id), doc.number, obs.texto) : null;
           if (sinObs) avisos.push(sinObs);
+          if (b.notas_por_linea) {
+            const sinNotas = await this.despachos.avisoNotasLineas(Number(doc.id), doc.number, b.lineas);
+            if (sinNotas) avisos.push(sinNotas);
+          }
           return avisos;
         },
       });
