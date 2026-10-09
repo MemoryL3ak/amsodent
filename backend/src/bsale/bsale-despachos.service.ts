@@ -71,6 +71,16 @@ export function observacionSugerida(lineas: { sku?: string; producto?: string; o
   }
   return partes.join(' · ');
 }
+/* (2026-10-08) Pedido de Ariel: "al crear la guía debe aparecer el campo para
+   ver las observaciones y permitir agregar más información por producto, que
+   se envía a los atributos adicionales". La pantalla manda la observación de
+   cada línea (editada) y una general; acá se arma el texto del atributo:
+   general · SKU: texto · SKU: texto. Misma cuenta en src/lib/observacionGuia.js. */
+export function observacionCompuesta(general: any, lineas: { sku?: string; producto?: string; observacion?: string }[]): string {
+  const g = String(general ?? '').replace(/\s+/g, ' ').trim();
+  const porLinea = observacionSugerida(lineas);
+  return [g, porLinea].filter(Boolean).join(' · ');
+}
 // RUT como lo guarda Bsale: sin puntos, con guion.
 const rutBsale = (v: any) => {
   const limpio = normRut(v);
@@ -566,8 +576,11 @@ export class BsaleDespachosService {
       despacho?: { direccion?: string; comuna?: string; ciudad?: string; destinatario?: string; tipo_traslado_id?: number };
       // Empresa de transporte y N° de seguimiento: solo para el sistema, no van a Bsale.
       seguimiento?: { empresa?: string; numero?: string };
-      // Atributo adicional «Observación» en Bsale (sin enviar = la propuesta del borrador).
+      // Atributo adicional «Observación» en Bsale. Con `observaciones` (por SKU,
+      // 2026-10-08) el texto se arma: general · SKU: texto…; sin él, `observacion`
+      // es el texto completo (pantallas antiguas) o, si tampoco viene, la propuesta.
       observacion?: string;
+      observaciones?: Record<string, string>;
       cliente?: Record<string, any>; fecha_emision?: string; huella?: string; simular?: boolean;
     },
   ) {
@@ -589,6 +602,15 @@ export class BsaleDespachosService {
       elegidas.push({ ...l, cantidad: cant, neto: Math.round(cant * l.neto_unitario) });
     }
     if (!elegidas.length) throw new BadRequestException('Indica qué productos y cuánto va en esta guía.');
+    // Observación por producto (2026-10-08): la editada en pantalla o la de la cotización.
+    const porSkuObs = body?.observaciones && typeof body.observaciones === 'object' ? body.observaciones : null;
+    if (porSkuObs) {
+      const claves = new Map(Object.keys(porSkuObs).map((k) => [normSku(k), porSkuObs[k]]));
+      for (const l of elegidas) l.observacion = texto(claves.has(l.sku) ? claves.get(l.sku) : l.observacion, OBSERVACION_MAX);
+    }
+    const textoObservacion = porSkuObs
+      ? observacionCompuesta(body?.observacion, elegidas)
+      : body?.observacion === undefined ? observacionCompuesta('', elegidas) : body.observacion;
 
     const fecha = String(body?.fecha_emision || b.fecha_emision).slice(0, 10);
     if (!Number.isFinite(fechaAEpoch(fecha))) throw new BadRequestException('La fecha de emisión no es válida.');
@@ -638,7 +660,7 @@ export class BsaleDespachosService {
       references: b.referencias.map((r: any) => referenciaParaBsale(r, emision)),
       salesId,
     };
-    const obs = await this.observacionParaBsale(body?.observacion === undefined ? b.observacion_sugerida : body.observacion, b.tipo_documento_id);
+    const obs = await this.observacionParaBsale(textoObservacion, b.tipo_documento_id);
     if (obs.atributo) solicitud.dynamicAttributes = [obs.atributo];
     const vista = this.vista(b, {
       observacion: obs.texto || null,
@@ -664,7 +686,7 @@ export class BsaleDespachosService {
       usuario, clave, salesId, tipo: 'guia', ruta: '/shippings.json', solicitud, vista,
       licitacionId: b.cotizacion.id, origenDocId: b.oc.id,
       correo: { tipo: 'guia' },
-      lineas: elegidas.map((l) => ({ sku: l.sku, cantidad: l.cantidad, neto_unitario: l.neto_unitario })),
+      lineas: elegidas.map((l) => ({ sku: l.sku, cantidad: l.cantidad, neto_unitario: l.neto_unitario, ...(l.observacion ? { observacion: l.observacion } : {}) })),
       registrar: async (doc: any, pdf: any) => {
         // La guía queda en Trazabilidad como si se hubiera subido a mano (y avisa al vendedor).
         const creado = await this.licitaciones.createDocumento({
