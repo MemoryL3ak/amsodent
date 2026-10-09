@@ -52,6 +52,14 @@ type Creado = { id: number; nombre: string; estado: string | null; sku: string |
 const normSku = (v: any) => String(v ?? '').replace(/\s+/g, '').toUpperCase();
 
 const texto = (v: any, max: number) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
+// Texto largo de la ficha (conserva saltos de línea), recortado.
+const textoLargo = (v: any, max: number) => String(v ?? '').replace(/\r/g, '').trim().slice(0, max);
+// Medida (kg / cm) con decimales; null si viene vacía, NaN si no es número.
+const medida = (v: any): number | null => {
+  if (v == null || String(v).trim() === '') return null;
+  const n = Number(String(v).replace(',', '.'));
+  return Number.isFinite(n) && n >= 0 ? n : NaN;
+};
 const monto = (v: any): number | null => {
   if (v == null || String(v).trim() === '') return null;
   const n = Math.round(Number(String(v).replace(/\./g, '').replace(',', '.')));
@@ -166,20 +174,46 @@ export class ExploradorProductosService {
       if (Number.isNaN(v)) problemas.push({ codigo: k, mensaje: `${etiqueta} debe ser un monto en pesos.` });
       else if (!(Number(v) > 0)) problemas.push({ codigo: k, mensaje: `${etiqueta} es obligatorio.` });
     }
-    const descripcion = String(body?.descripcion ?? '').replace(/\r/g, '').trim().slice(0, 2000);
-    if (!descripcion) problemas.push({ codigo: 'descripcion', mensaje: 'Escribe la descripción del producto (la trae la tienda cuando la publica).' });
+    // (2026-10-09) Los mismos campos que Productos → Crear, con sus obligatorios:
+    // ficha técnica (presentación, descripción, composición, uso, beneficios),
+    // dimensiones (peso, alto, largo, ancho) y venta showroom opcional.
+    const ficha: Record<string, string | null> = {};
+    for (const [k, etiqueta, obligatorio] of [
+      ['presentacion', 'la presentación', true], ['descripcion', 'la descripción', true], ['composicion', 'la composición', true],
+      ['uso_indicaciones', 'el uso / indicaciones', true], ['beneficios', 'los beneficios', true],
+      ['modo_uso', 'el modo de uso', false], ['almacenamiento', 'el almacenamiento', false], ['datos_clave', 'los datos clave', false],
+    ] as const) {
+      const v = textoLargo(body?.[k], 2000);
+      ficha[k] = v || null;
+      if (obligatorio && !v) problemas.push({ codigo: k, mensaje: `Escribe ${etiqueta} del producto${k === 'descripcion' ? ' (la trae la tienda cuando la publica)' : ''}.` });
+    }
+    const descripcion = ficha.descripcion || '';
+    const medidas: Record<string, number | null> = {};
+    for (const [k, etiqueta] of [['peso', 'El peso (kg)'], ['alto', 'El alto (cm)'], ['largo', 'El largo (cm)'], ['ancho', 'El ancho (cm)']] as const) {
+      const v = medida(body?.[k]);
+      medidas[k] = v;
+      if (v == null || Number.isNaN(v)) problemas.push({ codigo: k, mensaje: `${etiqueta} es obligatorio y debe ser un número.` });
+      else if (!(v > 0)) problemas.push({ codigo: k, mensaje: `${etiqueta} debe ser mayor que 0.` });
+    }
+    const precioSugerido = monto(body?.precio_sugerido);
+    if (Number.isNaN(precioSugerido)) problemas.push({ codigo: 'precio_sugerido', mensaje: 'El precio showroom debe ser un monto en pesos.' });
 
-    // ¿Ya existe un producto con este link o, en nuestra web, con este SKU?
+    // ¿Ya existe un producto con este link o con este SKU? El SKU viene de
+    // nuestra web o, desde 2026-10-09, escrito a mano (como en Productos).
     const esAmsodent = String(body?.tienda || '') === 'amsodent';
-    const skuWeb = esAmsodent ? normSku(body?.sku) : '';
-    const existente = url ? this.existente({ url, tienda: body?.tienda, sku: body?.sku }, await this.indices()) : null;
+    const skuWeb = normSku(body?.sku);
+    // `existente` revisa el SKU cuando la tienda es la nuestra: con SKU escrito a mano se revisa igual.
+    const existente = url ? this.existente({ url, tienda: skuWeb ? 'amsodent' : body?.tienda, sku: skuWeb }, await this.indices()) : null;
     if (existente) {
       return { ya_existe: true, producto: existente, problemas: [{ codigo: 'ya_existe', mensaje: `Ya está creado: «${existente.nombre}» (${existente.sku ? `SKU ${existente.sku}` : 'sin SKU'}, ${existente.estado || 'sin estado'}).` }] };
     }
 
     const fila: Record<string, any> = {
       // De nuestra web viene nuestro SKU: queda con él (y se enlaza en Bsale). De otras tiendas, sin SKU.
-      sku: skuWeb || null, estado: 'Transitorio', nombre, marca, categoria, formato, link_referencia: url, descripcion,
+      sku: skuWeb || null, estado: 'Transitorio', nombre, marca, categoria, formato, link_referencia: url,
+      ...ficha,
+      ...(Object.values(medidas).every((v) => v != null && !Number.isNaN(v)) ? medidas : {}),
+      ...(precioSugerido != null && !Number.isNaN(precioSugerido) && precioSugerido > 0 ? { precio_sugerido: precioSugerido } : {}),
       ...(costo != null && !Number.isNaN(costo) ? { costo } : {}),
       ...(lista1 != null && !Number.isNaN(lista1) ? { lista1 } : {}),
       ...(lista2 != null && !Number.isNaN(lista2) ? { lista2 } : {}),
@@ -187,7 +221,8 @@ export class ExploradorProductosService {
     };
     const avisos: string[] = [];
     if (problemas.length) return { simulacion: simular, bloqueada: true, problemas, avisos };
-    if (skuWeb) avisos.unshift(`Queda con el SKU ${skuWeb} de nuestra web; si ya existe en Bsale, se enlaza a esa variante.`);
+    if (skuWeb) avisos.unshift(esAmsodent ? `Queda con el SKU ${skuWeb} de nuestra web; si ya existe en Bsale, se enlaza a esa variante.` : `Queda con el SKU ${skuWeb}; si ya existe en Bsale, se enlaza a esa variante.`);
+    void descripcion;
     if (simular) return { simulacion: true, problemas, avisos, producto: fila, imagen: body?.imagen || null };
 
     let creado: any;
