@@ -38,6 +38,12 @@ export const MODULOS: string[] = [
   'costeo_fletes',
   'monitoreo_stock',
   'portal_accesos',
+  // (2026-10-14) Inventario (antes solo admin; los vendedores lo ven sin KPIs),
+  // sus tarjetas KPI (valorización, unidades…) y ver TODAS las cotizaciones
+  // (un vendedor ve solo las suyas): asignables por perfil.
+  'inventario',
+  'inventario_kpis',
+  'cotizaciones_todas',
   'usuarios',
   'monitoreo_usuarios',
   'monitoreo_asistencia',
@@ -54,7 +60,8 @@ const BASE = [
   'mis_clientes',
   'bitacora',
   'productos',
-  'campanas',
+  // (2026-10-14) Campañas y Campañas de margen ya no son de todos: solo admin
+  // y quien las tenga en su perfil de permisos (pedido de Ariel).
   'mi_correo',
   'chat',
 ];
@@ -70,10 +77,12 @@ export function esRolAdmin(rol?: string): boolean {
 
 // Acceso por rol según la matriz vigente (ver SidebarLayout/RequireRole).
 export const ROLE_DEFAULTS: Record<string, string[]> = {
-  jefe_ventas: [...BASE, 'trazabilidad', 'metas', 'panel_indicadores', 'resumen_comercial', 'cotizaciones_vendedor', 'monitoreo_alertas'],
-  jefe_ventas_especial: [...BASE, 'trazabilidad', 'seguimiento_pagos', 'cobranza', 'factoring', 'facturacion', 'venta_directa', 'metas', 'panel_indicadores', 'resumen_comercial', 'cotizaciones_vendedor', 'monitoreo_alertas'],
-  ventas: [...BASE, 'metas'],
-  ventas_especial: [...BASE, 'metas', 'sorteo', 'monitoreo_stock'],
+  // (2026-10-14) 'inventario' para ventas y jefaturas: ven el stock, sin las
+  // tarjetas KPI ('inventario_kpis' se asigna por perfil) y sin mover stock.
+  jefe_ventas: [...BASE, 'trazabilidad', 'metas', 'panel_indicadores', 'resumen_comercial', 'cotizaciones_vendedor', 'monitoreo_alertas', 'inventario'],
+  jefe_ventas_especial: [...BASE, 'trazabilidad', 'seguimiento_pagos', 'cobranza', 'factoring', 'facturacion', 'venta_directa', 'metas', 'panel_indicadores', 'resumen_comercial', 'cotizaciones_vendedor', 'monitoreo_alertas', 'inventario'],
+  ventas: [...BASE, 'metas', 'inventario'],
+  ventas_especial: [...BASE, 'metas', 'sorteo', 'monitoreo_stock', 'inventario'],
   contabilidad: ['mi_correo', 'chat', 'seguimiento_pagos', 'cobranza', 'facturacion', 'venta_directa', 'metas'],
 };
 

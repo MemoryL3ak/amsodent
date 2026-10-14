@@ -5,12 +5,13 @@ import {
 import { InventarioService } from './inventario.service';
 import { AuthGuard } from '../auth/auth.guard';
 import { AdminGuard } from '../auth/admin.guard';
+import { InventarioGuard } from './inventario.guard';
 
-// TODO el módulo es solo admin (pedido 2026-08-28): también la lectura, no
-// solo la escritura — el inventario expone costos y valorización. La ruta y
-// el menú del frontend ya lo restringen; este guard cierra la API.
+// (2026-10-14) Antes todo el módulo era solo admin. Ahora LEE quien tenga el
+// módulo `inventario` en sus permisos efectivos (ventas lo ve sin KPIs ni
+// acciones); mover stock, el mínimo y la carga masiva siguen siendo solo admin.
 @Controller('inventario')
-@UseGuards(AuthGuard, AdminGuard)
+@UseGuards(AuthGuard, InventarioGuard)
 export class InventarioController {
   constructor(private inventario: InventarioService) {}
 
@@ -28,16 +29,19 @@ export class InventarioController {
   }
 
   @Post('movimientos')
+  @UseGuards(AdminGuard)
   registrar(@Body() body: any, @Req() req: any) {
     return this.inventario.registrarMovimiento(body, (req?.user?.email || '').toLowerCase());
   }
 
   @Put('stock-minimo/:productoId')
+  @UseGuards(AdminGuard)
   stockMinimo(@Param('productoId', ParseIntPipe) productoId: number, @Body() body: any) {
     return this.inventario.actualizarStockMinimo(productoId, body?.stockMinimo);
   }
 
   @Post('carga-masiva')
+  @UseGuards(AdminGuard)
   cargaMasiva(@Body() body: { rows?: any[]; motivo?: string }, @Req() req: any) {
     return this.inventario.cargaMasiva(body?.rows || [], (req?.user?.email || '').toLowerCase(), body?.motivo);
   }

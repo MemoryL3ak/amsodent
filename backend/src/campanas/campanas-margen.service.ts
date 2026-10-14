@@ -24,6 +24,8 @@ import { SupabaseService } from '../supabase/supabase.service';
 
 const MIGRACION = 'Falta aplicar la migración 20261001_lote_octubre.sql en Supabase.';
 const MIGRACION_SKUS = 'Falta aplicar la migración 20261003_campanas_margen_skus.sql en Supabase (campañas por SKU).';
+// (2026-10-14) Productos desmarcados sin su columna: se guarda igual y se avisa.
+const AVISO_EXCLUIDOS = 'Falta aplicar la migración 20261014_campanas_margen_excluidos.sql en Supabase: la campaña quedó SIN productos desmarcados (aplica a todos los que alcanza).';
 const MAX_SKUS = 2000;
 const RE_FECHA = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -85,12 +87,24 @@ export class CampanasMargenService {
     const { data, error } = await this.supabase
       .getClient()
       .from('campanas_margen')
-      .select('id, nombre, lista_precios, marcas, categorias, skus, margen_pct, desde, hasta, created_at')
+      .select('id, nombre, lista_precios, marcas, categorias, skus, skus_excluidos, margen_pct, desde, hasta, created_at')
       .eq('activa', true)
       .lte('desde', hoy)
       .gte('hasta', hoy)
       .order('created_at', { ascending: false });
     if (error) {
+      // Migración 20261014 (productos desmarcados) pendiente: sin la lista, la campaña aplica a todos los que alcanza.
+      if (/skus_excluidos/i.test(String(error.message || ''))) {
+        const { data: sinExcl } = await this.supabase
+          .getClient()
+          .from('campanas_margen')
+          .select('id, nombre, lista_precios, marcas, categorias, skus, margen_pct, desde, hasta, created_at')
+          .eq('activa', true)
+          .lte('desde', hoy)
+          .gte('hasta', hoy)
+          .order('created_at', { ascending: false });
+        return sinExcl || [];
+      }
       // Migración de SKUs pendiente: las campañas por marca/categoría siguen valiendo.
       if (/skus/i.test(String(error.message || ''))) {
         const { data: sinSkus } = await this.supabase
@@ -135,11 +149,20 @@ export class CampanasMargenService {
       marcas: listaLimpia(body?.marcas),
       categorias: listaLimpia(body?.categorias),
       skus: listaSkus(body?.skus),
+      // (2026-10-14) Productos desmarcados en la vista previa: no reciben el descuento.
+      skus_excluidos: listaSkus(body?.skus_excluidos),
       margen_pct: Math.round(margen * 100) / 100,
       desde,
       hasta,
       activa: body?.activa !== false,
     };
+  }
+
+  /* (2026-10-14) Sin la migración de desmarcados, la campaña se guarda igual
+     sin esa lista (aplica a todos los que alcanza) y se avisa. */
+  private sinExcluidos(error: any): boolean {
+    const msg = String(error?.message || '');
+    return /skus_excluidos/i.test(msg) && /(schema cache|column|not find)/i.test(msg);
   }
 
   private error(error: any): never {
@@ -153,24 +176,40 @@ export class CampanasMargenService {
   }
 
   async crear(body: any, creadorEmail?: string | null) {
-    const { data, error } = await this.supabase
+    const datos = this.datos(body);
+    let data: any;
+    let error: any;
+    ({ data, error } = await this.supabase
       .getClient()
       .from('campanas_margen')
-      .insert({ ...this.datos(body), creado_por: creadorEmail || null })
+      .insert({ ...datos, creado_por: creadorEmail || null })
       .select()
-      .single();
+      .single());
+    if (error && this.sinExcluidos(error)) {
+      const { skus_excluidos: _omitir, ...sinLista } = datos;
+      ({ data, error } = await this.supabase.getClient().from('campanas_margen').insert({ ...sinLista, creado_por: creadorEmail || null }).select().single());
+      if (!error && data) data.aviso = AVISO_EXCLUIDOS;
+    }
     if (error) this.error(error);
     return data;
   }
 
   async actualizar(id: number, body: any) {
-    const { data, error } = await this.supabase
+    const datos = this.datos(body);
+    let data: any;
+    let error: any;
+    ({ data, error } = await this.supabase
       .getClient()
       .from('campanas_margen')
-      .update({ ...this.datos(body), updated_at: new Date().toISOString() })
+      .update({ ...datos, updated_at: new Date().toISOString() })
       .eq('id', id)
       .select()
-      .maybeSingle();
+      .maybeSingle());
+    if (error && this.sinExcluidos(error)) {
+      const { skus_excluidos: _omitir, ...sinLista } = datos;
+      ({ data, error } = await this.supabase.getClient().from('campanas_margen').update({ ...sinLista, updated_at: new Date().toISOString() }).eq('id', id).select().maybeSingle());
+      if (!error && data) data.aviso = AVISO_EXCLUIDOS;
+    }
     if (error) this.error(error);
     if (!data) throw new NotFoundException('Campaña no encontrada.');
     return data;

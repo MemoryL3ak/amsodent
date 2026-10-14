@@ -11,7 +11,7 @@ import { useStickyState } from "../lib/useStickyState";
 import BotonLimpiarFiltros from "../components/BotonLimpiarFiltros";
 
 export default function ListarLicitaciones() {
-  const { user, rol, cargando } = useAuth();
+  const { user, rol, cargando, puede } = useAuth();
   const [data, setData] = useState([]);
   const [usuariosMap, setUsuariosMap] = useState({});
   const [toast, setToast] = useState(null);
@@ -76,7 +76,8 @@ export default function ListarLicitaciones() {
       const rolNorm   = (rol ?? "").toString().trim().toLowerCase();
       const emailUser = (user?.email || "").trim().toLowerCase();
 
-      if ((rolNorm === "ventas" || rolNorm === "ventas_especial") && emailUser)
+      // (2026-10-14) Un vendedor ve solo las suyas, salvo que su perfil tenga «Ver todas las cotizaciones».
+      if ((rolNorm === "ventas" || rolNorm === "ventas_especial") && emailUser && !puede("cotizaciones_todas"))
         rows = rows.filter((l) => (l.creado_por || "").trim().toLowerCase() === emailUser);
 
       // Fecha de adjudicación = fecha de creación de la primera OC de cada cotización.

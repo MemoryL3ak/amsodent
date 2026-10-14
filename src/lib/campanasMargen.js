@@ -70,6 +70,9 @@ export function campanaAlcanza(prod, campana) {
   const categorias = Array.isArray(campana.categorias) ? campana.categorias : [];
   const skus = Array.isArray(campana.skus) ? campana.skus : [];
   if (skus.length && !skus.some((s) => normSku(s) === normSku(prod.sku))) return false;
+  // (2026-10-14) Productos desmarcados al crear la campaña: no reciben el descuento.
+  const excluidos = Array.isArray(campana.skus_excluidos) ? campana.skus_excluidos : [];
+  if (excluidos.length && prod.sku && excluidos.some((s) => normSku(s) === normSku(prod.sku))) return false;
   if (marcas.length && !marcas.some((m) => norm(m) === norm(prod.marca))) return false;
   if (categorias.length && !categorias.some((c) => norm(c) === norm(prod.categoria))) return false;
   return true;

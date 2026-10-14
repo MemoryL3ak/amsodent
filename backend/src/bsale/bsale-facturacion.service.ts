@@ -238,9 +238,27 @@ export class BsaleFacturacionService {
   }
 
   async exigirRol(userId: string) {
-    const rol = await this.rolDe(userId);
-    if (!this.rolesPermitidos.includes(rol)) {
+    if (!(await this.puedeEmitir(userId))) {
       throw new ForbiddenException('Tu perfil no puede emitir facturas en Bsale.');
+    }
+  }
+
+  /* (2026-10-14) Emite quien tiene un rol de la lista (BSALE_EMISION_ROLES) o
+     quien tiene «Venta directa» o «Facturación» en su perfil de permisos
+     (pedido de Ariel: Laura y Sandy con venta directa sin cambiarles el rol). */
+  async puedeEmitir(userId: string): Promise<boolean> {
+    const rol = await this.rolDe(userId);
+    if (this.rolesPermitidos.includes(rol)) return true;
+    try {
+      const db = this.supabase.getClient();
+      const { data: p } = await db.from('profiles').select('permission_profile_id').eq('id', userId).maybeSingle();
+      const pid = (p as any)?.permission_profile_id;
+      if (!pid) return false;
+      const { data: perfil } = await db.from('permission_profiles').select('permisos').eq('id', pid).maybeSingle();
+      const permisos: string[] = Array.isArray((perfil as any)?.permisos) ? (perfil as any).permisos : [];
+      return permisos.includes('venta_directa') || permisos.includes('facturacion');
+    } catch {
+      return false;
     }
   }
 
@@ -250,13 +268,12 @@ export class BsaleFacturacionService {
   }
 
   async estado(userId: string) {
-    const rol = await this.rolDe(userId);
     const configurada = !!this.token;
     const tabla = await this.tablaLista();
     return {
       configurada,
-      // La pantalla solo ofrece el botón a quien puede usarlo.
-      puede: configurada && this.rolesPermitidos.includes(rol),
+      // La pantalla solo ofrece el botón a quien puede usarlo (rol o perfil de permisos).
+      puede: configurada && (await this.puedeEmitir(userId)),
       modo: this.emisionActiva ? 'activa' : 'simulacion',
       // Sin la tabla de registro no se emite: no habría cómo evitar duplicados.
       registro_listo: tabla,
