@@ -21,6 +21,8 @@ import { api } from "../lib/api";
    ─ Cliente particular puede además marcar "Flete por pagar": no se cobra
      flete en la cotización (el cliente lo paga al courier) y esta
      calculadora queda deshabilitada.
+   ─ (2026-10-14) O "Entrega en local": el cliente retira en nuestro local,
+     flete $0; también deshabilita esta calculadora.
    El cálculo corre en el backend (POST /fletes/tarifas/calcular); al
    obtener el valor se aplica al Flete Estimado vía onAplicar(neto).
    La región/localidad se precargan desde la dirección del cliente

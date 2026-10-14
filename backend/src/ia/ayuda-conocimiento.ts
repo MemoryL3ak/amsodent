@@ -721,6 +721,10 @@ girasol 🌻). Hoy ayuda en:
   la cotización no cobra flete (queda "POR PAGAR"), el cliente lo paga
   directo al courier al recibir, y el PDF lo declara como ítem "Despacho /
   Flete — POR PAGAR". Con esta opción no se exige calcular el flete.
+- ENTREGA EN LOCAL (solo cliente particular): casilla junto a "Flete por
+  pagar"; el cliente retira en nuestro local, el flete queda en $0 y el PDF lo
+  declara como ítem "Despacho / Flete — ENTREGA EN LOCAL". Tampoco exige
+  calcular el flete. Las dos casillas son excluyentes entre sí.
 - FLETE OBLIGATORIO PARA EL PDF: no se puede generar el PDF de una cotización
   sin haber calculado y aplicado el flete (aunque el resultado sea $0). El
   sistema recuerda con un aviso pasar por la Calculadora de Flete.

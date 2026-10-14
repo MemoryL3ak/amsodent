@@ -821,6 +821,7 @@ export default function EditarLicitacion() {
       condVenta: condVenta || "",
       fleteEstimado: fleteEstimado || 0,
       fletePorPagar: Boolean(fletePorPagar),
+      retiroEnLocal: Boolean(retiroEnLocal),
       tipoCompra: tipoCompra || "Compra ágil",
       region: region || "",
       comuna: comuna || "",
@@ -1099,10 +1100,16 @@ export default function EditarLicitacion() {
   // migración 20260914 pendiente).
   const [fletePorPagar, setFletePorPagar] = useState(false);
   const [fletePorPagarDB, setFletePorPagarDB] = useState(false);
+  // (2026-10-14) Cliente particular: "entrega en local" (el cliente retira en
+  // nuestro local; flete $0). retiroEnLocalDB recuerda lo guardado, igual que
+  // con flete por pagar (tolera la migración 20261014 pendiente).
+  const [retiroEnLocal, setRetiroEnLocal] = useState(false);
+  const [retiroEnLocalDB, setRetiroEnLocalDB] = useState(false);
   // "Flete por pagar" solo existe en cliente particular: si la cotización deja
   // de serlo, el flag no aplica aunque haya quedado marcado antes (el checkbox
   // se oculta, pero su estado sobrevivía y se guardaba igual).
   const fletePorPagarEfectivo = fletePorPagar && esCotizacionParticular;
+  const retiroEnLocalEfectivo = retiroEnLocal && esCotizacionParticular;
   // (2026-09-16) Estado del envío (solo cliente particular). estadoEnvioDB
   // recuerda lo guardado, para tolerar que la migración 20260916 aún no esté
   // aplicada (igual que con flete_por_pagar).
@@ -2049,6 +2056,7 @@ export default function EditarLicitacion() {
 
       setFleteEstimado(data.fleteEstimado || 0);
       setFletePorPagar(Boolean(data.fletePorPagar));
+      setRetiroEnLocal(Boolean(data.retiroEnLocal));
       setObservaciones(data.observaciones || "");
       setMotivoPerdida(data.motivoPerdida || "");
       setMotivoPerdidaOtro(data.motivoPerdidaOtro || "");
@@ -2117,6 +2125,7 @@ export default function EditarLicitacion() {
       condVenta,
       fleteEstimado,
       fletePorPagar,
+      retiroEnLocal,
       items,
       observaciones,
       vendedorNombre,
@@ -2155,6 +2164,7 @@ export default function EditarLicitacion() {
     condVenta,
     fleteEstimado,
     fletePorPagar,
+    retiroEnLocal,
     items,
     observaciones,
     vendedorNombre,
@@ -2194,6 +2204,7 @@ export default function EditarLicitacion() {
 
       fleteEstimado: Number(fleteEstimado || 0),
       fletePorPagar: Boolean(fletePorPagar),
+      retiroEnLocal: Boolean(retiroEnLocal),
       observaciones: observaciones || "",
 
       vendedorNombre: vendedorNombre || "",
@@ -2274,6 +2285,7 @@ export default function EditarLicitacion() {
     condVenta,
     fleteEstimado,
     fletePorPagar,
+    retiroEnLocal,
     items,
     observaciones,
     vendedorNombre,
@@ -2341,6 +2353,8 @@ export default function EditarLicitacion() {
     setFleteEstimado(lic.flete_estimado || 0);
     setFletePorPagar(Boolean(lic.flete_por_pagar));
     setFletePorPagarDB(Boolean(lic.flete_por_pagar));
+    setRetiroEnLocal(Boolean(lic.retiro_en_local));
+    setRetiroEnLocalDB(Boolean(lic.retiro_en_local));
     setVieneDelPortal(lic.solicitud_stock_id != null);
     setSolicitudStockId(lic.solicitud_stock_id ?? null);
     setEstadoEnvio(lic.estado_envio || "");
@@ -2547,6 +2561,8 @@ export default function EditarLicitacion() {
       setFleteEstimado(lic.flete_estimado || 0);
       setFletePorPagar(Boolean(lic.flete_por_pagar));
       setFletePorPagarDB(Boolean(lic.flete_por_pagar));
+      setRetiroEnLocal(Boolean(lic.retiro_en_local));
+      setRetiroEnLocalDB(Boolean(lic.retiro_en_local));
 
       setObservaciones(lic.observaciones || "");
       setMotivoPerdida(lic.motivo_perdida || "");
@@ -3014,7 +3030,7 @@ export default function EditarLicitacion() {
       regionNormPdf === "santiago" ||
       regionNormPdf.includes("metropolitana");
     const fleteGratisEvidente = Number(totalConIVA) >= 70000 && esRMPdf;
-    if (!(Number(fleteEstimado) > 0) && !fleteGratisEvidente && !fletePorPagarEfectivo) {
+    if (!(Number(fleteEstimado) > 0) && !fleteGratisEvidente && !fletePorPagarEfectivo && !retiroEnLocalEfectivo) {
       setToast({
         type: "warning",
         message:
@@ -3135,6 +3151,20 @@ export default function EditarLicitacion() {
               cantidad: 1,
               precio_unitario: "Por pagar",
               total: "Por pagar",
+              observacion: "",
+            });
+          }
+          // (2026-10-14) Entrega en local: el cliente retira en nuestro local,
+          // el PDF lo declara como ítem sin costo.
+          if (esParticularPdf && retiroEnLocal) {
+            filas.push({
+              n: filas.length + 1,
+              sku: "",
+              producto: "Despacho / Flete — ENTREGA EN LOCAL (el cliente retira en nuestro local)",
+              formato: "",
+              cantidad: 1,
+              precio_unitario: "$0",
+              total: "$0",
               observacion: "",
             });
           }
@@ -3347,10 +3377,12 @@ export default function EditarLicitacion() {
           // "Flete por pagar" es EXCLUSIVO de cliente particular: si la
           // cotización dejó de serlo, el flag se apaga al guardar (así una
           // pública no queda con flete $0 sin que el PDF lo diga).
-          flete_estimado: fletePorPagarEfectivo ? 0 : Number(fleteEstimado),
+          flete_estimado: fletePorPagarEfectivo || retiroEnLocalEfectivo ? 0 : Number(fleteEstimado),
           // Se envía solo si hay algo que decir (true, o volver a false tras
           // haber estado guardado en true): tolera la migración 20260914.
           ...(fletePorPagarEfectivo || fletePorPagarDB ? { flete_por_pagar: fletePorPagarEfectivo } : {}),
+          // (2026-10-14) Entrega en local: mismo criterio (tolera la migración 20261014).
+          ...(retiroEnLocalEfectivo || retiroEnLocalDB ? { retiro_en_local: retiroEnLocalEfectivo } : {}),
           // Estado del envío: mismo criterio — solo viaja si cambió o si ya
           // había algo guardado (tolera la migración 20260916 pendiente).
           ...(estadoEnvioEfectivo !== estadoEnvioDB
@@ -4735,23 +4767,50 @@ export default function EditarLicitacion() {
               {/* (2026-09-14) Cliente particular: flete POR PAGAR — sin cobro
                   de flete en la cotización; el cliente lo paga al courier. */}
               {esCotizacionParticular && (
-                <label style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12.5, color: "#0f172a", marginBottom: 6, cursor: esEditable ? "pointer" : "default" }}>
-                  <input
-                    type="checkbox"
-                    checked={fletePorPagar}
-                    disabled={!esEditable}
-                    onChange={(e) => {
-                      const v = e.target.checked;
-                      setFletePorPagar(v);
-                      if (v) setFleteEstimado(0);
-                    }}
-                    style={{ width: 15, height: 15 }}
-                  />
-                  <span>
-                    <strong>Flete por pagar</strong>
-                    <span style={{ color: "var(--text-muted)" }}> — lo paga el cliente al courier</span>
-                  </span>
-                </label>
+                <>
+                  <label style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12.5, color: "#0f172a", marginBottom: 6, cursor: esEditable ? "pointer" : "default" }}>
+                    <input
+                      type="checkbox"
+                      checked={fletePorPagar}
+                      disabled={!esEditable}
+                      onChange={(e) => {
+                        const v = e.target.checked;
+                        setFletePorPagar(v);
+                        if (v) {
+                          setRetiroEnLocal(false);
+                          setFleteEstimado(0);
+                        }
+                      }}
+                      style={{ width: 15, height: 15 }}
+                    />
+                    <span>
+                      <strong>Flete por pagar</strong>
+                      <span style={{ color: "var(--text-muted)" }}> — lo paga el cliente al courier</span>
+                    </span>
+                  </label>
+                  {/* (2026-10-14) Entrega en local: el cliente retira en nuestro
+                      local, flete $0. Excluyente con "flete por pagar". */}
+                  <label style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12.5, color: "#0f172a", marginBottom: 6, cursor: esEditable ? "pointer" : "default" }}>
+                    <input
+                      type="checkbox"
+                      checked={retiroEnLocal}
+                      disabled={!esEditable}
+                      onChange={(e) => {
+                        const v = e.target.checked;
+                        setRetiroEnLocal(v);
+                        if (v) {
+                          setFletePorPagar(false);
+                          setFleteEstimado(0);
+                        }
+                      }}
+                      style={{ width: 15, height: 15 }}
+                    />
+                    <span>
+                      <strong>Entrega en local</strong>
+                      <span style={{ color: "var(--text-muted)" }}> — el cliente retira en nuestro local, flete $0</span>
+                    </span>
+                  </label>
+                </>
               )}
               {/* Edición manual SOLO admin (pedido 2026-09-01), respetando el
                   bloqueo por estado (esEditable); el resto lo fija únicamente
@@ -4759,6 +4818,10 @@ export default function EditarLicitacion() {
               {fletePorPagar ? (
                 <div className="form-display form-display-value" style={{ color: "#b45309", fontWeight: 700 }}>
                   POR PAGAR
+                </div>
+              ) : retiroEnLocal ? (
+                <div className="form-display form-display-value" style={{ color: "#0f766e", fontWeight: 700 }}>
+                  ENTREGA EN LOCAL · $0
                 </div>
               ) : esAdmin ? (
                 <input
@@ -4839,7 +4902,7 @@ export default function EditarLicitacion() {
             totalCompra={totalConIVA}
             origen={vieneDelPortal ? "portal" : ""}
             solicitudStockId={solicitudStockId}
-            deshabilitado={!esEditable || fletePorPagar}
+            deshabilitado={!esEditable || fletePorPagar || retiroEnLocal}
             onAplicar={(neto) => setFleteEstimado(neto)}
           />
         </div>

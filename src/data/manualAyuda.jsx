@@ -162,6 +162,7 @@ export const GRUPOS_MANUAL = [
           "Margen por línea visible para todos; el costo del ítem queda congelado y es el que usarán los paneles y comisiones para siempre.",
           "Flete estimado con calculadora por courier (peso/volumen de los productos). Flete GRATIS: destino San Bernardo siempre (sin mínimo), o compra ≥ $70.000 (bruto) con destino en la Región Metropolitana.",
           "Cliente particular puede marcar «Flete por pagar»: la cotización no cobra flete (el cliente lo paga al courier al recibir) y el PDF lo declara como ítem «Despacho / Flete — POR PAGAR»; con esa opción no se exige calcular el flete.",
+          "Cliente particular también puede marcar «Entrega en local»: el cliente retira en nuestro local, el flete queda en $0 y el PDF lo declara como ítem «Despacho / Flete — ENTREGA EN LOCAL». Es excluyente con «Flete por pagar» y tampoco exige calcular el flete.",
           "Cotización hija: si hay productos equivalentes, el sistema ofrece crear la variante (jerarquía madre/hija).",
           "Segundo contacto en licitaciones (entidad pública): Nombre, Correo y Teléfono adicionales al contacto principal.",
           "Los ítems cuyo producto no tiene peso registrado se destacan en violeta con el aviso «Producto sin peso registrado».",
