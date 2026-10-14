@@ -34,6 +34,7 @@ export type VistaNegocio = {
 const VENDEDOR = `coalesce(nullif(p.nombre, ''), nullif(l.vendedor_nombre, ''), l.creado_por)`;
 const ES_LICITACION = `case when l.tipo_compra ilike '%licitaci%' then 'Sí' else 'No' end`;
 const TIPO_DESPACHO = `case
+    when coalesce(l.retiro_en_local, false) then 'Entrega en local (el cliente retira, sin flete)'
     when coalesce(l.flete_por_pagar, false) then 'Por pagar (lo paga el cliente)'
     when coalesce(l.flete_estimado, 0) > 0 then 'Incluido en la cotización'
     else 'Sin flete / retiro'
