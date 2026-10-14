@@ -153,13 +153,14 @@ export default function App() {
           <Route path="productos/nuevo" element={<CrearProducto />} />
           <Route path="productos/editar/:id" element={<EditarProducto />} />
 
-          {/* INVENTARIO — solo admin (mueve stock y valorización a costo) */}
+          {/* INVENTARIO — por permiso (2026-10-14): ventas ve el stock sin KPIs
+              ni acciones; mover stock sigue siendo solo admin (lo valida el backend). */}
           <Route
             path="inventario"
             element={
-              <RequireRole allow={["admin"]}>
+              <RequireModulo modulo="inventario">
                 <Inventario />
-              </RequireRole>
+              </RequireModulo>
             }
           />
 
@@ -204,8 +205,15 @@ export default function App() {
           {/* USUARIOS */}
           <Route path="usuarios" element={<ConfiguracionUsuarios />} />
 
-          {/* CAMPAÑAS */}
-          <Route path="campanas" element={<CampanasProductos />} />
+          {/* CAMPAÑAS — (2026-10-14) solo admin y quien tenga el módulo en su perfil */}
+          <Route
+            path="campanas"
+            element={
+              <RequireModulo modulo="campanas">
+                <CampanasProductos />
+              </RequireModulo>
+            }
+          />
           <Route
             path="campanas/nueva"
             element={
@@ -214,7 +222,14 @@ export default function App() {
               </RequireRole>
             }
           />
-          <Route path="campanas/editar/:id" element={<EditarCampana />} />
+          <Route
+            path="campanas/editar/:id"
+            element={
+              <RequireModulo modulo="campanas">
+                <EditarCampana />
+              </RequireModulo>
+            }
+          />
           {/* Campañas de margen por marca/categoría (2026-10-01). La ven quienes
               ven Campañas; crear y cambiar es solo admin (lo valida el backend). */}
           <Route

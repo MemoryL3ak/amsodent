@@ -235,7 +235,8 @@ export default function SidebarLayout() {
     esAdmin && { to: "/proveedores", icon: Building2, label: "Proveedores" },
     esAdmin && { to: "/ordenes-compra", icon: FileText, label: "Órdenes de Compra" },
     // Inventario mueve stock y valorización a costo: solo administración.
-    esAdmin && { to: "/inventario", icon: Boxes, label: "Inventario" },
+    // (2026-10-14) Inventario por permiso (ventas lo ve sin KPIs ni acciones), no solo admin.
+    puede("inventario") && { to: "/inventario", icon: Boxes, label: "Inventario" },
   ].filter(Boolean);
 
   const postVentaNav = [

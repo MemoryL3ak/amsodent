@@ -1007,6 +1007,11 @@ body {
   font-weight: 400;
 }
 
+/* (2026-10-14) Valor principal que es un monto largo ($1.234.567.890): más
+   chico para que no se salga de la tarjeta ("KPI Valorización, arreglar tamaño"). */
+.stat-value-monto { font-size: 24px; letter-spacing: -0.5px; overflow-wrap: anywhere; }
+@media (max-width: 1366px) { .stat-value-monto { font-size: 20px; } }
+
 /* Monto secundario dentro de una tarjeta KPI (ej. suma con IVA). */
 .stat-money {
   margin-top: 6px;

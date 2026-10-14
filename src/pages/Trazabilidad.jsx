@@ -2991,6 +2991,10 @@ export default function Trazabilidad() {
                                       </button>
                                     )}
                                   </div>
+                                  {/* (2026-10-14) El neto de la OC a la vista. */}
+                                  {Number(oc.monto) > 0 && (
+                                    <div className="neto-doc" style={{ fontSize: 11, fontWeight: 700, color: "#0f766e", whiteSpace: "nowrap" }}>Neto ${Math.round(Number(oc.monto)).toLocaleString("es-CL")}</div>
+                                  )}
                                   <div style={{ color: "var(--text-muted)", fontSize: "11px" }}>
                                     {oc.fecha_oc
                                       ? formatearFechaCorta(oc.fecha_oc)
@@ -3042,6 +3046,10 @@ export default function Trazabilidad() {
                                     </button>
                                   )}
                                 </div>
+                                {/* (2026-10-14) El neto de la guía a la vista. */}
+                                {Number(guia.monto) > 0 && (
+                                  <div className="neto-doc" style={{ fontSize: 11, fontWeight: 700, color: "#0f766e", whiteSpace: "nowrap" }}>Neto ${Math.round(Number(guia.monto)).toLocaleString("es-CL")}</div>
+                                )}
                                 <div style={{ color: "var(--text-muted)", fontSize: "11px" }}>
                                   {(guia.fecha_oc || guia.created_at)
                                     ? formatearFechaCorta(guia.fecha_oc || guia.created_at)

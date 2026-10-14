@@ -143,7 +143,7 @@ export default function CampanasMargen() {
   function nueva(prellenado = {}) {
     setForm({
       id: null, nombre: "", descripcion: "", lista_precios: "1", margen_pct: "",
-      marcas: [], categorias: [], skus: [], desde: hoy, hasta: "", activa: true,
+      marcas: [], categorias: [], skus: [], skus_excluidos: [], desde: hoy, hasta: "", activa: true,
       ...prellenado,
     });
   }
@@ -157,6 +157,7 @@ export default function CampanasMargen() {
       marcas: Array.isArray(c.marcas) ? c.marcas : [],
       categorias: Array.isArray(c.categorias) ? c.categorias : [],
       skus: Array.isArray(c.skus) ? c.skus : [],
+      skus_excluidos: Array.isArray(c.skus_excluidos) ? c.skus_excluidos : [],
       desde: String(c.desde || "").slice(0, 10),
       hasta: String(c.hasta || "").slice(0, 10),
       activa: c.activa !== false,
@@ -277,6 +278,7 @@ export default function CampanasMargen() {
               const marcas = Array.isArray(c.marcas) ? c.marcas : [];
               const cats = Array.isArray(c.categorias) ? c.categorias : [];
               const skus = Array.isArray(c.skus) ? c.skus : [];
+              const excluidos = Array.isArray(c.skus_excluidos) ? c.skus_excluidos : [];
               return (
                 <tr key={c.id}>
                   <td style={{ maxWidth: 260 }}>
@@ -289,6 +291,11 @@ export default function CampanasMargen() {
                     {skus.length > 0 && (
                       <div title={skus.join(", ")}>
                         <span style={{ color: "var(--text-muted)" }}>SKUs:</span> {skus.slice(0, 3).join(", ")}{skus.length > 3 ? ` +${skus.length - 3}` : ""}
+                      </div>
+                    )}
+                    {excluidos.length > 0 && (
+                      <div title={excluidos.join(", ")} style={{ color: "#b45309" }}>
+                        <span style={{ color: "var(--text-muted)" }}>Desmarcados:</span> {excluidos.length.toLocaleString("es-CL")} producto{excluidos.length === 1 ? "" : "s"}
                       </div>
                     )}
                     {marcas.length > 0 && (
@@ -400,6 +407,23 @@ function ModalCampana({ inicial, productos, otras, onCerrar, onGuardada }) {
     () => (sim ? [...sim.filas].sort((a, b) => (a.margenQueda ?? 999) - (b.margenQueda ?? 999)) : []),
     [sim],
   );
+  /* (2026-10-14) Pedido de Ariel: todos marcados y se pueden desmarcar. Lo
+     desmarcado queda en skus_excluidos (solo productos con SKU: sin SKU no hay
+     cómo apuntarlos). Las cuentas del resumen son sobre los marcados. */
+  const excluidos = useMemo(() => new Set((f.skus_excluidos || []).map((s) => normSku(s))), [f.skus_excluidos]);
+  const estaMarcado = (p) => !(p?.sku && excluidos.has(normSku(p.sku)));
+  const marcar = (p, si) => {
+    if (!p?.sku) return;
+    const sku = normSku(p.sku);
+    set("skus_excluidos")(si ? (f.skus_excluidos || []).filter((s) => normSku(s) !== sku) : [...new Set([...(f.skus_excluidos || []), sku])]);
+  };
+  const marcarTodos = (si) => set("skus_excluidos")(si ? [] : ejemplos.map((r) => r.p?.sku).filter(Boolean).map(normSku));
+  const marcados = useMemo(() => ejemplos.filter((r) => !(r.p?.sku && excluidos.has(normSku(r.p.sku)))), [ejemplos, excluidos]);
+  const resumenMarcados = useMemo(() => ({
+    total: marcados.length,
+    bajoCosto: marcados.filter((r) => r.margenQueda !== null && r.margenQueda < 0).length,
+    bajo20: marcados.filter((r) => r.margenQueda !== null && r.margenQueda >= 0 && r.margenQueda < 20).length,
+  }), [marcados]);
 
   // Otras campañas de la misma lista cuya vigencia se cruza y que alcanzan a
   // alguno de los mismos productos.
@@ -420,6 +444,7 @@ function ModalCampana({ inicial, productos, otras, onCerrar, onGuardada }) {
     if (!margenValido) { setError("Indica el descuento, entre 0 y 94,99 %."); return; }
     if (!f.desde || !f.hasta) { setError("Indica las fechas de inicio y término."); return; }
     if (f.hasta < f.desde) { setError("La fecha de término no puede ser anterior al inicio."); return; }
+    if (sim && sim.total > 0 && marcados.length === 0) { setError("Desmarcaste todos los productos: la campaña no tendría efecto."); return; }
     setError("");
     setGuardando(true);
     const payload = {
@@ -430,6 +455,8 @@ function ModalCampana({ inicial, productos, otras, onCerrar, onGuardada }) {
       marcas: f.marcas,
       categorias: f.categorias,
       skus: f.skus || [],
+      // (2026-10-14) Los productos desmarcados en la vista previa.
+      skus_excluidos: f.skus_excluidos || [],
       desde: f.desde,
       hasta: f.hasta,
       activa: f.activa !== false,
@@ -548,15 +575,18 @@ function ModalCampana({ inicial, productos, otras, onCerrar, onGuardada }) {
             {sim && (
               <>
                 <div style={{ fontSize: 13, color: "var(--text)", lineHeight: 1.5 }}>
-                  Alcanza a <strong>{sim.total.toLocaleString("es-CL")} producto{sim.total === 1 ? "" : "s"}</strong> en Lista {f.lista_precios}, con {Number(margen).toLocaleString("es-CL")} % de descuento sobre su precio de lista.
-                  {sim.bajoCosto > 0 && <span style={{ color: "#b91c1c", fontWeight: 600 }}> {sim.bajoCosto.toLocaleString("es-CL")} quedarían bajo su costo.</span>}
-                  {sim.bajo20 > 0 && <span style={{ color: "#b45309", fontWeight: 600 }}> {sim.bajo20.toLocaleString("es-CL")} quedan con menos de 20 % de margen.</span>}
+                  Alcanza a <strong>{resumenMarcados.total.toLocaleString("es-CL")} producto{resumenMarcados.total === 1 ? "" : "s"}</strong>{sim.total !== resumenMarcados.total ? ` (${(sim.total - resumenMarcados.total).toLocaleString("es-CL")} desmarcado${sim.total - resumenMarcados.total === 1 ? "" : "s"})` : ""} en Lista {f.lista_precios}, con {Number(margen).toLocaleString("es-CL")} % de descuento sobre su precio de lista.
+                  {resumenMarcados.bajoCosto > 0 && <span style={{ color: "#b91c1c", fontWeight: 600 }}> {resumenMarcados.bajoCosto.toLocaleString("es-CL")} quedarían bajo su costo.</span>}
+                  {resumenMarcados.bajo20 > 0 && <span style={{ color: "#b45309", fontWeight: 600 }}> {resumenMarcados.bajo20.toLocaleString("es-CL")} quedan con menos de 20 % de margen.</span>}
                 </div>
                 {ejemplos.length > 0 && (
                   <div className="table-wrap" style={{ margin: 0, maxHeight: 360, overflow: "auto" }}>
                     <table className="data-table tabla-productos-campana" style={{ minWidth: 520, fontSize: 12.5 }}>
                       <thead>
                         <tr>
+                          <th style={{ width: 34 }} title="Marcados = reciben el descuento">
+                            <input type="checkbox" className="marcar-todos" checked={ejemplos.length > 0 && marcados.length === ejemplos.length} onChange={(e) => marcarTodos(e.target.checked)} aria-label="Marcar o desmarcar todos" />
+                          </th>
                           <th>Producto</th>
                           <th>Costo</th>
                           <th>Lista {f.lista_precios} hoy</th>
@@ -566,8 +596,12 @@ function ModalCampana({ inicial, productos, otras, onCerrar, onGuardada }) {
                       <tbody>
                         {ejemplos.map(({ p, lista, campana, dif, margenQueda }) => {
                           const mHoy = margenDePrecio(p.costo, lista);
+                          const marcado = estaMarcado(p);
                           return (
-                            <tr key={p.id}>
+                            <tr key={p.id} className={marcado ? "producto-marcado" : "producto-desmarcado"} style={{ opacity: marcado ? 1 : 0.5 }}>
+                              <td>
+                                <input type="checkbox" checked={marcado} disabled={!p.sku} onChange={(e) => marcar(p, e.target.checked)} title={p.sku ? (marcado ? "Quitar de la campaña" : "Volver a incluir") : "Sin SKU no se puede desmarcar"} aria-label={`Incluir ${p.nombre}`} />
+                              </td>
                               <td style={{ maxWidth: 220 }}>
                                 <div className="truncar" title={p.nombre}>{p.nombre}</div>
                                 <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{p.sku || "sin SKU"} · {p.marca || "—"}</div>
@@ -597,12 +631,12 @@ function ModalCampana({ inicial, productos, otras, onCerrar, onGuardada }) {
                     </table>
                   </div>
                 )}
-                <div style={{ fontSize: 11.5, color: "var(--text-muted)" }}>{ejemplos.length.toLocaleString("es-CL")} producto{ejemplos.length === 1 ? "" : "s"}, del menor margen al mayor.</div>
+                <div style={{ fontSize: 11.5, color: "var(--text-muted)" }}>{ejemplos.length.toLocaleString("es-CL")} producto{ejemplos.length === 1 ? "" : "s"}, del menor margen al mayor. Todos marcados: desmarca los que no entran en la campaña.</div>
               </>
             )}
             {sim && sim.total === 0 && aviso("Ningún producto con precio en esta lista cumple esta combinación de marcas, categorías y SKUs: la campaña no tendría efecto.")}
             {sim && todoElCatalogo && sim.total > 0 && aviso("Sin marcas, categorías ni SKUs, la campaña aplica a TODO el catálogo.")}
-            {sim && sim.bajo20 + sim.bajoCosto > 0 && aviso("Los productos que quedan con menos de 20 % de margen dejan la cotización «Pendiente Aprobación»: alguien tiene que aprobarla.")}
+            {sim && resumenMarcados.bajo20 + resumenMarcados.bajoCosto > 0 && aviso("Los productos que quedan con menos de 20 % de margen dejan la cotización «Pendiente Aprobación»: alguien tiene que aprobarla.")}
             {cruces.map(({ c, comunes }) => (
               <div key={c.id}>
                 {aviso(`Se cruza con «${c.nombre}» (${Number(c.margen_pct).toLocaleString("es-CL")} %, ${fechaCorta(c.desde)} → ${fechaCorta(c.hasta)}) en ${comunes.toLocaleString("es-CL")} producto${comunes === 1 ? "" : "s"}. Mientras coincidan, manda la campaña más nueva.`)}

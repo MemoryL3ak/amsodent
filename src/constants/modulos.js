@@ -9,7 +9,10 @@ export const MODULOS = [
   { key: "mis_clientes", label: "Mis clientes", grupo: "Comercial" },
   { key: "bitacora", label: "Bitácora actividades", grupo: "Comercial" },
   { key: "productos", label: "Productos", grupo: "Comercial" },
-  { key: "campanas", label: "Campañas", grupo: "Comercial" },
+  // (2026-10-14) Campañas y Campañas de margen: solo admin y quien lo tenga en su perfil.
+  { key: "campanas", label: "Campañas y Campañas de margen", grupo: "Comercial" },
+  // (2026-10-14) Un vendedor ve solo sus cotizaciones; con esto ve todas.
+  { key: "cotizaciones_todas", label: "Ver todas las cotizaciones (no solo las propias)", grupo: "Comercial" },
   // Venta directa (2026-10-07): listado y documentos de las ventas directas.
   // Emitir exige además rol admin, contabilidad o jefe de ventas especial.
   { key: "venta_directa", label: "Venta directa", grupo: "Comercial" },
@@ -43,6 +46,10 @@ export const MODULOS = [
   { key: "despachos_choferes", label: "Despachos y Choferes", grupo: "Logística" },
   { key: "tracking_choferes", label: "Tracking en Vivo", grupo: "Logística" },
   { key: "costeo_fletes", label: "Fletes", grupo: "Logística" },
+  // (2026-10-14) Inventario (ver el stock; mover stock sigue siendo solo admin)
+  // y sus tarjetas KPI (ocultas a los vendedores).
+  { key: "inventario", label: "Inventario (ver stock)", grupo: "Abastecimiento" },
+  { key: "inventario_kpis", label: "Inventario: KPIs (valorización, unidades…)", grupo: "Abastecimiento" },
   { key: "monitoreo_stock", label: "Monitoreo Stock Clientes", grupo: "Portal del Cliente" },
   { key: "portal_accesos", label: "Acceso Portal Clientes", grupo: "Portal del Cliente" },
   // "Recursos Humanos" NO es asignable por perfil: es solo admin (sueldos,
@@ -57,14 +64,15 @@ export const MODULOS = [
 
 export const MODULO_KEYS = MODULOS.map((m) => m.key);
 
-const BASE = ["cotizaciones", "crear_cotizacion", "clientes", "mis_clientes", "bitacora", "productos", "campanas", "mi_correo", "chat"];
+// (2026-10-14) "campanas" salió de la base: solo admin y por perfil.
+const BASE = ["cotizaciones", "crear_cotizacion", "clientes", "mis_clientes", "bitacora", "productos", "mi_correo", "chat"];
 
 // Fallback por rol (debe reflejar backend/src/auth/permisos.ts).
 const ROLE_DEFAULTS = {
-  jefe_ventas: [...BASE, "trazabilidad", "metas", "panel_indicadores", "resumen_comercial", "cotizaciones_vendedor", "monitoreo_alertas"],
-  jefe_ventas_especial: [...BASE, "trazabilidad", "seguimiento_pagos", "cobranza", "factoring", "facturacion", "venta_directa", "metas", "panel_indicadores", "resumen_comercial", "cotizaciones_vendedor", "monitoreo_alertas"],
-  ventas: [...BASE, "metas"],
-  ventas_especial: [...BASE, "metas", "sorteo", "monitoreo_stock"],
+  jefe_ventas: [...BASE, "trazabilidad", "metas", "panel_indicadores", "resumen_comercial", "cotizaciones_vendedor", "monitoreo_alertas", "inventario"],
+  jefe_ventas_especial: [...BASE, "trazabilidad", "seguimiento_pagos", "cobranza", "factoring", "facturacion", "venta_directa", "metas", "panel_indicadores", "resumen_comercial", "cotizaciones_vendedor", "monitoreo_alertas", "inventario"],
+  ventas: [...BASE, "metas", "inventario"],
+  ventas_especial: [...BASE, "metas", "sorteo", "monitoreo_stock", "inventario"],
   contabilidad: ["mi_correo", "chat", "seguimiento_pagos", "cobranza", "facturacion", "venta_directa", "metas"],
 };
 

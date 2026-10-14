@@ -7,6 +7,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { api } from "../lib/api";
+import useAuth from "../hooks/useAuth";
+import { esAdminRol } from "../constants/modulos";
 import Toast from "../components/Toast";
 import CrearProductoModal from "../components/CrearProductoModal";
 import BotonLimpiarFiltros from "../components/BotonLimpiarFiltros";
@@ -42,6 +44,10 @@ function alertaDe(p) {
 }
 
 export default function Inventario() {
+  // (2026-10-14) Ventas entra a ver el stock: sin tarjetas KPI (permiso
+  // `inventario_kpis`) y sin mover stock, mínimos ni cargas (solo admin).
+  const { rol, puede } = useAuth();
+  const esAdmin = esAdminRol(rol);
   const [filas, setFilas] = useState([]);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState(null);
@@ -403,15 +409,19 @@ export default function Inventario() {
           <button className="btn btn-secondary" onClick={exportarExcel} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
             <Download size={14} /> Exportar
           </button>
-          <button className="btn btn-primary" onClick={() => setCargaOpen(true)}
-            title="Carga el conteo físico desde una planilla (columnas: sku, stock y opcionalmente stock_minimo). Cada diferencia queda como un ajuste en el libro."
-            style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-            <Upload size={14} /> Carga masiva
-          </button>
+          {esAdmin && (
+            <button className="btn btn-primary" onClick={() => setCargaOpen(true)}
+              title="Carga el conteo físico desde una planilla (columnas: sku, stock y opcionalmente stock_minimo). Cada diferencia queda como un ajuste en el libro."
+              style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <Upload size={14} /> Carga masiva
+            </button>
+          )}
         </div>
       </div>
 
       {/* KPIs */}
+      {/* (2026-10-14) Las tarjetas KPI solo para quien tenga «Inventario: KPIs» (los vendedores no las ven). */}
+      {puede("inventario_kpis") && (
       <div className={`stats-row ${bsale ? "stats-6" : "stats-5"}`}>
         <div className="stat-card">
           <div className="stat-label">SKUs con stock</div>
@@ -425,7 +435,7 @@ export default function Inventario() {
         </div>
         <div className="stat-card">
           <div className="stat-label">Valorización</div>
-          <div className="stat-value" style={{ color: "#15803d" }}>{fmtCLP(stats.valor)}</div>
+          <div className="stat-value stat-value-monto" style={{ color: "#15803d" }} title={fmtCLP(stats.valor)}>{fmtCLP(stats.valor)}</div>
           <div className="stat-sub">stock × costo (neto)</div>
         </div>
         <div className="stat-card" onClick={() => { setVista("stock"); setFiltroAlerta("bajo_minimo"); }} style={{ cursor: "pointer" }} title="Ver solo los productos bajo su mínimo">
@@ -446,6 +456,7 @@ export default function Inventario() {
           </div>
         )}
       </div>
+      )}
 
       {/* Integración Bsale: el stock disponible de Bsale (donde se factura)
           es la fuente de verdad; cada corrida deja los cambios como ajustes
@@ -526,16 +537,18 @@ export default function Inventario() {
               );
             })()}
           </div>
-          <button
-            className="btn btn-secondary"
-            onClick={sincronizarBsale}
-            disabled={bsaleSync || bsale.sincronizando || !bsale.token_configurado}
-            title={!bsale.token_configurado ? "Configura el token de Bsale en el backend" : "Traer el stock disponible desde Bsale ahora"}
-            style={{ display: "inline-flex", alignItems: "center", gap: 6, flexShrink: 0 }}
-          >
-            <RefreshCw size={14} style={bsaleSync || bsale.sincronizando ? { animation: "bsale-spin 1s linear infinite" } : undefined} />
-            {bsaleSync || bsale.sincronizando ? "Sincronizando…" : "Sincronizar ahora"}
-          </button>
+          {esAdmin && (
+            <button
+              className="btn btn-secondary"
+              onClick={sincronizarBsale}
+              disabled={bsaleSync || bsale.sincronizando || !bsale.token_configurado}
+              title={!bsale.token_configurado ? "Configura el token de Bsale en el backend" : "Traer el stock disponible desde Bsale ahora"}
+              style={{ display: "inline-flex", alignItems: "center", gap: 6, flexShrink: 0 }}
+            >
+              <RefreshCw size={14} style={bsaleSync || bsale.sincronizando ? { animation: "bsale-spin 1s linear infinite" } : undefined} />
+              {bsaleSync || bsale.sincronizando ? "Sincronizando…" : "Sincronizar ahora"}
+            </button>
+          )}
           <style>{`@keyframes bsale-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
         </div>
       )}
@@ -656,11 +669,13 @@ export default function Inventario() {
                             </span>
                           </td>
                           <td>
-                            <button className="btn btn-sm btn-primary" onClick={() => setCrearDesdeBsale({ sku: p.sku, nombre: p.nombre, stock: p.stock })}
-                              title="Crear el producto en el sistema con este SKU; el stock de Bsale queda como ajuste en el libro"
-                              style={{ display: "inline-flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" }}>
-                              <PackagePlus size={14} /> Crear producto
-                            </button>
+                            {esAdmin && (
+                              <button className="btn btn-sm btn-primary" onClick={() => setCrearDesdeBsale({ sku: p.sku, nombre: p.nombre, stock: p.stock })}
+                                title="Crear el producto en el sistema con este SKU; el stock de Bsale queda como ajuste en el libro"
+                                style={{ display: "inline-flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" }}>
+                                <PackagePlus size={14} /> Crear producto
+                              </button>
+                            )}
                           </td>
                         </tr>
                       );
@@ -679,7 +694,9 @@ export default function Inventario() {
                           {fmtNum(stock)}
                         </td>
                         <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
-                          {minEdit[p.id] !== undefined ? (
+                          {!esAdmin ? (
+                            <span style={{ color: Number(p.stock_minimo) > 0 ? "var(--text)" : "var(--text-muted)" }}>{fmtNum(Number(p.stock_minimo) || 0)}</span>
+                          ) : minEdit[p.id] !== undefined ? (
                             <input
                               className="input"
                               autoFocus
@@ -713,15 +730,19 @@ export default function Inventario() {
                         </td>
                         <td>
                           <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
-                            <button className="btn btn-sm btn-ghost" title="Registrar entrada (compra, devolución)" onClick={() => setMovModal({ producto: p, tipo: "entrada" })} style={{ padding: 6, lineHeight: 0, color: "#15803d" }}>
-                              <Plus size={15} />
-                            </button>
-                            <button className="btn btn-sm btn-ghost" title="Registrar salida (venta, merma, muestra)" onClick={() => setMovModal({ producto: p, tipo: "salida" })} style={{ padding: 6, lineHeight: 0, color: "#b91c1c" }}>
-                              <Minus size={15} />
-                            </button>
-                            <button className="btn btn-sm btn-ghost" title="Ajustar al conteo físico" onClick={() => setMovModal({ producto: p, tipo: "ajuste" })} style={{ padding: 6, lineHeight: 0, color: "#6d28d9" }}>
-                              <SlidersHorizontal size={15} />
-                            </button>
+                            {esAdmin && (
+                              <>
+                                <button className="btn btn-sm btn-ghost" title="Registrar entrada (compra, devolución)" onClick={() => setMovModal({ producto: p, tipo: "entrada" })} style={{ padding: 6, lineHeight: 0, color: "#15803d" }}>
+                                  <Plus size={15} />
+                                </button>
+                                <button className="btn btn-sm btn-ghost" title="Registrar salida (venta, merma, muestra)" onClick={() => setMovModal({ producto: p, tipo: "salida" })} style={{ padding: 6, lineHeight: 0, color: "#b91c1c" }}>
+                                  <Minus size={15} />
+                                </button>
+                                <button className="btn btn-sm btn-ghost" title="Ajustar al conteo físico" onClick={() => setMovModal({ producto: p, tipo: "ajuste" })} style={{ padding: 6, lineHeight: 0, color: "#6d28d9" }}>
+                                  <SlidersHorizontal size={15} />
+                                </button>
+                              </>
+                            )}
                             <button className="btn btn-sm btn-ghost" title="Ver historial de movimientos" onClick={() => abrirHistorial(p)} style={{ padding: 6, lineHeight: 0, color: "var(--text-muted)" }}>
                               <History size={15} />
                             </button>
