@@ -169,11 +169,12 @@ export class IaService {
   }
 
   private get model(): string {
-    // Haiku 4.5 por default: mucho más rápido que Sonnet para el flujo
-    // text-to-SQL + resumen breve, que es lo que hace DamarIA. Si se quiere
-    // calidad mayor se puede sobreescribir con DAMARIA_MODEL en el .env del
-    // backend (por ejemplo claude-sonnet-4-6 o claude-opus-4-7).
-    return (process.env.DAMARIA_MODEL || 'claude-haiku-4-5-20251001').trim();
+    /* (2026-10-15) Sonnet 5 por default (antes Haiku 4.5): Haiku resolvía
+       las preguntas con JOIN —metas, comparaciones— en 3 o 4 vueltas de SQL,
+       y cada vuelta vuelve a mandar todo el contexto; Sonnet suele cerrarlas
+       en una, así que el costo total queda parejo y la respuesta es mejor.
+       Se cambia sin desplegar con DAMARIA_MODEL en el .env del backend. */
+    return (process.env.DAMARIA_MODEL || 'claude-sonnet-5').trim();
   }
 
   // Configuración de system + tools con prompt caching activado. Anthropic
@@ -264,7 +265,10 @@ export class IaService {
     if (ctx) system.push({ type: 'text', text: ctx });
     // Contexto del panel abierto (p. ej. Análisis Mercado Público): DamarIA lo
     // usa como fuente principal y complementa con SQL solo si hace falta.
-    const ctxPanel = String(opts.contexto || '').trim();
+    // (2026-10-15) Tope de 12.000 caracteres (~3.000 tokens): el panel manda
+    // KPIs y listas acotadas, pero si crece no debe crecer el costo por pregunta.
+    const ctxCrudo = String(opts.contexto || '').trim();
+    const ctxPanel = ctxCrudo.length > 12000 ? `${ctxCrudo.slice(0, 12000)}… [contexto recortado a 12.000 caracteres]` : ctxCrudo;
     if (ctxPanel) {
       system.push({
         type: 'text',
@@ -286,8 +290,12 @@ export class IaService {
         resp = await this.llamarClaudeStream(
           {
             model: this.model,
-            max_tokens: 900,
-            temperature: 0.3,
+            // (2026-10-15) Los Claude 5 razonan antes de escribir y eso consume
+            // presupuesto: con 900 la respuesta salía cortada. Es un tope, no
+            // un gasto: la respuesta sigue siendo el resumen de 4 líneas.
+            max_tokens: 2500,
+            // La temperatura baja ayuda al SQL en los modelos 4.x; los 5 no la admiten junto al razonamiento.
+            ...(/^claude-[a-z]+-5/.test(this.model) ? {} : { temperature: 0.3 }),
             system,
             tools: this.toolsConCache,
             messages,
@@ -309,6 +317,12 @@ export class IaService {
       }
 
       messages.push({ role: 'assistant', content: resp.content });
+      // (2026-10-15) Tokens por vuelta, para que la optimización sea medible.
+      const u: any = resp.usage || {};
+      this.logger.log(
+        `DamarIA tokens · vuelta ${iter + 1} · entrada ${u.input_tokens ?? '?'} ` +
+        `(caché leída ${u.cache_read_input_tokens ?? 0}, creada ${u.cache_creation_input_tokens ?? 0}) · salida ${u.output_tokens ?? '?'}`,
+      );
 
       if (resp.stop_reason === 'tool_use') {
         emit({ tipo: 'estado', texto: 'Consultando la base de datos…' });
@@ -322,7 +336,7 @@ export class IaService {
             resultados.push({
               type: 'tool_result',
               tool_use_id: bloque.id,
-              content: JSON.stringify(ultimasFilas.slice(0, 200)),
+              content: this.compactarParaModelo(ultimasFilas),
             });
           } catch (e: any) {
             resultados.push({
@@ -464,8 +478,10 @@ ${MANUAL_SISTEMA}`,
       const resp = await this.llamarClaudeStream(
         {
           model: this.model,
-          max_tokens: 700,
-          temperature: 0.3,
+          // (2026-10-15) Mismo criterio que el modo datos: los Claude 5 razonan
+          // antes de escribir; con 700 la guía salía cortada. Es un tope.
+          max_tokens: 2000,
+          ...(/^claude-[a-z]+-5/.test(this.model) ? {} : { temperature: 0.3 }),
           system,
           messages,
           stream: true,
@@ -574,7 +590,7 @@ ${MANUAL_SISTEMA}`,
   private async llamarClaudeStream(
     body: any,
     onTextDelta: (delta: string, textoCompleto: string) => void,
-  ): Promise<{ content: any[]; stop_reason: string | null }> {
+  ): Promise<{ content: any[]; stop_reason: string | null; usage?: Record<string, any> }> {
     if (typeof fetchGlobal !== 'function') {
       throw new BadRequestException(
         'El servidor no soporta fetch nativo (se requiere Node 18 o superior).',
@@ -654,6 +670,8 @@ ${MANUAL_SISTEMA}`,
     const bloques: any[] = [];
     let stopReason: string | null = null;
     let textoAcumulado = '';
+    // Uso de tokens: message_start trae la entrada (y la caché), message_delta la salida.
+    let usage: Record<string, any> = {};
 
     while (true) {
       const { done, value } = await reader.read();
@@ -690,6 +708,11 @@ ${MANUAL_SISTEMA}`,
                 input: {},
                 _json: '',
               };
+            } else if (cb.type === 'thinking') {
+              // (2026-10-15) Los Claude 5 razonan antes de escribir. El bloque
+              // vuelve a la API en la siguiente vuelta del tool-use y debe ir
+              // completo (texto + firma); vacío, la API rechaza la llamada.
+              bloques[idx] = { type: 'thinking', thinking: '', signature: '' };
             } else {
               bloques[idx] = { type: cb.type, ...cb };
             }
@@ -706,6 +729,10 @@ ${MANUAL_SISTEMA}`,
               onTextDelta(t, textoAcumulado);
             } else if (data.delta?.type === 'input_json_delta') {
               blk._json = (blk._json || '') + String(data.delta.partial_json || '');
+            } else if (data.delta?.type === 'thinking_delta') {
+              blk.thinking = (blk.thinking || '') + String(data.delta.thinking || '');
+            } else if (data.delta?.type === 'signature_delta') {
+              blk.signature = String(data.delta.signature || '');
             }
             break;
           }
@@ -722,8 +749,13 @@ ${MANUAL_SISTEMA}`,
             }
             break;
           }
+          case 'message_start': {
+            usage = { ...usage, ...(data.message?.usage || {}) };
+            break;
+          }
           case 'message_delta': {
             if (data.delta?.stop_reason) stopReason = data.delta.stop_reason;
+            if (data.usage) usage = { ...usage, ...data.usage };
             break;
           }
           case 'error': {
@@ -738,7 +770,34 @@ ${MANUAL_SISTEMA}`,
       }
     }
 
-    return { content: bloques.filter(Boolean), stop_reason: stopReason };
+    return { content: bloques.filter(Boolean), stop_reason: stopReason, usage };
+  }
+
+  /* (2026-10-15) Lo que el modelo necesita para redactar, no la tabla entera:
+     la tabla completa (hasta 1.000 filas) igual viaja al navegador en `datos`
+     para la grilla y el Excel. Al modelo le llegan 100 filas con los textos
+     recortados a 120 caracteres, más el total real para que no diga "son
+     100" cuando son 800. Antes iban 200 filas enteras: con columnas largas
+     eran miles de tokens por vuelta. */
+  private compactarParaModelo(filas: any[]): string {
+    const total = filas.length;
+    const MAX_FILAS = 100;
+    const MAX_TEXTO = 120;
+    const muestra = filas.slice(0, MAX_FILAS).map((f) => {
+      const out: Record<string, any> = {};
+      for (const [k, v] of Object.entries(f || {})) {
+        if (typeof v === 'string' && v.length > MAX_TEXTO) out[k] = `${v.slice(0, MAX_TEXTO)}…`;
+        else if (v && typeof v === 'object') out[k] = JSON.stringify(v).slice(0, MAX_TEXTO);
+        else out[k] = v;
+      }
+      return out;
+    });
+    return JSON.stringify({
+      total_filas: total,
+      filas_mostradas: muestra.length,
+      ...(total > muestra.length ? { nota: `Se muestran ${muestra.length} de ${total} filas; si necesitas totales, calcúlalos en SQL.` } : {}),
+      filas: muestra,
+    });
   }
 
   private async ejecutarSQL(sql: string): Promise<any[]> {
