@@ -328,7 +328,9 @@ EMITIR BOLETA / FACTURA en Trazabilidad: en un cliente particular con la
 factura pendiente, arma la boleta o factura con el cliente y los productos de
 la cotización y la registra ahí (ítems sin SKU se avisan: no van en Bsale).
 GUÍA DESDE LA COTIZACIÓN: en el Detalle de una cotización ADJUDICADA, el botón
-"Emitir guía de despacho" (sección Documentos): con una OC sale de ella; con
+"Emitir guía de despacho" (sección Documentos) lo puede usar CUALQUIER usuario
+(desde 2026-10-15; facturas y boletas siguen siendo de quien emite en Bsale):
+con una OC sale de ella; con
 varias pregunta de cuál; sin OC (particular) se arma con los productos de la
 cotización. Empresa de transporte y N° de seguimiento son opcionales: si no se
 tienen, la guía muestra "+ N° de seguimiento" para agregarlo después (despacho

@@ -90,7 +90,7 @@ export class BsaleLibreService {
   // ── Para armar el documento en pantalla ────────────────────────────────
 
   async opciones(userId: string) {
-    await this.facturacion.exigirRol(userId);
+    await this.facturacion.exigirRolGuia(userId); // (2026-10-15) lecturas que necesita la guía: para todos
     const [{ formas }, traslados] = await Promise.all([this.facturacion.listas(), this.despachos.tiposTraslado()]);
     return {
       modo: this.facturacion.emisionActiva ? 'activa' : 'simulacion',
@@ -107,7 +107,7 @@ export class BsaleLibreService {
   /* Clientes del sistema que calzan con lo escrito (RUT o nombre): para
      elegir uno sin tipear el RUT entero. */
   async buscarClientes(userId: string, q: string) {
-    await this.facturacion.exigirRol(userId);
+    await this.facturacion.exigirRolGuia(userId);
     const t = texto(q, 60);
     if (t.length < 2) return [];
     const patron = `%${t.replace(/[%_]/g, '')}%`;
@@ -131,7 +131,7 @@ export class BsaleLibreService {
   /* El cliente como lo verá el documento: el que Bsale tiene con ese RUT o,
      si no existe, uno nuevo con lo que el sistema sepa de él. */
   async cliente(userId: string, rut: string) {
-    await this.facturacion.exigirRol(userId);
+    await this.facturacion.exigirRolGuia(userId);
     if (!normRut(rut)) throw new BadRequestException('Indica el RUT del cliente.');
     const enBsale = await this.despachos.clientePorRut(rut);
     if (enBsale) return this.clienteDeBsale(enBsale);
@@ -204,7 +204,7 @@ export class BsaleLibreService {
   /* Productos del catálogo que calzan (SKU o nombre), con sus listas: para
      agregarlos como líneas. Si el SKU no está en Bsale se dice al simular. */
   async buscarProductos(userId: string, q: string) {
-    await this.facturacion.exigirRol(userId);
+    await this.facturacion.exigirRolGuia(userId);
     const t = texto(q, 60);
     if (t.length < 2) return [];
     const patron = `%${t.replace(/[%_]/g, '')}%`;
@@ -229,7 +229,7 @@ export class BsaleLibreService {
      (precio neto unitario, con el flete repartido, igual que su total); los
      ítems sin SKU se informan aparte porque no pueden ir en Bsale. */
   async desdeCotizacion(userId: string, idRaw: any) {
-    await this.facturacion.exigirRol(userId);
+    await this.facturacion.exigirRolGuia(userId);
     const id = Number(idRaw);
     if (!(id > 0)) throw new BadRequestException('Indica la cotización.');
     const db = this.supabase.getClient();
@@ -530,7 +530,12 @@ export class BsaleLibreService {
   // ── Simular / emitir ───────────────────────────────────────────────────
 
   async emitir(usuario: { id: string; email: string }, body: any) {
-    await this.facturacion.exigirRol(usuario.id);
+    // (2026-10-15) La guía de despacho sola (no venta directa) la emite
+    // cualquiera; boletas, facturas y la venta directa siguen pidiendo rol o
+    // perfil. Misma resolución del tipo que en armar().
+    const esGuiaSola = !(body?.tipo === 'factura' || body?.tipo === 'boleta') && body?.venta_directa !== true;
+    if (esGuiaSola) await this.facturacion.exigirRolGuia(usuario.id);
+    else await this.facturacion.exigirRol(usuario.id);
     const simular = body?.simular === true;
     const real = this.facturacion.emisionActiva && !simular;
     const b: any = await this.armar(body);

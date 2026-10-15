@@ -243,6 +243,15 @@ export class BsaleFacturacionService {
     }
   }
 
+  /* (2026-10-15) Guía de despacho desde la cotización: la emite CUALQUIER
+     usuario autenticado (pedido de Ariel: "todos pueden emitir guía de
+     despacho desde la cotización"). Facturas, boletas, venta directa y
+     registrar la orden siguen con exigirRol. Queda como método (y no como
+     ausencia de chequeo) para poder acotarlo en un solo lugar más adelante. */
+  async exigirRolGuia(_userId: string): Promise<void> {
+    return;
+  }
+
   /* (2026-10-14) Emite quien tiene un rol de la lista (BSALE_EMISION_ROLES) o
      quien tiene «Venta directa» o «Facturación» en su perfil de permisos
      (pedido de Ariel: Laura y Sandy con venta directa sin cambiarles el rol). */
@@ -274,6 +283,8 @@ export class BsaleFacturacionService {
       configurada,
       // La pantalla solo ofrece el botón a quien puede usarlo (rol o perfil de permisos).
       puede: configurada && (await this.puedeEmitir(userId)),
+      // (2026-10-15) La guía de despacho desde la cotización: todos.
+      puede_guia: configurada,
       modo: this.emisionActiva ? 'activa' : 'simulacion',
       // Sin la tabla de registro no se emite: no habría cómo evitar duplicados.
       registro_listo: tabla,

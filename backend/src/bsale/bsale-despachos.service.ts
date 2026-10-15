@@ -486,7 +486,7 @@ export class BsaleDespachosService {
   }
 
   async prepararGuia(userId: string, licitacionId: number, ocDocId: number) {
-    await this.facturacion.exigirRol(userId);
+    await this.facturacion.exigirRolGuia(userId); // (2026-10-15) la guía la emite cualquiera
     return this.armarBorradorGuia(licitacionId, ocDocId);
   }
 
@@ -612,7 +612,7 @@ export class BsaleDespachosService {
       cliente?: Record<string, any>; fecha_emision?: string; huella?: string; simular?: boolean;
     },
   ) {
-    await this.facturacion.exigirRol(usuario.id);
+    await this.facturacion.exigirRolGuia(usuario.id); // (2026-10-15) la guía la emite cualquiera
     const real = this.facturacion.emisionActiva && body?.simular !== true;
     const b: any = await this.armarBorradorGuia(Number(body?.licitacion_id), Number(body?.oc_doc_id));
     if (b.problemas.length) throw new BadRequestException(`No se puede emitir: ${b.problemas.map((p: Problema) => p.mensaje).join(' ')}`);

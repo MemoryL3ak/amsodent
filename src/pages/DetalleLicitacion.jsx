@@ -939,7 +939,8 @@ export default function EditarLicitacion() {
     return APROBADORES_AUTORIZADOS.includes(e);
   }, [esAdmin, miCorreo]);
   /* (2026-10-07) Guía de despacho desde la cotización. Al quedar adjudicada se
-     habilita "Emitir guía de despacho" (quien emite en Bsale). Con orden de
+     habilita "Emitir guía de despacho" (desde 2026-10-15, para cualquier
+     usuario: `puede_guia`; antes solo quien emite facturas). Con orden de
      compra la guía sale de ella; sin OC (particular), de los productos de la
      cotización. El N° de seguimiento puede ir después. */
   const [puedeBsale, setPuedeBsale] = useState(false);
@@ -952,7 +953,8 @@ export default function EditarLicitacion() {
   const [guardandoSeguimiento, setGuardandoSeguimiento] = useState(false);
   useEffect(() => {
     let vivo = true;
-    api.get("/bsale/facturas/estado").then((e) => { if (vivo) setPuedeBsale(!!e?.puede); }).catch(() => {});
+    // `puede_guia` (todos) con respaldo en `puede` mientras el backend viejo siga desplegado.
+    api.get("/bsale/facturas/estado").then((e) => { if (vivo) setPuedeBsale(!!(e?.puede_guia ?? e?.puede)); }).catch(() => {});
     return () => { vivo = false; };
   }, []);
 
