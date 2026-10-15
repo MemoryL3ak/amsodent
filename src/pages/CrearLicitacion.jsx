@@ -1990,8 +1990,14 @@ export default function CrearLicitacion() {
   /* ============================================================
      PRODUCTOS EQUIVALENTES → COTIZACIÓN HIJA
 ============================================================ */
-  const buscarProductoPorSku = (sku) =>
-    productos.find((p) => String(p.sku || "").trim() === String(sku || "").trim()) || null;
+  // (2026-10-15) Sin SKU no hay producto: antes un SKU vacío calzaba con el
+  // primer producto del catálogo que tampoco tiene SKU y la ficha (y las
+  // equivalencias) salían de otro producto.
+  const buscarProductoPorSku = (sku) => {
+    const buscado = String(sku || "").trim();
+    if (!buscado) return null;
+    return productos.find((p) => String(p.sku || "").trim() === buscado) || null;
+  };
 
   // Equivalencias válidas de un SKU: las declaradas en el producto que además
   // existan en el catálogo activo.
