@@ -3,6 +3,7 @@ import { SupabaseService } from '../supabase/supabase.service';
 import { MailingsService } from '../mailings/mailings.service';
 import { ChatService } from '../chat/chat.service';
 import { fueSeleccionado } from '../mercadopublico/seleccion';
+import { MpAdjudicacionesService } from './mp-adjudicaciones.service';
 
 @Injectable()
 export class LicitacionesService {
@@ -14,6 +15,7 @@ export class LicitacionesService {
     private supabase: SupabaseService,
     private mailings: MailingsService,
     private chat: ChatService,
+    private adjudicaciones: MpAdjudicacionesService,
   ) {}
 
   async findAll(filters?: { estado?: string; creado_por?: string; id_licitacion?: string; exclude_id?: string }) {
@@ -2538,7 +2540,29 @@ export class LicitacionesService {
     return data;
   }
 
+  /* (2026-10-15) Una orden de compra cargada en la cotización ES la
+     adjudicación: el estado cambia en el acto (antes había que esperar a la
+     pasada del cron, y la de las 15:00 solía saltarse porque la de las 9:00
+     seguía corriendo contra la API caída de Compra Ágil). Las versiones
+     hermanas del proceso que sigan abiertas pasan a "Descartada". Nunca
+     frena el registro del documento. */
   async createDocumento(body: Record<string, any>) {
+    const inserted = await this.insertarDocumento(body);
+    if (String(body?.tipo || '') === 'orden_compra' && Number.isFinite(Number(body?.licitacion_id))) {
+      try {
+        await this.adjudicaciones.porOrdenCargada(
+          Number(body.licitacion_id),
+          { numero: String(body?.numero || '').trim() || null, fecha: String(body?.fecha_oc || '').slice(0, 10) || null },
+          'automático (orden de compra cargada)',
+        );
+      } catch (e: any) {
+        this.logger.warn(`La OC se registró pero no se pudo adjudicar la cotización #${body.licitacion_id}: ${String(e?.message || e)}`);
+      }
+    }
+    return inserted;
+  }
+
+  private async insertarDocumento(body: Record<string, any>) {
     let inserted: any = null;
 
     // Despacho interno → correlativo automático AMSO0000001 (cuando no se
@@ -2835,7 +2859,7 @@ export class LicitacionesService {
     const CERRADOS = ['Adjudicada', 'Perdida', 'Descartada', 'Cancelada', 'Desierta'];
     let q = client
       .from('licitaciones')
-      .select('id, id_licitacion, nombre_entidad, estado, fecha, total_con_iva')
+      .select('id, id_licitacion, nombre_entidad, estado, fecha, total_con_iva, fecha_hora_cierre')
       .not('id_licitacion', 'is', null)
       .order('fecha', { ascending: false });
     if (ids?.length) {
@@ -2866,6 +2890,9 @@ export class LicitacionesService {
         revisadas: 0,
         candidatas: candidatas.length,
         ids: candidatas.map((l: any) => l.id),
+        // (2026-10-15) Fecha de cierre de cada una: el cron revisa primero las
+        // que cerraron hace poco (son las que pueden haber cambiado).
+        detalle: candidatas.map((l: any) => ({ id: l.id, cierre: l.fecha_hora_cierre || null })),
         con_discrepancia: 0,
         con_error: 0,
         filas: [] as any[],
@@ -3109,54 +3136,13 @@ export class LicitacionesService {
   /* Aplica el estado sugerido a las cotizaciones elegidas. Va aparte del
      diagnóstico a propósito: mirar no debe cambiar datos del negocio. */
   async aplicarEstadoMp(
-    body: { cambios: Array<{ id: number; estado: string; fecha?: string | null }> },
+    body: { cambios: Array<{ id: number; estado: string; fecha?: string | null; motivo?: string | null }> },
     email?: string,
   ) {
-    const cambios = (Array.isArray(body?.cambios) ? body.cambios : [])
-      .map((c) => ({
-        id: Number(c?.id),
-        estado: String(c?.estado || '').trim(),
-        // Fecha de adjudicación explicita. Sin ella se usa hoy, que es lo
-        // correcto cuando el desenlace lo acabamos de descubrir; con ella se
-        // respeta la fecha real (por ejemplo, la de la orden de compra).
-        fecha: /^\d{4}-\d{2}-\d{2}$/.test(String(c?.fecha || '')) ? String(c.fecha) : null,
-      }))
-      .filter((c) => Number.isFinite(c.id) && ['Adjudicada', 'Perdida', 'Descartada'].includes(c.estado));
-    if (!cambios.length) throw new BadRequestException('No hay cambios válidos que aplicar.');
-
-    const client = this.supabase.getClient();
-    const aplicados: number[] = [];
-    const errores: string[] = [];
-    for (const c of cambios) {
-      const { error } = await client
-        .from('licitaciones')
-        .update({
-          estado: c.estado,
-          ...(c.estado === 'Adjudicada'
-            ? { fecha_adjudicada: c.fecha || new Date().toISOString().slice(0, 10) }
-            : {}),
-        })
-        .eq('id', c.id);
-      if (error) errores.push(`#${c.id}: ${error.message}`);
-      else {
-        aplicados.push(c.id);
-        // Queda en el historial de la cotización (que lee actividades_cliente;
-        // la tabla "actividades" a la que se escribía antes no existe).
-        const { error: errAct } = await client.from('actividades_cliente').insert({
-          licitacion_id: c.id,
-          user_email: email || 'sistema',
-          titulo: `Estado actualizado a "${c.estado}" según Mercado Público`,
-          tipo: 'otro',
-          motivo: 'Gestión Administrativa',
-          comentario: 'Cambio aplicado desde el diagnóstico de estados de Análisis Mercado Público.',
-          fecha: new Date().toISOString().slice(0, 10),
-          todo_el_dia: true,
-          estado: 'realizada',
-        });
-        if (errAct) this.logger.warn(`aplicarEstadoMp: sin bitácora para #${c.id}: ${errAct.message}`);
-      }
-    }
-    return { aplicados: aplicados.length, ids: aplicados, errores };
+    // (2026-10-15) Vive en MpAdjudicacionesService (también lo usan el cron,
+    // el barrido de OC y la carga de documentos). Al adjudicar, descarta las
+    // versiones hermanas abiertas del mismo proceso.
+    return this.adjudicaciones.aplicarEstado(body, email);
   }
 
   /* ── Historial de precios de un producto (2026-09-16, punto 22) ─────────

@@ -9,6 +9,7 @@ import { AuthGuard } from '../auth/auth.guard';
 import { AdminGuard } from '../auth/admin.guard';
 import { CobranzaGuard } from '../auth/cobranza.guard';
 import { DevolucionesService } from './devoluciones.service';
+import { MpOrdenesService } from './mp-ordenes.service';
 
 @Controller('licitaciones')
 @UseGuards(AuthGuard)
@@ -16,6 +17,7 @@ export class LicitacionesController {
   constructor(
     private licitacionesService: LicitacionesService,
     private devoluciones: DevolucionesService,
+    private mpOrdenes: MpOrdenesService,
   ) {}
 
   @Get()
@@ -166,6 +168,17 @@ export class LicitacionesController {
   @Post('mercado-publico/aplicar-estados')
   aplicarEstadoMp(@Req() req: any, @Body() body: { cambios: Array<{ id: number; estado: string }> }) {
     return this.licitacionesService.aplicarEstadoMp(body, (req?.user?.email || '').toLowerCase());
+  }
+
+  /* (2026-10-15) Barrido de las órdenes de compra emitidas a Amsodent en
+     Mercado Público (API v1, la que sí responde): adjudica la cotización de
+     cada OC sin depender de la ficha de la Compra Ágil. El cron lo corre en
+     cada pasada; esto es para lanzarlo a mano. `simular: true` solo muestra
+     el plan, sin cambiar nada. */
+  @Post('mercado-publico/ordenes/barrer')
+  @UseGuards(AdminGuard)
+  barrerOrdenesMp(@Body() body: { dias?: number; simular?: boolean }) {
+    return this.mpOrdenes.barrer({ dias: body?.dias, simular: body?.simular === true });
   }
 
   /* (2026-09-16, punto 22) Historial de precios de CUALQUIER producto que
