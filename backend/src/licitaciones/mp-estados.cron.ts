@@ -2,6 +2,8 @@ import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/commo
 import { SupabaseService } from '../supabase/supabase.service';
 import { LicitacionesService } from './licitaciones.service';
 import { MpExploracionCron } from './mp-exploracion.cron';
+import { MpOrdenesService } from './mp-ordenes.service';
+import { MpAdjudicacionesService } from './mp-adjudicaciones.service';
 
 /* ============================================================================
    Cambio automático de estado según Mercado Público (pedido 2026-09-17)
@@ -44,7 +46,17 @@ const HORAS = String(process.env.MP_ESTADOS_HORAS || '9,15')
 
 /* Tamano de cada tanda de consultas. No es un tope: la pasada recorre TODAS
    las candidatas en tandas de este tamano. */
-const LOTE = Math.max(5, Math.min(500, Number(process.env.MP_ESTADOS_LOTE || process.env.MP_ESTADOS_LIMITE) || 120));
+/* (2026-10-15) 24 y no 120: la tanda es la unidad en que la pasada puede
+   reaccionar (cortar si la API está caída, parar si se acabó la cuota). A
+   30 s por consulta fallida, una tanda de 120 eran 60 minutos a ciegas. */
+const LOTE = Math.max(5, Math.min(500, Number(process.env.MP_ESTADOS_LOTE || process.env.MP_ESTADOS_LIMITE) || 24));
+
+/* (2026-10-15) Candidatas "recientes": cerraron en Mercado Público hace menos
+   de 45 días (o siguen abiertas). Son las que pueden cambiar y se consultan
+   TODAS en cada pasada. Las antiguas se recorren en círculo, de a
+   MP_ESTADOS_ANTIGUAS por pasada. */
+const RECIENTE_MS = 45 * 864e5;
+const ANTIGUAS_POR_PASADA = Math.max(0, Math.trunc(Number(process.env.MP_ESTADOS_ANTIGUAS) || 120));
 
 /* Tope de cotizaciones por pasada. 0 = sin tope, que es lo correcto: si una
    cotizacion sigue abierta hay que preguntar por ella. Existe solo por si la
@@ -70,6 +82,8 @@ export class MpEstadosCron implements OnModuleInit, OnModuleDestroy {
     private readonly supabase: SupabaseService,
     private readonly licitaciones: LicitacionesService,
     private readonly exploracion: MpExploracionCron,
+    private readonly ordenes: MpOrdenesService,
+    private readonly adjudicaciones: MpAdjudicacionesService,
   ) {}
 
   /* (2026-10-02) A las 15:00 esta pasada comparte hora con la exploración de
@@ -161,25 +175,72 @@ export class MpEstadosCron implements OnModuleInit, OnModuleDestroy {
        se cierra acá no se consulta después. */
     const porOc = await this.adjudicarPorOrdenDeCompra(objetivo);
     const resueltosPorOc = new Set(porOc.ids);
+    /* (2026-10-15) Segunda evidencia propia, y hoy la más confiable: las OC
+       que Mercado Público emitió a nuestro código de proveedor (API v1, que
+       responde en segundos). Adjudica sin esperar a la ficha de la Compra
+       Ágil, cuya API pasa horas devolviendo 504. */
+    let porOcMp: any = null;
+    try {
+      porOcMp = await this.ordenes.barrer({ dias: 5 });
+    } catch (e: any) {
+      this.log.warn(`Barrido de OC de Mercado Público fallido: ${String(e?.message || e).slice(0, 160)}`);
+    }
+    for (const a of porOcMp?.adjudicadas || []) resueltosPorOc.add(Number(a.licitacion_id));
+    for (const d of porOcMp?.descartadas || []) resueltosPorOc.add(Number(d.id));
+    /* (2026-10-15) Y el acumulado: procesos ya ganados con otras versiones
+       todavía abiertas (madre o -2 "En espera" junto a la -1 adjudicada).
+       Solo base de datos, no gasta API. */
+    try {
+      const limpieza = await this.adjudicaciones.limpiarVersionesAdjudicadas({ dias: 180 });
+      for (const d of limpieza.descartadas) resueltosPorOc.add(Number(d.id));
+      if (limpieza.descartadas.length) this.log.log(`Versiones no adjudicadas descartadas: ${limpieza.descartadas.length} en ${limpieza.procesos} proceso(s).`);
+    } catch (e: any) {
+      this.log.warn(`Limpieza de versiones fallida: ${String(e?.message || e).slice(0, 160)}`);
+    }
     const pendientes = objetivo.filter((id) => !resueltosPorOc.has(id));
     if (!pendientes.length) {
       this.log.log(`Pasada completa: ${porOc.aplicados} adjudicada(s) por OC cargada, nada que consultar.`);
       return { revisadas: 0, candidatas: objetivo.length, aplicados: porOc.aplicados, con_error: 0, cuota_agotada: false };
     }
 
-    // Se recorre en círculo desde donde quedó la pasada anterior.
-    const inicio = this.cursor % pendientes.length;
-    const orden = inicio ? [...pendientes.slice(inicio), ...pendientes.slice(0, inicio)] : pendientes;
+    /* (2026-10-15) Primero lo que puede haber cambiado: las que cerraron en
+       Mercado Público hace poco, de la más reciente a la más antigua (las que
+       aún no cierran y las sin fecha van al final de ese grupo). Las cerradas
+       hace más de 45 días —la mayoría nunca tendrá un desenlace publicado— se
+       recorren en círculo, de a ANTIGUAS_POR_PASADA, para que no se coman la
+       pasada con una API que tarda 30 s en fallar. */
+    const cierreDe = new Map<number, number>();
+    for (const d of ((lista as any).detalle || []) as Array<{ id: number; cierre: string | null }>) {
+      cierreDe.set(Number(d.id), d?.cierre ? Date.parse(d.cierre) : NaN);
+    }
+    const ahora = Date.now();
+    const cierre = (id: number) => cierreDe.get(id) ?? NaN;
+    const clave = (id: number) => { const c = cierre(id); return !Number.isFinite(c) ? -2 : c > ahora ? -1 : c; };
+    const esReciente = (id: number) => !Number.isFinite(cierre(id)) || ahora - cierre(id) < RECIENTE_MS;
+    const recientes = pendientes.filter(esReciente).sort((a, b) => clave(b) - clave(a));
+    const antiguas = pendientes.filter((id) => !esReciente(id)).sort((a, b) => clave(b) - clave(a));
+    const inicio = antiguas.length ? this.cursor % antiguas.length : 0;
+    const vueltaAntiguas = inicio ? [...antiguas.slice(inicio), ...antiguas.slice(0, inicio)] : antiguas;
+    const orden = [...recientes, ...vueltaAntiguas.slice(0, ANTIGUAS_POR_PASADA)];
     this.log.log(
-      `Pasada iniciada: ${orden.length} candidatas en tandas de ${LOTE}, desde la posición ${inicio}` +
-      `${porOc.aplicados ? ` (${porOc.aplicados} ya adjudicada(s) por OC cargada)` : ''}.`,
+      `Pasada iniciada: ${orden.length} de ${pendientes.length} candidatas ` +
+      `(${recientes.length} recientes + ${Math.min(antiguas.length, ANTIGUAS_POR_PASADA)} antiguas desde la posición ${inicio}) en tandas de ${LOTE}` +
+      `${porOc.aplicados ? ` · ${porOc.aplicados} adjudicada(s) por OC cargada` : ''}` +
+      `${porOcMp?.adjudicadas?.length ? ` · ${porOcMp.adjudicadas.length} por OC emitida en Mercado Público` : ''}.`,
     );
 
     let revisadas = 0;
-    let aplicados = porOc.aplicados;
+    let aplicados = porOc.aplicados + (porOcMp?.adjudicadas?.length || 0);
     let conError = 0;
     let sinCuota = false;
+    let apiCaida = false;
+    let tandasSecas = 0;
     const fallidas: number[] = [];
+    // El cursor recorre las ANTIGUAS: lo consumido de ellas en esta pasada.
+    const avanzarCursor = (consumidas: number) => {
+      const deAntiguas = Math.max(0, consumidas - recientes.length);
+      this.cursor = antiguas.length ? (inicio + deAntiguas) % antiguas.length : 0;
+    };
 
     for (let i = 0; i < orden.length; i += LOTE) {
       const ids = orden.slice(i, i + LOTE);
@@ -190,21 +251,30 @@ export class MpEstadosCron implements OnModuleInit, OnModuleDestroy {
         if (f.error && f.id) fallidas.push(f.id);
       }
       aplicados += await this.aplicarYNotificar(diag.filas || []);
-      // Sin cuota del ticket no sirve seguir: solo gastaría llamadas en vano.
-      // Sin cuota se corta, y la próxima pasada sigue justo desde acá.
+      // Sin cuota del ticket no sirve seguir: la próxima pasada sigue desde acá.
       if ((diag.filas || []).some((f: any) => /cuota/i.test(String(f.error || '')))) {
         sinCuota = true;
-        this.cursor = (inicio + i + ids.length) % pendientes.length;
+        avanzarCursor(i + ids.length);
+        break;
+      }
+      /* (2026-10-15) API caída: dos tandas seguidas sin UNA sola respuesta
+         (la v2 de Compra Ágil pasa horas devolviendo 504). Seguir solo
+         alargaría la pasada —a 30 s por consulta, 1.000 candidatas son 8
+         horas— y bloquearía la siguiente. Se corta y se retoma más tarde. */
+      tandasSecas = diag.revisadas > 0 && diag.con_error >= diag.revisadas ? tandasSecas + 1 : 0;
+      if (tandasSecas >= 2) {
+        apiCaida = true;
+        avanzarCursor(i + ids.length);
         break;
       }
     }
-    if (!sinCuota) this.cursor = inicio;
+    if (!sinCuota && !apiCaida) avanzarCursor(orden.length);
 
     /* Segunda vuelta para las que fallaron por culpa de la API (504, timeouts:
        la v2 de Compra Ágil los da a menudo). Sin esto, una cotización ya
        resuelta en ChileCompra se quedaba sin actualizar hasta la pasada
-       siguiente por un error ajeno. */
-    if (!sinCuota && fallidas.length) {
+       siguiente por un error ajeno. No se hace con la API caída. */
+    if (!sinCuota && !apiCaida && fallidas.length) {
       let rescatados = 0;
       let siguenFallando = 0;
       for (let i = 0; i < fallidas.length; i += LOTE) {
@@ -220,11 +290,12 @@ export class MpEstadosCron implements OnModuleInit, OnModuleDestroy {
     }
 
     this.log.log(
-      `Pasada ${sinCuota ? 'CORTADA' : 'completa'}: ${revisadas} de ${pendientes.length} consultadas · ` +
+      `Pasada ${sinCuota || apiCaida ? 'CORTADA' : 'completa'}: ${revisadas} de ${orden.length} consultadas · ` +
       `${aplicados} cambio(s) de estado · ${conError} sin respuesta de Mercado Público` +
-      `${sinCuota ? ` · CUOTA DIARIA AGOTADA, la próxima sigue desde la ${this.cursor}` : ''}.`,
+      `${sinCuota ? ` · CUOTA DIARIA AGOTADA, la próxima sigue desde la ${this.cursor}` : ''}` +
+      `${apiCaida ? ' · API DE COMPRA ÁGIL CAÍDA: se retoma en la próxima pasada' : ''}.`,
     );
-    return { revisadas, candidatas: objetivo.length, aplicados, con_error: conError, cuota_agotada: sinCuota };
+    return { revisadas, candidatas: objetivo.length, aplicados, con_error: conError, cuota_agotada: sinCuota, api_caida: apiCaida, oc_mercado_publico: porOcMp };
   }
 
   /* ── Adjudicadas por evidencia propia (2026-09-25) ───────────────────────

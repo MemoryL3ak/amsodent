@@ -16,6 +16,7 @@ export const TIPOS_ALERTA = {
   info_despacho_agradecimiento: "Correo de despacho",
   mp_estado_auto: "Cambio de estado en MP",
   mp_adjudicada: "Adjudicada en MP",
+  mp_oc_emitida: "OC emitida en MP",
   cotizacion_aprobada: "Cotización aprobada",
   portal_upload: "Documento subido por el cliente",
   stock_solicitud_cotizacion: "Solicitud de cotización (portal)",
