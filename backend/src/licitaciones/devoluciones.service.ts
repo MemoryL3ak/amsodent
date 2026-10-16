@@ -49,14 +49,18 @@ export class DevolucionesService {
 
   private async leer(aplicar: (q: any) => any): Promise<any[]> {
     const db = this.supabase.getClient();
+    // Sin origen_doc_id no se sabe qué salió de cada NC: decirlo claro, no el error de SQL.
+    const falla = (msg: string) => /origen_doc_id/i.test(msg)
+      ? new BadRequestException('Falta aplicar en Supabase la migración 20261008_documentos_devolucion (columna origen_doc_id): sin ella no se pueden registrar devoluciones ni saldos a favor.')
+      : new BadRequestException(msg);
     if (!this.sinDinero) {
       const r = await aplicar(db.from('licitacion_documentos').select(`${COLS}, dinero`));
       if (!r.error) return r.data || [];
-      if (!/dinero/i.test(String(r.error.message))) throw new BadRequestException(r.error.message);
+      if (!/dinero/i.test(String(r.error.message))) throw falla(String(r.error.message));
       this.sinDinero = true;
     }
     const r = await aplicar(db.from('licitacion_documentos').select(COLS));
-    if (r.error) throw new BadRequestException(r.error.message);
+    if (r.error) throw falla(String(r.error.message));
     return (r.data || []).map((d: any) => ({ ...d, dinero: null }));
   }
 

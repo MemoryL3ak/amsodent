@@ -19,6 +19,18 @@
 --    necesita columnas nuevas).
 -- Sin esta migración el código sigue andando: la NC se emite igual (sin
 -- guardar la decisión) y registrar una devolución avisa que falta aplicarla.
+-- (2026-10-15) Faltaba la columna origen_doc_id en licitacion_documentos (solo
+-- existía en bsale_emisiones): «Registrar devolución» fallaba con «column
+-- licitacion_documentos.origen_doc_id does not exist». Todo el archivo se
+-- puede volver a correr aunque ya se haya aplicado antes.
+alter table public.licitacion_documentos
+  add column if not exists origen_doc_id bigint
+    references public.licitacion_documentos(id) on delete set null;
+comment on column public.licitacion_documentos.origen_doc_id is
+  'Devolución o saldo a favor aplicado: la nota de crédito de donde sale el dinero';
+create index if not exists licitacion_documentos_origen_doc_idx
+  on public.licitacion_documentos (origen_doc_id);
+
 alter table public.licitacion_documentos
   add column if not exists dinero text;
 comment on column public.licitacion_documentos.dinero is
