@@ -6,6 +6,8 @@ import { REGIONES_CHILE } from "../constants/regiones";
 import Toast from "../components/Toast";
 import ConfirmModal from "../components/ConfirmModal";
 import Avatar from "../components/Avatar";
+import CondicionesVentaSelector from "../components/CondicionesVentaSelector";
+import { tieneCredito30 } from "../lib/condicionesVenta";
 import {
   ArrowLeft, Pencil, Building2, MapPin, Phone, Mail, Globe, User, IdCard,
   DollarSign, Package, FileText, Target, CheckCircle2, Plus, Trash2,
@@ -1220,7 +1222,7 @@ function ModalEditarCliente({ cliente, esAdmin, vendedores, onCerrar, onGuardado
       onError?.("Debes completar todos los campos obligatorios.");
       return;
     }
-    if (bloquea30 && condVenta === "30 días" && condVentaOriginal !== "30 días") {
+    if (bloquea30 && tieneCredito30(condVenta) && !tieneCredito30(condVentaOriginal)) {
       onError?.("Solo el administrador puede autorizar el crédito de '30 días' a un cliente particular.");
       return;
     }
@@ -1281,12 +1283,8 @@ function ModalEditarCliente({ cliente, esAdmin, vendedores, onCerrar, onGuardado
           <div className="field"><label className="field-label">Teléfono</label><input className="input" value={telefono} onChange={(e) => setTelefono(e.target.value)} /></div>
           <div className="field">
             <label className="field-label">Condiciones de Venta</label>
-            <select className="input" value={condVenta} onChange={(e) => setCondVenta(e.target.value)}>
-              <option value="">Seleccione…</option>
-              <option value="30 días" disabled={bloquea30 && condVentaOriginal !== "30 días"}>30 días</option>
-              <option value="Contado">Contado</option>
-            </select>
-            {bloquea30 && condVentaOriginal !== "30 días" && (
+            <CondicionesVentaSelector value={condVenta} onChange={setCondVenta} bloqueadas={bloquea30 && !tieneCredito30(condVentaOriginal) ? ["30 días"] : []} />
+            {bloquea30 && !tieneCredito30(condVentaOriginal) && (
               <div className="field-hint">El crédito "30 días" para particulares solo lo autoriza el administrador.</div>
             )}
           </div>

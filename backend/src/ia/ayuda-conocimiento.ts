@@ -148,7 +148,10 @@ palabras clave entran en el buscador del listado.
 Cartera de clientes con RUT, tipo, región/comuna, vendedor asignado. El detalle
 del cliente tiene 6 pestañas: resumen (KPIs), cotizaciones, documentos,
 actividades, productos y sucursales. "Mis clientes" es la vista reducida con la
-cartera propia del ejecutivo.
+cartera propia del ejecutivo. CONDICIONES DE VENTA del cliente (oct 2026):
+selección múltiple, «30 días» y/o «Contado» («30 días» en particular solo lo
+autoriza el admin). La cotización toma «30 días» si la tiene, si no «Contado».
+Venta directa: «Crédito» solo aparece si el cliente tiene «30 días».
 ASIGNACIÓN DE CARTERA (/asignacion-cartera, solo admin; también con el botón
 "Asignar cartera" de Clientes): para repartir clientes entre vendedores EN
 MASA. Se filtra por nombre/RUT, tipo, región, vendedor asignado y "le cotiza"
@@ -402,10 +405,11 @@ en DOS PASOS obligatorios: 1) "Simular" muestra el documento como quedaría
 confirmación. Si se cambia un dato después de simular, hay que simular de
 nuevo. Nada se emite solo: siempre es ese botón. VENDEDOR EN BSALE (oct 2026):
 factura, boleta, nota de débito y orden salen con el vendedor de la cotización
-(sin cotización, quien emite), buscado por correo o nombre entre los usuarios
-de Bsale; la simulación lo muestra o avisa si no tiene usuario activo (queda el
-vendedor por defecto de Bsale). Guías y notas de crédito siempre quedan con el
-vendedor por defecto: la API de Bsale no permite elegirlo ahí.
+(sin cotización, quien emite); la GUÍA, con quien la emite en la plataforma.
+Se busca por correo o nombre entre los usuarios de Bsale; la simulación lo
+muestra o avisa si no tiene usuario activo (queda el vendedor por defecto de
+Bsale), y al emitir se avisa si Bsale no lo tomó. Las notas de crédito quedan
+con el vendedor por defecto.
 
 ### Seguimiento de Pagos (/seguimiento-pagos)
 DOS PESTAÑAS: "Cliente particular" y "Entidad pública". Cada una muestra sus

@@ -182,6 +182,14 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
   const cambiarObsLinea = (sku, v) => setLineas((prev) => prev.map((l) => (l.sku === sku ? { ...l, observacion: v } : l)));
   const obsPorSku = () => Object.fromEntries(lineas.map((l) => [l.sku, l.observacion || ""]));
 
+  /* (2026-10-16) Venta directa: «Crédito» solo aparece si el cliente tiene
+     «30 días» en su condición de venta (el servidor lo vuelve a revisar). */
+  const sinCredito = ventaDirecta && !cliente?.credito_autorizado;
+  const formasVisibles = (opciones?.formas_pago || []).filter((f) => !(sinCredito && f.credito));
+  useEffect(() => {
+    const elegida = (opciones?.formas_pago || []).find((f) => String(f.id) === String(formaPago));
+    if (sinCredito && elegida?.credito) setFormaPago(String(opciones?.forma_pago_venta_id || formasVisibles[0]?.id || ""));
+  }, [sinCredito, formaPago, opciones]); // eslint-disable-line react-hooks/exhaustive-deps
   // Venta directa: el plazo solo aplica si la factura queda a crédito.
   const formaElegida = (opciones?.formas_pago || []).find((f) => String(f.id) === String(formaPago));
   const aCredito = !!formaElegida?.credito;
@@ -258,7 +266,7 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
   const eligeTipo = ventaDirecta || (!!cotizacionId && !esGuia);
   const verbo = `Emitir ${nombreDoc}`;
   const opcionesTraslado = (opciones?.tipos_traslado || []).map((t) => ({ value: String(t.id), label: t.nombre }));
-  const opcionesPago = (opciones?.formas_pago || []).map((f) => ({ value: String(f.id), label: f.nombre }));
+  const opcionesPago = formasVisibles.map((f) => ({ value: String(f.id), label: f.nombre }));
 
   const campo = (obj, setObj, k, label, props = {}) => (
     <label style={{ flex: "1 1 160px", minWidth: 0 }}>
@@ -422,7 +430,8 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
                   inicial={crearCliente}
                   onCerrar={() => setCrearCliente(null)}
                   onCreado={(c) => {
-                    setCliente(c);
+                    // El cliente recién creado en Bsale conserva lo que dice su ficha del sistema (crédito).
+                    setCliente((prev) => ({ ...c, condiciones_venta: prev?.condiciones_venta || "", credito_autorizado: !!prev?.credito_autorizado }));
                     setRut(c.rut || rut);
                     setCrearCliente(null);
                     if (esGuia || ventaDirecta) setDespacho((d) => ({ ...d, destinatario: d.destinatario || c.razon_social || "", direccion: d.direccion || c.direccion || "", comuna: d.comuna || c.comuna || "", ciudad: d.ciudad || c.ciudad || "" }));
@@ -589,6 +598,11 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
                     <div style={{ flex: "1 1 190px", minWidth: 0 }}>
                       <span style={etiqueta}>Forma de pago</span>
                       <DropdownSelect value={formaPago} onChange={setFormaPago} options={opcionesPago} disabled={!!enviando} minWidth={190} style={{ width: "100%" }} />
+                      {sinCredito && !esBoleta && cliente && (
+                        <div className="aviso-sin-credito" style={{ fontSize: 11.5, color: "var(--text-muted)", marginTop: 4 }}>
+                          Sin crédito: el cliente no tiene «30 días» en su condición de venta.
+                        </div>
+                      )}
                     </div>
                     {!esBoleta && (!ventaDirecta || aCredito) && (
                       <label style={{ flex: "1 1 120px", minWidth: 0 }}>

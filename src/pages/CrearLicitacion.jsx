@@ -32,6 +32,7 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { GripVertical, Plus, Minus, Trash2, ChevronUp, ChevronDown, MessageSquare } from "lucide-react";
+import { condicionParaCotizacion } from "../lib/condicionesVenta";
 
 /* ============================================================
    TOOLTIP SOLO PARA PRODUCTO (NO TOCA EL INPUT DEL SELECT)
@@ -903,7 +904,7 @@ export default function CrearLicitacion() {
       telefono: data.telefono || "",
       email: data.email || "",
     });
-    setCondVenta(data.condiciones_venta || "");
+    setCondVenta(condicionParaCotizacion(data.condiciones_venta));
     const tc = (data.tipo_cliente || "").toString().trim();
     if (tc) {
       setTipoCliente(tc);
