@@ -92,8 +92,6 @@ export default function MargenProductos({ productos = [], campanas = [], esAdmin
       if (enCampana === "sin" && f.campana) return false;
       if (margenFiltro === "bajo20" && !(f.margenFinal != null && f.margenFinal < 20)) return false;
       if (margenFiltro === "bajo_costo" && !(f.margenFinal != null && f.margenFinal < 0)) return false;
-      if (margenFiltro === "sin_costo" && f.costo > 0) return false;
-      if (margenFiltro === "sin_precio" && f.precioLista > 0) return false;
       if (margenMin !== "" && !(f.margenFinal != null && f.margenFinal >= Number(margenMin))) return false;
       if (margenMax !== "" && !(f.margenFinal != null && f.margenFinal <= Number(margenMax))) return false;
       return true;
@@ -207,7 +205,7 @@ export default function MargenProductos({ productos = [], campanas = [], esAdmin
           <div className="stat-value" style={{ color: kpis.bajo20 ? "#b45309" : undefined }}>{kpis.bajo20.toLocaleString("es-CL")}</div>
           <div className="stat-sub">{kpis.bajoCosto ? `${kpis.bajoCosto.toLocaleString("es-CL")} bajo su costo · ` : ""}la cotización pide aprobación</div>
         </div>
-        <div className="stat-card" style={{ cursor: "pointer" }} onClick={() => setMargenFiltro("sin_costo")} title="Ver los que no tienen costo">
+        <div className="stat-card">
           <div className="stat-label">Sin costo</div>
           <div className="stat-value">{kpis.sinCosto.toLocaleString("es-CL")}</div>
           <div className="stat-sub">no entran al promedio</div>
@@ -248,8 +246,7 @@ export default function MargenProductos({ productos = [], campanas = [], esAdmin
               { value: "todos", label: "Todos" },
               { value: "bajo20", label: "Bajo 20 %", color: "#b45309" },
               { value: "bajo_costo", label: "Bajo su costo", color: "#b91c1c" },
-              { value: "sin_costo", label: "Sin costo" },
-              { value: "sin_precio", label: `Sin precio en Lista ${lista}` },
+              // (2026-10-16) Pedido de Ariel: sin «Sin costo» ni «Sin precio en Lista N» en este filtro.
             ]}
           />
         </div>

@@ -36,6 +36,7 @@ import { MercadopublicoModule } from './mercadopublico/mercadopublico.module';
 import { MonitorModule } from './monitor/monitor.module';
 import { RrhhModule } from './rrhh/rrhh.module';
 import { InventarioModule } from './inventario/inventario.module';
+import { GestionComprasModule } from './gestion-compras/gestion-compras.module';
 import { BsaleModule } from './bsale/bsale.module';
 
 @Module({
@@ -80,6 +81,7 @@ import { BsaleModule } from './bsale/bsale.module';
     MonitorModule,
     RrhhModule,
     InventarioModule,
+    GestionComprasModule,
     BsaleModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],

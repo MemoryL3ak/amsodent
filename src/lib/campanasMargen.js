@@ -66,6 +66,9 @@ export const normSku = (v) => String(v ?? "").replace(/\s+/g, "").toUpperCase();
    ya no hace falta que el producto tenga costo; sin precio de lista no aplica.) */
 export function campanaAlcanza(prod, campana) {
   if (!prod || !campana) return false;
+  // (2026-10-16) Pedido de Ariel: las campañas de margen son solo para productos con SKU
+  // (un transitorio sin SKU no recibe el descuento, tampoco al cotizar).
+  if (!normSku(prod.sku)) return false;
   const marcas = Array.isArray(campana.marcas) ? campana.marcas : [];
   const categorias = Array.isArray(campana.categorias) ? campana.categorias : [];
   const skus = Array.isArray(campana.skus) ? campana.skus : [];

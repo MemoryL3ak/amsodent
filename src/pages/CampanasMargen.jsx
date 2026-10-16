@@ -119,7 +119,8 @@ export default function CampanasMargen() {
     let vivo = true;
     // El catálogo alimenta las listas de marcas/categorías y el simulador.
     api.get("/productos/list")
-      .then((r) => { if (vivo) setProductos((Array.isArray(r) ? r : []).filter((p) => (p?.estado || "") !== "Inactivo")); })
+      // (2026-10-16) Solo productos con SKU: sin SKU no entran a las campañas de margen.
+      .then((r) => { if (vivo) setProductos((Array.isArray(r) ? r : []).filter((p) => (p?.estado || "") !== "Inactivo" && String(p?.sku || "").trim())); })
       .catch(() => { if (vivo) setProductos([]); });
     return () => { vivo = false; };
   }, []);

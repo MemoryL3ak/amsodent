@@ -309,6 +309,24 @@ export const GRUPOS_MANUAL = [
         },
       },
       {
+        id: "gestion-compras",
+        titulo: "Gestión de compras",
+        icono: "ShoppingCart",
+        ruta: "/gestion-compras",
+        acceso: { tipo: "modulo", key: "gestion_compras" },
+        quien: "Administradores y quien lo tenga en su perfil de permisos",
+        resumen: "Las cotizaciones adjudicadas desde el 16-10-2026, con lo que falta despachar contra el stock del inventario y lo que hay que comprar.",
+        queEs: [
+          "Por cada cotización adjudicada (desde el 16-10-2026 en adelante): lo cotizado, lo ya despachado en sus guías (leídas de Bsale), lo que falta despachar y cuánto de eso cubre el stock del inventario.",
+          "El stock se reparte por orden de adjudicación — la más antigua primero —, así dos cotizaciones no cuentan las mismas unidades. Lo que no alcanza es lo que hay que comprar.",
+        ],
+        funciones: [
+          "KPIs: cotizaciones por despachar (y cuántas tienen todo el stock), cobertura de stock en unidades, unidades por comprar y su valor estimado a costo neto.",
+          "Pestaña «Cotizaciones»: cobertura de cada una (productos y unidades con stock, barra de %) y su estado — stock completo, parcial, sin stock o despachada —; al hacer clic se despliega cada producto: cotizado, despachado, por despachar, stock, asignado a esa cotización, falta y %.",
+          "Pestaña «Por comprar»: por SKU, lo que falta en todas las cotizaciones, el stock, el costo, el valor estimado y en qué cotizaciones se necesita. Los productos sin SKU (transitorios) cuentan siempre como por comprar.",
+        ],
+      },
+      {
         id: "campanas",
         titulo: "Campañas",
         icono: "Megaphone",
@@ -353,7 +371,7 @@ export const GRUPOS_MANUAL = [
         funciones: [
           "Campaña = nombre + lista de precios (1, 2 o 3) + descuento % + fechas + marcas, categorías y/o SKUs (vacío = todos; con más de un filtro, el producto debe cumplirlos todos). Los SKUs se pegan tal cual vienen de un Excel y la pantalla avisa cuáles no están en el catálogo.",
           "Simulación antes de guardar: a cuántos productos alcanza y con qué margen queda cada uno tras el descuento; avisa los que quedarían bajo su costo o con menos de 20 % de margen.",
-          "Pestaña «Productos y margen»: el catálogo completo con filtros (texto, marcas, categorías, lista, en campaña o no, y por margen) y KPIs de lo filtrado — margen promedio al precio de lista y con las campañas vigentes, cuántos quedan bajo 20 % y cuántos no tienen costo (no entran al promedio). Ordena por menor margen.",
+          "Pestaña «Productos y margen»: el catálogo completo con filtros (texto, marcas, categorías, lista, en campaña o no, y por margen) y KPIs de lo filtrado — margen promedio al precio de lista y con las campañas vigentes, cuántos quedan bajo 20 % y cuántos no tienen costo (no entran al promedio). Ordena por menor margen. Solo productos con SKU (octubre 2026): un transitorio sin SKU no entra a las campañas de margen, tampoco al cotizar.",
           "Descuento masivo (admin): un % sobre el precio de lista de los productos filtrados. «Simular» muestra el margen promedio antes y después y los que quedarían bajo 20 % o bajo su costo; «Crear campaña» abre la campaña ya armada (por marca/categoría si solo se filtró por eso, si no por los SKUs filtrados) para ponerle nombre y fechas.",
           "Al cotizar manda primero la campaña por producto (SKU), después la campaña de margen y al final el precio de lista. Entre dos campañas de margen que alcancen al mismo producto manda la más nueva.",
           "Pausar y reanudar sin borrar; en Productos el precio de campaña se muestra bajo el de lista.",
@@ -495,7 +513,7 @@ export const GRUPOS_MANUAL = [
           "Guías: piden empresa de transporte y N° de seguimiento, opcionales; si no se tienen al emitir, se agregan después desde el Detalle de la cotización.",
           "Venta directa pagada al emitir: pide el N° de comprobante del pago (obligatorio salvo en efectivo) y el pago queda registrado con ese N°. La venta aparece en la pestaña «Venta directa» con su cotización.",
           "Imprimir en carta (ícono de impresora junto al N°, en Facturación, Venta directa, Trazabilidad → Facturas y los documentos de la cotización): la boleta y la nota de débito salen de Bsale en rollo térmico de 80 mm; este botón arma el mismo documento en hoja carta —emisor, recuadro del SII, receptor, referencias, detalle, totales y timbre electrónico con la resolución— para imprimirlo en formato normal. Sirve también para guías, facturas y notas de crédito.",
-          "Correo al cliente (octubre 2026): nada se envía solo. Al emitir en Bsale o cargar a mano una guía, factura o boleta, se abre la ventana de correo con todo prellenado —destinatario, copias, asunto, texto y el PDF adjunto— y ahí se agregan o quitan destinatarios, se edita el texto y se suman o sacan adjuntos antes de presionar Enviar. Sale desde la casilla del vendedor si la conectó. Si se cierra sin enviar, vuelve a aparecer como recordatorio (se puede posponer). La simulación dice a quién irá.",
+          "Correo al cliente (octubre 2026): nada se envía solo. Al emitir en Bsale o cargar a mano una guía, factura o boleta, se abre la ventana de correo con todo prellenado —destinatario, copias, asunto, texto y el PDF adjunto— y ahí se agregan o quitan destinatarios, se edita el texto y se suman o sacan adjuntos antes de presionar Enviar. Sale desde la casilla del vendedor si la conectó. La factura de Mercado Público (cotización que no es de cliente particular) va con copia solo a Ruth (admin@), nunca al vendedor de la cotización. Si se cierra sin enviar, vuelve a aparecer como recordatorio (se puede posponer). La simulación dice a quién irá.",
           "Cliente que no está en Bsale: al buscar su RUT se abre una ventana para crearlo con todos los datos que Bsale exige (empresa: razón social y giro; persona: nombres y apellidos; dirección, comuna y ciudad), con lo que el sistema ya sabe. «Simular» revisa sin crear; «Crear en Bsale» lo crea y queda «En Bsale».",
           "Anular guía (botón arriba, «Anular guía» en cada guía de Emitidas o el ícono 🚫 junto a la guía en los documentos de la cotización; octubre 2026): anula la guía de despacho en Bsale. Mismos dos pasos: simular y anular, con casilla de confirmación; el motivo es opcional y queda anotado en la guía. No deja anular una guía ya anulada ni una facturada (primero se anula la factura con nota de crédito); si una boleta o factura de la cotización está ligada a la guía (venta directa), avisa que esa sigue vigente. Al anular muestra el stock de cada producto antes y después. La guía queda «Anulada en Bsale» y deja de contar como despachada. Lo pueden usar quienes emiten facturas (rol o perfil con Facturación / Venta directa).",
           "Anular documento (botón arriba, o «Anular» en cada factura o boleta de Emitidas): anula una factura o boleta COMPLETA con nota de crédito en Bsale. Se busca por tipo y N° (sirve también para las hechas a mano en Bsale), se escribe el motivo (sale impreso) y se elige qué pasa con el dinero: rebajar la deuda (venta a crédito), devolver el dinero o sin movimiento. Mismos dos pasos: simular la nota de crédito y emitirla. Bsale reingresa el stock. Si el documento está en una cotización, la nota de crédito queda ahí colgada de la factura y Seguimiento de Pagos la descuenta del saldo. Si se anula completa la factura o boleta de un cliente particular con la cotización Adjudicada, se pregunta «¿La cotización sigue aprobada?»: Sí la deja Adjudicada; No la pasa a Cancelada. La nota de crédito tiene tres modos: «Anular completa», «Devolución parcial» (cuánto de cada producto; reingresa ese stock) y «Ajuste de precio» (rebaja por unidad, sin mover stock). Se pueden emitir varias mientras quede saldo; por línea no se devuelve más de lo que queda.",

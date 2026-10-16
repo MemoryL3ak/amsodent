@@ -62,6 +62,11 @@ const CC_ADJUDICACION = ccDesdeEnv('CC_ADJUDICACION', [...CC_BASE, CC_LISBETH]);
 // Guía de despacho: los mismos más Ruth (admin@, ya incluido en CC_BASE).
 const CC_GUIA_DESPACHO = ccDesdeEnv('CC_GUIA_DESPACHO', [...CC_BASE, CC_LISBETH]);
 const CC_POR_DEFECTO = CC_BASE;
+// (2026-10-16) Factura de Mercado Público (cotización que no es de cliente
+// particular): pedido de Ariel, "debe llegar con copia a Ruth pero no al
+// vendedor que tiene asignada esa cotización". Copia: solo admin@ (Ruth); si el
+// vendedor quedara en la lista (p. ej. una cotización de ventas@), se quita.
+const CC_FACTURA_PUBLICA = ccDesdeEnv('CC_FACTURA_PUBLICA', ['admin@amsodentmedical.cl']);
 
 // Tamaño máximo por adjunto adicional subido por el usuario (10 MB).
 const MAX_ADJUNTO_BYTES = 10 * 1024 * 1024;
@@ -116,7 +121,7 @@ export class CorreosService {
       .getClient()
       .from('licitaciones')
       .select(
-        'id, id_licitacion, nombre_entidad, email, contacto, vendedor_nombre, vendedor_correo, vendedor_celular, creado_por',
+        'id, id_licitacion, nombre_entidad, email, contacto, vendedor_nombre, vendedor_correo, vendedor_celular, creado_por, tipo_cliente',
       )
       .eq('id', licitacionId)
       .maybeSingle();
@@ -203,6 +208,19 @@ export class CorreosService {
     return null;
   }
 
+  // Los dos correos de una persona (inicio de sesión y alterno), para no dejarla en copia por ninguno.
+  private async correosAlternos(email: string): Promise<string[]> {
+    const e = String(email || '').trim().toLowerCase();
+    if (!e) return [];
+    try {
+      const { data } = await this.supabase.getClient().from('profiles').select('email, email_alterno').or(`email.ilike.${e},email_alterno.ilike.${e}`).limit(1);
+      const p: any = (data || [])[0];
+      return [p?.email, p?.email_alterno].map((x) => String(x || '').trim().toLowerCase()).filter(Boolean);
+    } catch {
+      return [];
+    }
+  }
+
   // Id de perfil a partir del correo de inicio de sesión. Desde el 2026-09-10
   // también matchea el correo alterno (profiles.email_alterno): un vendedor
   // con dos casillas resuelve al mismo perfil por cualquiera de las dos.
@@ -286,6 +304,10 @@ export class CorreosService {
     // de ventas (José) y admin (Ruth).
     if (tipo === 'oc_agradecimiento') base.cc = CC_ADJUDICACION;
     else if (tipo === 'guia_despacho_enviar') base.cc = CC_GUIA_DESPACHO;
+    else if (tipo === 'factura_enviar' && !/particular/i.test(String((lic as any).tipo_cliente || ''))) {
+      const delVendedor = new Set([vendedorCorreo, String(lic.creado_por || '').trim().toLowerCase(), ...(await this.correosAlternos(vendedorCorreo))].filter(Boolean));
+      base.cc = CC_FACTURA_PUBLICA.filter((e) => !delVendedor.has(e));
+    }
 
     if (tipo === 'oc_agradecimiento') {
       const { asunto, html } = plantillaAgradecimientoOC({

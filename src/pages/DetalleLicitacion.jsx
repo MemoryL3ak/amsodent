@@ -1069,7 +1069,7 @@ export default function EditarLicitacion() {
 
       localStorage.removeItem(STORAGE_KEY);
       setConfirmEliminarOpen(false);
-      setToast({ type: "success", message: "Licitación eliminada." });
+      setToast({ type: "success", message: "Cotización eliminada." });
       requestNavigation(baseLicitaciones, { replace: true });
     } catch (e) {
       console.error("Error eliminando licitación:", e);
@@ -2910,7 +2910,7 @@ export default function EditarLicitacion() {
     }
 
     setGuardando(true);
-    setToast({ type: "info", message: "Guardando licitación…" });
+    setToast({ type: "info", message: "Guardando cotización…" });
 
     try {
       const idLicitacionNorm = (idLicitacionInput || "").toString().trim();
@@ -2931,8 +2931,8 @@ export default function EditarLicitacion() {
         setToast({
           type: "error",
           message:
-            `Ya existe una licitación con el ID "${idLicitacionNorm}".\n` +
-            "No se puede guardar nuevamente con el mismo ID Licitación.",
+            `Ya existe una cotización con el ID "${idLicitacionNorm}".\n` +
+            "No se puede guardar otra cotización con el mismo ID.",
         });
         return false;
       }
@@ -3100,7 +3100,7 @@ export default function EditarLicitacion() {
         });
       } catch (errUpdate) {
         console.error(errUpdate);
-        setToast({ type: "error", message: "Error al guardar licitación" });
+        setToast({ type: "error", message: "Error al guardar la cotización" });
         return false;
       }
       setEstadoActualDB(estadoFinal);
@@ -3248,7 +3248,7 @@ export default function EditarLicitacion() {
       } else {
         setToast({
           type: "success",
-          message: `La licitación "${nombre}" fue actualizada correctamente.`,
+          message: `La cotización "${nombre}" fue actualizada correctamente.`,
         });
       }
 

@@ -50,6 +50,7 @@ export const MODULOS = [
   // y sus tarjetas KPI (ocultas a los vendedores).
   { key: "inventario", label: "Inventario (ver stock) — ya lo ven todos", grupo: "Abastecimiento" },
   { key: "inventario_kpis", label: "Inventario: KPIs (valorización, unidades…)", grupo: "Abastecimiento" },
+  { key: "gestion_compras", label: "Gestión de compras (adjudicadas vs. stock)", grupo: "Abastecimiento" },
   { key: "monitoreo_stock", label: "Monitoreo Stock Clientes", grupo: "Portal del Cliente" },
   { key: "portal_accesos", label: "Acceso Portal Clientes", grupo: "Portal del Cliente" },
   // "Recursos Humanos" NO es asignable por perfil: es solo admin (sueldos,

@@ -21,6 +21,7 @@ import Productos from "./pages/Productos";
 import CrearProducto from "./pages/CrearProducto";
 import EditarProducto from "./pages/EditarProducto";
 import Inventario from "./pages/Inventario";
+import GestionCompras from "./pages/GestionCompras";
 
 // CLIENTES
 import Clientes from "./pages/Clientes";
@@ -160,6 +161,15 @@ export default function App() {
             element={
               <RequireModulo modulo="inventario">
                 <Inventario />
+              </RequireModulo>
+            }
+          />
+          {/* GESTIÓN DE COMPRAS (2026-10-16): adjudicadas vs. stock, por permiso. */}
+          <Route
+            path="gestion-compras"
+            element={
+              <RequireModulo modulo="gestion_compras">
+                <GestionCompras />
               </RequireModulo>
             }
           />
