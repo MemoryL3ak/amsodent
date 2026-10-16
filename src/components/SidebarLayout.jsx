@@ -237,6 +237,8 @@ export default function SidebarLayout() {
     // Inventario mueve stock y valorización a costo: solo administración.
     // (2026-10-14) Inventario por permiso (ventas lo ve sin KPIs ni acciones), no solo admin.
     puede("inventario") && { to: "/inventario", icon: Boxes, label: "Inventario" },
+    // (2026-10-16) Adjudicadas vs. stock y lo que falta comprar.
+    puede("gestion_compras") && { to: "/gestion-compras", icon: ShoppingCart, label: "Gestión de compras" },
   ].filter(Boolean);
 
   const postVentaNav = [

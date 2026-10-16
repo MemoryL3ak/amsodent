@@ -24,6 +24,7 @@ import { CorreosModule } from '../correos/correos.module';
   controllers: [BsaleController, BsaleFacturacionController, BsaleDespachosController, BsaleLibreController, BsaleAnulacionesController],
   providers: [BsaleService, BsaleCron, BsaleFacturacionService, BsaleDespachosService, BsaleLibreService, BsaleProductosService, BsaleAnulacionesService, BsaleEstadosService, BsaleImpresionService],
   // Productos: un producto nuevo con SKU (o al que se le asigna uno) se crea en Bsale.
-  exports: [BsaleProductosService],
+  // BsaleService: Gestión de compras lee lo despachado por producto (2026-10-16).
+  exports: [BsaleProductosService, BsaleService],
 })
 export class BsaleModule {}

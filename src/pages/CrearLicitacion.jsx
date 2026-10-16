@@ -1789,7 +1789,7 @@ export default function CrearLicitacion() {
       setGuardando(false);
       setToast({
         type: "error",
-        message: "No tienes permisos para crear licitaciones.",
+        message: "No tienes permisos para crear cotizaciones.",
       });
       return;
     }
@@ -1860,7 +1860,7 @@ export default function CrearLicitacion() {
       }
     } catch { /* si el check falla, no bloqueamos aquí; el backend decide al guardar */ }
 
-    setToast({ type: "info", message: "Guardando licitación…" });
+    setToast({ type: "info", message: "Guardando cotización…" });
 
     try {
       // ✅ validar duplicado por ID Licitación (solo si NO es cliente particular —
@@ -1884,8 +1884,8 @@ export default function CrearLicitacion() {
           setToast({
             type: "error",
             message:
-              `Ya existe una licitación con el ID "${idLicitacionNorm}".\n` +
-              "No se puede guardar nuevamente con el mismo ID Licitación.",
+              `Ya existe una cotización con el ID "${idLicitacionNorm}".\n` +
+              "No se puede guardar otra cotización con el mismo ID.",
           });
           return;
         }
@@ -2069,7 +2069,7 @@ export default function CrearLicitacion() {
       } catch (error) {
         console.error(error);
         // Surface el motivo real (ej. bloqueo por mora del cliente).
-        setToast({ type: "error", message: error?.message || "Error al guardar licitación" });
+        setToast({ type: "error", message: error?.message || "Error al guardar la cotización" });
         return;
       }
 
@@ -2284,7 +2284,7 @@ export default function CrearLicitacion() {
 
       setToast({
         type: "success",
-        message: `La licitación "${nombre}" fue creada correctamente.`,
+        message: `La cotización "${nombre}" fue creada correctamente.`,
       });
 
       localStorage.removeItem(STORAGE_KEY);

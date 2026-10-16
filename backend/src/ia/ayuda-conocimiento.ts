@@ -257,7 +257,17 @@ inmediata» la guía NO se envía por correo (la boleta/factura sí). La ven
 quienes tienen Venta directa o Facturación;
 emitir exige rol administración, contabilidad o jefatura de ventas especial.
 
+### Gestión de compras (/gestion-compras) — oct 2026
+Admin y quien tenga «Gestión de compras» en su perfil. Cotizaciones ADJUDICADAS
+desde el 16-10-2026: por producto, lo cotizado, lo despachado en sus guías (de
+Bsale), lo que falta despachar y cuánto cubre el stock del inventario. El stock
+se reparte por orden de adjudicación (la más antigua primero). Pestañas
+«Cotizaciones» (cobertura en % de unidades, estado: stock completo / parcial /
+sin stock / despachada; detalle por producto) y «Por comprar» (por SKU: falta,
+stock, costo y valor estimado; los transitorios sin SKU siempre por comprar).
+
 ### Campañas de margen (/campanas-margen)
+Solo productos CON SKU (oct 2026): un transitorio no entra, tampoco al cotizar.
 Campaña por MARCA, CATEGORÍA y/o lista de SKUs, sobre una lista de precios
 (1, 2 o 3) y con vigencia. En vez de fijar un precio por SKU, aplica un % de
 DESCUENTO sobre el precio de lista (desde 2026-10-07; antes era un margen fijo):
@@ -393,7 +403,8 @@ guía, factura o boleta se abre la ventana de correo prellenada (destinatario,
 copias, asunto, texto y PDF adjunto) y la persona agrega o quita destinatarios,
 edita el texto, suma o saca adjuntos y presiona Enviar; sale desde su casilla
 si la conectó. Si la cierra sin enviar, vuelve como recordatorio (se puede
-posponer). La simulación dice a quién irá.
+posponer). La simulación dice a quién irá. Factura de Mercado Público (no
+particular): copia solo a Ruth (admin@), nunca al vendedor de la cotización.
 VENTA DIRECTA: pagada al emitir pide el N° de comprobante (salvo efectivo) y
 queda en la pestaña «Venta directa» con su cotización. CLIENTE NUEVO EN BSALE:
 si el RUT no está, una ventana pide los datos que Bsale exige y lo crea

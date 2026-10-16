@@ -43,6 +43,8 @@ export const MODULOS: string[] = [
   // (un vendedor ve solo las suyas): asignables por perfil.
   'inventario',
   'inventario_kpis',
+  // (2026-10-16) Gestión de compras: adjudicadas vs. stock; asignable por perfil.
+  'gestion_compras',
   'cotizaciones_todas',
   'usuarios',
   'monitoreo_usuarios',
