@@ -3,6 +3,8 @@ import { api } from "../lib/api";
 import Toast from "../components/Toast";
 import { Link } from "react-router-dom";
 import { REGIONES_CHILE } from "../constants/regiones";
+import CondicionesVentaSelector from "../components/CondicionesVentaSelector";
+import { leerCondiciones, tieneCredito30, unirCondiciones } from "../lib/condicionesVenta";
 
 export default function CrearCliente() {
   const [tipoCliente, setTipoCliente] = useState("");
@@ -50,10 +52,10 @@ export default function CrearCliente() {
     })();
   }, []);
 
-  // Si el usuario no puede asignar "30 días" a un particular, fuerza "Contado".
+  // Si el usuario no puede asignar "30 días" a un particular, se la quita (queda "Contado").
   useEffect(() => {
-    if (bloquea30 && condVenta === "30 días") {
-      setCondVenta("Contado");
+    if (bloquea30 && tieneCredito30(condVenta)) {
+      setCondVenta(unirCondiciones([...leerCondiciones(condVenta).filter((o) => o !== "30 días"), "Contado"]));
     }
   }, [bloquea30, condVenta]);
 
@@ -91,7 +93,7 @@ export default function CrearCliente() {
       return;
     }
 
-    if (bloquea30 && condVenta === "30 días") {
+    if (bloquea30 && tieneCredito30(condVenta)) {
       setToast({ type: "error", message: "Solo el administrador puede autorizar el crédito de '30 días' a un cliente particular." });
       return;
     }
@@ -250,15 +252,7 @@ export default function CrearCliente() {
 
             <div className="field">
               <label className="field-label">Condiciones de Venta *</label>
-              <select
-                className="input"
-                value={condVenta}
-                onChange={(e) => setCondVenta(e.target.value)}
-              >
-                <option value="">Seleccione…</option>
-                {!bloquea30 && <option value="30 días">30 días</option>}
-                <option value="Contado">Contado</option>
-              </select>
+              <CondicionesVentaSelector value={condVenta} onChange={setCondVenta} bloqueadas={bloquea30 ? ["30 días"] : []} />
               {bloquea30 && (
                 <p style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>
                   El crédito "30 días" para clientes particulares solo puede autorizarlo el administrador.

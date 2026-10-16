@@ -331,12 +331,16 @@ export class BsaleFacturacionService {
   /* ── Vendedor del documento en Bsale (2026-10-16) ─────────────────────────
      Sin `sellerId`, Bsale pone como vendedor al dueño del token (BENJAMIN
      ALARCON) en todo lo que emite el sistema, aunque la cotización sea de
-     Eva o la emita Ruth. El vendedor es el de la cotización y, sin cotización,
-     quien emite; su usuario de Bsale se busca por correo (también el alterno)
-     y, si no calza, por nombre (Camila y Jonathan tienen otro correo en
-     Bsale). Solo POST /documents.json acepta sellerId: la API no lo trae para
-     guías (/shippings.json) ni notas de crédito (/returns.json). Nunca lanza:
-     sin vendedor, el documento sale igual con el de siempre y se avisa. */
+     Eva o la emita Ruth. En factura, boleta, nota de débito y orden el
+     vendedor es el de la cotización (sin cotización, quien emite); en la guía,
+     quien la emite en la plataforma (pedido de Ariel: así sale cuando se emite
+     desde Bsale web). Su usuario de Bsale se busca por correo (también el
+     alterno) y, si no calza, por nombre (Camila y Jonathan tienen otro correo
+     en Bsale). POST /documents.json documenta sellerId; /shippings.json no,
+     pero acepta campos no documentados (references, salesId) y los procesa:
+     se manda igual y `avisoVendedor` confirma después si Bsale lo tomó. Las
+     notas de crédito (/returns.json) no lo llevan. Nunca lanza: sin vendedor,
+     el documento sale igual con el de siempre y se avisa. */
   private cacheUsuariosBsale: { ts: number; items: any[] } | null = null;
 
   private async usuariosBsale(): Promise<any[]> {
@@ -386,7 +390,20 @@ export class BsaleFacturacionService {
     }
   }
 
-  // Deja el vendedor en la solicitud (sellerId) y en la vista previa. Solo para POST /documents.json.
+  // Después de emitir: ¿quedó el vendedor pedido? null = sí (o no se pudo leer: no frena nada).
+  async avisoVendedor(docId: number, numero: any, sellerId: number): Promise<string | null> {
+    try {
+      const r = await this.apiGet(`/documents/${Number(docId)}/sellers.json`);
+      const items: any[] = r?.items || [];
+      if (!items.length || items.some((s) => Number(s?.id) === Number(sellerId))) return null;
+      const quien = items.map((s) => `${s?.firstName || ''} ${s?.lastName || ''}`.replace(/\s+/g, ' ').trim()).join(', ');
+      return `El documento ${numero} quedó en Bsale con el vendedor ${quien}: Bsale no tomó el vendedor elegido.`;
+    } catch {
+      return null;
+    }
+  }
+
+  // Deja el vendedor en la solicitud (sellerId) y en la vista previa.
   async ponerVendedor(solicitud: Record<string, any>, vista: any, licitacionId: number | null, emailEmisor: string) {
     const v = await this.vendedorBsale(licitacionId, emailEmisor);
     if (v.id) solicitud.sellerId = v.id;
@@ -1314,6 +1331,10 @@ export class BsaleFacturacionService {
         `Bsale emitió la factura por $${Number(doc.totalAmount).toLocaleString('es-CL')} y el borrador decía $${b.totales.total.toLocaleString('es-CL')}. Revisa la factura en Bsale.`,
       );
       this.logger.warn(`Factura ${emitida.numero}: total de Bsale ${doc.totalAmount} ≠ borrador ${b.totales.total}`);
+    }
+    if (solicitud.sellerId && emitida.bsale_id) {
+      const sinVendedor = await this.avisoVendedor(emitida.bsale_id, emitida.numero, Number(solicitud.sellerId));
+      if (sinVendedor) avisosEmision.push(sinVendedor);
     }
 
     return this.registrarEnSistema({ id: emisionId, ...fila, ...emitida }, usuario.email, avisosEmision);

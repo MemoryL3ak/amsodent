@@ -713,6 +713,8 @@ export class BsaleDespachosService {
     });
     // (2026-10-07) La guía se envía sola al cliente: la simulación dice a quién.
     (vista as any).correo = await this.correoPrevio(b.cotizacion.id);
+    // (2026-10-16) En la guía el vendedor es quien la emite en la plataforma.
+    await this.facturacion.ponerVendedor(solicitud, vista, null, usuario.email);
     if (!real) return { simulacion: true, emision_apagada: body?.simular !== true, solicitud, totales, vista };
 
     return this.emitirReal({
@@ -918,6 +920,11 @@ export class BsaleDespachosService {
     this.logger.log(`${p.tipo === 'guia' ? 'Guía' : p.tipo === 'factura' ? 'Factura' : p.tipo === 'boleta' ? 'Boleta' : p.tipo === 'nota_credito' ? 'Nota de crédito' : 'Nota de venta'} ${emitida.numero} emitida en Bsale (${p.licitacionId ? `cotización ${p.licitacionId}` : 'libre'}) por ${p.usuario.email}`);
 
     const avisos = await p.verificar(doc);
+    // (2026-10-16) ¿Bsale tomó el vendedor? En guías la API no documenta sellerId: se confirma leyendo el documento.
+    if (p.solicitud.sellerId && emitida.bsale_id) {
+      const sinVendedor = await this.facturacion.avisoVendedor(emitida.bsale_id, emitida.numero, Number(p.solicitud.sellerId));
+      if (sinVendedor) avisos.push(sinVendedor);
+    }
     let pdf: { path: string; size: number } | null = null;
     if (!p.sinPdf && emitida.url_pdf) {
       for (let intento = 0; intento < 4 && !pdf; intento++) {

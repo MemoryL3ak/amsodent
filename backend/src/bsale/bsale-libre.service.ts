@@ -133,15 +133,37 @@ export class BsaleLibreService {
   async cliente(userId: string, rut: string) {
     await this.facturacion.exigirRolGuia(userId);
     if (!normRut(rut)) throw new BadRequestException('Indica el RUT del cliente.');
+    const credito = await this.creditoCliente(rut);
     const enBsale = await this.despachos.clientePorRut(rut);
-    if (enBsale) return this.clienteDeBsale(enBsale);
+    if (enBsale) return { ...this.clienteDeBsale(enBsale), ...credito };
     const { data } = await this.supabase.getClient().from('clientes').select('rut, nombre, direccion, comuna').limit(200);
     const propio = (data || []).find((c: any) => normRut(c.rut) === normRut(rut));
     return {
       id: null, nuevo: true, rut: rutBsale(rut),
       razon_social: String(propio?.nombre || '').trim(), giro: '', direccion: String(propio?.direccion || '').trim(),
       comuna: String(propio?.comuna || '').trim(), ciudad: String(propio?.comuna || '').trim(), email: '',
+      ...credito,
     };
+  }
+
+  /* ¿Puede la venta directa quedar a crédito? (2026-10-16) Pedido de Ariel:
+     solo si el cliente tiene «30 días» en su condición de venta (selección
+     múltiple: "30 días, Contado"). Sin ficha del cliente o sin condición, no.
+     El RUT se guarda en tres formatos (con puntos, con guion, plano). La
+     misma lectura está en src/lib/condicionesVenta.js. */
+  private async creditoCliente(rut: any): Promise<{ condiciones_venta: string; credito_autorizado: boolean }> {
+    const n = normRut(rut);
+    if (n.length < 2) return { condiciones_venta: '', credito_autorizado: false };
+    const cuerpo = n.slice(0, -1);
+    const dv = n.slice(-1);
+    const conPuntos = `${cuerpo.replace(/\B(?=(\d{3})+(?!\d))/g, '.')}-${dv}`;
+    const variantes = [...new Set([conPuntos, `${cuerpo}-${dv}`, n, conPuntos.toLowerCase(), `${cuerpo}-${dv}`.toLowerCase(), n.toLowerCase()])];
+    const { data } = await this.supabase.getClient().from('clientes').select('rut, condiciones_venta').in('rut', variantes);
+    const textos = (data || []).map((c: any) => String(c?.condiciones_venta || '').trim()).filter(Boolean);
+    const sinTilde = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+    const condiciones = textos.join(', ');
+    const credito = textos.some((t) => t.split(/[,;/]/).some((p) => sinTilde(p).trim() === '30 dias'));
+    return { condiciones_venta: condiciones, credito_autorizado: credito };
   }
 
   /* Crear el cliente en Bsale desde el sistema (2026-10-07). Pedido de Ariel:
@@ -461,6 +483,13 @@ export class BsaleLibreService {
       if (pagadaAhora && !comprobante && medioDePago(formaPago?.nombre) !== 'efectivo') {
         problemas.push({ codigo: 'falta_comprobante', mensaje: `Indica el N° de comprobante del pago (${formaPago?.nombre}).` });
       }
+      // (2026-10-16) Venta directa a crédito solo si el cliente tiene «30 días» en su condición de venta.
+      if (ventaDirecta && credito) {
+        const cond = await this.creditoCliente(rut);
+        if (!cond.credito_autorizado) {
+          problemas.push({ codigo: 'sin_credito', mensaje: `El cliente no tiene «30 días» en su condición de venta${cond.condiciones_venta ? ` (tiene: ${cond.condiciones_venta})` : ''}: la venta directa no puede quedar a crédito. Elige otra forma de pago o agrega «30 días» en el perfil del cliente.` });
+        }
+      }
       // A crédito rige el mismo freno por mora que al cotizar.
       if (ventaDirecta && credito && rut) {
         try {
@@ -588,8 +617,8 @@ export class BsaleLibreService {
     const vista: any = this.vista(b);
     if (obs.texto) vista.observacion = obs.texto;
     if (obs.aviso) vista.notas = [...vista.notas, obs.aviso];
-    // Factura/boleta con su vendedor (la guía no lo admite en la API de Bsale).
-    if (b.tipo !== 'guia') await this.facturacion.ponerVendedor(solicitud, vista, b.cotizacion?.id || null, usuario.email);
+    // Vendedor en Bsale: en factura/boleta el de la cotización; en la guía, quien la emite.
+    await this.facturacion.ponerVendedor(solicitud, vista, b.tipo === 'guia' ? null : b.cotizacion?.id || null, usuario.email);
     // (2026-10-07) Guía, factura o boleta se envían solas al cliente (si queda en
     // una cotización: la venta directa crea la suya). Sin cotización no se envía.
     vista.correo = b.cotizacion || b.venta_directa
@@ -712,6 +741,7 @@ export class BsaleLibreService {
       };
       const obs = await this.despachos.observacionParaBsale(b.observacion || '', g.tipo_documento_id);
       if (obs.atributo) solicitud.dynamicAttributes = [obs.atributo];
+      await this.facturacion.ponerVendedor(solicitud, null, null, usuario.email); // la guía: quien la emite
       const vista: any = this.vista({
         ...b, tipo: 'guia', tipo_documento_id: g.tipo_documento_id, despacho: g.despacho, traslado: g.traslado, descuenta_stock: true, con_guia: false, guia: null, referencias: [],
         venta_directa: false, cotizacion: cotizacion ? { id: cotizacion.id, codigo: cotizacion.codigo } : null,

@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
 import Toast from "../components/Toast";
 import DropdownSelect from "../components/ui/DropdownSelect";
+import CondicionesVentaSelector from "../components/CondicionesVentaSelector";
+import { tieneCredito30 } from "../lib/condicionesVenta";
 import { Link, useParams } from "react-router-dom";
 import { REGIONES_CHILE } from "../constants/regiones";
 
@@ -170,7 +172,7 @@ export default function EditarCliente() {
 
     // Bloquear asignar "30 días" a un particular si no es admin/jefatura especial.
     // (Si ya venía con "30 días" puesto por un admin, se respeta).
-    if (bloquea30 && condVenta === "30 días" && condVentaOriginal !== "30 días") {
+    if (bloquea30 && tieneCredito30(condVenta) && !tieneCredito30(condVentaOriginal)) {
       setToast({ type: "error", message: "Solo el administrador puede autorizar el crédito de '30 días' a un cliente particular." });
       return;
     }
@@ -329,16 +331,8 @@ export default function EditarCliente() {
 
             <div className="field">
               <label className="field-label">Condiciones de Venta</label>
-              <select
-                className="input"
-                value={condVenta}
-                onChange={(e) => setCondVenta(e.target.value)}
-              >
-                <option value="">Seleccione…</option>
-                <option value="30 días" disabled={bloquea30 && condVentaOriginal !== "30 días"}>30 días</option>
-                <option value="Contado">Contado</option>
-              </select>
-              {bloquea30 && condVentaOriginal !== "30 días" && (
+              <CondicionesVentaSelector value={condVenta} onChange={setCondVenta} bloqueadas={bloquea30 && !tieneCredito30(condVentaOriginal) ? ["30 días"] : []} />
+              {bloquea30 && !tieneCredito30(condVentaOriginal) && (
                 <p style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>
                   El crédito "30 días" para clientes particulares solo puede autorizarlo el administrador.
                 </p>

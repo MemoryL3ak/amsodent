@@ -51,6 +51,7 @@ import {
   useSortable,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import { condicionParaCotizacion } from "../lib/condicionesVenta";
 
 // Correos autorizados a aprobar cotizaciones (además del administrador).
 const APROBADORES_AUTORIZADOS = [
@@ -1275,7 +1276,7 @@ export default function EditarLicitacion() {
         telefono: data.telefono || "",
         email: data.email || "",
       });
-      setCondVenta(data.condiciones_venta || "");
+      setCondVenta(condicionParaCotizacion(data.condiciones_venta));
       const tc = (data.tipo_cliente || "").toString().trim();
       if (tc) setTipoCliente(tc);
     } catch (e) {
