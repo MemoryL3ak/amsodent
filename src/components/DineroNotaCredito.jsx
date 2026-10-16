@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
-import { CheckCircle2, Undo2, Wallet, X } from "lucide-react";
+import { CheckCircle2, Undo2, Upload, Wallet, X } from "lucide-react";
 import { api } from "../lib/api";
 import DropdownSelect from "./ui/DropdownSelect";
 import { ETIQUETA_DINERO } from "../lib/dineroNotaCredito";
@@ -194,10 +194,24 @@ export function RegistrarDevolucionModal({ nota, factura, onCerrar, onHecho }) {
             {campo("N° de comprobante (opcional)", { value: comprobante, onChange: (e) => setComprobante(e.target.value), disabled: enviando, placeholder: "N° de la transferencia" })}
           </div>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <label style={{ flex: "1 1 200px", minWidth: 0 }}>
+            <div style={{ flex: "1 1 200px", minWidth: 0 }}>
               <span style={etiqueta}>Comprobante (PDF o imagen, opcional)</span>
-              <input type="file" accept=".pdf,image/*" onChange={(e) => setArchivo(e.target.files?.[0] || null)} disabled={enviando} style={{ fontSize: 12.5 }} />
-            </label>
+              {/* El input nativo no se veía como botón: se usa el mismo de Seguimiento de Pagos. */}
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <label className="btn btn-secondary btn-sm" style={{ cursor: enviando ? "default" : "pointer", display: "inline-flex", alignItems: "center", gap: 6, flexShrink: 0, opacity: enviando ? 0.6 : 1 }}>
+                  <Upload size={13} /> {archivo ? "Cambiar archivo" : "Adjuntar comprobante"}
+                  <input type="file" accept=".pdf,image/*" onChange={(e) => { setArchivo(e.target.files?.[0] || null); e.target.value = ""; }} disabled={enviando} style={{ display: "none" }} />
+                </label>
+                <span title={archivo ? archivo.name : ""} style={{ fontSize: 12, color: archivo ? "var(--text)" : "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0, flex: "1 1 80px" }}>
+                  {archivo ? archivo.name : "Ningún archivo"}
+                </span>
+                {archivo && !enviando && (
+                  <button type="button" className="btn btn-secondary btn-sm" onClick={() => setArchivo(null)} title="Quitar el archivo" aria-label="Quitar el archivo" style={{ padding: "4px 6px" }}>
+                    <X size={13} />
+                  </button>
+                )}
+              </div>
+            </div>
             {campo("Observación (opcional)", { value: observacion, onChange: (e) => setObservacion(e.target.value.slice(0, 300)), disabled: enviando }, "2 1 220px")}
           </div>
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
