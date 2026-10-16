@@ -400,7 +400,12 @@ en DOS PASOS obligatorios: 1) "Simular" muestra el documento como quedaría
 (el JSON técnico queda plegado); 2) solo con esa simulación a la vista aparece
 "Emitir … oficial", que emite de verdad y se habilita al marcar la casilla de
 confirmación. Si se cambia un dato después de simular, hay que simular de
-nuevo. Nada se emite solo: siempre es ese botón.
+nuevo. Nada se emite solo: siempre es ese botón. VENDEDOR EN BSALE (oct 2026):
+factura, boleta, nota de débito y orden salen con el vendedor de la cotización
+(sin cotización, quien emite), buscado por correo o nombre entre los usuarios
+de Bsale; la simulación lo muestra o avisa si no tiene usuario activo (queda el
+vendedor por defecto de Bsale). Guías y notas de crédito siempre quedan con el
+vendedor por defecto: la API de Bsale no permite elegirlo ahí.
 
 ### Seguimiento de Pagos (/seguimiento-pagos)
 DOS PESTAÑAS: "Cliente particular" y "Entidad pública". Cada una muestra sus

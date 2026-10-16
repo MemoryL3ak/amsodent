@@ -422,6 +422,7 @@ export class BsaleAnulacionesService {
           : 'La factura no está en ninguna cotización: la nota de débito queda solo en Bsale y en Emitidas.',
       ],
     };
+    await this.facturacion.ponerVendedor(solicitud, vista, b.cotizacion?.id || null, usuario.email);
     if (!real) return { simulacion: true, emision_apagada: !simular, solicitud, vista, huella: b.huella, avisos: b.avisos, totales };
 
     return this.despachos.emitirReal({
