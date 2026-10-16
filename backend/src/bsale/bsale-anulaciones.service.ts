@@ -251,8 +251,9 @@ export class BsaleAnulacionesService {
     const registro = await this.registroDe(doc, documentoId);
     let cotizacion: any = null;
     if (registro) {
-      const { data: lic } = await db.from('licitaciones').select('id, id_licitacion, nombre_entidad').eq('id', registro.licitacion_id).maybeSingle();
-      cotizacion = lic ? { id: Number((lic as any).id), codigo: (lic as any).id_licitacion || null, cliente: (lic as any).nombre_entidad || '' } : null;
+      const { data: lic } = await db.from('licitaciones').select('id, id_licitacion, nombre_entidad, tipo_cliente, estado').eq('id', registro.licitacion_id).maybeSingle();
+      // `particular` y `estado`: al anular completa, la pantalla pregunta si la cotización sigue aprobada (2026-10-16).
+      cotizacion = lic ? { id: Number((lic as any).id), codigo: (lic as any).id_licitacion || null, cliente: (lic as any).nombre_entidad || '', particular: /particular/i.test(String((lic as any).tipo_cliente || '')), estado: (lic as any).estado || null } : null;
     } else {
       avisos.push({ codigo: 'sin_registro', mensaje: 'Este documento no está en ninguna cotización del sistema: la nota de crédito quedará solo en Bsale y en el historial de Emitidas.' });
     }

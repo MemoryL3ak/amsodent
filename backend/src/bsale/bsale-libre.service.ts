@@ -487,7 +487,7 @@ export class BsaleLibreService {
       if (ventaDirecta && credito) {
         const cond = await this.creditoCliente(rut);
         if (!cond.credito_autorizado) {
-          problemas.push({ codigo: 'sin_credito', mensaje: `El cliente no tiene «30 días» en su condición de venta${cond.condiciones_venta ? ` (tiene: ${cond.condiciones_venta})` : ''}: la venta directa no puede quedar a crédito. Elige otra forma de pago o agrega «30 días» en el perfil del cliente.` });
+          problemas.push({ codigo: 'sin_credito', mensaje: `El cliente no tiene «30 días» en su condición de venta${cond.condiciones_venta ? ` (tiene: ${cond.condiciones_venta})` : ''}: la venta directa no puede quedar a crédito. Elige otra forma de pago o pídele a un administrador que habilite «30 días» en el perfil del cliente.` });
         }
       }
       // A crédito rige el mismo freno por mora que al cotizar.

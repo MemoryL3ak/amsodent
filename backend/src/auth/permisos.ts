@@ -86,11 +86,15 @@ export const ROLE_DEFAULTS: Record<string, string[]> = {
   contabilidad: ['mi_correo', 'chat', 'seguimiento_pagos', 'cobranza', 'facturacion', 'venta_directa', 'metas'],
 };
 
+// (2026-10-16) Pedido de Ariel: "todos pueden ver el inventario" (las tarjetas
+// KPI siguen por 'inventario_kpis': admins y quien lo tenga en su perfil).
+export const PARA_TODOS = ['inventario'];
+
 // Permisos efectivos de un usuario: perfil asignado o, en su defecto, por rol.
 export function permisosEfectivos(rol: string | undefined, permisosPerfil?: any): string[] {
   if (esRolAdmin(rol)) return [...MODULOS]; // admin ve todo
-  if (Array.isArray(permisosPerfil)) {
-    return permisosPerfil.filter((m) => typeof m === 'string');
-  }
-  return ROLE_DEFAULTS[normRol(rol)] || [...BASE];
+  const propios = Array.isArray(permisosPerfil)
+    ? permisosPerfil.filter((m) => typeof m === 'string')
+    : ROLE_DEFAULTS[normRol(rol)] || [...BASE];
+  return [...new Set([...propios, ...PARA_TODOS])];
 }

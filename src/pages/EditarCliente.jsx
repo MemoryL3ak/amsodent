@@ -38,9 +38,9 @@ export default function EditarCliente() {
   const [vendedores, setVendedores] = useState([]);
 
   const esParticular = tipoCliente === "Cliente Particular";
-  // Crédito "30 días" en cliente particular: solo el administrador puede autorizarlo.
+  // (2026-10-16) Crédito "30 días": solo el rol admin lo habilita, en cualquier tipo de cliente.
   const puede30dias = esAdmin;
-  const bloquea30 = esParticular && !puede30dias;
+  const bloquea30 = !puede30dias;
 
   const comunasDisponibles = useMemo(() => {
     return (REGIONES_CHILE?.[region] ?? []);
@@ -170,10 +170,9 @@ export default function EditarCliente() {
       return;
     }
 
-    // Bloquear asignar "30 días" a un particular si no es admin/jefatura especial.
-    // (Si ya venía con "30 días" puesto por un admin, se respeta).
+    // Bloquear agregar "30 días" si no es admin (si ya venía puesto por un admin, se respeta).
     if (bloquea30 && tieneCredito30(condVenta) && !tieneCredito30(condVentaOriginal)) {
-      setToast({ type: "error", message: "Solo el administrador puede autorizar el crédito de '30 días' a un cliente particular." });
+      setToast({ type: "error", message: "Solo el administrador puede habilitar el crédito de '30 días'." });
       return;
     }
 
@@ -334,7 +333,7 @@ export default function EditarCliente() {
               <CondicionesVentaSelector value={condVenta} onChange={setCondVenta} bloqueadas={bloquea30 && !tieneCredito30(condVentaOriginal) ? ["30 días"] : []} />
               {bloquea30 && !tieneCredito30(condVentaOriginal) && (
                 <p style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>
-                  El crédito "30 días" para clientes particulares solo puede autorizarlo el administrador.
+                  El crédito "30 días" solo puede habilitarlo el administrador.
                 </p>
               )}
             </div>
