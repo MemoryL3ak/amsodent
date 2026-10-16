@@ -14,8 +14,8 @@ import {
   sumarDias,
   totalesDe,
   folioCotizacion,
-  ocDeReferencia,
   referenciaOcGuia,
+  referenciaOcOrden,
   referenciaParaBsale,
   referenciaVista,
   EMISOR,
@@ -471,7 +471,7 @@ export class BsaleDespachosService {
       cliente,
       lineas,
       totales,
-      referencias: ocNumero ? [referenciaOcGuia(folioCotizacion(lic), ocNumero, String(oc.fecha_oc || '').slice(0, 10) || null)] : [],
+      referencias: ocNumero ? [referenciaOcOrden(folioCotizacion(lic), ocNumero, String(oc.fecha_oc || '').slice(0, 10) || null)] : [],
       fecha_emision: hoy,
       fecha_minima: String(oc.fecha_oc || '').slice(0, 10) || sumarDias(hoy, -30),
       fecha_maxima: hoy,
@@ -750,7 +750,7 @@ export class BsaleDespachosService {
         try {
           const completo = await this.facturacion.apiGet(`/documents/${Number(doc.id)}.json?expand=[references]`);
           const refs: any[] = completo?.references?.items || [];
-          if (b.referencias.length && !refs.some((r: any) => ocDeReferencia(r) === b.referencias[0].numero)) {
+          if (b.referencias.length && !refs.some((r: any) => normOc(r?.number) === b.referencias[0].numero || normOc(r?.reason) === b.referencias[0].numero)) {
             avisos.push(`La guía ${doc.number} salió SIN la referencia a la orden de compra ${b.referencias[0].numero}: agrégala en Bsale.`);
           }
           if (Number.isFinite(Number(completo?.totalAmount)) && Math.abs(Number(completo.totalAmount) - totales.total) > 1) {

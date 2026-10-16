@@ -170,6 +170,14 @@ export class BsaleEstadosService {
     return { configurado: true, actualizado_at: new Date().toISOString(), estados, resumen };
   }
 
+  /* Recién anulada una guía desde el sistema (2026-10-16): se anota en la caché
+     para que salga «Anulada en Bsale» al tiro; la próxima lectura lo confirma. */
+  anotarAnulado(bsaleId: number) {
+    const datos = this.cache?.datos;
+    if (!datos?.estados || !bsaleId) return;
+    for (const e of Object.values(datos.estados) as EstadoBsale[]) if (e.bsale_id === Number(bsaleId)) e.estado = 'anulado';
+  }
+
   /* Recién emitida una nota de crédito desde el sistema: se anota en la caché
      para que la factura salga anulada / con NC al tiro, sin releer Bsale
      entero (~18 s). La próxima lectura completa la confirma. */

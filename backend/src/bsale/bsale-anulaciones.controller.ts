@@ -29,6 +29,18 @@ export class BsaleAnulacionesController {
     return this.anulaciones.emitirDebito({ id: String(req?.user?.id || ''), email: String(req?.user?.email || '').trim().toLowerCase() }, body);
   }
 
+  // (2026-10-16) Anular una guía de despacho: la guía (por id de Bsale, documento del sistema o N°) y si se puede.
+  @Get('guia/preparar')
+  prepararGuia(@Req() req: any, @Query() q: any) {
+    return this.anulaciones.prepararGuia(String(req?.user?.id || ''), { bsale_id: q?.bsale_id, documento_id: q?.documento_id, numero: q?.numero });
+  }
+
+  // Simula (simular: true) o anula la guía en Bsale.
+  @Post('guia/anular')
+  anularGuia(@Req() req: any, @Body() body: any) {
+    return this.anulaciones.anularGuia({ id: String(req?.user?.id || ''), email: String(req?.user?.email || '').trim().toLowerCase() }, body);
+  }
+
   // Simula (simular: true) o emite la nota de crédito.
   @Post('emitir')
   emitir(@Req() req: any, @Body() body: any) {

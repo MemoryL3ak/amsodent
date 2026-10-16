@@ -8,6 +8,7 @@ import EmitirFacturaBsale from "../components/EmitirFacturaBsale";
 import EmitirDespachoBsale from "../components/EmitirDespachoBsale";
 import DocumentoLibreBsale from "../components/DocumentoLibreBsale";
 import AnularDocumentoBsale from "../components/AnularDocumentoBsale";
+import AnularGuiaBsale from "../components/AnularGuiaBsale";
 import { useEstadosBsale } from "../lib/estadosBsale";
 import BotonImprimirCarta from "../components/BotonImprimirCarta";
 import BotonImprimirTermica from "../components/BotonImprimirTermica";
@@ -89,6 +90,8 @@ export default function Facturacion() {
   const [venta, setVenta] = useState(null); // "boleta" | "factura" | null
   // Anular con nota de crédito (2026-10-03): { bsaleId? } — vacío = buscar por N°.
   const [anular, setAnular] = useState(null);
+  // (2026-10-16) Anular una guía de despacho en Bsale: { bsaleId?, documentoId? } — vacío = buscar por N°.
+  const [anularGuia, setAnularGuia] = useState(null);
   const [emitidas, setEmitidas] = useState({ registro_listo: true, filas: [] });
   // Estado en Bsale por documento: suma las NC hechas a mano en Bsale (2026-10-07).
   const estadosBsale = useEstadosBsale();
@@ -213,6 +216,17 @@ export default function Facturacion() {
           }}
         />
       )}
+      {anularGuia && (
+        <AnularGuiaBsale
+          bsaleId={anularGuia.bsaleId || null}
+          documentoId={anularGuia.documentoId || null}
+          onCerrar={() => setAnularGuia(null)}
+          onAnulada={(r) => {
+            setToast({ type: r.anulada ? "success" : "error", message: r.anulada ? `Guía ${r.numero} anulada en Bsale.` : `Bsale respondió, pero la guía ${r.numero} sigue vigente: revísala en Bsale.` });
+            cargar();
+          }}
+        />
+      )}
       {venta && (
         <DocumentoLibreBsale
           tipo={venta}
@@ -261,6 +275,9 @@ export default function Facturacion() {
               </button>
               <button type="button" className="btn btn-secondary" onClick={() => setAnular({})} title="Anular una factura o boleta con nota de crédito (por su N°)">
                 <Ban size={14} /> Anular documento
+              </button>
+              <button type="button" className="btn btn-secondary" onClick={() => setAnularGuia({})} title="Anular una guía de despacho en Bsale (por su N°)">
+                <Ban size={14} /> Anular guía
               </button>
             </>
           )}
@@ -556,6 +573,14 @@ export default function Facturacion() {
                               <>
                                 {anulada && <span style={{ ...pastilla({ color: "#b91c1c", bg: "#fee2e2" }), marginLeft: 6 }}>Anulada · NC {anulada}</span>}
                                 {parcial && <span style={{ ...pastilla({ color: "#92400e", bg: "#fef3c7" }), marginLeft: 6 }} title="Nota de crédito por parte del documento">NC parcial {clp(parcial.total)}{parcial.numeros?.length ? ` · N° ${parcial.numeros.join(", ")}` : ""}</span>}
+                                {f.tipo === "guia" && eb?.estado === "anulado" && <span style={{ ...pastilla({ color: "#b91c1c", bg: "#fee2e2" }), marginLeft: 6 }}>Anulada en Bsale</span>}
+                                {f.estado === "emitida" && f.tipo === "guia" && f.bsale_id && eb?.estado !== "anulado" && estado?.puede && (
+                                  <div style={{ marginTop: 5 }}>
+                                    <button type="button" className="btn btn-secondary btn-sm boton-anular-guia" onClick={() => setAnularGuia({ bsaleId: f.bsale_id, documentoId: f.documento_id || null })} title="Anular la guía de despacho en Bsale">
+                                      <Ban size={12} /> Anular guía
+                                    </button>
+                                  </div>
+                                )}
                                 {f.estado === "emitida" && (f.tipo === "factura" || f.tipo === "boleta") && f.bsale_id && !anulada && (
                                   <div style={{ marginTop: 5 }}>
                                     <button type="button" className="btn btn-secondary btn-sm" onClick={() => setAnular({ bsaleId: f.bsale_id })} title={parcial ? "Otra nota de crédito: anular el resto, devolver o ajustar" : "Anular con nota de crédito en Bsale"}>

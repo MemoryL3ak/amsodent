@@ -371,7 +371,7 @@ export default function EmitirDespachoBsale({ tipo = "guia", licitacionId, ocDoc
                   {esGuia && <CamposSeguimientoGuia valor={seguimiento} onChange={setSeguimiento} disabled={!!enviando} />}
                   {esGuia && <CampoObservacionGuia valor={observacion} onChange={setObservacion} porProducto max={obsMax} disabled={!!enviando} />}
                   <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.45 }}>
-                    {borrador.referencias?.length ? `Referencia a la orden de compra: folio ${borrador.referencias[0].folio} · razón ${borrador.referencias[0].numero}. ` : ""}
+                    {borrador.referencias?.length ? `Referencia a la orden de compra: folio ${borrador.referencias[0].folio} · razón ${borrador.referencias[0].razon || borrador.referencias[0].numero}. ` : ""}
                     {esGuia ? "Bsale descuenta el stock al emitir la guía; la factura se emite después desde la guía." : "La nota de venta no va al SII ni mueve stock."}
                   </div>
 

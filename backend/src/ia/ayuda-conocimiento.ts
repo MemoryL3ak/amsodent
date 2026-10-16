@@ -306,8 +306,10 @@ documento LIBRE, sin orden de compra: cliente por RUT (si no está en Bsale se
 crea; giro obligatorio), productos del catálogo con cantidad y precio neto,
 despacho (guía) o forma de pago (factura), referencia opcional a OC o guía, y
 la cotización donde debe quedar registrado (si no se indica, queda solo en
-Bsale y en Emitidas). Referencias a la orden de compra: en guías y notas de
-venta la cotización va como FOLIO y el N° de OC como RAZÓN; en facturas el N°
+Bsale y en Emitidas). Referencias a la orden de compra: en GUÍAS el N° de OC
+va como FOLIO y el ID de la licitación como RAZÓN (desde oct 2026; antes al
+revés); en notas de venta la cotización va como FOLIO y el N° de OC como
+RAZÓN; en facturas el N°
 de OC va en el folio (Mercado Público cruza la factura con la OC por ese campo)
 y también en la razón; la fila de la GUÍA en una factura lleva el N° de la
 guía como folio y el N° de OC como razón. VENTA DIRECTA (botón arriba y
@@ -327,7 +329,13 @@ se escribe el motivo y se elige qué pasa con el dinero (rebajar la deuda,
 devolver el dinero o sin movimiento); simular y después emitir. Bsale
 reingresa el stock. Si está en una cotización, la nota de crédito queda ahí
 colgada de la factura y Seguimiento de Pagos la descuenta. No se anula dos
-veces. COMPROBANTE AL EMITIR: con la factura o boleta emitida y registrada
+veces. ANULAR GUÍA (oct 2026; botón arriba, «Anular guía» en Emitidas o el
+ícono junto a la guía en los documentos de la cotización): anula la guía en
+Bsale; simular y anular con confirmación, motivo opcional anotado en la guía.
+No se anula una ya anulada ni una facturada (primero NC a la factura); avisa
+si una boleta/factura de la cotización está ligada (venta directa). Muestra el
+stock antes y después; la guía queda «Anulada en Bsale» y deja de contar como
+despachada. La usan quienes emiten facturas. COMPROBANTE AL EMITIR: con la factura o boleta emitida y registrada
 aparece "Agregar N° de comprobante de pago" (N°, fecha, monto con IVA, medio);
 queda como pago de ese documento y, si cubre el total, lo deja pagado.
 EMITIR BOLETA / FACTURA en Trazabilidad: en un cliente particular con la
