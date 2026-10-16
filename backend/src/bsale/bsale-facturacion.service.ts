@@ -389,19 +389,61 @@ export class BsaleFacturacionService {
     const { dte } = await this.listas();
     const buscadas = new Set(numerosGuia.map(soloDigitos));
     const halladas = new Map<string, { numero: string; fecha: string | null }>();
+    /* (2026-10-16) Una factura anulada con nota de crédito sigue en Bsale con
+       state 0 (solo cambia a 1 si se anula sin NC): hay que mirar las
+       devoluciones. Caso real, guía 804: facturada tres veces a mano en Bsale
+       (749, 867, 868) y las tres anuladas (NC 141, 165, 179); el sistema veía
+       la 749 "vigente" y no dejaba facturarla. Las anuladas se devuelven
+       aparte para avisar el historial sin bloquear. */
+    const anuladas = new Map<string, Array<{ numero: string; fecha: string | null; notas: string[] }>>();
+    const anuladasPorNc = await this.facturasAnuladasPorNc(facturas);
     for (const f of facturas) {
       if (Number(f?.state) === 1) continue;
+      const nc = anuladasPorNc.get(Number(f?.id));
       for (const ref of f?.references?.items || []) {
         // Solo referencias a una GUÍA: el folio de una orden de compra puede
         // coincidir con el de una guía y no significa que esté facturada.
         if (dte.get(Number(ref?.dte_code?.id)) !== DTE_GUIA) continue;
         const n = soloDigitos(ref?.number);
-        if (buscadas.has(n) && !halladas.has(n)) {
-          halladas.set(n, { numero: String(f.number), fecha: epochAFecha(f.emissionDate) });
+        if (!buscadas.has(n)) continue;
+        if (nc) {
+          if (!anuladas.has(n)) anuladas.set(n, []);
+          anuladas.get(n)!.push({ numero: String(f.number), fecha: epochAFecha(f.emissionDate), notas: nc.notas });
+          continue;
         }
+        if (!halladas.has(n)) halladas.set(n, { numero: String(f.number), fecha: epochAFecha(f.emissionDate) });
       }
     }
-    return halladas;
+    return { halladas, anuladas };
+  }
+
+  /* Facturas anuladas por completo con nota(s) de crédito: las devoluciones de
+     Bsale cuyo documento de referencia es la factura suman al menos su total. */
+  private async facturasAnuladasPorNc(facturas: any[]): Promise<Map<number, { notas: string[]; monto: number }>> {
+    const out = new Map<number, { notas: string[]; monto: number }>();
+    if (!facturas.length) return out;
+    let devoluciones: any[] = [];
+    try {
+      devoluciones = await this.todos('/returns.json', '&expand=[reference_document,credit_note]');
+    } catch (e: any) {
+      // Sin las devoluciones se sigue con el criterio de siempre (bloquear): mejor un bloqueo de más que una factura duplicada.
+      this.logger.warn(`No se pudieron leer las devoluciones de Bsale: ${String(e?.message || e).slice(0, 120)}`);
+      return out;
+    }
+    const porFactura = new Map<number, { notas: string[]; monto: number }>();
+    for (const r of devoluciones) {
+      const id = Number(r?.reference_document?.id);
+      if (!Number.isFinite(id)) continue;
+      const e = porFactura.get(id) || { notas: [], monto: 0 };
+      e.monto += Number(r?.amount ?? r?.credit_note?.totalAmount ?? 0) || 0;
+      if (r?.credit_note?.number != null) e.notas.push(String(r.credit_note.number));
+      porFactura.set(id, e);
+    }
+    for (const f of facturas) {
+      const e = porFactura.get(Number(f?.id));
+      if (e && e.monto >= (Number(f?.totalAmount) || 0) - 1) out.set(Number(f.id), e);
+    }
+    return out;
   }
 
   // ── Listas del módulo Facturación ───────────────────────────────────────
@@ -851,7 +893,17 @@ export class BsaleFacturacionService {
     // ¿Alguna ya está facturada en Bsale?
     let recuperar: { emision_id: number; numero: string; doc: any } | null = null;
     if (guias.length && Number.isFinite(primeraEmision)) {
-      const ya = await this.facturasQueReferencian(guias.map((g) => g.numero), primeraEmision);
+      const { halladas: ya, anuladas } = await this.facturasQueReferencian(guias.map((g) => g.numero), primeraEmision);
+      // Historial: facturas de esta guía que ya se anularon con nota de crédito (no bloquean).
+      for (const g of guias) {
+        const previas = anuladas.get(soloDigitos(g.numero)) || [];
+        if (previas.length) {
+          avisos.push({
+            codigo: 'facturas_anuladas',
+            mensaje: `La guía ${g.numero} ya se facturó en Bsale ${previas.length === 1 ? 'una vez' : `${previas.length} veces`} y se anuló con nota de crédito: ${previas.map((p) => `factura ${p.numero}${p.fecha ? ` (${p.fecha})` : ''} → NC ${p.notas.join(', ') || 's/n'}`).join('; ')}. Se puede emitir de nuevo.`,
+          });
+        }
+      }
       /* Si la respuesta de una emisión se perdió, la factura existe en Bsale
          pero no en el sistema. Se reconoce como propia por su `salesId` y, en
          vez de bloquear, se ofrece terminar de registrarla. */
