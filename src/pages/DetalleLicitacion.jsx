@@ -25,6 +25,7 @@ import BotonFichaTecnica from "../components/BotonFichaTecnica";
 import BotonDescargarFichas from "../components/BotonDescargarFichas";
 import EstadoBsaleBadge from "../components/EstadoBsale";
 import BotonImprimirCarta from "../components/BotonImprimirCarta";
+import AnularGuiaBsale from "../components/AnularGuiaBsale";
 import BotonImprimirTermica from "../components/BotonImprimirTermica";
 import { useEstadosBsale } from "../lib/estadosBsale";
 import EmitirDespachoBsale from "../components/EmitirDespachoBsale";
@@ -33,7 +34,7 @@ import { generarPDFcotizacion } from "../utils/generarPDFcotizacion";
 import { calcularLista3 } from "../lib/listas";
 import { precioCampanaMargen } from "../lib/campanasMargen";
 import { useUnsavedChanges } from "../context/UnsavedChangesContext";
-import { GripVertical, Plus, Trash2, MessageSquare, Minus, ChevronUp, ChevronDown } from "lucide-react";
+import { GripVertical, Plus, Trash2, MessageSquare, Minus, ChevronUp, ChevronDown, Ban } from "lucide-react";
 
 import {
   DndContext,
@@ -945,6 +946,9 @@ export default function EditarLicitacion() {
      compra la guía sale de ella; sin OC (particular), de los productos de la
      cotización. El N° de seguimiento puede ir después. */
   const [puedeBsale, setPuedeBsale] = useState(false);
+  // (2026-10-16) Anular guías en Bsale: solo quien puede facturar (rol o perfil con Facturación / Venta directa).
+  const [puedeAnularGuia, setPuedeAnularGuia] = useState(false);
+  const [anularGuia, setAnularGuia] = useState(null); // { bsaleId, documentoId } | null
   // Estado en Bsale de las facturas, boletas y guías de la cotización.
   const estadosBsale = useEstadosBsale();
   const [guiaOc, setGuiaOc] = useState(null); // { ocId } | null
@@ -955,7 +959,7 @@ export default function EditarLicitacion() {
   useEffect(() => {
     let vivo = true;
     // `puede_guia` (todos) con respaldo en `puede` mientras el backend viejo siga desplegado.
-    api.get("/bsale/facturas/estado").then((e) => { if (vivo) setPuedeBsale(!!(e?.puede_guia ?? e?.puede)); }).catch(() => {});
+    api.get("/bsale/facturas/estado").then((e) => { if (vivo) { setPuedeBsale(!!(e?.puede_guia ?? e?.puede)); setPuedeAnularGuia(!!e?.puede); } }).catch(() => {});
     return () => { vivo = false; };
   }, []);
 
@@ -3633,6 +3637,17 @@ export default function EditarLicitacion() {
           }}
         />
       )}
+      {anularGuia && (
+        <AnularGuiaBsale
+          bsaleId={anularGuia.bsaleId || null}
+          documentoId={anularGuia.documentoId || null}
+          onCerrar={() => setAnularGuia(null)}
+          onAnulada={(r) => {
+            setToast({ type: r.anulada ? "success" : "error", message: r.anulada ? `Guía ${r.numero} anulada en Bsale.` : `Bsale respondió, pero la guía ${r.numero} sigue vigente: revísala en Bsale.` });
+            cargarDocumentosLicitacion();
+          }}
+        />
+      )}
       {guiaLibre && (
         <DocumentoLibreBsale
           tipo="guia"
@@ -5559,6 +5574,19 @@ export default function EditarLicitacion() {
                               <BotonImprimirTermica urlPdf={doc.bsale_url || estadosBsale?.[doc.id]?.url} compacto style={{ marginLeft: 4, verticalAlign: "middle" }} />
                               <BotonImprimirCarta bsaleId={doc.bsale_id || estadosBsale?.[doc.id]?.bsale_id} compacto style={{ marginLeft: 2, verticalAlign: "middle" }} />
                             </>
+                          )}
+                          {/* (2026-10-16) Anular la guía en Bsale (simular y anular en una ventana). */}
+                          {doc.tipo === "guia_despacho" && puedeAnularGuia && (doc.bsale_id || estadosBsale?.[doc.id]?.bsale_id) && estadosBsale?.[doc.id]?.estado !== "anulado" && (
+                            <button
+                              type="button"
+                              className="btn btn-ghost boton-anular-guia"
+                              onClick={() => setAnularGuia({ bsaleId: doc.bsale_id || estadosBsale?.[doc.id]?.bsale_id, documentoId: doc.id })}
+                              title="Anular la guía en Bsale"
+                              aria-label="Anular la guía en Bsale"
+                              style={{ marginLeft: 2, padding: 4, verticalAlign: "middle", color: "#b91c1c" }}
+                            >
+                              <Ban size={14} />
+                            </button>
                           )}
                           <EstadoBsaleBadge estado={estadosBsale?.[doc.id]} style={{ display: "block", width: "fit-content", marginTop: 2 }} />
                         </>

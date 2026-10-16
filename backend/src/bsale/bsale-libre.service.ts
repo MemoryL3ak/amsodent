@@ -2,7 +2,7 @@ import { BadRequestException, ConflictException, Injectable, Logger } from '@nes
 import { SupabaseService } from '../supabase/supabase.service';
 import { LicitacionesService } from '../licitaciones/licitaciones.service';
 import {
-  BsaleFacturacionService, EMISOR, fechaAEpoch, folioCotizacion, normOc, normRut, ocDeReferencia, referenciaGuia, referenciaOcFactura, referenciaOcGuia, referenciaParaBsale, referenciaVista, sumarDias, totalesDe,
+  BsaleFacturacionService, EMISOR, fechaAEpoch, folioCotizacion, normOc, normRut, referenciaGuia, referenciaOcFactura, referenciaOcGuia, referenciaParaBsale, referenciaVista, sumarDias, totalesDe,
 } from './bsale-facturacion.service';
 import { BsaleDespachosService, OBSERVACION_MAX, limpiarObservacion, observacionSugerida } from './bsale-despachos.service';
 
@@ -398,7 +398,7 @@ export class BsaleLibreService {
     }
 
     // Referencias (opcionales; la venta directa no lleva).
-    //   OC en guía: folio = cotización, razón = N° de OC. OC en factura: N° de OC en ambos.
+    //   OC en guía: folio = N° de OC, razón = ID de la licitación (2026-10-16). OC en factura: N° de OC en ambos.
     //   Guía (en una factura): folio = N° de guía, razón = N° de OC si se conoce.
     const referencias: any[] = [];
     for (const r of ventaDirecta ? [] : Array.isArray(body?.referencias) ? body.referencias : []) {
@@ -695,7 +695,7 @@ export class BsaleLibreService {
           const completo = await this.facturacion.apiGet(`/documents/${Number(doc.id)}.json?expand=[references]`);
           const refs: any[] = completo?.references?.items || [];
           for (const ref of b.referencias) {
-            const esta = ref.codigo_sii === DTE_OC ? refs.some((x: any) => ocDeReferencia(x) === ref.numero) : refs.some((x: any) => normOc(x?.number) === normOc(ref.folio));
+            const esta = ref.codigo_sii === DTE_OC ? refs.some((x: any) => normOc(x?.number) === ref.numero || normOc(x?.reason) === ref.numero) : refs.some((x: any) => normOc(x?.number) === normOc(ref.folio));
             if (!esta) avisos.push(`El documento ${doc.number} salió sin la referencia ${ref.codigo_sii === DTE_OC ? 'a la orden de compra' : 'a la guía'} ${ref.numero}: agrégala en Bsale.`);
           }
         } catch { /* la verificación no frena nada */ }

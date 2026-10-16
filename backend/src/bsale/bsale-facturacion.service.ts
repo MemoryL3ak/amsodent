@@ -106,9 +106,12 @@ export const EMISOR = {
 
 /* Cómo van las referencias a Bsale (regla de Ariel, 2026-10-03, tras la
    primera guía real, y lo que muestran los documentos hechos a mano):
-   - GUÍA y NOTA DE VENTA: en la referencia a la ORDEN DE COMPRA, el FOLIO
-     lleva la cotización (su código de Mercado Público o, si no tiene, su número
-     interno) y la RAZÓN lleva el número de la orden de compra.
+   - GUÍA (desde 2026-10-16, pedido de Ariel): en la referencia a la ORDEN DE
+     COMPRA el FOLIO es el número de la orden de compra y la RAZÓN el ID de la
+     licitación (su código de Mercado Público o, si no tiene, el número interno
+     de la cotización). Hasta esa fecha iba al revés: `ocDeReferencia` lee las dos.
+   - NOTA DE VENTA (orden en Bsale): sigue con la regla anterior — FOLIO la
+     cotización y RAZÓN el número de la orden de compra.
    - FACTURA: el número de la orden de compra va en el FOLIO (Mercado Público
      cruza la factura con la OC por ese campo; así están las 76 facturas reales
      con OC) y también en la razón.
@@ -118,6 +121,10 @@ export const EMISOR = {
 export type Referencia = { codigo_sii: number; folio: string; numero: string; razon: string; fecha: string | null };
 
 export function referenciaOcGuia(folioCotizacion: string, numeroOc: string, fecha: string | null): Referencia {
+  return { codigo_sii: 801, folio: normOc(numeroOc), numero: normOc(numeroOc), razon: normOc(folioCotizacion) || normOc(numeroOc), fecha };
+}
+
+export function referenciaOcOrden(folioCotizacion: string, numeroOc: string, fecha: string | null): Referencia {
   return { codigo_sii: 801, folio: normOc(folioCotizacion) || normOc(numeroOc), numero: normOc(numeroOc), razon: normOc(numeroOc), fecha };
 }
 
@@ -137,16 +144,28 @@ export function referenciaParaBsale(r: Referencia, emision: number) {
 export const folioCotizacion = (lic: any) => normOc(lic?.id_licitacion) || String(lic?.id || '').trim();
 
 /* La orden de compra que trae una referencia leída de Bsale. En las guías del
-   sistema va en la razón (el folio es la cotización); en las hechas a mano va
-   en los dos campos, o en el folio con una razón libre ("HES 1026670275",
-   "DISPOSITO MEDICO") o un rótulo ("Orden de compra"). Se prefiere lo que tenga
-   forma de OC de Mercado Público (1234-56-AG26); si nada la tiene, la razón
-   solo vale cuando trae dígitos. */
+   sistema hasta 2026-10-16 va en la razón (el folio es la cotización) y desde
+   entonces en el folio (la razón es el ID de la licitación); en las hechas a
+   mano va en los dos campos, o en el folio con una razón libre ("HES
+   1026670275", "DISPOSITO MEDICO") o un rótulo ("Orden de compra").
+   Primero se descarta el lado que tiene forma de ID de licitación de Mercado
+   Público (…-COT26, …-LE26, …-LR26, …-L126: compra ágil y licitaciones;
+   las OC terminan en AG, SE, CM…). Después se prefiere lo que tenga forma de
+   OC (1234-56-AG26); si nada la tiene, la razón solo vale cuando trae dígitos. */
 const ES_OC_MP = /^\d+-\d+-[A-Z]{2}\d{2}$/;
-export function ocDeReferencia(r: any): string {
+const ES_LICITACION_MP = /^\d+-\d+-(COT|LE|LP|LR|LQ|LS|L1|E2|CO|B2|H2|I2)\d{2}(-\d+)?$/;
+export function ocDeReferencia(r: any, folioCot?: string | null): string {
   const folio = normOc(r?.number);
   const razon = normOc(r?.reason);
   if (!razon || razon === folio) return folio;
+  // Si se sabe el folio de la cotización (ID de la licitación), la OC es el otro lado.
+  const cot = normOc(folioCot);
+  if (cot && folio === cot) return razon;
+  if (cot && razon === cot) return folio;
+  const licFolio = ES_LICITACION_MP.test(folio);
+  const licRazon = ES_LICITACION_MP.test(razon);
+  if (licFolio && !licRazon) return razon;
+  if (licRazon && !licFolio) return folio;
   if (ES_OC_MP.test(razon)) return razon;
   if (ES_OC_MP.test(folio)) return folio;
   return /\d/.test(razon) ? razon : folio;
@@ -466,7 +485,7 @@ export class BsaleFacturacionService {
 
   /* ¿Ya hay en Bsale una factura que referencie esta guía? La guía no lo dice;
      se buscan las facturas emitidas desde la fecha de la guía. */
-  private async facturasQueReferencian(numerosGuia: string[], desdeEpoch: number) {
+  async facturasQueReferencian(numerosGuia: string[], desdeEpoch: number) {
     const hasta = Math.floor(Date.now() / 1000) + 86400;
     const facturas = await this.todos(
       '/documents.json',
@@ -852,6 +871,7 @@ export class BsaleFacturacionService {
       .eq('id', licId)
       .maybeSingle();
     if (errLic || !lic) throw new BadRequestException('No se encontró la cotización.');
+    const folioCot = folioCotizacion(lic); // para leer la OC de las referencias de la guía
 
     const { data: docsData, error: errDocs } = await db
       .from('licitacion_documentos')
@@ -952,7 +972,7 @@ export class BsaleFacturacionService {
       const ocSistema = ocs.find((o) => o.id === g.deriva_de_id);
       if (refsOc.length) {
         for (const r of refsOc) {
-          const numero = ocDeReferencia(r);
+          const numero = ocDeReferencia(r, folioCot);
           if (numero && !referencias.some((x) => x.codigo_sii === DTE_OC && x.numero === numero)) {
             referencias.push(referenciaOcFactura(numero, epochAFecha(r.referenceDate)));
           }
@@ -960,10 +980,10 @@ export class BsaleFacturacionService {
         // La guía se digitó en Bsale y la OC en el sistema: si no dicen lo
         // mismo, una de las dos tiene un error de tipeo y hay que mirarlo.
         const delSistema = normOc(ocSistema?.numero);
-        if (delSistema && !refsOc.some((r: any) => ocDeReferencia(r) === delSistema)) {
+        if (delSistema && !refsOc.some((r: any) => ocDeReferencia(r, folioCot) === delSistema)) {
           avisos.push({
             codigo: 'oc_distinta',
-            mensaje: `La guía ${doc.number} referencia en Bsale la orden de compra ${ocDeReferencia(refsOc[0])}, pero en el sistema está cargada como ${delSistema}. Revisa cuál es la correcta: puedes corregirla antes de emitir.`,
+            mensaje: `La guía ${doc.number} referencia en Bsale la orden de compra ${ocDeReferencia(refsOc[0], folioCot)}, pero en el sistema está cargada como ${delSistema}. Revisa cuál es la correcta: puedes corregirla antes de emitir.`,
           });
           if (!ocsSistema.includes(delSistema)) ocsSistema.push(delSistema);
         }
@@ -974,7 +994,7 @@ export class BsaleFacturacionService {
         }
       }
       // La fila de la guía lleva su folio y, como razón, el N° de la orden de compra.
-      const ocDeLaGuia = refsOc.length ? ocDeReferencia(refsOc[0]) : normOc(ocSistema?.numero);
+      const ocDeLaGuia = refsOc.length ? ocDeReferencia(refsOc[0], folioCot) : normOc(ocSistema?.numero);
       referencias.push(referenciaGuia(String(doc.number), epochAFecha(doc.emissionDate), ocDeLaGuia));
 
       // Cuadre con la orden de compra del sistema (aviso, no bloquea: una OC
@@ -1364,17 +1384,18 @@ export class BsaleFacturacionService {
     return this.apiEnviar('POST', ruta, solicitud);
   }
 
-  /* POST o PUT a Bsale. Un 5xx o una respuesta perdida queda "incierta" (no se
-     sabe si Bsale lo hizo); un 4xx trae el motivo del rechazo. */
-  async apiEnviar(metodo: 'POST' | 'PUT', ruta: string, solicitud: Record<string, any>): Promise<any> {
+  /* POST, PUT o DELETE a Bsale. Un 5xx o una respuesta perdida queda
+     "incierta" (no se sabe si Bsale lo hizo); un 4xx trae el motivo del rechazo.
+     DELETE (anular una guía, 2026-10-16) va sin cuerpo. */
+  async apiEnviar(metodo: 'POST' | 'PUT' | 'DELETE', ruta: string, solicitud: Record<string, any> | null): Promise<any> {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), 60000);
     let res: Response;
     try {
       res = await fetch(`${this.base}/v1${ruta}`, {
         method: metodo,
-        headers: { access_token: this.token, Accept: 'application/json', 'Content-Type': 'application/json' },
-        body: JSON.stringify(solicitud),
+        headers: { access_token: this.token, Accept: 'application/json', ...(solicitud ? { 'Content-Type': 'application/json' } : {}) },
+        ...(solicitud ? { body: JSON.stringify(solicitud) } : {}),
         signal: ctrl.signal,
       });
     } catch (e: any) {

@@ -1,7 +1,7 @@
 import { BadRequestException, ConflictException, Injectable, Logger } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
 import { LicitacionesService } from '../licitaciones/licitaciones.service';
-import { BsaleFacturacionService, EMISOR, epochAFecha, fechaAEpoch, normRut, totalesDe } from './bsale-facturacion.service';
+import { BsaleFacturacionService, EMISOR, epochAFecha, fechaAEpoch, normRut, soloDigitos, totalesDe } from './bsale-facturacion.service';
 import { BsaleDespachosService } from './bsale-despachos.service';
 import { BsaleEstadosService } from './bsale-estados.service';
 import { DevolucionesService, DineroNc } from '../licitaciones/devoluciones.service';
@@ -24,8 +24,8 @@ import { DevolucionesService, DineroNc } from '../licitaciones/devoluciones.serv
    · Si el documento está en una cotización, la nota de crédito queda ahí como
      `nota_credito` (monto BRUTO, como se cargan a mano) colgada de la factura,
      y Seguimiento de Pagos la descuenta del saldo.
-   · Las GUÍAS no: no hay forma documentada de anularlas por la API; se anulan
-     en Bsale (en la cuenta hay 25 anuladas así).
+   · Las GUÍAS no van con nota de crédito: desde 2026-10-16 se anulan con
+     DELETE /shippings/:id (ver «Anular guías de despacho» más abajo).
    `/returns.json` no recibe `salesId`: si la respuesta se pierde, la emisión
    queda "incierta" y no se reintenta hasta revisar en Bsale (emitirReal).
 
@@ -164,7 +164,7 @@ export class BsaleAnulacionesService {
     } else if (documentoId) {
       const { data: d } = await db.from('licitacion_documentos').select('id, licitacion_id, tipo, numero, monto, descripcion, bsale_id').eq('id', documentoId).maybeSingle();
       if (!d) throw new BadRequestException('Ese documento no existe en el sistema.');
-      if (!['factura', 'factura_boleta'].includes(String((d as any).tipo))) throw new BadRequestException('Solo se anulan facturas y boletas (las guías se anulan en Bsale).');
+      if (!['factura', 'factura_boleta'].includes(String((d as any).tipo))) throw new BadRequestException('Solo se anulan facturas y boletas (las guías se anulan con «Anular guía»).');
       if (Number((d as any).bsale_id) > 0) doc = await this.documentoBsale(Number((d as any).bsale_id)).catch(() => null);
       if (!doc) {
         const numero = String((d as any).numero || '').trim().match(/\d+/)?.[0] || '';
@@ -201,7 +201,7 @@ export class BsaleAnulacionesService {
     const tipos = await this.tiposPorSii();
     const tipoDoc = [...tipos.values()].find((t) => Number(t.id) === Number(doc.document_type?.id));
     const sii = Number(tipoDoc?.codeSii) || 0;
-    if (sii === DTE_GUIA) problemas.push({ codigo: 'guia', mensaje: 'Las guías de despacho no se anulan con nota de crédito: se anulan en Bsale.' });
+    if (sii === DTE_GUIA) problemas.push({ codigo: 'guia', mensaje: 'Las guías de despacho no se anulan con nota de crédito: usa «Anular guía».' });
     else if (sii !== DTE_FACTURA && sii !== DTE_BOLETA) problemas.push({ codigo: 'tipo', mensaje: `Solo se anulan facturas y boletas electrónicas (este es ${tipoDoc?.name || 'otro tipo de documento'}).` });
     if (Number(doc.state) !== 0) problemas.push({ codigo: 'inactivo', mensaje: 'El documento está inactivo en Bsale.' });
     const ncTipo = tipos.get(DTE_NC);
@@ -299,6 +299,205 @@ export class BsaleAnulacionesService {
       modo: this.facturacion.emisionActiva ? 'activa' : 'simulacion',
       huella: this.facturacion.huellaDe({ cliente: { id: c?.id || c?.code || 'sin-cliente' }, tipo_documento_id: Number(doc.id), lineas: lineas.map((l: any) => ({ detalle_id: l.detalle_id, cantidad: l.cantidad, neto: l.neto_unitario })), referencias: previas.map((r) => ({ codigo_sii: 0, numero: String(r.id) })), totales: { total: Number(doc.totalAmount || 0) } }),
     };
+  }
+
+  // ── Anular guías de despacho (2026-10-16) ────────────────────────────
+  /* Pedido de Ariel: "podemos anular guías de despacho desde nuestra
+     plataforma". Bsale documenta DELETE /v1/shippings/:id.json («Anula un
+     documento del tipo despacho (manual o electrónico)»); el id del despacho
+     sale de GET /shippings.json?documentid=<id del documento de la guía>. Las
+     guías anuladas a mano en la cuenta quedan con state 1 en el documento y en
+     el despacho. Mismos dos pasos: simular y anular. No se anula:
+     · una guía ya anulada (state 1);
+     · una guía con factura vigente en Bsale (las anuladas con nota de crédito
+       no cuentan): primero se anula la factura.
+     El stock: Bsale no documenta qué hace con él al anular; se lee el de cada
+     producto antes y después y se muestra la diferencia. En el sistema la guía
+     queda registrada (Trazabilidad la muestra «Anulada en Bsale» y deja de
+     contar como despachada); su descripción anota quién la anuló y por qué. */
+
+  private async ubicarGuia(q: { bsale_id?: any; documento_id?: any; numero?: any }) {
+    const db = this.supabase.getClient();
+    let doc: any = null;
+    const documentoId: number | null = Number(q?.documento_id) || null;
+    if (Number(q?.bsale_id) > 0) {
+      doc = await this.documentoBsale(Number(q.bsale_id)).catch(() => null);
+    } else if (documentoId) {
+      const { data: d } = await db.from('licitacion_documentos').select('id, licitacion_id, tipo, numero, bsale_id').eq('id', documentoId).maybeSingle();
+      if (!d) throw new BadRequestException('Ese documento no existe en el sistema.');
+      if (String((d as any).tipo) !== 'guia_despacho') throw new BadRequestException('Ese documento no es una guía de despacho.');
+      if (Number((d as any).bsale_id) > 0) doc = await this.documentoBsale(Number((d as any).bsale_id)).catch(() => null);
+      if (!doc) {
+        const numero = String((d as any).numero || '').trim().match(/\d+/)?.[0] || '';
+        const { data: lic } = await db.from('licitaciones').select('rut_entidad').eq('id', Number((d as any).licitacion_id)).maybeSingle();
+        const encontrado = numero ? await this.buscarPorNumero(numero, [DTE_GUIA], { rut: (lic as any)?.rut_entidad }) : null;
+        if (encontrado) doc = await this.documentoBsale(Number(encontrado.id));
+      }
+    } else {
+      const numero = String(q?.numero ?? '').trim().match(/\d+/)?.[0] || '';
+      if (!numero) throw new BadRequestException('Indica el N° de la guía.');
+      const encontrado = await this.buscarPorNumero(numero, [DTE_GUIA]);
+      if (encontrado) doc = await this.documentoBsale(Number(encontrado.id));
+    }
+    if (!doc?.id) throw new BadRequestException('No se encontró la guía en Bsale. Revisa el N°.');
+    return { doc, documentoId };
+  }
+
+  /* La guía en el sistema (Trazabilidad): por su id, por el id de Bsale o por N° + RUT. */
+  private async registroGuia(doc: any, documentoId: number | null) {
+    const db = this.supabase.getClient();
+    if (documentoId) {
+      const { data } = await db.from('licitacion_documentos').select('id, licitacion_id, descripcion').eq('id', documentoId).maybeSingle();
+      if (data) return data as any;
+    }
+    let r: any = await db.from('licitacion_documentos').select('id, licitacion_id, descripcion').eq('bsale_id', Number(doc.id)).eq('tipo', 'guia_despacho');
+    let filas: any[] = r.error ? [] : r.data || [];
+    if (!filas.length) {
+      r = await db.from('licitacion_documentos').select('id, licitacion_id, descripcion').eq('numero', String(doc.number)).eq('tipo', 'guia_despacho');
+      filas = r.data || [];
+      if (filas.length > 1) {
+        const { data: lics } = await db.from('licitaciones').select('id, rut_entidad').in('id', filas.map((f) => Number(f.licitacion_id)));
+        const rut = normRut(doc?.client?.code);
+        const delCliente = filas.filter((f) => normRut((lics || []).find((l: any) => Number(l.id) === Number(f.licitacion_id))?.rut_entidad) === rut);
+        filas = delCliente.length ? delCliente : filas;
+      }
+    }
+    return filas[0] || null;
+  }
+
+  // Stock disponible en Bsale de cada producto de la guía (null = no se pudo leer).
+  private async stockDeLineas(lineas: { variante_id: number | null }[]) {
+    const out = new Map<number, number | null>();
+    const ids = [...new Set(lineas.map((l) => Number(l.variante_id)).filter((n) => n > 0))];
+    for (let i = 0; i < ids.length; i += 4) {
+      await Promise.all(ids.slice(i, i + 4).map(async (id) => { out.set(id, await this.despachos.stockDeVariante(id)); }));
+    }
+    return out;
+  }
+
+  async prepararGuia(userId: string, q: { bsale_id?: any; documento_id?: any; numero?: any }) {
+    await this.facturacion.exigirRol(userId);
+    const problemas: Problema[] = [];
+    const avisos: Problema[] = [];
+    const db = this.supabase.getClient();
+    const { doc, documentoId } = await this.ubicarGuia(q);
+
+    const tipos = await this.tiposPorSii();
+    const tipoDoc = [...tipos.values()].find((t) => Number(t.id) === Number(doc.document_type?.id));
+    if (Number(tipoDoc?.codeSii) !== DTE_GUIA) problemas.push({ codigo: 'tipo', mensaje: `Ese documento no es una guía de despacho electrónica (es ${tipoDoc?.name || doc.document_type?.name || 'otro tipo'}).` });
+    if (Number(doc.state) !== 0) problemas.push({ codigo: 'ya_anulada', mensaje: `La guía ${doc.number} ya está anulada en Bsale.` });
+
+    // El despacho de Bsale detrás de la guía: es lo que se anula.
+    const desp = await this.facturacion.apiGet(`/shippings.json?documentid=${Number(doc.id)}`).catch(() => null);
+    const despacho = ((desp?.items || []) as any[]).find((s) => Number(s?.state) === 0) || (desp?.items || [])[0] || null;
+    if (!despacho?.id) problemas.push({ codigo: 'sin_despacho', mensaje: `Bsale no tiene el despacho de la guía ${doc.number}: anúlala directamente en Bsale.` });
+
+    // ¿Facturada? Una factura vigente que la referencia en Bsale bloquea (las anuladas con NC no).
+    const { halladas, anuladas } = await this.facturacion.facturasQueReferencian([String(doc.number)], Number(doc.emissionDate) || 0);
+    const factura = halladas.get(soloDigitos(doc.number));
+    if (factura) problemas.push({ codigo: 'facturada', mensaje: `La guía ${doc.number} está facturada en la factura ${factura.numero}${factura.fecha ? ` del ${factura.fecha.split('-').reverse().join('-')}` : ''}: primero anula la factura con nota de crédito.` });
+    const previas = anuladas.get(soloDigitos(doc.number)) || [];
+    if (previas.length) avisos.push({ codigo: 'facturas_anuladas', mensaje: `Tuvo ${previas.length === 1 ? 'una factura, anulada' : `${previas.length} facturas, anuladas`} con nota de crédito (${previas.map((p) => `factura ${p.numero}`).join(', ')}): no impiden anular la guía.` });
+
+    // Líneas y su stock actual en Bsale.
+    let detalles: any[] = doc.details?.items || [];
+    if (Number(doc.details?.count || 0) > detalles.length) detalles = await this.facturacion.todos(`/documents/${Number(doc.id)}/details.json`, '&expand=[variant]');
+    const lineas = detalles.map((d: any) => ({
+      variante_id: Number(d.variant?.id) || null,
+      sku: String(d.variant?.code || '').trim(),
+      producto: String(d.variant?.description || d.description || '').trim() || String(d.note || '').trim(),
+      cantidad: Number(d.quantity || 0),
+      stock_bsale: null as number | null,
+    }));
+    for (const l of lineas) {
+      if (!l.producto && l.sku) l.producto = String((await this.despachos.variantePorSku(l.sku).catch(() => null))?.product?.name || '').trim();
+    }
+    const stock = await this.stockDeLineas(lineas);
+    for (const l of lineas) l.stock_bsale = l.variante_id ? stock.get(l.variante_id) ?? null : null;
+
+    // En el sistema: la cotización y las boletas/facturas que la listan (venta directa).
+    const registro = await this.registroGuia(doc, documentoId);
+    let cotizacion: any = null;
+    if (registro) {
+      const { data: lic } = await db.from('licitaciones').select('id, id_licitacion, nombre_entidad').eq('id', Number(registro.licitacion_id)).maybeSingle();
+      cotizacion = lic ? { id: Number((lic as any).id), codigo: (lic as any).id_licitacion || null, cliente: (lic as any).nombre_entidad || '' } : null;
+      const { data: ligados } = await db.from('licitacion_documentos').select('id, tipo, numero, descripcion, guias_ids, deriva_de_id').eq('licitacion_id', Number(registro.licitacion_id)).in('tipo', ['factura', 'factura_boleta']);
+      for (const f of (ligados || []) as any[]) {
+        const lista = Array.isArray(f.guias_ids) ? f.guias_ids.map(Number) : [];
+        if (!lista.includes(Number(registro.id)) && Number(f.deriva_de_id) !== Number(registro.id)) continue;
+        if (factura && String(f.numero) === String(factura.numero)) continue;
+        const cual = f.tipo === 'factura' ? 'factura' : /boleta/i.test(String(f.descripcion || '')) ? 'boleta' : 'factura o boleta';
+        avisos.push({ codigo: 'documento_ligado', mensaje: `La ${cual} N° ${f.numero || 's/n'} de la cotización está ligada a esta guía y sigue vigente: anular la guía no la anula (si la venta no va, anúlala con nota de crédito).` });
+      }
+    } else {
+      avisos.push({ codigo: 'sin_registro', mensaje: 'Esta guía no está en ninguna cotización del sistema: se anula solo en Bsale.' });
+    }
+    avisos.push({ codigo: 'stock', mensaje: 'Bsale no documenta qué hace con el stock al anular una guía: al anular se lee el stock de cada producto antes y después y se muestra la diferencia.' });
+
+    const c = doc.client || null;
+    return {
+      guia: {
+        bsale_id: Number(doc.id),
+        numero: String(doc.number),
+        fecha: epochAFecha(doc.emissionDate),
+        url: doc.urlPdf || doc.urlPublicView || null,
+        cliente: c ? { rut: String(c.code || ''), razon_social: String(c.company || `${c.firstName || ''} ${c.lastName || ''}`).trim() } : null,
+        totales: { neto: Number(doc.netAmount || 0), total: Number(doc.totalAmount || 0) },
+        lineas,
+      },
+      despacho_id: Number(despacho?.id) || null,
+      cotizacion,
+      registro: registro ? { documento_id: Number(registro.id), licitacion_id: Number(registro.licitacion_id) } : null,
+      problemas,
+      avisos,
+      modo: this.facturacion.emisionActiva ? 'activa' : 'simulacion',
+      huella: this.facturacion.huellaDe({ cliente: { id: c?.id || c?.code || 'sin-cliente' }, tipo_documento_id: Number(doc.id), lineas: lineas.map((l) => ({ detalle_id: Number(l.variante_id) || 0, cantidad: l.cantidad, neto: 0 })), referencias: [{ codigo_sii: Number(doc.state) || 0, numero: String(despacho?.id || '') }], totales: { total: Number(doc.totalAmount || 0) } }),
+    };
+  }
+
+  async anularGuia(usuario: { id: string; email: string }, body: any) {
+    const b = await this.prepararGuia(usuario.id, { bsale_id: body?.bsale_id, documento_id: body?.documento_id });
+    const motivo = texto(body?.motivo, 200);
+    const simular = body?.simular === true;
+    const real = this.facturacion.emisionActiva && !simular;
+    if (b.problemas.length) {
+      if (!real) return { simulacion: true, bloqueada: true, problemas: b.problemas, avisos: b.avisos, huella: b.huella };
+      throw new BadRequestException(`No se puede anular: ${b.problemas.map((p) => p.mensaje).join(' ')}`);
+    }
+    if (!real) return { simulacion: true, emision_apagada: !simular, ...b };
+    if (!body?.huella || body.huella !== b.huella) throw new ConflictException('La guía cambió en Bsale desde que la revisaste. Vuelve a abrirla y simula de nuevo.');
+
+    try {
+      await this.facturacion.apiEnviar('DELETE', `/shippings/${Number(b.despacho_id)}.json`, null);
+    } catch (e: any) {
+      if (e?.incierta) throw new ConflictException(`Bsale no respondió y no se sabe si la guía ${b.guia.numero} se anuló: revísala en Bsale antes de volver a intentar.`);
+      throw new BadRequestException(`Bsale no anuló la guía: ${String(e?.message || e).slice(0, 400)}`);
+    }
+
+    // Se confirma leyendo la guía y el stock de nuevo.
+    const avisos: string[] = [];
+    const despues = await this.documentoBsale(b.guia.bsale_id).catch(() => null);
+    const anulada = Number(despues?.state) === 1;
+    if (!anulada) avisos.push(`Bsale respondió, pero la guía ${b.guia.numero} todavía aparece vigente: revísala en Bsale.`);
+    const stock = await this.stockDeLineas(b.guia.lineas);
+    const stockLineas = b.guia.lineas.map((l) => {
+      const antes = l.stock_bsale;
+      const ahora = l.variante_id ? stock.get(l.variante_id) ?? null : null;
+      return { sku: l.sku, producto: l.producto, cantidad: l.cantidad, antes, despues: ahora, diferencia: antes != null && ahora != null ? ahora - antes : null };
+    });
+    const sinReponer = stockLineas.filter((l) => l.diferencia != null && l.diferencia < l.cantidad);
+    if (sinReponer.length && anulada) avisos.push(`El stock no subió lo que la guía había descontado en: ${sinReponer.map((l) => `${l.sku || l.producto} (+${l.diferencia} de ${l.cantidad})`).join(' · ')}. Revisa el stock en Bsale (otra venta pudo moverlo al mismo tiempo).`);
+
+    // En el sistema: la descripción de la guía anota la anulación.
+    if (b.registro) {
+      const nota = `Anulada en Bsale el ${hoyEnChile().split('-').reverse().join('-')} por ${usuario.email}${motivo ? `: ${motivo}` : ''}`;
+      const { data: fila } = await this.supabase.getClient().from('licitacion_documentos').select('descripcion').eq('id', b.registro.documento_id).maybeSingle();
+      const previa = String((fila as any)?.descripcion || '').trim();
+      await this.supabase.getClient().from('licitacion_documentos').update({ descripcion: previa ? `${previa} · ${nota}` : nota }).eq('id', b.registro.documento_id);
+    }
+    this.estados.anotarAnulado(b.guia.bsale_id);
+    this.logger.log(`Guía ${b.guia.numero} anulada en Bsale (despacho ${b.despacho_id}${b.cotizacion ? `, cotización ${b.cotizacion.id}` : ''}) por ${usuario.email}${motivo ? ` · ${motivo}` : ''}`);
+    return { anulada, numero: b.guia.numero, cotizacion: b.cotizacion, stock: stockLineas, avisos };
   }
 
   // ── Nota de débito (2026-10-07) ──────────────────────────────────────
