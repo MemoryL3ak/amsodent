@@ -6,7 +6,7 @@ import {
   UseGuards,
   Req,
 } from '@nestjs/common';
-import { Throttle } from '@nestjs/throttler';
+import { SkipThrottle, Throttle } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
 import { AuthGuard } from './auth.guard';
 import { AdminGuard } from './admin.guard';
@@ -22,7 +22,10 @@ export class AuthController {
     return this.authService.signIn(body.email, body.password);
   }
 
+  // (2026-10-16) Sin el límite global por IP: toda la oficina sale por la misma
+  // IP y un 429 aquí dejaba a un usuario con perfil sin sus permisos. Exige sesión.
   @Get('profile')
+  @SkipThrottle()
   @UseGuards(AuthGuard)
   async getProfile(@Req() req: any) {
     return this.authService.getProfile(req.user.id);
