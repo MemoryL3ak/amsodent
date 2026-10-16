@@ -417,6 +417,29 @@ export class BsaleFacturacionService {
     return { halladas, anuladas };
   }
 
+  /* (2026-10-16) Lo mismo con lo registrado en el SISTEMA: una factura cuyas
+     notas de crédito (hijas por deriva_de_id, en BRUTO) suman al menos su total
+     (neto × 1,19) está anulada y no cuenta como factura de la guía. Sin monto
+     en la factura no se puede saber: se sigue contando (bloquea). */
+  private facturasAnuladasEnSistema(docs: any[]): Map<number, { notas: string[] }> {
+    const out = new Map<number, { notas: string[] }>();
+    const ncPorFactura = new Map<number, { total: number; notas: string[] }>();
+    for (const d of docs) {
+      if (d?.tipo !== 'nota_credito' || !d?.deriva_de_id) continue;
+      const e = ncPorFactura.get(Number(d.deriva_de_id)) || { total: 0, notas: [] };
+      e.total += Number(d.monto) || 0;
+      e.notas.push(String(d.numero || 's/n'));
+      ncPorFactura.set(Number(d.deriva_de_id), e);
+    }
+    for (const f of docs) {
+      if (f?.tipo !== 'factura' && f?.tipo !== 'factura_boleta') continue;
+      const neto = Number(f?.monto) || 0;
+      const e = ncPorFactura.get(Number(f.id));
+      if (neto > 0 && e && e.total >= Math.round(neto * 1.19) - 2) out.set(Number(f.id), { notas: e.notas });
+    }
+    return out;
+  }
+
   /* Facturas anuladas por completo con nota(s) de crédito: las devoluciones de
      Bsale cuyo documento de referencia es la factura suman al menos su total. */
   private async facturasAnuladasPorNc(facturas: any[]): Promise<Map<number, { notas: string[]; monto: number }>> {
@@ -459,16 +482,19 @@ export class BsaleFacturacionService {
       const { data, error } = await db
         .from('licitacion_documentos')
         .select('id, licitacion_id, tipo, numero, monto, fecha_oc, deriva_de_id, guias_ids, created_at')
-        .in('tipo', ['orden_compra', 'guia_despacho', 'factura', 'factura_boleta'])
+        .in('tipo', ['orden_compra', 'guia_despacho', 'factura', 'factura_boleta', 'nota_credito'])
         .order('id', { ascending: true })
         .range(desde, desde + 999);
       if (error) throw new BadRequestException(error.message);
       docs.push(...(data || []));
       if (!data || data.length < 1000) break;
     }
+    // (2026-10-16) Una factura anulada con nota de crédito deja la guía otra vez por facturar.
+    const anuladasSistema = this.facturasAnuladasEnSistema(docs);
     const facturadas = new Set<number>();
     for (const f of docs) {
       if (f.tipo !== 'factura' && f.tipo !== 'factura_boleta') continue;
+      if (anuladasSistema.has(Number(f.id))) continue;
       if (f.deriva_de_id) facturadas.add(Number(f.deriva_de_id));
       if (Array.isArray(f.guias_ids)) for (const g of f.guias_ids) facturadas.add(Number(g));
     }
@@ -745,14 +771,18 @@ export class BsaleFacturacionService {
       .from('licitacion_documentos')
       .select('id, tipo, numero, monto, fecha_oc, fecha_factura, deriva_de_id, guias_ids, created_at')
       .eq('licitacion_id', licId)
-      .in('tipo', ['orden_compra', 'guia_despacho', 'factura', 'factura_boleta']);
+      .in('tipo', ['orden_compra', 'guia_despacho', 'factura', 'factura_boleta', 'nota_credito']);
     if (errDocs) throw new BadRequestException(errDocs.message);
     const docs: any[] = docsData || [];
     const ocs = docs.filter((d) => d.tipo === 'orden_compra');
     const guiasSistema = docs.filter((d) => d.tipo === 'guia_despacho');
-    const facturas = docs.filter((d) => d.tipo === 'factura' || d.tipo === 'factura_boleta');
-    const facturaDe = (g: any) =>
-      facturas.find((f) => f.deriva_de_id === g.id || (Array.isArray(f.guias_ids) && f.guias_ids.map(Number).includes(g.id)));
+    // (2026-10-16) Una factura anulada con nota de crédito en el sistema no cuenta: la guía se puede volver a facturar.
+    const anuladasSistema = this.facturasAnuladasEnSistema(docs);
+    const todasFacturas = docs.filter((d) => d.tipo === 'factura' || d.tipo === 'factura_boleta');
+    const facturas = todasFacturas.filter((f) => !anuladasSistema.has(Number(f.id)));
+    const esDeGuia = (f: any, g: any) => f.deriva_de_id === g.id || (Array.isArray(f.guias_ids) && f.guias_ids.map(Number).includes(g.id));
+    const facturaDe = (g: any) => facturas.find((f) => esDeGuia(f, g));
+    const anuladasDe = (g: any) => todasFacturas.filter((f) => anuladasSistema.has(Number(f.id)) && esDeGuia(f, g));
 
     const problemas: Problema[] = [];
     const avisos: Problema[] = [];
@@ -763,6 +793,13 @@ export class BsaleFacturacionService {
       elegidas.push(g);
       const f = facturaDe(g);
       if (f) problemas.push({ codigo: 'ya_facturada_sistema', mensaje: `La guía ${g.numero || 's/n'} ya tiene la factura ${f.numero || 's/n'} registrada en el sistema.` });
+      const previas = anuladasDe(g);
+      if (previas.length) {
+        avisos.push({
+          codigo: 'facturas_anuladas_sistema',
+          mensaje: `La guía ${g.numero || 's/n'} ya tuvo en el sistema ${previas.length === 1 ? 'una factura anulada' : `${previas.length} facturas anuladas`} con nota de crédito: ${previas.map((p) => `factura ${p.numero || 's/n'} → NC ${anuladasSistema.get(Number(p.id))!.notas.join(', ')}`).join('; ')}. Se puede emitir de nuevo.`,
+        });
+      }
       if (!folioGuia(g.numero)) problemas.push({ codigo: 'guia_sin_numero', mensaje: `La guía «${g.numero || 'sin número'}» no tiene un número de guía reconocible: no se puede buscar en Bsale. Corrige el número en Trazabilidad.` });
     }
 
