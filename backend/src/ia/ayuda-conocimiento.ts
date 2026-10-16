@@ -242,8 +242,11 @@ Bsale), cliente y cotización, total con notas de crédito y débito y pago
 (Pagada, Por cobrar, Anulada, Sin emitir); filtros por documento y pago. Cada
 fila se despliega con condición, comprobantes, notas (también las hechas a mano
 en Bsale), guías y quién la emitió. Por venta: «N. crédito» y, en facturas,
-«N. débito». No ofrece guía: la venta directa ya rebaja stock y una guía en
-Bsale lo rebaja otra vez. La ven quienes tienen Venta directa o Facturación;
+«N. débito». «Emitir guía de despacho» (por defecto si hay cliente) emite la
+guía enseguida con las mismas líneas y es la que rebaja el stock. Se abre la
+ventana de correo para la boleta/factura y la guía; con transporte «Entrega
+inmediata» la guía NO se envía por correo (la boleta/factura sí). La ven
+quienes tienen Venta directa o Facturación;
 emitir exige rol administración, contabilidad o jefatura de ventas especial.
 
 ### Campañas de margen (/campanas-margen)

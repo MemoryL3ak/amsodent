@@ -301,6 +301,7 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
               {resultado.guia && (resultado.guia.emitida ? (
                 <div className="guia-venta-ok" style={{ fontSize: 13, color: "#166534" }}>
                   Guía de despacho N° {resultado.guia.numero} emitida con las mismas líneas y registrada en la cotización.
+                  {resultado.guia.sin_correo && <div style={{ fontSize: 12.5, color: "var(--text-muted)" }}>Entrega inmediata: la guía no se envía por correo al cliente.</div>}
                   <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 4 }}>
                     <BotonImprimirTermica urlPdf={resultado.guia.url_pdf} etiqueta="Guía térmica" />
                     {resultado.guia.bsale_id && <BotonImprimirCarta bsaleId={resultado.guia.bsale_id} etiqueta="Guía en carta" />}
@@ -656,6 +657,9 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
                 </div>
               )}
               {(esGuia || (conGuia && guiaPosible)) && <CamposSeguimientoGuia valor={seguimiento} onChange={setSeguimiento} disabled={!!enviando} />}
+              {ventaDirecta && conGuia && guiaPosible && seguimiento.empresa === "Entrega inmediata" && (
+                <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Con entrega inmediata la guía no se envía por correo al cliente; la {esBoleta ? "boleta" : "factura"} sí.</div>
+              )}
               {conObsGuia && <CampoObservacionGuia valor={observacion} onChange={setObservacion} porProducto max={obsMax} disabled={!!enviando} />}
               {!ventaDirecta && !esBoleta && <div style={caja}>
                 <span style={etiqueta}>Referencias y registro (opcional)</span>
