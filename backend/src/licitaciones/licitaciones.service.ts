@@ -2546,8 +2546,8 @@ export class LicitacionesService {
      seguía corriendo contra la API caída de Compra Ágil). Las versiones
      hermanas del proceso que sigan abiertas pasan a "Descartada". Nunca
      frena el registro del documento. */
-  async createDocumento(body: Record<string, any>) {
-    const inserted = await this.insertarDocumento(body);
+  async createDocumento(body: Record<string, any>, opts?: { sinAvisoCorreo?: boolean }) {
+    const inserted = await this.insertarDocumento(body, opts);
     if (String(body?.tipo || '') === 'orden_compra' && Number.isFinite(Number(body?.licitacion_id))) {
       try {
         await this.adjudicaciones.porOrdenCargada(
@@ -2562,7 +2562,7 @@ export class LicitacionesService {
     return inserted;
   }
 
-  private async insertarDocumento(body: Record<string, any>) {
+  private async insertarDocumento(body: Record<string, any>, opts?: { sinAvisoCorreo?: boolean }) {
     let inserted: any = null;
 
     // Despacho interno → correlativo automático AMSO0000001 (cuando no se
@@ -2633,8 +2633,10 @@ export class LicitacionesService {
     }
 
     // Hook: aviso de correo pendiente al vendedor. No bloquea la subida.
+    // sinAvisoCorreo: la guía de una venta directa con entrega inmediata no se
+    // envía al cliente (2026-10-15).
     try {
-      await this.notificarCorreoPendiente(inserted?.id, body);
+      if (!opts?.sinAvisoCorreo) await this.notificarCorreoPendiente(inserted?.id, body);
     } catch (e: any) {
       console.error('[LicitacionesService] notificarCorreoPendiente falló:', e?.message || e);
     }

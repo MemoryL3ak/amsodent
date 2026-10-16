@@ -680,8 +680,12 @@ export class BsaleLibreService {
   /* Guía de despacho de la venta directa, desde las líneas del documento recién
      emitido (Bsale: `details` con el detailId del documento origen y
      «Operación constituye venta»). Si falla, la boleta/factura ya está
-     emitida SIN rebajar stock: se avisa y queda «Emitir guía» en la cotización. */
+     emitida SIN rebajar stock: se avisa y queda «Emitir guía» en la cotización.
+     (2026-10-15) Pedido de Ariel: con «Entrega inmediata» la guía NO se envía
+     por correo (el cliente se lleva los productos en el momento); la
+     boleta/factura sí. Solo en ese caso: con cualquier otro transporte se envía. */
   private async emitirGuiaDeVenta(usuario: { id: string; email: string }, b: any, docEmitido: any, claveBase: string, cotizacion: any, body: any) {
+    const sinCorreo = String(body?.seguimiento?.empresa || '').trim().toLowerCase() === 'entrega inmediata';
     try {
       const g = b.guia;
       const lineasDoc: any[] = await this.facturacion.todos(`/documents/${Number(docEmitido.bsale_id)}/details.json`, '');
@@ -715,7 +719,7 @@ export class BsaleLibreService {
         licitacionId: cotizacion?.id || null, origenDocId: docEmitido.documento_id || null,
         lineas: b.lineas.map((l: any) => ({ sku: l.sku, cantidad: l.cantidad, neto_unitario: l.neto_unitario, ...(l.observacion ? { observacion: l.observacion } : {}) })),
         bucket: 'guia-despacho',
-        correo: { tipo: 'guia', para: b.cliente?.email || null },
+        ...(sinCorreo ? {} : { correo: { tipo: 'guia' as const, para: b.cliente?.email || null } }),
         registrar: async (doc: any, pdf: any) => {
           if (!cotizacion?.id) return null;
           const creado = await this.licitaciones.createDocumento({
@@ -725,7 +729,7 @@ export class BsaleLibreService {
             n_seguimiento: String(body?.seguimiento?.numero || '').trim().slice(0, 80) || null,
             bucket: pdf ? 'guia-despacho' : null, storage_path: pdf?.path || null, file_name: pdf ? `Guía ${doc.number}.pdf` : null,
             mime_type: pdf ? 'application/pdf' : null, size_bytes: pdf?.size || null, bsale_id: Number(doc.id) || null, bsale_url: doc.urlPdf || doc.urlPublicView || null,
-          });
+          }, { sinAvisoCorreo: sinCorreo });
           const guiaId = Number((creado as any)?.id) || null;
           // La boleta/factura queda enlazada a su guía: así no aparece en «Guías por facturar».
           if (guiaId && docEmitido.documento_id) {
@@ -744,7 +748,7 @@ export class BsaleLibreService {
           return avisos;
         },
       });
-      return { emitida: true, numero: r.numero, url_pdf: r.url_pdf, bsale_id: r.bsale_id || null, documento_id: r.documento_id, avisos: r.avisos || [] };
+      return { emitida: true, numero: r.numero, url_pdf: r.url_pdf, bsale_id: r.bsale_id || null, documento_id: r.documento_id, avisos: r.avisos || [], sin_correo: sinCorreo };
     } catch (e: any) {
       const error = String(e?.message || e).slice(0, 200);
       this.logger.warn(`Venta directa ${docEmitido.numero}: la guía no se pudo emitir: ${error}`);

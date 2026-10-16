@@ -334,7 +334,7 @@ export const GRUPOS_MANUAL = [
           "Listado de TODAS las ventas directas: fecha, documento (con su PDF y estado en Bsale), cliente y cotización, total con las notas de crédito y débito, y pago (Pagada, Por cobrar, Anulada o Sin emitir). Filtros por documento y pago; los KPIs filtran al hacer clic.",
           "Cada fila se despliega: condición de venta, pago y comprobantes, notas de crédito (también las hechas a mano en Bsale y las que solo corrigen texto), notas de débito, guías y quién la emitió, con el enlace a la cotización.",
           "Documentos de cada venta: «N. crédito» (anular, devolver parte o ajustar el precio) y, en facturas, «N. débito». Una venta anulada ya no ofrece notas.",
-          "No ofrece guía de despacho: la venta directa ya rebaja el stock al emitirse y en Bsale una guía lo rebaja de nuevo.",
+          "«Emitir guía de despacho» (marcada por defecto si hay cliente): la guía sale enseguida con las mismas líneas y es la que rebaja el stock. Después de emitir se abre la ventana de correo para la boleta/factura y la guía; con transporte «Entrega inmediata» la guía no se envía por correo (la boleta/factura sí).",
         ],
       },
       {
