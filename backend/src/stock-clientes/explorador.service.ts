@@ -244,14 +244,22 @@ export class ExploradorService {
     const porTienda = await Promise.all(
       tiendas.map((t) =>
         this.buscarEnTienda(t, q).catch((e) => {
-          this.logger.warn(`Explorador: ${t.id} falló para "${q}": ${String(e?.message || e).slice(0, 120)}`);
-          return { items: [] as Hallazgo[], error: true };
+          const motivo = String(e?.message || e).slice(0, 120);
+          this.logger.warn(`Explorador: ${t.id} falló para "${q}": ${motivo}`);
+          // (2026-10-16) El motivo llega a la pantalla: "HTTP 403" (nos
+          // bloquean), "timeout" (lenta) o el error que sea. Antes solo se veía
+          // el nombre de la tienda y había que ir a los logs del servidor.
+          return { items: [] as Hallazgo[], error: true, motivo };
         }),
       ),
     );
 
     const items = porTienda.flatMap((r) => r.items);
     const tiendasCaidas = tiendas.filter((_, i) => (porTienda[i] as any).error).map((t) => t.nombre);
+    const detalleCaidas = tiendas
+      .map((t, i) => ({ nombre: t.nombre, motivo: String((porTienda[i] as any).motivo || '') || null, error: !!(porTienda[i] as any).error }))
+      .filter((x) => x.error)
+      .map(({ nombre, motivo }) => ({ nombre, motivo }));
 
     await this.adjuntarHistoricoYGuardar(q, items);
     await this.adjuntarVariantesAmsodent(items, tiendas);
@@ -270,6 +278,8 @@ export class ExploradorService {
       total: items.length,
       tiendas_consultadas: tiendas.map((t) => t.nombre),
       tiendas_sin_respuesta: tiendasCaidas,
+      // (2026-10-16) Por qué no respondió cada una (mismo orden que arriba).
+      tiendas_sin_respuesta_detalle: detalleCaidas,
       items,
     };
     this.cache.set(key, { ts: Date.now(), data });

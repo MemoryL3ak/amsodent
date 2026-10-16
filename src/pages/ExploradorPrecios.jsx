@@ -59,9 +59,13 @@ export default function ExploradorPrecios() {
       const r = await api.get(`/stock-clientes/explorador/interno?q=${encodeURIComponent(termino)}${region ? `&region=${encodeURIComponent(region)}` : ""}`);
       setResultado(r);
       if (r?.tiendas_sin_respuesta?.length) {
+        // (2026-10-16) Con el motivo de cada una: "HTTP 403" es que nos bloquean, "timeout" que tardó más de 12 s.
+        const detalle = Array.isArray(r.tiendas_sin_respuesta_detalle) && r.tiendas_sin_respuesta_detalle.length
+          ? r.tiendas_sin_respuesta_detalle.map((t) => (t.motivo ? `${t.nombre} (${t.motivo})` : t.nombre)).join(", ")
+          : r.tiendas_sin_respuesta.join(", ");
         setToast({
           type: "info",
-          message: `No respondieron: ${r.tiendas_sin_respuesta.join(", ")}. El resto sí.`,
+          message: `No respondieron: ${detalle}. El resto sí.`,
         });
       }
     } catch (err) {
@@ -99,7 +103,9 @@ export default function ExploradorPrecios() {
       baratoAjeno,
       diferencia: nuestro != null && minAjeno != null ? nuestro - minAjeno : null,
       tiendas: resultado?.tiendas_consultadas?.length || 0,
-      sinRespuesta: resultado?.tiendas_sin_respuesta || [],
+      sinRespuesta: Array.isArray(resultado?.tiendas_sin_respuesta_detalle) && resultado.tiendas_sin_respuesta_detalle.length
+        ? resultado.tiendas_sin_respuesta_detalle.map((t) => (t.motivo ? `${t.nombre} (${t.motivo})` : t.nombre))
+        : resultado?.tiendas_sin_respuesta || [],
     };
   }, [resultado]);
 
