@@ -6,7 +6,10 @@ import { esRolAdmin, permisosEfectivos } from '../auth/permisos';
    permisos efectivos (perfil asignado o rol) o sea admin. Antes el módulo
    entero era solo admin; ahora ventas ve el stock (sin tarjetas KPI ni
    acciones) y mover stock sigue siendo solo admin (AdminGuard en esas rutas).
-   Mismo cálculo de permisos que auth.service y el Monitoreo de alertas. */
+   Mismo cálculo de permisos que auth.service y el Monitoreo de alertas.
+   (2026-10-16) "Todos pueden ver el inventario": permisosEfectivos ya incluye
+   `inventario` para cualquier rol o perfil (PARA_TODOS); las tarjetas KPI
+   siguen por `inventario_kpis`. */
 @Injectable()
 export class InventarioGuard implements CanActivate {
   constructor(private supabase: SupabaseService) {}

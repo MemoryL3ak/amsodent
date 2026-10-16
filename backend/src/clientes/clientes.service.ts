@@ -1,9 +1,23 @@
-import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
+import { Injectable, BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
+
+/* (2026-10-16) Pedido de Ariel: "la condición de pago 30 días solamente la
+   puede habilitar el rol admin" (antes solo valía para particulares y solo en
+   la pantalla). Las condiciones son selección múltiple ("30 días, Contado"). */
+const sinTilde = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').trim().toLowerCase();
+const partesCondicion = (v: any) => String(v ?? '').split(/[,;/]/).map((p) => p.trim()).filter(Boolean);
+const tiene30 = (v: any) => partesCondicion(v).some((p) => sinTilde(p) === '30 dias');
 
 @Injectable()
 export class ClientesService {
   constructor(private supabase: SupabaseService) {}
+
+  private async esAdmin(userId?: string | null): Promise<boolean> {
+    if (!userId) return false;
+    const { data } = await this.supabase.getClient().from('profiles').select('rol').eq('id', userId).maybeSingle();
+    const rol = String((data as any)?.rol || '').trim().toLowerCase();
+    return rol === 'admin' || rol === 'administrador';
+  }
 
   async findAll(rut?: string, nombre?: string) {
     // Con ?rut= (o ?nombre=) devuelve SOLO ese cliente (objeto o null), para
@@ -187,8 +201,15 @@ export class ClientesService {
       vendedor_asignado?: string | null;
     },
     creadorEmail?: string,
+    creadorId?: string | null,
   ) {
     const fila: Record<string, any> = { ...body };
+    // Quien no es admin no habilita "30 días": el cliente se crea con lo demás (o "Contado").
+    // Pasa también con el cliente que se crea solo al guardar una cotización.
+    if (tiene30(fila.condiciones_venta) && !(await this.esAdmin(creadorId))) {
+      const resto = partesCondicion(fila.condiciones_venta).filter((p) => sinTilde(p) !== '30 dias');
+      fila.condiciones_venta = resto.length ? resto.join(', ') : 'Contado';
+    }
     // El cliente particular queda anexado a un vendedor: por defecto, el que lo
     // crea (email de la sesión), si el formulario no envió uno. Se guarda el
     // email en minúscula para que "Mis clientes" (que filtra por email) lo reconozca.
@@ -273,8 +294,15 @@ export class ClientesService {
     return data;
   }
 
-  async update(id: string | number, body: Record<string, any>) {
+  async update(id: string | number, body: Record<string, any>, userId?: string | null) {
     const patch: Record<string, any> = { ...body };
+    // "30 días" solo lo habilita el admin; si el cliente ya lo tenía, se respeta.
+    if ('condiciones_venta' in patch && tiene30(patch.condiciones_venta) && !(await this.esAdmin(userId))) {
+      const { data: actual } = await this.supabase.getClient().from('clientes').select('condiciones_venta').eq('id', id).maybeSingle();
+      if (!tiene30((actual as any)?.condiciones_venta)) {
+        throw new ForbiddenException('Solo el administrador puede habilitar la condición de pago «30 días».');
+      }
+    }
     // Al completar el RUT, un cliente transitorio pasa a ser cliente normal.
     if (patch.transitorio === undefined && typeof patch.rut === 'string' && patch.rut.trim()) {
       patch.transitorio = false;

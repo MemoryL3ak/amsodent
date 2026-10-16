@@ -149,8 +149,9 @@ Cartera de clientes con RUT, tipo, región/comuna, vendedor asignado. El detalle
 del cliente tiene 6 pestañas: resumen (KPIs), cotizaciones, documentos,
 actividades, productos y sucursales. "Mis clientes" es la vista reducida con la
 cartera propia del ejecutivo. CONDICIONES DE VENTA del cliente (oct 2026):
-selección múltiple, «30 días» y/o «Contado» («30 días» en particular solo lo
-autoriza el admin). La cotización toma «30 días» si la tiene, si no «Contado».
+selección múltiple, «30 días» y/o «Contado» («30 días» solo lo habilita el
+rol admin, en cualquier tipo de cliente; un cliente creado por otro rol queda
+sin «30 días»). La cotización toma «30 días» si la tiene, si no «Contado».
 Venta directa: «Crédito» solo aparece si el cliente tiene «30 días».
 ASIGNACIÓN DE CARTERA (/asignacion-cartera, solo admin; también con el botón
 "Asignar cartera" de Clientes): para repartir clientes entre vendedores EN
@@ -199,7 +200,9 @@ asigna un admin); al EDITAR nada es obligatorio salvo la imagen. Ventas puede
 editar peso y dimensiones de los Transitorios y Pendientes de Aprobación. Al
 usar en una cotización un transitorio con MÁS DE 30 DÍAS de creado, el sistema
 pide validar que su costo siga vigente (muestra costo y antigüedad) antes de
-agregarlo al ítem. Carga masiva
+agregarlo al ítem; si se corrige en Productos → Editar (otra pestaña), al
+guardar los datos nuevos llegan solos al aviso y a las líneas de la cotización
+en curso (salvo costo/precio editados a mano en la línea). Carga masiva
 por planilla con historial y rollback (deshace esa carga y las posteriores).
 Filtros de completitud: SKU asignado, con/sin peso, con/sin medidas. Al crear
 un producto queda a la vista con botones "Abrir ficha técnica", "Descargar
@@ -217,8 +220,10 @@ Bsale» (admin, en Productos) envía los que quedaron sin enviar: Simular cuenta
 cuántos (por defecto solo los sin SKU) y «Enviar a Bsale» los procesa de a uno
 en segundo plano mostrando el avance.
 
-### Inventario (/inventario) — solo admin
-Stock por SKU + libro de movimientos auditable (entrada / salida / ajuste, con
+### Inventario (/inventario) — lo ven todos (oct 2026)
+Todos ven el stock; las tarjetas KPI solo los admin y quien tenga «Inventario:
+KPIs» en su perfil (hoy Francisco Núñez); mover stock, mínimos y cargas, solo
+admin. Stock por SKU + libro de movimientos auditable (entrada / salida / ajuste, con
 stock resultante estampado y usuario). KPIs: SKUs con stock, unidades,
 valorización (stock × costo), bajo mínimo, sin stock. El mínimo se edita en la
 tabla misma; el ajuste pide el conteo físico y el sistema calcula el delta.
@@ -329,7 +334,9 @@ se escribe el motivo y se elige qué pasa con el dinero (rebajar la deuda,
 devolver el dinero o sin movimiento); simular y después emitir. Bsale
 reingresa el stock. Si está en una cotización, la nota de crédito queda ahí
 colgada de la factura y Seguimiento de Pagos la descuenta. No se anula dos
-veces. ANULAR GUÍA (oct 2026; botón arriba, «Anular guía» en Emitidas o el
+veces. Anulada completa la de un cliente PARTICULAR con la cotización
+Adjudicada, pregunta «¿La cotización sigue aprobada?»: Sí = sigue Adjudicada;
+No = pasa a Cancelada. ANULAR GUÍA (oct 2026; botón arriba, «Anular guía» en Emitidas o el
 ícono junto a la guía en los documentos de la cotización): anula la guía en
 Bsale; simular y anular con confirmación, motivo opcional anotado en la guía.
 No se anula una ya anulada ni una facturada (primero NC a la factura); avisa

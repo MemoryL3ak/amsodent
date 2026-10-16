@@ -1195,9 +1195,8 @@ function ModalEditarCliente({ cliente, esAdmin, vendedores, onCerrar, onGuardado
   const [guardando, setGuardando] = useState(false);
 
   const condVentaOriginal = cliente.condiciones_venta || "";
-  const esParticular = tipoCliente === "Cliente Particular";
   // Crédito "30 días" en cliente particular: solo el administrador puede autorizarlo.
-  const bloquea30 = esParticular && !esAdmin;
+  const bloquea30 = !esAdmin; // (2026-10-16) "30 días" solo lo habilita el rol admin, en cualquier tipo de cliente
   const comunasDisponibles = REGIONES_CHILE?.[region] ?? [];
 
   const opcionesVendedores = useMemo(() => {
@@ -1223,7 +1222,7 @@ function ModalEditarCliente({ cliente, esAdmin, vendedores, onCerrar, onGuardado
       return;
     }
     if (bloquea30 && tieneCredito30(condVenta) && !tieneCredito30(condVentaOriginal)) {
-      onError?.("Solo el administrador puede autorizar el crédito de '30 días' a un cliente particular.");
+      onError?.("Solo el administrador puede habilitar el crédito de '30 días'.");
       return;
     }
     setGuardando(true);
@@ -1285,7 +1284,7 @@ function ModalEditarCliente({ cliente, esAdmin, vendedores, onCerrar, onGuardado
             <label className="field-label">Condiciones de Venta</label>
             <CondicionesVentaSelector value={condVenta} onChange={setCondVenta} bloqueadas={bloquea30 && !tieneCredito30(condVentaOriginal) ? ["30 días"] : []} />
             {bloquea30 && !tieneCredito30(condVentaOriginal) && (
-              <div className="field-hint">El crédito "30 días" para particulares solo lo autoriza el administrador.</div>
+              <div className="field-hint">El crédito "30 días" solo lo habilita el administrador.</div>
             )}
           </div>
           <div className="field" style={{ gridColumn: "1 / -1" }}>

@@ -48,7 +48,7 @@ export const MODULOS = [
   { key: "costeo_fletes", label: "Fletes", grupo: "Logística" },
   // (2026-10-14) Inventario (ver el stock; mover stock sigue siendo solo admin)
   // y sus tarjetas KPI (ocultas a los vendedores).
-  { key: "inventario", label: "Inventario (ver stock)", grupo: "Abastecimiento" },
+  { key: "inventario", label: "Inventario (ver stock) — ya lo ven todos", grupo: "Abastecimiento" },
   { key: "inventario_kpis", label: "Inventario: KPIs (valorización, unidades…)", grupo: "Abastecimiento" },
   { key: "monitoreo_stock", label: "Monitoreo Stock Clientes", grupo: "Portal del Cliente" },
   { key: "portal_accesos", label: "Acceso Portal Clientes", grupo: "Portal del Cliente" },
@@ -84,5 +84,6 @@ export function esAdminRol(rol) {
 export function permisosFallback(rol) {
   if (esAdminRol(rol)) return [...MODULO_KEYS];
   const r = String(rol || "").trim().toLowerCase();
-  return ROLE_DEFAULTS[r] || [...BASE];
+  // (2026-10-16) El inventario lo ven todos (igual que permisosEfectivos en el backend).
+  return [...new Set([...(ROLE_DEFAULTS[r] || BASE), "inventario"])];
 }

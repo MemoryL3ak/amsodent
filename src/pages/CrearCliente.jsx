@@ -29,9 +29,11 @@ export default function CrearCliente() {
   const [toast, setToast] = useState(null);
 
   const esParticular = tipoCliente === "Cliente Particular";
-  // Crédito "30 días" en cliente particular: solo el administrador puede autorizarlo.
+  // (2026-10-16) Crédito "30 días": solo el rol admin lo habilita, en cualquier tipo de cliente
+  // (antes solo en particulares). Se aplica cuando ya se sabe el rol, para no quitárselo al admin.
+  const [perfilListo, setPerfilListo] = useState(false);
   const puede30dias = esAdmin;
-  const bloquea30 = esParticular && !puede30dias;
+  const bloquea30 = perfilListo && !puede30dias;
 
   // Perfil del creador (para asignarlo por defecto) + lista de vendedores.
   useEffect(() => {
@@ -44,6 +46,7 @@ export default function CrearCliente() {
         setEsAdmin(r === "admin" || r === "administrador");
         setEsJefeVentasEspecial(r === "jefe_ventas_especial");
         setVendedorAsignado(e.toLowerCase());
+        setPerfilListo(true);
       } catch { /* */ }
       try {
         const perfiles = await api.get("/usuarios/profiles");
@@ -52,7 +55,7 @@ export default function CrearCliente() {
     })();
   }, []);
 
-  // Si el usuario no puede asignar "30 días" a un particular, se la quita (queda "Contado").
+  // Si el usuario no puede habilitar "30 días", se la quita (queda "Contado").
   useEffect(() => {
     if (bloquea30 && tieneCredito30(condVenta)) {
       setCondVenta(unirCondiciones([...leerCondiciones(condVenta).filter((o) => o !== "30 días"), "Contado"]));
@@ -94,7 +97,7 @@ export default function CrearCliente() {
     }
 
     if (bloquea30 && tieneCredito30(condVenta)) {
-      setToast({ type: "error", message: "Solo el administrador puede autorizar el crédito de '30 días' a un cliente particular." });
+      setToast({ type: "error", message: "Solo el administrador puede habilitar el crédito de '30 días'." });
       return;
     }
 
@@ -255,7 +258,7 @@ export default function CrearCliente() {
               <CondicionesVentaSelector value={condVenta} onChange={setCondVenta} bloqueadas={bloquea30 ? ["30 días"] : []} />
               {bloquea30 && (
                 <p style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>
-                  El crédito "30 días" para clientes particulares solo puede autorizarlo el administrador.
+                  El crédito "30 días" solo puede habilitarlo el administrador.
                 </p>
               )}
             </div>

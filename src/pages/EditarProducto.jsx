@@ -10,6 +10,7 @@ import { FichaTecnicaDocument } from "../components/FichaTecnica";
 import { FACTOR_LISTA_3, calcularLista3 } from "../lib/listas";
 import EquivalentesProducto from "../components/EquivalentesProducto";
 import { mensajeBsale, tipoAvisoBsale } from "../lib/bsaleProducto";
+import { avisarProductoActualizado } from "../lib/productosCanal";
 
 /* ============================================================
    BUSCADOR MEJORADO (igual que licitaciones)
@@ -707,6 +708,9 @@ export default function EditarProducto() {
       return;
     }
 
+    // (2026-10-16) La cotización abierta en otra pestaña recibe el producto actualizado.
+    avisarProductoActualizado(id);
+
     setSkuOriginal(skuFinal ?? "");
     setProducto((prev) => ({
       ...prev,
@@ -725,7 +729,7 @@ export default function EditarProducto() {
     const base = partes.length
       ? `Producto actualizado · En cotizaciones ya creadas: ${partes.join(" y ")}.`
       : desdeValidacion
-      ? "Producto actualizado. Vuelve a la pestaña de la cotización: se aplicará ahí."
+      ? "Producto actualizado: la cotización abierta en la otra pestaña ya tiene los datos nuevos."
       : "Producto actualizado.";
     setToast({
       type: bsale ? tipoAvisoBsale(bsale) : "success",

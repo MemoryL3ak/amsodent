@@ -355,6 +355,11 @@ export const REGIONES_CHILE = {
     "Río Negro",
     "San Juan de la Costa",
     "San Pablo",
+    // (2026-10-16) Provincia de Palena: faltaba (Los Lagos tiene 30 comunas).
+    "Chaitén",
+    "Futaleufú",
+    "Hualaihué",
+    "Palena",
   ],
 
   "Aysén": [

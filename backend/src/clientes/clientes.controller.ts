@@ -92,7 +92,7 @@ export class ClientesController {
   @Post()
   create(@Body() body: any, @Req() req: any) {
     const creadorEmail = (req?.user?.email || '').toString().trim().toLowerCase();
-    return this.clientesService.create(body, creadorEmail);
+    return this.clientesService.create(body, creadorEmail, req?.user?.id || null);
   }
 
   // Creación rápida (bitácora): datos mínimos → cliente transitorio.
@@ -118,8 +118,8 @@ export class ClientesController {
   }
 
   @Put(':id')
-  update(@Param('id') id: string, @Body() body: any) {
-    return this.clientesService.update(id, body);
+  update(@Param('id') id: string, @Body() body: any, @Req() req: any) {
+    return this.clientesService.update(id, body, req?.user?.id || null);
   }
 
   // Eliminar un cliente completo es destructivo: solo admin (auditoría 2026-09-04).

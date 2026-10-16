@@ -3,6 +3,9 @@
 // (pedido 2026-09-04): paso 1 avisa; "Validar info producto" despliega la
 // ficha (costo, estado, fechas) con el link a Productos → Editar, y recién
 // ahí se puede confirmar "El costo sigue vigente" para usarlo en la cotización.
+// (2026-10-16) Si se guarda el producto en la otra pestaña, la cotización
+// recibe los datos nuevos (src/lib/productosCanal.js) y este aviso los muestra
+// (`actualizado`): al confirmar se usa la información actualizada.
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { AlertTriangle, ExternalLink, CheckCircle2, X } from "lucide-react";
@@ -15,9 +18,11 @@ const fmtCLP = (v) => `$${Number(v || 0).toLocaleString("es-CL")}`;
       la ficha con ?validacion=1 y el guardado va sin propagación).
     · false → desde el Detalle de una cotización YA creada: ahí sí conviene
       que el SKU/costo se completen también en las cotizaciones guardadas. */
-export default function ModalValidarTransitorio({ open, prod, onValidado, onCancelar, enBorrador = false }) {
+export default function ModalValidarTransitorio({ open, prod, onValidado, onCancelar, enBorrador = false, actualizado = false }) {
   const [paso, setPaso] = useState("aviso"); // aviso | info
   useEffect(() => { if (open) setPaso("aviso"); }, [open]);
+  // Con los datos ya actualizados desde Productos, se muestra la ficha nueva directamente.
+  useEffect(() => { if (open && actualizado) setPaso("info"); }, [open, actualizado]);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -80,6 +85,11 @@ export default function ModalValidarTransitorio({ open, prod, onValidado, onCanc
               </p>
             ) : (
               <div style={{ margin: "10px 0 0" }}>
+                {actualizado && (
+                  <div className="aviso-transitorio-actualizado" style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 10px", borderRadius: 8, background: "#f0fdf4", border: "1px solid #bbf7d0", color: "#15803d", fontSize: 12.5, fontWeight: 600, marginBottom: 6 }}>
+                    <CheckCircle2 size={14} /> Datos actualizados desde Productos: la cotización usará esta información.
+                  </div>
+                )}
                 <Fila label="Producto">{prod.nombre || "—"}</Fila>
                 {prod.sku ? <Fila label="SKU">{prod.sku}</Fila> : null}
                 <Fila label="Estado">{prod.estado || "Transitorio"}</Fila>
@@ -118,7 +128,7 @@ export default function ModalValidarTransitorio({ open, prod, onValidado, onCanc
                   </a>
                 )}
                 <p style={{ margin: "10px 0 0", fontSize: 12, color: "#94a3b8", lineHeight: 1.5 }}>
-                  Si corriges el costo en la otra pestaña, cancela aquí y vuelve a seleccionar el producto para que la cotización tome el valor nuevo.
+                  Si corriges el producto en la otra pestaña, al guardar los datos nuevos llegan solos a este aviso y a la cotización.
                 </p>
               </div>
             )}
@@ -146,7 +156,7 @@ export default function ModalValidarTransitorio({ open, prod, onValidado, onCanc
               fontWeight: 700, fontSize: 13.5, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 7,
               background: "linear-gradient(135deg, #15803d, #22c55e)", boxShadow: "0 6px 14px -4px rgba(21,128,61,.30)",
             }}>
-              <CheckCircle2 size={14} strokeWidth={2.4} /> El costo sigue vigente
+              <CheckCircle2 size={14} strokeWidth={2.4} /> {actualizado ? "Usar la información actualizada" : "El costo sigue vigente"}
             </button>
           )}
         </div>

@@ -43,6 +43,28 @@ export default function AnularDocumentoBsale({ bsaleId = null, documentoId = nul
   const [simuladoCon, setSimuladoCon] = useState(null);
   const [huella, setHuella] = useState(null);
   const [confirmadoCon, setConfirmadoCon] = useState(null);
+  /* (2026-10-16) Pedido de Ariel: al anular la factura/boleta de un cliente
+     particular, preguntar "¿La cotización sigue aprobada?". Sí: queda
+     Adjudicada. No: pasa a Cancelada. pregunta: null | "pendiente" | "si" | "no". */
+  const [pregunta, setPregunta] = useState(null);
+  const [cambiandoEstado, setCambiandoEstado] = useState(false);
+  const [errorEstado, setErrorEstado] = useState("");
+
+  async function responderPregunta(sigue) {
+    const cot = borrador?.cotizacion;
+    if (!cot || cambiandoEstado) return;
+    if (sigue) { setPregunta("si"); return; }
+    setCambiandoEstado(true);
+    setErrorEstado("");
+    try {
+      await api.put(`/licitaciones/${cot.id}`, { estado: "Cancelada" });
+      setPregunta("no");
+    } catch (e) {
+      setErrorEstado(e?.message || "No se pudo cambiar el estado de la cotización.");
+    } finally {
+      setCambiandoEstado(false);
+    }
+  }
 
   async function preparar(params) {
     setBuscando(true);
@@ -139,6 +161,7 @@ export default function AnularDocumentoBsale({ bsaleId = null, documentoId = nul
       if (r?.emitida) {
         refrescarEstadosBsale(); // la factura se ve anulada / con NC en todas las pantallas
         onEmitida?.({ ...r, original: o });
+        if (modo === "total" && borrador?.cotizacion?.particular && borrador.cotizacion.estado === "Adjudicada") setPregunta("pendiente");
       }
     } catch (e) {
       setError(e?.message || (accion === "simular" ? "No se pudo simular." : "No se pudo emitir la nota de crédito."));
@@ -147,7 +170,7 @@ export default function AnularDocumentoBsale({ bsaleId = null, documentoId = nul
     }
   }
 
-  const cerrar = () => { if (!enviando) onCerrar?.(); };
+  const cerrar = () => { if (!enviando && pregunta !== "pendiente") onCerrar?.(); };
   const celda = { padding: "6px 8px", borderBottom: "1px solid #f0f2f5", fontSize: 12.5, verticalAlign: "middle" };
 
   return createPortal(
@@ -186,6 +209,8 @@ export default function AnularDocumentoBsale({ bsaleId = null, documentoId = nul
                 </div>
               )}
               {(resultado.avisos || []).map((a, i) => <div key={i} style={{ fontSize: 12.5, color: "#92400e" }}>{a}</div>)}
+              {pregunta === "si" && <div className="estado-cotizacion-tras-nc" style={{ fontSize: 13, fontWeight: 600 }}>La cotización #{borrador.cotizacion.id} sigue Adjudicada.</div>}
+              {pregunta === "no" && <div className="estado-cotizacion-tras-nc" style={{ fontSize: 13, fontWeight: 600, color: "#b91c1c" }}>La cotización #{borrador.cotizacion.id} quedó Cancelada.</div>}
               {resultado.url_pdf && <a href={resultado.url_pdf} target="_blank" rel="noopener noreferrer" className="btn btn-secondary btn-sm" style={{ alignSelf: "flex-start", textDecoration: "none" }}><ExternalLink size={13} /> Ver en Bsale</a>}
             </div>
           ) : (
@@ -382,8 +407,27 @@ export default function AnularDocumentoBsale({ bsaleId = null, documentoId = nul
           )}
         </div>
 
+        {pregunta === "pendiente" && (
+          <div onClick={(e) => e.stopPropagation()} style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,.45)", zIndex: 11500, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+            <div className="pregunta-cotizacion-aprobada" role="dialog" aria-modal="true" aria-labelledby="pregunta-cot-titulo" style={{ width: 420, maxWidth: "100%", background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", boxShadow: "var(--shadow-lg)", padding: 20, display: "flex", flexDirection: "column", gap: 12 }}>
+              <strong id="pregunta-cot-titulo" style={{ fontSize: 16 }}>¿La cotización sigue aprobada?</strong>
+              <div style={{ fontSize: 13, color: "var(--text-muted)" }}>
+                Se anuló la {o?.tipo?.toLowerCase()} N° {o?.numero} de la cotización #{borrador?.cotizacion?.id}{borrador?.cotizacion?.cliente ? ` (${borrador.cotizacion.cliente})` : ""}, de cliente particular.
+                {" "}<b>Sí</b>: queda Adjudicada. <b>No</b>: pasa a Cancelada.
+              </div>
+              {errorEstado && <div style={{ fontSize: 12.5, color: "#b91c1c" }}>{errorEstado}</div>}
+              <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
+                <button type="button" className="btn btn-secondary" onClick={() => responderPregunta(false)} disabled={cambiandoEstado}>
+                  {cambiandoEstado ? "Cancelando…" : "No, cancelar la cotización"}
+                </button>
+                <button type="button" className="btn btn-primary" onClick={() => responderPregunta(true)} disabled={cambiandoEstado}>Sí, sigue aprobada</button>
+              </div>
+            </div>
+          </div>
+        )}
+
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, flexWrap: "wrap", padding: "14px 20px", borderTop: "1px solid var(--border)", background: "var(--bg)", borderRadius: "0 0 var(--radius-lg) var(--radius-lg)" }}>
-          <button type="button" onClick={cerrar} disabled={!!enviando} className="btn btn-secondary">{resultado?.emitida ? "Cerrar" : "Cancelar"}</button>
+          <button type="button" onClick={cerrar} disabled={!!enviando || pregunta === "pendiente"} className="btn btn-secondary">{resultado?.emitida ? "Cerrar" : "Cancelar"}</button>
           {!resultado?.emitida && o && !bloqueado && (
             <button type="button" onClick={() => enviar("simular")} disabled={!listoParaSimular} className="btn btn-secondary" style={{ opacity: listoParaSimular ? 1 : 0.5, cursor: listoParaSimular ? "pointer" : "not-allowed" }} title="Muestra la nota de crédito como quedaría. No emite ni guarda nada.">
               {enviando === "simular" ? "Simulando…" : simulacionVigente ? "Simular de nuevo" : "1. Simular"}
