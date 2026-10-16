@@ -328,6 +328,75 @@ export class BsaleFacturacionService {
     return out;
   }
 
+  /* ── Vendedor del documento en Bsale (2026-10-16) ─────────────────────────
+     Sin `sellerId`, Bsale pone como vendedor al dueño del token (BENJAMIN
+     ALARCON) en todo lo que emite el sistema, aunque la cotización sea de
+     Eva o la emita Ruth. El vendedor es el de la cotización y, sin cotización,
+     quien emite; su usuario de Bsale se busca por correo (también el alterno)
+     y, si no calza, por nombre (Camila y Jonathan tienen otro correo en
+     Bsale). Solo POST /documents.json acepta sellerId: la API no lo trae para
+     guías (/shippings.json) ni notas de crédito (/returns.json). Nunca lanza:
+     sin vendedor, el documento sale igual con el de siempre y se avisa. */
+  private cacheUsuariosBsale: { ts: number; items: any[] } | null = null;
+
+  private async usuariosBsale(): Promise<any[]> {
+    if (this.cacheUsuariosBsale && Date.now() - this.cacheUsuariosBsale.ts < 30 * 60 * 1000) return this.cacheUsuariosBsale.items;
+    const items = await this.todos('/users.json');
+    this.cacheUsuariosBsale = { ts: Date.now(), items };
+    return items;
+  }
+
+  async vendedorBsale(licitacionId: number | null, emailEmisor: string): Promise<{ id: number | null; nombre: string | null; aviso: string | null }> {
+    const db = this.supabase.getClient();
+    let email = String(emailEmisor || '').trim().toLowerCase();
+    let nombre = '';
+    try {
+      if (licitacionId) {
+        const { data: lic } = await db.from('licitaciones').select('vendedor_correo, vendedor_nombre, creado_por').eq('id', licitacionId).maybeSingle();
+        const correo = String((lic as any)?.vendedor_correo || (lic as any)?.creado_por || '').trim().toLowerCase();
+        if (correo) {
+          email = correo;
+          nombre = String((lic as any)?.vendedor_nombre || '').trim();
+        }
+      }
+      const correos = new Set([email].filter(Boolean));
+      if (email) {
+        let r: any = await db.from('profiles').select('email, nombre, email_alterno').ilike('email', email).limit(1);
+        if (r.error) r = await db.from('profiles').select('email, nombre').ilike('email', email).limit(1); // email_alterno sin migrar
+        else if (!(r.data || []).length) r = await db.from('profiles').select('email, nombre, email_alterno').ilike('email_alterno', email).limit(1);
+        const p = (r.data || [])[0];
+        if (p) {
+          if (p.nombre) nombre = String(p.nombre).trim();
+          for (const e of [p.email, p.email_alterno]) if (e) correos.add(String(e).trim().toLowerCase());
+        }
+      }
+      const nombreDe = (u: any) => `${u?.firstName || ''} ${u?.lastName || ''}`.replace(/\s+/g, ' ').trim();
+      const norm = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
+      const activos = (await this.usuariosBsale()).filter((u) => Number(u?.state) === 0);
+      let u = activos.find((x) => correos.has(String(x?.email || '').trim().toLowerCase()));
+      if (!u && nombre) {
+        const mismos = activos.filter((x) => norm(nombreDe(x)) === norm(nombre));
+        if (mismos.length === 1) u = mismos[0];
+      }
+      if (u) return { id: Number(u.id), nombre: nombreDe(u), aviso: null };
+      return { id: null, nombre: null, aviso: `${nombre || email || 'El vendedor'} no tiene usuario activo en Bsale: el documento queda con el vendedor por defecto de Bsale (el dueño del token).` };
+    } catch (e: any) {
+      this.logger.warn(`Vendedor en Bsale para ${email || 'sin correo'}: ${e?.message || e}`);
+      return { id: null, nombre: null, aviso: 'No se pudo consultar el vendedor en Bsale: el documento queda con el vendedor por defecto de Bsale.' };
+    }
+  }
+
+  // Deja el vendedor en la solicitud (sellerId) y en la vista previa. Solo para POST /documents.json.
+  async ponerVendedor(solicitud: Record<string, any>, vista: any, licitacionId: number | null, emailEmisor: string) {
+    const v = await this.vendedorBsale(licitacionId, emailEmisor);
+    if (v.id) solicitud.sellerId = v.id;
+    if (vista) {
+      if (v.nombre) vista.vendedor = v.nombre;
+      if (v.aviso) vista.notas = [...(vista.notas || []), v.aviso];
+    }
+    return v;
+  }
+
   private cacheListas: { ts: number; tipoFactura: any; formas: any[]; dte: Map<number, number> } | null = null;
 
   /* Tipo de documento "factura electrónica", formas de pago activas y la tabla
@@ -1130,6 +1199,7 @@ export class BsaleFacturacionService {
 
     if (!real) {
       const solicitud = armarSolicitud(b as any, { ...opciones, sales_id: `${clave}-0` });
+      const vendedor = await this.ponerVendedor(solicitud, null, licId, usuario.email);
       const formaPago = b.formas_pago.find((f) => f.id === forma);
       return {
         simulacion: true,
@@ -1152,7 +1222,8 @@ export class BsaleFacturacionService {
           forma_pago: formaPago?.nombre || null,
           fecha_emision: fecha,
           vencimiento: sumarDias(fecha, dias),
-          notas: ['Las líneas quedan enlazadas a la guía: el stock no se descuenta otra vez.'],
+          vendedor: vendedor.nombre,
+          notas: ['Las líneas quedan enlazadas a la guía: el stock no se descuenta otra vez.', ...(vendedor.aviso ? [vendedor.aviso] : [])],
         },
       };
     }
@@ -1170,6 +1241,7 @@ export class BsaleFacturacionService {
     // pierde, Bsale devuelve la factura ya creada en vez de hacer otra.
     const salesId = `${clave}-${previas || 0}`;
     const solicitud = armarSolicitud(b as any, { ...opciones, sales_id: salesId });
+    await this.ponerVendedor(solicitud, null, licId, usuario.email);
 
     const fila = {
       sales_id: salesId,

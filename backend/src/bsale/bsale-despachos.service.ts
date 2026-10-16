@@ -829,6 +829,7 @@ export class BsaleDespachosService {
       vencimiento: sumarDias(fecha, b.dias_vencimiento),
       notas: ['No va al SII ni mueve stock: deja la orden del cliente registrada en Bsale para despacharla y facturarla desde ahí.'],
     });
+    await this.facturacion.ponerVendedor(solicitud, vista, b.cotizacion.id, usuario.email);
     if (!real) return { simulacion: true, emision_apagada: body?.simular !== true, solicitud, totales, vista };
 
     return this.emitirReal({

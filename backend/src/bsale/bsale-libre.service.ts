@@ -588,6 +588,8 @@ export class BsaleLibreService {
     const vista: any = this.vista(b);
     if (obs.texto) vista.observacion = obs.texto;
     if (obs.aviso) vista.notas = [...vista.notas, obs.aviso];
+    // Factura/boleta con su vendedor (la guía no lo admite en la API de Bsale).
+    if (b.tipo !== 'guia') await this.facturacion.ponerVendedor(solicitud, vista, b.cotizacion?.id || null, usuario.email);
     // (2026-10-07) Guía, factura o boleta se envían solas al cliente (si queda en
     // una cotización: la venta directa crea la suya). Sin cotización no se envía.
     vista.correo = b.cotizacion || b.venta_directa
