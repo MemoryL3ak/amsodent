@@ -16,6 +16,7 @@ import {
   folioCotizacion,
   referenciaOcGuia,
   referenciaOcOrden,
+  esCotizacionPublica,
   referenciaParaBsale,
   referenciaVista,
   EMISOR,
@@ -405,7 +406,7 @@ export class BsaleDespachosService {
         tipo_traslado_id: traslados.find((t) => t.id === TIPO_TRASLADO_POR_DEFECTO)?.id || traslados[0]?.id || null,
       },
       tipos_traslado: traslados,
-      referencias: ocNumero ? [referenciaOcGuia(folioCotizacion(lic), ocNumero, String(oc.fecha_oc || '').slice(0, 10) || null)] : [],
+      referencias: ocNumero ? [referenciaOcGuia(folioCotizacion(lic), ocNumero, String(oc.fecha_oc || '').slice(0, 10) || null, esCotizacionPublica(lic))] : [],
       // Texto propuesto para el atributo «Observación» de la guía en Bsale.
       observacion_sugerida: observacionSugerida(lineasEmitibles),
       observacion_max: OBSERVACION_MAX,

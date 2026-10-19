@@ -2,7 +2,7 @@ import { BadRequestException, ConflictException, Injectable, Logger } from '@nes
 import { SupabaseService } from '../supabase/supabase.service';
 import { LicitacionesService } from '../licitaciones/licitaciones.service';
 import {
-  BsaleFacturacionService, EMISOR, fechaAEpoch, folioCotizacion, normOc, normRut, referenciaGuia, referenciaOcFactura, referenciaOcGuia, referenciaParaBsale, referenciaVista, sumarDias, totalesDe,
+  BsaleFacturacionService, EMISOR, fechaAEpoch, folioCotizacion, esCotizacionPublica, normOc, normRut, referenciaGuia, referenciaOcFactura, referenciaOcGuia, referenciaParaBsale, referenciaVista, sumarDias, totalesDe,
 } from './bsale-facturacion.service';
 import { BsaleDespachosService, OBSERVACION_MAX, limpiarObservacion, observacionSugerida } from './bsale-despachos.service';
 
@@ -398,7 +398,8 @@ export class BsaleLibreService {
     }
 
     // Referencias (opcionales; la venta directa no lleva).
-    //   OC en guía: folio = N° de OC, razón = ID de la licitación (2026-10-16). OC en factura: N° de OC en ambos.
+    //   OC en guía: folio = N° de OC; razón = N° de OC en entidad pública (2026-10-19) o el ID de la
+    //   cotización en particular (2026-10-16). OC en factura: N° de OC en ambos.
     //   Guía (en una factura): folio = N° de guía, razón = N° de OC si se conoce.
     const referencias: any[] = [];
     for (const r of ventaDirecta ? [] : Array.isArray(body?.referencias) ? body.referencias : []) {
@@ -407,7 +408,7 @@ export class BsaleLibreService {
       const esGuia = r?.tipo === 'guia';
       const f = String(r?.fecha || '').slice(0, 10);
       const fechaRef = /^\d{4}-\d{2}-\d{2}$/.test(f) ? f : null;
-      const ref = esGuia ? referenciaGuia(numero, fechaRef) : tipo === 'guia' ? referenciaOcGuia(licCot ? folioCotizacion(licCot) : numero, numero, fechaRef) : referenciaOcFactura(numero, fechaRef);
+      const ref = esGuia ? referenciaGuia(numero, fechaRef) : tipo === 'guia' ? referenciaOcGuia(licCot ? folioCotizacion(licCot) : numero, numero, fechaRef, esCotizacionPublica(licCot)) : referenciaOcFactura(numero, fechaRef);
       if (ref.folio.length > MAX_FOLIO_REF) problemas.push({ codigo: 'folio_largo', mensaje: `El folio de referencia ${ref.folio} supera los ${MAX_FOLIO_REF} caracteres que acepta el SII.` });
       referencias.push(ref);
     }

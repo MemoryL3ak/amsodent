@@ -322,8 +322,8 @@ crea; giro obligatorio), productos del catálogo con cantidad y precio neto,
 despacho (guía) o forma de pago (factura), referencia opcional a OC o guía, y
 la cotización donde debe quedar registrado (si no se indica, queda solo en
 Bsale y en Emitidas). Referencias a la orden de compra: en GUÍAS el N° de OC
-va como FOLIO y el ID de la licitación como RAZÓN (desde oct 2026; antes al
-revés); en notas de venta la cotización va como FOLIO y el N° de OC como
+va como FOLIO y, en ENTIDAD PÚBLICA, también como RAZÓN (desde 19-10-2026; en
+cliente particular la RAZÓN es el ID de la cotización; antes iba al revés); en notas de venta la cotización va como FOLIO y el N° de OC como
 RAZÓN; en facturas el N°
 de OC va en el folio (Mercado Público cruza la factura con la OC por ese campo)
 y también en la razón; la fila de la GUÍA en una factura lleva el N° de la
