@@ -1542,6 +1542,14 @@ function ModalActividad({ inicial, clienteOptions, cotizacionOptions, perfiles, 
   const [todoDia, setTodoDia] = useState(Boolean(inicial.todo_el_dia));
   const [horaIni, setHoraIni] = useState(inicial.hora_inicio ? String(inicial.hora_inicio).slice(0, 5) : "");
   const [horaFin, setHoraFin] = useState(inicial.hora_fin ? String(inicial.hora_fin).slice(0, 5) : "");
+  // (2026-10-19) Al cambiar «Desde», «Hasta» se corre lo mismo (mantiene la duración), como en Google Calendar.
+  const aMin = (h) => { const m = String(h || "").match(/^(\d{1,2}):(\d{2})/); return m ? Number(m[1]) * 60 + Number(m[2]) : null; };
+  const deMin = (n) => `${String(Math.floor(n / 60)).padStart(2, "0")}:${String(n % 60).padStart(2, "0")}`;
+  function cambiarHoraIni(nueva) {
+    const ini = aMin(horaIni), fin = aMin(horaFin), nuevaMin = aMin(nueva);
+    setHoraIni(nueva);
+    if (ini != null && fin != null && nuevaMin != null && fin > ini) setHoraFin(deMin(Math.min(23 * 60 + 59, nuevaMin + (fin - ini))));
+  }
   const [comentario, setComentario] = useState(inicial.comentario || "");
   const [estado, setEstado] = useState(inicial.estado || "pendiente");
   const [adjuntos, setAdjuntos] = useState(Array.isArray(inicial.adjuntos) ? inicial.adjuntos : []);
@@ -1584,6 +1592,13 @@ function ModalActividad({ inicial, clienteOptions, cotizacionOptions, perfiles, 
   // Para el resto el cliente sigue siendo obligatorio, porque sus actividades
   // alimentan la productividad comercial por cliente.
   const clienteOpcional = String(miEmail || "").toLowerCase() === "jer.consorcio@gmail.com";
+  /* (2026-10-19) Lisbeth editaba una reunión que llegó de Google Calendar SIN
+     cliente (la sincronización no lo sabe) y «Guardar» no hacía nada: el botón
+     quedaba desactivado por falta de cliente y el aviso nunca aparecía. Una
+     actividad que YA existe sin cliente se puede guardar así (cambiar fecha u
+     hora no debe exigir clasificarla); se puede asignar uno si se quiere. */
+  const sinClienteHeredado = !!inicial.id && !inicial.cliente_id;
+  const clienteNoExigido = clienteOpcional || sinClienteHeredado;
 
   // Filtro de tipo de cliente para acotar el selector de cliente del modal.
   const tiposClienteModal = useMemo(() => {
@@ -1633,7 +1648,8 @@ function ModalActividad({ inicial, clienteOptions, cotizacionOptions, perfiles, 
     // Avisos explícitos: antes el submit retornaba en silencio y el usuario
     // creía haber guardado (típico en actividades automáticas sin cliente).
     if (!titulo.trim()) { setErrorForm("Falta el título de la actividad."); return; }
-    if (!clienteSel && !clienteOpcional) { setErrorForm("Selecciona el cliente para poder guardar."); return; }
+    if (!clienteSel && !clienteNoExigido) { setErrorForm("Selecciona el cliente para poder guardar."); return; }
+    if (!todoDia && horaIni && horaFin && aMin(horaFin) <= aMin(horaIni)) { setErrorForm("La hora «Hasta» debe ser posterior a «Desde»."); return; }
     const falta = campos.find((c) => c.obligatorio && campoVacio(extra[c.clave]));
     if (falta) { setErrorForm(`Falta completar «${falta.etiqueta}».`); return; }
     setErrorForm("");
@@ -1698,7 +1714,7 @@ function ModalActividad({ inicial, clienteOptions, cotizacionOptions, perfiles, 
           <div className="field">
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <label className="field-label">
-                Cliente {clienteOpcional
+                Cliente {clienteNoExigido
                   ? <span style={{ color: "var(--text-muted)", fontWeight: 400 }}>(opcional)</span>
                   : <span style={{ color: "var(--danger)" }}>*</span>}
               </label>
@@ -1876,7 +1892,7 @@ function ModalActividad({ inicial, clienteOptions, cotizacionOptions, perfiles, 
               <>
                 <div className="field">
                   <label className="field-label">Desde</label>
-                  <input type="time" className="input" value={horaIni} onChange={(e) => setHoraIni(e.target.value)} />
+                  <input type="time" className="input" value={horaIni} onChange={(e) => cambiarHoraIni(e.target.value)} />
                 </div>
                 <div className="field">
                   <label className="field-label">Hasta</label>
@@ -1957,7 +1973,8 @@ function ModalActividad({ inicial, clienteOptions, cotizacionOptions, perfiles, 
             ) : (
               <>
                 <button type="button" onClick={onCancel} className="btn btn-secondary">Cancelar</button>
-                <button type="submit" disabled={guardando || !titulo.trim() || (!clienteSel && !clienteOpcional)} className="btn btn-primary">
+                {/* Solo se desactiva mientras guarda: si falta algo, el clic muestra qué (antes quedaba muerto). */}
+                <button type="submit" disabled={guardando} className="btn btn-primary">
                   {guardando ? "Guardando…" : "Guardar"}
                 </button>
               </>
