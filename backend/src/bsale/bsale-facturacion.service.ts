@@ -110,6 +110,9 @@ export const EMISOR = {
      COMPRA el FOLIO es el número de la orden de compra y la RAZÓN el ID de la
      licitación (su código de Mercado Público o, si no tiene, el número interno
      de la cotización). Hasta esa fecha iba al revés: `ocDeReferencia` lee las dos.
+     (2026-10-19) ENTIDAD PÚBLICA: FOLIO y RAZÓN llevan los dos el N° de la OC
+     (pedido de Ariel con la foto de una guía con el COT en el folio); la regla
+     de arriba queda para el cliente particular.
    - NOTA DE VENTA (orden en Bsale): sigue con la regla anterior — FOLIO la
      cotización y RAZÓN el número de la orden de compra.
    - FACTURA: el número de la orden de compra va en el FOLIO (Mercado Público
@@ -120,9 +123,13 @@ export const EMISOR = {
    `numero` es siempre el N° de la OC (o de la guía), para comparar y avisar. */
 export type Referencia = { codigo_sii: number; folio: string; numero: string; razon: string; fecha: string | null };
 
-export function referenciaOcGuia(folioCotizacion: string, numeroOc: string, fecha: string | null): Referencia {
-  return { codigo_sii: 801, folio: normOc(numeroOc), numero: normOc(numeroOc), razon: normOc(folioCotizacion) || normOc(numeroOc), fecha };
+export function referenciaOcGuia(folioCotizacion: string, numeroOc: string, fecha: string | null, publica = false): Referencia {
+  const oc = normOc(numeroOc);
+  return { codigo_sii: 801, folio: oc, numero: oc, razon: publica ? oc : normOc(folioCotizacion) || oc, fecha };
 }
+
+// ¿La cotización es de una entidad pública? (todo lo que no es cliente particular)
+export const esCotizacionPublica = (lic: any) => !!lic && !/particular/i.test(String(lic?.tipo_cliente || ''));
 
 export function referenciaOcOrden(folioCotizacion: string, numeroOc: string, fecha: string | null): Referencia {
   return { codigo_sii: 801, folio: normOc(folioCotizacion) || normOc(numeroOc), numero: normOc(numeroOc), razon: normOc(numeroOc), fecha };
