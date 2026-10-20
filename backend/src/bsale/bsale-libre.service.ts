@@ -649,7 +649,8 @@ export class BsaleLibreService {
           // Si la cotización tiene una sola orden de compra, la guía cuelga de ella.
           const { data: ocs } = await this.supabase.getClient().from('licitacion_documentos').select('id').eq('licitacion_id', b.cotizacion.id).eq('tipo', 'orden_compra');
           const creado = await this.licitaciones.createDocumento({
-            licitacion_id: b.cotizacion.id, tipo: 'guia_despacho', numero: String(doc.number), monto: null, fecha_oc: b.fecha_emision,
+            // (2026-10-20) Con su neto, igual que la guía subida a mano (antes quedaba en null).
+            licitacion_id: b.cotizacion.id, tipo: 'guia_despacho', numero: String(doc.number), monto: Number(doc?.netAmount) || b.totales.neto || null, fecha_oc: b.fecha_emision,
             deriva_de_id: (ocs || []).length === 1 ? (ocs as any[])[0].id : null,
             empresa_despacho: String(body?.seguimiento?.empresa || '').trim().slice(0, 60) || null,
             n_seguimiento: String(body?.seguimiento?.numero || '').trim().slice(0, 80) || null,
