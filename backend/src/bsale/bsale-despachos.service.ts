@@ -729,7 +729,9 @@ export class BsaleDespachosService {
           licitacion_id: b.cotizacion.id,
           tipo: 'guia_despacho',
           numero: String(doc.number),
-          monto: null,
+          // (2026-10-20) El neto de la guía, como cuando se sube a mano (lo exige): sin él no
+          // contaba en el avance de metas, el panel ni el saldo por consumir de la OC.
+          monto: Number(doc?.netAmount) || totales.neto || null,
           fecha_oc: fecha,
           deriva_de_id: b.oc.id,
           // Empresa de transporte y N° de seguimiento (opcionales: el N° se puede agregar después).
