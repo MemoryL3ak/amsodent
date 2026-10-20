@@ -16,6 +16,7 @@ import { Throttle } from '@nestjs/throttler';
 import { StockClientesService, rolDeToken } from './stock-clientes.service';
 import { ExploradorService } from './explorador.service';
 import { ExploradorProductosService } from './explorador-productos.service';
+import { InventarioPortalService } from './inventario-portal.service';
 import { PedidosFlujoService } from './pedidos-flujo.service';
 import { WebpayService } from './webpay.service';
 import { OfertasPortalService } from './ofertas-portal.service';
@@ -34,6 +35,7 @@ export class StockClientesController {
     private ofertas: OfertasPortalService,
     private modulos: PortalModulosService,
     private exploradorProductos: ExploradorProductosService,
+    private inventario: InventarioPortalService,
   ) {}
 
   /* ── Módulos del portal (2026-10-05) ── Qué secciones ve la cuenta. */
@@ -405,6 +407,52 @@ export class StockClientesController {
     this.exigirAdminPortal(req, 'El historial de movimientos es solo para el administrador de la cuenta.');
     await this.modulos.exigir(req.stockPortal.rut, 'declaracion');
     return await this.stockClientes.movimientosProductos(req.stockPortal.rut, sucursalId ? Number(sucursalId) : null);
+  }
+
+  /* ── Inventario por lotes de costo (2026-10-19) ── Lo editan el administrador
+     y el asistente de la cuenta; va con la sección Gestión de Stock. */
+  @UseGuards(StockPortalGuard)
+  @Get('inventario/estado')
+  async inventarioEstado() {
+    return { listo: await this.inventario.listo() };
+  }
+
+  @UseGuards(StockPortalGuard)
+  @Get('inventario')
+  async inventarioListar(@Req() req: any, @Query('sucursal_id') sucursalId?: string) {
+    await this.modulos.exigir(req.stockPortal.rut, 'declaracion');
+    return await this.inventario.listar(req.stockPortal.rut, sucursalId);
+  }
+
+  @UseGuards(StockPortalGuard)
+  @Post('inventario/ingreso')
+  async inventarioIngreso(@Req() req: any, @Body() body: any) {
+    await this.modulos.exigir(req.stockPortal.rut, 'declaracion');
+    return await this.inventario.ingresar(req.stockPortal, body);
+  }
+
+  @UseGuards(StockPortalGuard)
+  @Post('inventario/carga-masiva')
+  async inventarioCargaMasiva(@Req() req: any, @Body() body: any) {
+    await this.modulos.exigir(req.stockPortal.rut, 'declaracion');
+    return await this.inventario.cargaMasiva(req.stockPortal, body);
+  }
+
+  /* ── Solicitar una reunión (2026-10-19) ── Le llega a Lisbeth para agendarla. */
+  @UseGuards(StockPortalGuard)
+  @Post('solicitud-reunion')
+  async solicitudReunion(@Req() req: any, @Body() body: any) {
+    const r = await this.stockClientes.solicitarReunion(req.stockPortal, body);
+    await this.pedidosFlujo.anotarActividad({
+      rut: req.stockPortal.rut,
+      tipo: 'solicitud_reunion',
+      descripcion: `Solicitó una reunión: ${r.motivo}`,
+      actorEmail: req.stockPortal.usuario_email || null,
+      actorNombre: req.stockPortal.usuario_nombre || null,
+      origen: 'portal',
+      metadata: { motivo: r.motivo, detalle: r.detalle },
+    });
+    return { ok: true, avisados: r.avisados };
   }
 
   @UseGuards(StockPortalGuard)

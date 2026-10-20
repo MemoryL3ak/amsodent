@@ -607,6 +607,8 @@ export const GRUPOS_MANUAL = [
         funciones: [
           "Detalle por cliente y producto con umbrales; correos de alerta configurables por cliente.",
           "Las alertas también llegan a la campana de notificaciones.",
+          "Inventario del cliente (octubre 2026): en su portal, la pestaña «Inventario» es donde entra el stock nuevo; cada ingreso es un lote con su costo, así que un producto puede tener varios costos. En «Gestión de Stock» el stock solo baja (lo que se usa), sale primero del lote más antiguo y el precio unitario no se edita: es el costo promedio de lo que queda. Los productos nuevos y la carga masiva van en Inventario; se ven los últimos 5 movimientos de cada producto. Lo editan el administrador y el asistente de la cuenta; el stock bajo y el crítico, solo el administrador.",
+          "«Solicitar reunión» en el portal: el cliente elige el motivo (o «Otros» y lo escribe). Le llega a Lisbeth en la campana y por correo; el aviso abre la Bitácora con la reunión prellenada (cliente, motivo «Solicitud de Reunión» y lo que escribió) para que solo elija día y hora.",
         ],
       },
       {

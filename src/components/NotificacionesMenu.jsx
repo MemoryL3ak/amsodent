@@ -10,6 +10,7 @@ import {
   PackageSearch,
   Trophy,
   Inbox,
+  CalendarPlus,
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { api } from "../lib/api";
@@ -341,6 +342,15 @@ function getNotifVisuales(notif) {
       color: "#b45309",
       bg: "#fef3c7",
       etiqueta: "Stock bajo",
+    };
+  }
+  // (2026-10-19) Un cliente pide una reunión desde el portal: abre la Bitácora prellenada.
+  if (tipo === "portal_solicitud_reunion") {
+    return {
+      icono: CalendarPlus,
+      color: "#0f766e",
+      bg: "#ccfbf1",
+      etiqueta: "Solicitud de reunión",
     };
   }
   if (tipo === "portal_upload") {

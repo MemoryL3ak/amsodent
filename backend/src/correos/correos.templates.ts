@@ -547,6 +547,42 @@ export function plantillaSolicitudCotizacion(
   };
 }
 
+/* Solicitud de reunión desde el portal de clientes (2026-10-19). Le llega a
+   quien agenda (Lisbeth) con el motivo y un botón que abre la Bitácora con la
+   actividad ya prellenada. */
+export type DatosSolicitudReunion = {
+  razonSocial: string;
+  rutFmt: string;
+  solicitante: string;
+  correo?: string | null;
+  motivo: string;
+  detalle?: string | null;
+  enlace?: string | null;
+};
+
+export function plantillaSolicitudReunion(datos: DatosSolicitudReunion): PlantillaResultado {
+  const razon = String(datos.razonSocial || '').trim() || datos.rutFmt;
+  const filas = [
+    filaDato('🏢', 'Cliente', razon),
+    filaDato('🪪', 'RUT', datos.rutFmt),
+    filaDato('🙋', 'Solicita', datos.solicitante),
+    datos.correo ? filaDato('✉️', 'Correo', datos.correo) : '',
+    filaDato('🗂️', 'Motivo', datos.motivo),
+    filaDato('📅', 'Fecha de la solicitud', fechaLarga(), true),
+  ].filter(Boolean).join('');
+  const detalle = datos.detalle ? nota(`💬&nbsp;&nbsp;<strong>Lo que escribió el cliente:</strong><br/>${escapeHtml(datos.detalle)}`) : '';
+  const contenido = `
+    ${insignia('📅')}
+    ${titulo('Solicitud de reunión', `${razon} quiere agendar una reunión.`)}
+    ${tarjetaDatos('Datos de la solicitud', filas)}
+    ${detalle}
+    ${datos.enlace ? botonCta('Agendar en la Bitácora', datos.enlace) : ''}`;
+  return {
+    asunto: `Solicitud de reunión · ${razon}`,
+    html: envolver({ preheader: `${razon} solicita una reunión: ${datos.motivo}.`, contenido }),
+  };
+}
+
 export type DatosGuiaDespacho = {
   nombreCliente?: string;
   numeroOc?: string;

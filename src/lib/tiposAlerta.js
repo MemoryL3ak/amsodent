@@ -20,6 +20,7 @@ export const TIPOS_ALERTA = {
   cotizacion_aprobada: "Cotización aprobada",
   portal_upload: "Documento subido por el cliente",
   stock_solicitud_cotizacion: "Solicitud de cotización (portal)",
+  portal_solicitud_reunion: "Solicitud de reunión (portal)",
   stock_cotizacion_mensaje: "Mensaje del cliente (portal)",
   stock_critico: "Stock crítico de cliente",
   stock_bajo: "Stock bajo de cliente",

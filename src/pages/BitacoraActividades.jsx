@@ -512,6 +512,21 @@ export default function BitacoraActividades() {
     return `${MESES[ancla.getMonth()]} ${ancla.getFullYear()}`;
   }, [vista, ancla]);
 
+  /* (2026-10-19) Solicitud de reunión desde el portal de clientes: el aviso le
+     llega a Lisbeth con este enlace y la actividad se abre prellenada (reunión,
+     motivo «Solicitud de Reunión», cliente y lo que escribió el cliente) para
+     que solo elija el día y la hora. */
+  useEffect(() => {
+    const qs = new URLSearchParams(window.location.search);
+    if (qs.get("solicitud_reunion") !== "1") return;
+    setModal({
+      nueva: true, fecha: ymd(new Date()), tipo: "reunion", estado: "pendiente", todo_el_dia: false,
+      motivo: "Solicitud de Reunión", titulo: qs.get("titulo") || "Reunión", comentario: qs.get("comentario") || "",
+      cliente_id: qs.get("cliente_id") || null,
+    });
+    window.history.replaceState(null, "", window.location.pathname);
+  }, []);
+
   function abrirNueva(fecha) {
     setModal({ nueva: true, fecha: ymd(fecha || ancla), tipo: "llamada", estado: "pendiente", todo_el_dia: false });
   }
