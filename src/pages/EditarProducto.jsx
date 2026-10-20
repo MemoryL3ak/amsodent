@@ -159,6 +159,8 @@ export default function EditarProducto() {
   const [guardando, setGuardando] = useState(false);
 
   const [rol, setRol] = useState(null);
+  // (2026-10-20) Permiso «ver_costos»: ve el costo (solo lectura) sin ser admin.
+  const [verCostos, setVerCostos] = useState(false);
 
   // ✅ guardamos el SKU original para evitar "borrados" accidentales
   const [skuOriginal, setSkuOriginal] = useState("");
@@ -345,6 +347,7 @@ export default function EditarProducto() {
       try {
         const perfil = await api.get("/auth/profile");
         setRol(perfil?.rol ?? null);
+        setVerCostos(Array.isArray(perfil?.permisos) && perfil.permisos.includes("ver_costos"));
       } catch {
         setRol(null);
       }
@@ -1245,14 +1248,19 @@ try {
           </div>
           <div className="surface-body">
             <div className={`grid grid-cols-1 ${mostrarMargen ? "md:grid-cols-3" : "md:grid-cols-2"} gap-4`}>
-              {(esAdmin || (esVentasOJefe && (esProductoTransitorio || esPendienteAprobacion))) && (
+              {(esAdmin || (esVentasOJefe && (esProductoTransitorio || esPendienteAprobacion)) || verCostos) && (
                 <>
                   <div>
                     <label className="label">Costo</label>
-                    <MoneyInput
-                      value={producto.costo}
-                      onChange={(v) => setProducto((prev) => ({ ...prev, costo: formatearCLDesdeString(v) }))}
-                    />
+                    {esAdmin || (esVentasOJefe && (esProductoTransitorio || esPendienteAprobacion)) ? (
+                      <MoneyInput
+                        value={producto.costo}
+                        onChange={(v) => setProducto((prev) => ({ ...prev, costo: formatearCLDesdeString(v) }))}
+                      />
+                    ) : (
+                      // Solo lectura: ve el costo pero no lo cambia (el guardado tampoco lo envía).
+                      <input className="input costo-solo-lectura" readOnly value={`$${formatearCLDesdeString(String(producto.costo ?? "")) || "0"}`} title="Costo del producto (solo lectura)" style={{ background: "var(--bg)" }} />
+                    )}
                   </div>
                   <div />
                   {mostrarMargen && <div />}
