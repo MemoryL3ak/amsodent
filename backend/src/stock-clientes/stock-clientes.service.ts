@@ -14,11 +14,13 @@ import { CorreosService } from '../correos/correos.service';
 import { LicitacionesService } from '../licitaciones/licitaciones.service';
 import { OfertasPortalService } from './ofertas-portal.service';
 import { PortalModulosService, MODULOS_PORTAL } from './portal-modulos.service';
+import { InventarioPortalService } from './inventario-portal.service';
 import { firmarImagenesProductos } from './imagenes-productos';
 import {
   plantillaAlertaStock,
   plantillaSolicitudCotizacion,
   plantillaBienvenidaPortal,
+  plantillaSolicitudReunion,
 } from '../correos/correos.templates';
 
 const TOKEN_TTL_SECONDS = 12 * 60 * 60; // 12h
@@ -38,6 +40,8 @@ function precioEnteroPesos(raw: any): number | null {
 export type SemaforoColor = 'verde' | 'amarillo' | 'rojo';
 
 export type ItemDeclaracion = {
+  // (2026-10-19) Id del producto en stock_productos_cliente (se conserva al guardar con Inventario).
+  id?: number | null;
   nombre: string;
   // SKU/código opcional que el cliente asocia al producto.
   sku?: string | null;
@@ -227,6 +231,8 @@ export class StockClientesService {
     private ofertas: OfertasPortalService,
     // Módulos del portal por cliente (2026-10-05). Opcional para las pruebas.
     @Optional() private modulosPortal?: PortalModulosService,
+    // Inventario por lotes de costo (2026-10-19). Opcional para las pruebas.
+    @Optional() private inventario?: InventarioPortalService,
   ) {}
 
   /* Qué secciones ve el cliente (todo habilitado si no hay servicio o dato). */
@@ -1440,7 +1446,9 @@ export class StockClientesService {
             ? null
             : Number((it as any).ubicacion_id);
         const ubicacion = String((it as any)?.ubicacion || '').trim().slice(0, 120) || null;
+        const id = Number((it as any)?.id) > 0 ? Number((it as any).id) : null;
         return {
+          id,
           nombre,
           sku,
           marca,
@@ -1475,6 +1483,48 @@ export class StockClientesService {
 
     const client = this.supabase.getClient();
 
+    /* (2026-10-19) Reglas de Gestión de Stock (pedido de Ariel):
+       · el stock bajo y el crítico solo los cambia el ADMINISTRADOR de la
+         cuenta (el asistente no), con o sin Inventario;
+       · con el Inventario activo (migración 20261019): aquí el stock solo
+         BAJA (lo que sube entra por Inventario, con su costo), el precio
+         unitario no se edita (es el costo promedio de los lotes) y los
+         productos nuevos se crean en Inventario. */
+    const esAdminPortal = rolDeToken(payload) === 'admin';
+    const conInventario = !!this.inventario && (await this.inventario.listo());
+    let previosQ = client.from('stock_productos_cliente').select('*').eq('rut', rutN).eq('activo', true);
+    previosQ = sucursalId ? previosQ.eq('sucursal_id', sucursalId) : previosQ.is('sucursal_id', null);
+    const { data: filasPrevias } = await previosQ;
+    const previoPorId = new Map<number, any>(((filasPrevias || []) as any[]).map((p) => [Number(p.id), p]));
+    const problemas: string[] = [];
+    const vistos = new Set<number>();
+    for (const it of itemsLimpios) {
+      const previo = it.id ? previoPorId.get(it.id) : null;
+      if (conInventario) {
+        if (!previo) {
+          problemas.push(`«${it.nombre}» no está en el inventario de esta sucursal: los productos nuevos se agregan en la sección Inventario.`);
+          continue;
+        }
+        if (vistos.has(it.id!)) { problemas.push(`«${it.nombre}» viene repetido.`); continue; }
+        vistos.add(it.id!);
+        const antes = Number(previo.stock_actual) || 0;
+        if (it.stock_actual > antes + 0.001) {
+          problemas.push(`«${it.nombre}»: aquí el stock solo puede bajar (tenía ${antes.toLocaleString('es-CL')}); para sumar stock usa Inventario.`);
+        }
+        it.precio_unitario = precioEnteroPesos(previo.precio_unitario); // no se edita: es el costo promedio de los lotes
+      }
+      if (!esAdminPortal) {
+        const minimoAntes = previo ? Number(previo.stock_minimo) || 0 : 0;
+        const alertaAntes = previo && Number(previo.stock_alerta) > 0 ? Number(previo.stock_alerta) : null;
+        if (it.stock_minimo !== minimoAntes || (it.stock_alerta ?? null) !== alertaAntes) {
+          problemas.push(`«${it.nombre}»: el stock bajo y el crítico solo los cambia el administrador de la cuenta.`);
+        }
+      }
+    }
+    if (problemas.length) {
+      throw new BadRequestException(problemas.slice(0, 5).join(' ') + (problemas.length > 5 ? ` (y ${problemas.length - 5} más).` : ''));
+    }
+
     // 1) Inserta snapshot de la declaración
     const ahora = new Date().toISOString();
     const filaDeclaracion: Record<string, any> = {
@@ -1502,73 +1552,106 @@ export class StockClientesService {
     const { data: declaracion, error: errIns } = ins;
     if (errIns) throw new BadRequestException(errIns.message);
 
-    // 2) Sincroniza la lista persistente del cliente. Para no perder los
-    //    productos previos si el insert falla (p. ej. por un cambio de
-    //    esquema), insertamos primero los nuevos y recién después borramos
-    //    los anteriores. El cliente puede renombrar libremente sus productos,
-    //    por eso reemplazamos toda la lista en vez de hacer matching por nombre.
-    // Scope al catálogo de ESTA sucursal para no tocar el de las demás.
-    let previosQuery = client
-      .from('stock_productos_cliente')
-      .select('id')
-      .eq('rut', rutN);
-    previosQuery = sucursalId
-      ? previosQuery.eq('sucursal_id', sucursalId)
-      : previosQuery.is('sucursal_id', null);
-    const { data: previos } = await previosQuery;
-    const idsPrevios = (previos || []).map((p: any) => p.id);
+    if (conInventario) {
+      /* (2026-10-19) Con Inventario los productos conservan su id (sus lotes
+         cuelgan de él): se actualizan en su lugar, cada baja de stock sale de
+         los lotes más antiguos y lo que ya no viene se da de baja (activo =
+         false) para no perder lotes ni historial. */
+      const usuario = { email: (payload as any).usuario_email || 'cuenta principal', nombre: (payload as any).usuario_nombre || null };
+      for (const it of itemsLimpios) {
+        const previo = previoPorId.get(it.id!);
+        let precio = precioEnteroPesos(previo.precio_unitario);
+        if (it.stock_actual < (Number(previo.stock_actual) || 0) - 0.001) {
+          precio = (await this.inventario!.registrarSalida({ rut: rutN, producto: previo, nuevoStock: it.stock_actual, usuario })) ?? precio;
+        }
+        const cambios: Record<string, any> = {
+          nombre: it.nombre, sku: it.sku ?? null, marca: it.marca, unidad: it.unidad, stock_actual: it.stock_actual,
+          stock_minimo: it.stock_minimo, stock_alerta: it.stock_alerta, precio_unitario: precio,
+          ubicacion_id: (it as any).ubicacion_id ?? null, actualizado_at: ahora,
+        };
+        let { error } = await client.from('stock_productos_cliente').update(cambios).eq('id', it.id!);
+        if (error && (error.code === '42703' || /sku|ubicacion_id/i.test(error.message || ''))) {
+          const { sku: _s, ubicacion_id: _u, ...sinExtras } = cambios;
+          ({ error } = await client.from('stock_productos_cliente').update(sinExtras).eq('id', it.id!));
+        }
+        if (error) throw new BadRequestException(`No se pudo guardar «${it.nombre}»: ${error.message}`);
+      }
+      const quedan = new Set(itemsLimpios.map((it) => it.id));
+      const deBaja = [...previoPorId.keys()].filter((id) => !quedan.has(id));
+      if (deBaja.length) {
+        const { error } = await client.from('stock_productos_cliente').update({ activo: false, actualizado_at: ahora }).in('id', deBaja);
+        if (error) this.logger.warn(`No se pudieron dar de baja productos del cliente: ${error.message}`);
+      }
+    } else {
 
-    const productosRows = itemsLimpios.map((it) => ({
-      rut: rutN,
-      sucursal_id: sucursalId,
-      nombre: it.nombre,
-      sku: it.sku ?? null,
-      marca: it.marca,
-      unidad: it.unidad,
-      stock_actual: it.stock_actual,
-      stock_minimo: it.stock_minimo,
-      stock_alerta: it.stock_alerta,
-      precio_unitario: it.precio_unitario,
-      es_critico: it.es_critico === true,
-      ubicacion_id: (it as any).ubicacion_id ?? null,
-      activo: true,
-      actualizado_at: ahora,
-    }));
-    let { error: errInsProd } = await client
-      .from('stock_productos_cliente')
-      .insert(productosRows);
-    // Si las columnas `sku`/`ubicacion_id` aún no existen (migración pendiente),
-    // reintenta sin ellas para no bloquear la declaración.
-    if (
-      errInsProd &&
-      (errInsProd.code === '42703' || /sku|ubicacion_id/i.test(errInsProd.message || ''))
-    ) {
-      const rowsSinExtras = productosRows.map(({ sku, ubicacion_id, ...resto }) => resto);
-      ({ error: errInsProd } = await client
+      // 2) Sincroniza la lista persistente del cliente. Para no perder los
+      //    productos previos si el insert falla (p. ej. por un cambio de
+      //    esquema), insertamos primero los nuevos y recién después borramos
+      //    los anteriores. El cliente puede renombrar libremente sus productos,
+      //    por eso reemplazamos toda la lista en vez de hacer matching por nombre.
+      // Scope al catálogo de ESTA sucursal para no tocar el de las demás.
+      let previosQuery = client
         .from('stock_productos_cliente')
-        .insert(rowsSinExtras));
-    }
-    if (errInsProd) {
-      // No borramos los previos: la lista persistente conserva su estado
-      // anterior y avisamos del problema en vez de perder datos en silencio.
-      this.logger.error(
-        `No se pudieron persistir productos del cliente: ${errInsProd.message}`,
-      );
-      throw new BadRequestException(
-        `No se pudo guardar la lista de productos: ${errInsProd.message}`,
-      );
-    }
-    if (idsPrevios.length > 0) {
-      const { error: errDel } = await client
+        .select('id')
+        .eq('rut', rutN);
+      previosQuery = sucursalId
+        ? previosQuery.eq('sucursal_id', sucursalId)
+        : previosQuery.is('sucursal_id', null);
+      const { data: previos } = await previosQuery;
+      const idsPrevios = (previos || []).map((p: any) => p.id);
+
+      const productosRows = itemsLimpios.map((it) => ({
+        rut: rutN,
+        sucursal_id: sucursalId,
+        nombre: it.nombre,
+        sku: it.sku ?? null,
+        marca: it.marca,
+        unidad: it.unidad,
+        stock_actual: it.stock_actual,
+        stock_minimo: it.stock_minimo,
+        stock_alerta: it.stock_alerta,
+        precio_unitario: it.precio_unitario,
+        es_critico: it.es_critico === true,
+        ubicacion_id: (it as any).ubicacion_id ?? null,
+        activo: true,
+        actualizado_at: ahora,
+      }));
+      let { error: errInsProd } = await client
         .from('stock_productos_cliente')
-        .delete()
-        .in('id', idsPrevios);
-      if (errDel) {
-        this.logger.warn(
-          `No se pudieron limpiar productos previos del cliente: ${errDel.message}`,
+        .insert(productosRows);
+      // Si las columnas `sku`/`ubicacion_id` aún no existen (migración pendiente),
+      // reintenta sin ellas para no bloquear la declaración.
+      if (
+        errInsProd &&
+        (errInsProd.code === '42703' || /sku|ubicacion_id/i.test(errInsProd.message || ''))
+      ) {
+        const rowsSinExtras = productosRows.map(({ sku, ubicacion_id, ...resto }) => resto);
+        ({ error: errInsProd } = await client
+          .from('stock_productos_cliente')
+          .insert(rowsSinExtras));
+      }
+      if (errInsProd) {
+        // No borramos los previos: la lista persistente conserva su estado
+        // anterior y avisamos del problema en vez de perder datos en silencio.
+        this.logger.error(
+          `No se pudieron persistir productos del cliente: ${errInsProd.message}`,
+        );
+        throw new BadRequestException(
+          `No se pudo guardar la lista de productos: ${errInsProd.message}`,
         );
       }
-    }
+      if (idsPrevios.length > 0) {
+        const { error: errDel } = await client
+          .from('stock_productos_cliente')
+          .delete()
+          .in('id', idsPrevios);
+        if (errDel) {
+          this.logger.warn(
+            `No se pudieron limpiar productos previos del cliente: ${errDel.message}`,
+          );
+        }
+      }
+    } // fin de la lista sin Inventario
 
     // 3) Notificaciones si hay rojos o amarillos
     if (totales.rojos > 0 || totales.amarillos > 0) {
@@ -2215,6 +2298,69 @@ export class StockClientesService {
      Devuelve null en vez de fallar cuando no hay cliente, no hay vendedor
      asignado o el vendedor no tiene celular cargado: el portal simplemente no
      muestra el boton. */
+  /* ── Solicitud de reunión desde el portal (2026-10-19) ──
+     Pedido de Ariel: un botón para pedir una cita o reunión con el motivo (lista
+     con «Otros» y un texto); le llega a Lisbeth para que la agende: campana con
+     un enlace que abre la Bitácora con la actividad prellenada y correo.
+     Destinatarios: PORTAL_REUNION_PARA (correos separados por coma). */
+  async solicitarReunion(payload: StockTokenPayload, body: any) {
+    const rutN = normalizarRut(payload?.rut || '');
+    if (!rutN) throw new UnauthorizedException('Sesión inválida.');
+    const motivo = String(body?.motivo || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+    const detalle = String(body?.detalle || '').trim().slice(0, 600);
+    if (!motivo) throw new BadRequestException('Elige el motivo de la reunión.');
+    const esOtros = /^otros?$/i.test(motivo);
+    if (esOtros && detalle.length < 3) throw new BadRequestException('Escribe el motivo de la reunión.');
+    const motivoFinal = esOtros ? `Otros: ${detalle.replace(/\s+/g, ' ').slice(0, 120)}` : motivo;
+    const para = Array.from(new Set(
+      String(process.env.PORTAL_REUNION_PARA || 'lriquelme@amsodentmedical.cl')
+        .split(/[,;\s]+/).map((e) => e.trim().toLowerCase()).filter((e) => RE_EMAIL.test(e)),
+    ));
+    const rutFmt = formatearRut(rutN);
+    const razon = String(payload.razon_social || '').trim() || rutFmt;
+    const solicitante = String(payload.usuario_nombre || payload.usuario_email || 'Cuenta principal');
+    const client = this.supabase.getClient();
+
+    // El cliente en el sistema (el RUT se guarda con o sin puntos), para dejar la actividad con su cliente.
+    const variantes = Array.from(new Set([rutFmt, rutN, `${rutN.slice(0, -1)}-${rutN.slice(-1)}`, rutFmt.toUpperCase(), `${rutN.slice(0, -1)}-${rutN.slice(-1).toUpperCase()}`]));
+    const { data: clis } = await client.from('clientes').select('id').in('rut', variantes).limit(1);
+    const clienteId = (clis || [])[0]?.id ?? null;
+
+    const titulo = `Reunión con ${razon}`.slice(0, 120);
+    const comentario = [
+      `Solicitada desde el portal por ${solicitante}${payload.usuario_email ? ` (${payload.usuario_email})` : ''}.`,
+      `Motivo: ${esOtros ? 'Otros' : motivo}.`,
+      detalle ? `Detalle: ${detalle}` : '',
+    ].filter(Boolean).join('\n');
+    const link = `/bitacora-actividades?solicitud_reunion=1&titulo=${encodeURIComponent(titulo)}&comentario=${encodeURIComponent(comentario)}${clienteId ? `&cliente_id=${encodeURIComponent(String(clienteId))}` : ''}`;
+
+    if (para.length) {
+      const { error } = await client.from('notificaciones').insert(para.map((user_email) => ({
+        user_email,
+        tipo: 'portal_solicitud_reunion',
+        mensaje: `${razon} solicita una reunión · ${motivoFinal}`.slice(0, 300),
+        link,
+        metadata: { rut: rutN, razon_social: razon, solicitante, usuario_email: payload.usuario_email || null, motivo, detalle, cliente_id: clienteId },
+      })));
+      if (error) this.logger.warn(`Aviso de solicitud de reunión sin guardar: ${error.message}`);
+      const enlaceBase = String(process.env.APP_PUBLIC_URL || process.env.PUBLIC_APP_URL || '').trim();
+      const { asunto, html } = plantillaSolicitudReunion({
+        razonSocial: razon, rutFmt, solicitante, correo: payload.usuario_email || null,
+        motivo: esOtros ? 'Otros' : motivo, detalle: detalle || null,
+        enlace: enlaceBase ? `${enlaceBase.replace(/\/+$/, '')}${link}` : null,
+      });
+      for (const destino of para) {
+        try {
+          await this.mailings.enviarUno({ para: destino, asunto, cuerpoHtml: html });
+        } catch (e: any) {
+          this.logger.warn(`Correo de solicitud de reunión falló para ${destino}: ${e?.message || e}`);
+        }
+      }
+    }
+    this.logger.log(`Solicitud de reunión de ${razon} (${solicitante}): ${motivoFinal}`);
+    return { avisados: para.length, motivo: motivoFinal, detalle };
+  }
+
   async ejecutivoDeCliente(rut: string) {
     const rutN = normalizarRut(rut);
     if (!rutN) return null;

@@ -41,6 +41,11 @@ import {
   Tag,
   History,
   ClipboardCheck,
+  Boxes,
+  CalendarPlus,
+  PackagePlus,
+  ChevronDown,
+  ChevronRight,
 } from "lucide-react";
 
 import DropdownSelect from "../components/ui/DropdownSelect";
@@ -1296,7 +1301,16 @@ function FeatureItem({ icono: Icono, titulo, texto, delay = 0 }) {
    PASO 3 — Declaración de productos + semáforo
    ────────────────────────────────────────────────────────────────────── */
 function PantallaDeclaracion({ cliente, setToast }) {
-  const [tab, setTab] = useState("resumen"); // resumen | declaracion | solicitudes | explorador | usuarios
+  const [tab, setTab] = useState("resumen"); // resumen | declaracion | inventario | solicitudes | explorador | usuarios
+  /* (2026-10-19) Inventario por lotes de costo: con las tablas listas, en
+     Gestión de Stock el stock solo baja, el precio unitario no se edita (es el
+     costo promedio de los lotes) y los productos nuevos entran por Inventario. */
+  const [inventarioListo, setInventarioListo] = useState(false);
+  const [recargaStock, setRecargaStock] = useState(0);
+  const [mostrarReunion, setMostrarReunion] = useState(false);
+  useEffect(() => {
+    apiRequest("/stock-clientes/inventario/estado").then((r) => setInventarioListo(!!r?.listo)).catch(() => setInventarioListo(false));
+  }, []);
   const [refrescando, setRefrescando] = useState(false);
 
   /* Recarga los datos del portal sin recargar la página: así no se pierde el
@@ -1347,7 +1361,7 @@ function PantallaDeclaracion({ cliente, setToast }) {
   const habil = (clave) => (clave === "solicitudes" ? habilCrudo(clave) || puedePedir : habilCrudo(clave));
   const permitido = (t) =>
     t === "resumen" ||
-    (t === "usuarios" ? esAdminPortal : t === "explorador" ? habil("explorador") || puedePedir : habil(t));
+    (t === "usuarios" ? esAdminPortal : t === "explorador" ? habil("explorador") || puedePedir : t === "inventario" ? habil("declaracion") && inventarioListo : habil(t));
   const tabActiva = permitido(tab) ? tab : "resumen";
   // Cupo de crédito, para mostrarlo en el resumen comercial (punto 7 y 29).
   const [creditoCliente, setCreditoCliente] = useState(null);
@@ -1534,6 +1548,7 @@ function PantallaDeclaracion({ cliente, setToast }) {
           setBaseline(vacio.map((o) => ({ ...o })));
         } else {
           const mapeados = lista.map((p) => ({
+            id: p.id,
             nombre: p.nombre,
             sku: p.sku || "",
             marca: p.marca || "",
@@ -1568,7 +1583,7 @@ function PantallaDeclaracion({ cliente, setToast }) {
       cancel = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sucursalId]);
+  }, [sucursalId, recargaStock]);
 
   // Últimos 5 movimientos por producto (solo el administrador de la cuenta).
   async function cargarMovimientos() {
@@ -1674,8 +1689,22 @@ function PantallaDeclaracion({ cliente, setToast }) {
       setToast({ type: "warning", mensaje: "Agregue al menos un producto antes de guardar." });
       return;
     }
+    if (inventarioListo) {
+      const subidos = items.filter((it) => it.id && stockGuardado.has(it.id) && (Number(it.stock_actual) || 0) > stockGuardado.get(it.id) + 1e-9);
+      if (subidos.length) {
+        setToast({
+          type: "warning",
+          titulo: "Aquí el stock solo puede bajar",
+          mensaje: `Para sumar stock a «${subidos[0].nombre}»${subidos.length > 1 ? ` y ${subidos.length - 1} más` : ""} usa Inventario: cada ingreso queda con su costo.`,
+        });
+        return;
+      }
+    }
     setConfirmarGuardar(resumenCambiosStock(baseline, items));
   }
+
+  // Stock guardado de cada producto (por id): aquí solo se puede bajar.
+  const stockGuardado = useMemo(() => new Map(baseline.filter((b) => b.id).map((b) => [b.id, Number(b.stock_actual) || 0])), [baseline]);
 
   async function guardar() {
     const limpios = items
@@ -1689,6 +1718,7 @@ function PantallaDeclaracion({ cliente, setToast }) {
         const precioNum = parsePrecio(it.precio_unitario);
         const precio_unitario = precioNum > 0 ? precioNum : null;
         return {
+          id: it.id || undefined,
           nombre: String(it.nombre || "").trim(),
           sku: String(it.sku || "").trim() || undefined,
           marca: String(it.marca || "").trim() || undefined,
@@ -1954,6 +1984,7 @@ function PantallaDeclaracion({ cliente, setToast }) {
         esAdminPortal={esAdminPortal}
         habil={habil}
         puedePedir={puedePedir}
+        conInventario={inventarioListo}
       />
 
       {/* Avisos sin leer (despacho en curso). Van arriba de todo porque es lo
@@ -1964,7 +1995,21 @@ function PantallaDeclaracion({ cliente, setToast }) {
           se queda quieto: si Amsodent valida un pedido o despacha mientras el
           cliente lo tiene abierto, no se entera. Esto recarga sin recargar la
           página, que es lo que vacía el carrito y obliga a reubicarse. */}
-      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 10 }}>
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+        {/* (2026-10-19) Pedir una cita o reunión: le llega a Lisbeth para agendarla. */}
+        <button
+          type="button"
+          onClick={() => setMostrarReunion(true)}
+          className="btn-solicitar-reunion"
+          title="Pídenos una reunión: te contactamos para agendarla"
+          style={{
+            display: "inline-flex", alignItems: "center", gap: 6,
+            border: `1px solid ${TEAL}`, background: "#f0fdfa", color: TEAL, fontWeight: 600,
+            borderRadius: 999, padding: "6px 13px", fontSize: 12.5, fontFamily: "inherit", cursor: "pointer",
+          }}
+        >
+          <CalendarPlus size={13} /> Solicitar reunión
+        </button>
         <button
           type="button"
           onClick={refrescarTodo}
@@ -1981,6 +2026,8 @@ function PantallaDeclaracion({ cliente, setToast }) {
           {refrescando ? "Actualizando…" : "Actualizar"}
         </button>
       </div>
+
+      {mostrarReunion && <ModalSolicitarReunion onCerrar={() => setMostrarReunion(false)} setToast={setToast} />}
 
       {tabActiva === "resumen" ? (
         <DashboardComercial
@@ -2003,6 +2050,15 @@ function PantallaDeclaracion({ cliente, setToast }) {
       ) : tabActiva === "explorador" ? (
         // Sin Explorador habilitado, la pestaña muestra solo el carrito ("Mi pedido").
         <PanelExploradorPrecios soloCarrito={!habil("explorador")} />
+      ) : tabActiva === "inventario" ? (
+        <PanelInventario
+          sucursalId={sucursalId}
+          sucursales={sucursales}
+          onCambiarSucursal={(v) => setSucursalId(v || null)}
+          setToast={setToast}
+          esAdminPortal={esAdminPortal}
+          onCambio={() => setRecargaStock((n) => n + 1)}
+        />
       ) : tabActiva === "solicitudes" ? (
         <PanelMisSolicitudes
           solicitudes={solicitudes}
@@ -2019,10 +2075,12 @@ function PantallaDeclaracion({ cliente, setToast }) {
       <div style={styles.declCard}>
         <div style={styles.declCardHeader}>
           <div>
-            <div style={styles.declTitulo}>Inventario Clínica</div>
+            <div style={styles.declTitulo}>{inventarioListo ? "Stock de la clínica" : "Inventario Clínica"}</div>
             <div style={styles.declSub}>
-              Declare su stock actual y los umbrales de stock bajo y crítico. El
-              semáforo se calcula automáticamente.
+              {inventarioListo
+                ? "Registre lo que se usa: aquí el stock solo baja (lo que entra se ingresa en Inventario, con su costo). El precio unitario es el costo promedio de lo que queda."
+                : "Declare su stock actual y los umbrales de stock bajo y crítico. El semáforo se calcula automáticamente."}
+              {!esAdminPortal && " El stock bajo y el crítico los define el administrador de la cuenta."}
             </div>
           </div>
           <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
@@ -2031,17 +2089,25 @@ function PantallaDeclaracion({ cliente, setToast }) {
               onImprimir={imprimirReporte}
               disabled={itemsCriticos.length + itemsBajos.length === 0}
             />
-            <button
-              onClick={() => setMostrarCargaMasiva(true)}
-              style={styles.btnSecundarioOutline}
-              className="btn-hover"
-              title="Cargar varios productos desde un archivo Excel o CSV"
-            >
-              <Upload size={15} /> Carga masiva
-            </button>
-            <button onClick={agregarItem} style={styles.btnSecundarioOutline} className="btn-hover">
-              <Plus size={15} /> Agregar producto
-            </button>
+            {inventarioListo ? (
+              <button onClick={() => setTab("inventario")} style={styles.btnSecundarioOutline} className="btn-hover ir-inventario" title="Los productos nuevos y el stock que entra se ingresan en Inventario, con su costo">
+                <PackagePlus size={15} /> Ingresar stock en Inventario
+              </button>
+            ) : (
+              <>
+                <button
+                  onClick={() => setMostrarCargaMasiva(true)}
+                  style={styles.btnSecundarioOutline}
+                  className="btn-hover"
+                  title="Cargar varios productos desde un archivo Excel o CSV"
+                >
+                  <Upload size={15} /> Carga masiva
+                </button>
+                <button onClick={agregarItem} style={styles.btnSecundarioOutline} className="btn-hover">
+                  <Plus size={15} /> Agregar producto
+                </button>
+              </>
+            )}
           </div>
         </div>
 
@@ -2215,7 +2281,10 @@ function PantallaDeclaracion({ cliente, setToast }) {
                         value={it.stock_actual}
                         onChange={(e) => actualizarItem(idx, "stock_actual", e.target.value)}
                         placeholder="0"
-                        style={{ ...styles.cellInput, textAlign: "right" }}
+                        max={inventarioListo && it.id && stockGuardado.has(it.id) ? stockGuardado.get(it.id) : undefined}
+                        title={inventarioListo ? "Aquí el stock solo puede bajar (lo que se usa). Para sumar stock usa Inventario." : undefined}
+                        className={inventarioListo && it.id && (Number(it.stock_actual) || 0) > (stockGuardado.get(it.id) ?? Infinity) ? "stock-sube" : undefined}
+                        style={{ ...styles.cellInput, textAlign: "right", ...(inventarioListo && it.id && (Number(it.stock_actual) || 0) > (stockGuardado.get(it.id) ?? Infinity) ? { borderColor: "#dc2626", color: "#b91c1c" } : {}) }}
                       />
                     </td>
                     <td style={styles.td}>
@@ -2226,7 +2295,9 @@ function PantallaDeclaracion({ cliente, setToast }) {
                         value={it.stock_bajo}
                         onChange={(e) => actualizarItem(idx, "stock_bajo", e.target.value)}
                         placeholder="0"
-                        style={{ ...styles.cellInput, textAlign: "right" }}
+                        disabled={!esAdminPortal}
+                        title={esAdminPortal ? undefined : "Solo el administrador de la cuenta cambia el stock bajo"}
+                        style={{ ...styles.cellInput, textAlign: "right", ...(esAdminPortal ? {} : { background: "#f8fafc", color: "#64748b", cursor: "not-allowed" }) }}
                       />
                     </td>
                     <td style={styles.td}>
@@ -2237,10 +2308,18 @@ function PantallaDeclaracion({ cliente, setToast }) {
                         value={it.stock_minimo}
                         onChange={(e) => actualizarItem(idx, "stock_minimo", e.target.value)}
                         placeholder="0"
-                        style={{ ...styles.cellInput, textAlign: "right" }}
+                        disabled={!esAdminPortal}
+                        title={esAdminPortal ? undefined : "Solo el administrador de la cuenta cambia el stock crítico"}
+                        style={{ ...styles.cellInput, textAlign: "right", ...(esAdminPortal ? {} : { background: "#f8fafc", color: "#64748b", cursor: "not-allowed" }) }}
                       />
                     </td>
                     <td style={styles.td}>
+                      {inventarioListo ? (
+                        // (2026-10-19) No se edita: es el costo promedio de los lotes del Inventario.
+                        <span className="precio-promedio" title="Costo promedio de lo que queda (lotes del Inventario)" style={{ display: "block", textAlign: "right", padding: "0 6px", color: "#334155", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
+                          {it.precio_unitario ? `$${fmtPrecioInput(it.precio_unitario)}` : "—"}
+                        </span>
+                      ) : (
                       <input
                         type="text"
                         inputMode="numeric"
@@ -2252,6 +2331,7 @@ function PantallaDeclaracion({ cliente, setToast }) {
                         placeholder="0"
                         style={{ ...styles.cellInput, textAlign: "right" }}
                       />
+                      )}
                     </td>
                     <td
                       style={{
@@ -3300,12 +3380,14 @@ const botonCantidad = {
   alignItems: "center",
   justifyContent: "center",
 };
-function TabNavigator({ tab, onChange, contadorSolicitudes, contadorOfertas = 0, esAdminPortal, habil = () => true, puedePedir = true }) {
+function TabNavigator({ tab, onChange, contadorSolicitudes, contadorOfertas = 0, esAdminPortal, habil = () => true, puedePedir = true, conInventario = false }) {
   // (2026-10-05) Solo las secciones habilitadas para la cuenta. Sin Explorador,
   // su lugar lo toma "Mi pedido" (el carrito) si se puede pedir desde otra sección.
   const opciones = [
     { id: "resumen", label: "Resumen", icono: Activity },
     habil("declaracion") && { id: "declaracion", label: "Gestión de Stock", icono: Database },
+    // (2026-10-19) Ingresos de stock por lotes de costo; va con Gestión de Stock.
+    habil("declaracion") && conInventario && { id: "inventario", label: "Inventario", icono: Boxes },
     habil("solicitudes") && { id: "solicitudes", label: "Mis cotizaciones", icono: FileSpreadsheet },
     habil("ofertas") && { id: "ofertas", label: "Ofertas", icono: Tag },
     habil("showroom") && { id: "showroom", label: "Showroom", icono: ShoppingCart },
@@ -3415,6 +3497,561 @@ const ROLES_PORTAL = [
   { value: "admin", label: "Administrador", detalle: "Puede todo, incluidas la aprobación de cotizaciones y el pago." },
   { value: "asistente", label: "Asistente", detalle: "Puede todo lo demás: armar pedidos, pedir cotizaciones y ver el historial." },
 ];
+
+/* ──────────────────────────────────────────────────────────────────────
+   Solicitar reunión (2026-10-19)
+   Pedido de Ariel: un botón para pedir una cita o reunión, con el motivo de
+   la sesión (lista con «Otros») y un texto para escribirlo. Le llega a
+   Lisbeth (campana y correo) para que la agende.
+   ────────────────────────────────────────────────────────────────────── */
+const MOTIVOS_REUNION = [
+  "Presentación de productos",
+  "Capacitación en el portal",
+  "Revisión de stock y reposición",
+  "Cotizaciones y precios",
+  "Pedido o despacho",
+  "Otros",
+];
+
+function ModalSolicitarReunion({ onCerrar, setToast }) {
+  const [motivo, setMotivo] = useState("");
+  const [detalle, setDetalle] = useState("");
+  const [enviando, setEnviando] = useState(false);
+  const esOtros = motivo === "Otros";
+  const puede = !!motivo && (!esOtros || detalle.trim().length >= 3) && !enviando;
+
+  async function enviar() {
+    if (!puede) return;
+    setEnviando(true);
+    try {
+      await apiRequest("/stock-clientes/solicitud-reunion", {
+        method: "POST",
+        body: JSON.stringify({ motivo, detalle: detalle.trim() }),
+      });
+      setToast({ type: "success", titulo: "Solicitud enviada", mensaje: "Nuestro equipo te contactará para agendar la reunión." });
+      onCerrar();
+    } catch (e) {
+      setToast({ type: "error", titulo: "No se pudo enviar", mensaje: e?.message || "Intente nuevamente." });
+    } finally {
+      setEnviando(false);
+    }
+  }
+
+  return createPortal(
+    <div
+      onMouseDown={(e) => { if (e.target === e.currentTarget && !enviando) onCerrar(); }}
+      style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,.55)", backdropFilter: "blur(4px)", zIndex: 13000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+    >
+      <div className="modal-solicitar-reunion" style={{ width: 460, maxWidth: "100%", background: "#fff", borderRadius: 16, padding: 22, boxShadow: "0 24px 60px -12px rgba(15,23,42,.30)" }}>
+        <h3 style={{ margin: "0 0 4px", fontSize: 16, fontWeight: 800, color: "#0f172a", display: "flex", alignItems: "center", gap: 8 }}>
+          <CalendarPlus size={18} style={{ color: TEAL }} /> Solicitar una reunión
+        </h3>
+        <div style={{ fontSize: 13, color: "#64748b", marginBottom: 14 }}>Cuéntanos el motivo y te contactamos para agendarla.</div>
+
+        <label style={styles.label}>
+          Motivo de la reunión
+          <DropdownSelect
+            value={motivo}
+            onChange={setMotivo}
+            options={MOTIVOS_REUNION.map((m) => ({ value: m, label: m }))}
+            placeholder="Elige el motivo…"
+            minWidth={300}
+            className=""
+            style={styles.input}
+          />
+        </label>
+
+        <label style={styles.label}>
+          {esOtros ? "Escribe el motivo" : "Detalle"}{" "}
+          {esOtros ? <span style={{ color: "#dc2626" }}>*</span> : <span style={{ fontWeight: 400, opacity: 0.7, textTransform: "none" }}>(opcional)</span>}
+          <textarea
+            value={detalle}
+            onChange={(e) => setDetalle(e.target.value.slice(0, 600))}
+            rows={4}
+            placeholder={esOtros ? "¿De qué te gustaría conversar?" : "Algo que debamos saber: días u horarios que te acomodan, productos, etc."}
+            style={{ ...styles.input, height: "auto", minHeight: 92, paddingTop: 8, resize: "vertical", textTransform: "none" }}
+          />
+        </label>
+
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 8, flexWrap: "wrap" }}>
+          <button type="button" onClick={onCerrar} disabled={enviando} style={styles.btnSecundarioChico}>Cancelar</button>
+          <button type="button" onClick={enviar} disabled={!puede} style={{ ...styles.btnPrimarioChico, opacity: puede ? 1 : 0.55, cursor: puede ? "pointer" : "not-allowed" }}>
+            <Send size={14} /> {enviando ? "Enviando…" : "Enviar solicitud"}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+/* ──────────────────────────────────────────────────────────────────────
+   Inventario por lotes de costo (2026-10-19)
+   Pedido de Ariel: aquí se va agregando el stock nuevo; cada ingreso (lote)
+   tiene su costo, así que un mismo producto puede tener varios costos. Las
+   salidas se registran en Gestión de Stock y descuentan primero el lote más
+   antiguo; el precio unitario es el costo promedio de lo que queda. Se ven
+   los últimos 5 movimientos de cada producto. Lo editan el administrador y
+   el asistente de la cuenta. El cálculo vive en el backend
+   (inventario-portal.service.ts).
+   ────────────────────────────────────────────────────────────────────── */
+const fmtCant = (n) => (n == null || n === "" ? "—" : Number(n).toLocaleString("es-CL", { maximumFractionDigits: 2 }));
+const fmtPesos = (n) => (n == null ? "—" : `$${Math.round(Number(n) || 0).toLocaleString("es-CL")}`);
+const fmtFechaCL = (iso) => {
+  const m = String(iso || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? `${m[3]}-${m[2]}-${m[1]}` : "—";
+};
+const hoyChile = () => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Santiago" }).format(new Date());
+const sinTildesInv = (s) => String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+const TIPOS_MOV = { inicial: { texto: "Stock inicial", color: "#475569" }, ingreso: { texto: "Ingreso", color: "#15803d" }, salida: { texto: "Salida", color: "#b45309" } };
+
+function PanelInventario({ sucursalId, sucursales = [], onCambiarSucursal, setToast, esAdminPortal, onCambio }) {
+  const [datos, setDatos] = useState(null);
+  const [cargando, setCargando] = useState(true);
+  const [error, setError] = useState("");
+  const [q, setQ] = useState("");
+  const [abierto, setAbierto] = useState(null);
+  const [modal, setModal] = useState(null); // { producto } | { nuevo: true }
+  const [carga, setCarga] = useState(false);
+  const [guardando, setGuardando] = useState(false);
+
+  const cargar = useCallback(async () => {
+    if (!sucursalId) return;
+    setCargando(true);
+    setError("");
+    try {
+      setDatos(await apiRequest(`/stock-clientes/inventario?sucursal_id=${sucursalId}`));
+    } catch (e) {
+      setError(e?.message || "No se pudo cargar el inventario.");
+    } finally {
+      setCargando(false);
+    }
+  }, [sucursalId]);
+  useEffect(() => { cargar(); }, [cargar]);
+
+  async function ingresar(form) {
+    setGuardando(true);
+    try {
+      const r = await apiRequest("/stock-clientes/inventario/ingreso", { method: "POST", body: JSON.stringify({ ...form, sucursal_id: sucursalId }) });
+      setToast({ type: "success", titulo: r?.creado ? "Producto creado" : "Stock ingresado", mensaje: `«${r?.producto?.nombre}» queda con ${fmtCant(r?.producto?.stock_actual)} unidades a un costo promedio de ${fmtPesos(r?.producto?.costo_promedio)}.` });
+      setModal(null);
+      cargar();
+      onCambio?.();
+    } catch (e) {
+      setToast({ type: "error", titulo: "No se pudo ingresar", mensaje: e?.message || "Intente nuevamente." });
+    } finally {
+      setGuardando(false);
+    }
+  }
+
+  async function cargarMasivo(filas) {
+    const r = await apiRequest("/stock-clientes/inventario/carga-masiva", { method: "POST", body: JSON.stringify({ sucursal_id: sucursalId, filas }) });
+    const errores = r?.errores || [];
+    setToast({
+      type: errores.length ? "warning" : "success",
+      titulo: "Carga masiva",
+      mensaje: `${r?.ingresados || 0} ingreso${r?.ingresados === 1 ? "" : "s"} (${r?.creados || 0} producto${r?.creados === 1 ? "" : "s"} nuevo${r?.creados === 1 ? "" : "s"})${errores.length ? `; ${errores.length} con error: ${errores.slice(0, 3).map((e) => `fila ${e.fila} ${e.error}`).join(" · ")}` : "."}`,
+    });
+    cargar();
+    onCambio?.();
+    return r;
+  }
+
+  const productos = (datos?.productos || []).filter((p) => !q.trim() || sinTildesInv(`${p.nombre} ${p.sku} ${p.marca}`).includes(sinTildesInv(q.trim())));
+  const valor = (datos?.productos || []).reduce((a, p) => a + (Number(p.stock_actual) || 0) * (Number(p.costo_promedio) || 0), 0);
+
+  return (
+    <div style={styles.declCard} className="panel-inventario">
+      <div style={styles.declCardHeader}>
+        <div>
+          <div style={styles.declTitulo}>Inventario</div>
+          <div style={styles.declSub}>
+            Aquí entra el stock nuevo: cada ingreso queda como un lote con su costo. Lo que se usa se descuenta en
+            Gestión de Stock, primero del lote más antiguo, y el precio unitario es el costo promedio de lo que queda.
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          <button onClick={() => setCarga(true)} style={styles.btnSecundarioOutline} className="btn-hover" title="Ingresar varios productos desde un archivo Excel o CSV, con su costo">
+            <Upload size={15} /> Carga masiva
+          </button>
+          <button onClick={() => setModal({ nuevo: true })} style={styles.btnSecundarioOutline} className="btn-hover btn-nuevo-producto-inventario">
+            <Plus size={15} /> Nuevo producto
+          </button>
+        </div>
+      </div>
+
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", padding: "0 0 14px", borderBottom: "1px solid #eef2f7", marginBottom: 14 }}>
+        {sucursales.length > 1 && (
+          <>
+            <span style={{ fontSize: 13, fontWeight: 600, color: "#334155" }}>Sucursal:</span>
+            <DropdownSelect
+              value={sucursalId ?? ""}
+              onChange={onCambiarSucursal}
+              minWidth={240}
+              style={{ width: 260, flex: "0 1 260px", minWidth: 180, maxWidth: "100%", height: 38, fontSize: 13.5, borderRadius: 8 }}
+              options={sucursales.map((s) => ({ value: s.id, label: s.nombre, detalle: s.direccion || undefined }))}
+            />
+          </>
+        )}
+        <div style={{ position: "relative", flex: "1 1 220px", minWidth: 180, maxWidth: 360, marginLeft: "auto" }}>
+          <Search size={14} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "#94a3b8" }} />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Buscar producto, SKU o marca…" aria-label="Buscar en el inventario" style={{ width: "100%", height: 38, padding: "0 10px 0 30px", border: "1px solid #cbd5e1", borderRadius: 8, fontSize: 13.5, boxSizing: "border-box" }} />
+        </div>
+      </div>
+
+      {cargando && !datos ? (
+        <div style={{ padding: 24, color: "#64748b", fontSize: 13 }}>Cargando inventario…</div>
+      ) : error ? (
+        <div style={{ padding: 24, color: "#b91c1c", fontSize: 13 }}>{error}</div>
+      ) : !productos.length ? (
+        <div style={{ padding: 24, color: "#64748b", fontSize: 13 }}>
+          {(datos?.productos || []).length ? "Ningún producto calza con la búsqueda." : "Todavía no hay productos: agrégalos con «Nuevo producto» o con la carga masiva."}
+        </div>
+      ) : (
+        <div style={{ overflowX: "auto" }}>
+          <table className="tabla-inventario-portal" style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+            <thead>
+              <tr style={{ background: "#f8fafc" }}>
+                <th style={{ ...thPortal, width: 26 }} aria-label="Detalle" />
+                <th style={thPortal}>Producto</th>
+                <th style={{ ...thPortal, textAlign: "right" }}>Stock</th>
+                <th style={{ ...thPortal, textAlign: "right" }} title="Promedio de lo que queda, pesado por la cantidad de cada lote">Costo promedio</th>
+                <th style={{ ...thPortal, textAlign: "right" }}>Valorización</th>
+                <th style={{ ...thPortal, textAlign: "right" }}>Lotes</th>
+                <th style={{ ...thPortal, textAlign: "right" }}>Acciones</th>
+              </tr>
+            </thead>
+            <tbody>
+              {productos.map((p) => {
+                const ab = abierto === p.id;
+                return (
+                  <Fragment key={p.id}>
+                    <tr style={{ borderTop: "1px solid #f1f5f9", cursor: "pointer" }} onClick={() => setAbierto(ab ? null : p.id)}>
+                      <td style={tdPortal}>{ab ? <ChevronDown size={15} /> : <ChevronRight size={15} />}</td>
+                      <td style={{ ...tdPortal, minWidth: 160 }}>
+                        <div style={{ fontWeight: 700, color: "#0f172a", overflowWrap: "anywhere" }}>{p.nombre}</div>
+                        <div style={{ fontSize: 11.5, color: "#94a3b8" }}>{[p.sku, p.marca, p.unidad].filter(Boolean).join(" · ") || "—"}</div>
+                      </td>
+                      <td style={{ ...tdPortal, textAlign: "right", fontWeight: 700, whiteSpace: "nowrap" }}>{fmtCant(p.stock_actual)}</td>
+                      <td style={{ ...tdPortal, textAlign: "right", whiteSpace: "nowrap" }}>{fmtPesos(p.costo_promedio)}</td>
+                      <td style={{ ...tdPortal, textAlign: "right", whiteSpace: "nowrap" }}>{fmtPesos((Number(p.stock_actual) || 0) * (Number(p.costo_promedio) || 0))}</td>
+                      <td style={{ ...tdPortal, textAlign: "right" }}>{p.lotes.length}</td>
+                      <td style={{ ...tdPortal, textAlign: "right" }}>
+                        <button type="button" className="btn-ingresar-stock" onClick={(e) => { e.stopPropagation(); setModal({ producto: p }); }} style={{ ...styles.btnSecundarioChico, display: "inline-flex", alignItems: "center", gap: 5, whiteSpace: "nowrap" }}>
+                          <PackagePlus size={14} /> Ingresar stock
+                        </button>
+                      </td>
+                    </tr>
+                    {ab && (
+                      <tr className="detalle-inventario">
+                        <td colSpan={7} style={{ background: "#f8fafc", padding: "10px 14px" }}>
+                          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 14 }}>
+                            <div>
+                              <div style={{ fontSize: 11, fontWeight: 800, color: "#64748b", textTransform: "uppercase", letterSpacing: ".04em", marginBottom: 6 }}>Lotes con stock</div>
+                              {p.lotes.length === 0 ? (
+                                <div style={{ fontSize: 12.5, color: "#94a3b8" }}>Sin lotes con stock.</div>
+                              ) : (
+                                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, background: "#fff", borderRadius: 8 }}>
+                                  <thead><tr><th style={thPortal}>Fecha</th><th style={{ ...thPortal, textAlign: "right" }}>Ingresó</th><th style={{ ...thPortal, textAlign: "right" }}>Queda</th><th style={{ ...thPortal, textAlign: "right" }}>Costo</th></tr></thead>
+                                  <tbody>
+                                    {p.lotes.map((l) => (
+                                      <tr key={l.id} style={{ borderTop: "1px solid #f1f5f9" }} title={[l.nota, l.usuario].filter(Boolean).join(" · ")}>
+                                        <td style={tdPortal}>{fmtFechaCL(l.fecha)}</td>
+                                        <td style={{ ...tdPortal, textAlign: "right" }}>{fmtCant(l.cantidad_inicial)}</td>
+                                        <td style={{ ...tdPortal, textAlign: "right", fontWeight: 700 }}>{fmtCant(l.cantidad_restante)}</td>
+                                        <td style={{ ...tdPortal, textAlign: "right" }}>{fmtPesos(l.costo_unitario)}</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              )}
+                              {p.sin_lote > 0 && <div style={{ fontSize: 11.5, color: "#b45309", marginTop: 6 }}>{fmtCant(p.sin_lote)} unidades del stock no están en ningún lote (se cargaron sin costo).</div>}
+                            </div>
+                            <div>
+                              <div style={{ fontSize: 11, fontWeight: 800, color: "#64748b", textTransform: "uppercase", letterSpacing: ".04em", marginBottom: 6 }}>Últimos 5 movimientos</div>
+                              {p.movimientos.length === 0 ? (
+                                <div style={{ fontSize: 12.5, color: "#94a3b8" }}>Sin movimientos todavía.</div>
+                              ) : (
+                                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, background: "#fff", borderRadius: 8 }}>
+                                  <thead><tr><th style={thPortal}>Fecha</th><th style={thPortal}>Movimiento</th><th style={{ ...thPortal, textAlign: "right" }}>Cantidad</th><th style={{ ...thPortal, textAlign: "right" }}>Queda</th></tr></thead>
+                                  <tbody>
+                                    {p.movimientos.map((m) => {
+                                      const t = TIPOS_MOV[m.tipo] || TIPOS_MOV.ingreso;
+                                      return (
+                                        <tr key={m.id} style={{ borderTop: "1px solid #f1f5f9" }}>
+                                          <td style={{ ...tdPortal, whiteSpace: "nowrap" }}>{fmtFechaCL(m.fecha)}</td>
+                                          <td style={tdPortal}>
+                                            <span style={{ fontWeight: 700, color: t.color }}>{t.texto}</span>
+                                            {m.costo_unitario != null && <span style={{ color: "#64748b" }}> · {fmtPesos(m.costo_unitario)}</span>}
+                                            {m.usuario && <div style={{ fontSize: 11, color: "#94a3b8" }}>{m.usuario}</div>}
+                                          </td>
+                                          <td style={{ ...tdPortal, textAlign: "right", color: t.color, fontWeight: 700 }}>{m.tipo === "salida" ? "−" : "+"}{fmtCant(m.cantidad)}</td>
+                                          <td style={{ ...tdPortal, textAlign: "right" }}>{fmtCant(m.stock_resultante)}</td>
+                                        </tr>
+                                      );
+                                    })}
+                                  </tbody>
+                                </table>
+                              )}
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <div style={{ ...styles.declFooter, justifyContent: "flex-start" }}>
+        <span style={{ fontSize: 12.5, color: "#475569" }}>
+          Valor del inventario (a costo): <strong style={{ color: "#0f172a" }}>{fmtPesos(valor)}</strong>
+        </span>
+      </div>
+
+      {modal && <ModalIngresoInventario producto={modal.producto || null} esAdminPortal={esAdminPortal} guardando={guardando} onCerrar={() => setModal(null)} onGuardar={ingresar} />}
+      {carga && <ModalCargaInventario onCerrar={() => setCarga(false)} onCargar={cargarMasivo} setToast={setToast} />}
+    </div>
+  );
+}
+
+function ModalIngresoInventario({ producto, esAdminPortal, guardando, onCerrar, onGuardar }) {
+  const nuevo = !producto;
+  const [nombre, setNombre] = useState("");
+  const [sku, setSku] = useState("");
+  const [marca, setMarca] = useState("");
+  const [unidad, setUnidad] = useState("");
+  const [bajo, setBajo] = useState("");
+  const [critico, setCritico] = useState("");
+  const [cantidad, setCantidad] = useState("");
+  const [costo, setCosto] = useState("");
+  const [fecha, setFecha] = useState(hoyChile());
+  const [nota, setNota] = useState("");
+
+  const cant = Number(String(cantidad).replace(",", "."));
+  const cst = Number(String(costo).replace(/[^\d]/g, ""));
+  const ok = (!nuevo || nombre.trim()) && cant > 0 && costo !== "" && cst >= 0 && !guardando;
+  const stockAntes = Number(producto?.stock_actual) || 0;
+  const promedioAntes = Number(producto?.costo_promedio) || 0;
+  const promedioDespues = cant > 0 && costo !== "" ? Math.round((stockAntes * promedioAntes + cant * cst) / (stockAntes + cant)) : null;
+
+  function guardar() {
+    if (!ok) return;
+    onGuardar({
+      ...(nuevo
+        ? { nuevo: { nombre: nombre.trim(), sku: sku.trim(), marca: marca.trim(), unidad: unidad.trim(), ...(esAdminPortal ? { stock_alerta: Number(bajo) || null, stock_minimo: Number(critico) || 0 } : {}) } }
+        : { producto_id: producto.id }),
+      cantidad: cant,
+      costo_unitario: cst,
+      fecha,
+      nota: nota.trim(),
+    });
+  }
+
+  const campo = (label, input, extra) => (
+    <label style={{ ...styles.label, flex: "1 1 160px", minWidth: 0 }}>
+      {label}
+      {extra}
+      {input}
+    </label>
+  );
+
+  return createPortal(
+    <div
+      onMouseDown={(e) => { if (e.target === e.currentTarget && !guardando) onCerrar(); }}
+      style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,.55)", backdropFilter: "blur(4px)", zIndex: 13000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, overflowY: "auto" }}
+    >
+      <div className="modal-ingreso-inventario" style={{ width: 520, maxWidth: "100%", margin: "auto", background: "#fff", borderRadius: 16, padding: 22, boxShadow: "0 24px 60px -12px rgba(15,23,42,.30)" }}>
+        <h3 style={{ margin: "0 0 4px", fontSize: 16, fontWeight: 800, color: "#0f172a", display: "flex", alignItems: "center", gap: 8 }}>
+          <PackagePlus size={18} style={{ color: TEAL }} /> {nuevo ? "Nuevo producto" : `Ingresar stock · ${producto.nombre}`}
+        </h3>
+        <div style={{ fontSize: 13, color: "#64748b", marginBottom: 14 }}>
+          {nuevo ? "Se crea con su primer ingreso: la cantidad que llega y lo que costó cada unidad." : `Hoy tiene ${fmtCant(stockAntes)} a un costo promedio de ${fmtPesos(promedioAntes)}. Este ingreso queda como un lote con su propio costo.`}
+        </div>
+
+        {nuevo && (
+          <>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              {campo("Producto *", <input value={nombre} onChange={(e) => setNombre(e.target.value)} placeholder="Ej: Resina compuesta A2" style={styles.input} />)}
+            </div>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              {campo("SKU", <input value={sku} onChange={(e) => setSku(e.target.value)} placeholder="Opcional" style={styles.input} />)}
+              {campo("Marca", <input value={marca} onChange={(e) => setMarca(e.target.value)} placeholder="Opcional" style={styles.input} />)}
+              {campo("Formato", <input value={unidad} onChange={(e) => setUnidad(e.target.value)} placeholder="Caja, unidad…" style={styles.input} />)}
+            </div>
+            {esAdminPortal && (
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                {campo("Stock bajo", <input type="number" min="0" step="any" value={bajo} onChange={(e) => setBajo(e.target.value)} placeholder="0" style={styles.input} />)}
+                {campo("Stock crítico", <input type="number" min="0" step="any" value={critico} onChange={(e) => setCritico(e.target.value)} placeholder="0" style={styles.input} />)}
+              </div>
+            )}
+          </>
+        )}
+
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          {campo("Cantidad que entra *", <input type="number" min="0" step="any" value={cantidad} onChange={(e) => setCantidad(e.target.value)} placeholder="0" style={styles.input} />)}
+          {campo("Costo unitario *", <input inputMode="numeric" value={costo === "" ? "" : `$${Number(String(costo).replace(/[^\d]/g, "") || 0).toLocaleString("es-CL")}`} onChange={(e) => setCosto(e.target.value.replace(/[^\d]/g, ""))} placeholder="$0" style={styles.input} />)}
+          {campo("Fecha", <input type="date" value={fecha} max={hoyChile()} onChange={(e) => setFecha(e.target.value)} style={styles.input} />)}
+        </div>
+        <label style={styles.label}>
+          Nota <span style={{ fontWeight: 400, opacity: 0.7, textTransform: "none" }}>(opcional)</span>
+          <input value={nota} onChange={(e) => setNota(e.target.value.slice(0, 200))} placeholder="Proveedor, N° de factura, lote…" style={styles.input} />
+        </label>
+
+        {!nuevo && promedioDespues != null && (
+          <div className="resumen-ingreso" style={{ fontSize: 12.5, color: "#0f172a", background: "#f0fdfa", border: "1px solid #99f6e4", borderRadius: 10, padding: "8px 12px", marginBottom: 6 }}>
+            Quedará con <strong>{fmtCant(stockAntes + cant)}</strong> unidades y un costo promedio de <strong>{fmtPesos(promedioDespues)}</strong>.
+          </div>
+        )}
+
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 10, flexWrap: "wrap" }}>
+          <button type="button" onClick={onCerrar} disabled={guardando} style={styles.btnSecundarioChico}>Cancelar</button>
+          <button type="button" onClick={guardar} disabled={!ok} style={{ ...styles.btnPrimarioChico, opacity: ok ? 1 : 0.55, cursor: ok ? "pointer" : "not-allowed" }}>
+            <Save size={14} /> {guardando ? "Guardando…" : nuevo ? "Crear e ingresar" : "Ingresar stock"}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+// Encabezados de la planilla de Inventario → campo. Se normalizan (minúsculas, sin tildes).
+const INVENTARIO_ALIASES = {
+  sku: "sku", codigo: "sku", code: "sku",
+  producto: "nombre", nombre: "nombre", "nombre del producto": "nombre", descripcion: "nombre",
+  marca: "marca",
+  unidad: "unidad", formato: "unidad", "unidad de medida": "unidad", um: "unidad",
+  cantidad: "cantidad", ingreso: "cantidad", stock: "cantidad", "stock actual": "cantidad", stock_actual: "cantidad",
+  costo: "costo", "costo unitario": "costo", costo_unitario: "costo", precio: "costo", "precio unitario": "costo", precio_unitario: "costo", valor: "costo",
+};
+
+function ModalCargaInventario({ onCerrar, onCargar, setToast }) {
+  const [archivo, setArchivo] = useState(null);
+  const [filas, setFilas] = useState([]);
+  const [parsing, setParsing] = useState(false);
+  const [enviando, setEnviando] = useState(false);
+  const [resultado, setResultado] = useState(null);
+
+  async function manejarArchivo(file) {
+    if (!file) return;
+    setArchivo(file);
+    setParsing(true);
+    setFilas([]);
+    setResultado(null);
+    try {
+      const XLSX = await import("xlsx");
+      const wb = XLSX.read(await file.arrayBuffer(), { type: "array" });
+      const raw = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: "", raw: false });
+      const leidas = raw.map((row) => {
+        const f = { sku: "", nombre: "", marca: "", unidad: "", cantidad: "", costo: "" };
+        for (const [k, v] of Object.entries(row)) {
+          const c = INVENTARIO_ALIASES[normalizarEncabezado(k)];
+          if (!c) continue;
+          f[c] = c === "cantidad" || c === "costo" ? parsearNumeroCarga(v) : typeof v === "string" ? v.trim() : v ?? "";
+        }
+        return f;
+      }).filter((f) => String(f.nombre || "").trim() && Number(f.cantidad) > 0);
+      setFilas(leidas);
+      if (!leidas.length) setToast({ type: "warning", mensaje: "No se encontraron filas con producto y cantidad mayor que 0." });
+    } catch (e) {
+      console.error(e);
+      setToast({ type: "error", mensaje: "No se pudo leer el archivo. ¿Es un .xlsx, .xls o .csv válido?" });
+    } finally {
+      setParsing(false);
+    }
+  }
+
+  async function descargarPlantilla() {
+    try {
+      const XLSX = await import("xlsx");
+      const ws = XLSX.utils.json_to_sheet([{ sku: "EJ-001", producto: "Resina compuesta A2", marca: "3M", unidad: "caja", cantidad: 12, costo: 18900 }], { header: ["sku", "producto", "marca", "unidad", "cantidad", "costo"] });
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Inventario");
+      XLSX.writeFile(wb, "plantilla_inventario.xlsx");
+    } catch {
+      setToast({ type: "error", mensaje: "No se pudo generar la plantilla." });
+    }
+  }
+
+  async function enviar() {
+    setEnviando(true);
+    try {
+      setResultado(await onCargar(filas));
+    } catch (e) {
+      setToast({ type: "error", titulo: "No se pudo cargar", mensaje: e?.message || "Intente nuevamente." });
+    } finally {
+      setEnviando(false);
+    }
+  }
+
+  return (
+    <div style={modalStyles.overlay} onClick={() => { if (!enviando) onCerrar(); }}>
+      <div className="modal-carga-inventario" style={{ ...modalStyles.card, maxWidth: 600 }} onClick={(e) => e.stopPropagation()}>
+        <div style={modalStyles.header}>
+          <div style={modalStyles.headerIcono}><Upload size={20} /></div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={modalStyles.eyebrow}>Inventario</div>
+            <div style={modalStyles.titulo}>Carga masiva de ingresos</div>
+            <div style={modalStyles.sub}>Cada fila es un ingreso con su costo. Si el producto no existe en esta sucursal, se crea.</div>
+          </div>
+          <button onClick={onCerrar} style={modalStyles.btnCerrar} title="Cerrar" disabled={enviando}><X size={18} /></button>
+        </div>
+        <div style={modalStyles.body}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
+            <span style={{ fontSize: 12.5, color: "#64748b" }}>Columnas: SKU, producto, marca, unidad, cantidad, costo.</span>
+            <button type="button" onClick={descargarPlantilla} style={cargaStyles.btnPlantilla}><Download size={14} /> Descargar plantilla</button>
+          </div>
+          <label style={cargaStyles.dropzone}>
+            <input type="file" accept=".xlsx,.xls,.csv" onChange={(e) => manejarArchivo(e.target.files?.[0])} style={{ display: "none" }} />
+            <FileSpreadsheet size={26} style={{ color: TEAL }} />
+            <span style={{ fontWeight: 600, color: "#0f172a", fontSize: 13.5 }}>{archivo ? archivo.name : "Haga clic para elegir un archivo"}</span>
+            <span style={{ fontSize: 11.5, color: "#94a3b8" }}>.xlsx, .xls o .csv</span>
+          </label>
+          {parsing && <div style={{ marginTop: 14, fontSize: 13, color: "#64748b", textAlign: "center" }}>Leyendo archivo…</div>}
+          {filas.length > 0 && !resultado && (
+            <div style={{ marginTop: 14, overflowX: "auto" }}>
+              <div style={{ fontSize: 12.5, color: "#334155", marginBottom: 6 }}>{filas.length} ingreso{filas.length === 1 ? "" : "s"} leído{filas.length === 1 ? "" : "s"}{filas.length > 8 ? " (se muestran los primeros 8)" : ""}.</div>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+                <thead><tr style={{ background: "#f8fafc" }}><th style={thPortal}>Producto</th><th style={{ ...thPortal, textAlign: "right" }}>Cantidad</th><th style={{ ...thPortal, textAlign: "right" }}>Costo</th></tr></thead>
+                <tbody>
+                  {filas.slice(0, 8).map((f, i) => (
+                    <tr key={i} style={{ borderTop: "1px solid #f1f5f9" }}>
+                      <td style={tdPortal}>{f.nombre}{f.sku ? <span style={{ color: "#94a3b8" }}> · {f.sku}</span> : null}</td>
+                      <td style={{ ...tdPortal, textAlign: "right" }}>{fmtCant(f.cantidad)}</td>
+                      <td style={{ ...tdPortal, textAlign: "right" }}>{f.costo === "" ? "$0" : fmtPesos(f.costo)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {resultado && (
+            <div style={{ marginTop: 14, fontSize: 13, color: "#0f172a" }}>
+              <strong>{resultado.ingresados}</strong> ingreso{resultado.ingresados === 1 ? "" : "s"} registrado{resultado.ingresados === 1 ? "" : "s"} ({resultado.creados} producto{resultado.creados === 1 ? "" : "s"} nuevo{resultado.creados === 1 ? "" : "s"}).
+              {(resultado.errores || []).length > 0 && (
+                <ul style={{ margin: "8px 0 0", paddingLeft: 18, color: "#b91c1c", fontSize: 12.5 }}>
+                  {resultado.errores.slice(0, 10).map((e) => <li key={e.fila}>Fila {e.fila} ({e.nombre || "sin nombre"}): {e.error}</li>)}
+                </ul>
+              )}
+            </div>
+          )}
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 16, flexWrap: "wrap" }}>
+            <button type="button" onClick={onCerrar} disabled={enviando} style={styles.btnSecundarioChico}>{resultado ? "Cerrar" : "Cancelar"}</button>
+            {!resultado && (
+              <button type="button" onClick={enviar} disabled={!filas.length || enviando} style={{ ...styles.btnPrimarioChico, opacity: filas.length && !enviando ? 1 : 0.55 }}>
+                <Upload size={14} /> {enviando ? "Ingresando…" : `Ingresar ${filas.length || ""} producto${filas.length === 1 ? "" : "s"}`}
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function PanelUsuariosPortal({ setToast }) {
   const [usuarios, setUsuarios] = useState([]);

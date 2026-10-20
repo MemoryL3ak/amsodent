@@ -537,6 +537,15 @@ flete al cotizar.
 ### Monitoreo Stock Clientes (/monitoreo-stock)
 Vista interna del stock que declaran los clientes en su portal, con umbrales
 Bajo y Crítico (semáforo) y correos de alerta por cliente.
+INVENTARIO DEL CLIENTE (oct 2026, en su portal): la pestaña «Inventario»
+registra lo que ENTRA, cada ingreso como un lote con su costo (un producto
+puede tener varios costos). En «Gestión de Stock» el stock solo BAJA, sale del
+lote más antiguo y el precio unitario no se edita (costo promedio ponderado de
+lo que queda). Productos nuevos y carga masiva van en Inventario; últimos 5
+movimientos por producto. Editan admin y asistente de la cuenta; stock bajo y
+crítico, solo el admin. SOLICITAR REUNIÓN: el cliente elige motivo (o «Otros»
+y lo escribe); le llega a Lisbeth (campana + correo) y el aviso abre la
+Bitácora con la reunión prellenada.
 
 ### Ofertas del Portal (/ofertas-portal)
 Las OFERTAS ESPECIALES que el cliente ve en la pestaña "Ofertas" de su portal.
