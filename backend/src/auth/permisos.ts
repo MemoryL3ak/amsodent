@@ -43,6 +43,9 @@ export const MODULOS: string[] = [
   // (un vendedor ve solo las suyas): asignables por perfil.
   'inventario',
   'inventario_kpis',
+  // (2026-10-20) Ver el costo de los productos (solo lectura) sin ser admin: en
+  // la cotización y en la ficha del producto. Asignable por perfil (Francisco).
+  'ver_costos',
   // (2026-10-16) Gestión de compras: adjudicadas vs. stock; asignable por perfil.
   'gestion_compras',
   'cotizaciones_todas',

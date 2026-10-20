@@ -335,6 +335,8 @@ export default function CrearLicitacion() {
   /* PERFIL / ROL */
   const [perfilLoading, setPerfilLoading] = useState(true);
   const [rol, setRol] = useState(null);
+  // (2026-10-20) Permiso «ver_costos»: ve el costo (solo lectura) sin ser admin.
+  const [verCostos, setVerCostos] = useState(false);
 
   // ✅ vendedor (perfil)
   const [perfilNombre, setPerfilNombre] = useState("");
@@ -358,6 +360,7 @@ export default function CrearLicitacion() {
         const perfil = await api.get("/auth/profile");
         setPerfilEmail(perfil?.email || "");
         setRol(perfil?.rol || null);
+        setVerCostos(Array.isArray(perfil?.permisos) && perfil.permisos.includes("ver_costos"));
         setPerfilNombre(perfil?.nombre || "");
         setPerfilCelular(perfil?.celular || "");
       } catch {
@@ -3221,7 +3224,7 @@ export default function CrearLicitacion() {
                         />
                       </div>
 
-                      {esAdmin && (
+                      {(esAdmin || verCostos) && (
                         <div className="md:col-span-2">
                           <label className="block text-xs text-gray-600 mb-1">
                             Costo
@@ -3229,7 +3232,7 @@ export default function CrearLicitacion() {
                           <input
                             type="text"
                             inputMode="numeric"
-                            className="w-full h-10 rounded-md border border-gray-300 px-3 text-sm font-semibold bg-white"
+                            className={`w-full h-10 rounded-md border border-gray-300 px-3 text-sm font-semibold ${esAdmin ? "bg-white" : "bg-gray-50"}`}
                             value={
                               (it.costoStr ?? "").toString() !== ""
                                 ? it.costoStr
@@ -3237,8 +3240,10 @@ export default function CrearLicitacion() {
                                     String(Number(getCostoParaItem(it) || 0))
                                   )
                             }
-                            onChange={(e) => actualizarCostoItem(index, e.target.value)}
-                            onBlur={() => finalizarEdicionCosto(index)}
+                            readOnly={!esAdmin}
+                            title={esAdmin ? undefined : "Costo del producto (solo lectura)"}
+                            onChange={(e) => { if (esAdmin) actualizarCostoItem(index, e.target.value); }}
+                            onBlur={() => { if (esAdmin) finalizarEdicionCosto(index); }}
                           />
                         </div>
                       )}

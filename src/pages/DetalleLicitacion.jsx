@@ -560,6 +560,8 @@ export default function EditarLicitacion() {
   const [vendedorCorreo, setVendedorCorreo] = useState("");
 
   const [rol, setRol] = useState(null);
+  // (2026-10-20) Permiso «ver_costos»: ve el costo (solo lectura) sin ser admin.
+  const [verCostos, setVerCostos] = useState(false);
   const [miCorreo, setMiCorreo] = useState("");
   const esAdmin = useMemo(() => {
     const r = (rol ?? "").toString().trim().toLowerCase();
@@ -1020,6 +1022,7 @@ export default function EditarLicitacion() {
         if (!profile) return;
 
         setRol(profile.rol ?? null);
+        setVerCostos(Array.isArray(profile.permisos) && profile.permisos.includes("ver_costos"));
         setMiCorreo(profile.email || "");
 
         setVendedorCorreo((prev) => prev || profile.email || "");
@@ -4301,7 +4304,7 @@ export default function EditarLicitacion() {
                         />
                       </div>
 
-                      {esAdmin && (
+                      {(esAdmin || verCostos) && (
                         <div className="md:col-span-2">
                           <label className="block text-xs text-gray-600 mb-1">
                             Costo
@@ -4309,7 +4312,8 @@ export default function EditarLicitacion() {
                           <input
                             type="text"
                             inputMode="numeric"
-                            className={`${inputClassH10} text-sm font-semibold`}
+                            readOnly={!esAdmin}
+                            className={`${inputClassH10} text-sm font-semibold ${esAdmin ? "" : "bg-gray-50"}`}
                             value={
                               (it.costoStr ?? "").toString() !== ""
                                 ? it.costoStr
@@ -4317,9 +4321,9 @@ export default function EditarLicitacion() {
                                     String(Number(getCostoParaItem(it) || 0)),
                                   )
                             }
-                            onChange={(e) => actualizarCostoItem(index, e.target.value)}
-                            onBlur={() => finalizarEdicionCosto(index)}
-                            title="Costo solo para esta cotización — no modifica el producto. Editable en cualquier estado: al guardar actualiza los KPIs de margen."
+                            onChange={(e) => { if (esAdmin) actualizarCostoItem(index, e.target.value); }}
+                            onBlur={() => { if (esAdmin) finalizarEdicionCosto(index); }}
+                            title={esAdmin ? "Costo solo para esta cotización — no modifica el producto. Editable en cualquier estado: al guardar actualiza los KPIs de margen." : "Costo del producto (solo lectura)"}
                           />
                         </div>
                       )}
