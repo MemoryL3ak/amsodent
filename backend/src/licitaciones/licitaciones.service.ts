@@ -527,15 +527,55 @@ export class LicitacionesService {
     return { res, json };
   }
 
-  async mercadoPublicoDetalle(codigo: string) {
+  /* (2026-10-21) Caché de fichas (tabla mp_fichas_cache): la copia guardada se
+     muestra al tiro y la API —12 a 29 s por ficha, 504 frecuentes— solo se
+     consulta si no hay copia, si es más vieja que FICHA_FRESCA_MS o si el
+     usuario pide «Actualizar». Si la API falla y hay copia, se devuelve la
+     copia marcada como vencida en vez de un error. Sin la migración
+     20261021_mp_productos_fichas la caché simplemente no existe y se consulta
+     en vivo como antes. */
+  private static readonly FICHA_FRESCA_MS = 6 * 3600 * 1000;
+
+  async mercadoPublicoDetalle(codigo: string, opts: { refrescar?: boolean } = {}) {
     const ticket = this.mpTicket();
     const cod = String(codigo || '').trim();
     if (!/^[A-Za-z0-9-]{3,40}$/.test(cod)) {
       throw new BadRequestException('Código de proceso inválido.');
     }
-    return /-COT\w*$/i.test(cod)
-      ? this.fichaCompraAgil(cod, ticket)
-      : this.fichaLicitacion(cod, ticket);
+    const client = this.supabase.getClient();
+    const claveCache = cod.toUpperCase();
+    const { data: previa } = await client
+      .from('mp_fichas_cache')
+      .select('ficha, consultado_at')
+      .eq('codigo', claveCache)
+      .maybeSingle();
+    const copia: any = previa || null;
+    const edad = copia?.consultado_at ? Date.now() - Date.parse(copia.consultado_at) : Infinity;
+    if (!opts.refrescar && copia?.ficha && edad < LicitacionesService.FICHA_FRESCA_MS) {
+      return { ...copia.ficha, cache: { consultado_at: copia.consultado_at, vencida: false } };
+    }
+    let ficha: any;
+    try {
+      ficha = /-COT\w*$/i.test(cod)
+        ? await this.fichaCompraAgil(cod, ticket)
+        : await this.fichaLicitacion(cod, ticket);
+    } catch (e: any) {
+      if (copia?.ficha) {
+        return {
+          ...copia.ficha,
+          cache: { consultado_at: copia.consultado_at, vencida: true, error: String(e?.message || e).slice(0, 200) },
+        };
+      }
+      throw e;
+    }
+    const ahora = new Date().toISOString();
+    const { error: errCache } = await client
+      .from('mp_fichas_cache')
+      .upsert([{ codigo: claveCache, ficha, consultado_at: ahora }]);
+    if (errCache && !/does not exist|schema cache/i.test(errCache.message)) {
+      this.logger.warn(`No se pudo guardar la ficha ${cod} en caché: ${errCache.message}`);
+    }
+    return { ...ficha, cache: errCache ? null : { consultado_at: ahora, vencida: false } };
   }
 
   /* ===========================================================
@@ -3668,8 +3708,16 @@ export class LicitacionesService {
     const inicio = fila?.inicio_at ? new Date(fila.inicio_at).getTime() : 0;
     const enFila = fila?.estado === 'corriendo' && Date.now() - inicio < LicitacionesService.ANALISIS_GLOBAL_COLGADO_MS;
     const colgada = fila?.estado === 'corriendo' && !enFila;
+    // (2026-10-21) Corre en el worker: desde el web se sabe por la cola.
+    let enCola = false;
+    try {
+      const porTipo = await this.cola.pendientesPorTipo();
+      enCola = ((porTipo?.analisis_global?.pendientes || 0) + (porTipo?.analisis_global?.en_curso || 0)) > 0;
+    } catch {
+      /* sin cola (migración pendiente) */
+    }
     return {
-      corriendo: this.analisisGlobalCorriendo || enFila,
+      corriendo: this.analisisGlobalCorriendo || enFila || enCola,
       estado: colgada ? 'error' : fila?.estado || null,
       error: colgada ? 'La corrida anterior se interrumpió (el servidor se reinició a mitad).' : fila?.error || null,
       inicio_at: fila?.inicio_at || null,
@@ -3693,21 +3741,39 @@ export class LicitacionesService {
   }
 
   // Sin el gate de correos: lo usa el cron diario.
-  iniciarAnalisisProductosGlobalSinGate(motivo: string) {
+  /* (2026-10-21) Ya no corre dentro de este proceso: se encola y el robot lo
+     ejecuta en el worker. La clave única de la cola (analisis_global/unica)
+     evita dos corridas a la vez. Dos intentos como máximo: es una corrida de
+     ~110 llamadas y no vale la pena repetirla seis veces. */
+  async iniciarAnalisisProductosGlobalSinGate(motivo: string) {
     if (this.analisisGlobalCorriendo) {
       throw new BadRequestException('Ya hay un análisis global corriendo; espera a que termine.');
     }
-    void this.correrAnalisisProductosGlobal(motivo).catch((e) =>
-      this.logger.error(`Análisis global de productos MP falló: ${String(e?.message || e)}`),
+    const r = await this.cola.encolar(
+      [{ tipo: 'analisis_global', clave: 'unica', prioridad: 8, max_intentos: 2, payload: { motivo } }],
+      { solicitadoPor: motivo },
     );
-    return { iniciado: true };
+    if (!r.encolados) {
+      throw new BadRequestException('Ya hay un análisis global en cola o corriendo; espera a que termine.');
+    }
+    return { iniciado: true, lote: r.lote };
+  }
+
+  /* Exploración automática del explorador, como trabajo de la cola. */
+  async encolarExploracion(motivo: string) {
+    const r = await this.cola.encolar(
+      [{ tipo: 'exploracion', clave: 'unica', prioridad: 6, max_intentos: 3, payload: { motivo } }],
+      { solicitadoPor: motivo },
+    );
+    return { ...r, en_cola: !r.encolados };
   }
 
   get analisisGlobalEnCurso(): boolean {
     return this.analisisGlobalCorriendo;
   }
 
-  private async correrAnalisisProductosGlobal(motivo = 'manual') {
+  // Público desde 2026-10-21: lo ejecuta el robot (MpRobotService) como trabajo de la cola.
+  async correrAnalisisProductosGlobal(motivo = 'manual') {
     this.analisisGlobalCorriendo = true;
     try {
       await this.guardarEstadoAnalisisGlobal({ estado: 'corriendo', inicio_at: new Date().toISOString(), error: null }).catch(() => undefined);

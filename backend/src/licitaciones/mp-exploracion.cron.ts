@@ -103,40 +103,22 @@ export class MpExploracionCron implements OnModuleInit, OnModuleDestroy {
     await this.correr(`programada ${String(hora).padStart(2, '0')}:00`);
   }
 
+  /** (2026-10-21) Ya no busca desde acá: encola la exploración y el robot
+      (worker) la corre y guarda el resultado. No hace falta cederle el paso a
+      la sincronización: el limitador global reparte las conexiones. */
   async correr(motivo: string) {
     if (this.corriendo) return { omitida: true };
     this.corriendo = true;
-    const t0 = Date.now();
     try {
-      /* Ceder el paso a la sincronización del Análisis. El respiro de 90 s
-         existe porque, cuando comparten hora, ambos crones despiertan en el
-         mismo minuto: hay que darle tiempo a que la sincronización marque
-         `corriendo` antes de decidir si está libre. Si a esta hora no hay
-         sincronización programada, no se espera: se parte al tiro. */
-      const sync = this.mpCron.estado();
-      const horaActual = `${String(this.ahoraEnChile().hora).padStart(2, '0')}:00`;
-      if (sync.activa && sync.horarios.includes(horaActual)) {
-        await new Promise((r) => setTimeout(r, 90_000));
-      }
-      const esperaTope = Date.now() + ESPERA_SYNC_MS;
-      while (this.mpCron.estado().corriendo && Date.now() < esperaTope) {
-        await new Promise((r) => setTimeout(r, REVISA_SYNC_MS));
-      }
-      if (this.mpCron.estado().corriendo) {
-        this.log.warn(`Exploración ${motivo}: la sincronización lleva 90 min ocupando la API; se corre igual.`);
-      }
-
-      this.log.log(`Inicio de exploración ${motivo}.`);
-      const r: any = await this.licitaciones.explorarYGuardar(motivo);
-      const min = Math.round((Date.now() - t0) / 60000);
+      const r: any = await this.licitaciones.encolarExploracion(motivo);
       this.log.log(
-        r?.guardado
-          ? `Fin de exploración ${motivo}: ${r.items} procesos de ${r.palabras} palabras · ${min} min.`
-          : `Exploración ${motivo} sin guardar: ${r?.motivo || 'sin detalle'}.`,
+        r?.encolados
+          ? `Exploración ${motivo} encolada (lote ${r.lote}).`
+          : `Exploración ${motivo}: ya había una en cola o corriendo.`,
       );
       return r;
     } catch (e: any) {
-      this.log.error(`Exploración ${motivo} interrumpida: ${String(e?.message || e)}`);
+      this.log.error(`Exploración ${motivo} no se pudo encolar: ${String(e?.message || e)}`);
       return { error: String(e?.message || e) };
     } finally {
       this.corriendo = false;
