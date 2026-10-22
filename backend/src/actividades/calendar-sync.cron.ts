@@ -1,5 +1,6 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { ActividadesService } from './actividades.service';
+import { correTareasDeFondo, MOTIVO_SIN_FONDO } from '../rol-proceso';
 
 /* ── Importación automática Google Calendar → bitácora (pedido 2026-09-04) ──
    Cada 5 minutos revisa el calendario de cada cuenta de Google conectada en
@@ -22,6 +23,10 @@ export class CalendarSyncCron implements OnModuleInit, OnModuleDestroy {
   constructor(private actividades: ActividadesService) {}
 
   onModuleInit() {
+    if (!correTareasDeFondo()) {
+      this.log.log(`Importación de Google Calendar: no corre en este proceso (${MOTIVO_SIN_FONDO}).`);
+      return;
+    }
     if (String(process.env.CALENDAR_SYNC_AUTO || '').toLowerCase() === 'off') {
       this.log.log('Importación de Google Calendar a la bitácora DESACTIVADA (CALENDAR_SYNC_AUTO=off).');
       return;

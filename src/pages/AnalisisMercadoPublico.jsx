@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { api } from "../lib/api";
+import { estadoCola, seguirLote, loteTerminado, cancelarLote, trabajosDeLote, avisoRobot, progresoDeLote } from "../lib/mpCola";
 import Toast from "../components/Toast";
 import DateFilter from "../components/DateFilter";
 import DropdownSelect from "../components/ui/DropdownSelect";
@@ -233,141 +234,141 @@ export default function AnalisisMercadoPublico() {
 
   useEffect(() => { cargar(); }, []);
 
-  // Sincronización INCREMENTAL: tandas de 8 procesos en loop, refrescando la
-  // tabla tras cada tanda — los resultados aparecen en vivo, sin recargar.
-  // `forzar` re-consulta también los procesos ya resueltos. Se usa para
-  // rellenar datos que se agregaron después (la fecha de adjudicación, por
-  // ejemplo): sin esto esos procesos nunca se vuelven a preguntar y el campo
-  // queda vacío para siempre. Gasta cuota de la API, así que es a pedido.
-  // Detener la sincronización. Va en refs y no en estado porque el bucle de
-  // abajo lo lee entre tandas: con `useState` leería el valor congelado del
-  // render en que arrancó y nunca se enteraría del clic.
-  const detenerRef = useRef(false);
-  const abortRef = useRef(null);
-  // El ref manda el bucle, pero además hace falta ESTADO para que el botón
-  // reaccione al clic: un ref no re-renderiza y el botón se quedaría igual.
-  const [deteniendo, setDeteniendo] = useState(false);
+  /* (2026-10-21) La sincronización ya no corre en esta pestaña. El botón
+     ENCOLA los procesos pendientes y el robot de Mercado Público (proceso
+     worker del backend) los consulta de a pocos, con reintentos y respetando
+     la cuota. Aquí solo se sigue el avance del lote cada pocos segundos y se
+     refresca la tabla con lo que va llegando (incremental, ~90 KB).
 
-  function detenerSync() {
-    detenerRef.current = true;
+     Cerrar la pestaña no detiene nada: al volver, la pantalla se engancha sola
+     al lote que siga corriendo (sea de este usuario, de otra pestaña o de la
+     corrida automática de las 23:00). «Detener» cancela lo que queda en cola;
+     lo ya consultado queda guardado. */
+  const loteRef = useRef(null);    // lote que se está siguiendo
+  const abortRef = useRef(null);   // corta el SEGUIMIENTO (no al robot)
+  const [deteniendo, setDeteniendo] = useState(false);
+  const [robot, setRobot] = useState(null);
+
+  async function detenerSync() {
+    if (!loteRef.current) return;
     setDeteniendo(true);
-    // Aborta también la tanda en vuelo: sin esto habría que esperar hasta
-    // 30 s a que Mercado Público conteste antes de que el botón hiciera algo.
-    abortRef.current?.abort();
+    try {
+      await cancelarLote(loteRef.current);
+    } catch (e) {
+      setDeteniendo(false);
+      setToast({ type: "error", message: e?.message || "No se pudo detener la sincronización." });
+    }
   }
 
-  async function sincronizar(forzar = false) {
+  /* Sigue un lote hasta que termine, refrescando la tabla en cada vuelta. */
+  async function seguir(lote, { inicio = Date.now(), anunciar = true } = {}) {
+    loteRef.current = lote;
+    abortRef.current = new AbortController();
     setSincronizando(true);
-    setProgresoSync({ hechas: 0, guardadas: 0, restantes: null, etaMs: null, transcurrido: 0 });
-    detenerRef.current = false;
-    setDeteniendo(false);
-    const inicio = Date.now();
-    let hechas = 0;
-    let guardadas = 0;
-    let finalizadas = 0;
-    let erroresTotal = 0;
-    let cuotaAgotada = false;
-    let detenida = false;
-    // Tandas seguidas sin guardar NADA. Es la señal de que la API se cayó:
-    // los intentos siguen, la barra avanza, pero no llega ni una ficha.
-    let secas = 0;
-    let apiCaida = false;
-    let ultimasRestantes = 0;
+    let ultimo = null;
     try {
-      // El lote calza con el pool del backend: una tanda es UNA oleada de
-      // consultas paralelas (~30 s), en vez de encadenar varias dentro de la
-      // misma request y arriesgar el corte del proxy.
-      const LOTE = 12;
-      /* 300 × 12 = 3.600 procesos, por encima de las 3.348 cotizaciones con
-         código de Mercado Público que hay hoy: una sola pasada alcanza a
-         recorrer TODO el histórico sin volver a pulsar el botón. Estaba en 150
-         (1.800), calculado cuando el panel solo cubría el mes en curso; para
-         una puesta al día desde febrero —2.402 pendientes— se habría cortado a
-         mitad de camino. Es solo un tope de seguridad: el bucle termina solo
-         cuando no quedan pendientes. */
-      const MAX_TANDAS = 300;
-      for (let i = 0; i < MAX_TANDAS; i++) {
-        if (detenerRef.current) { detenida = true; break; }
-        abortRef.current = new AbortController();
-        const r = await api.post("/mercado-publico/sincronizar", {
-          desde: syncDesde || undefined,
-          hasta: syncHasta || undefined,
-          lote: LOTE,
-          forzar,
-        }, { signal: abortRef.current.signal });
-        hechas += r.consultadas || 0;
-        // `consultadas` cuenta INTENTOS —el backend lo suma antes de llamar a
-        // la API—, mientras que `actualizadas` cuenta fichas realmente
-        // guardadas. Se muestran las dos: cuando Mercado Público está lento y
-        // devuelve 504, la barra avanza igual y sin este dato parecería que se
-        // guardó algo que nunca llegó.
-        guardadas += r.actualizadas || 0;
-        finalizadas += r.finalizadas || 0;
-        erroresTotal += r.errores?.length || 0;
-        cuotaAgotada = !!r.cuota_agotada;
-        const restantes = r.restantes ?? 0;
-        // Un fallo ya no saca el proceso de la cola, solo lo manda al final, así
-        // que el avance REAL es lo guardado y con eso se estima lo que falta.
-        // Estimar con los intentos daría un tiempo optimista y falso en cuanto
-        // la API empieza a devolver 504.
-        secas = r.actualizadas ? 0 : secas + 1;
-        ultimasRestantes = restantes;
-        const transcurrido = Date.now() - inicio;
-        /* Hace falta una muestra mínima para estimar. Con 1 ficha guardada en
-           3 minutos la regla de tres daba «quedan 11 h 26 min», una cifra tan
-           precisa como inventada: basta que la siguiente tanda traiga 8 fichas
-           para que pase a 40 minutos. Hasta las 10 guardadas se muestra
-           «calculando» en vez de un número que asusta y no significa nada. */
-        const MUESTRA_MINIMA = 10;
-        const etaMs = guardadas >= MUESTRA_MINIMA ? (transcurrido / guardadas) * restantes : null;
-        setProgresoSync({ hechas, guardadas, restantes, etaMs, transcurrido });
-        // Refresco en CADA tanda: al ser incremental cuesta ~90 KB, así que los
-        // indicadores y la tabla se mueven cada ~45 s en vez de cada 4 minutos.
-        await refrescarNuevos();
-        if (cuotaAgotada || !r.restantes || !r.consultadas) break;
-        /* 5 tandas seguidas = 60 intentos sin una sola ficha guardada. Antes se
-           reintentaba en vano hasta agotar el tope; ahora se corta y se dice
-           que fue la API, en vez de anunciar «completa» dejando miles fuera. */
-        if (secas >= 5) { apiCaida = true; break; }
-      }
-      await refrescarNuevos();
-      const partes = [`${guardadas} ficha${guardadas === 1 ? "" : "s"} actualizada${guardadas === 1 ? "" : "s"}`];
-      // Solo se menciona el total intentado cuando NO coincide con lo guardado:
-      // si coincide, repetir el mismo número dos veces confunde.
-      if (hechas !== guardadas) partes.push(`de ${hechas} consultadas`);
-      if (finalizadas) partes.push(`${finalizadas} con resultado final`);
-      if (cuotaAgotada) partes.push("cuota diaria de la API agotada, el resto queda para mañana");
-      if (erroresTotal) partes.push(`${erroresTotal} con error`);
-      /* Tres finales distintos, y hay que decir cuál fue: antes cualquiera de
-         ellos anunciaba «completa», así que rendirse porque la API no responde
-         se leía igual que terminar el trabajo. */
-      setToast({
-        type: detenida || apiCaida ? "info" : erroresTotal || cuotaAgotada ? "info" : "success",
-        message: detenida
-          ? `Sincronización detenida: ${partes.join(" · ")}. Lo consultado quedó guardado.`
-          : apiCaida
-          ? `Mercado Público no está respondiendo: ${partes.join(" · ")}. Quedan ${ultimasRestantes} por consultar; vuelve a intentarlo más tarde o espera la corrida automática de las 23:00.`
-          : `Sincronización completa: ${partes.join(" · ")}.`,
+      const est = await seguirLote(lote, {
+        signal: abortRef.current.signal,
+        onTick: (resumen, rob) => {
+          ultimo = resumen;
+          setRobot(rob || null);
+          setProgresoSync(progresoDeLote(resumen, inicio));
+          void refrescarNuevos();
+        },
       });
-    } catch (e) {
-      // Abortar la request en vuelo NO es un error: es el usuario deteniendo.
-      if (detenerRef.current || e?.name === "AbortError") {
-        await refrescarNuevos();
+      ultimo = est?.lote || ultimo;
+      await refrescarNuevos();
+      if (anunciar && ultimo && !abortRef.current?.signal?.aborted) {
+        const p = progresoDeLote(ultimo, inicio);
+        const partes = [`${p.guardadas} ficha${p.guardadas === 1 ? "" : "s"} actualizada${p.guardadas === 1 ? "" : "s"}`];
+        // Solo se menciona el total consultado cuando NO coincide con lo guardado.
+        if (p.hechas !== p.guardadas) partes.push(`de ${p.hechas} consultadas`);
+        if (p.finalizadas) partes.push(`${p.finalizadas} con resultado final`);
+        if (p.errores) partes.push(`${p.errores} sin respuesta de Mercado Público tras varios intentos`);
         setToast({
-          type: "info",
-          message: `Sincronización detenida: ${guardadas} ficha${guardadas === 1 ? "" : "s"} actualizada${guardadas === 1 ? "" : "s"}. Lo consultado quedó guardado.`,
+          type: p.cancelados || p.errores ? "info" : "success",
+          message: p.cancelados
+            ? `Sincronización detenida: ${partes.join(" · ")}. Lo consultado quedó guardado.`
+            : `Sincronización completa: ${partes.join(" · ")}.`,
         });
-      } else {
-        setToast({ type: "error", message: e?.message || "No se pudo sincronizar." });
+      }
+    } catch (e) {
+      if (!abortRef.current?.signal?.aborted) {
+        setToast({ type: "error", message: e?.message || "No se pudo seguir la sincronización." });
       }
     } finally {
+      loteRef.current = null;
       abortRef.current = null;
-      detenerRef.current = false;
       setDeteniendo(false);
       setSincronizando(false);
       setProgresoSync(null);
     }
   }
+
+  // `forzar` re-consulta también los procesos ya resueltos. Sirve para
+  // rellenar datos que se agregaron después (la fecha de adjudicación, por
+  // ejemplo). Gasta cuota de la API, así que es a pedido.
+  async function sincronizar(forzar = false) {
+    setSincronizando(true);
+    setProgresoSync({ hechas: 0, guardadas: 0, restantes: null, etaMs: null, transcurrido: 0, total: 0, errores: 0 });
+    try {
+      const r = await api.post("/mercado-publico/sincronizar", {
+        desde: syncDesde || undefined,
+        hasta: syncHasta || undefined,
+        forzar,
+      });
+      if (!r?.encolados) {
+        // Nada nuevo que encolar: o no hay pendientes, o ya estaban en la cola
+        // (de otra pestaña o de la corrida automática). Si hay un lote vivo,
+        // se sigue ese.
+        const activo = await estadoCola(null, "ficha");
+        if (activo?.lote?.lote && !loteTerminado(activo.lote)) {
+          await seguir(activo.lote.lote, { inicio: Date.parse(activo.lote.creado_at) || Date.now() });
+          return;
+        }
+        setSincronizando(false);
+        setProgresoSync(null);
+        setToast({
+          type: "info",
+          message: r?.pendientes
+            ? "Esos procesos ya están en la cola del robot."
+            : "No hay procesos pendientes de consultar en ese rango (los ya resueltos no se vuelven a pedir).",
+        });
+        return;
+      }
+      setToast({
+        type: "info",
+        message: `${r.encolados} proceso(s) en cola: el robot los consulta en segundo plano. Puedes cerrar esta pestaña.`,
+      });
+      await seguir(r.lote);
+    } catch (e) {
+      setSincronizando(false);
+      setProgresoSync(null);
+      setToast({ type: "error", message: e?.message || "No se pudo encolar la sincronización." });
+    }
+  }
+
+  /* Al abrir: si el robot ya está consultando fichas (la corrida de las 23:00
+     o un pedido de otra pestaña), se muestra su avance sin que nadie apriete
+     nada. Si la cola no existe aún (migración pendiente), la pantalla sigue
+     igual que antes. */
+  useEffect(() => {
+    let activo = true;
+    (async () => {
+      try {
+        const est = await estadoCola(null, "ficha");
+        if (!activo) return;
+        setRobot(est?.robot || null);
+        if (est?.lote?.lote && !loteTerminado(est.lote)) {
+          await seguir(est.lote.lote, { inicio: Date.parse(est.lote.creado_at) || Date.now(), anunciar: false });
+        }
+      } catch {
+        /* sin cola: nada que seguir */
+      }
+    })();
+    return () => { activo = false; abortRef.current?.abort(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   /* ── Métricas ── */
   /* Una fila por PROCESO de Mercado Público, no por cotización.
@@ -808,9 +809,9 @@ export default function AnalisisMercadoPublico() {
         </div>
       </div>
 
-      {/* Avance de la sincronización. Es informativo: la sincronización tarda
-          decenas de minutos porque la API responde una ficha cada ~25 s, así
-          que hay que poder ver cuánto falta sin quedarse adivinando. */}
+      {/* Avance de la sincronización que corre el robot (la pedida aquí, la de
+          otra pestaña o la automática de las 23:00). Es informativo: tarda
+          decenas de minutos porque la API responde una ficha cada ~25 s. */}
       {sincronizando && progresoSync && (
         <div style={{ border: "1px solid var(--border)", background: "var(--surface)", borderRadius: 12, padding: "12px 16px", marginBottom: 16 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12, flexWrap: "wrap", fontSize: 13, marginBottom: 8 }}>
@@ -839,7 +840,7 @@ export default function AnalisisMercadoPublico() {
                 className="btn btn-ghost btn-sm"
                 onClick={detenerSync}
                 disabled={deteniendo}
-                title="Corta la sincronización. Lo ya consultado queda guardado y al retomar sigue desde ahí."
+                title="Cancela lo que queda en la cola del robot. Lo ya consultado queda guardado."
                 style={{ display: "inline-flex", alignItems: "center", gap: 5, color: deteniendo ? "var(--text-muted)" : "#b91c1c" }}
               >
                 <Square size={11} fill="currentColor" /> {deteniendo ? "Deteniendo…" : "Detener"}
@@ -858,9 +859,13 @@ export default function AnalisisMercadoPublico() {
             }} />
           </div>
           <div style={{ fontSize: 11.5, color: "var(--text-muted)", marginTop: 7, lineHeight: 1.5 }}>
-            Cada ficha se guarda apenas llega, así que puedes cerrar esta pestaña cuando quieras: al volver, la
-            sincronización retoma donde quedó y no repite lo ya consultado.
+            El robot de Mercado Público consulta en segundo plano y guarda cada ficha apenas llega: puedes cerrar
+            esta pestaña cuando quieras; al volver, la pantalla se engancha sola a lo que siga corriendo.
+            {progresoSync.errores > 0 && ` · ${progresoSync.errores} proceso(s) sin respuesta tras varios intentos`}
           </div>
+          {avisoRobot(robot) && (
+            <div style={{ fontSize: 12, color: "#b45309", marginTop: 6, fontWeight: 600 }}>{avisoRobot(robot)}</div>
+          )}
         </div>
       )}
 
@@ -2133,40 +2138,84 @@ function EstadoMpCotizaciones({ setToast }) {
   const [error, setError] = useState("");
   const [elegidas, setElegidas] = useState(() => new Set());
 
-  /* (2026-10-08) Por tandas de 5 (el servidor consulta Mercado Público de a
-     una: su API rechaza consultas en paralelo). Cada tanda se suma a la tabla
-     apenas llega, con el avance a la vista, y se puede detener. */
-  const TANDA = 5;
+  /* (2026-10-21) Ya no se consulta Mercado Público dentro de la request: el
+     botón ENCOLA un trabajo por cotización candidata (hasta TOPE) y el robot
+     del backend las consulta. Aquí se sigue el lote cada pocos segundos y la
+     tabla se arma con los resultados que van llegando. «Detener» cancela lo
+     que queda en cola y deja lo revisado hasta ahora. */
   const TOPE = 40;
-  const detenerRef = useRef(false);
+  const loteRef = useRef(null);
+  const abortRef = useRef(null);
+  const [robotAviso, setRobotAviso] = useState("");
+
   async function revisar() {
-    setCargando(true); setError(""); setElegidas(new Set());
-    detenerRef.current = false;
-    let acumulado = null;
+    setCargando(true); setError(""); setElegidas(new Set()); setDatos(null); setRobotAviso("");
+    abortRef.current = new AbortController();
     try {
-      for (let desde = 0; desde < TOPE; desde += TANDA) {
-        const r = await api.post("/licitaciones/mercado-publico/diagnostico-estados", { limite: TANDA, desde });
-        const vistos = new Set((acumulado?.filas || []).map((f) => f.id));
-        const filas = [...(acumulado?.filas || []), ...(r.filas || []).filter((f) => !vistos.has(f.id))];
-        const tope = Math.min(TOPE, Number(r.candidatas) || TOPE);
-        acumulado = {
-          ...r, filas, revisadas: filas.length, tope,
+      const r = await api.post("/licitaciones/mercado-publico/diagnostico-estados", { limite: TOPE });
+      let lote = r?.lote;
+      if (!r?.encolados) {
+        // Ya estaban en cola (otra pestaña o el cron): se sigue ese lote.
+        const activo = await estadoCola(null, "estado");
+        if (activo?.lote?.lote && !loteTerminado(activo.lote)) lote = activo.lote.lote;
+        else {
+          setDatos({ filas: [], revisadas: 0, candidatas: Number(r?.candidatas) || 0, tope: 0, con_discrepancia: 0, con_error: 0, en_curso: false });
+          return;
+        }
+      }
+      loteRef.current = lote;
+      const candidatas = Number(r?.candidatas) || 0;
+      const tope = Number(r?.elegidas) || TOPE;
+
+      const leer = async (resumen, rob) => {
+        setRobotAviso(avisoRobot(rob) || "");
+        const trabajos = await trabajosDeLote(lote);
+        const filas = [];
+        for (const t of trabajos || []) {
+          if (t.estado === "hecho" && t.resultado) filas.push(t.resultado);
+          else if (t.estado === "error") {
+            filas.push({ id: Number(t.clave), id_licitacion: `#${t.clave}`, error: t.ultimo_error || "no se pudo consultar" });
+          }
+        }
+        setDatos({
+          filas,
+          revisadas: filas.length,
+          candidatas,
+          tope,
           con_discrepancia: filas.filter((f) => f.discrepancia).length,
           con_error: filas.filter((f) => f.error).length,
-          en_curso: true,
-        };
-        setDatos(acumulado);
+          en_curso: !loteTerminado(resumen),
+          detenida: abortRef.current?.signal?.aborted || false,
+        });
         // Las discrepancias vienen marcadas: se preseleccionan para no obligar
         // a tildarlas una por una, pero se pueden destildar.
         setElegidas(new Set(filas.filter((f) => f.discrepancia).map((f) => f.id)));
-        if (detenerRef.current || filas.length >= tope || !(r.filas || []).length) break;
-      }
-      setDatos((d) => (d ? { ...d, en_curso: false, detenida: detenerRef.current } : d));
+      };
+
+      let ultima = null;
+      await seguirLote(lote, {
+        signal: abortRef.current.signal,
+        onTick: (resumen, rob) => { ultima = leer(resumen, rob); },
+      });
+      await ultima;
+      // Lectura final, ya con todo terminado (o detenido).
+      const est = await estadoCola(lote);
+      await leer(est?.lote, est?.robot);
     } catch (e) {
-      if (!acumulado) { setError(e?.message || "No se pudo consultar Mercado Público."); setDatos(null); }
-      else { setDatos({ ...acumulado, en_curso: false, error_parcial: e?.message || "Mercado Público dejó de responder." }); }
+      setError(e?.message || "No se pudo consultar Mercado Público.");
+      setDatos(null);
     } finally {
       setCargando(false);
+      loteRef.current = null;
+      abortRef.current = null;
+    }
+  }
+
+  async function detener() {
+    const lote = loteRef.current;
+    abortRef.current?.abort();
+    if (lote) {
+      try { await cancelarLote(lote); } catch { /* lo en curso termina solo */ }
     }
   }
 
@@ -2211,7 +2260,7 @@ function EstadoMpCotizaciones({ setToast }) {
               </button>
             )}
             {cargando && (
-              <button className="btn btn-ghost btn-sm" onClick={() => { detenerRef.current = true; }} style={{ fontSize: 11.5 }} title="Para en la tanda actual y deja lo revisado hasta ahora">
+              <button className="btn btn-ghost btn-sm" onClick={detener} style={{ fontSize: 11.5 }} title="Cancela lo que queda en la cola del robot y deja lo revisado hasta ahora">
                 Detener
               </button>
             )}
@@ -2229,7 +2278,8 @@ function EstadoMpCotizaciones({ setToast }) {
         ) : (
           <>
             <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 10 }}>
-              {datos.en_curso ? `Revisando de a una (Mercado Público no acepta consultas en paralelo): ${datos.revisadas} de ${datos.tope} · ` : datos.detenida ? "Detenido: " : ""}
+              {datos.en_curso ? `El robot está consultando Mercado Público: ${datos.revisadas} de ${datos.tope} · ` : datos.detenida ? "Detenido: " : ""}
+              {robotAviso ? <span style={{ color: "#b45309", fontWeight: 600 }}>{robotAviso} · </span> : null}
               {datos.error_parcial ? <span style={{ color: "#b91c1c" }}>{datos.error_parcial} · </span> : null}
               {datos.revisadas} de {datos.candidatas} cotizaciones abiertas con código de Mercado Público ·{" "}
               <strong style={{ color: datos.con_discrepancia ? "#b45309" : "#15803d" }}>

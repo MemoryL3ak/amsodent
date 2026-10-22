@@ -1,5 +1,7 @@
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
+import { MpColaService } from './mp-cola.service';
+import { mpLimitador } from './mp-limitador';
 import { fueSeleccionado } from './seleccion';
 
 /* ============================================================
@@ -40,21 +42,7 @@ const ESTADOS_ADJUDICADOS = new Set(['proveedor_seleccionado', 'oc_emitida', 'ad
 // Máximo de procesos consultados por sincronización (la API tiene cuota diaria).
 const MAX_CONSULTAS_POR_SYNC = 60;
 
-/* Cuántas fichas se piden a la vez. Medido el 2026-08-11 contra la API real,
-   sobre procesos pendientes de verdad:
-     ·  4 en paralelo →  1 de  4 responde  ·  ~2 fichas/min
-     · 12 en paralelo →  7 de 12 responden · ~14 fichas/min
-     · 24 en paralelo →  0 de 24 responden · la API se cae entera
-   O sea que el techo está entre 12 y 24, y por debajo de 12 se desaprovecha.
-   Los 504 NO los provoca nuestra concurrencia (a 4 fallaba el 75% y a 12 el
-   42%): son intermitentes del lado de ellos. Se deja ajustable por si el
-   comportamiento de la API cambia, que ya pasó una vez. */
-const CONCURRENCIA_SYNC = Math.max(1, Math.min(24, Number(process.env.MP_CONCURRENCIA) || 12));
-
-/* Procesos cuya consulta falló hace poco, para no reintentarlos dentro de la
-   misma corrida. Vive en memoria a propósito: es una espera, no un dato. Se
-   pierde al reiniciar el backend, que es exactamente lo que se quiere. */
-const fallosRecientes = new Map<number, number>();
+/* La concurrencia hacia la API vive ahora en mp-limitador.ts (MP_CONCURRENCIA). */
 
 // Solo analizamos cotizaciones internas de los últimos N días.
 /* Sin rango explícito se sincroniza DESDE EL DÍA 1 DEL MES ANTERIOR: el 11 de
@@ -120,20 +108,27 @@ function num(v: unknown): number | null {
    gateway corta a los ~29,5 s con 504, así que 35 s alcanza para VER ese 504
    en vez de abortar antes sin saber qué pasó. */
 async function fetchConTimeout(url: string, init: any = {}, ms = 35000): Promise<Response> {
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), ms);
-  try {
-    return await fetch(url, { ...init, signal: ctrl.signal });
-  } finally {
-    clearTimeout(t);
-  }
+  // (2026-10-21) Pasa por el limitador global: el reloj del timeout arranca
+  // cuando la llamada SALE, no mientras espera cupo.
+  return mpLimitador.con(url, async () => {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), ms);
+    try {
+      return await fetch(url, { ...init, signal: ctrl.signal });
+    } finally {
+      clearTimeout(t);
+    }
+  });
 }
 
 @Injectable()
 export class MercadopublicoService {
   private readonly logger = new Logger(MercadopublicoService.name);
 
-  constructor(private supabase: SupabaseService) {}
+  constructor(
+    private supabase: SupabaseService,
+    private cola: MpColaService,
+  ) {}
 
   private get ticket(): string {
     // Se aceptan ambos nombres de variable (MERCADO_PUBLICO_TICKET fue el
@@ -184,7 +179,7 @@ export class MercadopublicoService {
     // Se descarta un `desde` inválido en vez de fallar: peor que un refresco
     // caro es un refresco que devuelve un error a mitad de sincronización.
     const corte = desde && !Number.isNaN(Date.parse(desde)) ? new Date(desde).toISOString() : null;
-    if (!corte && this.cacheLista && Date.now() - this.cacheLista.ts < 5 * 60 * 1000) return this.cacheLista.datos;
+    if (!corte && this.cacheLista && Date.now() - this.cacheLista.ts < 2 * 60 * 1000) return this.cacheLista.datos;
     let query = client
       .from('mp_resultados')
       .select(MercadopublicoService.COLS_LISTA)
@@ -320,7 +315,7 @@ export class MercadopublicoService {
 
   /* Los ítems de todas las fichas (solo lo que usa el análisis), en caché 5 min. */
   private async itemsFichas(): Promise<any[]> {
-    if (this.cacheItems && Date.now() - this.cacheItems.ts < 5 * 60 * 1000) return this.cacheItems.filas;
+    if (this.cacheItems && Date.now() - this.cacheItems.ts < 2 * 60 * 1000) return this.cacheItems.filas;
     const { data, error } = await this.supabase
       .getClient()
       .from('mp_resultados')
@@ -359,15 +354,13 @@ export class MercadopublicoService {
   /* ── Sincronización: consulta la API para los procesos pendientes ──
      Rango configurable (desde/hasta, fecha de creación de la cotización
      interna, formato YYYY-MM-DD); sin rango parte del día 1 del mes anterior. */
-  async sincronizar(body?: { desde?: string; hasta?: string; lote?: number; forzar?: boolean | string }) {
-    // Lo que se sincroniza cambia la lista: la caché del panel se descarta.
-    this.cacheLista = null;
-    this.cacheItems = null;
-    if (!this.ticket) {
-      throw new BadRequestException(
-        'Falta configurar MP_API_TICKET en el backend. El ticket se solicita gratis en chilecompra.cl/api con Clave Única.',
-      );
-    }
+  /* ── Planificación de la sincronización ──
+     Qué procesos hay que consultar y en qué orden. NO llama a la API: es lo
+     que antes hacía `sincronizar` antes de ponerse a consultar.
+
+     Rango configurable (desde/hasta, fecha de creación de la cotización
+     interna, formato YYYY-MM-DD); sin rango parte del día 1 del mes anterior. */
+  async planificar(body?: { desde?: string; hasta?: string; forzar?: boolean | string }) {
     const client = this.supabase.getClient();
 
     const reFecha = /^\d{4}-\d{2}-\d{2}$/;
@@ -376,16 +369,8 @@ export class MercadopublicoService {
     const desde = desdeParam || primerDiaMesAnterior();
 
     /* Cotizaciones internas candidatas: las que llevan código con formato de
-       Mercado Público.
-
-       Se pagina. Antes era un `range(0, 2000)` de una sola pasada, y con 3.999
-       cotizaciones en la tabla eso dejaba fuera a las 1.999 más antiguas SIN
-       AVISAR: de las 3.337 con código de Mercado Público, la sincronización
-       solo llegaba a ver 1.576. Las otras 1.761 no eran candidatas, así que no
-       se consultaban nunca y jamás iban a aparecer en el panel. El recorte no
-       lo hacía la ventana de fechas —todas caen dentro de los 240 días— sino
-       el tope de filas, que en la práctica movía el corte real a la fecha de
-       la cotización número 2.001. */
+       Mercado Público. Se pagina: un `range(0, 2000)` de una sola pasada
+       dejaba fuera a las más antiguas sin avisar. */
     const conCodigo: any[] = [];
     for (let pagina = 0; ; pagina++) {
       const PAGINA = 1000;
@@ -404,13 +389,11 @@ export class MercadopublicoService {
         if (cod) conCodigo.push({ ...l, codigo_mp_norm: cod });
       }
       if (filas.length < PAGINA) break;
-      // Tope de seguridad: 50.000 cotizaciones es varias veces el tamaño real.
-      if (pagina >= 49) break;
+      if (pagina >= 49) break; // 50.000 cotizaciones: varias veces el tamaño real
     }
 
     // Estado ya conocido: los procesos con estado final no se re-consultan, y
-    // los no finales consultados hace poco tampoco (evita quemar cuota
-    // re-preguntando lo mismo en tandas seguidas de la misma sincronización).
+    // los no finales consultados hace poco tampoco.
     const { data: previos, error: errPrev } = await client
       .from('mp_resultados')
       .select('licitacion_id, estado_mp, ganamos, consultado_at')
@@ -424,22 +407,9 @@ export class MercadopublicoService {
     }
     const previoPorId = new Map((previos || []).map((p: any) => [p.licitacion_id, p]));
 
-    /* UNA cotización por proceso de Mercado Público.
-
-       Al aceptar los códigos con sufijo entran varias cotizaciones del mismo
-       proceso —la original y sus versiones—, y en Mercado Público hay una sola
-       ficha. Sin este paso se crearía una fila por versión: medido sobre el
-       histórico, 303 fichas duplicadas que inflarían ganadas, perdidas y montos.
-       (Y ya había 36 duplicados de antes, de procesos escritos con el mismo
-       código exacto en dos cotizaciones distintas.)
-
-       Criterio de desempate, en orden:
-         1. La que YA tiene ficha guardada. Es lo primero por continuidad: si se
-            eligiera otra, la ficha vieja quedaría huérfana en `mp_resultados`
-            —que devuelve todo lo guardado— y el proceso aparecería DOS veces en
-            el panel. Medido: 26 casos.
-         2. La que trae el código exacto, que es la cotización original.
-         3. La más reciente, que es la versión vigente. */
+    /* UNA cotización por proceso de Mercado Público (la original y sus
+       versiones comparten ficha). Desempate: la que ya tiene ficha guardada;
+       luego la del código exacto; luego la más reciente. */
     const porCodigo = new Map<string, any>();
     const exacta = (l: any) => RE_CODIGO_MP.test(String(l.id_licitacion || '').trim());
     const tieneFicha = (l: any) => previoPorId.has(l.id);
@@ -457,65 +427,19 @@ export class MercadopublicoService {
     const candidatas = [...porCodigo.values()];
     const FRESCURA_MS = 6 * 3600 * 1000; // 6 horas
     // Más corta en «forzar»: ahí el objetivo ES refrescar lo ya consultado.
-    // Tiene que superar la duración de una pasada completa (~1 h) para que la
-    // corrida no se muerda la cola.
     const FRESCURA_FORZAR_MS = 3 * 3600 * 1000; // 3 horas
-
-    // `forzar`: re-consulta también los procesos en estado final. Normalmente
-    // no tiene sentido (ya no cambian) y solo quema cuota, pero es la ÚNICA
-    // forma de rellenar campos nuevos en filas viejas: sin esto, un dato que se
-    // agrega después queda para siempre vacío en los procesos ya cerrados.
     const forzar = body?.forzar === true || body?.forzar === 'true';
-
-    // Purga de la memoria de fallos: lo que ya cumplió la espera vuelve a la cola.
-    for (const [id, ts] of fallosRecientes) {
-      if (Date.now() - ts > FRESCURA_MS) fallosRecientes.delete(id);
-    }
-
-    /* `forzar` levanta el filtro de estados finales, pero NO el de frescura.
-       Si lo levantara, `pendientesTotales` devolvería SIEMPRE el catálogo
-       entero: un proceso recién consultado seguiría contando como pendiente,
-       `restantes` no bajaría nunca y no habría forma de saber cuándo terminó
-       la pasada. Con la ventana puesta, lo consultado sale de la cola y la
-       corrida converge sola — que es lo que necesita el proceso automático
-       para no quedarse dando vueltas. La ventana de forzar es más corta que
-       la normal porque su objetivo es justamente refrescar lo ya cerrado. */
     const ventana = forzar ? FRESCURA_FORZAR_MS : FRESCURA_MS;
 
-    /* Un fallo NO saca el proceso de la cola: lo manda al final.
-
-       El problema que había que resolver es de ORDEN, no de reintento. Un
-       proceso que falla no escribe fila, así que sigue contando como «nunca
-       consultado», y como esos van primero, las mismas fichas rotas volvían a
-       encabezar cada tanda y las demás no se alcanzaban nunca.
-
-       La primera solución fue excluirlas 6 horas, y con la API en un mal día
-       —medido: 3 de 12 responden en horario hábil— eso vaciaba la cola entera:
-       `pendientes` quedaba en 0, la pasada se daba por terminada y avisaba
-       «completa» con miles sin consultar. Ahora solo se saltan durante 2
-       minutos, lo justo para no repetirlas dentro de la misma oleada, y luego
-       vuelven detrás de todo lo que no se ha intentado. Así una pasada larga
-       recorre primero lo nuevo y después reintenta lo fallido, tantas veces
-       como haga falta, en vez de rendirse. */
-    const REINTENTO_MS = 2 * 60 * 1000; // 2 minutos
-
-    const pendientesTotales = candidatas
+    const pendientes = candidatas
       .filter((l: any) => {
-        const fallo = fallosRecientes.get(l.id);
-        if (fallo && Date.now() - fallo < REINTENTO_MS) return false;
         const prev: any = previoPorId.get(l.id);
         if (!prev) return true; // nunca consultado
         if (!forzar && ESTADOS_FINALES.has(String(prev.estado_mp || ''))) return false;
         return Date.now() - new Date(prev.consultado_at || 0).getTime() > ventana;
       })
       .sort((a: any, b: any) => {
-        // 1º lo que no ha fallado en esta corrida; entre fallidos, el que
-        // falló hace más rato (más probable que la API ya se haya recuperado).
-        const fa = fallosRecientes.get(a.id) || 0;
-        const fb = fallosRecientes.get(b.id) || 0;
-        if (!!fa !== !!fb) return fa ? 1 : -1;
-        if (fa && fb) return fa - fb;
-        // 2º nunca consultados; luego los consultados hace más tiempo.
+        // Nunca consultados primero; luego los consultados hace más tiempo.
         const pa: any = previoPorId.get(a.id);
         const pb: any = previoPorId.get(b.id);
         if (!pa && pb) return -1;
@@ -524,74 +448,111 @@ export class MercadopublicoService {
         return new Date(pa.consultado_at || 0).getTime() - new Date(pb.consultado_at || 0).getTime();
       });
 
-    const lote = Math.max(1, Math.min(MAX_CONSULTAS_POR_SYNC, Number(body?.lote) || MAX_CONSULTAS_POR_SYNC));
-    const pendientes = pendientesTotales.slice(0, lote);
-
-    let consultadas = 0;
-    let actualizadas = 0;
-    let finalizadas = 0;
-    let cuotaAgotada = false;
-    const errores: string[] = [];
-
-    for (let i = 0; i < pendientes.length && !cuotaAgotada; i += CONCURRENCIA_SYNC) {
-      const tanda = pendientes.slice(i, i + CONCURRENCIA_SYNC);
-      await Promise.all(tanda.map(async (lic: any) => {
-        // El código YA normalizado: es el que entiende la API. Usar el texto
-        // crudo de la cotización devolvía 404 en las que traían sufijo.
-        const codigo = lic.codigo_mp_norm || String(lic.id_licitacion).trim();
-        const esCompraAgil = /-COT\d{2}$/i.test(codigo);
-        try {
-          consultadas += 1;
-          const fila = esCompraAgil
-            ? await this.consultarCompraAgil(codigo, lic)
-            : await this.consultarLicitacion(codigo, lic);
-          if (!fila) return;
-          const { error: errUp } = await client
-            .from('mp_resultados')
-            .upsert([fila], { onConflict: 'licitacion_id' });
-          if (errUp) throw new Error(errUp.message);
-          actualizadas += 1;
-          if (fila.estado_mp && ESTADOS_FINALES.has(fila.estado_mp)) finalizadas += 1;
-          // Transición a GANADA: si el proceso pasó a adjudicado a nuestro
-          // favor (y antes no lo estaba), se avisa al vendedor y a los jefes
-          // de ventas. Nunca corta la sincronización (maneja sus errores).
-          const previo: any = previoPorId.get(lic.id);
-          if (fila.ganamos === true && previo?.ganamos !== true) {
-            await this.notificarAdjudicacion(lic, fila);
-          }
-        } catch (e: any) {
-          const msg = String(e?.message || e);
-          errores.push(`${codigo}: ${msg.slice(0, 140)}`);
-          // Cuota diaria agotada: no tiene sentido seguir consultando hoy.
-          if (/429|límite de solicitudes/i.test(msg)) {
-            cuotaAgotada = true;
-            return;
-          }
-          // Se anota el intento fallido. Sin esto la sincronización no
-          // avanzaba: un proceso que falla no escribe fila, sigue contando como
-          // «nunca consultado» y el orden los pone PRIMERO, así que las mismas
-          // fichas rotas volvían a encabezar todas las tandas y las demás no se
-          // alcanzaban nunca. Se anota en memoria y no en `mp_resultados`
-          // porque un fallo no es un resultado: escribirlo pisaría la ficha
-          // buena de un proceso ya sincronizado que hoy dio 504, y ensuciaría
-          // el panel con filas que no son procesos reales.
-          fallosRecientes.set(lic.id, Date.now());
-        }
-      }));
-    }
-
     return {
       rango: { desde: desdeParam || desde.slice(0, 10), hasta: hastaParam ? hastaParam.slice(0, 10) : null },
-      candidatas: candidatas.length,
-      pendientes: pendientes.length,
-      // Procesos que quedaron SIN consultar en esta pasada (tope por cuota).
-      restantes: Math.max(0, pendientesTotales.length - consultadas),
-      consultadas,
-      actualizadas,
-      finalizadas,
-      cuota_agotada: cuotaAgotada,
-      errores,
+      forzar,
+      candidatas,
+      pendientes,
+      previoPorId,
     };
+  }
+
+  /* ── Encolar la sincronización (2026-10-21) ──
+     Lo que antes hacía `sincronizar` consultando la API dentro de la request:
+     ahora deja un trabajo «ficha» por proceso pendiente y el robot
+     (MpRobotService, en el worker) los va consultando. La pantalla sigue el
+     avance con mp_cola_resumen y refresca con `resultados?desde=`. */
+  async encolarSincronizacion(
+    body: { desde?: string; hasta?: string; forzar?: boolean | string } | undefined,
+    solicitadoPor: string | null,
+    opts: { prioridad?: number } = {},
+  ) {
+    if (!this.ticket) {
+      throw new BadRequestException(
+        'Falta configurar MP_API_TICKET en el backend. El ticket se solicita gratis en chilecompra.cl/api con Clave Única.',
+      );
+    }
+    const plan = await this.planificar(body || {});
+    const items = plan.pendientes.map((l: any) => ({
+      tipo: 'ficha' as const,
+      clave: l.id,
+      prioridad: opts.prioridad ?? 5,
+      payload: {
+        forzar: plan.forzar,
+        lic: {
+          id: l.id,
+          id_licitacion: l.id_licitacion,
+          codigo_mp_norm: l.codigo_mp_norm,
+          nombre: l.nombre,
+          nombre_entidad: l.nombre_entidad,
+          creado_por: l.creado_por,
+          total_con_iva: l.total_con_iva,
+          total_sin_iva: l.total_sin_iva,
+          created_at: l.created_at,
+        },
+      },
+    }));
+    const r = await this.cola.encolar(items, { solicitadoPor });
+    // Lo que se sincroniza cambia la lista: la caché del panel se descarta.
+    this.cacheLista = null;
+    this.cacheItems = null;
+    this.logger.log(
+      `Sincronización encolada por ${solicitadoPor || 'sistema'}: ${r.encolados} proceso(s) (${r.omitidos} ya estaban en cola) · lote ${r.lote}.`,
+    );
+    return {
+      ...r,
+      rango: plan.rango,
+      forzar: plan.forzar,
+      candidatas: plan.candidatas.length,
+      pendientes: plan.pendientes.length,
+    };
+  }
+
+  /* ── Consultar y guardar UN proceso (lo llama el robot) ──
+     `lic` es la cotización interna (al menos `id`; si viene sin código se lee
+     de la base). Devuelve cuántas fichas guardó (0 o 1) y si el proceso quedó
+     en estado final. Los errores de la API se lanzan tal cual: el robot decide
+     si reintenta (504, timeout), pausa (cuota) o marca con error. */
+  async consultarYGuardar(lic: any) {
+    if (!this.ticket) throw new Error('Falta configurar MP_API_TICKET en el backend.');
+    const client = this.supabase.getClient();
+    let cot: any = lic;
+    if (!cot?.id_licitacion) {
+      const { data, error } = await client
+        .from('licitaciones')
+        .select('id, id_licitacion, nombre, nombre_entidad, creado_por, total_con_iva, total_sin_iva, created_at')
+        .eq('id', Number(lic?.id))
+        .maybeSingle();
+      if (error) throw new Error(error.message);
+      if (!data) return { guardada: 0, finalizada: 0, error: 'La cotización ya no existe.' };
+      cot = data;
+    }
+    // El código YA normalizado: es el que entiende la API. Usar el texto
+    // crudo de la cotización devolvía 404 en las que traían sufijo.
+    const codigo = cot.codigo_mp_norm || codigoMpDe(cot.id_licitacion) || String(cot.id_licitacion || '').trim();
+    if (!codigo) return { guardada: 0, finalizada: 0, error: 'La cotización no tiene código de Mercado Público.' };
+    const esCompraAgil = /-COT\d{2}$/i.test(codigo);
+
+    // Lo que ya se sabía, para detectar la transición a GANADA.
+    const { data: previo } = await client
+      .from('mp_resultados')
+      .select('ganamos')
+      .eq('licitacion_id', cot.id)
+      .maybeSingle();
+
+    const fila = esCompraAgil
+      ? await this.consultarCompraAgil(codigo, cot)
+      : await this.consultarLicitacion(codigo, cot);
+    if (!fila) return { guardada: 0, finalizada: 0, codigo };
+    const { error: errUp } = await client.from('mp_resultados').upsert([fila], { onConflict: 'licitacion_id' });
+    if (errUp) throw new Error(errUp.message);
+    const finalizada = fila.estado_mp && ESTADOS_FINALES.has(fila.estado_mp) ? 1 : 0;
+    // Transición a GANADA: si el proceso pasó a adjudicado a nuestro favor (y
+    // antes no lo estaba), se avisa al vendedor y a los jefes de ventas.
+    if (fila.ganamos === true && (previo as any)?.ganamos !== true) {
+      await this.notificarAdjudicacion(cot, fila);
+    }
+    return { guardada: 1, finalizada, codigo, estado_mp: fila.estado_mp, ganamos: fila.ganamos };
   }
 
   /* ── Aviso de adjudicación ganada (2026-09-03) ──
@@ -786,6 +747,15 @@ export class MercadopublicoService {
     const url = `${V1_BASE}/licitaciones.json?codigo=${encodeURIComponent(codigo)}&ticket=${encodeURIComponent(this.ticket)}`;
     const res = await fetchConTimeout(url);
     const body: any = await res.json().catch(() => null);
+    if (res.status === 429) {
+      // La v1 devuelve 429 por dos motivos: cuota diaria agotada y «peticiones
+      // simultáneas». Solo el primero debe pausar al robot hasta mañana.
+      throw new Error(
+        /simult/i.test(String(body?.Mensaje || ''))
+          ? 'Mercado Público rechazó la consulta por peticiones simultáneas'
+          : 'Se agotó la cuota diaria del ticket de Mercado Público',
+      );
+    }
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const det = body?.Listado?.[0];
     if (!det) return this.filaSinProceso(codigo, lic, 'licitacion');

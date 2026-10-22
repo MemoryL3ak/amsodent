@@ -1,6 +1,7 @@
 import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
 import { LicitacionesService } from './licitaciones.service';
+import { correTareasDeFondo, MOTIVO_SIN_FONDO } from '../rol-proceso';
 
 /* ============================================================================
    Recordatorio de equivalencias sin aprovechar
@@ -47,6 +48,10 @@ export class EquivalenciasCron implements OnModuleInit, OnModuleDestroy {
   ) {}
 
   onModuleInit() {
+    if (!correTareasDeFondo()) {
+      this.log.log(`Recordatorio de equivalencias: no corre en este proceso (${MOTIVO_SIN_FONDO}).`);
+      return;
+    }
     if (String(process.env.EQUIV_AVISO || '').toLowerCase() === 'off') {
       this.log.log('Recordatorio de equivalencias DESACTIVADO (EQUIV_AVISO=off).');
       return;

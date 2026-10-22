@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import { api } from "../lib/api";
+import { estadoCola, seguirLote, loteTerminado, avisoRobot, progresoDeLote } from "../lib/mpCola";
 import { replicarEnWhatsApp } from "../lib/chatWhatsapp";
 import { supabase } from "../lib/supabase";
 import useAuth from "../hooks/useAuth";
@@ -726,33 +727,40 @@ export default function LicitacionesDisponibles({ embedded = false }) {
     }
   }
 
-  // Confirma contra Mercado Público, en tandas, cuáles de nuestras
-  // postulaciones ya figuran con oferta enviada. Va por tandas porque la API
-  // tarda ~25 s por proceso y hay que poder ver el avance.
+  /* (2026-10-21) Confirma contra Mercado Público cuáles de nuestras
+     postulaciones ya figuran con oferta enviada. Ya no se consulta dentro de
+     la request: se ENCOLA un trabajo por postulación y el robot del backend
+     las consulta; aquí solo se sigue el avance del lote. */
   async function verificarPostulaciones() {
     if (verificando) return;
     setVerificando(true);
     setProgresoVerif({ revisadas: 0, restantes: null });
-    let revisadas = 0;
-    let confirmadas = 0;
-    let sinDato = 0;
-    let errores = 0;
     try {
-      for (let i = 0; i < 40; i++) {
-        const r = await api.post("/licitaciones/disponibles/verificar-postulacion", { lote: 24 });
-        revisadas += r.revisadas || 0;
-        confirmadas += r.con_postulacion || 0;
-        sinDato += r.sin_dato || 0;
-        errores += r.errores?.length || 0;
-        setProgresoVerif({ revisadas, restantes: r.restantes ?? 0 });
-        if (!r.restantes || !r.revisadas) break;
+      const r = await api.post("/licitaciones/disponibles/verificar-postulacion", { lote: 500 });
+      let lote = r?.lote;
+      if (!r?.encolados) {
+        const activo = await estadoCola(null, "postulacion");
+        if (activo?.lote?.lote && !loteTerminado(activo.lote)) lote = activo.lote.lote;
+        else {
+          setToast({ type: "info", message: "No hay postulaciones pendientes de confirmar." });
+          return;
+        }
       }
+      const est = await seguirLote(lote, {
+        onTick: (resumen) => {
+          const p = progresoDeLote(resumen);
+          setProgresoVerif({ revisadas: p.hechas, restantes: p.restantes });
+        },
+      });
       await cargar();
-      const partes = [`${revisadas} revisada${revisadas === 1 ? "" : "s"}`];
-      if (confirmadas) partes.push(`${confirmadas} con postulación confirmada`);
-      if (sinDato) partes.push(`${sinDato} sin dato (Mercado Público aún no publica los oferentes)`);
-      if (errores) partes.push(`${errores} con error`);
-      setToast({ type: confirmadas ? "success" : "info", message: partes.join(" · ") + "." });
+      const p = progresoDeLote(est?.lote);
+      const partes = [`${p.hechas} revisada${p.hechas === 1 ? "" : "s"}`];
+      if (p.conPostulacion) partes.push(`${p.conPostulacion} con postulación confirmada`);
+      if (p.sinDato) partes.push(`${p.sinDato} sin dato (Mercado Público aún no publica los oferentes)`);
+      const sinRespuesta = p.errores + p.sinRespuesta;
+      if (sinRespuesta) partes.push(`${sinRespuesta} sin respuesta de Mercado Público`);
+      const aviso = avisoRobot(est?.robot);
+      setToast({ type: p.conPostulacion ? "success" : "info", message: partes.join(" · ") + "." + (aviso ? ` ${aviso}` : "") });
     } catch (e) {
       setToast({ type: "error", message: e?.message || "No se pudo verificar contra Mercado Público." });
     } finally {

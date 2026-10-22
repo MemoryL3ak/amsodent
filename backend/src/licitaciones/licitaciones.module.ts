@@ -9,6 +9,7 @@ import { MpEstadosCron } from './mp-estados.cron';
 import { MpAnalisisGlobalCron } from './mp-analisis-global.cron';
 import { MpAdjudicacionesService } from './mp-adjudicaciones.service';
 import { MpOrdenesService } from './mp-ordenes.service';
+import { MpRobotService } from './mp-robot.service';
 import { MailingsModule } from '../mailings/mailings.module';
 import { MercadopublicoModule } from '../mercadopublico/mercadopublico.module';
 import { ChatModule } from '../chat/chat.module';
@@ -21,7 +22,7 @@ import { FeriadosModule } from '../feriados/feriados.module';
   // FeriadosModule: días hábiles del calendario de cobranza (FacturasVencidasCron).
   imports: [MailingsModule, MercadopublicoModule, ChatModule, FeriadosModule],
   controllers: [LicitacionesController],
-  providers: [LicitacionesService, DevolucionesService, MpAdjudicacionesService, MpOrdenesService, MpExploracionCron, EquivalenciasCron, FacturasVencidasCron, MpEstadosCron, MpAnalisisGlobalCron],
+  providers: [LicitacionesService, DevolucionesService, MpAdjudicacionesService, MpOrdenesService, MpExploracionCron, EquivalenciasCron, FacturasVencidasCron, MpEstadosCron, MpAnalisisGlobalCron, MpRobotService],
   exports: [LicitacionesService, DevolucionesService],
 })
 export class LicitacionesModule {}

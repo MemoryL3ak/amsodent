@@ -4,6 +4,7 @@ import { LicitacionesService } from './licitaciones.service';
 import { MpExploracionCron } from './mp-exploracion.cron';
 import { MpOrdenesService } from './mp-ordenes.service';
 import { MpAdjudicacionesService } from './mp-adjudicaciones.service';
+import { correTareasDeFondo, MOTIVO_SIN_FONDO } from '../rol-proceso';
 
 /* ============================================================================
    Cambio automático de estado según Mercado Público (pedido 2026-09-17)
@@ -106,6 +107,10 @@ export class MpEstadosCron implements OnModuleInit, OnModuleDestroy {
   }
 
   onModuleInit() {
+    if (!correTareasDeFondo()) {
+      this.log.log(`Cambio automático de estados MP: no corre en este proceso (${MOTIVO_SIN_FONDO}).`);
+      return;
+    }
     if (String(process.env.MP_ESTADOS_AUTO || '').toLowerCase() === 'off') {
       this.log.log('Cambio automático de estados MP DESACTIVADO (MP_ESTADOS_AUTO=off).');
       return;

@@ -4,6 +4,8 @@ import { MailingsService } from '../mailings/mailings.service';
 import { ChatService } from '../chat/chat.service';
 import { fueSeleccionado } from '../mercadopublico/seleccion';
 import { MpAdjudicacionesService } from './mp-adjudicaciones.service';
+import { MpColaService } from '../mercadopublico/mp-cola.service';
+import { mpLimitador } from '../mercadopublico/mp-limitador';
 
 @Injectable()
 export class LicitacionesService {
@@ -16,6 +18,7 @@ export class LicitacionesService {
     private mailings: MailingsService,
     private chat: ChatService,
     private adjudicaciones: MpAdjudicacionesService,
+    private cola: MpColaService,
   ) {}
 
   async findAll(filters?: { estado?: string; creado_por?: string; id_licitacion?: string; exclude_id?: string }) {
@@ -499,7 +502,8 @@ export class LicitacionesService {
   ): Promise<any> {
     let res: globalThis.Response;
     try {
-      res = await fetch(url, { headers, signal: AbortSignal.timeout(timeoutMs) });
+      // (2026-10-21) Limitador global: nunca más de las conexiones permitidas hacia cada API.
+      res = await mpLimitador.con(url, () => fetch(url, { headers, signal: AbortSignal.timeout(timeoutMs) }));
     } catch (e: any) {
       throw new BadRequestException(
         `No se pudo consultar Mercado Público: ${String(e?.message || e).slice(0, 120)}`,
@@ -619,6 +623,46 @@ export class LicitacionesService {
    * oferta ya fue enviada. `ids` limita a filas concretas; sin `ids` toma las
    * que aún no se han revisado y siguen abiertas.
    */
+  /* ── Encolar la verificación de postulaciones (2026-10-21) ──
+     Misma selección de candidatas que verificarPostulaciones, pero sin
+     consultar: deja un trabajo «postulacion» por postulación y el robot los
+     resuelve. La pantalla sigue el avance por lote. */
+  async encolarVerificacionPostulaciones(
+    body: { ids?: number[]; lote?: number; revisarTodas?: boolean } | undefined,
+    solicitadoPor: string | null,
+  ) {
+    this.mpTicket();
+    this.rutEmpresaMp();
+    const client = this.supabase.getClient();
+    const ids = Array.isArray(body?.ids) ? body!.ids!.map(Number).filter(Number.isFinite) : null;
+    let query = client
+      .from('licitaciones_disponibles')
+      .select('id, id_licitacion, datos')
+      .order('created_at', { ascending: false })
+      .limit(1000);
+    if (ids?.length) query = query.in('id', ids);
+    const { data, error } = await query;
+    if (error) throw new BadRequestException(error.message);
+    const candidatas = (data || []).filter((r: any) => {
+      if (ids?.length) return true;
+      if (r?.datos?.postulamos === true) return false;
+      if (body?.revisarTodas) return true;
+      return r?.datos?.postulamos == null;
+    });
+    const tope = Math.max(1, Math.min(1000, Number(body?.lote) || 500));
+    const elegidas = candidatas.slice(0, tope);
+    const r = await this.cola.encolar(
+      elegidas.map((row: any) => ({
+        tipo: 'postulacion' as const,
+        clave: row.id,
+        prioridad: 4,
+        payload: { codigo: String(row.id_licitacion || '').trim() },
+      })),
+      { solicitadoPor },
+    );
+    return { ...r, candidatas: candidatas.length, elegidas: elegidas.length };
+  }
+
   async verificarPostulaciones(body?: { ids?: number[]; lote?: number; revisarTodas?: boolean }) {
     const ticket = this.mpTicket();
     const rutEmpresa = this.rutEmpresaMp();
@@ -2852,6 +2896,35 @@ export class LicitacionesService {
      No cambia nada por su cuenta: `aplicar` existe aparte, porque cambiar el
      estado de una cotización es una decisión comercial, no un efecto
      secundario de mirar. */
+  /* ── Encolar el diagnóstico de estados (2026-10-21) ──
+     Antes la pantalla consultaba Mercado Público de a 5 dentro de la request
+     (y esperaba hasta 35 s por cada una). Ahora deja un trabajo «estado» por
+     cotización candidata y el robot los consulta; la tabla se arma con los
+     resultados del lote. Aplicar el cambio sigue siendo un paso aparte. */
+  async encolarDiagnosticoEstados(
+    body: { ids?: number[]; limite?: number } | undefined,
+    solicitadoPor: string | null,
+  ) {
+    this.mpTicket();
+    const ids = Array.isArray(body?.ids) ? body!.ids!.map(Number).filter(Number.isFinite) : [];
+    let elegidas: number[];
+    let candidatas: number;
+    if (ids.length) {
+      elegidas = ids;
+      candidatas = ids.length;
+    } else {
+      const lista: any = await this.diagnosticoMpCotizaciones({ soloCandidatas: true });
+      candidatas = Number(lista?.candidatas) || 0;
+      const limite = Math.max(1, Math.min(500, Number(body?.limite) || 40));
+      elegidas = ((lista?.ids || []) as number[]).slice(0, limite);
+    }
+    const r = await this.cola.encolar(
+      elegidas.map((id) => ({ tipo: 'estado' as const, clave: id, prioridad: 4 })),
+      { solicitadoPor },
+    );
+    return { ...r, candidatas, elegidas: elegidas.length };
+  }
+
   async diagnosticoMpCotizaciones(body?: { ids?: number[]; limite?: number; desde?: number; soloCandidatas?: boolean }) {
     const ticket = this.mpTicket();
     const client = this.supabase.getClient();

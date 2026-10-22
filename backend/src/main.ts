@@ -16,6 +16,7 @@ import { AppModule } from './app.module';
 import { MonitorService } from './monitor/monitor.service';
 import { MonitorInterceptor } from './monitor/monitor.interceptor';
 import { MonitorExceptionsFilter } from './monitor/monitor-exceptions.filter';
+import { rolProceso } from './rol-proceso';
 
 // Blindaje del proceso: un rechazo/excepción no capturado NO debe tumbar el
 // backend. Sin esto, los reintentos asíncronos de googleapis (gaxios) al fallar
@@ -103,6 +104,6 @@ async function bootstrap() {
 
   const port = Number(process.env.PORT) || 3001;
   await app.listen(port, '0.0.0.0');
-  console.log(`Backend corriendo en puerto ${port} (prefijo /api)`);
+  console.log(`Backend corriendo en puerto ${port} (prefijo /api) · rol ${rolProceso()}`);
 }
 bootstrap();

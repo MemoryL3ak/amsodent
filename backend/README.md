@@ -96,3 +96,30 @@ Nest is an MIT-licensed open source project. It can grow thanks to the sponsors 
 ## License
 
 Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+
+## Procesos web y worker (Railway)
+
+Desde el 2026-10-21 el backend corre como **dos servicios de Railway con la
+misma imagen**, separados por la variable `APP_ROL`:
+
+| Servicio | `APP_ROL` | Qué hace |
+|---|---|---|
+| backend (dominio público) | `web` | Atiende la API. Ningún cron, ningún robot. |
+| backend-worker (sin dominio) | `worker` | Corre los crons (Mercado Público, Bsale, cobranza, Google Calendar, recordatorios) y el **robot de Mercado Público**, que procesa la cola `mp_cola`. |
+
+Sin la variable, el proceso corre en modo `todo` (ambas cosas, como antes), así
+que un despliegue sin configurar sigue funcionando. Los interruptores por tarea
+(`MP_SYNC_AUTO=off`, `BSALE_SYNC_AUTO=off`, …) se respetan encima del rol.
+
+Cómo crear el worker en Railway: duplicar el servicio del backend (mismo repo,
+mismo root `backend`, mismas variables), quitarle el dominio público y poner
+`APP_ROL=worker`; en el servicio original poner `APP_ROL=web`. Requiere la
+migración `supabase/migrations/20261021_mp_cola.sql`.
+
+El robot: toma trabajos de `mp_cola` (fichas del Análisis, diagnóstico de
+estados, confirmación de postulaciones), consulta Mercado Público respetando
+el limitador global (`MP_CONCURRENCIA` hacia la API v2, `MP_CONCURRENCIA_V1`
+hacia la v1), reintenta los fallos transitorios con espera creciente, se pausa
+hasta el día siguiente si se agota la cuota del ticket y 10 minutos si la API
+deja de responder. Las pantallas solo encolan y siguen el avance en
+`GET /api/mercado-publico/cola/estado`.
