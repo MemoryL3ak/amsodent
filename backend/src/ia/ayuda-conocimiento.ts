@@ -264,10 +264,18 @@ emitir exige rol administración, contabilidad o jefatura de ventas especial.
 Admin y quien tenga «Gestión de compras» en su perfil. Cotizaciones ADJUDICADAS
 desde el 16-10-2026: por producto, lo cotizado, lo despachado en sus guías (de
 Bsale), lo que falta despachar y cuánto cubre el stock del inventario. El stock
-se reparte por orden de adjudicación (la más antigua primero). Pestañas
-«Cotizaciones» (cobertura en % de unidades, estado: stock completo / parcial /
-sin stock / despachada; detalle por producto) y «Por comprar» (por SKU: falta,
-stock, costo y valor estimado; los transitorios sin SKU siempre por comprar).
+se reparte por orden de adjudicación (la más antigua primero). KPIs: cotizaciones
+por despachar (completas / parciales / sin stock), cobertura en % de unidades
+(anillo), unidades por comprar y valor estimado a costo neto. Pestaña
+«Cotizaciones»: una fila por cotización (cliente, vendedor, neto, fecha, con
+stock, faltan, barra de cobertura, estado con semáforo verde/ámbar/rojo) y al
+hacer clic el detalle por producto (cotizado, despachado, por despachar, stock,
+asignado, falta, %); «Expandir todo» y «Ver en Por comprar». Filtros: búsqueda,
+stock (por despachar, con faltantes, completo, parcial, sin stock, despachadas,
+todas), vendedor, orden y «Adjudicadas desde» (nunca antes del 16-10-2026).
+Pestaña «Por comprar»: por SKU, falta, stock, costo, valor estimado, en qué
+cotizaciones, con totales al pie; los transitorios sin SKU y lo que no está en
+el catálogo siempre por comprar. «Exportar» baja la pestaña visible en CSV.
 
 ### Campañas de margen (/campanas-margen)
 Solo productos CON SKU (oct 2026): un transitorio no entra, tampoco al cotizar.
