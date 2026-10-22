@@ -1,6 +1,7 @@
 import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { LicitacionesService } from './licitaciones.service';
 import { MercadopublicoCron } from '../mercadopublico/mercadopublico.cron';
+import { correTareasDeFondo, MOTIVO_SIN_FONDO } from '../rol-proceso';
 
 /* ============================================================================
    Exploración automática de Mercado Público
@@ -56,6 +57,10 @@ export class MpExploracionCron implements OnModuleInit, OnModuleDestroy {
   ) {}
 
   onModuleInit() {
+    if (!correTareasDeFondo()) {
+      this.log.log(`Exploración automática MP: no corre en este proceso (${MOTIVO_SIN_FONDO}).`);
+      return;
+    }
     // Mismo interruptor de desarrollo que la sincronización: un backend local
     // encendido no debe gastar la cuota compartida con producción.
     if (String(process.env.MP_EXPLORAR_AUTO || '').toLowerCase() === 'off') {

@@ -1,6 +1,7 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { LicitacionesService } from './licitaciones.service';
 import { MpExploracionCron } from './mp-exploracion.cron';
+import { correTareasDeFondo, MOTIVO_SIN_FONDO } from '../rol-proceso';
 
 /* ============================================================================
    Análisis global de productos MP, automático (2026-10-02)
@@ -35,6 +36,10 @@ export class MpAnalisisGlobalCron implements OnModuleInit, OnModuleDestroy {
 
   onModuleInit() {
     this.licitaciones.registrarAutomaticoAnalisisGlobal(() => this.estado());
+    if (!correTareasDeFondo()) {
+      this.log.log(`Análisis global MP: no corre en este proceso (${MOTIVO_SIN_FONDO}).`);
+      return;
+    }
     if (!this.activa()) {
       this.log.log('Análisis global automático DESACTIVADO (MP_ANALISIS_GLOBAL_AUTO=off).');
       return;

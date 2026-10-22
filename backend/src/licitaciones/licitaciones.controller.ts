@@ -67,9 +67,10 @@ export class LicitacionesController {
 
   // Revisa contra Mercado Público si nuestro RUT ya figura entre los oferentes.
   // Se llama por tandas desde la pantalla, que muestra el avance.
+  // (2026-10-21) Encola la verificación; el robot consulta Mercado Público.
   @Post('disponibles/verificar-postulacion')
-  verificarPostulaciones(@Body() body: any) {
-    return this.licitacionesService.verificarPostulaciones(body || {});
+  verificarPostulaciones(@Req() req: any, @Body() body: any) {
+    return this.licitacionesService.encolarVerificacionPostulaciones(body || {}, (req?.user?.email || '').toLowerCase() || null);
   }
 
   @Put('disponibles/:dispId/cargar')
@@ -160,9 +161,10 @@ export class LicitacionesController {
   /* (2026-09-16, punto 26) Estado real de nuestras cotizaciones en Mercado
      Público. El diagnóstico solo mira; aplicar el cambio de estado es una
      llamada aparte y explícita. */
+  // (2026-10-21) Encola el diagnóstico; el robot consulta y la pantalla lee el lote.
   @Post('mercado-publico/diagnostico-estados')
-  diagnosticoMpCotizaciones(@Body() body: { ids?: number[]; limite?: number }) {
-    return this.licitacionesService.diagnosticoMpCotizaciones(body);
+  diagnosticoMpCotizaciones(@Req() req: any, @Body() body: { ids?: number[]; limite?: number }) {
+    return this.licitacionesService.encolarDiagnosticoEstados(body, (req?.user?.email || '').toLowerCase() || null);
   }
 
   @Post('mercado-publico/aplicar-estados')

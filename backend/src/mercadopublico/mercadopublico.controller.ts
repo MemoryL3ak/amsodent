@@ -1,6 +1,7 @@
-import { Controller, Get, Post, Body, Query, UseGuards, Param, ParseIntPipe } from '@nestjs/common';
+import { Controller, Get, Post, Body, Query, UseGuards, Param, ParseIntPipe, Req } from '@nestjs/common';
 import { MercadopublicoService } from './mercadopublico.service';
 import { MercadopublicoCron } from './mercadopublico.cron';
+import { MpColaService } from './mp-cola.service';
 import { AdminGuard } from '../auth/admin.guard';
 
 // Benchmark de postulaciones vs Mercado Público: SOLO administradores.
@@ -10,6 +11,7 @@ export class MercadopublicoController {
   constructor(
     private mpService: MercadopublicoService,
     private cron: MercadopublicoCron,
+    private cola: MpColaService,
   ) {}
 
   // Configuración disponible (ticket / RUT empresa) para la UI.
@@ -45,8 +47,38 @@ export class MercadopublicoController {
   // Consulta la API oficial para los procesos aún sin resultado final.
   // body opcional: { desde: 'YYYY-MM-DD', hasta: 'YYYY-MM-DD', lote: n }
   // (el frontend sincroniza en tandas chicas y refresca entre cada una)
+  /* (2026-10-21) Ya no consulta la API dentro de la request: ENCOLA un trabajo
+     por proceso pendiente y responde al tiro con el lote. El robot (en el
+     worker) los procesa; la pantalla sigue el avance en 'cola/estado'. */
   @Post('sincronizar')
-  sincronizar(@Body() body: any) {
-    return this.mpService.sincronizar(body || {});
+  sincronizar(@Body() body: any, @Req() req: any) {
+    return this.mpService.encolarSincronizacion(body || {}, (req?.user?.email || '').toLowerCase() || null);
+  }
+
+  /* ── Cola y robot ──
+     'cola/estado': el robot (¿vive?, ¿pausado por cuota o API caída?) y el
+     avance de un lote (?lote=…) o del lote activo más reciente si no se indica,
+     para que una pantalla recién abierta se enganche a lo que ya corre. */
+  @Get('cola/estado')
+  async colaEstado(@Query('lote') lote?: string, @Query('tipo') tipo?: string) {
+    const [robot, resumen, porTipo] = await Promise.all([
+      this.cola.robot(),
+      this.cola.resumen(lote || null, tipo || null),
+      this.cola.pendientesPorTipo(),
+    ]);
+    return { robot, lote: resumen, por_tipo: porTipo };
+  }
+
+  // Los trabajos de un lote con su resultado (tablas de diagnóstico / verificación).
+  @Get('cola/lote/:lote')
+  colaLote(@Param('lote') lote: string) {
+    return this.cola.trabajosDeLote(String(lote || ''));
+  }
+
+  // Cancela lo pendiente de un lote; lo que ya está en curso termina solo.
+  @Post('cola/cancelar')
+  colaCancelar(@Body() body: { lote?: string }) {
+    if (!body?.lote) return { cancelados: 0 };
+    return this.cola.cancelarLote(String(body.lote));
   }
 }

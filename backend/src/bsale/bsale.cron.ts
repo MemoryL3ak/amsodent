@@ -1,5 +1,6 @@
 import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { BsaleService } from './bsale.service';
+import { correTareasDeFondo, MOTIVO_SIN_FONDO } from '../rol-proceso';
 
 /* ============================================================================
    Sincronización automática de stock con Bsale
@@ -29,6 +30,10 @@ export class BsaleCron implements OnModuleInit, OnModuleDestroy {
   constructor(private readonly bsale: BsaleService) {}
 
   onModuleInit() {
+    if (!correTareasDeFondo()) {
+      this.log.log(`Sincronización Bsale: no corre en este proceso (${MOTIVO_SIN_FONDO}).`);
+      return;
+    }
     if (String(process.env.BSALE_SYNC_AUTO || '').toLowerCase() === 'off') {
       this.log.log('Sincronización automática con Bsale DESACTIVADA (BSALE_SYNC_AUTO=off).');
       return;

@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
 import { ESTADOS_ABIERTOS, MpAdjudicacionesService, baseDeCodigo } from './mp-adjudicaciones.service';
+import { mpLimitador } from '../mercadopublico/mp-limitador';
 
 /* ============================================================================
    Órdenes de compra emitidas a Amsodent en Mercado Público (2026-10-15)
@@ -57,7 +58,7 @@ export type ResumenBarrido = {
 export class MpOrdenesService {
   private readonly log = new Logger('MpOrdenes');
   /** Reemplazable en pruebas. */
-  fetchFn: (url: string, init?: any) => Promise<any> = (url, init) => fetch(url, init);
+  fetchFn: (url: string, init?: any) => Promise<any> = (url, init) => mpLimitador.con(url, () => fetch(url, init));
   /** Pausa entre llamadas a la v1 (responde 429 «simultáneas» si se le pide seguido). */
   pausaMs = 1200;
   /** OC ya procesadas en esta instancia (código → cuándo), para no repetir detalle ni avisos. */

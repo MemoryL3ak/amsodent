@@ -1,5 +1,6 @@
 import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { MercadopublicoService } from './mercadopublico.service';
+import { correTareasDeFondo, MOTIVO_SIN_FONDO } from '../rol-proceso';
 
 /* ============================================================================
    Sincronización automática con Mercado Público
@@ -38,11 +39,6 @@ const HORAS = String(process.env.MP_SYNC_AUTO_HORAS || '23')
 
 const FORZAR = String(process.env.MP_SYNC_AUTO_FORZAR || '').toLowerCase() === 'true';
 
-const LOTE = 12;
-// 200 × 12 = 2.400 fichas: más que el total de cotizaciones con código de
-// Mercado Público. Es un tope de seguridad para que un bug no deje al proceso
-// consultando toda la noche, no un límite que se espere alcanzar.
-const MAX_TANDAS = 200;
 
 @Injectable()
 export class MercadopublicoCron implements OnModuleInit, OnModuleDestroy {
@@ -56,6 +52,10 @@ export class MercadopublicoCron implements OnModuleInit, OnModuleDestroy {
   constructor(private readonly mp: MercadopublicoService) {}
 
   onModuleInit() {
+    if (!correTareasDeFondo()) {
+      this.log.log(`Sincronización automática MP: no corre en este proceso (${MOTIVO_SIN_FONDO}).`);
+      return;
+    }
     // Interruptor para que un backend de desarrollo no consuma la cuota diaria
     // del ticket, que es compartida con la de producción.
     if (String(process.env.MP_SYNC_AUTO || '').toLowerCase() === 'off') {
@@ -107,53 +107,26 @@ export class MercadopublicoCron implements OnModuleInit, OnModuleDestroy {
     await this.correr(`programada ${hora}:00`);
   }
 
-  /** Pasada completa, en tandas, hasta vaciar la cola. */
+  /** (2026-10-21) Ya no consulta la API desde acá: encola la sincronización
+      completa y el robot (MpRobotService, en el worker) la procesa de a pocos,
+      con reintentos y respetando la cuota. Prioridad baja (7): si alguien
+      pide algo a mano, lo suyo sale antes. */
   async correr(motivo: string) {
     if (this.corriendo) {
       this.log.warn(`Se omite la corrida ${motivo}: ya hay una en curso.`);
       return { omitida: true };
     }
     this.corriendo = true;
-    const t0 = Date.now();
-    let consultadas = 0;
-    let guardadas = 0;
-    let finalizadas = 0;
-    let errores = 0;
-    let cuotaAgotada = false;
-    // Tandas seguidas sin guardar ni una ficha: la API no está respondiendo.
-    let secas = 0;
-    let apiCaida = false;
-    let restantes = 0;
     try {
-      this.log.log(`Inicio de sincronización ${motivo} (modo ${FORZAR ? 'forzar' : 'normal'}).`);
-      for (let i = 0; i < MAX_TANDAS; i++) {
-        const r: any = await this.mp.sincronizar({ lote: LOTE, forzar: FORZAR });
-        consultadas += r?.consultadas || 0;
-        guardadas += r?.actualizadas || 0;
-        finalizadas += r?.finalizadas || 0;
-        errores += r?.errores?.length || 0;
-        cuotaAgotada = !!r?.cuota_agotada;
-        restantes = r?.restantes || 0;
-        secas = r?.actualizadas ? 0 : secas + 1;
-        // Sin cuota no sirve seguir; sin pendientes ni consultas, terminó.
-        if (cuotaAgotada || !r?.restantes || !r?.consultadas) break;
-        /* 10 tandas = 120 intentos sin una sola ficha. De noche la API suele
-           responder bien, así que si llega hasta acá está caída de verdad y no
-           tiene sentido seguir toda la madrugada quemando cuota. Es más
-           tolerante que la pantalla (5) porque acá nadie está esperando. */
-        if (secas >= 10) { apiCaida = true; break; }
-      }
-      const min = Math.round((Date.now() - t0) / 60000);
+      const r = await this.mp.encolarSincronizacion({ forzar: FORZAR }, `automática (${motivo})`, { prioridad: 7 });
       this.log.log(
-        `Fin de sincronización ${motivo}: ${guardadas} guardadas de ${consultadas} consultadas · ` +
-        `${finalizadas} con resultado final · ${errores} con error · ${min} min` +
-        `${cuotaAgotada ? ' · CUOTA DIARIA AGOTADA' : ''}` +
-        `${apiCaida ? ` · CORTADA: la API no responde, quedan ${restantes}` : ''}.`,
+        `Sincronización ${motivo} encolada: ${r.encolados} proceso(s) (${r.omitidos} ya estaban en cola) ` +
+        `de ${r.pendientes} pendientes sobre ${r.candidatas} candidatas · modo ${FORZAR ? 'forzar' : 'normal'} · lote ${r.lote}.`,
       );
-      return { consultadas, guardadas, finalizadas, errores, cuota_agotada: cuotaAgotada, api_caida: apiCaida, restantes, minutos: min };
+      return r;
     } catch (e: any) {
-      this.log.error(`Sincronización ${motivo} interrumpida: ${String(e?.message || e)}`);
-      return { consultadas, finalizadas, errores, error: String(e?.message || e) };
+      this.log.error(`Sincronización ${motivo} no se pudo encolar: ${String(e?.message || e)}`);
+      return { error: String(e?.message || e) };
     } finally {
       this.corriendo = false;
     }

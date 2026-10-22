@@ -1,6 +1,7 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
 import { MailingsService } from '../mailings/mailings.service';
+import { correTareasDeFondo, MOTIVO_SIN_FONDO } from '../rol-proceso';
 
 // Scheduler liviano (setInterval, sin dependencias extra) que genera
 // recordatorios de cotización: cierre próximo (3 h / 1 h antes) y resultados
@@ -19,6 +20,10 @@ export class RecordatoriosService implements OnModuleInit {
   ) {}
 
   onModuleInit() {
+    if (!correTareasDeFondo()) {
+      this.logger.log(`Recordatorios: no corre en este proceso (${MOTIVO_SIN_FONDO}).`);
+      return;
+    }
     // Primera pasada a los 30 s del arranque y luego cada 5 min.
     setTimeout(() => this.ejecutar().catch(() => {}), 30 * 1000);
     setInterval(() => this.ejecutar().catch(() => {}), this.INTERVALO_MS);

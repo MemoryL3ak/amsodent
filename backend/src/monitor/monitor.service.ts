@@ -4,6 +4,7 @@ import * as net from 'net';
 import * as dns from 'dns';
 import * as nodemailer from 'nodemailer';
 import { SupabaseService } from '../supabase/supabase.service';
+import { atiendeWeb, rolProceso } from '../rol-proceso';
 
 export interface MonitorEntry {
   nivel?: 'info' | 'warn' | 'error';
@@ -67,14 +68,19 @@ export class MonitorService implements OnModuleInit, OnModuleDestroy {
 
   constructor(private supabase: SupabaseService) {
     this.programar(() => void this.flush(), FLUSH_INTERVALO_MS);
-    this.programar(() => void this.purgar(), PURGA_INTERVALO_MS);
-    this.programar(() => void this.evaluarAlertas(), ALERTAS_INTERVALO_MS);
-    this.programar(() => void this.chequearSalud(), SALUD_INTERVALO_MS);
-    void this.purgar();
-    // Primer health check a los 10 s del arranque (deja levantar todo antes).
-    const t = setTimeout(() => void this.chequearSalud(), 10_000);
-    t.unref?.();
-    this.timers.push(t);
+    // (2026-10-21) Purga, alertas y chequeos de salud solo en el proceso que
+    // atiende a los usuarios (APP_ROL=web o todo): el worker solo vuelca sus
+    // logs, para no duplicar correos de alerta ni chequeos.
+    if (atiendeWeb()) {
+      this.programar(() => void this.purgar(), PURGA_INTERVALO_MS);
+      this.programar(() => void this.evaluarAlertas(), ALERTAS_INTERVALO_MS);
+      this.programar(() => void this.chequearSalud(), SALUD_INTERVALO_MS);
+      void this.purgar();
+      // Primer health check a los 10 s del arranque (deja levantar todo antes).
+      const t = setTimeout(() => void this.chequearSalud(), 10_000);
+      t.unref?.();
+      this.timers.push(t);
+    }
   }
 
   private programar(fn: () => void, ms: number) {
@@ -87,8 +93,8 @@ export class MonitorService implements OnModuleInit, OnModuleDestroy {
     this.registrar({
       nivel: 'info',
       tipo: 'sistema',
-      mensaje: `Backend iniciado · versión ${APP_VERSION}`,
-      metadata: { version: APP_VERSION, node: process.version },
+      mensaje: `Backend iniciado · versión ${APP_VERSION} · rol ${rolProceso()}`,
+      metadata: { version: APP_VERSION, node: process.version, rol: rolProceso() },
     });
   }
 

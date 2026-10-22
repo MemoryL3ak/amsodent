@@ -1,6 +1,7 @@
 import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
 import { FeriadosService } from '../feriados/feriados.service';
+import { correTareasDeFondo, MOTIVO_SIN_FONDO } from '../rol-proceso';
 
 /* ============================================================================
    Calendario de cobranza por vencimiento de facturas
@@ -98,6 +99,10 @@ export class FacturasVencidasCron implements OnModuleInit, OnModuleDestroy {
   ) {}
 
   onModuleInit() {
+    if (!correTareasDeFondo()) {
+      this.log.log(`Calendario de cobranza: no corre en este proceso (${MOTIVO_SIN_FONDO}).`);
+      return;
+    }
     if (String(process.env.FACT_VENC_AVISO || '').toLowerCase() === 'off') {
       this.log.log('Calendario de cobranza DESACTIVADO (FACT_VENC_AVISO=off).');
       return;
