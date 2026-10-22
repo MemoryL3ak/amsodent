@@ -123,3 +123,10 @@ hacia la v1), reintenta los fallos transitorios con espera creciente, se pausa
 hasta el día siguiente si se agota la cuota del ticket y 10 minutos si la API
 deja de responder. Las pantallas solo encolan y siguen el avance en
 `GET /api/mercado-publico/cola/estado`.
+
+Etapas 2 y 3 (mismo día): el análisis por producto del panel lo agrega
+PostgreSQL (`mp_productos_resumen`), la ficha de un proceso se sirve desde
+`mp_fichas_cache` (hasta 6 h, `?refrescar=1` la pide en vivo), y la
+exploración, el análisis global y el cambio automático de estados también
+son trabajos de la cola (`exploracion`, `analisis_global`, `estado` con
+`auto: true`). Requiere además `supabase/migrations/20261021_mp_productos_fichas.sql`.

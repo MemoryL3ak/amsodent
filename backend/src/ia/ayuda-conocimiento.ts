@@ -131,7 +131,10 @@ fechas) con filtros locales sobre los resultados (texto, tipo, vigencia, rango
 de cierre). Acciones por postulación: Tomar (reserva, máx. 3), No aplica,
 Cargar → crea la cotización. El botón de crear cotización solo se habilita para
 quien tiene la toma. La sincronización nocturna (23:00) trae los resultados de
-adjudicación para el Análisis Mercado Público.
+adjudicación para el Análisis Mercado Público. La ficha de un proceso se abre al
+tiro desde una copia guardada (hasta 6 h) y tiene el botón «Actualizar desde
+Mercado Público» para pedirla en vivo. «Confirmar postulaciones» encola el
+trabajo al ROBOT de Mercado Público y muestra el avance.
 
 ### Órdenes de Compra a proveedores (/ordenes-compra) — solo admin
 OC de COMPRA a proveedores (no confundir con la OC que emite el cliente).
@@ -627,6 +630,15 @@ promedio, monto y ganador frecuente. Se actualiza SOLO cada día a las 06:00
 (MP_ANALISIS_GLOBAL_AUTO); si una corrida falla o se corta, el panel muestra
 el motivo y conserva el resultado anterior. Refrescarlo a mano gasta ~110
 llamadas del ticket (solo exploradores autorizados).
+ROBOT de Mercado Público (desde 2026-10-21): todas las consultas a la API
+(sincronización de fichas, Revisar estados, Confirmar postulaciones,
+exploración, análisis global) las hace un robot en segundo plano desde una
+cola. Los botones encolan y responden al tiro; la pantalla muestra el avance
+("el robot está consultando: X de Y") y se puede cerrar la pestaña sin cortar
+nada. Si la cuota diaria del ticket se agota, el robot se pausa hasta el día
+siguiente; si la API deja de responder, reintenta a los 10 minutos. La
+pantalla avisa en ambos casos. Si el aviso dice que el robot NO está activo,
+hay que revisar el servicio worker en Railway (APP_ROL=worker).
 
 ### Panel de Ejecutivos (/cotizaciones-vendedor)
 Rendimiento por vendedor: cotizaciones, adjudicaciones, ventas y resumen

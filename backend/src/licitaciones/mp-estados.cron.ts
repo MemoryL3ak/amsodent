@@ -5,6 +5,7 @@ import { MpExploracionCron } from './mp-exploracion.cron';
 import { MpOrdenesService } from './mp-ordenes.service';
 import { MpAdjudicacionesService } from './mp-adjudicaciones.service';
 import { correTareasDeFondo, MOTIVO_SIN_FONDO } from '../rol-proceso';
+import { MpColaService } from '../mercadopublico/mp-cola.service';
 
 /* ============================================================================
    Cambio automático de estado según Mercado Público (pedido 2026-09-17)
@@ -85,6 +86,7 @@ export class MpEstadosCron implements OnModuleInit, OnModuleDestroy {
     private readonly exploracion: MpExploracionCron,
     private readonly ordenes: MpOrdenesService,
     private readonly adjudicaciones: MpAdjudicacionesService,
+    private readonly cola: MpColaService,
   ) {}
 
   /* (2026-10-02) A las 15:00 esta pasada comparte hora con la exploración de
@@ -234,73 +236,27 @@ export class MpEstadosCron implements OnModuleInit, OnModuleDestroy {
       `${porOcMp?.adjudicadas?.length ? ` · ${porOcMp.adjudicadas.length} por OC emitida en Mercado Público` : ''}.`,
     );
 
-    let revisadas = 0;
-    let aplicados = porOc.aplicados + (porOcMp?.adjudicadas?.length || 0);
-    let conError = 0;
-    let sinCuota = false;
-    let apiCaida = false;
-    let tandasSecas = 0;
-    const fallidas: number[] = [];
+    /* (2026-10-21) Las consultas a Mercado Público ya no se hacen aquí: se
+       encola un trabajo «estado» por cotización (payload.auto) y el robot las
+       consulta con reintentos; con desenlace concluyente aplica el cambio y
+       avisa (aplicarYNotificar). El cursor de las antiguas avanza como si la
+       pasada hubiera recorrido todo lo encolado. */
+    const r = await this.cola.encolar(
+      orden.map((id) => ({ tipo: 'estado' as const, clave: id, prioridad: 6, payload: { auto: true } })),
+      { solicitadoPor: 'cron estados' },
+    );
     // El cursor recorre las ANTIGUAS: lo consumido de ellas en esta pasada.
     const avanzarCursor = (consumidas: number) => {
       const deAntiguas = Math.max(0, consumidas - recientes.length);
       this.cursor = antiguas.length ? (inicio + deAntiguas) % antiguas.length : 0;
     };
-
-    for (let i = 0; i < orden.length; i += LOTE) {
-      const ids = orden.slice(i, i + LOTE);
-      const diag = await this.licitaciones.diagnosticoMpCotizaciones({ ids, limite: ids.length });
-      revisadas += diag.revisadas;
-      conError += diag.con_error;
-      for (const f of (diag.filas || []) as any[]) {
-        if (f.error && f.id) fallidas.push(f.id);
-      }
-      aplicados += await this.aplicarYNotificar(diag.filas || []);
-      // Sin cuota del ticket no sirve seguir: la próxima pasada sigue desde acá.
-      if ((diag.filas || []).some((f: any) => /cuota/i.test(String(f.error || '')))) {
-        sinCuota = true;
-        avanzarCursor(i + ids.length);
-        break;
-      }
-      /* (2026-10-15) API caída: dos tandas seguidas sin UNA sola respuesta
-         (la v2 de Compra Ágil pasa horas devolviendo 504). Seguir solo
-         alargaría la pasada —a 30 s por consulta, 1.000 candidatas son 8
-         horas— y bloquearía la siguiente. Se corta y se retoma más tarde. */
-      tandasSecas = diag.revisadas > 0 && diag.con_error >= diag.revisadas ? tandasSecas + 1 : 0;
-      if (tandasSecas >= 2) {
-        apiCaida = true;
-        avanzarCursor(i + ids.length);
-        break;
-      }
-    }
-    if (!sinCuota && !apiCaida) avanzarCursor(orden.length);
-
-    /* Segunda vuelta para las que fallaron por culpa de la API (504, timeouts:
-       la v2 de Compra Ágil los da a menudo). Sin esto, una cotización ya
-       resuelta en ChileCompra se quedaba sin actualizar hasta la pasada
-       siguiente por un error ajeno. No se hace con la API caída. */
-    if (!sinCuota && !apiCaida && fallidas.length) {
-      let rescatados = 0;
-      let siguenFallando = 0;
-      for (let i = 0; i < fallidas.length; i += LOTE) {
-        const ids = fallidas.slice(i, i + LOTE);
-        const reintento = await this.licitaciones.diagnosticoMpCotizaciones({ ids, limite: ids.length });
-        siguenFallando += reintento.con_error;
-        rescatados += await this.aplicarYNotificar(reintento.filas || []);
-      }
-      aplicados += rescatados;
-      this.log.log(
-        `Reintento de ${fallidas.length} sin respuesta: ${siguenFallando} volvieron a fallar · ${rescatados} cambio(s) rescatado(s).`,
-      );
-    }
-
+    avanzarCursor(orden.length);
+    const aplicados = porOc.aplicados + (porOcMp?.adjudicadas?.length || 0);
     this.log.log(
-      `Pasada ${sinCuota || apiCaida ? 'CORTADA' : 'completa'}: ${revisadas} de ${orden.length} consultadas · ` +
-      `${aplicados} cambio(s) de estado · ${conError} sin respuesta de Mercado Público` +
-      `${sinCuota ? ` · CUOTA DIARIA AGOTADA, la próxima sigue desde la ${this.cursor}` : ''}` +
-      `${apiCaida ? ' · API DE COMPRA ÁGIL CAÍDA: se retoma en la próxima pasada' : ''}.`,
+      `Pasada encolada: ${r.encolados} cotización(es) para el robot (${r.omitidos} ya estaban en cola) · ` +
+      `${aplicados} cambio(s) por evidencia propia · lote ${r.lote}.`,
     );
-    return { revisadas, candidatas: objetivo.length, aplicados, con_error: conError, cuota_agotada: sinCuota, api_caida: apiCaida, oc_mercado_publico: porOcMp };
+    return { encoladas: r.encolados, omitidas: r.omitidos, candidatas: objetivo.length, aplicados, lote: r.lote, oc_mercado_publico: porOcMp };
   }
 
   /* ── Adjudicadas por evidencia propia (2026-09-25) ───────────────────────
@@ -372,7 +328,7 @@ export class MpEstadosCron implements OnModuleInit, OnModuleDestroy {
     return { aplicados: r.aplicados, ids: r.ids };
   }
   /** Aplica los desenlaces concluyentes de un lote y avisa a cada vendedor. */
-  private async aplicarYNotificar(filas: any[]): Promise<number> {
+  async aplicarYNotificar(filas: any[]): Promise<number> {
     const aplicables = (filas || []).filter((f: any) => f.discrepancia && f.sugerencia && f.id);
     if (!aplicables.length) return 0;
 

@@ -221,9 +221,11 @@ export class LicitacionesController {
 
   // Ficha en vivo desde Mercado Público (proxy: el ticket vive solo en el
   // backend). Debe declararse ANTES de @Get(':id').
+  // (2026-10-21) Sirve la copia guardada (hasta 6 h) y consulta la API solo
+  // si falta, está vieja o viene ?refrescar=1.
   @Get('mercado-publico/:codigo')
-  mercadoPublicoDetalle(@Param('codigo') codigo: string) {
-    return this.licitacionesService.mercadoPublicoDetalle(codigo);
+  mercadoPublicoDetalle(@Param('codigo') codigo: string, @Query('refrescar') refrescar?: string) {
+    return this.licitacionesService.mercadoPublicoDetalle(codigo, { refrescar: refrescar === '1' || refrescar === 'true' });
   }
 
   // (2026-10-07) Guías de despacho del usuario que no tienen N° de

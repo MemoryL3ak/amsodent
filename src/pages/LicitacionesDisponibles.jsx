@@ -712,13 +712,15 @@ export default function LicitacionesDisponibles({ embedded = false }) {
      «Crear cotización (borrador)». Desde el Listado NO se ofrece a propósito:
      ahí la cotización se crea con «Cargar», que reserva el cupo y deja la
      postulación marcada; un atajo aquí saltaría ese control. */
-  async function verFichaMP(row, itemExplorar = null) {
+  /* (2026-10-21) La ficha llega desde la copia guardada en el backend (hasta
+     6 h) y abre al tiro; «Actualizar desde Mercado Público» la pide en vivo. */
+  async function verFichaMP(row, itemExplorar = null, refrescar = false) {
     const codigo = String(row.id_licitacion || "").trim();
     if (!codigo) return;
     const urlFicha = String(row?.datos?.url_ficha || "").trim();
     setMpFicha({ codigo, urlFicha, loading: true, data: null, error: "", itemExplorar });
     try {
-      const data = await api.get(`/licitaciones/mercado-publico/${encodeURIComponent(codigo)}`);
+      const data = await api.get(`/licitaciones/mercado-publico/${encodeURIComponent(codigo)}${refrescar ? "?refrescar=1" : ""}`);
       setMpFicha((prev) => (prev?.codigo === codigo ? { ...prev, loading: false, data } : prev));
     } catch (e) {
       setMpFicha((prev) => (prev?.codigo === codigo
@@ -2281,6 +2283,23 @@ export default function LicitacionesDisponibles({ embedded = false }) {
               <button className="btn btn-ghost" onClick={() => setMpFicha(null)} style={{ padding: 6 }}><X size={16} /></button>
             </div>
 
+            {!mpFicha.loading && mpFicha.data?.cache && (
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap", fontSize: 11.5, color: mpFicha.data.cache.vencida ? "#b45309" : "var(--text-muted)", marginBottom: 10 }}>
+                <span>
+                  {mpFicha.data.cache.vencida
+                    ? `Mercado Público no respondió; se muestra la copia guardada el ${new Date(mpFicha.data.cache.consultado_at).toLocaleString("es-CL", { dateStyle: "short", timeStyle: "short" })}.`
+                    : `Datos guardados el ${new Date(mpFicha.data.cache.consultado_at).toLocaleString("es-CL", { dateStyle: "short", timeStyle: "short" })}.`}
+                </span>
+                <button
+                  className="btn btn-ghost btn-sm"
+                  style={{ fontSize: 11.5 }}
+                  title="Vuelve a pedir la ficha a Mercado Público (puede tardar hasta 30 s)"
+                  onClick={() => verFichaMP({ id_licitacion: mpFicha.codigo, datos: { url_ficha: mpFicha.urlFicha } }, mpFicha.itemExplorar, true)}
+                >
+                  Actualizar desde Mercado Público
+                </button>
+              </div>
+            )}
             {mpFicha.loading ? (
               <div style={{ padding: "32px 0", textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>
                 Consultando Mercado Público…

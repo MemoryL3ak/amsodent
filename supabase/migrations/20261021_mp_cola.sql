@@ -77,13 +77,14 @@ begin
       coalesce(i->'payload', '{}'::jsonb)          as payload,
       i->>'lote'                                   as lote,
       coalesce((i->>'prioridad')::int, 5)          as prioridad,
+      coalesce((i->>'max_intentos')::int, 6)       as max_intentos,
       i->>'solicitado_por'                         as solicitado_por
     from jsonb_array_elements(p_items) as i
     where coalesce(i->>'tipo', '') <> '' and coalesce(i->>'clave', '') <> ''
   ),
   ins as (
-    insert into public.mp_cola (tipo, clave, payload, lote, prioridad, solicitado_por)
-    select tipo, clave, payload, lote, prioridad, solicitado_por from datos
+    insert into public.mp_cola (tipo, clave, payload, lote, prioridad, max_intentos, solicitado_por)
+    select tipo, clave, payload, lote, prioridad, max_intentos, solicitado_por from datos
     on conflict (tipo, clave) where estado in ('pendiente', 'en_curso') do nothing
     returning 1
   )

@@ -16,15 +16,21 @@ import { SupabaseService } from '../supabase/supabase.service';
                   publica Mercado Público (diagnóstico; aplicar es aparte).
      postulacion  clave = id de la postulación (licitaciones_disponibles) →
                   confirma si nuestro RUT figura entre los oferentes.
+     exploracion  clave = 'unica' → corre la búsqueda del explorador con todo
+                  el catálogo de palabras clave y guarda mp_exploracion.
+     analisis_global  clave = 'unica' → análisis global de productos
+                  adjudicados en todo Mercado Público (mp_analisis_productos).
 ============================================================================ */
 
-export type TipoTrabajo = 'ficha' | 'estado' | 'postulacion';
+export type TipoTrabajo = 'ficha' | 'estado' | 'postulacion' | 'exploracion' | 'analisis_global';
 
 export interface TrabajoNuevo {
   tipo: TipoTrabajo;
   clave: string | number;
   payload?: Record<string, any>;
   prioridad?: number;
+  /** Cuántas veces se intenta antes de quedar con error (default 6). */
+  max_intentos?: number;
 }
 
 export interface Trabajo {
@@ -72,6 +78,7 @@ export class MpColaService {
         payload: t.payload || {},
         lote,
         prioridad: t.prioridad ?? 5,
+        max_intentos: t.max_intentos ?? 6,
         solicitado_por: opts.solicitadoPor || null,
       }));
       const { data, error } = await client.rpc('mp_cola_encolar', { p_items: tanda });

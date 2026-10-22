@@ -1,5 +1,6 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { LicitacionesService } from './licitaciones.service';
+import { MpEstadosCron } from './mp-estados.cron';
 import { MercadopublicoService } from '../mercadopublico/mercadopublico.service';
 import { MpColaService, Trabajo } from '../mercadopublico/mp-cola.service';
 import { mpLimitador } from '../mercadopublico/mp-limitador';
@@ -63,6 +64,7 @@ export class MpRobotService implements OnModuleInit, OnModuleDestroy {
     private readonly cola: MpColaService,
     private readonly mp: MercadopublicoService,
     private readonly licitaciones: LicitacionesService,
+    private readonly estados: MpEstadosCron,
   ) {}
 
   onModuleInit() {
@@ -205,8 +207,20 @@ export class MpRobotService implements OnModuleInit, OnModuleDestroy {
         // El diagnóstico atrapa sus errores y los deja en la fila: los que son
         // de la API se relanzan para que el robot los reintente.
         if (fila.error && (esTransitorio(fila.error) || esCuotaAgotada(fila.error))) throw new Error(fila.error);
+        /* Trabajos del cron de estados (payload.auto): con desenlace
+           concluyente se aplica el cambio y se avisa al vendedor, igual que
+           hacía la pasada del cron. Los pedidos desde la pantalla solo miran. */
+        if (t.payload?.auto) {
+          const aplicados = await this.estados.aplicarYNotificar([fila]);
+          return { ...fila, aplicado: aplicados };
+        }
         return fila;
       }
+      case 'exploracion':
+        return this.licitaciones.explorarYGuardar(String(t.payload?.motivo || 'robot'));
+      case 'analisis_global':
+        await this.licitaciones.correrAnalisisProductosGlobal(String(t.payload?.motivo || 'robot'));
+        return { ok: true };
       case 'postulacion': {
         const id = Number(t.clave);
         const r: any = await this.licitaciones.verificarPostulaciones({ ids: [id] });

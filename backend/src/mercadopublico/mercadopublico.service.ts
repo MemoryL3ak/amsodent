@@ -242,6 +242,25 @@ export class MercadopublicoService {
     const esFecha = (v?: string) => /^\d{4}-\d{2}-\d{2}$/.test(String(v || ''));
     const d = esFecha(desde) ? String(desde) : null;
     const h = esFecha(hasta) ? String(hasta) : null;
+    /* (2026-10-21) La agregación la hace PostgreSQL (mp_productos_resumen, en
+       milisegundos): antes el backend bajaba el `detalle` de las ~3.000 fichas
+       a memoria en cada carga del panel. Sin la migración
+       20261021_mp_productos_fichas se cae al cálculo en memoria de siempre. */
+    const { data, error } = await this.supabase
+      .getClient()
+      .rpc('mp_productos_resumen', { p_desde: d, p_hasta: h });
+    if (!error && data) {
+      const r: any = data;
+      return { desde: d, hasta: h, fichas: Number(r.fichas) || 0, productos: Array.isArray(r.productos) ? r.productos : [] };
+    }
+    if (error && !/does not exist|schema cache|function/i.test(error.message)) {
+      this.logger.warn(`mp_productos_resumen falló (${error.message}); se calcula en memoria.`);
+    }
+    return this.resultadosProductosEnMemoria(d, h);
+  }
+
+  /* Cálculo en memoria (el de antes): solo si la función SQL no existe. */
+  private async resultadosProductosEnMemoria(d: string | null, h: string | null) {
     const filas = await this.itemsFichas();
     // La ficha más reciente de cada código de Mercado Público.
     const porCodigo = new Map<string, any>();

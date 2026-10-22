@@ -95,11 +95,17 @@ ESQUEMA
 - stock_declaraciones: id, rut, razon_social, fecha, total_items, total_verdes, total_amarillos, total_rojos, created_at. (snapshots de declaraciones de stock)
 - stock_solicitudes_cotizacion: id, rut, razon_social, contacto_email, estado (pendiente/respondida/cancelada), created_at. (solicitudes de cotización del portal)
 - mp_resultados: licitacion_id, codigo_mp, tipo (compra_agil/licitacion), estado_mp, estado_glosa, participamos, ganamos (true/false/null), ganador_rut, ganador_nombre, ganador_es_emt, monto_nuestro, monto_ganador, total_ofertas, organismo, fecha_cierre, consultado_at. (benchmark Mercado Público: nuestra oferta vs la GANADORA de cada proceso; montos brutos con IVA; ganamos=null → proceso aún sin decisión. Sirve para tasa de éxito, brechas de precio nuestra_oferta vs ganadora, ranking de competidores que nos ganan y análisis por organismo)
+- mp_exploracion: id (siempre 1), resultado (jsonb; resultado->'items' es la lista de oportunidades: codigo, nombre, organismo, region, monto_clp, fecha_publicacion, fecha_cierre, estado, tipo_familia 'compra_agil'/'licitacion', match_keywords), actualizado_at, motivo. (última exploración automática de Mercado Público: procesos PUBLICADOS que calzan con nuestras palabras clave; para listarlos usa jsonb_array_elements(resultado->'items'))
+- licitaciones_disponibles: id, id_licitacion (código del proceso MP), nombre, cargada (true = ya se cotizó), cargada_por, cargada_at, subida_por, tomada_por, tomada_at, origen ('listado'/'exploracion'), datos (jsonb: organismo, region, monto, cierre, publicacion, tipo, postulamos true/false/null, no_aplica), created_at. (postulaciones candidatas que el equipo toma y convierte en cotización)
+- mp_cola: id, tipo ('ficha'/'estado'/'postulacion'/'exploracion'/'analisis_global'), clave, lote, estado ('pendiente'/'en_curso'/'hecho'/'error'/'cancelado'), intentos, ultimo_error, resultado (jsonb), solicitado_por, created_at, terminado_at. (cola de trabajos del robot que consulta Mercado Público en segundo plano)
+- mp_robot: id (1), latido_at, en_vuelo, cuota_agotada_hasta, api_caida_hasta, nota. (estado del robot: está activo si latido_at es de hace menos de 90 segundos; si cuota_agotada_hasta o api_caida_hasta son futuras está pausado)
+- mp_analisis_productos: id (1), resultado (jsonb: productos adjudicados en TODO Mercado Público de nuestro rubro en los últimos 30 días), actualizado_at, estado ('corriendo'/'ok'/'error').
 
 NOTAS DE ESQUEMA
 - "Ventas" / "adjudicaciones": NO hay tabla de ventas; usa licitaciones con estado = 'Adjudicada' (montos en total_con_iva / total_sin_iva, fecha en fecha_adjudicada).
 - Las facturas/boletas viven en licitacion_documentos (tipo factura o factura_boleta); cobranza_estados/gestiones se relacionan con ellas por numero / documento_id.
 - NO tienes acceso a una tabla de campañas: si te preguntan por campañas de productos, avisa con sinceridad que ese módulo no está disponible para consulta.
+- "Qué licitaciones / oportunidades nuevas hay en Mercado Público": mp_exploracion (items publicados hoy). "Cómo va el robot / la cola de Mercado Público": mp_cola (cuenta por estado) y mp_robot (latido y pausas). "Qué estamos postulando": licitaciones_disponibles con tomada_por o cargada.
 
 METAS Y SEMÁFORO (cuando pregunten por cumplimiento de metas o avance de vendedores)
 - La meta neta por vendedor y mes está en vendedor_metas_mensuales (vendedor_email, periodo 'YYYY-MM', meta_neto).
