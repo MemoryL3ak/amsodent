@@ -116,7 +116,15 @@ export class MpRobotService implements OnModuleInit, OnModuleDestroy {
         void this.procesar(t).finally(() => { this.enVuelo -= 1; });
       }
     } catch (e: any) {
-      this.log.warn(`Ciclo del robot con error: ${String(e?.message || e).slice(0, 200)}`);
+      const msg = String(e?.message || e).slice(0, 200);
+      /* Sin la migración de la cola no hay nada que hacer: se avisa una vez y
+         se vuelve a mirar en 5 minutos, en vez de llenar el log cada 3 s. */
+      if (/migraci[oó]n|does not exist|schema cache/i.test(msg)) {
+        this.pausadoHasta = Date.now() + 5 * 60_000;
+        this.log.warn(`Robot en espera 5 min: ${msg}`);
+      } else {
+        this.log.warn(`Ciclo del robot con error: ${msg}`);
+      }
     } finally {
       this.tickEnCurso = false;
     }
