@@ -326,6 +326,7 @@ export const GRUPOS_MANUAL = [
           "Filtros: búsqueda (cotización, cliente, vendedor o SKU), stock (por despachar, con faltantes, completo, parcial, sin stock, despachadas, todas), vendedor, orden (adjudicación reciente o antigua, menor cobertura, más faltantes, mayor neto, cliente) y «Adjudicadas desde» (nunca antes del 16-10-2026).",
           "Pestaña «Por comprar»: por SKU, lo que falta en todas las cotizaciones, el stock, el costo, el valor estimado y en qué cotizaciones se necesita, con la fila de totales al pie. Los productos sin SKU (transitorios) y los que no están en el catálogo cuentan siempre como por comprar y se marcan con una etiqueta.",
           "«Exportar» descarga en CSV (Excel) la pestaña que se está viendo: el detalle por producto de las cotizaciones filtradas o la lista de compras.",
+          "Una cotización con cierre forzado deja de tomar stock y no entra en «Por comprar»: queda con estado «Cierre forzado» (se ve con el filtro Todas o Cierre forzado), con lo que quedó sin despachar y el monto con que se cerró. El orden por defecto es de la adjudicación más antigua a la más nueva, el mismo en que se reparte el stock.",
         ],
       },
       {
