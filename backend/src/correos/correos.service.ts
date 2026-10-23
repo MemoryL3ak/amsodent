@@ -447,7 +447,8 @@ export class CorreosService {
   }) {
     const lic = await this.getLicitacion(Number(opts.licitacionId));
     const vendedorCorreo = this.correoVendedor(lic);
-    const cuenta = await this.cuentaDeVendedor(lic);
+    const perfilId = await this.perfilIdPorEmail(vendedorCorreo);
+    const cuenta = perfilId ? await this.cuentaDeUsuario(perfilId) : null;
 
     // "Copia a": correos válidos, sin duplicar el destinatario principal.
     const paraNorm = String(opts.para || '').trim().toLowerCase();
@@ -479,35 +480,116 @@ export class CorreosService {
       attachments.push({ filename, content, contentType: a?.mime || undefined });
     }
 
+    const documentoRecordatorio = opts.documentoId ?? opts.adjuntarDocumentoId ?? null;
+    const correoGmail = (remitente: string) => ({
+      remitente,
+      para: opts.para,
+      cc: ccArg,
+      asunto: opts.asunto,
+      html: opts.cuerpoHtml,
+      attachments,
+    });
+
     // Si el vendedor tiene Gmail disponible (OAuth conectado o DWD), el
     // correo sale desde su casilla (queda en sus Enviados).
+    let aviso: string | null = null;
     if (cuenta) {
       const remitente = String(lic.vendedor_nombre || '').trim()
         ? `${String(lic.vendedor_nombre).trim()} <${cuenta.email}>`
         : cuenta.email;
-      const res = await this.gmailApi.enviarComo(this.credsDe(cuenta), {
-        remitente,
-        para: opts.para,
-        cc: ccArg,
-        asunto: opts.asunto,
-        html: opts.cuerpoHtml,
-        attachments,
-      });
-      await this.cerrarRecordatorios(opts.documentoId ?? opts.adjuntarDocumentoId ?? null);
-      return { ...res, modo: 'gmail' as const, de: cuenta.email };
+      try {
+        const res = await this.gmailApi.enviarComo(this.credsDe(cuenta), correoGmail(remitente));
+        await this.cerrarRecordatorios(documentoRecordatorio);
+        return { ...res, modo: 'gmail' as const, de: cuenta.email, aviso: null };
+      } catch (e: any) {
+        if (!this.esConexionGoogleCaducada(e)) throw this.errorEnvioLegible(e, 'gmail', cuenta.email);
+        /* (2026-10-23) La conexión de Google del vendedor caducó o fue revocada:
+           antes esto era un 500 «invalid_grant» y el correo no salía (y el aviso
+           del documento seguía saltando). Se olvida la cuenta muerta y el correo
+           sale igual: por el acceso del dominio si existe, si no por la cuenta
+           compartida; la respuesta avisa que vuelva a conectar su Google. */
+        await this.olvidarConexionCaducada(perfilId, cuenta);
+        const caducada = this.mensajeConexionCaducada(cuenta);
+        if (cuenta.modo === 'oauth' && this.gmailApi.puedeImpersonar(cuenta.email)) {
+          try {
+            const res = await this.gmailApi.enviarComo({ modo: 'dwd', email: cuenta.email }, correoGmail(remitente));
+            await this.cerrarRecordatorios(documentoRecordatorio);
+            return { ...res, modo: 'gmail' as const, de: cuenta.email, aviso: `${caducada} Este correo salió igual desde tu casilla por el acceso del dominio.` };
+          } catch (e2: any) {
+            this.logger.warn(`Respaldo DWD para ${cuenta.email} falló: ${e2?.message || e2}`);
+          }
+        }
+        aviso = `${caducada} Este correo salió por la cuenta compartida ${remitenteCompartido()}.`;
+      }
     }
 
     // Respaldo: cuenta SMTP compartida, con responder-a hacia el vendedor.
-    const res = await this.mailings.enviarUno({
-      para: opts.para,
-      cc: ccArg,
-      asunto: opts.asunto,
-      cuerpoHtml: opts.cuerpoHtml,
-      replyTo: vendedorCorreo || undefined,
-      attachments,
-    });
-    await this.cerrarRecordatorios(opts.documentoId ?? opts.adjuntarDocumentoId ?? null);
-    return { ...res, modo: 'smtp' as const, de: remitenteCompartido() };
+    let res: { enviado: boolean; messageId?: string };
+    try {
+      res = await this.mailings.enviarUno({
+        para: opts.para,
+        cc: ccArg,
+        asunto: opts.asunto,
+        cuerpoHtml: opts.cuerpoHtml,
+        replyTo: vendedorCorreo || undefined,
+        attachments,
+      });
+    } catch (e: any) {
+      if (e instanceof BadRequestException) throw e;
+      const legible = this.errorEnvioLegible(e, 'smtp', remitenteCompartido());
+      // Si además venía de una conexión caducada, que el mensaje cuente las dos cosas.
+      throw aviso ? new BadRequestException(`${this.mensajeConexionCaducada(cuenta!)} Se intentó por la cuenta compartida y también falló: ${legible.message}`) : legible;
+    }
+    await this.cerrarRecordatorios(documentoRecordatorio);
+    return { ...res, modo: 'smtp' as const, de: remitenteCompartido(), aviso };
+  }
+
+  /* ── Conexión de Google caducada o revocada (2026-10-23) ────────────────
+     Caso real: Jeremías emitió la boleta de una venta directa, intentó
+     enviarla dos veces y las dos fallaron con «invalid_grant» (500); cerró la
+     ventana y el aviso «Factura o boleta por enviar» siguió saltando cada
+     2 horas, con el correo sin salir. Google no vuelve a aceptar un
+     refresh_token caducado o revocado, así que la cuenta se olvida (igual que
+     «Desconectar» en Buzón) para que el sistema deje de insistir y el buzón
+     pida conectarla de nuevo. */
+  private esConexionGoogleCaducada(e: any): boolean {
+    const texto = [e?.message, e?.code, e?.response?.data?.error, e?.response?.data?.error_description]
+      .filter(Boolean).map(String).join(' ').toLowerCase();
+    return texto.includes('invalid_grant') || texto.includes('token has been expired or revoked') || texto.includes('invalid_rapt');
+  }
+
+  private mensajeConexionCaducada(cuenta: CuentaVendedor): string {
+    return `La conexión con tu cuenta de Google (${cuenta.email}) caducó o fue revocada: vuelve a conectarla en Buzón → «Conectar cuenta de Google».`;
+  }
+
+  private async olvidarConexionCaducada(userId: string | null, cuenta: CuentaVendedor | null) {
+    if (!userId || !cuenta || cuenta.modo !== 'oauth') return;
+    try {
+      await this.desconectar(userId);
+      this.logger.warn(`La conexión de Google de ${cuenta.email} caducó o fue revocada (invalid_grant): se desconectó para que vuelva a conectarla.`);
+    } catch (e: any) {
+      this.logger.warn(`No se pudo olvidar la conexión caducada de ${cuenta.email}: ${e?.message || e}`);
+    }
+  }
+
+  // Error de envío con un mensaje que el vendedor pueda entender (no «invalid_grant» ni «535-5.7.8 …»).
+  private errorEnvioLegible(e: any, via: 'gmail' | 'smtp', de: string): BadRequestException {
+    const detalle = String(e?.message || e || '').replace(/\s+/g, ' ').trim();
+    if (via === 'smtp' && /535|username and password not accepted|invalid login/i.test(detalle)) {
+      return new BadRequestException(`La cuenta de correo compartida (${de}) rechazó su clave (SMTP 535): hay que actualizar la clave de aplicación SMTP_PASS en el servidor. Avisa a administración.`);
+    }
+    return new BadRequestException(`No se pudo enviar el correo ${via === 'gmail' ? `desde ${de}` : `por la cuenta compartida ${de}`}: ${detalle.slice(0, 220) || 'error desconocido'}.`);
+  }
+
+  // Llamada a Gmail con la cuenta del usuario: si la conexión caducó, se olvida y se explica.
+  private async conGmail<T>(userId: string, cuenta: CuentaVendedor, fn: () => Promise<T>): Promise<T> {
+    try {
+      return await fn();
+    } catch (e: any) {
+      if (!this.esConexionGoogleCaducada(e)) throw e;
+      await this.olvidarConexionCaducada(userId, cuenta);
+      throw new BadRequestException(this.mensajeConexionCaducada(cuenta));
+    }
   }
 
   /* (2026-10-22) Enviado el correo de un documento, su recordatorio se cierra
@@ -743,7 +825,7 @@ export class CorreosService {
     if (!cuenta) {
       throw new BadRequestException('Aún no has conectado tu cuenta de correo.');
     }
-    return this.gmailApi.listarMensajes(this.credsDe(cuenta), opts);
+    return this.conGmail(userId, cuenta, () => this.gmailApi.listarMensajes(this.credsDe(cuenta), opts));
   }
 
   // Conteos por carpeta del sistema, para los badges del sidebar.
@@ -752,7 +834,7 @@ export class CorreosService {
     if (!cuenta) {
       throw new BadRequestException('Aún no has conectado tu cuenta de correo.');
     }
-    return this.gmailApi.contarCarpetas(this.credsDe(cuenta));
+    return this.conGmail(userId, cuenta, () => this.gmailApi.contarCarpetas(this.credsDe(cuenta)));
   }
 
   // Acciones sobre un mensaje individual (atajos al gmail-api.service).
@@ -811,7 +893,7 @@ export class CorreosService {
     if (!cuenta) {
       throw new BadRequestException('Aún no has conectado tu cuenta de correo.');
     }
-    return this.gmailApi.listarEtiquetas(this.credsDe(cuenta));
+    return this.conGmail(userId, cuenta, () => this.gmailApi.listarEtiquetas(this.credsDe(cuenta)));
   }
 
   async crearEtiqueta(userId: string, nombre: string) {
@@ -958,14 +1040,14 @@ export class CorreosService {
       imgsHtml +
       (firmaHtml ? `<br><br>${firmaHtml}` : '');
 
-    const res = await this.gmailApi.enviarComo(this.credsDe(cuenta), {
+    const res = await this.conGmail(userId, cuenta, () => this.gmailApi.enviarComo(this.credsDe(cuenta), {
       remitente: cuenta.email,
       para,
       cc: cc.length > 0 ? cc : undefined,
       asunto,
       html: cuerpoHtml,
       attachments: attachments.length > 0 ? attachments : undefined,
-    });
+    }));
     return { ...res, de: cuenta.email };
   }
 

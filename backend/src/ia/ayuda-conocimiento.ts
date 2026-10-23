@@ -716,7 +716,11 @@ Comisión = (Full venta + Full productividad) × ×Margen × ×Conversión.
 
 ### Mi Correo (/buzon)
 Cliente de correo integrado (OAuth de Google): carpetas, etiquetas propias,
-búsqueda, adjuntos y redacción.
+búsqueda, adjuntos y redacción. Si Google deja de aceptar la conexión (caducó
+o fue revocada), el sistema la desconecta solo y el buzón vuelve a pedir
+«Conectar cuenta de Google»; mientras tanto los correos de documentos (guía,
+factura, boleta) salen igual por la cuenta compartida y la ventana de envío
+avisa que hay que reconectar.
 
 ### Chat Grupal (/bitacora-cotizaciones)
 Salas grupales y directos 1 a 1, con contador de no leídos en el menú. Las
