@@ -2,7 +2,7 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   AlertTriangle, Boxes, CalendarDays, ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown,
-  ClipboardList, Download, PackageCheck, PackageX, RefreshCw, Search, ShoppingCart, Wallet,
+  ClipboardList, Download, ExternalLink, PackageCheck, PackageX, RefreshCw, Search, ShoppingCart, Wallet,
 } from "lucide-react";
 import { api } from "../lib/api";
 import { useStickyState } from "../lib/useStickyState";
@@ -28,7 +28,10 @@ import BotonLimpiarFiltros from "../components/BotonLimpiarFiltros";
    2026-10-23 (Ariel): el detalle por producto lleva la columna «Costo neto»
    (el costo del producto en el catálogo, el mismo de «Por comprar»; no el
    que quedó guardado en la cotización) y los enlaces a la cotización abren
-   en una pestaña nueva para no perder la gestión. */
+   en una pestaña nueva para no perder la gestión. El nombre de un producto
+   del catálogo también es un enlace: abre Editar Producto en otra pestaña
+   (producto_id lo entrega el backend; los transitorios y lo que no está en
+   el catálogo quedan como texto). */
 
 const POR_PAGINA = 20;
 const clp = (n) => `$${Math.round(Number(n) || 0).toLocaleString("es-CL")}`;
@@ -104,6 +107,19 @@ function Etiquetas({ p }) {
     <span className="gc-etiquetas">
       {p.sin_sku ? <span className="gc-etiqueta gc-etiqueta-aviso">Transitorio</span> : <span className="gc-etiqueta gc-etiqueta-aviso">No está en el catálogo</span>}
     </span>
+  );
+}
+
+// Nombre del producto: enlace a Editar Producto en otra pestaña cuando está en el catálogo; si no, solo texto.
+function NombreProducto({ p }) {
+  const nombre = p.producto || "—";
+  if (!p.producto_id) return <div className="gc-producto-nombre">{nombre}</div>;
+  return (
+    <div className="gc-producto-nombre">
+      <Link to={`/productos/editar/${p.producto_id}`} target="_blank" rel="noopener noreferrer" className="gc-producto-link" onClick={(e) => e.stopPropagation()} title="Abrir el producto en una pestaña nueva">
+        {nombre} <ExternalLink size={11} aria-hidden="true" />
+      </Link>
+    </div>
   );
 }
 
@@ -397,7 +413,7 @@ export default function GestionCompras() {
                 {visibles.map((e) => (
                   <tr key={`${e.sku}|${e.producto}`} className="gc-fila-compra">
                     <td className="gc-col-producto">
-                      <div className="gc-producto-nombre">{e.producto || "—"}</div>
+                      <NombreProducto p={e} />
                       <div className="gc-producto-meta"><span className="gc-sku">{e.sku || "Sin SKU"}</span><Etiquetas p={e} /></div>
                     </td>
                     <td className="gc-num">{num(e.por_despachar)}</td>
@@ -526,7 +542,7 @@ export default function GestionCompras() {
                                       return (
                                         <tr key={i} className={`gc-prod ${clase}`}>
                                           <td className="gc-col-producto">
-                                            <div className="gc-producto-nombre">{p.producto || "—"}</div>
+                                            <NombreProducto p={p} />
                                             <div className="gc-producto-meta"><span className="gc-sku">{p.sku || "Sin SKU"}</span>{p.formato && <span className="gc-formato">{p.formato}</span>}<Etiquetas p={p} /></div>
                                           </td>
                                           <td className="gc-num">{num(p.cotizado)}</td>

@@ -23,6 +23,8 @@ import { BsaleService } from '../bsale/bsale.service';
      detalle lleva el costo neto del catálogo (productos.costo, el mismo que
      usa «Por comprar»). Es el costo del PRODUCTO, no el que quedó guardado
      en la cotización: lo que no está en el catálogo sale sin costo.
+   · producto_id (2026-10-23): el id del producto en el catálogo, para que el
+     nombre abra Editar Producto en otra pestaña; null si no está en el catálogo.
    · Cierre forzado (licitaciones.ciclo_cerrado, 2026-10-22): lo que quedó sin
      despachar ya no se despacha ni se compra. La cotización no toma stock, no
      entra en «Por comprar» y sale con estado «cerrada» (en la pantalla solo con
@@ -91,13 +93,13 @@ export class GestionComprasService {
 
     // 3. Stock y costo del catálogo por SKU.
     const skus = [...new Set(filas.map((f) => String(f.sku || '').trim()).filter(Boolean))];
-    const catalogo = new Map<string, { stock: number; costo: number; nombre: string }>();
+    const catalogo = new Map<string, { id: number | null; stock: number; costo: number; nombre: string }>();
     for (let i = 0; i < skus.length; i += 200) {
-      const { data, error: e2 } = await db.from('productos').select('sku, nombre, stock, costo').in('sku', skus.slice(i, i + 200));
+      const { data, error: e2 } = await db.from('productos').select('id, sku, nombre, stock, costo').in('sku', skus.slice(i, i + 200));
       if (e2) throw new BadRequestException(e2.message);
       for (const p of (data || []) as any[]) {
         const k = String(p.sku || '').trim().toUpperCase();
-        if (!catalogo.has(k)) catalogo.set(k, { stock: Number(p.stock) || 0, costo: Number(p.costo) || 0, nombre: String(p.nombre || '') });
+        if (!catalogo.has(k)) catalogo.set(k, { id: Number(p.id) || null, stock: Number(p.stock) || 0, costo: Number(p.costo) || 0, nombre: String(p.nombre || '') });
       }
     }
 
@@ -127,7 +129,7 @@ export class GestionComprasService {
         const falta = cerrada ? 0 : pendiente - asignado;
         if (falta > 0) {
           const ck = clave(f.sku, f.producto);
-          const e = compras.get(ck) || { sku: String(f.sku || '').trim(), producto: enCatalogo?.nombre || String(f.producto || ''), sin_sku: !k, en_catalogo: !!enCatalogo, stock: enCatalogo ? enCatalogo.stock : null, costo: enCatalogo ? enCatalogo.costo : null, por_despachar: 0, falta: 0, cotizaciones: [] as number[] };
+          const e = compras.get(ck) || { sku: String(f.sku || '').trim(), producto: enCatalogo?.nombre || String(f.producto || ''), producto_id: enCatalogo?.id ?? null, sin_sku: !k, en_catalogo: !!enCatalogo, stock: enCatalogo ? enCatalogo.stock : null, costo: enCatalogo ? enCatalogo.costo : null, por_despachar: 0, falta: 0, cotizaciones: [] as number[] };
           e.falta += falta;
           if (!e.cotizaciones.includes(Number(c.id))) e.cotizaciones.push(Number(c.id));
           compras.set(ck, e);
@@ -135,6 +137,7 @@ export class GestionComprasService {
         return {
           sku: String(f.sku || '').trim(),
           producto: String(f.producto || '') || enCatalogo?.nombre || '',
+          producto_id: enCatalogo?.id ?? null,
           formato: String(f.formato || ''),
           cotizado: Number(f.cotizada || 0),
           despachado: Number(f.despachada || 0),
