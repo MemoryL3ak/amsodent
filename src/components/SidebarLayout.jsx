@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { useUnsavedChanges } from "../context/UnsavedChangesContext";
 import SessionTracker from "./SessionTracker";
 import PresenceTracker from "./PresenceTracker";
+import AvisoCredenciales from "./AvisoCredenciales";
 import Avatar from "./Avatar";
 import { permisosFallback } from "../constants/modulos";
 import {
@@ -597,6 +598,9 @@ export default function SidebarLayout() {
       </aside>
 
       <main className="content">
+        {/* (2026-10-23) Credenciales rechazadas (SMTP, Bsale, MP…): el admin
+            lo ve en cualquier pantalla, no solo si entra a Monitoreo. */}
+        {esAdmin && <AvisoCredenciales />}
         <Outlet />
       </main>
     </div>

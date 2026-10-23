@@ -2,10 +2,14 @@ import { Body, Controller, Get, Param, Post, Query, Req, UseGuards } from '@nest
 import { AuthGuard } from '../auth/auth.guard';
 import { AdminGuard } from '../auth/admin.guard';
 import { MonitorService } from './monitor.service';
+import { CredencialesService } from './credenciales.service';
 
 @Controller('monitor')
 export class MonitorController {
-  constructor(private monitor: MonitorService) {}
+  constructor(
+    private monitor: MonitorService,
+    private credenciales: CredencialesService,
+  ) {}
 
   // Consulta del panel (solo admin). El "en vivo" llega por Realtime directo
   // desde Supabase; esto es la carga inicial y los filtros.
@@ -38,6 +42,20 @@ export class MonitorController {
   @UseGuards(AdminGuard)
   salud() {
     return this.monitor.estadoSalud();
+  }
+
+  // Credenciales e integraciones (2026-10-23): estado vigente del último
+  // chequeo (autenticación real contra cada proveedor) y chequeo a pedido.
+  @Get('credenciales')
+  @UseGuards(AdminGuard)
+  credencialesEstado() {
+    return this.credenciales.estado();
+  }
+
+  @Post('credenciales/chequear')
+  @UseGuards(AdminGuard)
+  credencialesChequear() {
+    return this.credenciales.chequearAhora();
   }
 
   // Errores agrupados por huella (vista "Problemas").

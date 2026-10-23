@@ -413,6 +413,24 @@ function getNotifVisuales(notif) {
       etiqueta: "Stock",
     };
   }
+  // Avisos técnicos del monitor (2026-10-23): credenciales rechazadas por
+  // su proveedor, avisos de integraciones y alertas de errores/latencia.
+  if (tipo === "credencial_fallo" || tipo === "monitor_alerta") {
+    return {
+      icono: AlertCircle,
+      color: "#b91c1c",
+      bg: "#fee2e2",
+      etiqueta: "Sistema",
+    };
+  }
+  if (tipo === "credencial_aviso") {
+    return {
+      icono: AlertTriangle,
+      color: "#b45309",
+      bg: "#fef3c7",
+      etiqueta: "Sistema",
+    };
+  }
   return {
     icono: Bell,
     color: "#475569",
