@@ -208,9 +208,10 @@ export class CredencialesService implements OnModuleDestroy {
     const vencido = this.ultimoAvisoEn > 0 && Date.now() - this.ultimoAvisoEn >= recordatorioMs;
     if (!nuevas.length && !vencido) return;
     // El dedupe es en memoria: tras un reinicio del backend (p. ej. un
-    // deploy) se vuelve a avisar una vez. Se intentó deduplicar consultando
-    // `notificaciones` por metadata, pero la tabla es tan grande que esa
-    // consulta tardó más de dos minutos y vencía el timeout de Supabase.
+    // deploy) se vuelve a avisar una vez. Se probó deduplicar consultando
+    // `notificaciones`, pero el aviso no debe depender de la base: el día que
+    // se estrenó, Supabase estaba degradado y esa consulta tardó 140 s. Un
+    // chequeo de credenciales tiene que terminar aunque la base esté lenta.
     for (const r of malas) this.avisados.set(r.clave, r.estado);
     this.ultimoAvisoEn = Date.now();
     const firma = malas.map((r) => `${r.clave}:${r.estado}`).sort().join('|');
