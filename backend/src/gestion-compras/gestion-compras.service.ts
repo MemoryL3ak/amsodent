@@ -18,7 +18,12 @@ import { BsaleService } from '../bsale/bsale.service';
      dos cotizaciones no cuentan dos veces las mismas unidades. Lo que no
      alcanza es lo que hay que comprar (pestaña «Por comprar», por SKU, con el
      costo para estimar cuánto cuesta).
-   · Sin SKU (transitorios) no hay stock que mirar: cuentan como por comprar. */
+   · Sin SKU (transitorios) no hay stock que mirar: cuentan como por comprar.
+   · Cierre forzado (licitaciones.ciclo_cerrado, 2026-10-22): lo que quedó sin
+     despachar ya no se despacha ni se compra. La cotización no toma stock, no
+     entra en «Por comprar» y sale con estado «cerrada» (en la pantalla solo con
+     el filtro Todas / Cierre forzado), con lo que quedó sin despachar y el
+     monto con que se cerró (monto_forzado). */
 
 export const INICIO_GESTION_COMPRAS = '2026-10-16';
 
@@ -44,7 +49,7 @@ export class GestionComprasService {
     // 1. Cotizaciones adjudicadas desde el inicio del módulo.
     const { data: lics, error } = await db
       .from('licitaciones')
-      .select('id, id_licitacion, nombre_entidad, rut_entidad, tipo_cliente, vendedor_nombre, vendedor_correo, creado_por, fecha_adjudicada, estado, total_sin_iva')
+      .select('id, id_licitacion, nombre_entidad, rut_entidad, tipo_cliente, vendedor_nombre, vendedor_correo, creado_por, fecha_adjudicada, estado, total_sin_iva, ciclo_cerrado, monto_forzado')
       .eq('estado', 'Adjudicada')
       .gte('fecha_adjudicada', desde)
       .order('fecha_adjudicada', { ascending: true })
@@ -105,16 +110,17 @@ export class GestionComprasService {
     const compras = new Map<string, any>();
     const salida: any[] = [];
     for (const c of cotizaciones) {
+      const cerrada = c.ciclo_cerrado === true;
       const productos = (filasPorLic.get(Number(c.id)) || []).map((f) => {
         const k = String(f.sku || '').trim().toUpperCase();
         const enCatalogo = k ? catalogo.get(k) : undefined;
         const pendiente = Math.max(0, Number(f.pendiente ?? Number(f.cotizada || 0) - Number(f.despachada || 0)));
         let asignado = 0;
-        if (k && enCatalogo && pendiente > 0) {
+        if (!cerrada && k && enCatalogo && pendiente > 0) {
           asignado = Math.min(pendiente, restante.get(k) || 0);
           restante.set(k, (restante.get(k) || 0) - asignado);
         }
-        const falta = pendiente - asignado;
+        const falta = cerrada ? 0 : pendiente - asignado;
         if (falta > 0) {
           const ck = clave(f.sku, f.producto);
           const e = compras.get(ck) || { sku: String(f.sku || '').trim(), producto: enCatalogo?.nombre || String(f.producto || ''), sin_sku: !k, en_catalogo: !!enCatalogo, stock: enCatalogo ? enCatalogo.stock : null, costo: enCatalogo ? enCatalogo.costo : null, por_despachar: 0, falta: 0, cotizaciones: [] as number[] };
@@ -134,15 +140,17 @@ export class GestionComprasService {
           falta,
           sin_sku: !k,
           en_catalogo: !!enCatalogo,
-          cobertura: pendiente > 0 ? Math.round((asignado / pendiente) * 1000) / 10 : 100,
+          cobertura: cerrada ? 0 : pendiente > 0 ? Math.round((asignado / pendiente) * 1000) / 10 : 100,
         };
       });
       const conPendiente = productos.filter((p) => p.por_despachar > 0);
-      const porDespachar = conPendiente.reduce((a, p) => a + p.por_despachar, 0);
-      const asignado = conPendiente.reduce((a, p) => a + p.asignado, 0);
-      const cubiertos = conPendiente.filter((p) => p.falta <= 0).length;
-      const cobertura = porDespachar > 0 ? Math.round((asignado / porDespachar) * 1000) / 10 : 100;
-      const estado = !productos.length ? 'sin_items' : porDespachar === 0 ? 'despachada' : cobertura >= 100 ? 'lista' : asignado > 0 ? 'parcial' : 'sin_stock';
+      // Cerrada: lo que quedó sin despachar se informa, pero no cuenta como por despachar.
+      const sinDespachar = conPendiente.reduce((a, p) => a + p.por_despachar, 0);
+      const porDespachar = cerrada ? 0 : sinDespachar;
+      const asignado = cerrada ? 0 : conPendiente.reduce((a, p) => a + p.asignado, 0);
+      const cubiertos = cerrada ? 0 : conPendiente.filter((p) => p.falta <= 0).length;
+      const cobertura = cerrada ? 0 : porDespachar > 0 ? Math.round((asignado / porDespachar) * 1000) / 10 : 100;
+      const estado = !productos.length ? 'sin_items' : cerrada ? 'cerrada' : porDespachar === 0 ? 'despachada' : cobertura >= 100 ? 'lista' : asignado > 0 ? 'parcial' : 'sin_stock';
       salida.push({
         id: Number(c.id),
         codigo: c.id_licitacion || null,
@@ -154,14 +162,17 @@ export class GestionComprasService {
         neto: Number(c.total_sin_iva) || 0,
         estado,
         cobertura,
-        unidades: { por_despachar: porDespachar, asignadas: asignado, faltan: porDespachar - asignado },
-        productos_pendientes: conPendiente.length,
+        cerrada,
+        monto_forzado: cerrada ? Number(c.monto_forzado) || 0 : null,
+        unidades: { por_despachar: porDespachar, asignadas: asignado, faltan: porDespachar - asignado, sin_despachar: cerrada ? sinDespachar : 0 },
+        productos_pendientes: cerrada ? 0 : conPendiente.length,
         productos_cubiertos: cubiertos,
         productos,
       });
     }
     // El total por despachar de cada SKU (en todas las cotizaciones) para la lista de compras.
     for (const cot of salida) for (const p of cot.productos) {
+      if (cot.cerrada) continue; // lo que quedó sin despachar en una cerrada no se va a despachar
       const e = compras.get(clave(p.sku, p.producto));
       if (e) e.por_despachar += p.por_despachar;
     }
@@ -169,7 +180,7 @@ export class GestionComprasService {
       .map((e) => ({ ...e, valor_estimado: e.costo ? Math.round(e.costo * e.falta) : null }))
       .sort((a, b) => (b.valor_estimado || 0) - (a.valor_estimado || 0) || b.falta - a.falta);
 
-    const enGestion = salida.filter((c) => c.estado !== 'despachada' && c.estado !== 'sin_items');
+    const enGestion = salida.filter((c) => c.estado !== 'despachada' && c.estado !== 'sin_items' && c.estado !== 'cerrada');
     const porDespacharTotal = enGestion.reduce((a, c) => a + c.unidades.por_despachar, 0);
     const asignadoTotal = enGestion.reduce((a, c) => a + c.unidades.asignadas, 0);
     return {
@@ -181,6 +192,7 @@ export class GestionComprasService {
         cotizaciones: enGestion.length,
         listas: enGestion.filter((c) => c.estado === 'lista').length,
         despachadas: salida.filter((c) => c.estado === 'despachada').length,
+        cerradas: salida.filter((c) => c.estado === 'cerrada').length,
         cobertura: porDespacharTotal > 0 ? Math.round((asignadoTotal / porDespacharTotal) * 1000) / 10 : 100,
         unidades_por_despachar: porDespacharTotal,
         unidades_faltan: porDespacharTotal - asignadoTotal,
@@ -197,7 +209,7 @@ export class GestionComprasService {
   private vacio(desde: string, avisos: string[]) {
     return {
       inicio: INICIO_GESTION_COMPRAS, desde, actualizado_at: new Date().toISOString(), hoy: hoyEnChile(),
-      kpis: { cotizaciones: 0, listas: 0, despachadas: 0, cobertura: 100, unidades_por_despachar: 0, unidades_faltan: 0, skus_por_comprar: 0, valor_por_comprar: 0, sin_costo: 0 },
+      kpis: { cotizaciones: 0, listas: 0, despachadas: 0, cerradas: 0, cobertura: 100, unidades_por_despachar: 0, unidades_faltan: 0, skus_por_comprar: 0, valor_por_comprar: 0, sin_costo: 0 },
       cotizaciones: [], compras: [], avisos,
     };
   }

@@ -49,11 +49,13 @@ const ESTADOS = {
   parcial: { texto: "Stock parcial", tono: "medio" },
   sin_stock: { texto: "Sin stock", tono: "bajo" },
   despachada: { texto: "Despachada", tono: "neutro" },
+  cerrada: { texto: "Cierre forzado", tono: "neutro" },
   sin_items: { texto: "Sin productos", tono: "neutro" },
 };
+// Por defecto de la adjudicación más antigua a la más nueva (pedido de Ariel 2026-10-22): es el orden en que se reparte el stock.
 const ORDENES = [
-  { value: "reciente", label: "Adjudicación más reciente" },
   { value: "antigua", label: "Adjudicación más antigua" },
+  { value: "reciente", label: "Adjudicación más reciente" },
   { value: "cobertura", label: "Menor cobertura primero" },
   { value: "falta", label: "Más unidades faltantes" },
   { value: "neto", label: "Mayor monto neto" },
@@ -132,7 +134,7 @@ export default function GestionCompras() {
   const [q, setQ] = useStickyState("gestionCompras.q", "");
   const [estado, setEstado] = useStickyState("gestionCompras.estado", "pendientes");
   const [vendedor, setVendedor] = useStickyState("gestionCompras.vendedor", "");
-  const [orden, setOrden] = useStickyState("gestionCompras.orden", "reciente");
+  const [orden, setOrden] = useStickyState("gestionCompras.orden", "antigua");
   const [desde, setDesde] = useStickyState("gestionCompras.desde", "");
   const [abiertas, setAbiertas] = useState([]);
   const [pagina, setPagina] = useState(1);
@@ -162,7 +164,7 @@ export default function GestionCompras() {
 
   const cotizaciones = useMemo(() => {
     const lista = (datos?.cotizaciones || []).filter((c) => {
-      if (estado === "pendientes" && (c.estado === "despachada" || c.estado === "sin_items")) return false;
+      if (estado === "pendientes" && (c.estado === "despachada" || c.estado === "sin_items" || c.estado === "cerrada")) return false;
       if (estado === "faltantes" && c.estado !== "parcial" && c.estado !== "sin_stock") return false;
       if (!["pendientes", "faltantes", "todas"].includes(estado) && c.estado !== estado) return false;
       if (vendedor && c.vendedor !== vendedor) return false;
@@ -189,12 +191,12 @@ export default function GestionCompras() {
   const lista = pestana === "compras" ? compras : cotizaciones;
   const visibles = lista.slice((pagina - 1) * POR_PAGINA, pagina * POR_PAGINA);
   const k = datos?.kpis;
-  const hayFiltros = !!q.trim() || estado !== "pendientes" || !!vendedor || orden !== "reciente" || !!desde;
-  const limpiar = () => { setQ(""); setEstado("pendientes"); setVendedor(""); setOrden("reciente"); setDesde(""); };
+  const hayFiltros = !!q.trim() || estado !== "pendientes" || !!vendedor || orden !== "antigua" || !!desde;
+  const limpiar = () => { setQ(""); setEstado("pendientes"); setVendedor(""); setOrden("antigua"); setDesde(""); };
 
   // Desglose por estado para el KPI de cotizaciones (sobre lo que está en gestión, no sobre lo filtrado).
   const desglose = useMemo(() => {
-    const en = (datos?.cotizaciones || []).filter((c) => c.estado !== "despachada" && c.estado !== "sin_items");
+    const en = (datos?.cotizaciones || []).filter((c) => c.estado !== "despachada" && c.estado !== "sin_items" && c.estado !== "cerrada");
     return { lista: en.filter((c) => c.estado === "lista").length, parcial: en.filter((c) => c.estado === "parcial").length, sin_stock: en.filter((c) => c.estado === "sin_stock").length };
   }, [datos]);
 
@@ -314,6 +316,7 @@ export default function GestionCompras() {
                   { value: "parcial", label: "Stock parcial", color: "#ca8a04" },
                   { value: "sin_stock", label: "Sin stock", color: "#dc2626" },
                   { value: "despachada", label: "Despachadas" },
+                  { value: "cerrada", label: "Cierre forzado", detalle: "No toman stock ni entran en Por comprar" },
                   { value: "todas", label: "Todas" },
                 ]}
               />
@@ -429,6 +432,7 @@ export default function GestionCompras() {
               <tbody>
                 {visibles.map((c) => {
                   const abierta = abiertas.includes(c.id);
+                  const cerrada = c.estado === "cerrada";
                   const dias = diasEntre(c.fecha_adjudicada, datos?.hoy);
                   const faltantes = c.productos.filter((p) => p.falta > 0).length;
                   return (
@@ -442,20 +446,26 @@ export default function GestionCompras() {
                             <span className={`gc-etiqueta ${c.particular ? "gc-etiqueta-particular" : "gc-etiqueta-publica"}`}>{c.particular ? "Particular" : "Pública"}</span>
                           </div>
                           <div className="gc-cot-cliente">{c.cliente || "—"}</div>
-                          <div className="gc-cot-meta">{c.vendedor && <span>{c.vendedor}</span>}{c.neto ? <span>Neto {clp(c.neto)}</span> : null}</div>
+                          <div className="gc-cot-meta">
+                            {c.vendedor && <span>{c.vendedor}</span>}
+                            {c.neto ? <span>Neto {clp(c.neto)}</span> : null}
+                            {cerrada && <span className="gc-meta-cerrada">Cierre forzado{c.monto_forzado ? ` · se cerró con ${clp(c.monto_forzado)} neto` : ""}</span>}
+                          </div>
                         </td>
                         <td className="gc-col-fecha">
                           <div className="gc-nowrap">{fechaCL(c.fecha_adjudicada)}</div>
                           {dias != null && <div className="gc-sub">{haceDias(dias)}</div>}
                         </td>
                         <td className="gc-num">
-                          <div className="gc-nowrap"><strong>{num(c.productos_cubiertos)}</strong> de {num(c.productos_pendientes)} <span className="gc-sub-inline">prod.</span></div>
-                          <div className="gc-sub gc-nowrap">{num(c.unidades.asignadas)} de {num(c.unidades.por_despachar)} unid.</div>
+                          {cerrada ? <span className="gc-sin-dato">—</span> : <>
+                            <div className="gc-nowrap"><strong>{num(c.productos_cubiertos)}</strong> de {num(c.productos_pendientes)} <span className="gc-sub-inline">prod.</span></div>
+                            <div className="gc-sub gc-nowrap">{num(c.unidades.asignadas)} de {num(c.unidades.por_despachar)} unid.</div>
+                          </>}
                         </td>
                         <td className="gc-num">
-                          {c.unidades.faltan > 0 ? <><span className="gc-falta">{num(c.unidades.faltan)}</span><div className="gc-sub gc-nowrap">{num(faltantes)} prod.</div></> : <span className="gc-ok-check"><PackageCheck size={16} /></span>}
+                          {cerrada ? <span className="gc-sin-dato">—</span> : c.unidades.faltan > 0 ? <><span className="gc-falta">{num(c.unidades.faltan)}</span><div className="gc-sub gc-nowrap">{num(faltantes)} prod.</div></> : <span className="gc-ok-check"><PackageCheck size={16} /></span>}
                         </td>
-                        <td className="gc-col-cobertura"><Barra valor={c.cobertura} /></td>
+                        <td className="gc-col-cobertura">{cerrada ? <span className="gc-pill gc-tono-neutro">No se despacha</span> : <Barra valor={c.cobertura} />}</td>
                         <td><Pastilla estado={c.estado} /></td>
                       </tr>
                       {abierta && (
@@ -468,15 +478,20 @@ export default function GestionCompras() {
                                   <span>Productos de la cotización <strong>#{c.id}</strong>{c.codigo && c.codigo !== String(c.id) ? ` · ${c.codigo}` : ""}</span>
                                 </div>
                                 <div className="gc-minis">
-                                  <span className="gc-mini"><b>{num(c.unidades.por_despachar)}</b> por despachar</span>
-                                  <span className="gc-mini gc-tono-ok"><b>{num(c.unidades.asignadas)}</b> con stock</span>
-                                  <span className={`gc-mini ${c.unidades.faltan > 0 ? "gc-tono-bajo" : ""}`}><b>{num(c.unidades.faltan)}</b> faltan</span>
-                                  <span className={`gc-mini gc-tono-${tono(c.cobertura)}`}><b>{pct(c.cobertura)}</b> cobertura</span>
-                                  {c.unidades.faltan > 0 && (
-                                    <button type="button" className="btn btn-secondary btn-sm" onClick={(e) => { e.stopPropagation(); verFaltantes(c); }} title="Ver estos faltantes en la lista de compras">
-                                      <ShoppingCart size={13} /> Ver en Por comprar
-                                    </button>
-                                  )}
+                                  {cerrada ? <>
+                                    <span className="gc-mini gc-tono-neutro"><b>{num(c.unidades.sin_despachar)}</b> sin despachar</span>
+                                    <span className="gc-mini gc-tono-neutro">Cierre forzado: no toma stock ni entra en Por comprar</span>
+                                  </> : <>
+                                    <span className="gc-mini"><b>{num(c.unidades.por_despachar)}</b> por despachar</span>
+                                    <span className="gc-mini gc-tono-ok"><b>{num(c.unidades.asignadas)}</b> con stock</span>
+                                    <span className={`gc-mini ${c.unidades.faltan > 0 ? "gc-tono-bajo" : ""}`}><b>{num(c.unidades.faltan)}</b> faltan</span>
+                                    <span className={`gc-mini gc-tono-${tono(c.cobertura)}`}><b>{pct(c.cobertura)}</b> cobertura</span>
+                                    {c.unidades.faltan > 0 && (
+                                      <button type="button" className="btn btn-secondary btn-sm" onClick={(e) => { e.stopPropagation(); verFaltantes(c); }} title="Ver estos faltantes en la lista de compras">
+                                        <ShoppingCart size={13} /> Ver en Por comprar
+                                      </button>
+                                    )}
+                                  </>}
                                 </div>
                               </div>
                               <div className="gc-scroll">
@@ -495,7 +510,7 @@ export default function GestionCompras() {
                                   </thead>
                                   <tbody>
                                     {c.productos.map((p, i) => {
-                                      const clase = p.por_despachar <= 0 ? "gc-prod-listo" : p.falta <= 0 ? "gc-prod-ok" : p.asignado > 0 ? "gc-prod-medio" : "gc-prod-bajo";
+                                      const clase = cerrada || p.por_despachar <= 0 ? "gc-prod-listo" : p.falta <= 0 ? "gc-prod-ok" : p.asignado > 0 ? "gc-prod-medio" : "gc-prod-bajo";
                                       return (
                                         <tr key={i} className={`gc-prod ${clase}`}>
                                           <td className="gc-col-producto">
@@ -508,7 +523,7 @@ export default function GestionCompras() {
                                           <td className="gc-num">{p.stock == null ? <span className="gc-sin-dato">—</span> : num(p.stock)}</td>
                                           <td className="gc-num">{num(p.asignado)}</td>
                                           <td className="gc-num">{p.falta > 0 ? <span className="gc-falta">{num(p.falta)}</span> : <span className="gc-sin-dato">—</span>}</td>
-                                          <td className="gc-col-cobertura">{p.por_despachar > 0 ? <Barra valor={p.cobertura} /> : <span className="gc-pill gc-tono-neutro">Despachado</span>}</td>
+                                          <td className="gc-col-cobertura">{p.por_despachar <= 0 ? <span className="gc-pill gc-tono-neutro">Despachado</span> : cerrada ? <span className="gc-pill gc-tono-neutro">No se despacha</span> : <Barra valor={p.cobertura} />}</td>
                                         </tr>
                                       );
                                     })}

@@ -279,6 +279,10 @@ todas), vendedor, orden y «Adjudicadas desde» (nunca antes del 16-10-2026).
 Pestaña «Por comprar»: por SKU, falta, stock, costo, valor estimado, en qué
 cotizaciones, con totales al pie; los transitorios sin SKU y lo que no está en
 el catálogo siempre por comprar. «Exportar» baja la pestaña visible en CSV.
+Cierre forzado (ciclo_cerrado): la cotización deja de tomar stock y no entra en
+«Por comprar»; queda con estado «Cierre forzado» (filtro Todas / Cierre
+forzado) con lo que quedó sin despachar y el monto con que se cerró. Orden por
+defecto: adjudicación más antigua primero (el mismo en que se reparte el stock).
 
 ### Campañas de margen (/campanas-margen)
 Solo productos CON SKU (oct 2026): un transitorio no entra, tampoco al cotizar.
