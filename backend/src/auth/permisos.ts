@@ -19,7 +19,8 @@ export const MODULOS: string[] = [
   // Monitoreo de alertas (2026-10-07): alertas por vendedor y su cumplimiento.
   'monitoreo_alertas',
   // Venta directa (2026-10-07): listado de ventas directas y sus documentos.
-  // Emitir exige además rol admin, contabilidad o jefe de ventas especial.
+  // Emite quien tiene rol admin, contabilidad o jefe de ventas especial, o
+  // quien tiene este módulo o «facturacion» entre sus permisos efectivos.
   'venta_directa',
   'mi_correo',
   'chat',
@@ -47,6 +48,9 @@ export const MODULOS: string[] = [
   // (2026-10-20) Ver el costo de los productos (solo lectura) sin ser admin: en
   // la cotización y en la ficha del producto. Asignable por perfil (Francisco).
   'ver_costos',
+  // (2026-10-23) Crear productos con el formulario completo, SKU incluido, sin
+  // ser admin (pedido de Ariel para Francisco). Asignable por perfil.
+  'crear_productos',
   // (2026-10-16) Gestión de compras: adjudicadas vs. stock; asignable por perfil.
   'gestion_compras',
   'cotizaciones_todas',
@@ -87,8 +91,10 @@ export const ROLE_DEFAULTS: Record<string, string[]> = {
   // tarjetas KPI (solo admin desde 2026-10-22) y sin mover stock.
   jefe_ventas: [...BASE, 'trazabilidad', 'metas', 'panel_indicadores', 'resumen_comercial', 'cotizaciones_vendedor', 'monitoreo_alertas', 'inventario'],
   jefe_ventas_especial: [...BASE, 'trazabilidad', 'seguimiento_pagos', 'cobranza', 'factoring', 'facturacion', 'venta_directa', 'metas', 'panel_indicadores', 'resumen_comercial', 'cotizaciones_vendedor', 'monitoreo_alertas', 'inventario'],
-  ventas: [...BASE, 'metas', 'inventario'],
-  ventas_especial: [...BASE, 'metas', 'sorteo', 'monitoreo_stock', 'inventario'],
+  // (2026-10-23) Venta directa para todos los vendedores (pedido de Ariel): el
+  // módulo y la emisión (puedeEmitir usa estos permisos efectivos).
+  ventas: [...BASE, 'metas', 'inventario', 'venta_directa'],
+  ventas_especial: [...BASE, 'metas', 'sorteo', 'monitoreo_stock', 'inventario', 'venta_directa'],
   contabilidad: ['mi_correo', 'chat', 'seguimiento_pagos', 'cobranza', 'facturacion', 'venta_directa', 'metas'],
 };
 
