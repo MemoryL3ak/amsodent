@@ -2308,7 +2308,7 @@ export default function Trazabilidad() {
 
 
   /* (2026-09-24) Volver a ver todo sin ir borrando filtro por filtro. */
-  const hayFiltros = filtroId !== "" || filtroEntidad !== "" || filtroVendedor !== "" || filtroOC !== "" || filtroFactura !== "" || filtroFechaDesde !== "" || filtroFechaHasta !== "" || filtroTipoCotizacion !== "" || filtroTipoCompra.length > 0 || filtroEstadoCiclo !== "";
+  const hayFiltros = filtroId !== "" || filtroEntidad !== "" || filtroVendedor !== "" || filtroOC !== "" || filtroFactura !== "" || filtroFechaDesde !== "" || filtroFechaHasta !== "" || filtroTipoCotizacion !== "" || filtroTipoCompra.length > 0 || filtroEstadoCiclo !== "" || flagOc || flagGuia || flagFactura || flagSinDocs;
   function limpiarFiltros() {
     setFiltroId("");
     setFiltroEntidad("");
@@ -2320,6 +2320,10 @@ export default function Trazabilidad() {
     setFiltroTipoCotizacion("");
     setFiltroTipoCompra([]);
     setFiltroEstadoCiclo("");
+    setFlagOc(false);
+    setFlagGuia(false);
+    setFlagFactura(false);
+    setFlagSinDocs(false);
   }
 
   return (
@@ -2719,36 +2723,13 @@ export default function Trazabilidad() {
             </div>
           </div>
 
+          {/* (2026-10-22) Un solo «Limpiar filtros»: antes convivían el botón
+              antiguo (solo con filtros aplicados) y el compartido, y se veían
+              los dos a la vez. El compartido queda a la derecha de la fila y
+              también limpia las casillas de documentos. */}
           <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "end" }}>
-            {(filtroId || filtroEntidad || filtroVendedor || filtroOC || filtroFactura || filtroFechaDesde || filtroFechaHasta || filtroTipoCotizacion || filtroTipoCompra.length > 0 || filtroEstadoCiclo || flagOc || flagGuia || flagFactura || flagSinDocs) ? (
-              <button
-                type="button"
-                className="btn btn-secondary btn-sm"
-                style={{ height: 36, whiteSpace: "nowrap" }}
-                onClick={() => {
-                  setFiltroId("");
-                  setFiltroEntidad("");
-                  setFiltroVendedor("");
-                  setFiltroOC("");
-                  setFiltroFactura("");
-                  setFiltroFechaDesde("");
-                  setFiltroFechaHasta("");
-                  setFiltroTipoCotizacion("");
-                  setFiltroTipoCompra([]);
-                  setFiltroEstadoCiclo("");
-                  setFlagOc(false);
-                  setFlagGuia(false);
-                  setFlagFactura(false);
-                  setFlagSinDocs(false);
-                }}
-              >
-                Limpiar filtros
-              </button>
-            ) : (
-              <div style={{ height: 36 }} />
-            )}
+            <BotonLimpiarFiltros hay={hayFiltros} onLimpiar={limpiarFiltros} />
           </div>
-          <BotonLimpiarFiltros hay={hayFiltros} onLimpiar={limpiarFiltros} />
         </div>
       </div>
 
