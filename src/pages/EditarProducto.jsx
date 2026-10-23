@@ -142,6 +142,16 @@ const selectStyles = {
 export default function EditarProducto() {
   const { id } = useParams();
   const navigate = useNavigate();
+  // (2026-10-22) ?desde=cotizacion → se abrió con el botón «Editar» de una
+  // línea de cotización (otra pestaña). El guardado se propaga como siempre;
+  // el aviso recuerda que la cotización abierta ya tomó los cambios.
+  const desdeCotizacion = (() => {
+    try {
+      return new URLSearchParams(window.location.search).get("desde") === "cotizacion";
+    } catch {
+      return false;
+    }
+  })();
   // ?validacion=1 → la pantalla se abrió desde el modal de validación de un
   // transitorio, con una cotización en curso en otra pestaña: los cambios NO
   // se propagan a las cotizaciones ya creadas (solo a la que se está
@@ -731,7 +741,7 @@ export default function EditarProducto() {
     if (bsale) aplicarResultadoBsale(bsale);
     const base = partes.length
       ? `Producto actualizado · En cotizaciones ya creadas: ${partes.join(" y ")}.`
-      : desdeValidacion
+      : desdeValidacion || desdeCotizacion
       ? "Producto actualizado: la cotización abierta en la otra pestaña ya tiene los datos nuevos."
       : "Producto actualizado.";
     setToast({
@@ -772,6 +782,8 @@ export default function EditarProducto() {
 
     try {
       await api.put(`/productos/${id}`, { estado: "Transitorio" });
+      // (2026-10-22) La cotización abierta en otra pestaña se entera del nuevo estado.
+      avisarProductoActualizado(id);
 
       setProducto((prev) => ({ ...prev, estado: "Transitorio" }));
       setToast({ type: "success", message: "Producto aprobado." });

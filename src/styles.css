@@ -4077,3 +4077,18 @@ a.ayuda-ruta-chip:hover { background: var(--primary-mid); }
   .gestion-compras .gc-kpis { grid-template-columns: 1fr; }
   .gestion-compras .gc-kpi-valor { font-size: 28px; }
 }
+
+/* (2026-10-22) Botón «Editar» del producto de la línea de cotización (abre
+   Editar Producto en otra pestaña; al guardar, la cotización toma los cambios
+   en vivo). Va en la cabecera del SKU (la de Producto no tiene espacio en la
+   vista admin: 135 px a 1280). Si la columna SKU se angosta queda solo el lápiz. */
+.cab-sku-editar { container-type: inline-size; }
+@container (max-width: 95px) {
+  .cab-sku-editar .bep-texto { display: none; }
+  .cab-sku-editar .boton-editar-producto { padding: 0 6px !important; }
+}
+/* En Detalle la etiqueta es «SKU (opcional)» (más larga): el texto del botón se va antes. */
+@container (max-width: 150px) {
+  .cab-sku-editar--largo .bep-texto { display: none; }
+  .cab-sku-editar--largo .boton-editar-producto { padding: 0 6px !important; }
+}
