@@ -27,7 +27,9 @@ export class InventarioService {
 
   /* Resumen para la grilla: catálogo con stock, umbral y datos de valorización.
      Se pagina server-side contra Supabase (tope 20.000, igual que productos). */
-  async resumen() {
+  /* verCostos=false (ni admin ni «ver_costos» en el perfil): las filas salen
+     sin `costo`, así la valorización no se reconstruye desde la red. */
+  async resumen(verCostos = true) {
     const { data, error } = await this.supabase
       .getClient()
       .from('productos')
@@ -35,7 +37,12 @@ export class InventarioService {
       .range(0, 20000)
       .order('id', { ascending: true });
     if (error) throw new BadRequestException(sinMigracion(error.message));
-    return data;
+    if (verCostos) return data;
+    return (data || []).map((p: any) => {
+      const sinCosto = { ...p };
+      delete sinCosto.costo;
+      return sinCosto;
+    });
   }
 
   /* Movimientos, del más nuevo al más viejo. productoId acota a un producto

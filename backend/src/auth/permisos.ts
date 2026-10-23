@@ -38,11 +38,12 @@ export const MODULOS: string[] = [
   'costeo_fletes',
   'monitoreo_stock',
   'portal_accesos',
-  // (2026-10-14) Inventario (antes solo admin; los vendedores lo ven sin KPIs),
-  // sus tarjetas KPI (valorización, unidades…) y ver TODAS las cotizaciones
-  // (un vendedor ve solo las suyas): asignables por perfil.
+  // (2026-10-14) Inventario (antes solo admin; los vendedores lo ven sin KPIs)
+  // y ver TODAS las cotizaciones (un vendedor ve solo las suyas): asignables
+  // por perfil. (2026-10-22) 'inventario_kpis' dejó de existir: las tarjetas
+  // KPI del Inventario son SOLO admin (pedido de Ariel); si un perfil viejo
+  // aún trae la clave, se ignora.
   'inventario',
-  'inventario_kpis',
   // (2026-10-20) Ver el costo de los productos (solo lectura) sin ser admin: en
   // la cotización y en la ficha del producto. Asignable por perfil (Francisco).
   'ver_costos',
@@ -83,7 +84,7 @@ export function esRolAdmin(rol?: string): boolean {
 // Acceso por rol según la matriz vigente (ver SidebarLayout/RequireRole).
 export const ROLE_DEFAULTS: Record<string, string[]> = {
   // (2026-10-14) 'inventario' para ventas y jefaturas: ven el stock, sin las
-  // tarjetas KPI ('inventario_kpis' se asigna por perfil) y sin mover stock.
+  // tarjetas KPI (solo admin desde 2026-10-22) y sin mover stock.
   jefe_ventas: [...BASE, 'trazabilidad', 'metas', 'panel_indicadores', 'resumen_comercial', 'cotizaciones_vendedor', 'monitoreo_alertas', 'inventario'],
   jefe_ventas_especial: [...BASE, 'trazabilidad', 'seguimiento_pagos', 'cobranza', 'factoring', 'facturacion', 'venta_directa', 'metas', 'panel_indicadores', 'resumen_comercial', 'cotizaciones_vendedor', 'monitoreo_alertas', 'inventario'],
   ventas: [...BASE, 'metas', 'inventario'],
@@ -92,7 +93,8 @@ export const ROLE_DEFAULTS: Record<string, string[]> = {
 };
 
 // (2026-10-16) Pedido de Ariel: "todos pueden ver el inventario" (las tarjetas
-// KPI siguen por 'inventario_kpis': admins y quien lo tenga en su perfil).
+// KPI y la valorización son solo de los admin; el costo por fila, además, de
+// quien tenga 'ver_costos' en su perfil).
 export const PARA_TODOS = ['inventario'];
 
 // Permisos efectivos de un usuario: perfil asignado o, en su defecto, por rol.

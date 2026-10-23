@@ -44,10 +44,14 @@ function alertaDe(p) {
 }
 
 export default function Inventario() {
-  // (2026-10-14) Ventas entra a ver el stock: sin tarjetas KPI (permiso
-  // `inventario_kpis`) y sin mover stock, mínimos ni cargas (solo admin).
+  // (2026-10-14) Ventas entra a ver el stock sin mover stock, mínimos ni
+  // cargas (solo admin). (2026-10-22) Las tarjetas KPI son SOLO admin (ya no
+  // existe el permiso de perfil `inventario_kpis`); las columnas Costo y
+  // Valorización (y su export) solo para admin o quien tenga «ver_costos» en
+  // su perfil: a los demás el backend ni siquiera les manda el costo.
   const { rol, puede } = useAuth();
   const esAdmin = esAdminRol(rol);
+  const verCostos = esAdmin || puede("ver_costos");
   const [filas, setFilas] = useState([]);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState(null);
@@ -354,8 +358,10 @@ export default function Inventario() {
       Estado: p.bsale_huerfano ? "NO CREADO EN EL SISTEMA (existe en Bsale)" : (p.estado || ""),
       Stock: Number(p.stock) || 0,
       "Stock mínimo": Number(p.stock_minimo) || 0,
-      Costo: Number(p.costo) || 0,
-      "Valorización (stock × costo)": (Number(p.stock) || 0) * (Number(p.costo) || 0),
+      ...(verCostos ? {
+        Costo: Number(p.costo) || 0,
+        "Valorización (stock × costo)": (Number(p.stock) || 0) * (Number(p.costo) || 0),
+      } : {}),
       Alerta: p.bsale_huerfano ? "No creado" : alertaDe(p) === "sin_stock" ? "Sin stock" : alertaDe(p) === "bajo_minimo" ? "Bajo mínimo" : "",
     })));
     const wb = XLSX.utils.book_new();
@@ -420,8 +426,8 @@ export default function Inventario() {
       </div>
 
       {/* KPIs */}
-      {/* (2026-10-14) Las tarjetas KPI solo para quien tenga «Inventario: KPIs» (los vendedores no las ven). */}
-      {puede("inventario_kpis") && (
+      {/* (2026-10-22) Las tarjetas KPI son solo para administradores (pedido de Ariel; antes también por perfil). */}
+      {esAdmin && (
       <div className={`stats-row ${bsale ? "stats-6" : "stats-5"}`}>
         <div className="stat-card">
           <div className="stat-label">SKUs con stock</div>
@@ -637,10 +643,14 @@ export default function Inventario() {
                       <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>Stock <FlechaOrden campo="stock" /></span>
                     </th>
                     <th style={{ textAlign: "right", whiteSpace: "nowrap" }} title="Umbral de alerta. Clic en el número para editarlo; 0 = sin umbral.">Mínimo</th>
-                    <th style={{ textAlign: "right", whiteSpace: "nowrap" }}>Costo</th>
-                    <th style={{ textAlign: "right", whiteSpace: "nowrap", cursor: "pointer" }} onClick={() => toggleOrden("valor")} title="Ordenar por valorización">
-                      <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>Valorización <FlechaOrden campo="valor" /></span>
-                    </th>
+                    {verCostos && (
+                      <>
+                        <th style={{ textAlign: "right", whiteSpace: "nowrap" }}>Costo</th>
+                        <th style={{ textAlign: "right", whiteSpace: "nowrap", cursor: "pointer" }} onClick={() => toggleOrden("valor")} title="Ordenar por valorización">
+                          <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>Valorización <FlechaOrden campo="valor" /></span>
+                        </th>
+                      </>
+                    )}
                     <th style={{ textAlign: "left" }}>Alerta</th>
                     <th style={{ textAlign: "left", whiteSpace: "nowrap" }}>Acciones</th>
                   </tr>
@@ -661,8 +671,12 @@ export default function Inventario() {
                             <div style={{ fontSize: 10.5, color: "var(--text-muted)" }}>en Bsale</div>
                           </td>
                           <td style={{ textAlign: "right", color: "var(--text-muted)" }}>—</td>
-                          <td style={{ textAlign: "right", color: "var(--text-muted)" }}>—</td>
-                          <td style={{ textAlign: "right", color: "var(--text-muted)" }}>—</td>
+                          {verCostos && (
+                            <>
+                              <td style={{ textAlign: "right", color: "var(--text-muted)" }}>—</td>
+                              <td style={{ textAlign: "right", color: "var(--text-muted)" }}>—</td>
+                            </>
+                          )}
                           <td>
                             <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 999, background: "#ffedd5", color: "#c2410c", whiteSpace: "nowrap" }}>
                               <AlertTriangle size={11} /> No creado
@@ -715,8 +729,12 @@ export default function Inventario() {
                             </button>
                           )}
                         </td>
-                        <td style={{ textAlign: "right", whiteSpace: "nowrap", fontSize: 12.5 }}>{fmtCLP(p.costo)}</td>
-                        <td style={{ textAlign: "right", whiteSpace: "nowrap", fontWeight: 600 }}>{fmtCLP(stock * (Number(p.costo) || 0))}</td>
+                        {verCostos && (
+                          <>
+                            <td style={{ textAlign: "right", whiteSpace: "nowrap", fontSize: 12.5 }}>{fmtCLP(p.costo)}</td>
+                            <td style={{ textAlign: "right", whiteSpace: "nowrap", fontWeight: 600 }}>{fmtCLP(stock * (Number(p.costo) || 0))}</td>
+                          </>
+                        )}
                         <td>
                           {al === "sin_stock" ? (
                             <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 999, background: "#fee2e2", color: "#b91c1c", whiteSpace: "nowrap" }}>Sin stock</span>
