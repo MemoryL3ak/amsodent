@@ -137,6 +137,8 @@ export default function CorreoComposer({
         asunto: asunto.trim(),
         cuerpoHtml,
         adjuntarDocumentoId: adjuntarDocumentoId ?? null,
+        // Con esto el servidor cierra el recordatorio de este documento para todos.
+        documentoId: documentoId ?? null,
         adjuntos: adjuntos.map((a) => ({
           filename: a.filename,
           contentBase64: a.contentBase64,

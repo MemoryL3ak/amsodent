@@ -324,8 +324,9 @@ export class LicitacionesController {
   }
 
   @Post('documentos')
-  createDocumento(@Body() body: any) {
-    return this.licitacionesService.createDocumento(body);
+  createDocumento(@Body() body: any, @Req() req: any) {
+    // Quién lo carga: la factura de entidad pública avisa a esa persona, no al vendedor.
+    return this.licitacionesService.createDocumento(body, { usuarioEmail: String(req?.user?.email || '').toLowerCase() || null });
   }
 
   @Put('documentos/:docId')

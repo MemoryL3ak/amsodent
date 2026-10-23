@@ -19,6 +19,8 @@ export type TipoPlantilla =
   | 'factura_enviar';
 
 const RE_EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+// Avisos que abren la ventana de correo de un documento (los de RecordatoriosCorreo).
+const TIPOS_RECORDATORIO: TipoPlantilla[] = ['oc_agradecimiento', 'guia_despacho_enviar', 'info_despacho_agradecimiento', 'factura_enviar'];
 
 type PlantillaPreparada = {
   tipo: TipoPlantilla;
@@ -441,6 +443,7 @@ export class CorreosService {
     cuerpoHtml: string;
     adjuntarDocumentoId?: number | null;
     adjuntos?: Array<{ filename: string; contentBase64: string; mime?: string }>;
+    documentoId?: number | null;
   }) {
     const lic = await this.getLicitacion(Number(opts.licitacionId));
     const vendedorCorreo = this.correoVendedor(lic);
@@ -490,6 +493,7 @@ export class CorreosService {
         html: opts.cuerpoHtml,
         attachments,
       });
+      await this.cerrarRecordatorios(opts.documentoId ?? opts.adjuntarDocumentoId ?? null);
       return { ...res, modo: 'gmail' as const, de: cuenta.email };
     }
 
@@ -502,7 +506,28 @@ export class CorreosService {
       replyTo: vendedorCorreo || undefined,
       attachments,
     });
+    await this.cerrarRecordatorios(opts.documentoId ?? opts.adjuntarDocumentoId ?? null);
     return { ...res, modo: 'smtp' as const, de: remitenteCompartido() };
+  }
+
+  /* (2026-10-22) Enviado el correo de un documento, su recordatorio se cierra
+     para todos los que lo tuvieran: si Ruth envía la factura de entidad
+     pública, al vendedor no le vuelve a saltar un aviso por esa misma factura.
+     Nunca lanza: el correo ya salió. */
+  private async cerrarRecordatorios(documentoId: number | null) {
+    const id = Number(documentoId);
+    if (!(id > 0)) return;
+    try {
+      const { error } = await this.supabase.getClient()
+        .from('notificaciones')
+        .update({ leida_at: new Date().toISOString() })
+        .in('tipo', TIPOS_RECORDATORIO)
+        .is('leida_at', null)
+        .filter('metadata->>documento_id', 'eq', String(id));
+      if (error) this.logger.warn(`No se cerró el recordatorio del documento ${id}: ${error.message}`);
+    } catch (e: any) {
+      this.logger.warn(`No se cerró el recordatorio del documento ${id}: ${e?.message || e}`);
+    }
   }
 
   // Envía un correo de redacción libre a un cliente desde el portal de stock.
