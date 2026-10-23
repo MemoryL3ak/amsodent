@@ -507,12 +507,23 @@ export class BsaleLibreService {
     const notasPorLinea = !!obsPorSku;
     const observacion = tipo === 'guia' || conGuia ? limpiarObservacion(body?.observacion) : '';
     if (observacion.length > OBSERVACION_MAX) problemas.push({ codigo: 'observacion_larga', mensaje: `La observación tiene ${observacion.length} caracteres; en Bsale caben hasta ${OBSERVACION_MAX}. Acórtala.` });
+    // Correo de la guía de la venta directa (la boleta/factura siempre abre su
+    // ventana de correo). No se envía: a cliente particular (2026-10-22; sin
+    // cotización enlazada la venta crea una particular) ni con «Entrega
+    // inmediata» (2026-10-15). Lo usan la simulación y emitirGuiaDeVenta.
+    const guiaSinCorreo: 'particular' | 'entrega_inmediata' | null = !conGuia
+      ? null
+      : (cotizacion ? cotizacion.particular === true : true)
+        ? 'particular'
+        : String(body?.seguimiento?.empresa || '').trim().toLowerCase() === 'entrega inmediata'
+          ? 'entrega_inmediata'
+          : null;
     const borrador = {
       observacion,
       notas_por_linea: notasPorLinea,
       comprobante,
       tipo, venta_directa: ventaDirecta, tipo_documento_id: tipoDocumentoId, cliente, lineas, totales, fecha_emision: fecha, referencias, despacho,
-      con_guia: conGuia, guia: guiaVenta,
+      con_guia: conGuia, guia: guiaVenta, guia_sin_correo: guiaSinCorreo,
       traslado: traslado ? { id: traslado.id, nombre: traslado.nombre } : null,
       forma_pago: formaPago ? { id: formaPago.id, nombre: formaPago.nombre } : null, dias_vencimiento: dias, credito,
       medio_pago: formaPago ? medioDePago(formaPago.nombre) : null, pagada_ahora: pagadaAhora,
@@ -550,6 +561,9 @@ export class BsaleLibreService {
           : b.con_guia
             ? `Enseguida se emite la guía de despacho con las mismas líneas (${b.guia?.traslado?.nombre || 'Operación constituye venta'}) a ${b.guia?.despacho?.direccion || '—'}, ${b.guia?.despacho?.comuna || '—'}: el stock lo rebaja la guía, no la ${b.tipo}.`
             : b.descuenta_stock ? `La ${b.tipo} descuenta el stock en Bsale${b.venta_directa ? '' : ' (no viene de una guía)'}.` : 'La factura no mueve stock.',
+        ...(b.con_guia && b.guia_sin_correo
+          ? [`La guía no se envía por correo al cliente (${b.guia_sin_correo === 'particular' ? 'venta directa a cliente particular' : 'entrega inmediata'}); la ${b.tipo} sí abre su ventana de correo.`]
+          : []),
         b.venta_directa && !b.cotizacion
           ? `Al emitir se crea en el sistema una cotización particular adjudicada a nombre de ${nombreCliente}, con estos ítems y el documento registrado${b.pagada_ahora ? ` y pagado (${b.forma_pago?.nombre}).` : ' con el pago pendiente (crédito): aparecerá en Seguimiento de Pagos.'}`
           : b.cotizacion ? `Quedará registrada en la cotización #${b.cotizacion.id}${b.cotizacion.codigo ? ` (${b.cotizacion.codigo})` : ''}.` : 'No se indicó cotización: quedará solo en Bsale y en el historial de Emitidas.',
@@ -714,11 +728,15 @@ export class BsaleLibreService {
      emitido (Bsale: `details` con el detailId del documento origen y
      «Operación constituye venta»). Si falla, la boleta/factura ya está
      emitida SIN rebajar stock: se avisa y queda «Emitir guía» en la cotización.
-     (2026-10-15) Pedido de Ariel: con «Entrega inmediata» la guía NO se envía
-     por correo (el cliente se lleva los productos en el momento); la
-     boleta/factura sí. Solo en ese caso: con cualquier otro transporte se envía. */
+     Correo de la guía (la boleta/factura siempre abre su ventana de correo):
+     · (2026-10-22) Pedido de Ariel: en una venta directa a cliente PARTICULAR la
+       guía NO se envía por correo. Sin cotización enlazada la venta siempre crea
+       una cotización particular; enlazada, manda el tipo de cliente de esa.
+     · (2026-10-15) Con transporte «Entrega inmediata» tampoco (el cliente se
+       lleva los productos en el momento), sea cual sea el cliente. */
   private async emitirGuiaDeVenta(usuario: { id: string; email: string }, b: any, docEmitido: any, claveBase: string, cotizacion: any, body: any) {
-    const sinCorreo = String(body?.seguimiento?.empresa || '').trim().toLowerCase() === 'entrega inmediata';
+    const motivoSinCorreo: 'particular' | 'entrega_inmediata' | null = b.guia_sin_correo || null;
+    const sinCorreo = motivoSinCorreo !== null;
     try {
       const g = b.guia;
       const lineasDoc: any[] = await this.facturacion.todos(`/documents/${Number(docEmitido.bsale_id)}/details.json`, '');
@@ -782,7 +800,7 @@ export class BsaleLibreService {
           return avisos;
         },
       });
-      return { emitida: true, numero: r.numero, url_pdf: r.url_pdf, bsale_id: r.bsale_id || null, documento_id: r.documento_id, avisos: r.avisos || [], sin_correo: sinCorreo };
+      return { emitida: true, numero: r.numero, url_pdf: r.url_pdf, bsale_id: r.bsale_id || null, documento_id: r.documento_id, avisos: r.avisos || [], sin_correo: sinCorreo, motivo_sin_correo: motivoSinCorreo };
     } catch (e: any) {
       const error = String(e?.message || e).slice(0, 200);
       this.logger.warn(`Venta directa ${docEmitido.numero}: la guía no se pudo emitir: ${error}`);

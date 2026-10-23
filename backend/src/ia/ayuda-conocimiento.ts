@@ -255,8 +255,9 @@ fila se despliega con condición, comprobantes, notas (también las hechas a man
 en Bsale), guías y quién la emitió. Por venta: «N. crédito» y, en facturas,
 «N. débito». «Emitir guía de despacho» (por defecto si hay cliente) emite la
 guía enseguida con las mismas líneas y es la que rebaja el stock. Se abre la
-ventana de correo para la boleta/factura y la guía; con transporte «Entrega
-inmediata» la guía NO se envía por correo (la boleta/factura sí). La ven
+ventana de correo para la boleta/factura; la guía NO se envía por correo cuando
+la venta es a cliente particular (toda venta directa sin cotización enlazada lo
+es) ni con transporte «Entrega inmediata». La ven
 quienes tienen Venta directa o Facturación;
 emitir exige rol administración, contabilidad o jefatura de ventas especial.
 
