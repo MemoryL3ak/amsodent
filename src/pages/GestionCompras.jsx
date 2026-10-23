@@ -114,10 +114,13 @@ function Etiquetas({ p }) {
 function NombreProducto({ p }) {
   const nombre = p.producto || "—";
   if (!p.producto_id) return <div className="gc-producto-nombre">{nombre}</div>;
+  // El ícono va pegado a la última palabra para que no caiga solo a la línea siguiente.
+  const palabras = nombre.split(" ");
+  const ultima = palabras.pop();
   return (
     <div className="gc-producto-nombre">
       <Link to={`/productos/editar/${p.producto_id}`} target="_blank" rel="noopener noreferrer" className="gc-producto-link" onClick={(e) => e.stopPropagation()} title="Abrir el producto en una pestaña nueva">
-        {nombre} <ExternalLink size={11} aria-hidden="true" />
+        {palabras.length ? `${palabras.join(" ")} ` : ""}<span className="gc-producto-link-final">{ultima}<ExternalLink size={11} aria-hidden="true" /></span>
       </Link>
     </div>
   );

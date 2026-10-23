@@ -4038,7 +4038,8 @@ a.ayuda-ruta-chip:hover { background: var(--primary-mid); }
 .gestion-compras .gc-producto-nombre { font-weight: 600; overflow-wrap: anywhere; }
 /* Nombre con enlace a Editar Producto (otra pestaña): mismo color que el texto, se nota al pasar el mouse. */
 .gestion-compras .gc-producto-link { color: inherit; text-decoration: none; }
-.gestion-compras .gc-producto-link svg { color: var(--text-muted); vertical-align: -1px; margin-left: 1px; }
+.gestion-compras .gc-producto-link-final { white-space: nowrap; }
+.gestion-compras .gc-producto-link svg { display: inline; color: var(--text-muted); vertical-align: -1px; margin-left: 3px; } /* el reset deja los svg en block */
 .gestion-compras .gc-producto-link:hover { color: var(--primary-dark); text-decoration: underline; }
 .gestion-compras .gc-producto-link:hover svg { color: var(--primary); }
 .gestion-compras .gc-producto-meta { display: flex; flex-wrap: wrap; gap: 3px 8px; align-items: center; margin-top: 2px; font-size: 11.5px; color: var(--text-muted); }
