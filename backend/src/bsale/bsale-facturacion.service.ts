@@ -45,10 +45,11 @@ const DTE_FACTURA = 33; // factura electrónica
 
 type Problema = { codigo: string; mensaje: string };
 /* (2026-10-24) Lo que la persona puede cambiar de la factura antes de emitir:
-   de cada línea de la guía, la cantidad (hasta la de la guía) y la observación;
-   las que no vienen en `lineas` se quitan. `extras` son productos agregados
-   que no están en la guía (van como líneas libres y descuentan stock). */
-type EdicionLinea = { detalle_id: number; cantidad?: number; nota?: string | null };
+   de cada línea de la guía, la cantidad (hasta la de la guía), la observación
+   y el precio neto; las que no vienen en `lineas` se quitan. `extras` son
+   productos agregados que no están en la guía (van como líneas libres). Qué
+   rebaja stock lo decide decidirDespacho. */
+type EdicionLinea = { detalle_id: number; cantidad?: number; nota?: string | null; neto_unitario?: number };
 type LineaExtra = { sku: string; producto?: string; cantidad: number; neto_unitario: number; nota?: string | null };
 
 function hoyEnChile(ahora = new Date()): string {
@@ -213,6 +214,25 @@ export function comentarioDe(l: { nota?: string | null; nota_guia?: string | nul
   return nota;
 }
 
+/* (2026-10-24) ¿La factura va con `dispatch: 1`? Comprobado en Bsale real:
+   · línea enlazada a la guía (detailId): no toca el stock (factura 917);
+   · línea libre SIN dispatch: Bsale la deja RESERVADA como pendiente de
+     despacho (factura 918: reservó justo sus 7 líneas; el físico no bajó);
+   · con `dispatch: 1` el documento se despacha completo y rebaja el stock
+     físico (API Chile, documentos: «despacha y rebaja el stock»).
+   Las líneas libres son las copiadas (una factura anulada consumió la línea
+   de la guía y su nota de crédito repuso el stock) y los productos agregados.
+   Se despacha solo si TODAS las líneas son libres; si hay alguna enlazada (su
+   stock ya lo rebajó la guía) no se despacha y las libres quedan reservadas.
+   Por lo mismo, una línea enlazada nunca se pasa a libre (ni para cambiarle
+   el precio): Bsale volvería a reservar o rebajar un stock que ya rebajó. */
+export const rebajaStock = (l: { extra?: boolean; enlazada?: boolean; consumida_por?: string | null }) => !!l?.extra || (l?.enlazada === false && !!l?.consumida_por);
+export function decidirDespacho<T extends { extra?: boolean; enlazada?: boolean; consumida_por?: string | null }>(lineas: T[]) {
+  const rebajar = (lineas || []).filter((l) => rebajaStock(l));
+  const yaRebajadas = (lineas || []).filter((l) => !rebajaStock(l));
+  return { despacha: rebajar.length > 0 && yaRebajadas.length === 0, rebajar, yaRebajadas };
+}
+
 /* Lo que se le manda a Bsale. Función pura: recibe el borrador ya validado y
    las tres decisiones del usuario (fecha, plazo, forma de pago). */
 export function armarSolicitud(
@@ -223,6 +243,7 @@ export function armarSolicitud(
     lineas: { detalle_id: number; cantidad: number; enlazada?: boolean; variante_id?: number | null; sku?: string; neto_unitario?: number; neto_unitario_raw?: number; nota?: string | null; nota_guia?: string | null; extra?: boolean }[];
     referencias: Referencia[];
     totales: { total: number };
+    despacha?: boolean;
   },
   o: { fecha_emision: string; dias_vencimiento: number; forma_pago_id: number; sales_id: string },
 ) {
@@ -233,10 +254,10 @@ export function armarSolicitud(
     expirationDate: fechaAEpoch(sumarDias(o.fecha_emision, o.dias_vencimiento)),
     declareSii: 1,
     clientId: b.cliente.id,
-    // Sin `dispatch`: la guía ya despachó y rebajó el stock.
-    /* Línea enlazada a la guía (detailId: Bsale copia el precio y no mueve
-       stock) o, si Bsale ya la usó en una factura anulada (2026-10-23),
-       copiada: variante + cantidad + precio neto, y descuenta stock. */
+    /* Línea enlazada a la guía (detailId: Bsale copia el precio) o libre:
+       variante + cantidad + precio neto, cuando Bsale ya usó la línea en una
+       factura anulada (2026-10-23) o cuando es un producto agregado
+       (2026-10-24). Qué pasa con el stock: ver decidirDespacho. */
     details: b.lineas.map((l) => ({
       ...(l.enlazada === false
         ? {
@@ -254,6 +275,8 @@ export function armarSolicitud(
     salesId: o.sales_id,
   };
   if (b.sucursal_id) solicitud.officeId = b.sucursal_id;
+  // Sin `dispatch`, las líneas libres quedan reservadas como pendientes de despacho.
+  if (b.despacha) solicitud.dispatch = 1;
   return solicitud;
 }
 
@@ -1169,8 +1192,9 @@ export class BsaleFacturacionService {
          hecha desde ella se anula con nota de crédito: mandarlas otra vez con
          `detailId` responde "Invalid quantity" (guía 836 → factura 855 → NC
          169). Esas líneas van copiadas (SKU, cantidad y precio), igual que las
-         facturas 867 y 868 que el equipo hizo a mano para la guía 804. Como la
-         NC repuso el stock, la factura copiada lo vuelve a descontar y cuadra. */
+         facturas 867 y 868 que el equipo hizo a mano para la guía 804.
+         (2026-10-24) Stock: ver decidirDespacho. La NC repuso ese stock, así
+         que despacharla lo deja cuadrado; sin despacho queda reservado. */
       const facturasAnuladas = [...new Map(guias.flatMap((g) => anuladas.get(soloDigitos(g.numero)) || []).map((f) => [f.id, f])).values()];
       if (facturasAnuladas.length && lineas.length) {
         const consumidas = await this.lineasConsumidas(new Set(lineas.map((l) => l.detalle_id)), facturasAnuladas);
@@ -1181,19 +1205,22 @@ export class BsaleFacturacionService {
           l.consumida_por = c.factura;
           l.repuesto = c.repuesto;
         }
-        /* Una línea copiada descuenta stock de verdad. Si el producto no admite
-           stock negativo en Bsale y no alcanza, Bsale rechazaría la factura:
-           mejor decirlo aquí, con el número, que recibir el rechazo. */
-        const oficina = sucursales.size === 1 ? [...sucursales][0] : null;
-        for (const l of lineas.filter((x) => !x.enlazada && x.variante_id)) {
-          const st = await this.stockVariante(l.variante_id!, oficina);
-          if (!st) continue;
-          l.stock_bsale = st.stock;
-          if (!st.permite_negativo && st.stock < l.cantidad) {
-            problemas.push({
-              codigo: 'stock_insuficiente',
-              mensaje: `Bsale no permite dejar en negativo ${l.sku || l.producto}: tiene ${st.stock.toLocaleString('es-CL')} y la línea copiada de la guía ${l.guia} descuenta ${l.cantidad.toLocaleString('es-CL')}. Ingresa stock en Bsale (o permite stock negativo en ese producto) y vuelve a abrir el borrador.`,
-            });
+        const { despacha } = decidirDespacho(lineas);
+        /* Al despacharse, Bsale exige stock en la sucursal: si el producto no
+           admite negativo y no alcanza, rechazaría la factura. Mejor decirlo
+           aquí, con el número. Sin despacho no se revisa: solo reserva. */
+        if (despacha) {
+          const oficina = sucursales.size === 1 ? [...sucursales][0] : null;
+          for (const l of lineas.filter((x) => !x.enlazada && x.variante_id)) {
+            const st = await this.stockVariante(l.variante_id!, oficina);
+            if (!st) continue;
+            l.stock_bsale = st.stock;
+            if (!st.permite_negativo && st.stock < l.cantidad) {
+              problemas.push({
+                codigo: 'stock_insuficiente',
+                mensaje: `Bsale no permite dejar en negativo ${l.sku || l.producto}: tiene ${st.stock.toLocaleString('es-CL')} y la factura, al despacharse, rebaja ${l.cantidad.toLocaleString('es-CL')}. Ingresa stock en Bsale (o permite stock negativo en ese producto) y vuelve a abrir el borrador.`,
+              });
+            }
           }
         }
         for (const g of guias) {
@@ -1203,10 +1230,11 @@ export class BsaleFacturacionService {
           const unidades = libres.reduce((a, l) => a + l.cantidad, 0);
           const repuestas = libres.reduce((a, l) => a + (l.repuesto || 0), 0);
           const porFactura = [...new Set(libres.map((l) => l.consumida_por))].join(', ');
-          const stock =
-            repuestas >= unidades
-              ? `Descuenta stock: la nota de crédito repuso las ${unidades.toLocaleString('es-CL')} unidades, así que queda cuadrado.`
-              : `Descuenta stock otra vez y la nota de crédito repuso solo ${repuestas.toLocaleString('es-CL')} de ${unidades.toLocaleString('es-CL')} unidades: revisa el stock en Bsale después de emitir.`;
+          const stock = despacha
+            ? repuestas >= unidades
+              ? `La factura se despacha en Bsale y rebaja ese stock, que la nota de crédito había repuesto (${unidades.toLocaleString('es-CL')} unidades): queda cuadrado.`
+              : `La factura se despacha en Bsale y rebaja ${unidades.toLocaleString('es-CL')} unidades, pero la nota de crédito repuso solo ${repuestas.toLocaleString('es-CL')}: revisa el stock en Bsale después de emitir.`
+            : `Como la factura también lleva líneas enlazadas a la guía, Bsale no la despacha: las copiadas quedan reservadas como pendientes de despacho. El stock disponible queda bien, porque la nota de crédito había repuesto esas ${repuestas.toLocaleString('es-CL')} unidades, pero Bsale mostrará la factura con productos por despachar.`;
           avisos.push({
             codigo: 'lineas_copiadas',
             mensaje: `Bsale no deja volver a enlazar ${libres.length === deLaGuia.length ? 'las líneas' : `${libres.length} de las ${deLaGuia.length} líneas`} de la guía ${g.numero}: ya las usó la factura ${porFactura}, anulada, y la anulación no las libera. Van copiadas (mismo SKU, cantidad y precio) con las referencias a la orden de compra y a la guía, como las facturas hechas a mano. ${stock}`,
@@ -1286,6 +1314,8 @@ export class BsaleFacturacionService {
       oc_del_sistema: ocsSistema[0] || null,
       formas_pago: formas,
       observacion_max: OBSERVACION_MAX,
+      // Con las líneas tal como vienen (sin editar): ¿se despacha? Ver decidirDespacho.
+      despacha: decidirDespacho(lineas).despacha,
       forma_pago_id: formaPorDefecto,
       fecha_emision: hoy,
       fecha_minima: fechaMinima,
@@ -1417,6 +1447,7 @@ export class BsaleFacturacionService {
     const edicion = await this.aplicarEdiciones(b as any, body);
     b.lineas = edicion.lineas;
     b.totales = edicion.totales;
+    (b as any).despacha = edicion.despacha;
 
     const opciones = { fecha_emision: fecha, dias_vencimiento: dias, forma_pago_id: forma };
 
@@ -1424,12 +1455,9 @@ export class BsaleFacturacionService {
       const solicitud = armarSolicitud(b as any, { ...opciones, sales_id: `${clave}-0` });
       const vendedor = await this.ponerVendedor(solicitud, null, licId, usuario.email);
       const formaPago = b.formas_pago.find((f) => f.id === forma);
-      const copiadas = b.lineas.filter((l) => l.enlazada === false && !l.extra);
+      const copiadas = b.lineas.filter((l) => l.enlazada === false && l.consumida_por && !l.extra);
       const agregadas = b.lineas.filter((l) => l.extra);
-      const stockPartes = [
-        copiadas.length ? `${copiadas.length} ${copiadas.length === 1 ? 'línea copiada' : 'líneas copiadas'} de la guía` : '',
-        agregadas.length ? `${agregadas.length} ${agregadas.length === 1 ? 'línea agregada' : 'líneas agregadas'}` : '',
-      ].filter(Boolean);
+      const despacha = !!(b as any).despacha;
       return {
         simulacion: true,
         // Se pidió emitir pero el servidor tiene la emisión apagada.
@@ -1442,8 +1470,8 @@ export class BsaleFacturacionService {
           correo: this.correos ? await this.correos.destinatarioDocumento(licId) : null,
           tipo: 'Factura electrónica',
           sii: true,
-          descuenta_stock: stockPartes.length > 0,
-          stock_texto: stockPartes.length ? `Descuenta stock (${stockPartes.join(' y ')})` : 'No mueve stock',
+          descuenta_stock: despacha || copiadas.length + agregadas.length > 0,
+          stock_texto: despacha ? 'Se despacha: rebaja el stock' : copiadas.length + agregadas.length ? 'Reserva stock (pendiente de despacho)' : 'No mueve stock',
           emisor: EMISOR,
           cliente: b.cliente,
           lineas: b.lineas.map((l) => ({ sku: l.sku, producto: l.producto, cantidad: l.cantidad, neto_unitario: l.neto_unitario, neto: l.neto, guia: l.guia || null, enlazada: l.enlazada !== false, extra: !!l.extra, observacion: l.nota || null })),
@@ -1455,13 +1483,19 @@ export class BsaleFacturacionService {
           vendedor: vendedor.nombre,
           notas: [
             copiadas.length
-              ? `${copiadas.length === b.lineas.length ? 'Las líneas' : `${copiadas.length} líneas`} van copiadas de la guía, no enlazadas: Bsale ya las usó en la factura ${[...new Set(copiadas.map((l) => l.consumida_por))].join(', ')}, que está anulada. Esta factura descuenta stock.`
-              : agregadas.length === b.lineas.length
-                ? 'Ninguna línea viene de la guía.'
-                : 'Las líneas de la guía quedan enlazadas a ella: su stock no se descuenta otra vez.',
+              ? `${copiadas.length === b.lineas.length ? 'Las líneas' : `${copiadas.length} líneas`} van copiadas de la guía, no enlazadas: Bsale ya las usó en la factura ${[...new Set(copiadas.map((l) => l.consumida_por))].join(', ')}, que está anulada.`
+              : '',
+            // Aviso general de stock, salvo que la edición ya traiga el suyo.
+            edicion.avisos.some((a) => /^La factura (no )?se despacha/.test(a))
+              ? ''
+              : despacha
+              ? 'La factura se despacha en Bsale: rebaja el stock de sus líneas.'
+              : copiadas.length || agregadas.length
+                ? 'La factura no se despacha en Bsale: las líneas enlazadas a la guía no mueven stock y las copiadas o agregadas quedan reservadas como pendientes de despacho.'
+                : 'Las líneas quedan enlazadas a la guía: el stock no se descuenta otra vez.',
             ...edicion.avisos,
             ...(vendedor.aviso ? [vendedor.aviso] : []),
-          ],
+          ].filter(Boolean),
         },
       };
     }
@@ -1576,14 +1610,17 @@ export class BsaleFacturacionService {
   }
 
   /* (2026-10-24) Aplica lo que la persona editó sobre el borrador del servidor.
-     Nunca confía en precios ni productos del navegador para las líneas de la
-     guía: de ellas solo acepta una cantidad menor o igual, la observación, o
-     quitarlas. Los productos agregados se resuelven en Bsale por SKU y van
-     como líneas libres (descuentan stock), con el precio neto que se indique. */
+     De las líneas de la guía acepta una cantidad menor o igual, la
+     observación o quitarlas; otro precio neto solo en las copiadas (las
+     enlazadas toman siempre el de la guía, ver decidirDespacho). El producto
+     y la guía salen siempre del borrador del servidor.
+     Los productos agregados se resuelven en Bsale por SKU y van como líneas
+     libres con el precio neto que se indique. El stock lo decide
+     decidirDespacho. */
   private async aplicarEdiciones(
     b: { lineas: any[]; totales: { neto: number; iva: number; total: number }; sucursal_id: number | null },
     body: { lineas?: EdicionLinea[]; extras?: LineaExtra[] },
-  ): Promise<{ lineas: any[]; totales: { neto: number; iva: number; total: number }; avisos: string[] }> {
+  ): Promise<{ lineas: any[]; totales: { neto: number; iva: number; total: number }; avisos: string[]; despacha: boolean }> {
     const base: any[] = b.lineas || [];
     const avisos: string[] = [];
     let lineas: any[] = base;
@@ -1592,6 +1629,7 @@ export class BsaleFacturacionService {
       for (const e of body.lineas) if (Number(e?.detalle_id) > 0) porId.set(Number(e.detalle_id), e);
       lineas = [];
       let menos = 0;
+      let precioCambiado = 0;
       for (const l of base) {
         const e = porId.get(Number(l.detalle_id));
         if (!e) continue; // quitada
@@ -1603,8 +1641,30 @@ export class BsaleFacturacionService {
         }
         const nota = limpiarObservacion(e.nota ?? l.nota);
         if (nota.length > OBSERVACION_MAX) throw new BadRequestException(`${nombre}: la observación tiene ${nota.length} caracteres; en Bsale caben hasta ${OBSERVACION_MAX}.`);
+        // (2026-10-24) Precio: una línea enlazada (detailId) toma SIEMPRE el
+        // precio de la guía, y pasarla a libre volvería a reservar o rebajar
+        // su stock. Solo las copiadas (ya libres) admiten otro precio.
+        const precioGuia = Number(l.neto_unitario_raw) || Number(l.neto_unitario) || 0;
+        let precio = precioGuia;
+        if (e.neto_unitario != null && (e.neto_unitario as any) !== '') {
+          precio = Number(e.neto_unitario);
+          if (!Number.isFinite(precio) || precio <= 0) throw new BadRequestException(`${nombre}: el precio neto unitario debe ser mayor que 0.`);
+        }
+        const cambioPrecio = Math.abs(precio - precioGuia) > 0.005;
+        if (cambioPrecio && l.enlazada !== false) {
+          throw new BadRequestException(
+            `${nombre}: el precio de una línea enlazada a la guía no se puede cambiar al facturar, porque Bsale la factura con el precio de la guía. Emite con ese precio y después haz una nota de crédito de ajuste de precio (si baja) o una nota de débito (si sube).`,
+          );
+        }
+        if (cambioPrecio) precioCambiado++;
         if (cantidad < Number(l.cantidad)) menos++;
-        lineas.push({ ...l, cantidad, nota, neto: Math.round(cantidad * (Number(l.neto_unitario_raw) || Number(l.neto_unitario) || 0)) });
+        lineas.push({
+          ...l,
+          cantidad,
+          nota,
+          ...(cambioPrecio ? { neto_unitario: precio, neto_unitario_raw: precio, precio_guia: precioGuia, precio_editado: true } : {}),
+          neto: Math.round(cantidad * precio),
+        });
       }
       const quitadas = base.length - lineas.length;
       if (quitadas || menos) {
@@ -1612,6 +1672,9 @@ export class BsaleFacturacionService {
         avisos.push(
           `Factura parcial (${partes.join(' y ')}): lo que no se factura ahora no se podrá facturar desde el sistema después, porque la guía quedará con factura. Si falta algo, habrá que hacerlo a mano en Bsale.`,
         );
+      }
+      if (precioCambiado) {
+        avisos.push(`Cambiaste el precio de ${precioCambiado} ${precioCambiado === 1 ? 'línea' : 'líneas'} respecto de la guía: la factura no cuadrará con la guía ni, quizás, con la orden de compra.`);
       }
     }
 
@@ -1625,12 +1688,12 @@ export class BsaleFacturacionService {
       const cantidad = Number(x?.cantidad);
       const neto = Number(x?.neto_unitario);
       if (!Number.isFinite(cantidad) || cantidad <= 0) throw new BadRequestException(`${sku}: la cantidad debe ser mayor que 0.`);
-      if (!Number.isFinite(neto) || neto < 0) throw new BadRequestException(`${sku}: indica el precio neto unitario.`);
+      if (!Number.isFinite(neto) || neto <= 0) throw new BadRequestException(`${sku}: indica el precio neto unitario.`);
       const nota = limpiarObservacion(x?.nota);
       if (nota.length > OBSERVACION_MAX) throw new BadRequestException(`${sku}: la observación tiene ${nota.length} caracteres; en Bsale caben hasta ${OBSERVACION_MAX}.`);
       const variante = await this.variantePorSku(sku);
       if (!variante) throw new BadRequestException(`El SKU ${sku} no está en Bsale: no se puede agregar a la factura.`);
-      const linea: any = {
+      extras.push({
         detalle_id: 0,
         variante_id: Number(variante.id) || null,
         guia: '',
@@ -1647,25 +1710,35 @@ export class BsaleFacturacionService {
         consumida_por: null,
         repuesto: null,
         stock_bsale: null,
-      };
-      // Una línea agregada descuenta stock de verdad: si el producto no admite negativo y no alcanza, Bsale la rechazaría.
-      const st = linea.variante_id ? await this.stockVariante(linea.variante_id, b.sucursal_id) : null;
-      if (st) {
-        linea.stock_bsale = st.stock;
-        if (!st.permite_negativo && st.stock < cantidad) {
-          throw new BadRequestException(`Bsale no permite dejar en negativo ${sku}: tiene ${st.stock.toLocaleString('es-CL')} y la línea agregada descuenta ${cantidad.toLocaleString('es-CL')}.`);
-        }
-      }
-      extras.push(linea);
-    }
-    if (extras.length) {
-      avisos.push(`${extras.length === 1 ? 'La línea agregada no viene de la guía y descuenta' : `Las ${extras.length} líneas agregadas no vienen de la guía y descuentan`} stock en Bsale.`);
+      });
     }
 
     const todas = [...lineas, ...extras];
     if (!todas.length) throw new BadRequestException('La factura no puede ir sin líneas.');
     if (!(totalesDe(todas).neto > 0)) throw new BadRequestException('La factura no puede ir con neto cero.');
-    return { lineas: todas, totales: totalesDe(todas), avisos };
+
+    // Stock: solo se mueve si la factura se despacha (decidirDespacho).
+    const { despacha, rebajar, yaRebajadas } = decidirDespacho(todas);
+    if (despacha) {
+      for (const l of rebajar.filter((x) => x.variante_id)) {
+        const st = await this.stockVariante(l.variante_id, b.sucursal_id);
+        if (!st) continue;
+        l.stock_bsale = st.stock;
+        if (!st.permite_negativo && st.stock < l.cantidad) {
+          throw new BadRequestException(`Bsale no permite dejar en negativo ${l.sku}: tiene ${st.stock.toLocaleString('es-CL')} y la factura, al despacharse, rebaja ${l.cantidad.toLocaleString('es-CL')}. Ingresa stock en Bsale o permite stock negativo en ese producto.`);
+        }
+      }
+      if (extras.length) {
+        avisos.push(`La factura se despacha en Bsale: rebaja el stock de ${extras.length === 1 ? 'la línea agregada' : `las ${extras.length} líneas agregadas`}${rebajar.length > extras.length ? ' y de las copiadas' : ''}.`);
+      }
+    } else if (extras.length) {
+      // Las copiadas ya tienen su aviso en el borrador; aquí, los productos agregados.
+      const nombres = extras.map((l) => l.sku).slice(0, 6).join(', ');
+      avisos.push(
+        `La factura no se despacha en Bsale, porque Bsale despacha el documento completo y ${yaRebajadas.length === 1 ? 'una línea ya la rebajó' : `${yaRebajadas.length} líneas ya las rebajó`} la guía. ${extras.length === 1 ? 'El producto agregado' : 'Los productos agregados'} (${nombres}${extras.length > 6 ? '…' : ''}) ${extras.length === 1 ? 'queda reservado' : 'quedan reservados'} como pendiente de despacho: emite la guía desde la factura cuando ${extras.length === 1 ? 'salga' : 'salgan'}.`,
+      );
+    }
+    return { lineas: todas, totales: totalesDe(todas), avisos, despacha };
   }
 
   // Variante de Bsale por SKU (misma regla que bsale-despachos.service: activa primero).

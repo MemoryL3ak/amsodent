@@ -19,9 +19,14 @@ import RegistrarComprobanteRapido from "./RegistrarComprobanteRapido";
    (2026-10-24, pedido de Ariel) También se pueden editar las líneas: bajar la
    cantidad (nunca subirla: Bsale no deja facturar más que la guía), poner una
    observación por línea, quitar líneas y agregar productos del catálogo que
-   no vienen en la guía (van como líneas libres y descuentan stock). El precio
-   de las líneas de la guía lo fija Bsale. Y «Todas las guías» arma una sola
-   factura con todas las guías pendientes de la cotización.
+   no vienen en la guía. El precio se cambia en los productos agregados y en
+   las líneas copiadas; el de una línea enlazada a la guía lo fija la guía (para
+   otro precio: nota de crédito de ajuste o nota de débito después). Y «Todas
+   las guías» arma una sola factura con todas las guías pendientes.
+   Stock (comprobado en Bsale real, ver decidirDespacho en
+   bsale-facturacion.service.ts, que esta ventana repite para mostrarlo): una
+   línea enlazada no lo toca; una libre queda reservada como pendiente de
+   despacho; si TODAS son libres la factura se despacha y rebaja el stock.
 
    Dos pasos, en orden. 1) "Simular" muestra el documento como quedaría, sin
    emitir ni guardar nada. 2) Solo con esa simulación a la vista aparece
@@ -95,7 +100,7 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
       .then((b) => {
         if (!vivo) return;
         setBorrador(b);
-        setEdits((prev) => Object.fromEntries((b.lineas || []).map((l) => [l.detalle_id, prev[l.detalle_id] || { cantidad: String(l.cantidad), nota: l.nota || "", quitada: false }])));
+        setEdits((prev) => Object.fromEntries((b.lineas || []).map((l) => [l.detalle_id, prev[l.detalle_id] || { cantidad: String(l.cantidad), nota: l.nota || "", neto_unitario: String(l.neto_unitario_raw ?? l.neto_unitario), quitada: false }])));
         // Lo ya decidido se conserva al sumar o quitar una guía.
         setFecha((v) => (v && v >= b.fecha_minima && v <= b.fecha_maxima ? v : b.fecha_emision));
         setDias((v) => (v !== "" ? v : String(b.dias_vencimiento ?? 30)));
@@ -142,18 +147,27 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
   }
   const numero = (v) => { const n = Number(String(v ?? "").replace(",", ".")); return Number.isFinite(n) ? n : NaN; };
   const cantidadDe = (l) => numero(edits[l.detalle_id]?.cantidad ?? l.cantidad);
+  const precioGuia = (l) => Number(l.neto_unitario_raw ?? l.neto_unitario) || 0;
+  const precioDe = (l) => numero(edits[l.detalle_id]?.neto_unitario ?? precioGuia(l));
+  const precioCambiado = (l) => Number.isFinite(precioDe(l)) && Math.abs(precioDe(l) - precioGuia(l)) > 0.005;
   const netoLinea = (cant, unit) => Math.round((Number(cant) || 0) * (Number(unit) || 0));
   const lineasActivas = (borrador?.lineas || []).filter((l) => !edits[l.detalle_id]?.quitada);
   const netoEdit =
-    lineasActivas.reduce((a, l) => a + netoLinea(cantidadDe(l), l.neto_unitario_raw ?? l.neto_unitario), 0) +
+    lineasActivas.reduce((a, l) => a + netoLinea(cantidadDe(l), precioDe(l)), 0) +
     extras.reduce((a, x) => a + netoLinea(numero(x.cantidad), numero(x.neto_unitario)), 0);
   const totalesEdit = { neto: netoEdit, iva: Math.round(netoEdit * 0.19), total: netoEdit + Math.round(netoEdit * 0.19) };
   const cantidadInvalida =
-    lineasActivas.some((l) => { const c = cantidadDe(l); return !(c > 0) || c > l.cantidad; }) ||
-    extras.some((x) => !(numero(x.cantidad) > 0) || !(numero(x.neto_unitario) >= 0));
+    lineasActivas.some((l) => { const c = cantidadDe(l); return !(c > 0) || c > l.cantidad || !(precioDe(l) > 0); }) ||
+    extras.some((x) => !(numero(x.cantidad) > 0) || !(numero(x.neto_unitario) > 0));
   const editada =
     extras.length > 0 ||
-    (borrador?.lineas || []).some((l) => { const e = edits[l.detalle_id]; return !!e && (e.quitada || numero(e.cantidad) !== l.cantidad || (e.nota || "") !== (l.nota || "")); });
+    (borrador?.lineas || []).some((l) => { const e = edits[l.detalle_id]; return !!e && (e.quitada || numero(e.cantidad) !== l.cantidad || (e.nota || "") !== (l.nota || "") || precioCambiado(l)); });
+  /* Stock (misma regla que decidirDespacho en el servidor): rebajan las líneas
+     copiadas tras una NC y las agregadas; las enlazadas a la guía y las de
+     precio cambiado ya las rebajó la guía. Se despacha solo si TODAS rebajan. */
+  const rebajaLinea = (l) => l.enlazada === false && !!l.consumida_por;
+  const hayQueRebajar = lineasActivas.some(rebajaLinea) || extras.length > 0;
+  const despachaEdit = hayQueRebajar && !lineasActivas.some((l) => !rebajaLinea(l));
   const todasSeleccionadas = (borrador?.guias_disponibles || []).length > 0 && borrador.guias_disponibles.every((g) => seleccion.includes(g.doc_id));
   const opcionesForma = useMemo(
     () => (borrador?.formas_pago || []).map((f) => ({ value: String(f.id), label: f.nombre })),
@@ -184,7 +198,7 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
         ...(borrador.oc_editable && oc.trim() && oc.trim().toUpperCase() !== ocOriginal ? { oc_numero: oc.trim() } : {}),
         huella: borrador.huella,
         // (2026-10-24) Líneas de la guía que se facturan (las quitadas no van), con cantidad y observación; y productos agregados.
-        lineas: lineasActivas.map((l) => ({ detalle_id: l.detalle_id, cantidad: cantidadDe(l), nota: edits[l.detalle_id]?.nota ?? l.nota ?? "" })),
+        lineas: lineasActivas.map((l) => ({ detalle_id: l.detalle_id, cantidad: cantidadDe(l), nota: edits[l.detalle_id]?.nota ?? l.nota ?? "", ...(precioCambiado(l) ? { neto_unitario: precioDe(l) } : {}) })),
         extras: extras.map((x) => ({ sku: x.sku, producto: x.producto, cantidad: numero(x.cantidad), neto_unitario: numero(x.neto_unitario), nota: x.nota || "" })),
       });
       setResultado(r);
@@ -420,10 +434,12 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
                                       style={{ width: "100%", height: 26, fontSize: 11.5, marginTop: 3, padding: "0 6px" }}
                                     />
                                   )}
-                                  {l.enlazada === false && (
+                                  {!e.quitada && l.enlazada === false && (
                                     <div style={{ fontSize: 11, color: "#92400e", marginTop: 2 }}>
-                                      Copiada, no enlazada: la usó la factura {l.consumida_por || "anulada"}. Descuenta stock
-                                      {l.stock_bsale != null ? ` (Bsale tiene ${Number(l.stock_bsale).toLocaleString("es-CL")})` : ""}.
+                                      Copiada, no enlazada: la usó la factura {l.consumida_por || "anulada"}.{" "}
+                                      {despachaEdit
+                                        ? `Rebaja stock al despacharse${l.stock_bsale != null ? ` (Bsale tiene ${Number(l.stock_bsale).toLocaleString("es-CL")})` : ""}.`
+                                        : "Queda reservada en Bsale como pendiente de despacho."}
                                     </div>
                                   )}
                                 </td>
@@ -446,8 +462,32 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
                                   )}
                                   {mala && <div style={{ fontSize: 10.5, color: "#b91c1c" }}>máx. {Number(l.cantidad).toLocaleString("es-CL")}</div>}
                                 </td>
-                                <td style={{ textAlign: "right", whiteSpace: "nowrap", verticalAlign: "top" }} title="El precio lo fija la guía en Bsale">{clp(l.neto_unitario)}</td>
-                                <td style={{ textAlign: "right", whiteSpace: "nowrap", fontWeight: 600, verticalAlign: "top" }}>{e.quitada ? "—" : clp(netoLinea(cant, l.neto_unitario_raw ?? l.neto_unitario))}</td>
+                                <td style={{ textAlign: "right", whiteSpace: "nowrap", verticalAlign: "top" }}>
+                                  {e.quitada || l.enlazada !== false ? (
+                                    <span title={l.enlazada !== false ? "Lo fija la guía. Para cobrar otro precio, emite con este y después haz una nota de crédito de ajuste de precio (o una nota de débito si sube)." : undefined}>
+                                      {clp(l.neto_unitario)}
+                                    </span>
+                                  ) : (
+                                    <input
+                                      className="input"
+                                      inputMode="decimal"
+                                      value={e.neto_unitario ?? String(precioGuia(l))}
+                                      onChange={(ev) => cambiarEdit(l.detalle_id, { neto_unitario: ev.target.value.replace(/[^\d.,]/g, "").slice(0, 12) })}
+                                      disabled={!!enviando}
+                                      title={`Precio neto unitario. En la guía: ${clp(precioGuia(l))}`}
+                                      style={{ width: 92, height: 28, textAlign: "right", fontSize: 12.5, padding: "0 6px", borderColor: precioDe(l) > 0 ? undefined : "#dc2626" }}
+                                    />
+                                  )}
+                                  {!e.quitada && precioCambiado(l) && (
+                                    <div style={{ fontSize: 10.5, color: "#92400e" }}>
+                                      guía {clp(precioGuia(l))}{" "}
+                                      <button type="button" className="btn-link" onClick={() => cambiarEdit(l.detalle_id, { neto_unitario: String(precioGuia(l)) })} disabled={!!enviando} style={{ fontSize: 10.5, padding: 0, background: "none", border: "none", color: "var(--primary)", cursor: "pointer", textDecoration: "underline" }}>
+                                        volver
+                                      </button>
+                                    </div>
+                                  )}
+                                </td>
+                                <td style={{ textAlign: "right", whiteSpace: "nowrap", fontWeight: 600, verticalAlign: "top" }}>{e.quitada ? "—" : clp(netoLinea(cant, precioDe(l)))}</td>
                                 <td style={{ textAlign: "center", padding: "4px 2px", verticalAlign: "top" }}>
                                   <button
                                     type="button"
@@ -473,6 +513,9 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
                                 <td style={{ overflowWrap: "anywhere", whiteSpace: "normal", minWidth: 180 }}>
                                   <div>
                                     {x.producto || x.sku} <span style={{ fontSize: 10.5, color: "#92400e", fontWeight: 600 }}>agregado · no viene en la guía</span>
+                                  </div>
+                                  <div style={{ fontSize: 11, color: "#92400e" }}>
+                                    {despachaEdit ? "Rebaja stock al despacharse." : "Queda reservado en Bsale como pendiente de despacho: emite la guía desde la factura cuando salga."}
                                   </div>
                                   <input
                                     className="input"
@@ -590,9 +633,11 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
                     <div style={{ flex: "2 1 240px", minWidth: 0, fontSize: 12, color: "var(--text-muted)", lineHeight: 1.45, overflowWrap: "anywhere" }}>
                       La factura referencia:{" "}
                       {borrador.referencias.map((r) => (r.codigo_sii === 801 ? `orden de compra ${borrador.oc_editable ? (oc.trim().toUpperCase() || r.numero) : r.numero}` : `guía ${r.folio}`)).join(" · ") || "nada"}.{" "}
-                      {borrador.lineas.some((l) => l.enlazada === false) || extras.length > 0
-                        ? "Las líneas de la guía quedan enlazadas a ella (no descuentan stock otra vez); las copiadas y las agregadas sí descuentan stock."
-                        : "Las líneas quedan enlazadas a la guía, así que el stock no se descuenta de nuevo."}
+                      {despachaEdit
+                        ? "La factura se despacha en Bsale: rebaja el stock de todas sus líneas."
+                        : hayQueRebajar
+                          ? "La factura no se despacha en Bsale, porque lleva líneas cuyo stock ya rebajó la guía: las copiadas o agregadas quedan reservadas como pendientes de despacho. El precio de las líneas enlazadas lo fija la guía."
+                          : "La factura no mueve stock: la guía ya lo rebajó. El precio de las líneas lo fija la guía."}
                     </div>
                   </div>
 
