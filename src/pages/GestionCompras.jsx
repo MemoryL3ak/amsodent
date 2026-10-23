@@ -23,7 +23,12 @@ import BotonLimpiarFiltros from "../components/BotonLimpiarFiltros";
    cotización y detalle por producto con semáforo (verde cubierto, ámbar
    parcial, rojo sin stock), filtros de vendedor, orden y fecha, expandir todo,
    total de la lista de compras y exportación a CSV. Estilos en styles.css
-   bajo «Gestión de compras» (clases gc-*). */
+   bajo «Gestión de compras» (clases gc-*).
+
+   2026-10-23 (Ariel): el detalle por producto lleva la columna «Costo neto»
+   (costo del catálogo, el mismo de «Por comprar»; si el producto no está en
+   el catálogo, el costo que quedó en la cotización, marcado) y los enlaces a
+   la cotización abren en una pestaña nueva para no perder la gestión. */
 
 const POR_PAGINA = 20;
 const clp = (n) => `$${Math.round(Number(n) || 0).toLocaleString("es-CL")}`;
@@ -100,6 +105,20 @@ function Etiquetas({ p }) {
       {p.sin_sku ? <span className="gc-etiqueta gc-etiqueta-aviso">Transitorio</span> : <span className="gc-etiqueta gc-etiqueta-aviso">No está en el catálogo</span>}
     </span>
   );
+}
+
+// Costo neto unitario: el del catálogo; si el producto no está en el catálogo, el que quedó en la cotización.
+function Costo({ p }) {
+  if (p.costo) return <span title="Costo neto unitario del catálogo">{clp(p.costo)}</span>;
+  if (p.costo_cotizacion) {
+    return (
+      <>
+        <div title="El producto no está en el catálogo: es el costo que quedó registrado en la cotización">{clp(p.costo_cotizacion)}</div>
+        <div className="gc-sub gc-nowrap">de la cotización</div>
+      </>
+    );
+  }
+  return <span className="gc-sin-dato" title="El producto no tiene costo ni en el catálogo ni en la cotización">sin costo</span>;
 }
 
 function Paginacion({ pagina, total, onCambiar, nombre }) {
@@ -217,8 +236,8 @@ export default function GestionCompras() {
     }
     descargarCSV(
       `cotizaciones-vs-stock-${hoy}.csv`,
-      ["Cotización", "Código", "Cliente", "RUT", "Vendedor", "Adjudicada", "Estado", "Cobertura %", "SKU", "Producto", "Cotizado", "Despachado", "Por despachar", "Stock", "Asignado", "Falta"],
-      cotizaciones.flatMap((c) => c.productos.map((p) => [c.id, c.codigo || "", c.cliente, c.rut, c.vendedor, fechaCL(c.fecha_adjudicada), (ESTADOS[c.estado] || ESTADOS.sin_items).texto, c.cobertura, p.sku || "Sin SKU", p.producto, p.cotizado, p.despachado, p.por_despachar, p.stock ?? "", p.asignado, p.falta])),
+      ["Cotización", "Código", "Cliente", "RUT", "Vendedor", "Adjudicada", "Estado", "Cobertura %", "SKU", "Producto", "Cotizado", "Despachado", "Por despachar", "Stock", "Asignado", "Falta", "Costo neto"],
+      cotizaciones.flatMap((c) => c.productos.map((p) => [c.id, c.codigo || "", c.cliente, c.rut, c.vendedor, fechaCL(c.fecha_adjudicada), (ESTADOS[c.estado] || ESTADOS.sin_items).texto, c.cobertura, p.sku || "Sin SKU", p.producto, p.cotizado, p.despachado, p.por_despachar, p.stock ?? "", p.asignado, p.falta, p.costo ?? p.costo_cotizacion ?? ""])),
     );
   };
 
@@ -396,7 +415,7 @@ export default function GestionCompras() {
                     <td className="gc-num gc-nowrap gc-fuerte">{e.valor_estimado ? clp(e.valor_estimado) : "—"}</td>
                     <td>
                       <span className="gc-cot-chips">
-                        {e.cotizaciones.map((id) => <Link key={id} to={`/detalle/${id}`} className="gc-cot-chip" title={`Abrir la cotización #${id}`}>#{id}</Link>)}
+                        {e.cotizaciones.map((id) => <Link key={id} to={`/detalle/${id}`} target="_blank" rel="noopener noreferrer" className="gc-cot-chip" title={`Abrir la cotización #${id} en una pestaña nueva`}>#{id}</Link>)}
                       </span>
                     </td>
                   </tr>
@@ -441,7 +460,7 @@ export default function GestionCompras() {
                         <td className="gc-col-chevron"><span className="gc-chevron">{abierta ? <ChevronDown size={15} /> : <ChevronRight size={15} />}</span></td>
                         <td className="gc-col-cot">
                           <div className="gc-cot-linea">
-                            <Link to={`/detalle/${c.id}`} className="gc-cot-id" onClick={(e) => e.stopPropagation()} title="Abrir la cotización">#{c.id}</Link>
+                            <Link to={`/detalle/${c.id}`} target="_blank" rel="noopener noreferrer" className="gc-cot-id" onClick={(e) => e.stopPropagation()} title="Abrir la cotización en una pestaña nueva">#{c.id}</Link>
                             {c.codigo && c.codigo !== String(c.id) && <span className="gc-cot-codigo">{c.codigo}</span>}
                             <span className={`gc-etiqueta ${c.particular ? "gc-etiqueta-particular" : "gc-etiqueta-publica"}`}>{c.particular ? "Particular" : "Pública"}</span>
                           </div>
@@ -505,6 +524,7 @@ export default function GestionCompras() {
                                       <th className="gc-num" title="Stock total del inventario">Stock</th>
                                       <th className="gc-num" title="Unidades del stock que le tocan a esta cotización (por orden de adjudicación)">Asignado</th>
                                       <th className="gc-num">Falta</th>
+                                      <th className="gc-num" title="Costo neto unitario del catálogo (el mismo de «Por comprar»)">Costo neto</th>
                                       <th className="gc-col-cobertura">Cobertura</th>
                                     </tr>
                                   </thead>
@@ -523,6 +543,7 @@ export default function GestionCompras() {
                                           <td className="gc-num">{p.stock == null ? <span className="gc-sin-dato">—</span> : num(p.stock)}</td>
                                           <td className="gc-num">{num(p.asignado)}</td>
                                           <td className="gc-num">{p.falta > 0 ? <span className="gc-falta">{num(p.falta)}</span> : <span className="gc-sin-dato">—</span>}</td>
+                                          <td className="gc-num gc-nowrap"><Costo p={p} /></td>
                                           <td className="gc-col-cobertura">{p.por_despachar <= 0 ? <span className="gc-pill gc-tono-neutro">Despachado</span> : cerrada ? <span className="gc-pill gc-tono-neutro">No se despacha</span> : <Barra valor={p.cobertura} />}</td>
                                         </tr>
                                       );

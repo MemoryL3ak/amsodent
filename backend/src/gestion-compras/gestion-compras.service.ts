@@ -19,6 +19,10 @@ import { BsaleService } from '../bsale/bsale.service';
      alcanza es lo que hay que comprar (pestaña «Por comprar», por SKU, con el
      costo para estimar cuánto cuesta).
    · Sin SKU (transitorios) no hay stock que mirar: cuentan como por comprar.
+   · Costo por producto (2026-10-23, pedido de Ariel): cada producto del
+     detalle lleva el costo neto del catálogo (productos.costo, el mismo que
+     usa «Por comprar») y, aparte, el costo congelado en la cotización
+     (items_licitacion.costo) para los que no están en el catálogo.
    · Cierre forzado (licitaciones.ciclo_cerrado, 2026-10-22): lo que quedó sin
      despachar ya no se despacha ni se compra. La cotización no toma stock, no
      entra en «Por comprar» y sale con estado «cerrada» (en la pantalla solo con
@@ -74,12 +78,13 @@ export class GestionComprasService {
     if (!filas.length) {
       // Sin Bsale: solo lo cotizado.
       const ids = cotizaciones.map((c) => Number(c.id));
-      const { data: items } = await db.from('items_licitacion').select('licitacion_id, sku, producto, formato, cantidad').in('licitacion_id', ids).range(0, 50000);
+      const { data: items } = await db.from('items_licitacion').select('licitacion_id, sku, producto, formato, cantidad, costo').in('licitacion_id', ids).range(0, 50000);
       const porClave = new Map<string, any>();
       for (const it of (items || []) as any[]) {
         const k = `${it.licitacion_id}|${clave(it.sku, it.producto)}`;
-        const f = porClave.get(k) || { licitacion_id: Number(it.licitacion_id), sku: String(it.sku || '').trim(), producto: String(it.producto || ''), formato: String(it.formato || ''), cotizada: 0, despachada: 0, en_cotizacion: true };
+        const f = porClave.get(k) || { licitacion_id: Number(it.licitacion_id), sku: String(it.sku || '').trim(), producto: String(it.producto || ''), formato: String(it.formato || ''), cotizada: 0, despachada: 0, costo: 0, en_cotizacion: true };
         f.cotizada += Number(it.cantidad || 0);
+        if (!f.costo) f.costo = Number(it.costo || 0);
         porClave.set(k, f);
       }
       filas = [...porClave.values()].map((f) => ({ ...f, pendiente: f.cotizada }));
@@ -138,6 +143,8 @@ export class GestionComprasService {
           stock: enCatalogo ? enCatalogo.stock : null,
           asignado,
           falta,
+          costo: enCatalogo?.costo || null, // costo neto unitario del catálogo (el de «Por comprar»)
+          costo_cotizacion: Number(f.costo) || null, // el congelado en el ítem al cotizar
           sin_sku: !k,
           en_catalogo: !!enCatalogo,
           cobertura: cerrada ? 0 : pendiente > 0 ? Math.round((asignado / pendiente) * 1000) / 10 : 100,
