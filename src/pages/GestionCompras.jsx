@@ -30,8 +30,9 @@ import BotonLimpiarFiltros from "../components/BotonLimpiarFiltros";
    que quedó guardado en la cotización) y los enlaces a la cotización abren
    en una pestaña nueva para no perder la gestión. El nombre de un producto
    del catálogo también es un enlace: abre Editar Producto en otra pestaña
-   (producto_id lo entrega el backend; los transitorios y lo que no está en
-   el catálogo quedan como texto). */
+   (producto_id lo entrega el backend, que cruza por SKU y, sin SKU, por
+   nombre: los transitorios del catálogo también enlazan y traen su costo;
+   solo lo que no está en el catálogo queda como texto y «sin costo»). */
 
 const POR_PAGINA = 20;
 const clp = (n) => `$${Math.round(Number(n) || 0).toLocaleString("es-CL")}`;
@@ -101,11 +102,14 @@ function Pastilla({ estado }) {
   return <span className={`gc-pill gc-tono-${e.tono}`}>{e.texto}</span>;
 }
 
+// Transitorio = está en el catálogo sin SKU (sin stock que mirar); lo que no calzó ni por SKU ni por nombre no está en el catálogo.
 function Etiquetas({ p }) {
   if (!p.sin_sku && p.en_catalogo) return null;
   return (
     <span className="gc-etiquetas">
-      {p.sin_sku ? <span className="gc-etiqueta gc-etiqueta-aviso">Transitorio</span> : <span className="gc-etiqueta gc-etiqueta-aviso">No está en el catálogo</span>}
+      {p.en_catalogo
+        ? <span className="gc-etiqueta gc-etiqueta-aviso" title="Producto del catálogo sin SKU: no tiene stock en Bsale, cuenta como por comprar">Transitorio</span>
+        : <span className="gc-etiqueta gc-etiqueta-aviso" title="No calzó con ningún producto del catálogo, ni por SKU ni por nombre">No está en el catálogo</span>}
     </span>
   );
 }
