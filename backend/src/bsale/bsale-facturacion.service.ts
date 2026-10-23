@@ -1502,7 +1502,7 @@ export class BsaleFacturacionService {
     // correo con la factura prellenada, y la persona revisa y envía.
     let correo: any = null;
     if (this.licitaciones) {
-      await this.licitaciones.avisarCorreoDocumento(Number((creado as any).id), { tipo: 'factura', licitacion_id: licId, numero });
+      await this.licitaciones.avisarCorreoDocumento(Number((creado as any).id), { tipo: 'factura', licitacion_id: licId, numero }, email);
       const dest = this.correos ? await this.correos.destinatarioDocumento(licId) : null;
       correo = { ventana: true, para: dest?.para || null };
     }

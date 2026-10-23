@@ -7,6 +7,15 @@ import { MpAdjudicacionesService } from './mp-adjudicaciones.service';
 import { MpColaService } from '../mercadopublico/mp-cola.service';
 import { mpLimitador } from '../mercadopublico/mp-limitador';
 
+/* (2026-10-22) Quién envía la factura de entidad pública cuando no se sabe
+   quién la emitió: Ruth (admin@). Misma lista que la copia de esa factura
+   (CC_FACTURA_PUBLICA en correos.service), así se configuran juntas. */
+const RESPONSABLE_FACTURA_PUBLICA =
+  String(process.env.CC_FACTURA_PUBLICA || '')
+    .split(/[,;\s]+/)
+    .map((s) => s.trim().toLowerCase())
+    .find((s) => s.includes('@')) || 'admin@amsodentmedical.cl';
+
 @Injectable()
 export class LicitacionesService {
   private readonly logger = new Logger('Licitaciones');
@@ -2630,7 +2639,7 @@ export class LicitacionesService {
      seguía corriendo contra la API caída de Compra Ágil). Las versiones
      hermanas del proceso que sigan abiertas pasan a "Descartada". Nunca
      frena el registro del documento. */
-  async createDocumento(body: Record<string, any>, opts?: { sinAvisoCorreo?: boolean }) {
+  async createDocumento(body: Record<string, any>, opts?: { sinAvisoCorreo?: boolean; usuarioEmail?: string | null }) {
     const inserted = await this.insertarDocumento(body, opts);
     if (String(body?.tipo || '') === 'orden_compra' && Number.isFinite(Number(body?.licitacion_id))) {
       try {
@@ -2646,7 +2655,7 @@ export class LicitacionesService {
     return inserted;
   }
 
-  private async insertarDocumento(body: Record<string, any>, opts?: { sinAvisoCorreo?: boolean }) {
+  private async insertarDocumento(body: Record<string, any>, opts?: { sinAvisoCorreo?: boolean; usuarioEmail?: string | null }) {
     let inserted: any = null;
 
     // Despacho interno → correlativo automático AMSO0000001 (cuando no se
@@ -2716,11 +2725,12 @@ export class LicitacionesService {
       inserted = data;
     }
 
-    // Hook: aviso de correo pendiente al vendedor. No bloquea la subida.
+    // Hook: aviso de correo pendiente (al vendedor; la factura de entidad
+    // pública, a quien la cargó). No bloquea la subida.
     // sinAvisoCorreo: la guía de una venta directa con entrega inmediata no se
     // envía al cliente (2026-10-15).
     try {
-      if (!opts?.sinAvisoCorreo) await this.notificarCorreoPendiente(inserted?.id, body);
+      if (!opts?.sinAvisoCorreo) await this.notificarCorreoPendiente(inserted?.id, body, opts?.usuarioEmail);
     } catch (e: any) {
       console.error('[LicitacionesService] notificarCorreoPendiente falló:', e?.message || e);
     }
@@ -2803,15 +2813,15 @@ export class LicitacionesService {
   /* Documento registrado desde Bsale sin pasar por createDocumento (factura
      desde guías, venta directa): deja el mismo aviso que una carga a mano, y
      ese aviso abre la ventana de correo (2026-10-08). Nunca lanza. */
-  async avisarCorreoDocumento(docId: number, body: Record<string, any>) {
+  async avisarCorreoDocumento(docId: number, body: Record<string, any>, emitidoPor?: string | null) {
     try {
-      await this.notificarCorreoPendiente(docId, body);
+      await this.notificarCorreoPendiente(docId, body, emitidoPor);
     } catch (e: any) {
       console.warn(`[correos-hook] ${e?.message || e}`);
     }
   }
 
-  private async notificarCorreoPendiente(docId: number, body: Record<string, any>) {
+  private async notificarCorreoPendiente(docId: number, body: Record<string, any>, emitidoPor?: string | null) {
     const log = (m: string) => console.log(`[correos-hook] ${m}`);
     if (!docId) {
       log('sin docId — no se notifica');
@@ -2860,7 +2870,7 @@ export class LicitacionesService {
 
     const { data: lic } = await this.supabase.getClient()
       .from('licitaciones')
-      .select('id, nombre_entidad, vendedor_correo, creado_por')
+      .select('id, nombre_entidad, vendedor_correo, creado_por, tipo_cliente')
       .eq('id', licitacionId)
       .maybeSingle();
     if (!lic) {
@@ -2868,12 +2878,24 @@ export class LicitacionesService {
       return;
     }
 
-    const destinatario = String(lic.vendedor_correo || lic.creado_por || '')
-      .trim()
-      .toLowerCase();
+    /* (2026-10-22) Factura de entidad pública (cotización que no es de cliente
+       particular): la envía quien la emite o la carga —Ruth—, no el vendedor.
+       Por eso el aviso que abre la ventana de correo va a esa persona; si no
+       se sabe quién fue, a Ruth (admin@). Lo demás (guía, OC, info de
+       despacho y la boleta/factura del particular) sigue yendo al vendedor. */
+    const esPublica = !/particular/i.test(String((lic as any).tipo_cliente || ''));
+    const vendedor = String(lic.vendedor_correo || lic.creado_por || '').trim().toLowerCase();
+    const emisor = String(emitidoPor || '').trim().toLowerCase();
+    const destinatario =
+      tipoCorreo === 'factura_enviar' && esPublica
+        ? (emisor.includes('@') ? emisor : RESPONSABLE_FACTURA_PUBLICA)
+        : vendedor;
     if (!destinatario) {
       log(`cotización ${licitacionId} sin vendedor/creado_por — no se notifica`);
       return;
+    }
+    if (tipoCorreo === 'factura_enviar' && esPublica && vendedor !== destinatario) {
+      log(`factura de entidad pública: el aviso va a quien la emitió (${destinatario}), no al vendedor (${vendedor || 'sin vendedor'})`);
     }
 
     const numero = String(body?.numero || '').trim();

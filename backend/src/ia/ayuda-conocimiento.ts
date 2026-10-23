@@ -434,7 +434,9 @@ copias, asunto, texto y PDF adjunto) y la persona agrega o quita destinatarios,
 edita el texto, suma o saca adjuntos y presiona Enviar; sale desde su casilla
 si la conectó. Si la cierra sin enviar, vuelve como recordatorio (se puede
 posponer). La simulación dice a quién irá. Factura de Mercado Público (no
-particular): copia solo a Ruth (admin@), nunca al vendedor de la cotización.
+particular): la envía quien la emite o la carga (Ruth): la ventana de correo y
+el recordatorio le aparecen a esa persona, no al vendedor; copia solo a Ruth
+(admin@), nunca al vendedor de la cotización.
 VENTA DIRECTA: pagada al emitir pide el N° de comprobante (salvo efectivo) y
 queda en la pestaña «Venta directa» con su cotización. CLIENTE NUEVO EN BSALE:
 si el RUT no está, una ventana pide los datos que Bsale exige y lo crea

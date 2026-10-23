@@ -969,7 +969,7 @@ export class BsaleDespachosService {
       const { data: licDoc } = await db.from('licitacion_documentos').select('licitacion_id, tipo, numero').eq('id', documentoId).maybeSingle();
       if ((licDoc as any)?.licitacion_id) {
         if (typeof (this.licitaciones as any)?.avisarCorreoDocumento === 'function') {
-          await this.licitaciones.avisarCorreoDocumento(documentoId, { tipo: (licDoc as any).tipo, licitacion_id: (licDoc as any).licitacion_id, numero: (licDoc as any).numero });
+          await this.licitaciones.avisarCorreoDocumento(documentoId, { tipo: (licDoc as any).tipo, licitacion_id: (licDoc as any).licitacion_id, numero: (licDoc as any).numero }, p.usuario.email || null);
         }
         const dest = this.correos ? await this.correos.destinatarioDocumento(Number((licDoc as any).licitacion_id), p.correo.para || null) : null;
         correo = { ventana: true, para: dest?.para || null };

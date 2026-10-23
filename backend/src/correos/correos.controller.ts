@@ -90,6 +90,8 @@ export class CorreosController {
       cuerpoHtml?: string;
       adjuntarDocumentoId?: number | null;
       adjuntos?: Array<{ filename: string; contentBase64: string; mime?: string }>;
+      // Documento del recordatorio (guía, factura…): enviado el correo, se cierra para todos.
+      documentoId?: number | null;
     },
   ) {
     if (!body?.licitacionId || !body?.para || !body?.asunto || !body?.cuerpoHtml) {
@@ -105,6 +107,7 @@ export class CorreosController {
       cuerpoHtml: body.cuerpoHtml,
       adjuntarDocumentoId: body.adjuntarDocumentoId ?? null,
       adjuntos: Array.isArray(body.adjuntos) ? body.adjuntos : [],
+      documentoId: body.documentoId ?? null,
     });
   }
 
