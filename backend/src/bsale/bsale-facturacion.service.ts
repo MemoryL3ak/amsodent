@@ -32,6 +32,7 @@ import { permisosEfectivos } from '../auth/permisos';
    · Todo queda en `bsale_emisiones` (quién, cuándo, qué se envió, qué volvió). */
 
 const IVA = 0.19;
+const IVA_ID = 1; // impuesto IVA 19 % en Bsale (el mismo que usa bsale-libre.service)
 const DTE_OC = 801; // código SII de "orden de compra" en una referencia
 const DTE_GUIA = 52; // guía de despacho electrónica
 const DTE_FACTURA = 33; // factura electrónica
@@ -197,7 +198,7 @@ export function armarSolicitud(
     tipo_documento_id: number;
     sucursal_id: number | null;
     cliente: { id: number };
-    lineas: { detalle_id: number; cantidad: number }[];
+    lineas: { detalle_id: number; cantidad: number; enlazada?: boolean; variante_id?: number | null; sku?: string; neto_unitario?: number; neto_unitario_raw?: number }[];
     referencias: Referencia[];
     totales: { total: number };
   },
@@ -211,7 +212,19 @@ export function armarSolicitud(
     declareSii: 1,
     clientId: b.cliente.id,
     // Sin `dispatch`: la guía ya despachó y rebajó el stock.
-    details: b.lineas.map((l) => ({ detailId: l.detalle_id, quantity: l.cantidad })),
+    /* Línea enlazada a la guía (detailId: Bsale copia el precio y no mueve
+       stock) o, si Bsale ya la usó en una factura anulada (2026-10-23),
+       copiada: variante + cantidad + precio neto, y descuenta stock. */
+    details: b.lineas.map((l) =>
+      l.enlazada === false
+        ? {
+            ...(l.variante_id ? { variantId: l.variante_id } : { code: l.sku }),
+            quantity: l.cantidad,
+            netUnitValue: l.neto_unitario_raw || l.neto_unitario || 0,
+            taxId: `[${IVA_ID}]`,
+          }
+        : { detailId: l.detalle_id, quantity: l.cantidad },
+    ),
     payments: [{ paymentTypeId: o.forma_pago_id, amount: b.totales.total, recordDate: emision }],
     references: b.referencias.map((r) => referenciaParaBsale(r, emision)),
     salesId: o.sales_id,
@@ -515,7 +528,7 @@ export class BsaleFacturacionService {
        (749, 867, 868) y las tres anuladas (NC 141, 165, 179); el sistema veía
        la 749 "vigente" y no dejaba facturarla. Las anuladas se devuelven
        aparte para avisar el historial sin bloquear. */
-    const anuladas = new Map<string, Array<{ numero: string; fecha: string | null; notas: string[] }>>();
+    const anuladas = new Map<string, Array<{ id: number; numero: string; fecha: string | null; notas: string[]; devoluciones: number[] }>>();
     const anuladasPorNc = await this.facturasAnuladasPorNc(facturas);
     for (const f of facturas) {
       if (Number(f?.state) === 1) continue;
@@ -528,13 +541,50 @@ export class BsaleFacturacionService {
         if (!buscadas.has(n)) continue;
         if (nc) {
           if (!anuladas.has(n)) anuladas.set(n, []);
-          anuladas.get(n)!.push({ numero: String(f.number), fecha: epochAFecha(f.emissionDate), notas: nc.notas });
+          anuladas.get(n)!.push({ id: Number(f.id), numero: String(f.number), fecha: epochAFecha(f.emissionDate), notas: nc.notas, devoluciones: nc.devoluciones });
           continue;
         }
         if (!halladas.has(n)) halladas.set(n, { numero: String(f.number), fecha: epochAFecha(f.emissionDate) });
       }
     }
     return { halladas, anuladas };
+  }
+
+  /* (2026-10-23) Qué líneas de la guía ya usó en Bsale una factura (anulada) y
+     cuántas unidades devolvió al stock la nota de crédito que la anuló. El
+     detalle de una factura hecha desde la guía apunta a la línea de la guía en
+     `relatedDetailId`; el detalle de la devolución apunta al de la factura en
+     `documentDetailId` y trae lo repuesto en `quantityDevStock`. */
+  private async lineasConsumidas(detallesGuia: Set<number>, facturas: Array<{ id: number; numero: string; devoluciones: number[] }>) {
+    const out = new Map<number, { factura: string; repuesto: number }>();
+    for (const f of facturas) {
+      let detalles: any[] = [];
+      try {
+        detalles = await this.todos(`/documents/${f.id}/details.json`);
+      } catch (e: any) {
+        this.logger.warn(`No se pudieron leer las líneas de la factura ${f.numero} en Bsale: ${String(e?.message || e).slice(0, 120)}`);
+        continue;
+      }
+      const lineaDeGuia = new Map<number, number>(); // detalle de la factura → línea de la guía
+      for (const d of detalles) {
+        const rel = Number(d?.relatedDetailId) || 0;
+        if (rel && detallesGuia.has(rel)) lineaDeGuia.set(Number(d.id), rel);
+      }
+      if (!lineaDeGuia.size) continue;
+      const repuesto = new Map<number, number>();
+      for (const rid of f.devoluciones || []) {
+        const dets: any[] = await this.todos(`/returns/${rid}/details.json`).catch(() => [] as any[]);
+        for (const d of dets) {
+          const rel = lineaDeGuia.get(Number(d?.documentDetailId));
+          if (rel) repuesto.set(rel, (repuesto.get(rel) || 0) + (Number(d?.quantityDevStock) || 0));
+        }
+      }
+      for (const rel of lineaDeGuia.values()) {
+        const previo = out.get(rel);
+        out.set(rel, { factura: previo ? `${previo.factura} y ${f.numero}` : f.numero, repuesto: (previo?.repuesto || 0) + (repuesto.get(rel) || 0) });
+      }
+    }
+    return out;
   }
 
   /* (2026-10-16) Lo mismo con lo registrado en el SISTEMA: una factura cuyas
@@ -562,8 +612,8 @@ export class BsaleFacturacionService {
 
   /* Facturas anuladas por completo con nota(s) de crédito: las devoluciones de
      Bsale cuyo documento de referencia es la factura suman al menos su total. */
-  private async facturasAnuladasPorNc(facturas: any[]): Promise<Map<number, { notas: string[]; monto: number }>> {
-    const out = new Map<number, { notas: string[]; monto: number }>();
+  private async facturasAnuladasPorNc(facturas: any[]): Promise<Map<number, { notas: string[]; monto: number; devoluciones: number[] }>> {
+    const out = new Map<number, { notas: string[]; monto: number; devoluciones: number[] }>();
     if (!facturas.length) return out;
     let devoluciones: any[] = [];
     try {
@@ -573,13 +623,14 @@ export class BsaleFacturacionService {
       this.logger.warn(`No se pudieron leer las devoluciones de Bsale: ${String(e?.message || e).slice(0, 120)}`);
       return out;
     }
-    const porFactura = new Map<number, { notas: string[]; monto: number }>();
+    const porFactura = new Map<number, { notas: string[]; monto: number; devoluciones: number[] }>();
     for (const r of devoluciones) {
       const id = Number(r?.reference_document?.id);
       if (!Number.isFinite(id)) continue;
-      const e = porFactura.get(id) || { notas: [], monto: 0 };
+      const e = porFactura.get(id) || { notas: [], monto: 0, devoluciones: [] };
       e.monto += Number(r?.amount ?? r?.credit_note?.totalAmount ?? 0) || 0;
       if (r?.credit_note?.number != null) e.notas.push(String(r.credit_note.number));
+      if (Number(r?.id)) e.devoluciones.push(Number(r.id));
       porFactura.set(id, e);
     }
     for (const f of facturas) {
@@ -954,13 +1005,20 @@ export class BsaleFacturacionService {
 
       const lineasGuia = detalles.map((d: any) => ({
         detalle_id: Number(d.id),
+        variante_id: Number(d?.variant?.id) || null,
         guia: String(doc.number),
         sku: String(d?.variant?.code || '').trim(),
         producto: [d?.product?.name, d?.variant?.description].map((x) => String(x || '').trim()).filter(Boolean).join(' · '),
         nota: String(d?.note || '').trim(),
         cantidad: Number(d.quantity || 0),
         neto_unitario: Number(d.netUnitValue || 0),
+        // Precio sin redondear: una línea copiada debe dar el mismo neto que en la guía.
+        neto_unitario_raw: Number(d.netUnitValueRaw ?? d.netUnitValue) || 0,
         neto: Number(d.netAmount ?? Number(d.quantity || 0) * Number(d.netUnitValue || 0)) || 0,
+        // (2026-10-23) false cuando Bsale ya usó la línea en una factura anulada: va copiada, no enlazada.
+        enlazada: true,
+        consumida_por: null as string | null,
+        repuesto: null as number | null,
       }));
       if (!lineasGuia.length) problemas.push({ codigo: 'guia_sin_lineas', mensaje: `La guía ${doc.number} no tiene productos en Bsale.` });
       if (lineasGuia.some((l) => !(l.cantidad > 0) || !l.detalle_id)) {
@@ -1062,6 +1120,40 @@ export class BsaleFacturacionService {
           });
         }
       }
+      /* (2026-10-23) Bsale NO libera las líneas de una guía cuando la factura
+         hecha desde ella se anula con nota de crédito: mandarlas otra vez con
+         `detailId` responde "Invalid quantity" (guía 836 → factura 855 → NC
+         169). Esas líneas van copiadas (SKU, cantidad y precio), igual que las
+         facturas 867 y 868 que el equipo hizo a mano para la guía 804. Como la
+         NC repuso el stock, la factura copiada lo vuelve a descontar y cuadra. */
+      const facturasAnuladas = [...new Map(guias.flatMap((g) => anuladas.get(soloDigitos(g.numero)) || []).map((f) => [f.id, f])).values()];
+      if (facturasAnuladas.length && lineas.length) {
+        const consumidas = await this.lineasConsumidas(new Set(lineas.map((l) => l.detalle_id)), facturasAnuladas);
+        for (const l of lineas) {
+          const c = consumidas.get(l.detalle_id);
+          if (!c) continue;
+          l.enlazada = false;
+          l.consumida_por = c.factura;
+          l.repuesto = c.repuesto;
+        }
+        for (const g of guias) {
+          const deLaGuia = lineas.filter((l) => l.guia === g.numero);
+          const libres = deLaGuia.filter((l) => !l.enlazada);
+          if (!libres.length) continue;
+          const unidades = libres.reduce((a, l) => a + l.cantidad, 0);
+          const repuestas = libres.reduce((a, l) => a + (l.repuesto || 0), 0);
+          const porFactura = [...new Set(libres.map((l) => l.consumida_por))].join(', ');
+          const stock =
+            repuestas >= unidades
+              ? `Descuenta stock: la nota de crédito repuso las ${unidades.toLocaleString('es-CL')} unidades, así que queda cuadrado.`
+              : `Descuenta stock otra vez y la nota de crédito repuso solo ${repuestas.toLocaleString('es-CL')} de ${unidades.toLocaleString('es-CL')} unidades: revisa el stock en Bsale después de emitir.`;
+          avisos.push({
+            codigo: 'lineas_copiadas',
+            mensaje: `Bsale no deja volver a enlazar ${libres.length === deLaGuia.length ? 'las líneas' : `${libres.length} de las ${deLaGuia.length} líneas`} de la guía ${g.numero}: ya las usó la factura ${porFactura}, anulada, y la anulación no las libera. Van copiadas (mismo SKU, cantidad y precio) con las referencias a la orden de compra y a la guía, como las facturas hechas a mano. ${stock}`,
+          });
+        }
+      }
+
       /* Si la respuesta de una emisión se perdió, la factura existe en Bsale
          pero no en el sistema. Se reconoce como propia por su `salesId` y, en
          vez de bloquear, se ofrece terminar de registrarla. */
@@ -1171,7 +1263,7 @@ export class BsaleFacturacionService {
     const base = JSON.stringify({
       c: b.cliente?.id || 0,
       t: b.tipo_documento_id,
-      l: (b.lineas || []).map((l: any) => [l.detalle_id, l.cantidad, l.neto]),
+      l: (b.lineas || []).map((l: any) => [l.detalle_id, l.cantidad, l.neto, ...(l.enlazada === false ? ['copiada'] : [])]),
       r: (b.referencias || []).map((r: any) => [r.codigo_sii, r.folio, r.numero]),
       n: b.totales?.total || 0,
     });
@@ -1253,6 +1345,7 @@ export class BsaleFacturacionService {
       const solicitud = armarSolicitud(b as any, { ...opciones, sales_id: `${clave}-0` });
       const vendedor = await this.ponerVendedor(solicitud, null, licId, usuario.email);
       const formaPago = b.formas_pago.find((f) => f.id === forma);
+      const copiadas = b.lineas.filter((l) => l.enlazada === false);
       return {
         simulacion: true,
         // Se pidió emitir pero el servidor tiene la emisión apagada.
@@ -1265,17 +1358,23 @@ export class BsaleFacturacionService {
           correo: this.correos ? await this.correos.destinatarioDocumento(licId) : null,
           tipo: 'Factura electrónica',
           sii: true,
-          descuenta_stock: false,
+          descuenta_stock: copiadas.length > 0,
+          stock_texto: copiadas.length ? (copiadas.length === b.lineas.length ? 'Descuenta stock (líneas copiadas de la guía)' : `Descuenta stock (${copiadas.length} líneas copiadas)`) : 'No mueve stock',
           emisor: EMISOR,
           cliente: b.cliente,
-          lineas: b.lineas.map((l) => ({ sku: l.sku, producto: l.producto, cantidad: l.cantidad, neto_unitario: l.neto_unitario, neto: l.neto, guia: l.guia })),
+          lineas: b.lineas.map((l) => ({ sku: l.sku, producto: l.producto, cantidad: l.cantidad, neto_unitario: l.neto_unitario, neto: l.neto, guia: l.guia, enlazada: l.enlazada !== false })),
           totales: b.totales,
           referencias: b.referencias.map(referenciaVista),
           forma_pago: formaPago?.nombre || null,
           fecha_emision: fecha,
           vencimiento: sumarDias(fecha, dias),
           vendedor: vendedor.nombre,
-          notas: ['Las líneas quedan enlazadas a la guía: el stock no se descuenta otra vez.', ...(vendedor.aviso ? [vendedor.aviso] : [])],
+          notas: [
+            copiadas.length
+              ? `${copiadas.length === b.lineas.length ? 'Las líneas' : `${copiadas.length} líneas`} van copiadas de la guía, no enlazadas: Bsale ya las usó en la factura ${[...new Set(copiadas.map((l) => l.consumida_por))].join(', ')}, que está anulada. Esta factura descuenta stock.`
+              : 'Las líneas quedan enlazadas a la guía: el stock no se descuenta otra vez.',
+            ...(vendedor.aviso ? [vendedor.aviso] : []),
+          ],
         },
       };
     }
@@ -1341,7 +1440,14 @@ export class BsaleFacturacionService {
       if (incierta) {
         throw new BadGatewayException('Bsale no respondió y no se sabe si la factura se emitió. Vuelve a intentarlo: lleva el mismo identificador, así que no se duplicará.');
       }
-      throw new BadRequestException(`Bsale rechazó la factura: ${String(e?.message || e).slice(0, 400)}`);
+      const motivo = String(e?.message || e).slice(0, 400);
+      // "Invalid quantity": una línea de la guía ya la usó otra factura (Bsale no la libera ni al anularla).
+      if (/invalid quantity/i.test(motivo)) {
+        throw new BadRequestException(
+          `Bsale rechazó la factura (${motivo}): alguna línea de la guía ya la usó otra factura en Bsale, y anularla no la libera. El sistema solo reconoce las facturas que referencian la guía: revisa en Bsale qué factura usó esas líneas.`,
+        );
+      }
+      throw new BadRequestException(`Bsale rechazó la factura: ${motivo}`);
     }
 
     const emitida = {
