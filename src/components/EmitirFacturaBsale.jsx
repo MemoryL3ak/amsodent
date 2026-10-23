@@ -323,6 +323,11 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
                               <td style={{ overflowWrap: "anywhere" }}>
                                 {l.producto || "—"}
                                 {l.nota && <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{l.nota}</div>}
+                                {l.enlazada === false && (
+                                  <div style={{ fontSize: 11, color: "#92400e" }}>
+                                    Copiada, no enlazada: la usó la factura {l.consumida_por || "anulada"}. Descuenta stock.
+                                  </div>
+                                )}
                               </td>
                               <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>{Number(l.cantidad).toLocaleString("es-CL")}</td>
                               <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>{clp(l.neto_unitario)}</td>
@@ -380,7 +385,9 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
                     <div style={{ flex: "2 1 240px", minWidth: 0, fontSize: 12, color: "var(--text-muted)", lineHeight: 1.45, overflowWrap: "anywhere" }}>
                       La factura referencia:{" "}
                       {borrador.referencias.map((r) => (r.codigo_sii === 801 ? `orden de compra ${borrador.oc_editable ? (oc.trim().toUpperCase() || r.numero) : r.numero}` : `guía ${r.folio}`)).join(" · ") || "nada"}.
-                      Las líneas quedan enlazadas a la guía, así que el stock no se descuenta de nuevo.
+                      {borrador.lineas.some((l) => l.enlazada === false)
+                        ? "Las líneas copiadas (Bsale ya las usó en una factura anulada) descuentan stock; las enlazadas a la guía, no."
+                        : "Las líneas quedan enlazadas a la guía, así que el stock no se descuenta de nuevo."}
                     </div>
                   </div>
 
