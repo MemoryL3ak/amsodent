@@ -54,6 +54,8 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { condicionParaCotizacion } from "../lib/condicionesVenta";
+import { leerGiros, tieneGiro } from "../lib/giros";
+import { GirosRapidos } from "../components/GirosEditor";
 import { escucharProductosActualizados, itemEsDelProducto } from "../lib/productosCanal";
 import { REGIONES_CHILE, filtrarOpcionComuna } from "../constants/regiones";
 
@@ -619,6 +621,8 @@ export default function EditarLicitacion() {
   const [rutEntidad, setRutEntidad] = useState("");
   const [nombreEntidad, setNombreEntidad] = useState("");
   const [giro, setGiro] = useState("");
+  // (2026-10-23) Giros de la ficha del cliente: pastillas bajo el campo Giro.
+  const [girosCliente, setGirosCliente] = useState([]);
   const [tipoCliente, setTipoCliente] = useState("");
   // Valor de tipo_cliente que ya está guardado en BD. Lo usamos para mostrar el
   // botón "Guardar" inline cuando la licitación está bloqueada (Adjudicada,
@@ -714,6 +718,7 @@ export default function EditarLicitacion() {
           direccion: cli.direccion || "", comuna: cli.comuna || "",
           contacto: cli.contacto || "", telefono: cli.telefono || "", email: cli.email || "",
         });
+        setGirosCliente(cli ? leerGiros(cli) : []);
         if (!sucursal && lista.length) {
           const cm = lista.find((s) => (s.nombre || "").trim().toLowerCase() === "casa matriz") || lista[0];
           setSucursal(cm.nombre);
@@ -915,6 +920,11 @@ export default function EditarLicitacion() {
         telefono: data.telefono || "",
         email: data.email || "",
       });
+      // (2026-10-23) Giros de la ficha: se propone el principal (salvo que el
+      // escrito ya sea uno de ellos) y los demás quedan como pastillas.
+      const girosFicha = leerGiros(data);
+      setGirosCliente(girosFicha);
+      if (girosFicha.length) setGiro((g) => (tieneGiro(girosFicha, g) ? g : girosFicha[0]));
       setCondVenta(condicionParaCotizacion(data.condiciones_venta));
       const tc = (data.tipo_cliente || "").toString().trim();
       if (tc) setTipoCliente(tc);
@@ -937,11 +947,17 @@ export default function EditarLicitacion() {
       // Sincronizar tipo_cliente en la ficha del cliente si cambió en la cotización.
       const tcActual = (existe.tipo_cliente || "").toString().trim();
       const tcNuevo = (tipoCliente || "").toString().trim();
-      if (tcNuevo && tcNuevo !== tcActual && existe.id) {
+      const cambios = {};
+      if (tcNuevo && tcNuevo !== tcActual) cambios.tipo_cliente = tcNuevo;
+      // (2026-10-23) Un giro escrito en la cotización que la ficha no tiene se
+      // suma a sus giros (el backend lo manda a Bsale si el RUT ya está allá).
+      const giroCot = (giro || "").trim();
+      if (giroCot && !tieneGiro(leerGiros(existe), giroCot)) cambios.giros = [...leerGiros(existe), giroCot];
+      if (Object.keys(cambios).length && existe.id) {
         try {
-          await api.put(`/clientes/${existe.id}`, { tipo_cliente: tcNuevo });
+          await api.put(`/clientes/${existe.id}`, cambios);
         } catch (errUpd) {
-          console.warn("No se pudo actualizar tipo_cliente del cliente:", errUpd);
+          console.warn("No se pudo actualizar la ficha del cliente:", errUpd);
         }
       }
       return;
@@ -963,6 +979,8 @@ export default function EditarLicitacion() {
         telefono,
         condiciones_venta: condVenta,
         tipo_cliente: tipoCliente || null,
+        // (2026-10-23) El giro de la cotización queda como primer giro de la ficha.
+        giro: giro || null,
         vendedor_asignado: esParticular ? ((vendedorCorreo || "").trim() || null) : null,
       });
     } catch (error) {
@@ -3843,6 +3861,8 @@ export default function EditarLicitacion() {
               disabled={!esEditable}
               placeholder="Ej: Servicios dentales"
             />
+            {/* (2026-10-23) Los giros de la ficha del cliente, para elegir uno con un clic. */}
+            <GirosRapidos giros={girosCliente} value={giro} onChange={setGiro} disabled={!esEditable} />
           </div>
 
           <div>
