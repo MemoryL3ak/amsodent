@@ -156,6 +156,19 @@ selección múltiple, «30 días» y/o «Contado» («30 días» solo lo habilit
 rol admin, en cualquier tipo de cliente; un cliente creado por otro rol queda
 sin «30 días»). La cotización toma «30 días» si la tiene, si no «Contado».
 Venta directa: «Crédito» solo aparece si el cliente tiene «30 días».
+GIROS DEL CLIENTE (oct 2026): la ficha admite VARIOS giros (hasta 6; el
+primero es el principal; se agregan con Enter o «Agregar», la estrella hace
+principal a otro, la × lo quita). La cotización propone el giro principal y
+muestra los demás como pastillas para elegir (el campo Giro de la cotización
+sigue siendo texto libre y un giro nuevo escrito ahí se suma a la ficha al
+guardar). BSALE guarda UN solo texto de giro por cliente (campo activity): al
+guardar la ficha con giros distintos, si el RUT ya existe en Bsale se le
+actualiza el giro con todos unidos con « / » y el aviso dice cómo fue
+(actualizado / el RUT no está en Bsale / falló); si no existe en Bsale, los
+giros viajan cuando se cree el cliente al emitirle su primer documento (guía,
+factura libre o venta directa). Si la ficha y Bsale dicen giros distintos, al
+armar el documento se avisa: sale con el de Bsale (se corrige guardando la
+ficha, que lo reenvía, o en Bsale).
 ASIGNACIÓN DE CARTERA (/asignacion-cartera, solo admin; también con el botón
 "Asignar cartera" de Clientes): para repartir clientes entre vendedores EN
 MASA. Se filtra por nombre/RUT, tipo, región, vendedor asignado y "le cotiza"

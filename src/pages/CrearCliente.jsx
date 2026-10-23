@@ -4,7 +4,9 @@ import Toast from "../components/Toast";
 import { Link } from "react-router-dom";
 import { REGIONES_CHILE } from "../constants/regiones";
 import CondicionesVentaSelector from "../components/CondicionesVentaSelector";
+import GirosEditor from "../components/GirosEditor";
 import { leerCondiciones, tieneCredito30, unirCondiciones } from "../lib/condicionesVenta";
+import { bsaleGirosFallo, mensajeBsaleGiros } from "../lib/giros";
 
 export default function CrearCliente() {
   const [tipoCliente, setTipoCliente] = useState("");
@@ -19,6 +21,8 @@ export default function CrearCliente() {
   const [email, setEmail] = useState("");
   const [telefono, setTelefono] = useState("");
   const [condVenta, setCondVenta] = useState("30 días");
+  // (2026-10-23) Varios giros por cliente; el primero es el principal.
+  const [giros, setGiros] = useState([]);
   const [vendedorAsignado, setVendedorAsignado] = useState("");
 
   const [userEmail, setUserEmail] = useState("");
@@ -102,7 +106,7 @@ export default function CrearCliente() {
     }
 
     try {
-      await api.post("/clientes", {
+      const creado = await api.post("/clientes", {
         tipo_cliente: tipoCliente,
         rut,
         nombre,
@@ -115,11 +119,17 @@ export default function CrearCliente() {
         email,
         telefono,
         condiciones_venta: condVenta,
+        giros,
         // Cliente particular: queda anexado a un vendedor (por defecto, el creador).
         vendedor_asignado: esParticular ? ((vendedorAsignado || "").trim() || null) : null,
       });
 
-      setToast({ type: "success", message: "Cliente creado con éxito" });
+      // Si el RUT ya estaba en Bsale, el backend le puso los giros allá y cuenta cómo le fue.
+      const avisoBsale = mensajeBsaleGiros(creado?.bsale);
+      setToast({
+        type: avisoBsale && bsaleGirosFallo(creado?.bsale) ? "error" : "success",
+        message: avisoBsale ? `Cliente creado con éxito. ${avisoBsale}` : "Cliente creado con éxito",
+      });
     } catch (error) {
       console.error(error);
       setToast({ type: "error", message: "Error al guardar el cliente." });
@@ -138,6 +148,7 @@ export default function CrearCliente() {
     setEmail("");
     setTelefono("");
     setCondVenta("30 días");
+    setGiros([]);
     setVendedorAsignado((userEmail || "").toLowerCase());
   }
 
@@ -261,6 +272,13 @@ export default function CrearCliente() {
                   El crédito "30 días" solo puede habilitarlo el administrador.
                 </p>
               )}
+            </div>
+
+            {/* (2026-10-23) Varios giros por cliente. Van también a Bsale (su único
+                campo de giro, unidos con « / ») cuando el RUT ya existe allá. */}
+            <div className="field" style={{ gridColumn: "1 / -1" }}>
+              <label className="field-label">Giros</label>
+              <GirosEditor value={giros} onChange={setGiros} />
             </div>
 
             {esParticular && (

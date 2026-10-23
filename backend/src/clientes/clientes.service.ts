@@ -1,5 +1,6 @@
-import { Injectable, BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { Injectable, BadRequestException, ForbiddenException, NotFoundException, Optional } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
+import { BsaleClientesService, normalizarGiros, ResultadoGirosBsale } from '../bsale/bsale-clientes.service';
 
 /* (2026-10-16) Pedido de Ariel: "la condición de pago 30 días solamente la
    puede habilitar el rol admin" (antes solo valía para particulares y solo en
@@ -10,7 +11,41 @@ const tiene30 = (v: any) => partesCondicion(v).some((p) => sinTilde(p) === '30 d
 
 @Injectable()
 export class ClientesService {
-  constructor(private supabase: SupabaseService) {}
+  constructor(
+    private supabase: SupabaseService,
+    // Opcional para que las pruebas puedan crear el servicio sin Bsale.
+    @Optional() private bsaleClientes?: BsaleClientesService,
+  ) {}
+
+  /* (2026-10-23) Varios giros por cliente. El cuerpo puede traer `giros`
+     (lista, desde la ficha) o `giro` (texto, como lo manda la cotización al
+     crear el cliente): quedan limpios en `giros` (sin vacíos ni repetidos,
+     máximo 6). Devuelve si el cuerpo traía giros. */
+  private static girosDelCuerpo(fila: Record<string, any>): boolean {
+    const trae = 'giros' in fila || 'giro' in fila;
+    if (!trae) return false;
+    const previos = Array.isArray(fila.giros) ? fila.giros : typeof fila.giros === 'string' ? [fila.giros] : [];
+    fila.giros = normalizarGiros([...previos, ...(fila.giro != null ? [fila.giro] : [])]);
+    delete fila.giro;
+    return true;
+  }
+
+  // ¿El error es que la columna `giros` (migración 20261023) aún no existe?
+  private static faltaColumnaGiros(error: any): boolean {
+    const msg = [error?.message, error?.details, error?.hint].filter(Boolean).join(' ').toLowerCase();
+    return msg.includes('giros');
+  }
+
+  /* Los giros de la ficha van también a Bsale (su único campo `activity`), si
+     el RUT ya existe allá. Nunca frena el guardado: devuelve qué pasó. */
+  private async girosABsale(rut: any, giros: string[]): Promise<ResultadoGirosBsale | null> {
+    if (!this.bsaleClientes) return null;
+    try {
+      return await this.bsaleClientes.sincronizarGiros(rut, giros);
+    } catch (e: any) {
+      return { estado: 'error', mensaje: String(e?.message || e).slice(0, 200) };
+    }
+  }
 
   private async esAdmin(userId?: string | null): Promise<boolean> {
     if (!userId) return false;
@@ -199,11 +234,14 @@ export class ClientesService {
       condiciones_venta?: string;
       tipo_cliente?: 'Cliente Particular' | 'Entidad Pública' | null;
       vendedor_asignado?: string | null;
+      giros?: string[];
+      giro?: string | null;
     },
     creadorEmail?: string,
     creadorId?: string | null,
   ) {
     const fila: Record<string, any> = { ...body };
+    const traeGiros = ClientesService.girosDelCuerpo(fila);
     // Quien no es admin no habilita "30 días": el cliente se crea con lo demás (o "Contado").
     // Pasa también con el cliente que se crea solo al guardar una cotización.
     if (tiene30(fila.condiciones_venta) && !(await this.esAdmin(creadorId))) {
@@ -217,14 +255,20 @@ export class ClientesService {
       const asignado = (body?.vendedor_asignado || creadorEmail || '').toString().trim().toLowerCase();
       fila.vendedor_asignado = asignado || null;
     }
-    const { data, error } = await this.supabase
-      .getClient()
-      .from('clientes')
-      .insert([fila])
-      .select()
-      .single();
-
+    const insertar = (f: Record<string, any>) => this.supabase.getClient().from('clientes').insert([f]).select().single();
+    let { data, error } = await insertar(fila);
+    // Tolera que la columna `giros` (migración 20261023) aún no esté aplicada.
+    if (error && traeGiros && ClientesService.faltaColumnaGiros(error)) {
+      const sinGiros = { ...fila };
+      delete sinGiros.giros;
+      ({ data, error } = await insertar(sinGiros));
+    }
     if (error) throw new BadRequestException(error.message);
+    // Los giros van también a Bsale cuando el cliente ya existe allá.
+    if (traeGiros && fila.giros.length) {
+      const bsale = await this.girosABsale(fila.rut, fila.giros);
+      if (bsale) return { ...(data as any), bsale };
+    }
     return data;
   }
 
@@ -296,6 +340,15 @@ export class ClientesService {
 
   async update(id: string | number, body: Record<string, any>, userId?: string | null) {
     const patch: Record<string, any> = { ...body };
+    // Giros (2026-10-23): se guardan limpios y, si cambiaron, van a Bsale.
+    const traeGiros = ClientesService.girosDelCuerpo(patch);
+    let girosAntes: string[] = [];
+    let rutAntes = '';
+    if (traeGiros) {
+      const { data: previo } = await this.supabase.getClient().from('clientes').select('rut, giros').eq('id', id).maybeSingle();
+      girosAntes = normalizarGiros(Array.isArray((previo as any)?.giros) ? (previo as any).giros : []);
+      rutAntes = String((previo as any)?.rut || '');
+    }
     // "30 días" solo lo habilita el admin; si el cliente ya lo tenía, se respeta.
     if ('condiciones_venta' in patch && tiene30(patch.condiciones_venta) && !(await this.esAdmin(userId))) {
       const { data: actual } = await this.supabase.getClient().from('clientes').select('condiciones_venta').eq('id', id).maybeSingle();
@@ -328,6 +381,11 @@ export class ClientesService {
         delete limpio.credito_monto;
         delete limpio.credito_dias;
         ({ data, error } = await intentar(limpio));
+      } else if (traeGiros && ClientesService.faltaColumnaGiros(error)) {
+        // Columna `giros` (migración 20261023) aún no aplicada: se guarda lo demás.
+        const limpio = { ...patch };
+        delete limpio.giros;
+        ({ data, error } = await intentar(limpio));
       } else if (msg.includes('transitorio') || msg.includes('42703')) {
         const limpio = { ...patch };
         delete limpio.transitorio;
@@ -335,6 +393,12 @@ export class ClientesService {
       }
     }
     if (error) throw new BadRequestException(error.message);
+    // Giros distintos a los que tenía: van a Bsale (si el cliente ya está allá).
+    // El resultado viaja en `bsale` para mostrarlo; no frena nada.
+    if (traeGiros && patch.giros.length && JSON.stringify(patch.giros) !== JSON.stringify(girosAntes)) {
+      const bsale = await this.girosABsale((data as any)?.rut || patch.rut || rutAntes, patch.giros);
+      if (bsale) return { ...(data as any), bsale };
+    }
     return data;
   }
 

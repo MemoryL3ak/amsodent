@@ -3,6 +3,7 @@ import { SupabaseService } from '../supabase/supabase.service';
 import { LicitacionesService } from '../licitaciones/licitaciones.service';
 import { CorreosService } from '../correos/correos.service';
 import { BsaleService } from './bsale.service';
+import { BsaleClientesService } from './bsale-clientes.service';
 import {
   BsaleFacturacionService,
   epochAFecha,
@@ -98,6 +99,8 @@ export class BsaleDespachosService {
     private facturacion: BsaleFacturacionService,
     private bsale: BsaleService,
     private licitaciones: LicitacionesService,
+    // Giros de la ficha del cliente para el cliente nuevo en Bsale (2026-10-23).
+    private bsaleClientes: BsaleClientesService,
     // Opcional para las pruebas: sin él no se envía el correo automático.
     @Optional() private correos?: CorreosService,
   ) {}
@@ -273,18 +276,26 @@ export class BsaleDespachosService {
         comuna: String(enBsale.municipality || ''),
         ciudad: String(enBsale.city || ''),
         email: String(enBsale.email || ''),
+        // (2026-10-23) Si la ficha del sistema dice otro giro se avisa: el
+        // documento sale con el que tiene Bsale.
+        aviso_giro: await this.bsaleClientes.avisoGiroDistinto(lic.rut_entidad, enBsale.activity),
       };
     }
+    // (2026-10-23) Cliente nuevo en Bsale: el giro sale de la ficha del cliente
+    // (sus giros unidos con « / »); si la ficha no tiene, del de la cotización.
+    const giro = await this.bsaleClientes.giroPropuesto(lic.rut_entidad, lic.giro);
     return {
       id: null,
       nuevo: true,
       rut: rutBsale(lic.rut_entidad),
       razon_social: String(lic.nombre_entidad || '').trim(),
-      giro: String(lic.giro || '').trim(),
+      giro: giro.giro,
+      giros: giro.giros,
       direccion: String(lic.direccion || '').trim(),
       comuna: String(lic.comuna || '').trim(),
       ciudad: String(lic.comuna || '').trim(),
       email: String(lic.email || '').trim(),
+      aviso_giro: null as string | null,
     };
   }
 
@@ -302,6 +313,7 @@ export class BsaleDespachosService {
     const traslados = await this.tiposTraslado();
     const cliente = await this.clienteParaDocumento(lic);
     if (cliente.nuevo) avisos.push({ codigo: 'cliente_nuevo', mensaje: `El cliente (RUT ${cliente.rut || 'sin RUT'}) no existe en Bsale: se creará con los datos de abajo. Revisa razón social, giro y dirección.` });
+    if (cliente.aviso_giro) avisos.push({ codigo: 'giro_distinto', mensaje: cliente.aviso_giro });
     if (!cliente.rut) problemas.push({ codigo: 'sin_rut', mensaje: 'La cotización no tiene RUT del cliente.' });
 
     // Lo ya despachado para esta orden, según las guías que hay en Bsale.
@@ -432,6 +444,7 @@ export class BsaleDespachosService {
     if (!tipoNota) problemas.push({ codigo: 'sin_tipo_nota', mensaje: 'La cuenta de Bsale no tiene activa la nota de venta.' });
     const cliente = await this.clienteParaDocumento(lic);
     if (cliente.nuevo) avisos.push({ codigo: 'cliente_nuevo', mensaje: `El cliente (RUT ${cliente.rut || 'sin RUT'}) no existe en Bsale: se creará con los datos de abajo.` });
+    if (cliente.aviso_giro) avisos.push({ codigo: 'giro_distinto', mensaje: cliente.aviso_giro });
     if (!cliente.rut) problemas.push({ codigo: 'sin_rut', mensaje: 'La cotización no tiene RUT del cliente.' });
 
     const lineas: any[] = [];
