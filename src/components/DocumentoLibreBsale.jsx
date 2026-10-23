@@ -201,6 +201,10 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
   const guiaPosible = ventaDirecta && (!esBoleta || !!cliente);
   // Hay guía (libre, de la cotización o de la venta directa): observación general + una por producto (en su línea).
   const conObsGuia = esGuia || (ventaDirecta && conGuia && guiaPosible);
+  // Correo de la guía de la venta directa: a cliente particular (2026-10-22; sin cotización enlazada la venta crea una
+  // particular) o con «Entrega inmediata» (2026-10-15) no se envía; la boleta/factura sí abre su ventana de correo.
+  const guiaParticular = ventaDirecta && (cotLigada ? desde?.cotizacion?.particular === true : true);
+  const guiaSinCorreo = ventaDirecta && conGuia && guiaPosible ? (guiaParticular ? "particular" : seguimiento.empresa === "Entrega inmediata" ? "entrega_inmediata" : null) : null;
   const diasEfectivos = esGuia ? 0 : esBoleta ? 0 : ventaDirecta && !aCredito ? 0 : Number(dias);
 
   const totales = useMemo(() => {
@@ -309,7 +313,7 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
               {resultado.guia && (resultado.guia.emitida ? (
                 <div className="guia-venta-ok" style={{ fontSize: 13, color: "#166534" }}>
                   Guía de despacho N° {resultado.guia.numero} emitida con las mismas líneas y registrada en la cotización.
-                  {resultado.guia.sin_correo && <div style={{ fontSize: 12.5, color: "var(--text-muted)" }}>Entrega inmediata: la guía no se envía por correo al cliente.</div>}
+                  {resultado.guia.sin_correo && <div style={{ fontSize: 12.5, color: "var(--text-muted)" }}>{resultado.guia.motivo_sin_correo === "particular" ? "Venta directa a cliente particular" : "Entrega inmediata"}: la guía no se envía por correo al cliente.</div>}
                   <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 4 }}>
                     <BotonImprimirTermica urlPdf={resultado.guia.url_pdf} etiqueta="Guía térmica" />
                     {resultado.guia.bsale_id && <BotonImprimirCarta bsaleId={resultado.guia.bsale_id} etiqueta="Guía en carta" />}
@@ -671,8 +675,8 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
                 </div>
               )}
               {(esGuia || (conGuia && guiaPosible)) && <CamposSeguimientoGuia valor={seguimiento} onChange={setSeguimiento} disabled={!!enviando} />}
-              {ventaDirecta && conGuia && guiaPosible && seguimiento.empresa === "Entrega inmediata" && (
-                <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Con entrega inmediata la guía no se envía por correo al cliente; la {esBoleta ? "boleta" : "factura"} sí.</div>
+              {guiaSinCorreo && (
+                <div style={{ fontSize: 12, color: "var(--text-muted)" }}>{guiaSinCorreo === "particular" ? "Venta directa a cliente particular: la guía" : "Con entrega inmediata la guía"} no se envía por correo al cliente; la {esBoleta ? "boleta" : "factura"} sí.</div>
               )}
               {conObsGuia && <CampoObservacionGuia valor={observacion} onChange={setObservacion} porProducto max={obsMax} disabled={!!enviando} />}
               {!ventaDirecta && !esBoleta && <div style={caja}>
