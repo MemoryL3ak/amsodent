@@ -325,7 +325,8 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
                                 {l.nota && <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{l.nota}</div>}
                                 {l.enlazada === false && (
                                   <div style={{ fontSize: 11, color: "#92400e" }}>
-                                    Copiada, no enlazada: la usó la factura {l.consumida_por || "anulada"}. Descuenta stock.
+                                    Copiada, no enlazada: la usó la factura {l.consumida_por || "anulada"}. Descuenta stock
+                                    {l.stock_bsale != null ? ` (Bsale tiene ${Number(l.stock_bsale).toLocaleString("es-CL")})` : ""}.
                                   </div>
                                 )}
                               </td>
