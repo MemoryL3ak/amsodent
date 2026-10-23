@@ -793,6 +793,10 @@ export type DatosBienvenidaPortal = {
   rutFmt: string;
   // Correo con el que la persona entrará al portal (el mismo que recibe esto).
   emailAcceso?: string;
+  // (2026-10-23) Usuario creado dentro del RUT (tabla portal_usuarios): el
+  // saludo va a la persona y el texto aclara a qué cuenta pertenece.
+  esUsuario?: boolean;
+  nombrePersona?: string | null;
   passwordTemporal: string;
   // Texto legible del período: "1 mes", "3 meses", "Acceso indefinido".
   vigenciaTexto: string;
@@ -811,8 +815,11 @@ export function plantillaBienvenidaPortal(
   const clave = String(datos.passwordTemporal || '').trim();
   const url = String(datos.urlPortal || '').trim();
   const emailAcceso = String(datos.emailAcceso || '').trim().toLowerCase();
+  const esUsuario = !!datos.esUsuario;
+  const nombrePersona = String(datos.nombrePersona || '').trim();
 
   const filasAcceso = [
+    esUsuario ? filaDato('🏢', 'Cuenta', razonSocial) : '',
     filaDato('🪪', 'RUT de acceso', datos.rutFmt),
     emailAcceso ? filaDato('✉️', 'Correo de acceso', emailAcceso) : '',
     filaDato('🔑', 'Clave temporal', clave),
@@ -834,10 +841,15 @@ export function plantillaBienvenidaPortal(
   const contenido = `
     ${insignia('👋')}
     ${titulo('Bienvenido al Portal del Cliente', 'Ya tiene acceso para gestionar su stock con Amsodent.')}
-    <p style="margin:0 0 14px;">Estimado(a) <strong>${escapeHtml(razonSocial)}</strong>,</p>
+    <p style="margin:0 0 14px;">Estimado(a) <strong>${escapeHtml(esUsuario ? nombrePersona || emailAcceso || razonSocial : razonSocial)}</strong>,</p>
     <p style="margin:0 0 20px;color:${C.suave};">
-      Habilitamos su acceso al <strong style="color:${C.texto};">Portal del Cliente</strong> de
-      Amsodent Medical. Desde ahí podrá declarar el stock de su empresa, recibir alertas
+      ${
+        esUsuario
+          ? `Se creó su usuario en el <strong style="color:${C.texto};">Portal del Cliente</strong> de
+      Amsodent Medical, dentro de la cuenta de <strong style="color:${C.texto};">${escapeHtml(razonSocial)}</strong>.`
+          : `Habilitamos su acceso al <strong style="color:${C.texto};">Portal del Cliente</strong> de
+      Amsodent Medical.`
+      } Desde ahí podrá declarar el stock de su empresa, recibir alertas
       cuando un producto se acerque al mínimo y solicitar cotizaciones de reposición.
     </p>
     ${tarjetaDatos('Sus datos de acceso', filasAcceso)}
@@ -848,9 +860,13 @@ export function plantillaBienvenidaPortal(
   `;
 
   return {
-    asunto: 'Acceso habilitado · Portal del Cliente Amsodent',
+    asunto: esUsuario
+      ? 'Su usuario del Portal del Cliente Amsodent'
+      : 'Acceso habilitado · Portal del Cliente Amsodent',
     html: envolver({
-      preheader: `Su acceso al Portal del Cliente está habilitado (${datos.vigenciaTexto}). Clave temporal incluida.`,
+      preheader: esUsuario
+        ? `Su usuario del Portal del Cliente está listo (${datos.vigenciaTexto}). Clave temporal incluida.`
+        : `Su acceso al Portal del Cliente está habilitado (${datos.vigenciaTexto}). Clave temporal incluida.`,
       contenido,
     }),
   };

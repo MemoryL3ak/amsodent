@@ -579,7 +579,10 @@ export class StockClientesService {
         .select('id, rut, email, nombre, rol, activo, ultimo_acceso, password_temporal, created_at')
         .single();
       if (error) throw new BadRequestException(error.message);
-      return data;
+      // Clave nueva ⇒ la persona la recibe por correo, igual que al crearla.
+      if (!body?.password) return data;
+      const correo = await this.enviarBienvenidaUsuarioPortal(rutN, data, String(body.password));
+      return { ...data, correo_enviado: correo.enviado, correo_destino: correo.para, correo_error: correo.error };
     }
 
     const password = String(body?.password || '');
@@ -607,7 +610,42 @@ export class StockClientesService {
       }
       throw new BadRequestException(error.message);
     }
-    return data;
+    /* (2026-10-23) El usuario recibe su clave temporal por correo al crearse.
+       Antes solo la cuenta principal recibía la bienvenida (al habilitar el
+       RUT) y la clave de cada usuario había que entregarla a mano. */
+    const correo = await this.enviarBienvenidaUsuarioPortal(rutN, data, password);
+    return { ...data, correo_enviado: correo.enviado, correo_destino: correo.para, correo_error: correo.error };
+  }
+
+  // Bienvenida de un usuario del portal: su propio correo y clave, con la
+  // vigencia del acceso del RUT (la que manda al entrar) y la razón social de
+  // la cuenta. Nunca falla la creación: si el correo no sale, se informa.
+  private async enviarBienvenidaUsuarioPortal(
+    rutN: string,
+    usuario: { email?: string | null; nombre?: string | null },
+    passwordTemporal: string,
+  ): Promise<{ enviado: boolean; para: string | null; error?: string }> {
+    const { data: portal } = await this.supabase
+      .getClient()
+      .from('stock_clientes_portal')
+      .select('razon_social, acceso_vigencia, acceso_expira')
+      .eq('rut', rutN)
+      .maybeSingle();
+    let razonSocial = String(portal?.razon_social || '').trim();
+    if (!razonSocial) {
+      const cli = await this.buscarClientePorRut(rutN);
+      razonSocial = String(cli?.nombre || '').trim();
+    }
+    return await this.enviarCorreoBienvenida({
+      rut: rutN,
+      razonSocial,
+      email: usuario?.email || null,
+      esUsuario: true,
+      nombrePersona: usuario?.nombre || null,
+      passwordTemporal,
+      vigencia: portal?.acceso_vigencia || 'indefinido',
+      expira: portal?.acceso_expira || null,
+    });
   }
 
   async eliminarUsuarioPortal(rut: string, id: number) {
@@ -874,6 +912,7 @@ export class StockClientesService {
       rut_formateado: formatearRut(rutN),
       correo_enviado: correo.enviado,
       correo_destino: correo.para,
+      correo_error: correo.error,
     };
   }
 
@@ -928,7 +967,7 @@ export class StockClientesService {
       .eq('rut', rutN);
     if (error) throw new BadRequestException(error.message);
 
-    let correo = { enviado: false, para: null as string | null };
+    let correo: { enviado: boolean; para: string | null; error?: string } = { enviado: false, para: null };
     if (opts.reenviar_correo !== false) {
       correo = await this.enviarCorreoBienvenida({
         rut: rutN,
@@ -955,6 +994,7 @@ export class StockClientesService {
       ok: true,
       correo_enviado: correo.enviado,
       correo_destino: correo.para,
+      correo_error: correo.error,
     };
   }
 
@@ -997,13 +1037,17 @@ export class StockClientesService {
     rut: string;
     razonSocial?: string | null;
     email?: string | null;
+    // Usuario creado dentro del RUT: saludo a la persona y sin caer al
+    // correo del maestro de clientes (sería otra persona).
+    esUsuario?: boolean;
+    nombrePersona?: string | null;
     passwordTemporal: string;
     vigencia: string;
     expira: string | null;
-  }): Promise<{ enviado: boolean; para: string | null }> {
+  }): Promise<{ enviado: boolean; para: string | null; error?: string }> {
     const rutN = normalizarRut(opts.rut);
     let para = String(opts.email || '').trim().toLowerCase();
-    if (!para) {
+    if (!para && !opts.esUsuario) {
       const cli = await this.buscarClientePorRut(rutN);
       para = String(cli?.email || '').trim().toLowerCase();
     }
@@ -1011,7 +1055,7 @@ export class StockClientesService {
       this.logger.warn(
         `Bienvenida portal: cliente ${rutN} sin correo válido; no se envió.`,
       );
-      return { enviado: false, para: null };
+      return { enviado: false, para: null, error: 'sin correo válido' };
     }
 
     const base = String(
@@ -1033,6 +1077,8 @@ export class StockClientesService {
       razonSocial: String(opts.razonSocial || '').trim() || formatearRut(rutN),
       rutFmt: formatearRut(rutN),
       emailAcceso: para,
+      esUsuario: !!opts.esUsuario,
+      nombrePersona: opts.nombrePersona || null,
       passwordTemporal: opts.passwordTemporal,
       vigenciaTexto: vigenciaTexto(opts.vigencia),
       expiraTexto,
@@ -1046,7 +1092,9 @@ export class StockClientesService {
       this.logger.warn(
         `Bienvenida portal falló para ${para}: ${e?.message || e}`,
       );
-      return { enviado: false, para };
+      // El motivo llega a la pantalla: «sin correo» y «SMTP caído» no se
+      // arreglan igual.
+      return { enviado: false, para, error: String(e?.message || e || 'error de envío') };
     }
   }
 
