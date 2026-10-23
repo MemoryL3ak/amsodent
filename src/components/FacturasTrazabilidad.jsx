@@ -45,7 +45,7 @@ const fechaCL = (iso) => {
 const POR_PAGINA = 15;
 const sinTildes = (s) => String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
 
-function Paginas({ pagina, total, porPagina, onCambiar }) {
+export function Paginas({ pagina, total, porPagina, onCambiar }) {
   const paginas = Math.max(1, Math.ceil(total / porPagina));
   if (paginas <= 1) return null;
   return (

@@ -72,12 +72,13 @@ function SLABadge({ fechaOc }) {
     </span>
   );
 }
-import { Upload, Eye, Trash2, ArrowUpDown, ArrowUp, ArrowDown, Calendar, FileCheck, ChevronDown, Truck, Download, Clock, CheckCircle2, Check, Pencil, X, AlertTriangle, Package, Receipt, Workflow } from "lucide-react";
+import { Upload, Eye, Trash2, ArrowUpDown, ArrowUp, ArrowDown, Calendar, FileCheck, ChevronDown, Truck, Download, Clock, CheckCircle2, Check, Pencil, X, AlertTriangle, Package, Receipt, Workflow, FileDiff } from "lucide-react";
 import { SunflowerIcon } from "../components/DamarIAWidget";
 import EmitirFacturaBsale from "../components/EmitirFacturaBsale";
 import DocumentoLibreBsale from "../components/DocumentoLibreBsale";
 import EstadoBsaleBadge from "../components/EstadoBsale";
 import FacturasTrazabilidad from "../components/FacturasTrazabilidad";
+import NotasTrazabilidad from "../components/NotasTrazabilidad";
 import { useEstadosBsale } from "../lib/estadosBsale";
 import { pedirPendientesFacturar } from "../lib/pendientesFacturar";
 
@@ -578,12 +579,13 @@ export default function Trazabilidad() {
   // Estado en Bsale (anulada, SII pendiente/rechazado, no está en Bsale) de guías y facturas.
   const estadosBsale = useEstadosBsale();
   /* (2026-10-07) Pestañas: «Seguimiento» (el ciclo OC → guía → factura de
-     siempre) y «Facturas» (emitir facturas y notas de crédito/débito). */
+     siempre) y «Facturas» (emitir facturas y notas de crédito/débito).
+     (2026-10-22) «Notas»: repositorio de las notas de crédito y débito. */
   const [pestanaTraz, setPestanaTraz] = useStickyState("trazabilidad.pestana", "seguimiento");
   // (2026-10-08) El aviso de devolución pendiente enlaza a /trazabilidad?pestana=facturas.
   useEffect(() => {
     const p = new URLSearchParams(window.location.search).get("pestana");
-    if (p === "facturas" || p === "seguimiento") setPestanaTraz(p);
+    if (p === "facturas" || p === "notas" || p === "seguimiento") setPestanaTraz(p);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const [facturaNumero, setFacturaNumero] = useState("");
   const [facturaFecha, setFacturaFecha] = useState("");
@@ -2404,6 +2406,7 @@ export default function Trazabilidad() {
         {[
           { value: "seguimiento", label: "Seguimiento", Icono: Workflow },
           { value: "facturas", label: "Facturas", Icono: Receipt },
+          { value: "notas", label: "Notas", Icono: FileDiff },
         ].map((p) => (
           <button key={p.value} type="button" role="tab" aria-selected={pestanaTraz === p.value} className={pestanaTraz === p.value ? "activo" : ""} onClick={() => setPestanaTraz(p.value)}>
             <p.Icono size={15} />
@@ -2412,7 +2415,17 @@ export default function Trazabilidad() {
         ))}
       </div>
 
-      {pestanaTraz === "facturas" ? (
+      {pestanaTraz === "notas" ? (
+        <NotasTrazabilidad
+          lics={data}
+          documentosMap={documentosMap}
+          estadosBsale={estadosBsale}
+          puedeEmitir={puedeEmitirBsale && !soloLectura}
+          onRefrescar={(licId) => refrescarDocumentosLic(licId)}
+          onAviso={(tipo, mensaje) => setToast({ type: tipo, message: mensaje })}
+          onAbrirDocumento={abrirDocumento}
+        />
+      ) : pestanaTraz === "facturas" ? (
         <FacturasTrazabilidad
           lics={data}
           documentosMap={documentosMap}
