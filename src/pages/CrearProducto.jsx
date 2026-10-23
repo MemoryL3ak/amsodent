@@ -224,6 +224,8 @@ export default function CrearProducto() {
   const [rol, setRol] = useState(null);
   const [rolLoading, setRolLoading] = useState(true);
   const [userEmail, setUserEmail] = useState("");
+  // (2026-10-23) Permisos efectivos del perfil: «crear_productos» habilita el formulario completo.
+  const [permisos, setPermisos] = useState([]);
 
   /* ==========================================================
      Cargar rol del usuario
@@ -239,6 +241,7 @@ export default function CrearProducto() {
         if (alive) {
           setRol(perfil?.rol ?? null);
           setUserEmail(perfil?.email || "");
+          setPermisos(Array.isArray(perfil?.permisos) ? perfil.permisos : []);
         }
       } finally {
         if (alive) setRolLoading(false);
@@ -253,10 +256,14 @@ export default function CrearProducto() {
 
   const rolNorm = useMemo(() => (rol ?? "").toString().trim().toLowerCase(), [rol]);
   // ✅ En tu DB el rol suele ser "admin" (y por compatibilidad también "Administrador")
-  const puedeIngresarSKU = useMemo(() => {
-    return rol === "admin" || rol === "Administrador";
-  }, [rol]);
-  const esAdmin = puedeIngresarSKU;
+  const esAdmin = useMemo(() => rol === "admin" || rol === "Administrador", [rol]);
+  // (2026-10-23) Pedido de Ariel: quien tenga «Crear productos» en su perfil
+  // (Francisco) crea con el formulario completo, SKU y costo incluidos, igual
+  // que un admin. El resto de los vendedores sigue creando transitorios.
+  const puedeIngresarSKU = useMemo(
+    () => esAdmin || permisos.includes("crear_productos"),
+    [esAdmin, permisos]
+  );
   const esVentasOJefe = useMemo(
     () =>
       rolNorm === "ventas" ||
@@ -271,7 +278,7 @@ export default function CrearProducto() {
   // ventas/jefes/contabilidad solo lo veían en transitorios o pendientes.
   const mostrarMargen = true;
   const puedeVerCosto =
-    esAdmin || (esVentasOJefe && (esTransitorio || esPendienteAprobacion));
+    puedeIngresarSKU || (esVentasOJefe && (esTransitorio || esPendienteAprobacion));
 
   const metroCubico = useMemo(() => {
     const a = Number(alto) || 0;
@@ -438,7 +445,7 @@ export default function CrearProducto() {
       return;
     }
 
-    // ✅ Solo admin puede enviar sku; si está vacío => null (evita constraint)
+    // ✅ Solo admin (o perfil con «crear_productos») envía sku; si está vacío => null (evita constraint)
     const skuPermitido = puedeIngresarSKU && skuLimpio ? skuLimpio : null;
 
     setGuardando(true);

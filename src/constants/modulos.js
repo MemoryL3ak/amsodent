@@ -9,12 +9,15 @@ export const MODULOS = [
   { key: "mis_clientes", label: "Mis clientes", grupo: "Comercial" },
   { key: "bitacora", label: "Bitácora actividades", grupo: "Comercial" },
   { key: "productos", label: "Productos", grupo: "Comercial" },
+  // (2026-10-23) Crear productos con el formulario completo (SKU incluido) sin ser admin.
+  { key: "crear_productos", label: "Crear productos con SKU (formulario completo)", grupo: "Comercial" },
   // (2026-10-14) Campañas y Campañas de margen: solo admin y quien lo tenga en su perfil.
   { key: "campanas", label: "Campañas y Campañas de margen", grupo: "Comercial" },
   // (2026-10-14) Un vendedor ve solo sus cotizaciones; con esto ve todas.
   { key: "cotizaciones_todas", label: "Ver todas las cotizaciones (no solo las propias)", grupo: "Comercial" },
   // Venta directa (2026-10-07): listado y documentos de las ventas directas.
-  // Emitir exige además rol admin, contabilidad o jefe de ventas especial.
+  // Emite quien tiene rol admin, contabilidad o jefe de ventas especial, o
+  // este módulo o «Facturación» entre sus permisos (perfil o rol).
   { key: "venta_directa", label: "Venta directa", grupo: "Comercial" },
   { key: "trazabilidad", label: "Trazabilidad", grupo: "Post-venta" },
   { key: "seguimiento_pagos", label: "Seguimiento de Pagos", grupo: "Post-venta" },
@@ -73,8 +76,9 @@ const BASE = ["cotizaciones", "crear_cotizacion", "clientes", "mis_clientes", "b
 const ROLE_DEFAULTS = {
   jefe_ventas: [...BASE, "trazabilidad", "metas", "panel_indicadores", "resumen_comercial", "cotizaciones_vendedor", "monitoreo_alertas", "inventario"],
   jefe_ventas_especial: [...BASE, "trazabilidad", "seguimiento_pagos", "cobranza", "factoring", "facturacion", "venta_directa", "metas", "panel_indicadores", "resumen_comercial", "cotizaciones_vendedor", "monitoreo_alertas", "inventario"],
-  ventas: [...BASE, "metas", "inventario"],
-  ventas_especial: [...BASE, "metas", "sorteo", "monitoreo_stock", "inventario"],
+  // (2026-10-23) Venta directa para todos los vendedores.
+  ventas: [...BASE, "metas", "inventario", "venta_directa"],
+  ventas_especial: [...BASE, "metas", "sorteo", "monitoreo_stock", "inventario", "venta_directa"],
   contabilidad: ["mi_correo", "chat", "seguimiento_pagos", "cobranza", "facturacion", "venta_directa", "metas"],
 };
 

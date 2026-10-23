@@ -520,7 +520,9 @@ function SelectorEstadoEntrega({ valor, onCambiar }) {
 }
 
 export default function Trazabilidad() {
-  const { user, rol, cargando } = useAuth();
+  const { user, rol, cargando, puede } = useAuth();
+  // (2026-10-23) Booleano estable para el efecto de carga (puede() cambia de identidad en cada render).
+  const verTodas = puede("cotizaciones_todas");
   const [data, setData] = useState([]);
   const [documentosMap, setDocumentosMap] = useState({});
   const [usuariosMap, setUsuariosMap] = useState({});
@@ -725,7 +727,10 @@ export default function Trazabilidad() {
 
       const rlNorm = (rol ?? "").toString().trim().toLowerCase();
       const emailUser = (user?.email || "").trim().toLowerCase();
-      if (rlNorm === "ventas" && emailUser) {
+      // (2026-10-23) Igual que el listado de cotizaciones: un vendedor ve solo
+      // las suyas, salvo que su perfil tenga «Ver todas las cotizaciones»
+      // (pedido de Ariel para Francisco; antes Trazabilidad ignoraba ese permiso).
+      if (rlNorm === "ventas" && emailUser && !verTodas) {
         rows = rows.filter((l) => (l.creado_por || "").trim().toLowerCase() === emailUser);
       }
 
@@ -774,7 +779,7 @@ export default function Trazabilidad() {
     }
 
     loadData();
-  }, [cargando, rol, user?.email]);
+  }, [cargando, rol, user?.email, verTodas]);
 
   /* ── Filtrado ──────────────────────────────────────────────── */
   const dataFiltrada = useMemo(() => {

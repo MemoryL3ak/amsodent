@@ -11,6 +11,7 @@ import { createHash } from 'crypto';
 import { SupabaseService } from '../supabase/supabase.service';
 import { CorreosService } from '../correos/correos.service';
 import { LicitacionesService } from '../licitaciones/licitaciones.service';
+import { permisosEfectivos } from '../auth/permisos';
 
 /* ── Emisión de facturas en Bsale desde el sistema (2026-10-02) ──────────────
    La factura se arma A PARTIR DE LA GUÍA DE DESPACHO que ya existe en Bsale,
@@ -288,9 +289,16 @@ export class BsaleFacturacionService {
       const db = this.supabase.getClient();
       const { data: p } = await db.from('profiles').select('permission_profile_id').eq('id', userId).maybeSingle();
       const pid = (p as any)?.permission_profile_id;
-      if (!pid) return false;
-      const { data: perfil } = await db.from('permission_profiles').select('permisos').eq('id', pid).maybeSingle();
-      const permisos: string[] = Array.isArray((perfil as any)?.permisos) ? (perfil as any).permisos : [];
+      let permisosPerfil: string[] | undefined;
+      if (pid) {
+        const { data: perfil } = await db.from('permission_profiles').select('permisos').eq('id', pid).maybeSingle();
+        permisosPerfil = Array.isArray((perfil as any)?.permisos) ? (perfil as any).permisos : undefined;
+      }
+      // (2026-10-23) Permisos efectivos, igual que /auth/profile: con perfil, los
+      // del perfil; sin perfil, los del rol. Así «Venta directa» en los permisos
+      // por defecto de ventas (pedido de Ariel: todos los vendedores) también
+      // habilita emitir, no solo ver el módulo.
+      const permisos = permisosEfectivos(rol, permisosPerfil);
       return permisos.includes('venta_directa') || permisos.includes('facturacion');
     } catch {
       return false;
