@@ -46,10 +46,10 @@ export const MODULOS = [
   { key: "despachos_choferes", label: "Despachos y Choferes", grupo: "Logística" },
   { key: "tracking_choferes", label: "Tracking en Vivo", grupo: "Logística" },
   { key: "costeo_fletes", label: "Fletes", grupo: "Logística" },
-  // (2026-10-14) Inventario (ver el stock; mover stock sigue siendo solo admin)
-  // y sus tarjetas KPI (ocultas a los vendedores).
+  // (2026-10-14) Inventario (ver el stock; mover stock sigue siendo solo admin).
+  // (2026-10-22) "inventario_kpis" ya no es asignable: las tarjetas KPI son
+  // solo admin; las columnas Costo/Valorización van con "ver_costos".
   { key: "inventario", label: "Inventario (ver stock) — ya lo ven todos", grupo: "Abastecimiento" },
-  { key: "inventario_kpis", label: "Inventario: KPIs (valorización, unidades…)", grupo: "Abastecimiento" },
   { key: "ver_costos", label: "Ver el costo de los productos (solo lectura)", grupo: "Comercial" },
   { key: "gestion_compras", label: "Gestión de compras (adjudicadas vs. stock)", grupo: "Abastecimiento" },
   { key: "monitoreo_stock", label: "Monitoreo Stock Clientes", grupo: "Portal del Cliente" },

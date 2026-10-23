@@ -290,7 +290,7 @@ export const GRUPOS_MANUAL = [
           "El stock vigente vive en cada producto y cada cambio queda en el libro de movimientos con su stock resultante estampado y el usuario que lo hizo.",
         ],
         funciones: [
-          "KPIs (solo administradores y quien tenga «Inventario: KPIs» en su perfil): SKUs con stock, unidades totales, valorización (stock × costo), bajo mínimo y sin stock (los dos últimos filtran al hacer clic).",
+          "KPIs (solo administradores): SKUs con stock, unidades totales, valorización (stock × costo), bajo mínimo y sin stock (los dos últimos filtran al hacer clic). Las columnas Costo y Valorización de la tabla (y su export) las ven los administradores y quien tenga «Ver el costo de los productos» en su perfil.",
           "Registrar movimiento: entrada, salida (nunca deja stock negativo) o ajuste (ingresas el conteo físico y el sistema calcula el delta).",
           "Stock mínimo editable en la propia tabla (clic en el número; 0 = sin umbral).",
           "Carga masiva por planilla (sku, stock, stock_minimo): cada diferencia queda como ajuste auditado.",

@@ -224,9 +224,11 @@ cuántos (por defecto solo los sin SKU) y «Enviar a Bsale» los procesa de a un
 en segundo plano mostrando el avance.
 
 ### Inventario (/inventario) — lo ven todos (oct 2026)
-Todos ven el stock; las tarjetas KPI solo los admin y quien tenga «Inventario:
-KPIs» en su perfil (hoy Francisco Núñez); mover stock, mínimos y cargas, solo
-admin. Stock por SKU + libro de movimientos auditable (entrada / salida / ajuste, con
+Todos ven el stock; las tarjetas KPI (valorización, unidades…) SOLO los admin
+(desde el 22-10-2026 ya no se asignan por perfil); las columnas Costo y
+Valorización de la tabla (y su export) solo admin o quien tenga «Ver el costo
+de los productos» en su perfil; mover stock, mínimos y cargas, solo admin.
+Stock por SKU + libro de movimientos auditable (entrada / salida / ajuste, con
 stock resultante estampado y usuario). KPIs: SKUs con stock, unidades,
 valorización (stock × costo), bajo mínimo, sin stock. El mínimo se edita en la
 tabla misma; el ajuste pide el conteo físico y el sistema calcula el delta.

@@ -15,9 +15,11 @@ import { InventarioGuard } from './inventario.guard';
 export class InventarioController {
   constructor(private inventario: InventarioService) {}
 
+  // (2026-10-22) Sin admin ni «ver_costos» el resumen viene sin `costo`
+  // (InventarioGuard deja request.verCostos).
   @Get('resumen')
-  resumen() {
-    return this.inventario.resumen();
+  resumen(@Req() req: any) {
+    return this.inventario.resumen(req?.verCostos === true);
   }
 
   @Get('movimientos')

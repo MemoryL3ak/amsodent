@@ -8,8 +8,10 @@ import { esRolAdmin, permisosEfectivos } from '../auth/permisos';
    acciones) y mover stock sigue siendo solo admin (AdminGuard en esas rutas).
    Mismo cálculo de permisos que auth.service y el Monitoreo de alertas.
    (2026-10-16) "Todos pueden ver el inventario": permisosEfectivos ya incluye
-   `inventario` para cualquier rol o perfil (PARA_TODOS); las tarjetas KPI
-   siguen por `inventario_kpis`. */
+   `inventario` para cualquier rol o perfil (PARA_TODOS).
+   (2026-10-22) Las tarjetas KPI son solo admin (lo decide el front por rol) y
+   el costo de cada producto solo viaja a admin o a quien tenga `ver_costos`
+   (request.verCostos → resumen()). */
 @Injectable()
 export class InventarioGuard implements CanActivate {
   constructor(private supabase: SupabaseService) {}
@@ -31,12 +33,17 @@ export class InventarioGuard implements CanActivate {
       const { data: asignado } = await client.from('permission_profiles').select('permisos').eq('id', perfil.permission_profile_id).maybeSingle();
       permisosPerfil = asignado?.permisos ?? null;
     }
-    if (!esRolAdmin(rol) && !permisosEfectivos(rol, permisosPerfil).includes('inventario')) {
+    const esAdmin = esRolAdmin(rol);
+    const permisos = permisosEfectivos(rol, permisosPerfil);
+    if (!esAdmin && !permisos.includes('inventario')) {
       throw new ForbiddenException('No tienes acceso al Inventario. Pídele a administración que lo agregue a tu perfil.');
     }
     request.user = user;
     request.userRol = rol;
     request.accessToken = token;
+    // (2026-10-22) El costo (y con él la valorización) solo viaja a admin o a
+    // quien tenga «ver_costos» en su perfil: resumen() lo omite para el resto.
+    request.verCostos = esAdmin || permisos.includes('ver_costos');
     return true;
   }
 }
