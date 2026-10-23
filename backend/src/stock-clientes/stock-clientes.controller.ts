@@ -901,6 +901,17 @@ export class StockClientesController {
     );
   }
 
+  // (2026-10-23) «Enviar acceso»: correo con enlace, RUT, correo de acceso
+  // y una clave temporal nueva para un usuario ya creado.
+  @UseGuards(AdminGuard)
+  @Post('accesos/usuarios/:id/enviar-acceso')
+  async enviarAccesoUsuarioDeAcceso(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { rut: string },
+  ) {
+    return await this.stockClientes.enviarAccesoUsuarioPortal(String(body?.rut || ''), id);
+  }
+
   @UseGuards(AdminGuard)
   @Delete('accesos/usuarios/:id')
   async eliminarUsuarioDeAcceso(

@@ -24,6 +24,7 @@ import {
   Trash2,
   Zap,
   LayoutGrid,
+  Send,
 } from "lucide-react";
 import { api } from "../lib/api";
 import Toast from "../components/Toast";
@@ -1117,6 +1118,29 @@ function ModalUsuariosPortal({ rut, razonSocial, onCerrar, onOk, onError }) {
     onOk?.(msgCorreoClave(`Clave nueva para ${u.email}.`, res, u.email));
   }
 
+  // (2026-10-23) Manda a la persona el enlace al portal, su RUT y correo
+  // de acceso y la vigencia. La clave no se puede recuperar (va con hash),
+  // así que el correo lleva una clave temporal nueva y la anterior deja de
+  // servir; por eso se confirma antes.
+  async function enviarAcceso(u) {
+    if (!window.confirm(
+      `Se enviará a ${u.email} un correo con el enlace al portal, su correo de acceso y una clave temporal nueva (la clave actual dejará de servir). ¿Enviar?`,
+    )) return;
+    setGuardando(true);
+    try {
+      const res = await api.post(`/stock-clientes/accesos/usuarios/${u.id}/enviar-acceso`, { rut });
+      if (res?.password) {
+        setClaveEntregar({ email: u.email, clave: res.password, enviado: !!res?.correo_enviado });
+      }
+      onOk?.(msgCorreoClave(`Datos de acceso para ${u.email}.`, res, u.email));
+      cargar();
+    } catch (e) {
+      onError?.(e?.message || "No se pudo enviar el acceso.");
+    } finally {
+      setGuardando(false);
+    }
+  }
+
   async function eliminar(u) {
     if (!window.confirm(`¿Quitar el acceso de ${u.email}? Podrá volver a crearlo cuando quiera.`)) return;
     setGuardando(true);
@@ -1205,6 +1229,16 @@ function ModalUsuariosPortal({ rut, razonSocial, onCerrar, onOk, onError }) {
                   </button>
                   <button style={s.accBtn} disabled={guardando} title="Generar una clave nueva" onClick={() => regenerarClaveUsuario(u)}>
                     <KeyRound size={13} /> Clave
+                  </button>
+                  <button
+                    style={s.accBtn}
+                    disabled={guardando || u.activo === false}
+                    title={u.activo === false
+                      ? "Active al usuario antes de enviarle el acceso"
+                      : "Enviar por correo el enlace, el correo de acceso y una clave temporal nueva"}
+                    onClick={() => enviarAcceso(u)}
+                  >
+                    <Send size={13} /> Enviar acceso
                   </button>
                   <button style={{ ...s.accBtn, color: "#b91c1c", marginLeft: "auto" }} disabled={guardando} title="Eliminar usuario" onClick={() => eliminar(u)}>
                     <Trash2 size={13} />
