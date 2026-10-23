@@ -7,6 +7,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { X } from "lucide-react";
+import DropdownSelect from "../ui/DropdownSelect";
 import { mesDe, fmtNum, FunnelShape } from "./panelKit";
 import useEmbudoComercial, { ETAPAS_EMBUDO } from "./useEmbudoComercial";
 
@@ -36,8 +37,8 @@ export function ModalEtapaEmbudo({ etapa, items, nombresEjecutivos = {}, onClose
         </div>
         <p style={{ fontSize: 12.5, color: "var(--text-muted)", marginTop: 2, marginBottom: 12 }}>
           {esCompra
-            ? "Clientes con una cotización adjudicada (vinculada a su actividad de presupuesto), acumulado al corte del mes."
-            : "Clientes que alcanzaron la etapa, con la actividad de bitácora que los marcó. Acumulado al corte del mes."}
+            ? "Clientes con una cotización adjudicada en el mes seleccionado (vinculada a su actividad de presupuesto)."
+            : "Clientes con la acción de esta etapa registrada en el mes seleccionado, con la actividad de bitácora que la marcó."}
         </p>
         <div style={{ overflowY: "auto", overflowX: "auto", flex: 1, border: "1px solid var(--border)", borderRadius: 10 }}>
           <table className="data-table" style={{ width: "100%" }}>
@@ -91,18 +92,14 @@ export default function EmbudoComercial({ periodo, titulo = "Embudo comercial (c
     <div className="surface" style={{ padding: 18 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
         <h3 className="surface-title" style={{ margin: 0 }}>{titulo}</h3>
-        <select
-          className="input"
+        <DropdownSelect
           value={ejecutivo}
-          onChange={(e) => setEjecutivo(e.target.value)}
-          style={{ maxWidth: 200, fontSize: 12.5, height: 32, padding: "0 8px" }}
+          onChange={setEjecutivo}
+          options={[{ value: "", label: "Todos los ejecutivos" }, ...opcionesEjecutivos]}
+          minWidth={200}
+          style={{ width: 200, maxWidth: "100%", fontSize: 12.5, height: 32, padding: "0 8px" }}
           title="Filtrar el embudo por ejecutivo"
-        >
-          <option value="">Todos los ejecutivos</option>
-          {opcionesEjecutivos.map((op) => (
-            <option key={op.value} value={op.value}>{op.label}</option>
-          ))}
-        </select>
+        />
       </div>
       {loading
         ? <div style={{ color: "var(--text-muted)", fontSize: 13, padding: "24px 0", textAlign: "center" }}>Cargando embudo…</div>

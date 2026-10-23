@@ -1,12 +1,13 @@
 // PanelParticular.jsx
-// Sub-panel "Cliente Particular": embudo comercial basado en las MARCAS
-// secuenciales y acumuladas por cliente particular (ver useEmbudoComercial):
+// Sub-panel "Cliente Particular": embudo comercial DEL MES basado en las
+// acciones de bitácora por cliente particular (ver useEmbudoComercial):
 //   Prospecto → Cliente Contactado → Clientes que Cotizan → Clientes que Compran
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
 import useAuth from "../hooks/useAuth";
 import MonthCalendarPicker from "../components/MonthCalendarPicker";
 import BotonLimpiarFiltros from "../components/BotonLimpiarFiltros";
+import DropdownSelect from "../components/ui/DropdownSelect";
 import { Users, PhoneCall, FileText, ShoppingCart, TrendingUp, Banknote } from "lucide-react";
 import {
   fmtCLP, fmtNum, fmtPct, inicioMesISO, mesDe, toDateISO, addMesKey, labelMesCorto, labelMesLargo, clamp,
@@ -214,17 +215,19 @@ export default function PanelParticular() {
       <div className="page-header" style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
         <div>
           <h1 className="page-title">Embudo Comercial — Cliente Particular</h1>
-          <p className="page-subtitle">Marcas secuenciales acumuladas por cliente · {labelMesLargo(mesActual)}</p>
+          <p className="page-subtitle">Acciones del mes por cliente particular · {labelMesLargo(mesActual)}</p>
         </div>
         <div style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
           <div className="field" style={{ margin: 0 }}>
             <label className="field-label">Ejecutivo</label>
-            <select className="input" value={ejecutivo} onChange={(e) => setEjecutivo(e.target.value)} style={{ minWidth: 180 }}>
-              <option value="">Todos</option>
-              {opcionesEjecutivos.map((op) => (
-                <option key={op.value} value={op.value}>{op.label}</option>
-              ))}
-            </select>
+            <DropdownSelect
+              value={ejecutivo}
+              onChange={setEjecutivo}
+              options={[{ value: "", label: "Todos" }, ...opcionesEjecutivos]}
+              minWidth={180}
+              style={{ minWidth: 180 }}
+              title="Filtrar el embudo por ejecutivo"
+            />
           </div>
           <div className="field" style={{ margin: 0 }}>
             <label className="field-label">Mes</label>
@@ -318,10 +321,10 @@ export default function PanelParticular() {
                   <div key={r.t}>
                     <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4 }}>
                       <span style={{ color: "var(--text)" }}>{r.t}</span>
-                      <strong style={{ color: r.c }}>{fmtPct(r.v)}</strong>
+                      <strong style={{ color: r.c }} title={r.v == null ? "Sin clientes en la etapa anterior este mes" : undefined}>{r.v == null ? "—" : fmtPct(r.v)}</strong>
                     </div>
                     <div style={{ height: 12, borderRadius: 6, background: "var(--bg)", overflow: "hidden" }}>
-                      <div style={{ height: "100%", width: `${clamp(r.v, 0, 100)}%`, background: r.c, borderRadius: 6 }} />
+                      <div style={{ height: "100%", width: `${clamp(r.v ?? 0, 0, 100)}%`, background: r.c, borderRadius: 6 }} />
                     </div>
                   </div>
                 ))}
@@ -342,12 +345,14 @@ export default function PanelParticular() {
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, gap: 8, flexWrap: "wrap" }}>
                 <h3 className="surface-title" style={{ margin: 0 }}>Detalle de perdidas ({labelMesLargo(mesActual).toLowerCase()})</h3>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <select className="input" value={filtroMotivo} onChange={(e) => setFiltroMotivo(e.target.value)} style={{ fontSize: 12, height: 30, padding: "0 8px", maxWidth: 170 }}>
-                    <option value="">Todos los motivos</option>
-                    {perdidas.items.map((it) => (
-                      <option key={it.label} value={it.label}>{it.label}</option>
-                    ))}
-                  </select>
+                  <DropdownSelect
+                    value={filtroMotivo}
+                    onChange={setFiltroMotivo}
+                    options={[{ value: "", label: "Todos los motivos" }, ...perdidas.items.map((it) => ({ value: it.label, label: it.label }))]}
+                    minWidth={170}
+                    style={{ fontSize: 12, height: 30, padding: "0 8px", width: 170, maxWidth: "100%" }}
+                    title="Filtrar el detalle por motivo de pérdida"
+                  />
                   <span style={{ fontSize: 11, color: "var(--text-muted)" }}>{filasPerdidas.length} cotización{filasPerdidas.length === 1 ? "" : "es"}</span>
                 </div>
                 <BotonLimpiarFiltros hay={hayFiltros} onLimpiar={limpiarFiltros} />
@@ -404,7 +409,7 @@ export default function PanelParticular() {
           )}
 
           <p style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>
-            * Solo clientes particulares. Marcas secuenciales y acumuladas: un cliente pasa a Contactado solo si ya es Prospecto, a Cotiza solo si ya es Contactado, y a Compra solo si ya Cotiza. Prospecto = motivo Mapeo / Visita Espontánea / Referido; Contactado = tipo Llamada / Visita / Reunión / Correo; Cotiza = motivo "Presupuesto"; Compra = la cotización asociada pasa a "Adjudicada". Acumulado hasta el fin del mes seleccionado.
+            * Solo clientes particulares. Cada etapa cuenta los clientes distintos con esa acción registrada en la bitácora dentro del mes seleccionado. Prospecto = motivo Mapeo / Visita Espontánea / Referido; Contactado = tipo Llamada / WhatsApp / Visita / Reunión / Correo; Cotiza = motivo "Presupuesto"; Compra = la cotización asociada a ese presupuesto se adjudica en el mes. La conversión se mide sobre los mismos clientes del mes (de los contactados, cuántos cotizaron, etc.). El filtro de ejecutivo lista al equipo comercial con actividad sobre clientes particulares.
           </p>
         </>
       )}
