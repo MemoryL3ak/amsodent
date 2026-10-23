@@ -404,6 +404,18 @@ cotización, Facturación). Cuentan también las NC hechas a mano en Bsale; las 
 solo corrigen texto (giro, dirección) no cambian el monto. En la pestaña
 Facturas la anulada se ve en gris, con «Anulada» en Pago y sin botones de
 notas, y un filtro separa vigentes / anuladas / NC parcial / con nota de débito.
+PESTAÑA «NOTAS» DE TRAZABILIDAD (2026-10-22): el repositorio de todas las notas
+de crédito y débito, una fila por nota: N°, fecha, a qué factura o boleta
+aplica (y si quedó anulada), cotización y cliente, monto con IVA, qué hizo
+(anulación total, devolución parcial, ajuste de precio, corrige texto, cargo
+adicional) con su motivo, de dónde salió («Cargada a mano» si se registró sin
+emitirla desde el sistema, «Solo en Bsale» si se hizo allá y no está en la
+cotización, «Sin documento asociado» si no se eligió la factura) y qué pasó
+con el dinero (devolución pendiente o devuelta, saldo a favor o aplicado, con
+los mismos botones de la pestaña Facturas). Seis KPIs que filtran al hacer
+clic (NC y ND de este mes, anulaciones, parciales y ajustes, devolución
+pendiente, saldo a favor), filtro por tipo y por mes, buscador por N°, cliente,
+cotización o motivo, impresión térmica/carta junto al N° y CSV del filtro.
 IMPRIMIR EN CARTA: en la cuenta de Bsale la boleta («BOLETA ELECTRÓNICA T») y
 la nota de débito salen en rollo térmico de 80 mm (factura, guía y nota de
 crédito ya salen en hoja). El ícono de impresora junto al N° del documento
