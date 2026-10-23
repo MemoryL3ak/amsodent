@@ -3,7 +3,9 @@ import { api } from "../lib/api";
 import Toast from "../components/Toast";
 import DropdownSelect from "../components/ui/DropdownSelect";
 import CondicionesVentaSelector from "../components/CondicionesVentaSelector";
+import GirosEditor from "../components/GirosEditor";
 import { tieneCredito30 } from "../lib/condicionesVenta";
+import { bsaleGirosFallo, leerGiros, mensajeBsaleGiros } from "../lib/giros";
 import { Link, useParams } from "react-router-dom";
 import { REGIONES_CHILE } from "../constants/regiones";
 
@@ -26,6 +28,8 @@ export default function EditarCliente() {
   const [telefono, setTelefono] = useState("");
   const [condVenta, setCondVenta] = useState("");
   const [condVentaOriginal, setCondVentaOriginal] = useState("");
+  // (2026-10-23) Varios giros por cliente; el primero es el principal.
+  const [giros, setGiros] = useState([]);
   const [vendedorAsignado, setVendedorAsignado] = useState("");
   /* Crédito del cliente particular (2026-09-16): habilita pagar a crédito en
      el portal, además de Webpay. Solo lo define un administrador. */
@@ -130,6 +134,7 @@ export default function EditarCliente() {
       setTelefono((data.telefono || "").toString());
       setCondVenta((data.condiciones_venta || "").toString());
       setCondVentaOriginal((data.condiciones_venta || "").toString());
+      setGiros(leerGiros(data));
       setVendedorAsignado((data.vendedor_asignado || "").toString());
       setCreditoHabilitado(Boolean(data.credito_habilitado));
       setCreditoMonto(data.credito_monto ?? "");
@@ -190,6 +195,7 @@ export default function EditarCliente() {
         email,
         telefono,
         condiciones_venta: condVenta,
+        giros,
       };
       // El crédito del portal solo lo define un administrador, y solo aplica a
       // clientes particulares.
@@ -202,9 +208,14 @@ export default function EditarCliente() {
       if (esAdmin) {
         payload.vendedor_asignado = (vendedorAsignado || "").trim() || null;
       }
-      await api.put(`/clientes/${id}`, payload);
+      const actualizado = await api.put(`/clientes/${id}`, payload);
 
-      setToast({ type: "success", message: "Cliente actualizado correctamente" });
+      // Si cambiaron los giros y el RUT está en Bsale, el backend los puso allá y cuenta cómo le fue.
+      const avisoBsale = mensajeBsaleGiros(actualizado?.bsale);
+      setToast({
+        type: avisoBsale && bsaleGirosFallo(actualizado?.bsale) ? "error" : "success",
+        message: avisoBsale ? `Cliente actualizado correctamente. ${avisoBsale}` : "Cliente actualizado correctamente",
+      });
     } catch (error) {
       console.error(error);
       setToast({ type: "error", message: "Error al guardar cambios" });
@@ -336,6 +347,13 @@ export default function EditarCliente() {
                   El crédito "30 días" solo puede habilitarlo el administrador.
                 </p>
               )}
+            </div>
+
+            {/* (2026-10-23) Varios giros por cliente. Al guardar van también a Bsale
+                (su único campo de giro, unidos con « / ») si el RUT ya existe allá. */}
+            <div className="field" style={{ gridColumn: "1 / -1" }}>
+              <label className="field-label">Giros</label>
+              <GirosEditor value={giros} onChange={setGiros} />
             </div>
 
             {/* (2026-09-16) Crédito en el portal: solo para particulares y

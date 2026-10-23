@@ -5,6 +5,7 @@ import {
   BsaleFacturacionService, EMISOR, fechaAEpoch, folioCotizacion, esCotizacionPublica, normOc, normRut, referenciaGuia, referenciaOcFactura, referenciaOcGuia, referenciaParaBsale, referenciaVista, sumarDias, totalesDe,
 } from './bsale-facturacion.service';
 import { BsaleDespachosService, OBSERVACION_MAX, limpiarObservacion, observacionSugerida } from './bsale-despachos.service';
+import { BsaleClientesService, girosParaBsale } from './bsale-clientes.service';
 
 /* ── Guías, facturas y boletas LIBRES en Bsale (2026-10-03) ──────────────────
    Pedido de Ariel: "necesito la opción de crear guías y facturas de manera
@@ -85,6 +86,8 @@ export class BsaleLibreService {
     private facturacion: BsaleFacturacionService,
     private despachos: BsaleDespachosService,
     private licitaciones: LicitacionesService,
+    // Ficha y giros del cliente del sistema (2026-10-23).
+    private bsaleClientes: BsaleClientesService,
   ) {}
 
   // ── Para armar el documento en pantalla ────────────────────────────────
@@ -135,12 +138,19 @@ export class BsaleLibreService {
     if (!normRut(rut)) throw new BadRequestException('Indica el RUT del cliente.');
     const credito = await this.creditoCliente(rut);
     const enBsale = await this.despachos.clientePorRut(rut);
-    if (enBsale) return { ...this.clienteDeBsale(enBsale), ...credito };
-    const { data } = await this.supabase.getClient().from('clientes').select('rut, nombre, direccion, comuna').limit(200);
-    const propio = (data || []).find((c: any) => normRut(c.rut) === normRut(rut));
+    if (enBsale) {
+      // (2026-10-23) Si la ficha dice otro giro se avisa: el documento sale con el de Bsale.
+      const aviso_giro = await this.bsaleClientes.avisoGiroDistinto(rut, enBsale.activity);
+      return { ...this.clienteDeBsale(enBsale), ...credito, aviso_giro };
+    }
+    // (2026-10-23) La ficha del sistema por RUT (antes se leían solo 200 filas y
+    // el cliente podía no aparecer), con sus giros: es lo que Bsale recibirá
+    // como `activity` al crearlo (unidos con « / »).
+    const propio = await this.bsaleClientes.fichaPorRut(rut);
     return {
       id: null, nuevo: true, rut: rutBsale(rut),
-      razon_social: String(propio?.nombre || '').trim(), giro: '', direccion: String(propio?.direccion || '').trim(),
+      razon_social: String(propio?.nombre || '').trim(), giro: girosParaBsale(propio?.giros || []), giros: propio?.giros || [],
+      direccion: String(propio?.direccion || '').trim(),
       comuna: String(propio?.comuna || '').trim(), ciudad: String(propio?.comuna || '').trim(), email: '',
       ...credito,
     };
@@ -288,11 +298,13 @@ export class BsaleLibreService {
     // Hay particulares con RUT de relleno (000000000): se deja vacío para que
     // la boleta vaya a consumidor final y no se cree un cliente inválido en Bsale.
     const rut = rutValido(l.rut_entidad) ? rutBsale(l.rut_entidad) : '';
+    // (2026-10-23) El giro propuesto sale de la ficha del cliente; si no tiene, del de la cotización.
+    const giro = rut ? (await this.bsaleClientes.giroPropuesto(rut, l.giro)).giro : String(l.giro || '');
     return {
       cotizacion: { id: l.id, codigo: l.id_licitacion || null, cliente: l.nombre_entidad || '', particular, estado: l.estado || '' },
       rut_descartado: !rut && String(l.rut_entidad || '').trim() ? String(l.rut_entidad) : null,
       cliente: {
-        rut, razon_social: String(l.nombre_entidad || ''), giro: String(l.giro || ''),
+        rut, razon_social: String(l.nombre_entidad || ''), giro,
         direccion: String(l.direccion || ''), comuna: String(l.comuna || ''), ciudad: String(l.comuna || ''), email: String(l.email || ''),
       },
       lineas,

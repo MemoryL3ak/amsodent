@@ -7,11 +7,13 @@ import Toast from "../components/Toast";
 import ConfirmModal from "../components/ConfirmModal";
 import Avatar from "../components/Avatar";
 import CondicionesVentaSelector from "../components/CondicionesVentaSelector";
+import GirosEditor from "../components/GirosEditor";
 import { tieneCredito30 } from "../lib/condicionesVenta";
+import { bsaleGirosFallo, girosATexto, leerGiros, mensajeBsaleGiros } from "../lib/giros";
 import {
   ArrowLeft, Pencil, Building2, MapPin, Phone, Mail, Globe, User, IdCard,
   DollarSign, Package, FileText, Target, CheckCircle2, Plus, Trash2,
-  CalendarClock, AlertTriangle, Cake, Briefcase, Clock, ShieldCheck, Wallet,
+  CalendarClock, AlertTriangle, Cake, Briefcase, Clock, ShieldCheck, Wallet, Tag,
 } from "lucide-react";
 
 /* ─── Helpers ─────────────────────────────────────────────────────────── */
@@ -552,6 +554,7 @@ export default function DetalleCliente() {
           <Seccion titulo="Información General">
             <InfoRow icon={Building2} label="Razón Social" value={cliente.nombre} />
             <InfoRow icon={IdCard} label="RUT" value={cliente.rut} />
+            <InfoRow icon={Tag} label={leerGiros(cliente).length > 1 ? "Giros" : "Giro"} value={girosATexto(leerGiros(cliente))} />
             <InfoRow icon={MapPin} label="Dirección" value={[cliente.direccion, cliente.comuna, cliente.region].filter(Boolean).join(", ")} />
             <InfoRow icon={Briefcase} label="Departamento" value={cliente.departamento} />
             <InfoRow icon={Phone} label="Teléfono" value={cliente.telefono} />
@@ -944,9 +947,15 @@ export default function DetalleCliente() {
           vendedores={vendedores}
           onCerrar={() => setEditando(false)}
           onGuardado={(actualizado) => {
-            setCliente((c) => ({ ...c, ...actualizado }));
+            // `bsale` no es un dato del cliente: es cómo le fue al mandar los giros a Bsale.
+            const { bsale, ...datos } = actualizado || {};
+            setCliente((c) => ({ ...c, ...datos }));
             setEditando(false);
-            setToast({ type: "success", message: "Cliente actualizado." });
+            const avisoBsale = mensajeBsaleGiros(bsale);
+            setToast({
+              type: avisoBsale && bsaleGirosFallo(bsale) ? "error" : "success",
+              message: avisoBsale ? `Cliente actualizado. ${avisoBsale}` : "Cliente actualizado.",
+            });
           }}
           onError={(msg) => setToast({ type: "error", message: msg })}
         />
@@ -1191,6 +1200,8 @@ function ModalEditarCliente({ cliente, esAdmin, vendedores, onCerrar, onGuardado
   const [email, setEmail] = useState(cliente.email || "");
   const [telefono, setTelefono] = useState(cliente.telefono || "");
   const [condVenta, setCondVenta] = useState(cliente.condiciones_venta || "");
+  // (2026-10-23) Varios giros por cliente; el primero es el principal.
+  const [giros, setGiros] = useState(() => leerGiros(cliente));
   const [vendedorAsignado, setVendedorAsignado] = useState(cliente.vendedor_asignado || "");
   const [guardando, setGuardando] = useState(false);
 
@@ -1231,6 +1242,7 @@ function ModalEditarCliente({ cliente, esAdmin, vendedores, onCerrar, onGuardado
         tipo_cliente: tipoCliente, rut, nombre, departamento, municipalidad,
         region, comuna, direccion, contacto, email, telefono,
         condiciones_venta: condVenta,
+        giros,
       };
       if (esAdmin) payload.vendedor_asignado = (vendedorAsignado || "").trim() || null;
       const actualizado = await api.put(`/clientes/${cliente.id}`, payload);
@@ -1286,6 +1298,11 @@ function ModalEditarCliente({ cliente, esAdmin, vendedores, onCerrar, onGuardado
             {bloquea30 && !tieneCredito30(condVentaOriginal) && (
               <div className="field-hint">El crédito "30 días" solo lo habilita el administrador.</div>
             )}
+          </div>
+          {/* (2026-10-23) Varios giros; al guardar van también a Bsale si el RUT ya está allá. */}
+          <div className="field" style={{ gridColumn: "1 / -1" }}>
+            <label className="field-label">Giros</label>
+            <GirosEditor value={giros} onChange={setGiros} />
           </div>
           <div className="field" style={{ gridColumn: "1 / -1" }}>
             <label className="field-label">Vendedor Asignado</label>

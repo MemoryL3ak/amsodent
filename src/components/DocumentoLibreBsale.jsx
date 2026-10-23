@@ -494,6 +494,8 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
                         <div style={{ fontWeight: 600 }}>{cliente.razon_social || "—"} <span style={{ fontSize: 11, fontWeight: 700, color: "#15803d", background: "#dcfce7", borderRadius: 999, padding: "1px 8px", marginLeft: 6 }}>En Bsale</span></div>
                         <div>RUT {cliente.rut}</div>
                         <div style={{ color: "var(--text-muted)", fontSize: 12 }}>{[cliente.giro, cliente.direccion, cliente.comuna].filter(Boolean).join(" · ") || "Sin giro ni dirección"}</div>
+                        {/* (2026-10-23) La ficha del sistema dice otro giro: el documento sale con el de Bsale. */}
+                        {cliente.aviso_giro && <div style={{ color: "#92400e", fontSize: 12, marginTop: 4 }}>{cliente.aviso_giro}</div>}
                       </div>
                     )}
                     {esBoleta && (
