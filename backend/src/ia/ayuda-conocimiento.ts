@@ -286,9 +286,9 @@ por despachar (completas / parciales / sin stock), cobertura en % de unidades
 «Cotizaciones»: una fila por cotización (cliente, vendedor, neto, fecha, con
 stock, faltan, barra de cobertura, estado con semáforo verde/ámbar/rojo) y al
 hacer clic el detalle por producto (cotizado, despachado, por despachar, stock,
-asignado, falta, costo neto —el del catálogo o, si no está en el catálogo, el
-que quedó en la cotización—, %); el número de la cotización abre su detalle en
-una pestaña nueva; «Expandir todo» y «Ver en Por comprar». Filtros: búsqueda,
+asignado, falta, costo neto —el del producto en el catálogo—, %); el número
+de la cotización abre su detalle en una pestaña nueva; «Expandir todo» y «Ver
+en Por comprar». Filtros: búsqueda,
 stock (por despachar, con faltantes, completo, parcial, sin stock, despachadas,
 todas), vendedor, orden y «Adjudicadas desde» (nunca antes del 16-10-2026).
 Pestaña «Por comprar»: por SKU, falta, stock, costo, valor estimado, en qué

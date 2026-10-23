@@ -26,9 +26,9 @@ import BotonLimpiarFiltros from "../components/BotonLimpiarFiltros";
    bajo «Gestión de compras» (clases gc-*).
 
    2026-10-23 (Ariel): el detalle por producto lleva la columna «Costo neto»
-   (costo del catálogo, el mismo de «Por comprar»; si el producto no está en
-   el catálogo, el costo que quedó en la cotización, marcado) y los enlaces a
-   la cotización abren en una pestaña nueva para no perder la gestión. */
+   (el costo del producto en el catálogo, el mismo de «Por comprar»; no el
+   que quedó guardado en la cotización) y los enlaces a la cotización abren
+   en una pestaña nueva para no perder la gestión. */
 
 const POR_PAGINA = 20;
 const clp = (n) => `$${Math.round(Number(n) || 0).toLocaleString("es-CL")}`;
@@ -107,18 +107,10 @@ function Etiquetas({ p }) {
   );
 }
 
-// Costo neto unitario: el del catálogo; si el producto no está en el catálogo, el que quedó en la cotización.
+// Costo neto unitario del producto en el catálogo (el mismo de «Por comprar»), no el que quedó en la cotización.
 function Costo({ p }) {
-  if (p.costo) return <span title="Costo neto unitario del catálogo">{clp(p.costo)}</span>;
-  if (p.costo_cotizacion) {
-    return (
-      <>
-        <div title="El producto no está en el catálogo: es el costo que quedó registrado en la cotización">{clp(p.costo_cotizacion)}</div>
-        <div className="gc-sub gc-nowrap">de la cotización</div>
-      </>
-    );
-  }
-  return <span className="gc-sin-dato" title="El producto no tiene costo ni en el catálogo ni en la cotización">sin costo</span>;
+  if (p.costo) return <span title="Costo neto unitario del producto en el catálogo">{clp(p.costo)}</span>;
+  return <span className="gc-sin-dato" title={p.en_catalogo ? "El producto no tiene costo en el catálogo" : "El producto no está en el catálogo"}>sin costo</span>;
 }
 
 function Paginacion({ pagina, total, onCambiar, nombre }) {
@@ -237,7 +229,7 @@ export default function GestionCompras() {
     descargarCSV(
       `cotizaciones-vs-stock-${hoy}.csv`,
       ["Cotización", "Código", "Cliente", "RUT", "Vendedor", "Adjudicada", "Estado", "Cobertura %", "SKU", "Producto", "Cotizado", "Despachado", "Por despachar", "Stock", "Asignado", "Falta", "Costo neto"],
-      cotizaciones.flatMap((c) => c.productos.map((p) => [c.id, c.codigo || "", c.cliente, c.rut, c.vendedor, fechaCL(c.fecha_adjudicada), (ESTADOS[c.estado] || ESTADOS.sin_items).texto, c.cobertura, p.sku || "Sin SKU", p.producto, p.cotizado, p.despachado, p.por_despachar, p.stock ?? "", p.asignado, p.falta, p.costo ?? p.costo_cotizacion ?? ""])),
+      cotizaciones.flatMap((c) => c.productos.map((p) => [c.id, c.codigo || "", c.cliente, c.rut, c.vendedor, fechaCL(c.fecha_adjudicada), (ESTADOS[c.estado] || ESTADOS.sin_items).texto, c.cobertura, p.sku || "Sin SKU", p.producto, p.cotizado, p.despachado, p.por_despachar, p.stock ?? "", p.asignado, p.falta, p.costo ?? ""])),
     );
   };
 
@@ -524,7 +516,7 @@ export default function GestionCompras() {
                                       <th className="gc-num" title="Stock total del inventario">Stock</th>
                                       <th className="gc-num" title="Unidades del stock que le tocan a esta cotización (por orden de adjudicación)">Asignado</th>
                                       <th className="gc-num">Falta</th>
-                                      <th className="gc-num" title="Costo neto unitario del catálogo (el mismo de «Por comprar»)">Costo neto</th>
+                                      <th className="gc-num" title="Costo neto unitario del producto en el catálogo (el mismo de «Por comprar»)">Costo neto</th>
                                       <th className="gc-col-cobertura">Cobertura</th>
                                     </tr>
                                   </thead>
