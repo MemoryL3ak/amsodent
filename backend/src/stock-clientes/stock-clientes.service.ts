@@ -179,6 +179,14 @@ function validarPasswordPortal(plain: string): string | null {
   return null;
 }
 
+// Clave temporal legible que cumple la política de arriba, con el mismo
+// formato que genera la plataforma ("ABCdef-234") y sin caracteres ambiguos.
+function generarClaveTemporalPortal(): string {
+  const pick = (set: string, n: number) =>
+    Array.from({ length: n }, () => set[crypto.randomInt(set.length)]).join('');
+  return `${pick('ABCDEFGHJKLMNPQRSTUVWXYZ', 3)}${pick('abcdefghijkmnpqrstuvwxyz', 3)}-${pick('23456789', 3)}`;
+}
+
 function verifyPassword(plain: string, stored?: string | null): boolean {
   if (!stored) return false;
   const parts = String(stored).split('$');
@@ -624,6 +632,7 @@ export class StockClientesService {
     rutN: string,
     usuario: { email?: string | null; nombre?: string | null },
     passwordTemporal: string,
+    reenvio = false,
   ): Promise<{ enviado: boolean; para: string | null; error?: string }> {
     const { data: portal } = await this.supabase
       .getClient()
@@ -642,10 +651,64 @@ export class StockClientesService {
       email: usuario?.email || null,
       esUsuario: true,
       nombrePersona: usuario?.nombre || null,
+      reenvio,
       passwordTemporal,
       vigencia: portal?.acceso_vigencia || 'indefinido',
       expira: portal?.acceso_expira || null,
     });
+  }
+
+  /* (2026-10-23) Botón «Enviar acceso» de Acceso Portal Clientes → Usuarios:
+     manda a la persona el enlace, su RUT y correo de acceso y la vigencia.
+     La clave se guarda con hash y no se puede recuperar, así que el envío
+     siempre va con una clave temporal nueva (la anterior deja de servir) y
+     la persona debe cambiarla al entrar. Devuelve la clave en texto para el
+     chip de respaldo por si el correo no sale. */
+  async enviarAccesoUsuarioPortal(rut: string, id: number) {
+    const rutN = normalizarRut(rut);
+    if (!rutN) throw new BadRequestException('Falta el RUT del cliente.');
+    if (!Number.isFinite(id) || id <= 0) throw new BadRequestException('Usuario inválido.');
+    await this.assertTablaUsuarios();
+    const client = this.supabase.getClient();
+    const { data: usuario, error: errSel } = await client
+      .from('portal_usuarios')
+      .select('id, rut, email, nombre, rol, activo')
+      .eq('id', Number(id))
+      .eq('rut', rutN) // un RUT no puede tocar usuarios de otro
+      .maybeSingle();
+    if (errSel) throw new BadRequestException(errSel.message);
+    if (!usuario) throw new BadRequestException('El usuario no existe para este RUT.');
+    if (usuario.activo === false) {
+      throw new BadRequestException('El usuario está desactivado: actívelo antes de enviarle el acceso.');
+    }
+    if (!RE_EMAIL.test(String(usuario.email || ''))) {
+      throw new BadRequestException('El usuario no tiene un correo válido al que enviar el acceso.');
+    }
+
+    const password = generarClaveTemporalPortal();
+    const ahora = new Date().toISOString();
+    const { data, error } = await client
+      .from('portal_usuarios')
+      .update({
+        password_hash: hashPassword(password),
+        password_temporal: true,
+        password_actualizada_en: ahora,
+        updated_at: ahora,
+      })
+      .eq('id', Number(id))
+      .eq('rut', rutN)
+      .select('id, rut, email, nombre, rol, activo, ultimo_acceso, password_temporal, created_at')
+      .single();
+    if (error) throw new BadRequestException(error.message);
+
+    const correo = await this.enviarBienvenidaUsuarioPortal(rutN, data, password, true);
+    return {
+      ...data,
+      password,
+      correo_enviado: correo.enviado,
+      correo_destino: correo.para,
+      correo_error: correo.error,
+    };
   }
 
   async eliminarUsuarioPortal(rut: string, id: number) {
@@ -1041,6 +1104,8 @@ export class StockClientesService {
     // correo del maestro de clientes (sería otra persona).
     esUsuario?: boolean;
     nombrePersona?: string | null;
+    // Reenvío de datos de acceso a un usuario ya creado («Enviar acceso»).
+    reenvio?: boolean;
     passwordTemporal: string;
     vigencia: string;
     expira: string | null;
@@ -1079,6 +1144,7 @@ export class StockClientesService {
       emailAcceso: para,
       esUsuario: !!opts.esUsuario,
       nombrePersona: opts.nombrePersona || null,
+      reenvio: !!opts.reenvio,
       passwordTemporal: opts.passwordTemporal,
       vigenciaTexto: vigenciaTexto(opts.vigencia),
       expiraTexto,

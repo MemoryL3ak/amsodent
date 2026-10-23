@@ -797,6 +797,10 @@ export type DatosBienvenidaPortal = {
   // saludo va a la persona y el texto aclara a qué cuenta pertenece.
   esUsuario?: boolean;
   nombrePersona?: string | null;
+  // (2026-10-23) Reenvío de los datos de acceso a un usuario ya creado,
+  // desde el botón «Enviar acceso»: el texto no habla de "se creó su
+  // usuario" sino de que se le reenvían sus datos con una clave nueva.
+  reenvio?: boolean;
   passwordTemporal: string;
   // Texto legible del período: "1 mes", "3 meses", "Acceso indefinido".
   vigenciaTexto: string;
@@ -816,6 +820,7 @@ export function plantillaBienvenidaPortal(
   const url = String(datos.urlPortal || '').trim();
   const emailAcceso = String(datos.emailAcceso || '').trim().toLowerCase();
   const esUsuario = !!datos.esUsuario;
+  const reenvio = esUsuario && !!datos.reenvio;
   const nombrePersona = String(datos.nombrePersona || '').trim();
 
   const filasAcceso = [
@@ -840,14 +845,22 @@ export function plantillaBienvenidaPortal(
 
   const contenido = `
     ${insignia('👋')}
-    ${titulo('Bienvenido al Portal del Cliente', 'Ya tiene acceso para gestionar su stock con Amsodent.')}
+    ${
+      reenvio
+        ? titulo('Sus datos de acceso al Portal del Cliente', 'Le reenviamos cómo ingresar, con una clave temporal nueva.')
+        : titulo('Bienvenido al Portal del Cliente', 'Ya tiene acceso para gestionar su stock con Amsodent.')
+    }
     <p style="margin:0 0 14px;">Estimado(a) <strong>${escapeHtml(esUsuario ? nombrePersona || emailAcceso || razonSocial : razonSocial)}</strong>,</p>
     <p style="margin:0 0 20px;color:${C.suave};">
       ${
-        esUsuario
-          ? `Se creó su usuario en el <strong style="color:${C.texto};">Portal del Cliente</strong> de
+        reenvio
+          ? `Le reenviamos sus datos de acceso al <strong style="color:${C.texto};">Portal del Cliente</strong> de
+      Amsodent Medical, dentro de la cuenta de <strong style="color:${C.texto};">${escapeHtml(razonSocial)}</strong>.
+      Por seguridad generamos una <strong style="color:${C.texto};">clave temporal nueva</strong>: la anterior ya no sirve.`
+          : esUsuario
+            ? `Se creó su usuario en el <strong style="color:${C.texto};">Portal del Cliente</strong> de
       Amsodent Medical, dentro de la cuenta de <strong style="color:${C.texto};">${escapeHtml(razonSocial)}</strong>.`
-          : `Habilitamos su acceso al <strong style="color:${C.texto};">Portal del Cliente</strong> de
+            : `Habilitamos su acceso al <strong style="color:${C.texto};">Portal del Cliente</strong> de
       Amsodent Medical.`
       } Desde ahí podrá declarar el stock de su empresa, recibir alertas
       cuando un producto se acerque al mínimo y solicitar cotizaciones de reposición.
@@ -860,13 +873,17 @@ export function plantillaBienvenidaPortal(
   `;
 
   return {
-    asunto: esUsuario
-      ? 'Su usuario del Portal del Cliente Amsodent'
-      : 'Acceso habilitado · Portal del Cliente Amsodent',
+    asunto: reenvio
+      ? 'Sus datos de acceso · Portal del Cliente Amsodent'
+      : esUsuario
+        ? 'Su usuario del Portal del Cliente Amsodent'
+        : 'Acceso habilitado · Portal del Cliente Amsodent',
     html: envolver({
-      preheader: esUsuario
-        ? `Su usuario del Portal del Cliente está listo (${datos.vigenciaTexto}). Clave temporal incluida.`
-        : `Su acceso al Portal del Cliente está habilitado (${datos.vigenciaTexto}). Clave temporal incluida.`,
+      preheader: reenvio
+        ? `Sus datos de acceso al Portal del Cliente (${datos.vigenciaTexto}). Clave temporal nueva incluida.`
+        : esUsuario
+          ? `Su usuario del Portal del Cliente está listo (${datos.vigenciaTexto}). Clave temporal incluida.`
+          : `Su acceso al Portal del Cliente está habilitado (${datos.vigenciaTexto}). Clave temporal incluida.`,
       contenido,
     }),
   };
