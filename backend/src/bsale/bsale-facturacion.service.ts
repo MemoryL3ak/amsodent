@@ -33,11 +33,23 @@ import { permisosEfectivos } from '../auth/permisos';
 
 const IVA = 0.19;
 const IVA_ID = 1; // impuesto IVA 19 % en Bsale (el mismo que usa bsale-libre.service)
+/* (2026-10-24) Observación por línea (campo `comment` del detalle en Bsale) y
+   SKU: mismas reglas que bsale-despachos.service. No se importan de ahí porque
+   ese servicio ya importa este y sería un ciclo. */
+const OBSERVACION_MAX = 250;
+const limpiarObservacion = (v: any) => String(v ?? '').replace(/\s+/g, ' ').trim();
+const normSku = (v: any) => String(v ?? '').replace(/\s+/g, '').toUpperCase();
 const DTE_OC = 801; // código SII de "orden de compra" en una referencia
 const DTE_GUIA = 52; // guía de despacho electrónica
 const DTE_FACTURA = 33; // factura electrónica
 
 type Problema = { codigo: string; mensaje: string };
+/* (2026-10-24) Lo que la persona puede cambiar de la factura antes de emitir:
+   de cada línea de la guía, la cantidad (hasta la de la guía) y la observación;
+   las que no vienen en `lineas` se quitan. `extras` son productos agregados
+   que no están en la guía (van como líneas libres y descuentan stock). */
+type EdicionLinea = { detalle_id: number; cantidad?: number; nota?: string | null };
+type LineaExtra = { sku: string; producto?: string; cantidad: number; neto_unitario: number; nota?: string | null };
 
 function hoyEnChile(ahora = new Date()): string {
   return new Intl.DateTimeFormat('en-CA', {
@@ -191,6 +203,16 @@ export function totalesDe(lineas: { neto: number }[]) {
   return { neto, iva, total: neto + iva };
 }
 
+/* Observación que viaja a Bsale en la línea. En una línea enlazada a la guía
+   (detailId) Bsale copia solo la nota de la guía: se manda únicamente si la
+   persona la cambió. En una línea copiada o agregada va siempre que exista. */
+export function comentarioDe(l: { nota?: string | null; nota_guia?: string | null; enlazada?: boolean; extra?: boolean }): string {
+  const nota = limpiarObservacion(l?.nota);
+  if (!nota) return '';
+  if (l?.enlazada !== false && !l?.extra && nota === limpiarObservacion(l?.nota_guia)) return '';
+  return nota;
+}
+
 /* Lo que se le manda a Bsale. Función pura: recibe el borrador ya validado y
    las tres decisiones del usuario (fecha, plazo, forma de pago). */
 export function armarSolicitud(
@@ -198,7 +220,7 @@ export function armarSolicitud(
     tipo_documento_id: number;
     sucursal_id: number | null;
     cliente: { id: number };
-    lineas: { detalle_id: number; cantidad: number; enlazada?: boolean; variante_id?: number | null; sku?: string; neto_unitario?: number; neto_unitario_raw?: number }[];
+    lineas: { detalle_id: number; cantidad: number; enlazada?: boolean; variante_id?: number | null; sku?: string; neto_unitario?: number; neto_unitario_raw?: number; nota?: string | null; nota_guia?: string | null; extra?: boolean }[];
     referencias: Referencia[];
     totales: { total: number };
   },
@@ -215,16 +237,18 @@ export function armarSolicitud(
     /* Línea enlazada a la guía (detailId: Bsale copia el precio y no mueve
        stock) o, si Bsale ya la usó en una factura anulada (2026-10-23),
        copiada: variante + cantidad + precio neto, y descuenta stock. */
-    details: b.lineas.map((l) =>
-      l.enlazada === false
+    details: b.lineas.map((l) => ({
+      ...(l.enlazada === false
         ? {
             ...(l.variante_id ? { variantId: l.variante_id } : { code: l.sku }),
             quantity: l.cantidad,
             netUnitValue: l.neto_unitario_raw || l.neto_unitario || 0,
             taxId: `[${IVA_ID}]`,
           }
-        : { detailId: l.detalle_id, quantity: l.cantidad },
-    ),
+        : { detailId: l.detalle_id, quantity: l.cantidad }),
+      // Observación de la línea (2026-10-24); ver comentarioDe.
+      ...(comentarioDe(l) ? { comment: comentarioDe(l) } : {}),
+    })),
     payments: [{ paymentTypeId: o.forma_pago_id, amount: b.totales.total, recordDate: emision }],
     references: b.referencias.map((r) => referenciaParaBsale(r, emision)),
     salesId: o.sales_id,
@@ -1027,6 +1051,9 @@ export class BsaleFacturacionService {
         sku: String(d?.variant?.code || '').trim(),
         producto: [d?.product?.name, d?.variant?.description].map((x) => String(x || '').trim()).filter(Boolean).join(' · '),
         nota: String(d?.note || '').trim(),
+        // La nota tal como está en la guía; `nota` es la que irá en la factura (editable).
+        nota_guia: String(d?.note || '').trim(),
+        extra: false,
         cantidad: Number(d.quantity || 0),
         neto_unitario: Number(d.netUnitValue || 0),
         // Precio sin redondear: una línea copiada debe dar el mismo neto que en la guía.
@@ -1258,6 +1285,7 @@ export class BsaleFacturacionService {
       oc_editable: referencias.filter((r) => r.codigo_sii === DTE_OC).length === 1,
       oc_del_sistema: ocsSistema[0] || null,
       formas_pago: formas,
+      observacion_max: OBSERVACION_MAX,
       forma_pago_id: formaPorDefecto,
       fecha_emision: hoy,
       fecha_minima: fechaMinima,
@@ -1307,7 +1335,18 @@ export class BsaleFacturacionService {
 
   async emitir(
     usuario: { id: string; email: string },
-    body: { licitacion_id: number; guia_ids: number[]; fecha_emision?: string; dias_vencimiento?: number; forma_pago_id?: number; oc_numero?: string; huella?: string; simular?: boolean },
+    body: {
+      licitacion_id: number;
+      guia_ids: number[];
+      fecha_emision?: string;
+      dias_vencimiento?: number;
+      forma_pago_id?: number;
+      oc_numero?: string;
+      huella?: string;
+      simular?: boolean;
+      lineas?: EdicionLinea[];
+      extras?: LineaExtra[];
+    },
   ) {
     await this.exigirRol(usuario.id);
     if (!this.token) throw new BadRequestException('La integración con Bsale no está configurada (falta el token).');
@@ -1372,13 +1411,25 @@ export class BsaleFacturacionService {
       );
     }
 
+    // (2026-10-24) Líneas editadas por la persona: cantidades menores, líneas
+    // quitadas, observaciones y productos agregados. Se validan contra el
+    // borrador del servidor y los totales se recalculan aquí.
+    const edicion = await this.aplicarEdiciones(b as any, body);
+    b.lineas = edicion.lineas;
+    b.totales = edicion.totales;
+
     const opciones = { fecha_emision: fecha, dias_vencimiento: dias, forma_pago_id: forma };
 
     if (!real) {
       const solicitud = armarSolicitud(b as any, { ...opciones, sales_id: `${clave}-0` });
       const vendedor = await this.ponerVendedor(solicitud, null, licId, usuario.email);
       const formaPago = b.formas_pago.find((f) => f.id === forma);
-      const copiadas = b.lineas.filter((l) => l.enlazada === false);
+      const copiadas = b.lineas.filter((l) => l.enlazada === false && !l.extra);
+      const agregadas = b.lineas.filter((l) => l.extra);
+      const stockPartes = [
+        copiadas.length ? `${copiadas.length} ${copiadas.length === 1 ? 'línea copiada' : 'líneas copiadas'} de la guía` : '',
+        agregadas.length ? `${agregadas.length} ${agregadas.length === 1 ? 'línea agregada' : 'líneas agregadas'}` : '',
+      ].filter(Boolean);
       return {
         simulacion: true,
         // Se pidió emitir pero el servidor tiene la emisión apagada.
@@ -1391,11 +1442,11 @@ export class BsaleFacturacionService {
           correo: this.correos ? await this.correos.destinatarioDocumento(licId) : null,
           tipo: 'Factura electrónica',
           sii: true,
-          descuenta_stock: copiadas.length > 0,
-          stock_texto: copiadas.length ? (copiadas.length === b.lineas.length ? 'Descuenta stock (líneas copiadas de la guía)' : `Descuenta stock (${copiadas.length} líneas copiadas)`) : 'No mueve stock',
+          descuenta_stock: stockPartes.length > 0,
+          stock_texto: stockPartes.length ? `Descuenta stock (${stockPartes.join(' y ')})` : 'No mueve stock',
           emisor: EMISOR,
           cliente: b.cliente,
-          lineas: b.lineas.map((l) => ({ sku: l.sku, producto: l.producto, cantidad: l.cantidad, neto_unitario: l.neto_unitario, neto: l.neto, guia: l.guia, enlazada: l.enlazada !== false })),
+          lineas: b.lineas.map((l) => ({ sku: l.sku, producto: l.producto, cantidad: l.cantidad, neto_unitario: l.neto_unitario, neto: l.neto, guia: l.guia || null, enlazada: l.enlazada !== false, extra: !!l.extra, observacion: l.nota || null })),
           totales: b.totales,
           referencias: b.referencias.map(referenciaVista),
           forma_pago: formaPago?.nombre || null,
@@ -1405,7 +1456,10 @@ export class BsaleFacturacionService {
           notas: [
             copiadas.length
               ? `${copiadas.length === b.lineas.length ? 'Las líneas' : `${copiadas.length} líneas`} van copiadas de la guía, no enlazadas: Bsale ya las usó en la factura ${[...new Set(copiadas.map((l) => l.consumida_por))].join(', ')}, que está anulada. Esta factura descuenta stock.`
-              : 'Las líneas quedan enlazadas a la guía: el stock no se descuenta otra vez.',
+              : agregadas.length === b.lineas.length
+                ? 'Ninguna línea viene de la guía.'
+                : 'Las líneas de la guía quedan enlazadas a ella: su stock no se descuenta otra vez.',
+            ...edicion.avisos,
             ...(vendedor.aviso ? [vendedor.aviso] : []),
           ],
         },
@@ -1510,8 +1564,133 @@ export class BsaleFacturacionService {
       const sinVendedor = await this.avisoVendedor(emitida.bsale_id, emitida.numero, Number(solicitud.sellerId));
       if (sinVendedor) avisosEmision.push(sinVendedor);
     }
+    // (2026-10-24) ¿Bsale tomó las observaciones que se mandaron en las líneas?
+    const conObservacion = b.lineas.filter((l) => comentarioDe(l));
+    if (conObservacion.length && emitida.bsale_id) {
+      const faltan = await this.observacionesSinTomar(emitida.bsale_id, conObservacion);
+      if (faltan.length) avisosEmision.push(`Bsale no tomó la observación de ${faltan.join(', ')}: revísala en el documento en Bsale.`);
+    }
+    avisosEmision.push(...edicion.avisos);
 
     return this.registrarEnSistema({ id: emisionId, ...fila, ...emitida }, usuario.email, avisosEmision);
+  }
+
+  /* (2026-10-24) Aplica lo que la persona editó sobre el borrador del servidor.
+     Nunca confía en precios ni productos del navegador para las líneas de la
+     guía: de ellas solo acepta una cantidad menor o igual, la observación, o
+     quitarlas. Los productos agregados se resuelven en Bsale por SKU y van
+     como líneas libres (descuentan stock), con el precio neto que se indique. */
+  private async aplicarEdiciones(
+    b: { lineas: any[]; totales: { neto: number; iva: number; total: number }; sucursal_id: number | null },
+    body: { lineas?: EdicionLinea[]; extras?: LineaExtra[] },
+  ): Promise<{ lineas: any[]; totales: { neto: number; iva: number; total: number }; avisos: string[] }> {
+    const base: any[] = b.lineas || [];
+    const avisos: string[] = [];
+    let lineas: any[] = base;
+    if (Array.isArray(body?.lineas)) {
+      const porId = new Map<number, EdicionLinea>();
+      for (const e of body.lineas) if (Number(e?.detalle_id) > 0) porId.set(Number(e.detalle_id), e);
+      lineas = [];
+      let menos = 0;
+      for (const l of base) {
+        const e = porId.get(Number(l.detalle_id));
+        if (!e) continue; // quitada
+        const cantidad = e.cantidad == null || e.cantidad === ('' as any) ? Number(l.cantidad) : Number(e.cantidad);
+        const nombre = l.sku || l.producto || `la línea ${l.detalle_id}`;
+        if (!Number.isFinite(cantidad) || cantidad <= 0) throw new BadRequestException(`${nombre}: la cantidad debe ser mayor que 0.`);
+        if (cantidad > Number(l.cantidad) + 1e-9) {
+          throw new BadRequestException(`${nombre}: la guía ${l.guia} trae ${Number(l.cantidad).toLocaleString('es-CL')}; no se puede facturar más que eso. Para más unidades agrega el producto como línea nueva.`);
+        }
+        const nota = limpiarObservacion(e.nota ?? l.nota);
+        if (nota.length > OBSERVACION_MAX) throw new BadRequestException(`${nombre}: la observación tiene ${nota.length} caracteres; en Bsale caben hasta ${OBSERVACION_MAX}.`);
+        if (cantidad < Number(l.cantidad)) menos++;
+        lineas.push({ ...l, cantidad, nota, neto: Math.round(cantidad * (Number(l.neto_unitario_raw) || Number(l.neto_unitario) || 0)) });
+      }
+      const quitadas = base.length - lineas.length;
+      if (quitadas || menos) {
+        const partes = [quitadas ? `${quitadas} ${quitadas === 1 ? 'línea quitada' : 'líneas quitadas'}` : '', menos ? `${menos} con menos cantidad que la guía` : ''].filter(Boolean);
+        avisos.push(
+          `Factura parcial (${partes.join(' y ')}): lo que no se factura ahora no se podrá facturar desde el sistema después, porque la guía quedará con factura. Si falta algo, habrá que hacerlo a mano en Bsale.`,
+        );
+      }
+    }
+
+    const extras: any[] = [];
+    const vistos = new Set<string>();
+    for (const x of Array.isArray(body?.extras) ? body.extras : []) {
+      const sku = normSku(x?.sku);
+      if (!sku) throw new BadRequestException('Una línea agregada no tiene SKU.');
+      if (vistos.has(sku)) throw new BadRequestException(`El SKU ${sku} está agregado dos veces: júntalo en una línea.`);
+      vistos.add(sku);
+      const cantidad = Number(x?.cantidad);
+      const neto = Number(x?.neto_unitario);
+      if (!Number.isFinite(cantidad) || cantidad <= 0) throw new BadRequestException(`${sku}: la cantidad debe ser mayor que 0.`);
+      if (!Number.isFinite(neto) || neto < 0) throw new BadRequestException(`${sku}: indica el precio neto unitario.`);
+      const nota = limpiarObservacion(x?.nota);
+      if (nota.length > OBSERVACION_MAX) throw new BadRequestException(`${sku}: la observación tiene ${nota.length} caracteres; en Bsale caben hasta ${OBSERVACION_MAX}.`);
+      const variante = await this.variantePorSku(sku);
+      if (!variante) throw new BadRequestException(`El SKU ${sku} no está en Bsale: no se puede agregar a la factura.`);
+      const linea: any = {
+        detalle_id: 0,
+        variante_id: Number(variante.id) || null,
+        guia: '',
+        sku,
+        producto: String(x?.producto || '').trim().slice(0, 160) || String(variante?.product?.name || sku),
+        nota,
+        nota_guia: '',
+        extra: true,
+        cantidad,
+        neto_unitario: neto,
+        neto_unitario_raw: neto,
+        neto: Math.round(cantidad * neto),
+        enlazada: false,
+        consumida_por: null,
+        repuesto: null,
+        stock_bsale: null,
+      };
+      // Una línea agregada descuenta stock de verdad: si el producto no admite negativo y no alcanza, Bsale la rechazaría.
+      const st = linea.variante_id ? await this.stockVariante(linea.variante_id, b.sucursal_id) : null;
+      if (st) {
+        linea.stock_bsale = st.stock;
+        if (!st.permite_negativo && st.stock < cantidad) {
+          throw new BadRequestException(`Bsale no permite dejar en negativo ${sku}: tiene ${st.stock.toLocaleString('es-CL')} y la línea agregada descuenta ${cantidad.toLocaleString('es-CL')}.`);
+        }
+      }
+      extras.push(linea);
+    }
+    if (extras.length) {
+      avisos.push(`${extras.length === 1 ? 'La línea agregada no viene de la guía y descuenta' : `Las ${extras.length} líneas agregadas no vienen de la guía y descuentan`} stock en Bsale.`);
+    }
+
+    const todas = [...lineas, ...extras];
+    if (!todas.length) throw new BadRequestException('La factura no puede ir sin líneas.');
+    if (!(totalesDe(todas).neto > 0)) throw new BadRequestException('La factura no puede ir con neto cero.');
+    return { lineas: todas, totales: totalesDe(todas), avisos };
+  }
+
+  // Variante de Bsale por SKU (misma regla que bsale-despachos.service: activa primero).
+  private cacheVariantes = new Map<string, { ts: number; variante: any }>();
+  private async variantePorSku(sku: string): Promise<any | null> {
+    const k = normSku(sku);
+    if (!k) return null;
+    const hit = this.cacheVariantes.get(k);
+    if (hit && Date.now() - hit.ts < 60 * 60 * 1000) return hit.variante;
+    const r = await this.apiGet(`/variants.json?code=${encodeURIComponent(k)}&expand=[product]&limit=5`);
+    const items: any[] = r?.items || [];
+    const variante = items.find((v) => normSku(v?.code) === k && Number(v?.state) === 0) || items.find((v) => normSku(v?.code) === k) || null;
+    this.cacheVariantes.set(k, { ts: Date.now(), variante });
+    return variante;
+  }
+
+  // Líneas cuya observación no aparece en el documento emitido (Bsale no la tomó).
+  private async observacionesSinTomar(bsaleId: number, lineas: any[]): Promise<string[]> {
+    try {
+      const dets: any[] = await this.todos(`/documents/${bsaleId}/details.json`);
+      const notas = new Set(dets.map((d) => limpiarObservacion(d?.note)));
+      return lineas.filter((l) => !notas.has(comentarioDe(l))).map((l) => String(l.sku || l.producto || 'una línea'));
+    } catch {
+      return [];
+    }
   }
 
   private async emisionSinRegistrar(clave: string) {

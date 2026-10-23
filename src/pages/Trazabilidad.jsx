@@ -1073,6 +1073,16 @@ export default function Trazabilidad() {
     return documentosMap[licId] || [];
   }
 
+  /* (2026-10-24) Guías de la cotización sin factura y con número: las que
+     puede juntar una factura general («Facturar las N guías»). */
+  function guiasSinFactura(licId) {
+    const docs = getDocsForLic(licId);
+    const facturas = docs.filter((d) => d.tipo === "factura" || d.tipo === "factura_boleta" || d.tipo === "efectivo");
+    return docs
+      .filter((d) => d.tipo === "guia_despacho" && String(d.numero || "").trim() && !facturas.some((f) => facturaCubreGuia(f, d.id)))
+      .sort((a, b) => a.id - b.id);
+  }
+
   function buildCycles(licId) {
     const docs = getDocsForLic(licId);
     const ocs = docs.filter((d) => d.tipo === "orden_compra");
@@ -2377,6 +2387,7 @@ export default function Trazabilidad() {
         <EmitirFacturaBsale
           licitacionId={emitirFactura.licId}
           guiaDocId={emitirFactura.guiaId}
+          guiaDocIds={emitirFactura.guiaIds}
           onCerrar={() => setEmitirFactura(null)}
           onEmitida={(r) => {
             setToast({ type: "success", message: `Factura ${r.numero} emitida en Bsale${r.registrada ? " y registrada en la cotización." : "."}` });
@@ -3197,6 +3208,22 @@ export default function Trazabilidad() {
                                   <FileCheck size={12} style={{ flexShrink: 0 }} /> Emitir factura
                                 </button>
                               )}
+                              {/* (2026-10-24) Una sola factura con todas las guías pendientes; solo en la fila de la primera. */}
+                              {puedeEmitirBsale && !soloLectura && guia?.id && guia?.numero && (() => {
+                                const pendientes = guiasSinFactura(lic.id);
+                                if (pendientes.length < 2 || pendientes[0].id !== guia.id) return null;
+                                return (
+                                  <button
+                                    type="button"
+                                    onClick={() => setEmitirFactura({ licId: lic.id, guiaId: guia.id, guiaIds: pendientes.map((g) => g.id) })}
+                                    className="btn btn-secondary btn-sm"
+                                    style={{ height: "auto", minHeight: 26, padding: "3px 8px", fontSize: 11.5, whiteSpace: "normal", textAlign: "left", lineHeight: 1.2 }}
+                                    title={`Una sola factura en Bsale con las guías ${pendientes.map((g) => g.numero).join(", ")}`}
+                                  >
+                                    <FileCheck size={12} style={{ flexShrink: 0 }} /> Facturar las {pendientes.length} guías
+                                  </button>
+                                );
+                              })()}
                               {/* Cliente particular: su boleta o factura, armada con los productos de la cotización. */}
                               {puedeEmitirBsale && !soloLectura && esParticular(lic) && (
                                 <button
