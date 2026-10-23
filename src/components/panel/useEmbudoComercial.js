@@ -1,22 +1,44 @@
 // useEmbudoComercial.js
-// Lógica compartida del embudo comercial (marcas acumuladas por cliente
-// particular según su actividad en la bitácora). La usan el Panel de
-// Indicadores y el sub-panel "Cliente Particular" para no duplicar reglas.
+// Lógica compartida del embudo comercial (clientes particulares según su
+// actividad en la bitácora). La usan el Panel de Indicadores y el sub-panel
+// "Cliente Particular" para no duplicar reglas.
 //
-// Reglas de marcado (se suman, nunca se quitan):
+// Qué acción marca cada etapa:
 //   • Prospecto            → actividad con motivo Mapeo / Visita Espontánea / Referido
-//   • Cliente Contactado   → actividad de tipo Llamada / Visita / Reunión / Correo
+//   • Cliente Contactado   → actividad de tipo Llamada / WhatsApp / Visita / Reunión / Correo
 //   • Clientes que Cotizan → actividad con motivo "Presupuesto"
 //   • Clientes que Compran → la cotización asociada a esa actividad "Presupuesto"
 //                            pasa a estado "Adjudicada"
+//
+// (2026-10-23) El embudo es DEL MES: cada etapa cuenta los clientes distintos
+// que registraron la acción de esa etapa dentro del mes seleccionado (para
+// "Compran", la adjudicación del mes). Antes era acumulado desde el inicio y
+// cada etapa exigía haber logrado la anterior: el mes casi no cambiaba nada,
+// el detalle mostraba acciones de otros meses y, como casi nadie registra el
+// motivo de prospecto, meses con decenas de contactos quedaban en cero. La
+// conversión entre etapas se mide sobre los mismos clientes del mes (de los
+// contactados en el mes, cuántos cotizaron en el mes, etc.).
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../../lib/api";
 import useAuth from "../../hooks/useAuth";
+import { esVendedorSiempreVisible } from "../../constants/vendedores";
 import { mesDe, toDateISO, addMesKey, labelMesCorto } from "./panelKit";
 
 export const MOTIVOS_PROSPECTO = ["Mapeo", "Visita Espontánea", "Referido"];
 export const TIPOS_CONTACTO = ["llamada", "whatsapp", "visita", "reunion", "correo"];
 export const MOTIVO_COTIZA = "Presupuesto";
+
+// Quiénes son "ejecutivos" para el filtro: el equipo comercial según su rol
+// (misma regla que el Avance de Metas del Panel de Indicadores), más las
+// excepciones por correo (Diego Cruz, admin que vende). Antes el filtro
+// listaba TODOS los correos de la bitácora: entradas automáticas, correos de
+// participantes externos, administradores y una persona dos veces (correo
+// principal y alterno).
+const ROLES_VENTA = new Set(["ventas", "ventas_especial", "jefe_ventas", "jefe_ventas_especial"]);
+function esEquipoComercial(rol, email) {
+  if (esVendedorSiempreVisible(email)) return true;
+  return ROLES_VENTA.has(String(rol || "").trim().toLowerCase());
+}
 
 export const ETAPAS_EMBUDO = [
   { key: "prospectos",  label: "Prospectos",           color: "#1e40af" },
@@ -31,8 +53,12 @@ export function finDeMes(mesKey) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
-// mesActualKey: 'YYYY-MM'. Devuelve el embudo acumulado hasta el fin de ese mes.
-// ejecutivo: email (lowercase) del ejecutivo para filtrar la bitácora; "" = todos.
+const normEmail = (e) => String(e || "").trim().toLowerCase();
+const conteo = (d) => ({ prospectos: d.prospectos.length, contactados: d.contactados.length, cotizan: d.cotizan.length, compran: d.compran.length });
+
+// mesActualKey: 'YYYY-MM'. Devuelve el embudo del mes (y el del anterior, la
+// evolución de 6 meses y el detalle por etapa).
+// ejecutivo: correo principal del ejecutivo para filtrar la bitácora; "" = todos.
 export default function useEmbudoComercial(mesActualKey, ejecutivo = "") {
   const { rol, cargando } = useAuth();
   const rolNorm = (rol || "").toString().trim().toLowerCase();
@@ -44,7 +70,7 @@ export default function useEmbudoComercial(mesActualKey, ejecutivo = "") {
   const [actividades, setActividades] = useState([]);
   const [lics, setLics] = useState([]);
   const [clientes, setClientes] = useState([]);
-  const [nombresEjecutivos, setNombresEjecutivos] = useState({});
+  const [perfiles, setPerfiles] = useState([]);
 
   const mesActual = mesActualKey;
   const mesPrev = addMesKey(mesActual, -1);
@@ -56,18 +82,20 @@ export default function useEmbudoComercial(mesActualKey, ejecutivo = "") {
     (async () => {
       setLoading(true);
       try {
-        const [acts, licis, cli] = await Promise.all([
+        const [acts, licis, cli, perfs] = await Promise.all([
           api.get(`/actividades?desde=2000-01-01&hasta=${hastaCorte}`),
           api.get("/licitaciones/with-fields?fields=id,estado,fecha,fecha_adjudicada"),
           api.get("/clientes"),
+          api.get("/usuarios/profiles").catch(() => []),
         ]);
         if (!activo) return;
         setActividades(Array.isArray(acts) ? acts : []);
         setLics(Array.isArray(licis) ? licis : []);
         setClientes(Array.isArray(cli) ? cli : []);
+        setPerfiles(Array.isArray(perfs) ? perfs : []);
       } catch (e) {
         console.error("Error cargando embudo:", e);
-        if (activo) { setActividades([]); setLics([]); setClientes([]); }
+        if (activo) { setActividades([]); setLics([]); setClientes([]); setPerfiles([]); }
       } finally {
         if (activo) setLoading(false);
       }
@@ -75,42 +103,18 @@ export default function useEmbudoComercial(mesActualKey, ejecutivo = "") {
     return () => { activo = false; };
   }, [cargando, puedeVer, hastaCorte]);
 
-  // Nombres de los ejecutivos presentes en la bitácora (para el filtro).
-  useEffect(() => {
-    const emails = Array.from(new Set(
-      actividades.map((a) => (a.user_email || "").trim().toLowerCase()).filter(Boolean)
-    ));
-    if (!emails.length) { setNombresEjecutivos({}); return; }
-    let activo = true;
-    api.post("/usuarios/profiles/by-emails", { emails })
-      .then((perfiles) => {
-        if (!activo) return;
-        const m = {};
-        (perfiles || []).forEach((p) => {
-          m[(p.email || "").trim().toLowerCase()] = (p.nombre || "").trim();
-        });
-        setNombresEjecutivos(m);
-      })
-      .catch(() => {});
-    return () => { activo = false; };
-  }, [actividades]);
-
-  const opcionesEjecutivos = useMemo(
-    () =>
-      Array.from(new Set(
-        actividades.map((a) => (a.user_email || "").trim().toLowerCase()).filter(Boolean)
-      ))
-        .map((email) => ({ value: email, label: nombresEjecutivos[email] || email }))
-        .sort((a, b) => a.label.localeCompare(b.label)),
-    [actividades, nombresEjecutivos]
-  );
-
-  // Filtro por ejecutivo: solo su actividad de bitácora marca las etapas.
-  const actividadesFiltradas = useMemo(() => {
-    const e = (ejecutivo || "").trim().toLowerCase();
-    if (!e) return actividades;
-    return actividades.filter((a) => (a.user_email || "").trim().toLowerCase() === e);
-  }, [actividades, ejecutivo]);
+  // Nombres por correo (principal y alterno) de todos los perfiles, para la
+  // columna "Ejecutivo" del detalle. Lo que no sea un perfil (entradas
+  // automáticas, externos) se muestra tal cual.
+  const nombresEjecutivos = useMemo(() => {
+    const m = {};
+    perfiles.forEach((p) => {
+      const nombre = String(p?.nombre || "").trim();
+      if (!nombre) return;
+      [p.email, p.email_alterno].map(normEmail).filter(Boolean).forEach((e) => { m[e] = nombre; });
+    });
+    return m;
+  }, [perfiles]);
 
   // Solo clientes particulares.
   const particularIds = useMemo(() => {
@@ -120,6 +124,40 @@ export default function useEmbudoComercial(mesActualKey, ejecutivo = "") {
     });
     return s;
   }, [clientes]);
+
+  // Equipo comercial: una opción por PERSONA (correo principal + alterno),
+  // solo con quienes tienen alguna actividad sobre un cliente particular.
+  const equipo = useMemo(() => {
+    const conActividad = new Set();
+    actividades.forEach((a) => {
+      const cid = a.cliente_id != null ? String(a.cliente_id) : "";
+      if (cid && particularIds.has(cid)) conActividad.add(normEmail(a.user_email));
+    });
+    const personas = [];
+    perfiles.forEach((p) => {
+      const principal = normEmail(p?.email);
+      if (!principal || !esEquipoComercial(p?.rol, principal)) return;
+      const emails = Array.from(new Set([principal, normEmail(p?.email_alterno)].filter(Boolean)));
+      if (!emails.some((e) => conActividad.has(e))) return;
+      personas.push({ value: principal, label: String(p?.nombre || "").trim() || principal, emails });
+    });
+    return personas.sort((a, b) => a.label.localeCompare(b.label));
+  }, [perfiles, actividades, particularIds]);
+
+  const opcionesEjecutivos = useMemo(
+    () => equipo.map(({ value, label }) => ({ value, label })),
+    [equipo]
+  );
+
+  // Filtro por ejecutivo: solo su actividad de bitácora (por cualquiera de
+  // sus correos) marca las etapas.
+  const actividadesFiltradas = useMemo(() => {
+    const e = normEmail(ejecutivo);
+    if (!e) return actividades;
+    const persona = equipo.find((p) => p.value === e);
+    const correos = new Set(persona ? persona.emails : [e]);
+    return actividades.filter((a) => correos.has(normEmail(a.user_email)));
+  }, [actividades, ejecutivo, equipo]);
 
   const licById = useMemo(() => {
     const m = new Map();
@@ -131,58 +169,30 @@ export default function useEmbudoComercial(mesActualKey, ejecutivo = "") {
     return m;
   }, [lics]);
 
-  // Fecha de LOGRO de cada marca por cliente, respetando el orden secuencial:
-  // para pasar a una etapa el cliente ya debe tener la marca anterior. La
-  // fecha de logro de una etapa = la más tardía entre "tener la etapa previa"
-  // y "registrar la acción propia de esta etapa".
-  const logrosPorCliente = useMemo(() => {
-    const maxDate = (a, b) => (!a || !b ? null : (a > b ? a : b));
-    // 1) Primera fecha de cada acción por cliente particular. Se guarda
-    //    también LA ACTIVIDAD que marcó cada etapa, para el detalle cliqueable
-    //    del embudo.
-    const base = new Map(); // cid -> { pDate, cDate, zDate, mDate, pAct, cAct, zAct, mAct, mLicId }
-    const ensure = (cid) => {
-      let e = base.get(cid);
-      if (!e) {
-        e = { pDate: null, cDate: null, zDate: null, mDate: null, pAct: null, cAct: null, zAct: null, mAct: null, mLicId: null };
-        base.set(cid, e);
-      }
-      return e;
-    };
-    const marcar = (e, dateKey, actKey, f, a) => {
-      if (!e[dateKey] || f < e[dateKey]) { e[dateKey] = f; e[actKey] = a; }
-    };
+  // Acciones de cada etapa por cliente particular, ordenadas por fecha, con la
+  // actividad de bitácora que la registró (para el detalle cliqueable).
+  // "Compran" usa la fecha de adjudicación de la cotización vinculada a la
+  // actividad "Presupuesto".
+  const accionesPorCliente = useMemo(() => {
+    const base = new Map(); // cid -> { pros: [], cont: [], cot: [], comp: [] }
     actividadesFiltradas.forEach((a) => {
       const cid = a.cliente_id != null ? String(a.cliente_id) : "";
       if (!cid || !particularIds.has(cid)) return;
       const f = toDateISO(a.fecha);
       if (!f) return;
-      const e = ensure(cid);
-      if (MOTIVOS_PROSPECTO.includes(a.motivo)) marcar(e, "pDate", "pAct", f, a);
-      if (TIPOS_CONTACTO.includes(a.tipo)) marcar(e, "cDate", "cAct", f, a);
-      if (a.motivo === MOTIVO_COTIZA) marcar(e, "zDate", "zAct", f, a);
-    });
-    // Compran: la cotización vinculada a una actividad "Presupuesto" adjudicada.
-    actividadesFiltradas.forEach((a) => {
-      if (a.motivo !== MOTIVO_COTIZA || a.cliente_id == null) return;
-      const cid = String(a.cliente_id);
-      if (!particularIds.has(cid)) return;
-      const lic = a.licitacion_id != null ? licById.get(String(a.licitacion_id)) : null;
-      if (lic && lic.adjudicada && lic.adjDate) {
-        const e = ensure(cid);
-        if (!e.mDate || lic.adjDate < e.mDate) { e.mDate = lic.adjDate; e.mAct = a; e.mLicId = a.licitacion_id; }
+      let e = base.get(cid);
+      if (!e) { e = { pros: [], cont: [], cot: [], comp: [] }; base.set(cid, e); }
+      if (MOTIVOS_PROSPECTO.includes(a.motivo)) e.pros.push({ fecha: f, act: a });
+      if (TIPOS_CONTACTO.includes(a.tipo)) e.cont.push({ fecha: f, act: a });
+      if (a.motivo === MOTIVO_COTIZA) {
+        e.cot.push({ fecha: f, act: a });
+        const lic = a.licitacion_id != null ? licById.get(String(a.licitacion_id)) : null;
+        if (lic && lic.adjudicada && lic.adjDate) e.comp.push({ fecha: lic.adjDate, act: a, licId: a.licitacion_id });
       }
     });
-    // 2) Fechas de logro encadenadas (cada etapa exige la anterior).
-    const arr = [];
-    base.forEach((e, cid) => {
-      const achP = e.pDate;                                   // Prospecto
-      const achC = achP && e.cDate ? maxDate(achP, e.cDate) : null; // Contactado (ya prospecto)
-      const achZ = achC && e.zDate ? maxDate(achC, e.zDate) : null; // Cotiza (ya contactado)
-      const achM = achZ && e.mDate ? maxDate(achZ, e.mDate) : null; // Compra (ya cotiza)
-      arr.push({ cid, achP, achC, achZ, achM, pAct: e.pAct, cAct: e.cAct, zAct: e.zAct, mAct: e.mAct, mLicId: e.mLicId });
-    });
-    return arr;
+    const porFecha = (x, y) => x.fecha.localeCompare(y.fecha);
+    base.forEach((e) => { e.pros.sort(porFecha); e.cont.sort(porFecha); e.cot.sort(porFecha); e.comp.sort(porFecha); });
+    return base;
   }, [actividadesFiltradas, licById, particularIds]);
 
   const clientesById = useMemo(() => {
@@ -191,73 +201,65 @@ export default function useEmbudoComercial(mesActualKey, ejecutivo = "") {
     return m;
   }, [clientes]);
 
-  // Detalle por etapa (acumulado al corte del mes seleccionado): cliente + la
-  // actividad de bitácora que marcó la etapa. Para "compran" se incluye la
-  // cotización adjudicada que gatilló la marca.
-  const detalleEmbudo = useMemo(() => {
-    const corte = finDeMes(mesActual);
+  // Embudo de un mes: por etapa, los clientes distintos que registraron la
+  // acción de esa etapa dentro del mes (se guarda la primera del mes para el
+  // detalle). Devuelve el detalle (cliente + actividad).
+  const etapasDelMes = useMemo(() => (mesKey) => {
     const out = { prospectos: [], contactados: [], cotizan: [], compran: [] };
-    logrosPorCliente.forEach((L) => {
-      const cliente = clientesById.get(L.cid)?.nombre || `Cliente ${L.cid}`;
-      const push = (key, ach, act, extra) => {
-        if (!ach || ach > corte) return;
-        out[key].push({
-          clienteId: L.cid,
-          cliente,
-          fecha: ach,
-          tipo: act?.tipo || "",
-          motivo: act?.motivo || "",
-          ejecutivo: (act?.user_email || "").trim().toLowerCase(),
-          ...extra,
-        });
-      };
-      push("prospectos", L.achP, L.pAct);
-      push("contactados", L.achC, L.cAct);
-      push("cotizan", L.achZ, L.zAct);
-      push("compran", L.achM, L.mAct, { licitacionId: L.mLicId });
+    const primeraDelMes = (arr) => arr.find((x) => mesDe(x.fecha) === mesKey);
+    const item = (cid, x, extra) => ({
+      clienteId: cid,
+      cliente: clientesById.get(cid)?.nombre || `Cliente ${cid}`,
+      fecha: x.fecha,
+      tipo: x.act?.tipo || "",
+      motivo: x.act?.motivo || "",
+      ejecutivo: normEmail(x.act?.user_email),
+      ...extra,
+    });
+    accionesPorCliente.forEach((e, cid) => {
+      const p = primeraDelMes(e.pros);
+      if (p) out.prospectos.push(item(cid, p));
+      const c = primeraDelMes(e.cont);
+      if (c) out.contactados.push(item(cid, c));
+      const z = primeraDelMes(e.cot);
+      if (z) out.cotizan.push(item(cid, z));
+      const m = primeraDelMes(e.comp);
+      if (m) out.compran.push(item(cid, m, { licitacionId: m.licId }));
     });
     Object.values(out).forEach((arr) => arr.sort((a, b) => String(b.fecha).localeCompare(String(a.fecha))));
     return out;
-  }, [logrosPorCliente, clientesById, mesActual]);
+  }, [accionesPorCliente, clientesById]);
 
-  const embudoHasta = useMemo(() => (mesKey) => {
-    const corte = finDeMes(mesKey);
-    let p = 0, c = 0, z = 0, m = 0;
-    logrosPorCliente.forEach((L) => {
-      if (L.achP && L.achP <= corte) p++;
-      if (L.achC && L.achC <= corte) c++;
-      if (L.achZ && L.achZ <= corte) z++;
-      if (L.achM && L.achM <= corte) m++;
-    });
-    return { prospectos: p, contactados: c, cotizan: z, compran: m };
-  }, [logrosPorCliente]);
+  const detalleEmbudo = useMemo(() => etapasDelMes(mesActual), [etapasDelMes, mesActual]);
+  const emb = useMemo(() => conteo(detalleEmbudo), [detalleEmbudo]);
+  const embPrev = useMemo(() => conteo(etapasDelMes(mesPrev)), [etapasDelMes, mesPrev]);
 
-  // Evolución: clientes que ENTRAN a cada etapa en el mes (nuevos logros).
+  // Evolución: embudo de cada uno de los últimos 6 meses (el del mes
+  // seleccionado coincide con el embudo principal).
   const evolucion = useMemo(() => {
     const arr = [];
     for (let i = 5; i >= 0; i--) {
       const k = addMesKey(mesActual, -i);
-      let pros = 0, cont = 0, cot = 0, com = 0;
-      logrosPorCliente.forEach((L) => {
-        if (mesDe(L.achP) === k) pros++;
-        if (mesDe(L.achC) === k) cont++;
-        if (mesDe(L.achZ) === k) cot++;
-        if (mesDe(L.achM) === k) com++;
-      });
-      arr.push({ mes: k, label: labelMesCorto(k), prospectos: pros, contactados: cont, cotizan: cot, compran: com });
+      arr.push({ mes: k, label: labelMesCorto(k), ...conteo(etapasDelMes(k)) });
     }
     return arr;
-  }, [mesActual, logrosPorCliente]);
+  }, [mesActual, etapasDelMes]);
 
-  const emb = useMemo(() => embudoHasta(mesActual), [embudoHasta, mesActual]);
-  const embPrev = useMemo(() => embudoHasta(mesPrev), [embudoHasta, mesPrev]);
-
-  const conv = useMemo(() => ({
-    e1: emb.prospectos > 0 ? (emb.contactados / emb.prospectos) * 100 : 0,
-    e2: emb.contactados > 0 ? (emb.cotizan / emb.contactados) * 100 : 0,
-    e3: emb.cotizan > 0 ? (emb.compran / emb.cotizan) * 100 : 0,
-    total: emb.prospectos > 0 ? (emb.compran / emb.prospectos) * 100 : 0,
-  }), [emb]);
+  // Conversión entre etapas sobre los clientes del mes: de los que están en
+  // una etapa este mes, cuántos aparecen también en la siguiente este mes.
+  // Sin base (0 en la etapa de origen) queda en null y la vista muestra "—".
+  const conv = useMemo(() => {
+    const ids = (arr) => new Set(arr.map((it) => it.clienteId));
+    const P = ids(detalleEmbudo.prospectos), C = ids(detalleEmbudo.contactados);
+    const Z = ids(detalleEmbudo.cotizan), M = ids(detalleEmbudo.compran);
+    const tasa = (origen, destino) => {
+      if (!origen.size) return null;
+      let n = 0;
+      origen.forEach((id) => { if (destino.has(id)) n++; });
+      return (n / origen.size) * 100;
+    };
+    return { e1: tasa(P, C), e2: tasa(C, Z), e3: tasa(Z, M), total: tasa(P, M) };
+  }, [detalleEmbudo]);
 
   const maxEmbudo = Math.max(1, emb.prospectos, emb.contactados, emb.cotizan, emb.compran);
 
