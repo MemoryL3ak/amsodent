@@ -80,6 +80,9 @@ export class BsaleFacturacionController {
       oc_numero?: string;
       huella?: string;
       simular?: boolean;
+      // (2026-10-24) Edición de líneas: cantidad/observación/quitar de las de la guía, y productos agregados.
+      lineas?: { detalle_id: number; cantidad?: number; nota?: string | null }[];
+      extras?: { sku: string; producto?: string; cantidad: number; neto_unitario: number; nota?: string | null }[];
     },
   ) {
     return this.facturacion.emitir(

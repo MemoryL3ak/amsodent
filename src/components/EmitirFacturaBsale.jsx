@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import { AlertTriangle, CheckCircle2, FileText, Info, Loader2, Mail, X } from "lucide-react";
+import { AlertTriangle, CheckCircle2, FileText, Info, Loader2, Mail, RotateCcw, Search, Trash2, X } from "lucide-react";
 import { api } from "../lib/api";
 import DateFilter from "./DateFilter";
 import DropdownSelect from "./ui/DropdownSelect";
@@ -14,8 +14,14 @@ import RegistrarComprobanteRapido from "./RegistrarComprobanteRapido";
    Ventana que se abre desde Trazabilidad sobre una guía sin factura. El
    servidor arma el borrador a partir de la guía que ya existe en Bsale (mismas
    líneas, mismo cliente, referencia a la orden de compra y a la guía) y esta
-   ventana solo lo muestra y deja decidir tres cosas: fecha, plazo y forma de
-   pago (más corregir el folio de la orden de compra si la guía lo trae mal).
+   ventana lo muestra y deja decidir fecha, plazo y forma de pago (más
+   corregir el folio de la orden de compra si la guía lo trae mal).
+   (2026-10-24, pedido de Ariel) También se pueden editar las líneas: bajar la
+   cantidad (nunca subirla: Bsale no deja facturar más que la guía), poner una
+   observación por línea, quitar líneas y agregar productos del catálogo que
+   no vienen en la guía (van como líneas libres y descuentan stock). El precio
+   de las líneas de la guía lo fija Bsale. Y «Todas las guías» arma una sola
+   factura con todas las guías pendientes de la cotización.
 
    Dos pasos, en orden. 1) "Simular" muestra el documento como quedaría, sin
    emitir ni guardar nada. 2) Solo con esa simulación a la vista aparece
@@ -54,12 +60,26 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
   const [dias, setDias] = useState("");
   const [forma, setForma] = useState("");
   const [oc, setOc] = useState("");
+  // (2026-10-24) Edición de líneas: por detalle_id { cantidad, nota, quitada }; y productos agregados.
+  const [edits, setEdits] = useState({});
+  const [extras, setExtras] = useState([]); // { key, sku, producto, cantidad, neto_unitario, nota }
+  const [qProducto, setQProducto] = useState("");
+  const [productos, setProductos] = useState([]);
+  const [buscandoProd, setBuscandoProd] = useState(false);
   const [enviando, setEnviando] = useState(""); // "" | "simular" | "emitir"
   const [resultado, setResultado] = useState(null);
   /* La simulación vale para ESTOS datos: la firma resume lo que la persona
      decide. Simular guarda la firma; si cambia algo, la simulación caduca y
      la confirmación también (hay que simular y confirmar de nuevo). */
-  const firma = JSON.stringify({ seleccion, fecha, dias, forma, oc: oc.trim().toUpperCase() });
+  const firma = JSON.stringify({
+    seleccion,
+    fecha,
+    dias,
+    forma,
+    oc: oc.trim().toUpperCase(),
+    edits,
+    extras: extras.map((x) => [x.sku, x.cantidad, x.neto_unitario, x.nota]),
+  });
   const [simuladoCon, setSimuladoCon] = useState(null);
   const [confirmadoCon, setConfirmadoCon] = useState(null);
   const simulacionVigente = !!resultado?.simulacion && simuladoCon === firma;
@@ -75,6 +95,7 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
       .then((b) => {
         if (!vivo) return;
         setBorrador(b);
+        setEdits((prev) => Object.fromEntries((b.lineas || []).map((l) => [l.detalle_id, prev[l.detalle_id] || { cantidad: String(l.cantidad), nota: l.nota || "", quitada: false }])));
         // Lo ya decidido se conserva al sumar o quitar una guía.
         setFecha((v) => (v && v >= b.fecha_minima && v <= b.fecha_maxima ? v : b.fecha_emision));
         setDias((v) => (v !== "" ? v : String(b.dias_vencimiento ?? 30)));
@@ -86,12 +107,54 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
     return () => { vivo = false; };
   }, [licitacionId, seleccion]);
 
+  useEffect(() => {
+    const q = qProducto.trim();
+    if (q.length < 2) { setProductos([]); return undefined; }
+    let vivo = true;
+    setBuscandoProd(true);
+    const t = setTimeout(() => {
+      api
+        .get(`/bsale/libre/productos?q=${encodeURIComponent(q)}`)
+        .then((r) => vivo && setProductos(Array.isArray(r) ? r : []))
+        .catch(() => vivo && setProductos([]))
+        .finally(() => vivo && setBuscandoProd(false));
+    }, 300);
+    return () => { vivo = false; clearTimeout(t); };
+  }, [qProducto]);
+
   // El servidor puede tener la emisión real apagada: ahí solo se simula.
   const apagada = borrador?.modo !== "activa";
   const bloqueada = (borrador?.problemas?.length || 0) > 0;
   const variasGuias = (borrador?.guias?.length || 0) > 1;
   const vence = fecha && dias !== "" ? sumarDias(fecha, dias) : "";
   const ocOriginal = (borrador?.referencias?.find((r) => r.codigo_sii === 801) || {}).numero || "";
+
+  // ── Edición de líneas (2026-10-24) ──
+  const cambiarEdit = (id, cambio) => setEdits((prev) => ({ ...prev, [id]: { ...(prev[id] || {}), ...cambio } }));
+  const cambiarExtra = (key, cambio) => setExtras((prev) => prev.map((x) => (x.key === key ? { ...x, ...cambio } : x)));
+  function agregarExtra(p) {
+    setExtras((prev) => {
+      if (prev.some((x) => x.sku === p.sku)) return prev.map((x) => (x.sku === p.sku ? { ...x, cantidad: String((Number(x.cantidad) || 0) + 1) } : x));
+      return [...prev, { key: `${p.sku}-${Date.now()}`, sku: p.sku, producto: p.nombre, cantidad: "1", neto_unitario: p.lista1 != null && p.lista1 !== "" ? String(p.lista1) : "", nota: "" }];
+    });
+    setQProducto("");
+    setProductos([]);
+  }
+  const numero = (v) => { const n = Number(String(v ?? "").replace(",", ".")); return Number.isFinite(n) ? n : NaN; };
+  const cantidadDe = (l) => numero(edits[l.detalle_id]?.cantidad ?? l.cantidad);
+  const netoLinea = (cant, unit) => Math.round((Number(cant) || 0) * (Number(unit) || 0));
+  const lineasActivas = (borrador?.lineas || []).filter((l) => !edits[l.detalle_id]?.quitada);
+  const netoEdit =
+    lineasActivas.reduce((a, l) => a + netoLinea(cantidadDe(l), l.neto_unitario_raw ?? l.neto_unitario), 0) +
+    extras.reduce((a, x) => a + netoLinea(numero(x.cantidad), numero(x.neto_unitario)), 0);
+  const totalesEdit = { neto: netoEdit, iva: Math.round(netoEdit * 0.19), total: netoEdit + Math.round(netoEdit * 0.19) };
+  const cantidadInvalida =
+    lineasActivas.some((l) => { const c = cantidadDe(l); return !(c > 0) || c > l.cantidad; }) ||
+    extras.some((x) => !(numero(x.cantidad) > 0) || !(numero(x.neto_unitario) >= 0));
+  const editada =
+    extras.length > 0 ||
+    (borrador?.lineas || []).some((l) => { const e = edits[l.detalle_id]; return !!e && (e.quitada || numero(e.cantidad) !== l.cantidad || (e.nota || "") !== (l.nota || "")); });
+  const todasSeleccionadas = (borrador?.guias_disponibles || []).length > 0 && borrador.guias_disponibles.every((g) => seleccion.includes(g.doc_id));
   const opcionesForma = useMemo(
     () => (borrador?.formas_pago || []).map((f) => ({ value: String(f.id), label: f.nombre })),
     [borrador],
@@ -120,6 +183,9 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
         // Solo viaja si se corrigió: el servidor usa la de la guía por defecto.
         ...(borrador.oc_editable && oc.trim() && oc.trim().toUpperCase() !== ocOriginal ? { oc_numero: oc.trim() } : {}),
         huella: borrador.huella,
+        // (2026-10-24) Líneas de la guía que se facturan (las quitadas no van), con cantidad y observación; y productos agregados.
+        lineas: lineasActivas.map((l) => ({ detalle_id: l.detalle_id, cantidad: cantidadDe(l), nota: edits[l.detalle_id]?.nota ?? l.nota ?? "" })),
+        extras: extras.map((x) => ({ sku: x.sku, producto: x.producto, cantidad: numero(x.cantidad), neto_unitario: numero(x.neto_unitario), nota: x.nota || "" })),
       });
       setResultado(r);
       if (r?.simulacion) setSimuladoCon(firma);
@@ -133,7 +199,7 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
 
   // (2026-10-08) Emitido el documento, al cerrar se abre la ventana de correo para enviárselo al cliente.
   const cerrar = () => { if (enviando) return; if (resultado?.emitida) window.dispatchEvent(new Event("correos:check")); onCerrar?.(); };
-  const completo = !cargando && !enviando && borrador && !bloqueada && fecha && dias !== "" && forma;
+  const completo = !cargando && !enviando && borrador && !bloqueada && fecha && dias !== "" && forma && !cantidadInvalida && lineasActivas.length + extras.length > 0;
   const puedeSimular = completo;
   // Emitir solo después de simular estos mismos datos (o al registrar una ya emitida).
   const puedeEmitir = completo && !apagada && (borrador.recuperar || (simulacionVigente && confirmo));
@@ -146,7 +212,7 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
       <div
         className="modal-emitir-factura"
         onClick={(e) => e.stopPropagation()}
-        style={{ width: 780, maxWidth: "100%", margin: "auto", background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", boxShadow: "var(--shadow-lg)" }}
+        style={{ width: 900, maxWidth: "100%", margin: "auto", background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", boxShadow: "var(--shadow-lg)" }}
       >
         <div style={{ padding: "14px 20px", borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
           <div style={{ minWidth: 0 }}>
@@ -274,7 +340,21 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
                       )}
                     </div>
                     <div style={{ flex: "1 1 200px", minWidth: 0, border: "1px solid var(--border)", borderRadius: 10, padding: "10px 12px" }}>
-                      <span style={etiqueta}>Guías que se facturan</span>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
+                        <span style={etiqueta}>Guías que se facturan</span>
+                        {(borrador.guias_disponibles || []).length > 1 && (
+                          <button
+                            type="button"
+                            className="btn btn-ghost btn-sm"
+                            disabled={!!enviando}
+                            onClick={() => setSeleccion(todasSeleccionadas ? [seleccion.includes(Number(guiaDocId)) ? Number(guiaDocId) : seleccion[0]] : borrador.guias_disponibles.map((g) => g.doc_id).sort((a, b) => a - b))}
+                            title={todasSeleccionadas ? "Dejar una sola guía" : "Una sola factura con todas las guías pendientes de esta cotización"}
+                            style={{ padding: "0 6px", height: "auto", minHeight: 22, fontSize: 11.5, whiteSpace: "nowrap" }}
+                          >
+                            {todasSeleccionadas ? "Solo una" : "Todas las guías"}
+                          </button>
+                        )}
+                      </div>
                       <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
                         {(borrador.guias_disponibles || []).map((g) => (
                           <label key={g.doc_id} style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 13, cursor: enviando ? "default" : "pointer" }}>
@@ -301,51 +381,175 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
                     </div>
                   </div>
 
-                  {/* Líneas */}
+                  {/* Líneas (2026-10-24: editables — cantidad hasta la de la guía, observación, quitar; y productos agregados) */}
                   <div style={{ border: "1px solid var(--border)", borderRadius: 10, overflow: "hidden" }}>
-                    <div style={{ maxHeight: 250, overflow: "auto" }}>
-                      <table className="data-table" style={{ width: "100%", minWidth: 520 }}>
+                    <div style={{ maxHeight: 380, overflow: "auto" }}>
+                      <table className="data-table" style={{ width: "100%", minWidth: 560 }}>
                         <thead>
                           <tr>
                             {variasGuias && <th style={{ textAlign: "left" }}>Guía</th>}
                             <th style={{ textAlign: "left" }}>SKU</th>
-                            <th style={{ textAlign: "left" }}>Producto</th>
+                            <th style={{ textAlign: "left" }}>Producto y observación</th>
                             <th style={{ textAlign: "right" }}>Cant.</th>
                             <th style={{ textAlign: "right" }}>Neto unit.</th>
                             <th style={{ textAlign: "right" }}>Neto</th>
+                            <th style={{ width: 34 }} />
                           </tr>
                         </thead>
                         <tbody>
-                          {borrador.lineas.map((l) => (
-                            <tr key={l.detalle_id}>
-                              {variasGuias && <td style={{ whiteSpace: "nowrap" }}>{l.guia}</td>}
-                              <td style={{ whiteSpace: "nowrap", fontWeight: 600 }}>{l.sku || "—"}</td>
-                              <td style={{ overflowWrap: "anywhere" }}>
-                                {l.producto || "—"}
-                                {l.nota && <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{l.nota}</div>}
-                                {l.enlazada === false && (
-                                  <div style={{ fontSize: 11, color: "#92400e" }}>
-                                    Copiada, no enlazada: la usó la factura {l.consumida_por || "anulada"}. Descuenta stock
-                                    {l.stock_bsale != null ? ` (Bsale tiene ${Number(l.stock_bsale).toLocaleString("es-CL")})` : ""}.
+                          {borrador.lineas.map((l) => {
+                            const e = edits[l.detalle_id] || { cantidad: String(l.cantidad), nota: l.nota || "", quitada: false };
+                            const cant = cantidadDe(l);
+                            const mala = !e.quitada && (!(cant > 0) || cant > l.cantidad);
+                            return (
+                              <tr key={l.detalle_id} style={e.quitada ? { opacity: 0.45 } : undefined}>
+                                {variasGuias && <td style={{ whiteSpace: "nowrap", verticalAlign: "top" }}>{l.guia}</td>}
+                                <td style={{ whiteSpace: "nowrap", fontWeight: 600, verticalAlign: "top", textDecoration: e.quitada ? "line-through" : "none" }}>{l.sku || "—"}</td>
+                                <td style={{ overflowWrap: "anywhere", whiteSpace: "normal", minWidth: 180 }}>
+                                  <div style={{ textDecoration: e.quitada ? "line-through" : "none" }}>{l.producto || "—"}</div>
+                                  {e.quitada ? (
+                                    <div style={{ fontSize: 11, color: "var(--text-muted)" }}>No se factura.</div>
+                                  ) : (
+                                    <input
+                                      className="input"
+                                      value={e.nota}
+                                      onChange={(ev) => cambiarEdit(l.detalle_id, { nota: ev.target.value.slice(0, borrador.observacion_max || 250) })}
+                                      disabled={!!enviando}
+                                      placeholder="Observación de la línea (opcional)"
+                                      title={l.nota_guia ? `En la guía: ${l.nota_guia}` : "Observación que irá en la línea de la factura"}
+                                      style={{ width: "100%", height: 26, fontSize: 11.5, marginTop: 3, padding: "0 6px" }}
+                                    />
+                                  )}
+                                  {l.enlazada === false && (
+                                    <div style={{ fontSize: 11, color: "#92400e", marginTop: 2 }}>
+                                      Copiada, no enlazada: la usó la factura {l.consumida_por || "anulada"}. Descuenta stock
+                                      {l.stock_bsale != null ? ` (Bsale tiene ${Number(l.stock_bsale).toLocaleString("es-CL")})` : ""}.
+                                    </div>
+                                  )}
+                                </td>
+                                <td style={{ textAlign: "right", whiteSpace: "nowrap", verticalAlign: "top" }}>
+                                  {e.quitada ? (
+                                    Number(l.cantidad).toLocaleString("es-CL")
+                                  ) : (
+                                    <input
+                                      className="input"
+                                      inputMode="decimal"
+                                      value={e.cantidad}
+                                      onChange={(ev) => cambiarEdit(l.detalle_id, { cantidad: ev.target.value.replace(/[^\d.,]/g, "").slice(0, 9) })}
+                                      disabled={!!enviando}
+                                      title={`En la guía: ${Number(l.cantidad).toLocaleString("es-CL")}. Se puede facturar menos, no más.`}
+                                      style={{ width: 70, height: 28, textAlign: "right", fontSize: 12.5, padding: "0 6px", borderColor: mala ? "#dc2626" : undefined }}
+                                    />
+                                  )}
+                                  {!e.quitada && !mala && cant !== l.cantidad && (
+                                    <div style={{ fontSize: 10.5, color: "#92400e" }}>de {Number(l.cantidad).toLocaleString("es-CL")}</div>
+                                  )}
+                                  {mala && <div style={{ fontSize: 10.5, color: "#b91c1c" }}>máx. {Number(l.cantidad).toLocaleString("es-CL")}</div>}
+                                </td>
+                                <td style={{ textAlign: "right", whiteSpace: "nowrap", verticalAlign: "top" }} title="El precio lo fija la guía en Bsale">{clp(l.neto_unitario)}</td>
+                                <td style={{ textAlign: "right", whiteSpace: "nowrap", fontWeight: 600, verticalAlign: "top" }}>{e.quitada ? "—" : clp(netoLinea(cant, l.neto_unitario_raw ?? l.neto_unitario))}</td>
+                                <td style={{ textAlign: "center", padding: "4px 2px", verticalAlign: "top" }}>
+                                  <button
+                                    type="button"
+                                    className="btn btn-ghost btn-sm"
+                                    onClick={() => cambiarEdit(l.detalle_id, { quitada: !e.quitada })}
+                                    disabled={!!enviando}
+                                    title={e.quitada ? "Volver a incluir esta línea" : "No facturar esta línea"}
+                                    style={{ padding: 4, height: "auto", minHeight: 24 }}
+                                  >
+                                    {e.quitada ? <RotateCcw size={13} /> : <Trash2 size={13} />}
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                          {extras.map((x) => {
+                            const cant = numero(x.cantidad);
+                            const unit = numero(x.neto_unitario);
+                            return (
+                              <tr key={x.key} style={{ background: "#fffbeb" }}>
+                                {variasGuias && <td style={{ whiteSpace: "nowrap", verticalAlign: "top", color: "var(--text-muted)" }}>—</td>}
+                                <td style={{ whiteSpace: "nowrap", fontWeight: 600, verticalAlign: "top" }}>{x.sku}</td>
+                                <td style={{ overflowWrap: "anywhere", whiteSpace: "normal", minWidth: 180 }}>
+                                  <div>
+                                    {x.producto || x.sku} <span style={{ fontSize: 10.5, color: "#92400e", fontWeight: 600 }}>agregado · no viene en la guía</span>
                                   </div>
-                                )}
-                              </td>
-                              <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>{Number(l.cantidad).toLocaleString("es-CL")}</td>
-                              <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>{clp(l.neto_unitario)}</td>
-                              <td style={{ textAlign: "right", whiteSpace: "nowrap", fontWeight: 600 }}>{clp(l.neto)}</td>
-                            </tr>
-                          ))}
-                          {borrador.lineas.length === 0 && (
-                            <tr><td colSpan={variasGuias ? 6 : 5} style={{ textAlign: "center", color: "var(--text-muted)", padding: 18 }}>Sin productos.</td></tr>
+                                  <input
+                                    className="input"
+                                    value={x.nota}
+                                    onChange={(ev) => cambiarExtra(x.key, { nota: ev.target.value.slice(0, borrador.observacion_max || 250) })}
+                                    disabled={!!enviando}
+                                    placeholder="Observación de la línea (opcional)"
+                                    style={{ width: "100%", height: 26, fontSize: 11.5, marginTop: 3, padding: "0 6px" }}
+                                  />
+                                </td>
+                                <td style={{ textAlign: "right", whiteSpace: "nowrap", verticalAlign: "top" }}>
+                                  <input
+                                    className="input"
+                                    inputMode="decimal"
+                                    value={x.cantidad}
+                                    onChange={(ev) => cambiarExtra(x.key, { cantidad: ev.target.value.replace(/[^\d.,]/g, "").slice(0, 9) })}
+                                    disabled={!!enviando}
+                                    style={{ width: 70, height: 28, textAlign: "right", fontSize: 12.5, padding: "0 6px", borderColor: cant > 0 ? undefined : "#dc2626" }}
+                                  />
+                                </td>
+                                <td style={{ textAlign: "right", whiteSpace: "nowrap", verticalAlign: "top" }}>
+                                  <input
+                                    className="input"
+                                    inputMode="decimal"
+                                    value={x.neto_unitario}
+                                    onChange={(ev) => cambiarExtra(x.key, { neto_unitario: ev.target.value.replace(/[^\d.,]/g, "").slice(0, 12) })}
+                                    disabled={!!enviando}
+                                    placeholder="Neto"
+                                    title="Precio neto unitario"
+                                    style={{ width: 92, height: 28, textAlign: "right", fontSize: 12.5, padding: "0 6px", borderColor: unit >= 0 ? undefined : "#dc2626" }}
+                                  />
+                                </td>
+                                <td style={{ textAlign: "right", whiteSpace: "nowrap", fontWeight: 600, verticalAlign: "top" }}>{clp(netoLinea(cant, unit))}</td>
+                                <td style={{ textAlign: "center", padding: "4px 2px", verticalAlign: "top" }}>
+                                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => setExtras((prev) => prev.filter((y) => y.key !== x.key))} disabled={!!enviando} title="Quitar esta línea" style={{ padding: 4, height: "auto", minHeight: 24 }}>
+                                    <Trash2 size={13} />
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                          {borrador.lineas.length === 0 && extras.length === 0 && (
+                            <tr><td colSpan={variasGuias ? 7 : 6} style={{ textAlign: "center", color: "var(--text-muted)", padding: 18 }}>Sin productos.</td></tr>
                           )}
                         </tbody>
                       </table>
                     </div>
-                    <div style={{ display: "flex", justifyContent: "flex-end", flexWrap: "wrap", gap: "4px 22px", padding: "10px 14px", borderTop: "1px solid var(--border)", background: "var(--bg)", fontSize: 13 }}>
-                      <span>Neto <b>{clp(borrador.totales.neto)}</b></span>
-                      <span>IVA 19% <b>{clp(borrador.totales.iva)}</b></span>
-                      <span style={{ fontSize: 14 }}>Total <b>{clp(borrador.totales.total)}</b></span>
+                    <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", flexWrap: "wrap", gap: "4px 22px", padding: "10px 14px", borderTop: "1px solid var(--border)", background: "var(--bg)", fontSize: 13 }}>
+                      {editada && <span style={{ marginRight: "auto", color: "#92400e", fontSize: 12 }}>Factura editada respecto a la guía.</span>}
+                      <span>Neto <b>{clp(totalesEdit.neto)}</b></span>
+                      <span>IVA 19% <b>{clp(totalesEdit.iva)}</b></span>
+                      <span style={{ fontSize: 14 }}>Total <b>{clp(totalesEdit.total)}</b></span>
                     </div>
+                  </div>
+
+                  {/* Agregar un producto del catálogo que no viene en la guía (línea libre: descuenta stock) */}
+                  <div style={{ position: "relative", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                    <Search size={13} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
+                    <input
+                      className="input"
+                      value={qProducto}
+                      onChange={(e) => setQProducto(e.target.value)}
+                      disabled={!!enviando}
+                      placeholder="Agregar producto que no viene en la guía (SKU o nombre)…"
+                      style={{ flex: "1 1 240px", minWidth: 0, height: 30, fontSize: 12.5 }}
+                    />
+                    {buscandoProd && <Loader2 size={13} className="spin" style={{ color: "var(--text-muted)" }} />}
+                    {productos.length > 0 && qProducto.trim().length >= 2 && (
+                      <div style={{ position: "absolute", left: 0, right: 0, top: "100%", zIndex: 5, background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 8, boxShadow: "var(--shadow-lg)", maxHeight: 200, overflow: "auto" }}>
+                        {productos.slice(0, 12).map((p) => (
+                          <button key={p.sku} type="button" onClick={() => agregarExtra(p)} style={{ display: "flex", justifyContent: "space-between", gap: 8, width: "100%", textAlign: "left", padding: "7px 10px", background: "none", border: "none", cursor: "pointer", fontSize: 12.5 }}>
+                            <span style={{ minWidth: 0, overflowWrap: "anywhere" }}><b>{p.sku}</b> · {p.nombre}</span>
+                            <span style={{ color: "var(--text-muted)", whiteSpace: "nowrap" }}>{p.lista1 ? clp(p.lista1) : ""}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </div>
 
                   {/* Decisiones */}
@@ -385,9 +589,9 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
                     )}
                     <div style={{ flex: "2 1 240px", minWidth: 0, fontSize: 12, color: "var(--text-muted)", lineHeight: 1.45, overflowWrap: "anywhere" }}>
                       La factura referencia:{" "}
-                      {borrador.referencias.map((r) => (r.codigo_sii === 801 ? `orden de compra ${borrador.oc_editable ? (oc.trim().toUpperCase() || r.numero) : r.numero}` : `guía ${r.folio}`)).join(" · ") || "nada"}.
-                      {borrador.lineas.some((l) => l.enlazada === false)
-                        ? "Las líneas copiadas (Bsale ya las usó en una factura anulada) descuentan stock; las enlazadas a la guía, no."
+                      {borrador.referencias.map((r) => (r.codigo_sii === 801 ? `orden de compra ${borrador.oc_editable ? (oc.trim().toUpperCase() || r.numero) : r.numero}` : `guía ${r.folio}`)).join(" · ") || "nada"}.{" "}
+                      {borrador.lineas.some((l) => l.enlazada === false) || extras.length > 0
+                        ? "Las líneas de la guía quedan enlazadas a ella (no descuentan stock otra vez); las copiadas y las agregadas sí descuentan stock."
                         : "Las líneas quedan enlazadas a la guía, así que el stock no se descuenta de nuevo."}
                     </div>
                   </div>
@@ -443,7 +647,7 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
                 ? "Emitiendo…"
                 : borrador?.recuperar
                   ? `Registrar la factura ${borrador.recuperar.numero}`
-                  : `2. Emitir factura oficial por ${clp(borrador?.totales?.total)}`}
+                  : `2. Emitir factura oficial por ${clp(totalesEdit.total)}`}
             </button>
           )}
         </div>
