@@ -24,6 +24,8 @@ export default function CorreoComposer({
   const [enviando, setEnviando] = useState(false);
   const [error, setError] = useState("");
   const [enviado, setEnviado] = useState(false);
+  // (2026-10-23) Aviso del servidor al enviar: p. ej. la conexión de Google caducó y el correo salió por la cuenta compartida.
+  const [avisoEnvio, setAvisoEnvio] = useState("");
 
   const [para, setPara] = useState("");
   const [cc, setCc] = useState("");
@@ -130,7 +132,7 @@ export default function CorreoComposer({
     }
     setEnviando(true);
     try {
-      await api.post("/correos/enviar", {
+      const r = await api.post("/correos/enviar", {
         licitacionId,
         para: destinatario,
         cc: ccLista,
@@ -145,6 +147,7 @@ export default function CorreoComposer({
           mime: a.mime,
         })),
       });
+      setAvisoEnvio(r?.aviso ? String(r.aviso) : "");
       setEnviado(true);
       if (onSent) onSent();
     } catch (e) {
@@ -231,6 +234,11 @@ export default function CorreoComposer({
               <p style={{ color: "#64748b", fontSize: 14, margin: 0 }}>
                 Se envió a {para}.
               </p>
+              {avisoEnvio && (
+                <p style={{ margin: "14px auto 0", maxWidth: 480, padding: "10px 12px", borderRadius: 8, border: "1px solid #fde68a", background: "#fffbeb", color: "#92400e", fontSize: 13, lineHeight: 1.45, textAlign: "left" }}>
+                  {avisoEnvio}
+                </p>
+              )}
             </div>
           ) : (
             <>
