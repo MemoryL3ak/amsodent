@@ -32,8 +32,10 @@ import {
   useSortable,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { GripVertical, Plus, Minus, Trash2, ChevronUp, ChevronDown, MessageSquare } from "lucide-react";
+import { GripVertical, Plus, Minus, Trash2, ChevronUp, ChevronDown, MessageSquare, AlertTriangle } from "lucide-react";
 import { condicionParaCotizacion } from "../lib/condicionesVenta";
+import { leerGiros, tieneGiro } from "../lib/giros";
+import { GirosRapidos } from "../components/GirosEditor";
 import { escucharProductosActualizados, itemEsDelProducto } from "../lib/productosCanal";
 import { REGIONES_CHILE, filtrarOpcionComuna } from "../constants/regiones";
 
@@ -410,6 +412,8 @@ export default function CrearLicitacion() {
   // Lista de clientes para autocompletar la entidad por RUT o por nombre.
   const [clientesLista, setClientesLista] = useState([]);
   const [giro, setGiro] = useState("");
+  // (2026-10-23) Giros de la ficha del cliente elegido: pastillas bajo el campo Giro.
+  const [girosCliente, setGirosCliente] = useState([]);
   const [tipoCliente, setTipoCliente] = useState(""); // "Entidad Pública" | "Cliente Particular" | ""
   // Preview del próximo correlativo para cliente particular (max(id)+1 al momento de la consulta).
   const [idPreview, setIdPreview] = useState(null);
@@ -540,6 +544,11 @@ export default function CrearLicitacion() {
       telefono: data.telefono || "",
       email: data.email || "",
     });
+    // (2026-10-23) Giros de la ficha: se propone el principal (salvo que el
+    // escrito ya sea uno de ellos) y los demás quedan como pastillas.
+    const girosFicha = leerGiros(data);
+    setGirosCliente(girosFicha);
+    if (girosFicha.length) setGiro((g) => (tieneGiro(girosFicha, g) ? g : girosFicha[0]));
     setCondVenta(condicionParaCotizacion(data.condiciones_venta));
     const tc = (data.tipo_cliente || "").toString().trim();
     if (tc) {
@@ -616,6 +625,33 @@ export default function CrearLicitacion() {
     return () => { activo = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rutEntidad]);
+
+  /* (2026-10-23) Bloqueo por cobranza del cliente, consultado apenas el RUT
+     queda completo (escrito, elegido del autocompletar o prellenado desde un
+     borrador). Antes el vendedor recién se enteraba al apretar Guardar, con
+     toda la cotización armada. Ahora el aviso aparece bajo el RUT y el botón
+     Guardar queda deshabilitado mientras el cliente siga bloqueado; el
+     backend sigue validando al guardar como respaldo. Depende también del
+     tipo de cliente porque el umbral cambia (60 días particular / 120 público). */
+  const [estadoMora, setEstadoMora] = useState(null);
+  useEffect(() => {
+    const rut = (rutEntidad || "").trim();
+    const compacto = rut.replace(/[^0-9kK]/g, "");
+    if (!/^\d{7,8}[0-9kK]$/.test(compacto)) { setEstadoMora(null); return; }
+    let activo = true;
+    const timer = setTimeout(async () => {
+      try {
+        const data = await api.get(
+          `/licitaciones/cliente-mora?rut=${encodeURIComponent(rut)}&tipo=${encodeURIComponent(tipoCliente || "")}`
+        );
+        if (activo) setEstadoMora(data && typeof data === "object" ? data : null);
+      } catch {
+        if (activo) setEstadoMora(null);
+      }
+    }, 350);
+    return () => { activo = false; clearTimeout(timer); };
+  }, [rutEntidad, tipoCliente]);
+  const clienteBloqueado = !!estadoMora?.bloqueado;
 
   // Elige una sucursal manualmente: guarda su nombre y trae sus datos de despacho.
   function elegirSucursal(nombre) {
@@ -1658,11 +1694,17 @@ export default function CrearLicitacion() {
       // nunca se persistía).
       const tcActual = (existe.tipo_cliente || "").toString().trim();
       const tcNuevo = (tipoCliente || "").toString().trim();
-      if (tcNuevo && tcNuevo !== tcActual) {
+      const cambios = {};
+      if (tcNuevo && tcNuevo !== tcActual) cambios.tipo_cliente = tcNuevo;
+      // (2026-10-23) Un giro escrito en la cotización que la ficha no tiene se
+      // suma a sus giros (el backend lo manda a Bsale si el RUT ya está allá).
+      const giroCot = (giro || "").trim();
+      if (giroCot && !tieneGiro(leerGiros(existe), giroCot)) cambios.giros = [...leerGiros(existe), giroCot];
+      if (Object.keys(cambios).length) {
         try {
-          await api.put(`/clientes/${existe.id}`, { tipo_cliente: tcNuevo });
+          await api.put(`/clientes/${existe.id}`, cambios);
         } catch (errUpd) {
-          console.warn("No se pudo actualizar tipo_cliente del cliente existente:", errUpd);
+          console.warn("No se pudo actualizar la ficha del cliente existente:", errUpd);
           // No bloqueamos la creación de la cotización por esto.
         }
       }
@@ -1685,6 +1727,8 @@ export default function CrearLicitacion() {
         telefono,
         condiciones_venta: condVenta,
         tipo_cliente: tipoCliente || null,
+        // (2026-10-23) El giro de la cotización queda como primer giro de la ficha.
+        giro: giro || null,
         vendedor_asignado: esParticular ? ((perfilEmail || "").trim() || null) : null,
       });
     } catch (error) {
@@ -1703,6 +1747,7 @@ export default function CrearLicitacion() {
     setRutEntidad("");
     setNombreEntidad("");
     setGiro("");
+    setGirosCliente([]);
     setTipoCliente("");
     setDepartamento("");
     setMunicipalidad("");
@@ -1917,18 +1962,22 @@ export default function CrearLicitacion() {
       return;
     }
 
-    // Pre-check de bloqueo por mora del cliente (el backend lo valida igual al
-    // guardar, esto solo evita el trabajo previo y avisa de inmediato).
+    // Respaldo del bloqueo por cobranza: el aviso principal vive bajo el RUT
+    // (efecto `estadoMora`) y con él el botón Guardar queda deshabilitado, así
+    // que normalmente no se llega aquí. Se repite la consulta por si aquella
+    // falló (red) o el cliente quedó bloqueado mientras se armaba la cotización;
+    // el backend lo valida igual al insertar.
     try {
-      const estadoMora = await api.get(
+      const chequeo = await api.get(
         `/licitaciones/cliente-mora?rut=${encodeURIComponent(rutEntidad)}&tipo=${encodeURIComponent(tipoCliente || "")}`
       );
-      if (estadoMora?.bloqueado) {
+      if (chequeo?.bloqueado) {
+        setEstadoMora(chequeo);
         guardandoRef.current = false;
         setGuardando(false);
         setToast({
           type: "error",
-          message: `Cliente bloqueado por deuda: ${estadoMora.diasAtrasoMax} días de atraso (máximo ${estadoMora.umbral}). Regulariza en Cobranza o solicita desbloqueo a un administrador.`,
+          message: `Cliente bloqueado por deuda: ${chequeo.diasAtrasoMax} días de atraso (máximo ${chequeo.umbral}). Regulariza en Cobranza o solicita desbloqueo a un administrador.`,
         });
         return;
       }
@@ -2791,8 +2840,18 @@ export default function CrearLicitacion() {
         <div className="surface-body">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
+            <label className="flex flex-wrap items-center gap-2 text-sm font-medium text-gray-700 mb-1">
               RUT *
+              {clienteBloqueado && (
+                <span
+                  className="inline-flex items-center gap-1 rounded-full border border-red-200 bg-red-100 px-2 py-0.5 text-[11px] font-bold text-red-700"
+                  title={estadoMora.override === "bloqueado"
+                    ? "Bloqueado manualmente por un administrador"
+                    : `Mora de ${estadoMora.diasAtrasoMax} días (máximo ${estadoMora.umbral})`}
+                >
+                  <AlertTriangle size={11} /> Bloqueado
+                </span>
+              )}
             </label>
             <ClienteAutocomplete
               modo="rut"
@@ -2801,7 +2860,7 @@ export default function CrearLicitacion() {
               onPick={(c) => buscarClientePorRut(c.rut)}
               onBlur={() => buscarClientePorRut(rutEntidad)}
               clientes={clientesSugeridos}
-              className="w-full rounded-md border border-gray-300 px-3 py-2"
+              className={`w-full rounded-md border px-3 py-2 ${clienteBloqueado ? "border-red-400 bg-red-50" : "border-gray-300"}`}
               placeholder="Busca o escribe el RUT…"
             />
           </div>
@@ -2832,7 +2891,37 @@ export default function CrearLicitacion() {
               onChange={(e) => setGiro(e.target.value)}
               placeholder="Ej: Servicios dentales"
             />
+            {/* (2026-10-23) Los giros de la ficha del cliente, para elegir uno con un clic. */}
+            <GirosRapidos giros={girosCliente} value={giro} onChange={setGiro} />
           </div>
+
+          {/* Bloqueo por cobranza: se muestra apenas se ingresa el RUT, no al guardar. */}
+          {clienteBloqueado && (
+            <div
+              role="alert"
+              className="md:col-span-3 flex flex-wrap items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900"
+            >
+              <AlertTriangle size={16} className="mt-0.5 shrink-0" />
+              <div className="min-w-0 flex-1">
+                <b>
+                  Cliente bloqueado {estadoMora.override === "bloqueado" ? "por un administrador" : "por deuda"}.
+                </b>{" "}
+                {estadoMora.override === "bloqueado"
+                  ? `El bloqueo es manual${Number(estadoMora.diasAtrasoMax) > 0 ? ` (mora de ${estadoMora.diasAtrasoMax} días)` : ""}: solo un administrador puede levantarlo desde la ficha del cliente.`
+                  : `${estadoMora.diasAtrasoMax} días de atraso (máximo permitido ${estadoMora.umbral})${
+                      Number(estadoMora.montoVencido) > 0
+                        ? `, $${Math.round(Number(estadoMora.montoVencido)).toLocaleString("es-CL")} vencidos`
+                        : ""
+                    }. Regulariza en Cobranza o solicita el desbloqueo a un administrador.`}{" "}
+                No se puede guardar la cotización mientras siga bloqueado.
+              </div>
+            </div>
+          )}
+          {!clienteBloqueado && estadoMora?.override === "desbloqueado" && estadoMora?.autoBloqueado && (
+            <div className="md:col-span-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900">
+              Cliente desbloqueado manualmente por un administrador (mora de {estadoMora.diasAtrasoMax} días).
+            </div>
+          )}
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -3685,8 +3774,9 @@ export default function CrearLicitacion() {
 
         <button
           onClick={guardarLicitacion}
-          disabled={guardando || generandoPDF}
-          className={`btn btn-primary ${guardando || generandoPDF ? "opacity-60 cursor-not-allowed" : ""}`}
+          disabled={guardando || generandoPDF || clienteBloqueado}
+          title={clienteBloqueado ? "Cliente bloqueado por cobranza: no se puede guardar la cotización" : undefined}
+          className={`btn btn-primary ${guardando || generandoPDF || clienteBloqueado ? "opacity-60 cursor-not-allowed" : ""}`}
           type="button"
         >
           Guardar Cotización
