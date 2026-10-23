@@ -4077,12 +4077,21 @@ function PanelUsuariosPortal({ setToast }) {
   async function guardar(form) {
     setGuardando(true);
     try {
-      await apiRequest("/stock-clientes/usuarios", {
+      const res = await apiRequest("/stock-clientes/usuarios", {
         method: "POST",
         body: JSON.stringify(form),
       });
       setModal(null);
-      setToast({ type: "success", titulo: "Listo", mensaje: form.id ? "Usuario actualizado." : "Usuario creado. Avísele su clave: deberá cambiarla al ingresar." });
+      // Con clave nueva (usuario nuevo o cambio de clave) el servidor se la
+      // manda por correo a la persona (2026-10-23); si no salió, se avisa.
+      const conClave = !form.id || !!form.password;
+      const base = form.id ? (form.password ? "Clave actualizada." : "Usuario actualizado.") : "Usuario creado.";
+      const mensaje = !conClave
+        ? base
+        : res?.correo_enviado
+          ? `${base} Le enviamos un correo a ${res.correo_destino || form.email} con su clave temporal; deberá cambiarla al ingresar.`
+          : `${base} No se pudo enviar el correo: avísele su clave, deberá cambiarla al ingresar.`;
+      setToast({ type: "success", titulo: "Listo", mensaje });
       cargar();
     } catch (e) {
       setToast({ type: "error", titulo: "No se pudo guardar", mensaje: e?.message || "Intente nuevamente." });

@@ -604,7 +604,9 @@ function ModalHabilitar({ clienteInicial, onCerrar, onHecho, onError }) {
       });
       const sufijo = res?.correo_enviado
         ? ` Correo de bienvenida enviado a ${res.correo_destino}.`
-        : " (No se pudo enviar el correo: el cliente no tiene correo válido).";
+        : res?.correo_destino
+          ? ` (No se pudo enviar el correo a ${res.correo_destino}${res?.correo_error ? `: ${res.correo_error}` : ""}).`
+          : " (No se pudo enviar el correo: el cliente no tiene correo válido).";
       onHecho(`Acceso habilitado para ${cliente.nombre || cliente.rut_formateado}.${sufijo}`);
     } catch (e) {
       setError(e?.message || "No se pudo habilitar el acceso.");
@@ -770,7 +772,7 @@ function ModalRegenerar({ datos, onCerrar, onHecho, onError }) {
         reenviar && res?.correo_enviado
           ? ` Correo enviado a ${res.correo_destino}.`
           : reenviar
-            ? " (No se pudo enviar el correo)."
+            ? ` (No se pudo enviar el correo${res?.correo_error ? `: ${res.correo_error}` : ""}).`
             : "";
       onHecho(`Clave regenerada para ${datos.razon_social || datos.rut}.${sufijo}`);
     } catch (e) {
@@ -1029,6 +1031,17 @@ function ModalSucursalesHabilitar({ rut, razonSocial, onCerrar, onOk, onError })
   );
 }
 
+/* Aviso tras crear un usuario o regenerarle la clave: el correo con la clave
+   temporal lo manda el servidor (2026-10-23). Si no salió, dice por qué para
+   que el equipo sepa si falta el correo o se cayó el SMTP. */
+function msgCorreoClave(prefijo, res, email) {
+  if (res?.correo_enviado) {
+    return `${prefijo} Correo con la clave temporal enviado a ${res.correo_destino || email}.`;
+  }
+  const motivo = res?.correo_error ? ` (${res.correo_error})` : "";
+  return `${prefijo} No se pudo enviar el correo${motivo}: entréguele la clave, deberá cambiarla al entrar.`;
+}
+
 /* ── Usuarios del portal por RUT (2026-09-16) ───────────────────────────
    Un RUT puede tener varias personas con su propio correo y clave, con rol
    admin (aprueba y paga) o asistente (todo lo demás). El admin del cliente
@@ -1041,9 +1054,10 @@ function ModalUsuariosPortal({ rut, razonSocial, onCerrar, onOk, onError }) {
   const [nombre, setNombre] = useState("");
   const [rol, setRol] = useState("asistente");
   const [clave, setClave] = useState(() => generarClave());
-  // Última clave generada, para que el equipo se la entregue a la persona
-  // (el sistema no se la envía por correo).
-  const [claveEntregar, setClaveEntregar] = useState(null); // {email, clave}
+  // Última clave generada. Desde el 2026-10-23 el servidor se la manda por
+  // correo a la persona; el chip queda como respaldo (y por si el correo
+  // no salió, para entregársela a mano).
+  const [claveEntregar, setClaveEntregar] = useState(null); // {email, clave, enviado}
 
   async function cargar() {
     setCargando(true);
@@ -1065,12 +1079,12 @@ function ModalUsuariosPortal({ rut, razonSocial, onCerrar, onOk, onError }) {
     if (!claveCumplePolitica(clave.trim())) return onError?.(MSG_CLAVE_POLITICA);
     setGuardando(true);
     try {
-      await api.post("/stock-clientes/accesos/usuarios", {
+      const res = await api.post("/stock-clientes/accesos/usuarios", {
         rut, email: mail, nombre: nombre.trim(), rol, password: clave.trim(),
       });
-      setClaveEntregar({ email: mail, clave: clave.trim() });
+      setClaveEntregar({ email: mail, clave: clave.trim(), enviado: !!res?.correo_enviado });
       setEmail(""); setNombre(""); setRol("asistente"); setClave(generarClave());
-      onOk?.("Usuario creado. Entréguele su clave: deberá cambiarla al entrar.");
+      onOk?.(msgCorreoClave("Usuario creado.", res, mail));
       cargar();
     } catch (e) {
       onError?.(e?.message || "No se pudo crear el usuario.");
@@ -1079,14 +1093,17 @@ function ModalUsuariosPortal({ rut, razonSocial, onCerrar, onOk, onError }) {
     }
   }
 
+  // Devuelve la respuesta del servidor, o null si falló (ya se avisó).
   async function actualizar(u, patch, msg) {
     setGuardando(true);
     try {
-      await api.post("/stock-clientes/accesos/usuarios", { rut, id: u.id, ...patch });
+      const res = await api.post("/stock-clientes/accesos/usuarios", { rut, id: u.id, ...patch });
       if (msg) onOk?.(msg);
       cargar();
+      return res;
     } catch (e) {
       onError?.(e?.message || "No se pudo actualizar el usuario.");
+      return null;
     } finally {
       setGuardando(false);
     }
@@ -1094,9 +1111,10 @@ function ModalUsuariosPortal({ rut, razonSocial, onCerrar, onOk, onError }) {
 
   async function regenerarClaveUsuario(u) {
     const nueva = generarClave();
-    await actualizar(u, { password: nueva }, null);
-    setClaveEntregar({ email: u.email, clave: nueva });
-    onOk?.(`Clave nueva para ${u.email}. Entréguesela: deberá cambiarla al entrar.`);
+    const res = await actualizar(u, { password: nueva }, null);
+    if (!res) return;
+    setClaveEntregar({ email: u.email, clave: nueva, enviado: !!res?.correo_enviado });
+    onOk?.(msgCorreoClave(`Clave nueva para ${u.email}.`, res, u.email));
   }
 
   async function eliminar(u) {
@@ -1131,6 +1149,9 @@ function ModalUsuariosPortal({ rut, razonSocial, onCerrar, onOk, onError }) {
             <span style={{ minWidth: 0, overflowWrap: "anywhere" }}>
               Clave de <strong>{claveEntregar.email}</strong>:{" "}
               <code style={{ fontWeight: 800, whiteSpace: "nowrap" }}>{claveEntregar.clave}</code>
+              <span style={{ color: claveEntregar.enviado ? "#047857" : "#b45309", marginLeft: 6 }}>
+                {claveEntregar.enviado ? "· enviada por correo" : "· el correo no salió: entréguesela"}
+              </span>
             </span>
             <button
               style={{ ...s.accBtn, marginLeft: "auto", flexShrink: 0 }}
