@@ -33,8 +33,8 @@ export class UsuariosController {
   // permitía a cualquier usuario asignarse rol admin).
   @Put('profiles/:id')
   @UseGuards(AdminGuard)
-  updateProfile(@Param('id') id: string, @Body() body: any) {
-    return this.usuariosService.updateProfile(id, body);
+  updateProfile(@Param('id') id: string, @Body() body: any, @Req() req: any) {
+    return this.usuariosService.updateProfile(id, body, (req?.user?.email || '').toLowerCase());
   }
 
   @Delete('profiles/:id')

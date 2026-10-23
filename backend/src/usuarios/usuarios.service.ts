@@ -1,9 +1,11 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
+import { Injectable, BadRequestException, Logger } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
 import { olvidarBloqueados } from '../auth/bloqueados';
 
 @Injectable()
 export class UsuariosService {
+  private readonly logger = new Logger('UsuariosService');
+
   constructor(private supabase: SupabaseService) {}
 
   async getProfiles() {
@@ -64,7 +66,7 @@ export class UsuariosService {
     return data;
   }
 
-  async updateProfile(id: string, body: Record<string, any>) {
+  async updateProfile(id: string, body: Record<string, any>, actorEmail?: string) {
     // Whitelist de campos (contención auditoría 2026-09-04): solo lo que la
     // pantalla de usuarios edita. Nada de mass assignment sobre profiles.
     const PERMITIDOS = ['nombre', 'rol', 'permission_profile_id', 'avatar_url', 'email_alterno'];
@@ -77,23 +79,132 @@ export class UsuariosService {
       }
       patch.email_alterno = e || null;
     }
+
+    const client = this.supabase.getClient();
+
+    /* (2026-10-22) Cambio del correo de acceso. Hasta ahora era de solo
+       lectura: la única salida era borrar la cuenta y crearla de nuevo,
+       perdiendo perfil, foto y oficinas. Auth es la fuente de verdad del
+       login, así que se cambia primero ahí (confirmado, sin correo de
+       verificación) y después se refleja en profiles. No puede quedar vacío:
+       es el identificador con el que la persona entra. */
+    let emailAnterior: string | null = null;
+    if (body?.email !== undefined) {
+      const nuevo = String(body.email || '').trim().toLowerCase();
+      if (!nuevo) {
+        throw new BadRequestException(
+          'El correo de acceso no puede quedar vacío: es con el que la persona inicia sesión. Reemplázalo por otro.',
+        );
+      }
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(nuevo)) {
+        throw new BadRequestException('El correo de acceso no es un email válido.');
+      }
+      const { data: actual, error: errActual } = await client
+        .from('profiles')
+        .select('*')
+        .eq('id', id)
+        .maybeSingle();
+      if (errActual) throw new BadRequestException(errActual.message);
+      if (!actual) throw new BadRequestException('Usuario no encontrado.');
+
+      const previo = String(actual.email || '').trim().toLowerCase();
+      if (previo !== nuevo) {
+        const alterno = patch.email_alterno !== undefined
+          ? patch.email_alterno
+          : String(actual.email_alterno || '').trim().toLowerCase() || null;
+        if (alterno && alterno === nuevo) {
+          throw new BadRequestException('El correo alterno no puede ser el mismo que el de acceso.');
+        }
+        if (await this.correoEnUsoPorOtro(nuevo, id)) {
+          throw new BadRequestException('Ya existe otro usuario con ese correo (como acceso o como alterno).');
+        }
+        const { error: errAuth } = await client.auth.admin.updateUserById(id, {
+          email: nuevo,
+          email_confirm: true,
+        } as any);
+        if (errAuth) {
+          const msg = (errAuth.message || '').toLowerCase();
+          if (msg.includes('already') || msg.includes('registered') || msg.includes('exists')) {
+            throw new BadRequestException('Ya existe una cuenta con ese correo en Supabase Auth.');
+          }
+          throw new BadRequestException(`No se pudo cambiar el correo de acceso: ${errAuth.message}`);
+        }
+        patch.email = nuevo;
+        emailAnterior = previo || null;
+      }
+    }
+
     if (Object.keys(patch).length === 0) {
       throw new BadRequestException('Nada que actualizar.');
     }
-    const { data, error } = await this.supabase.getClient()
+    const { data, error } = await client
       .from('profiles')
       .update(patch)
       .eq('id', id)
       .select()
       .single();
     if (error) {
+      // Auth ya quedó con el correo nuevo: se devuelve al anterior para no
+      // dejar login y perfil desalineados.
+      if (emailAnterior && patch.email) {
+        await client.auth.admin
+          .updateUserById(id, { email: emailAnterior, email_confirm: true } as any)
+          .catch(() => undefined);
+      }
       throw new BadRequestException(
         /email_alterno/i.test(error.message || '')
           ? 'Falta aplicar la migración 20260910_profiles_email_alterno.sql en Supabase.'
           : error.message,
       );
     }
+
+    if (emailAnterior && patch.email) {
+      await this.revincularCorreo(emailAnterior, patch.email);
+      this.logger.log(
+        `Correo de acceso cambiado: ${emailAnterior} → ${patch.email} (por ${actorEmail || 'sistema'})`,
+      );
+    }
     return data;
+  }
+
+  // ¿Otro perfil ya usa ese correo, como acceso o como alterno? Los correos
+  // se guardan en minúsculas, así que la comparación exacta basta.
+  private async correoEnUsoPorOtro(email: string, id: string): Promise<boolean> {
+    const client = this.supabase.getClient();
+    let res = await client
+      .from('profiles')
+      .select('id')
+      .neq('id', id)
+      .or(`email.eq.${email},email_alterno.eq.${email}`)
+      .limit(1);
+    // Migración 20260910_profiles_email_alterno pendiente: solo por email.
+    if (res.error && /email_alterno/i.test(res.error.message || '')) {
+      res = await client.from('profiles').select('id').neq('id', id).eq('email', email).limit(1);
+    }
+    if (res.error) throw new BadRequestException(res.error.message);
+    return (res.data || []).length > 0;
+  }
+
+  /* Tablas que apuntan al usuario por su correo como vínculo VIVO (no como
+     historial) se mueven al correo nuevo. El historial (bitácora, ventas,
+     marcajes…) queda con el correo anterior y se resuelve por email_alterno,
+     que para eso existe: por eso la pantalla propone conservar el correo
+     anterior como alterno al cambiarlo. Cada paso es best-effort: una tabla
+     sin migrar o un choque de unicidad no deben deshacer el cambio. */
+  private async revincularCorreo(anterior: string, nuevo: string) {
+    const client = this.supabase.getClient();
+    const pasos: Array<{ tabla: string; col: string }> = [
+      { tabla: 'marcaje_oficina_trabajadores', col: 'trabajador_email' },
+      { tabla: 'rrhh_empleados', col: 'email' },
+    ];
+    for (const p of pasos) {
+      try {
+        const { error } = await client.from(p.tabla).update({ [p.col]: nuevo }).eq(p.col, anterior);
+        if (error) this.logger.warn(`No se pudo re-vincular ${p.tabla}.${p.col}: ${error.message}`);
+      } catch (e: any) {
+        this.logger.warn(`No se pudo re-vincular ${p.tabla}.${p.col}: ${e?.message || e}`);
+      }
+    }
   }
 
   async deleteProfile(id: string) {

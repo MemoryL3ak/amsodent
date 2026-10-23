@@ -929,7 +929,8 @@ export const GRUPOS_MANUAL = [
         quien: "Administración",
         resumen: "Cuentas, roles y perfiles de permisos por módulo.",
         funciones: [
-          "Crear usuario (genera contraseña temporal), editar, reset de clave y eliminar.",
+          "Crear usuario (genera contraseña temporal), editar (nombre, rol, perfil, correo de acceso y oficinas de marcaje), reset de clave y eliminar.",
+          "Cambiar el correo de acceso: desde Editar usuario; la persona entra con el nuevo correo y su contraseña de siempre. Al cambiarlo se ofrece conservar el correo anterior como alterno para que su historial siga apareciendo a su nombre.",
           "Correo alterno: cada usuario puede tener una segunda casilla asociada (ej: personal + corporativa) y la plataforma reconoce ambas como la misma persona — nombres en paneles, resolución de vendedor y envío de correos.",
           "Perfiles de permisos: eligen módulo por módulo qué ve un usuario, por sobre el fallback de su rol.",
           "También existen cuentas internas sin correo real (username + dominio interno) creadas por el admin.",

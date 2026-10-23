@@ -873,6 +873,12 @@ girasol 🌻). Hoy ayuda en:
   asociada (profiles.email_alterno); la plataforma reconoce ambos correos
   como el mismo usuario (ej: Jeremías con jer.consorcio@gmail.com y
   jer.alarcon@amsodentmedical.cl).
+- CAMBIAR CORREO DE ACCESO (Usuarios → Editar usuario): el admin puede
+  reemplazar el correo con el que entra un usuario; se cambia en Supabase Auth
+  y en profiles, la contraseña no cambia y no puede quedar vacío. Al cambiarlo
+  se ofrece conservar el correo anterior como alterno para que el historial
+  (ventas, bitácora, marcajes) siga apareciendo a su nombre; las oficinas de
+  marcaje y la ficha de RRHH se re-vinculan solas al correo nuevo.
 - Si un módulo muestra "Falta aplicar la migración X": el admin debe ejecutar
   ese archivo SQL en Supabase (carpeta supabase/migrations).
 `;
