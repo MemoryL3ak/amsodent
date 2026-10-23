@@ -587,6 +587,23 @@ export class BsaleFacturacionService {
     return out;
   }
 
+  /* Stock de una variante en Bsale (en la sucursal de la guía, si hay una) y
+     si el producto admite quedar en negativo. Nunca lanza: sin dato, null. */
+  private async stockVariante(varianteId: number, oficinaId: number | null): Promise<{ stock: number; permite_negativo: boolean } | null> {
+    try {
+      const [v, s] = await Promise.all([
+        this.apiGet(`/variants/${varianteId}.json`),
+        this.apiGet(`/stocks.json?variantid=${varianteId}${oficinaId ? `&officeid=${oficinaId}` : ''}&limit=50`),
+      ]);
+      const items: any[] = s?.items || [];
+      const stock = items.reduce((a, x) => a + (Number(x?.quantityAvailable ?? x?.quantity) || 0), 0);
+      return { stock, permite_negativo: Number(v?.allowNegativeStock) === 1 || Number(v?.unlimitedStock) === 1 };
+    } catch (e: any) {
+      this.logger.warn(`No se pudo leer el stock de la variante ${varianteId} en Bsale: ${String(e?.message || e).slice(0, 120)}`);
+      return null;
+    }
+  }
+
   /* (2026-10-16) Lo mismo con lo registrado en el SISTEMA: una factura cuyas
      notas de crédito (hijas por deriva_de_id, en BRUTO) suman al menos su total
      (neto × 1,19) está anulada y no cuenta como factura de la guía. Sin monto
@@ -1019,6 +1036,7 @@ export class BsaleFacturacionService {
         enlazada: true,
         consumida_por: null as string | null,
         repuesto: null as number | null,
+        stock_bsale: null as number | null,
       }));
       if (!lineasGuia.length) problemas.push({ codigo: 'guia_sin_lineas', mensaje: `La guía ${doc.number} no tiene productos en Bsale.` });
       if (lineasGuia.some((l) => !(l.cantidad > 0) || !l.detalle_id)) {
@@ -1135,6 +1153,21 @@ export class BsaleFacturacionService {
           l.enlazada = false;
           l.consumida_por = c.factura;
           l.repuesto = c.repuesto;
+        }
+        /* Una línea copiada descuenta stock de verdad. Si el producto no admite
+           stock negativo en Bsale y no alcanza, Bsale rechazaría la factura:
+           mejor decirlo aquí, con el número, que recibir el rechazo. */
+        const oficina = sucursales.size === 1 ? [...sucursales][0] : null;
+        for (const l of lineas.filter((x) => !x.enlazada && x.variante_id)) {
+          const st = await this.stockVariante(l.variante_id!, oficina);
+          if (!st) continue;
+          l.stock_bsale = st.stock;
+          if (!st.permite_negativo && st.stock < l.cantidad) {
+            problemas.push({
+              codigo: 'stock_insuficiente',
+              mensaje: `Bsale no permite dejar en negativo ${l.sku || l.producto}: tiene ${st.stock.toLocaleString('es-CL')} y la línea copiada de la guía ${l.guia} descuenta ${l.cantidad.toLocaleString('es-CL')}. Ingresa stock en Bsale (o permite stock negativo en ese producto) y vuelve a abrir el borrador.`,
+            });
+          }
         }
         for (const g of guias) {
           const deLaGuia = lineas.filter((l) => l.guia === g.numero);
