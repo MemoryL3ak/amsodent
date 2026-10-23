@@ -40,6 +40,20 @@ export const APP_VERSION =
   process.env.APP_VERSION ||
   'dev';
 
+/** ¿Corre en Railway (producción)? Dev y producción comparten la base de
+ *  Supabase: un backend local no debe escribir avisos en la campana de los
+ *  admins. MONITOR_AVISAR_ADMINS=on lo fuerza (p. ej. para probar). */
+export function enProduccion(): boolean {
+  return (
+    Boolean(
+      process.env.RAILWAY_GIT_COMMIT_SHA ||
+        process.env.RAILWAY_ENVIRONMENT ||
+        process.env.RAILWAY_ENVIRONMENT_NAME ||
+        process.env.RAILWAY_PROJECT_ID,
+    ) || String(process.env.MONITOR_AVISAR_ADMINS || '').toLowerCase() === 'on'
+  );
+}
+
 export interface EstadoServicio {
   servicio: string;
   ok: boolean | null; // null = aún no chequeado
@@ -345,7 +359,79 @@ export class MonitorService implements OnModuleInit, OnModuleDestroy {
       .filter((e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e));
   }
 
-  private async enviarCorreoAlerta(para: string[], asunto: string, html: string) {
+  enProduccion(): boolean {
+    return enProduccion();
+  }
+
+  /**
+   * Aviso operativo a los administradores (2026-10-23): campana + log del
+   * monitor + correo si el SMTP sirve. A diferencia de `alertar`, SÍ cae a
+   * los admins de `profiles` cuando corre en producción, porque estos avisos
+   * (credenciales rechazadas) los tiene que ver quien administra, no solo
+   * quien esté en MONITOR_ALERTA_CORREO. Fuera de Railway solo avisa a
+   * MONITOR_ALERTA_CORREO (o a nadie: queda en el log).
+   */
+  async notificarAdmins(opts: {
+    tipo: string;
+    mensaje: string;
+    link?: string;
+    metadata?: Record<string, any>;
+    nivel?: 'info' | 'warn' | 'error';
+    correo?: boolean;
+  }): Promise<{ destinatarios: string[] }> {
+    this.registrar({
+      nivel: opts.nivel || 'error',
+      tipo: 'sistema',
+      mensaje: opts.mensaje,
+      metadata: { aviso: opts.tipo, ...(opts.metadata || {}) },
+    });
+    const client = this.supabase.getClient();
+    const porVariable = await this.destinatariosAlerta();
+    let admins: string[] = [];
+    if (enProduccion()) {
+      try {
+        const { data } = await client.from('profiles').select('email').in('rol', ['admin', 'administrador']);
+        admins = (data || [])
+          .map((p: any) => String(p?.email || '').trim().toLowerCase())
+          .filter((e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e));
+      } catch {
+        /* sin admins: sigue con la variable */
+      }
+    }
+    const destinatarios = Array.from(new Set([...porVariable, ...admins]));
+    if (!destinatarios.length) {
+      this.logger.warn(`Aviso "${opts.tipo}" sin destinatarios (fuera de Railway y sin MONITOR_ALERTA_CORREO): ${opts.mensaje}`);
+      return { destinatarios };
+    }
+    try {
+      await client.from('notificaciones').insert(
+        destinatarios.map((email) => ({
+          user_email: email,
+          tipo: opts.tipo,
+          mensaje: opts.mensaje,
+          link: opts.link || '/monitoreo-sistema',
+          metadata: opts.metadata || null,
+        })),
+      );
+    } catch (e: any) {
+      this.logger.warn(`No se pudo dejar el aviso "${opts.tipo}" en la campana: ${e?.message || e}`);
+    }
+    if (opts.correo !== false) {
+      try {
+        await this.enviarCorreoAlerta(
+          destinatarios,
+          `🚨 Aviso AMSODENT: ${opts.mensaje.slice(0, 80)}`,
+          `<p><b>${opts.mensaje}</b></p><p>Panel: <a href="${process.env.MONITOR_PANEL_URL || 'https://amsodent.vercel.app/monitoreo-sistema'}">Monitoreo del Sistema</a></p>`,
+        );
+      } catch (e: any) {
+        // Si lo que falla es el SMTP, esto es esperable: la campana ya quedó.
+        this.logger.warn(`No se pudo enviar por correo el aviso "${opts.tipo}": ${e?.message || e}`);
+      }
+    }
+    return { destinatarios };
+  }
+
+  async enviarCorreoAlerta(para: string[], asunto: string, html: string) {
     const user = process.env.SMTP_USER;
     const pass = process.env.SMTP_PASS;
     if (!user || !pass) return;
