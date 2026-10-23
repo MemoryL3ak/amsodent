@@ -13,6 +13,7 @@ import ProductoPickerModal from "../components/ProductoPickerModal";
 import ModalValidarTransitorio from "../components/ModalValidarTransitorio";
 import CalculadoraFlete from "../components/CalculadoraFlete";
 import BotonFichaTecnica from "../components/BotonFichaTecnica";
+import BotonEditarProducto from "../components/BotonEditarProducto";
 import BotonDescargarFichas from "../components/BotonDescargarFichas";
 
 import {
@@ -34,7 +35,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { GripVertical, Plus, Minus, Trash2, ChevronUp, ChevronDown, MessageSquare } from "lucide-react";
 import { condicionParaCotizacion } from "../lib/condicionesVenta";
 import { escucharProductosActualizados, itemEsDelProducto } from "../lib/productosCanal";
-import { REGIONES_CHILE } from "../constants/regiones";
+import { REGIONES_CHILE, filtrarOpcionComuna } from "../constants/regiones";
 
 /* ============================================================
    TOOLTIP SOLO PARA PRODUCTO (NO TOCA EL INPUT DEL SELECT)
@@ -1096,24 +1097,32 @@ export default function CrearLicitacion() {
      costo y precio (salvo el costo o el precio editados a mano en el ítem). */
   const productosRef = useRef(productos);
   useEffect(() => { productosRef.current = productos; }, [productos]);
+  // Ítem de la cotización con los datos vigentes del producto: nombre, SKU,
+  // categoría, formato y, salvo que se hayan editado a mano en el ítem, costo
+  // y precio (según lista y campañas). Lo usan el aviso en vivo desde otra
+  // pestaña y la sincronización al restaurar el borrador.
+  function itemConProductoFresco(it, fresco) {
+    const n = { ...it, producto_id: fresco.id, sku: fresco.sku ? String(fresco.sku).trim() : "", producto: fresco.nombre || it.producto, categoria: fresco.categoria || "", formato: fresco.formato || "" };
+    if (!it.costoManual) n.costo = Number(fresco.costo ?? 0);
+    if (!it.precioManual) n.precio = getPrecioBaseParaSKU(fresco, listado, campaignPrices, campanasMargen);
+    const cantidad = Math.max(1, Number(n.cantidad || 1));
+    n.total = redondear(cantidad * (Number(n.precio || 0) + Number(fletePorUnidad || 0)));
+    return n;
+  }
   const aplicarFrescoRef = useRef(null);
   aplicarFrescoRef.current = (fresco) => {
     const anterior = productosRef.current.find((p) => p.id === fresco.id) || null;
-    setProductos((prev) => (prev.some((p) => p.id === fresco.id) ? prev.map((p) => (p.id === fresco.id ? { ...p, ...fresco } : p)) : prev));
+    // El catálogo en memoria toma el producto nuevo (y lo incorpora si no lo
+    // tenía, p. ej. recién aprobado: así el picker ya lo ofrece).
+    setProductos((prev) =>
+      prev.some((p) => p.id === fresco.id)
+        ? prev.map((p) => (p.id === fresco.id ? { ...p, ...fresco } : p))
+        : ["Activo", "Transitorio"].includes(String(fresco.estado || "")) ? [...prev, fresco] : prev,
+    );
     setValidarCosto((v) => (v && Number(v.prod?.id) === Number(fresco.id) ? { ...v, prod: { ...v.prod, ...fresco }, actualizado: true } : v));
     const tocados = itemsRefrescoRef.current.filter((it) => itemEsDelProducto(it, fresco, anterior)).length;
     if (!tocados) return;
-    setItems((prev) =>
-      prev.map((it) => {
-        if (!itemEsDelProducto(it, fresco, anterior)) return it;
-        const n = { ...it, producto_id: fresco.id, sku: fresco.sku ? String(fresco.sku).trim() : "", producto: fresco.nombre || it.producto, categoria: fresco.categoria || "", formato: fresco.formato || "" };
-        if (!it.costoManual) n.costo = Number(fresco.costo ?? 0);
-        if (!it.precioManual) n.precio = getPrecioBaseParaSKU(fresco, listado, campaignPrices, campanasMargen);
-        const cantidad = Math.max(1, Number(n.cantidad || 1));
-        n.total = redondear(cantidad * (Number(n.precio || 0) + Number(fletePorUnidad || 0)));
-        return n;
-      }),
-    );
+    setItems((prev) => prev.map((it) => (itemEsDelProducto(it, fresco, anterior) ? itemConProductoFresco(it, fresco) : it)));
     setToast({ type: "success", message: `«${fresco.nombre || "Producto"}» se actualizó: ${tocados === 1 ? "el ítem de esta cotización tomó" : `${tocados} ítems de esta cotización tomaron`} los datos nuevos.` });
   };
   useEffect(
@@ -1128,6 +1137,71 @@ export default function CrearLicitacion() {
       }),
     [],
   );
+
+  /* (2026-10-22) Pedido de Ariel: el producto editado también debe llegar a la
+     cotización en curso cuando se editó EN ESTA MISMA PESTAÑA (ir a Productos
+     → Editar y volver a Crear cotización). En ese caso la cotización estaba
+     desmontada: el aviso del BroadcastChannel no la encontró y el borrador
+     volvía con los datos viejos, así que había que borrar la línea o partir
+     otra cotización. Al restaurar el borrador, cada ítem que viene del
+     catálogo (por id de producto, por SKU o por nombre exacto) se compara con
+     el catálogo recién cargado y toma los datos vigentes; el costo o el precio
+     editados a mano en el ítem se respetan. Corre una sola vez, cuando ya están
+     el catálogo y las campañas (antes, el precio de campaña se leería como un
+     cambio). También deja el id del producto en los ítems que no lo traían
+     (borradores viejos, duplicados), para que reciban los avisos en vivo. */
+  const sincronizadoAlRestaurarRef = useRef(false);
+  useEffect(() => {
+    if (sincronizadoAlRestaurarRef.current || !hydrated || !productos.length || !campanasListas) return;
+    sincronizadoAlRestaurarRef.current = true;
+    const porId = new Map(productos.map((p) => [Number(p.id), p]));
+    const porSku = new Map();
+    const porNombre = new Map();
+    for (const p of productos) {
+      const sku = String(p.sku || "").trim();
+      if (sku && !porSku.has(sku)) porSku.set(sku, p);
+      const nombre = String(p.nombre || "").trim();
+      if (nombre && !porNombre.has(nombre)) porNombre.set(nombre, p);
+    }
+    const productoDe = (it) => {
+      const sku = String(it?.sku || "").trim();
+      const nombre = String(it?.producto || "").trim();
+      return (
+        (it?.producto_id != null ? porId.get(Number(it.producto_id)) : null) ||
+        (sku ? porSku.get(sku) : null) ||
+        (!sku && nombre ? porNombre.get(nombre) : null) ||
+        null
+      );
+    };
+    const sincronizar = (lista) => {
+      let cambiados = 0;
+      const nombres = [];
+      const items = lista.map((it) => {
+        const prod = productoDe(it);
+        if (!prod) return it;
+        const n = itemConProductoFresco(it, prod);
+        const distinto =
+          ["sku", "producto", "categoria", "formato"].some((k) => String(n[k] ?? "") !== String(it[k] ?? "")) ||
+          (!it.costoManual && Number(n.costo || 0) !== Number(it.costo || 0)) ||
+          (!it.precioManual && Number(n.precio || 0) !== Number(it.precio || 0));
+        if (!distinto) return it.producto_id != null ? it : { ...it, producto_id: prod.id };
+        cambiados += 1;
+        if (nombres.length < 3) nombres.push(prod.nombre || n.producto);
+        return n;
+      });
+      return { items, cambiados, nombres };
+    };
+    const actuales = itemsRefrescoRef.current || [];
+    const vista = sincronizar(actuales);
+    if (!vista.items.some((it, i) => it !== actuales[i])) return;
+    setItems((prev) => sincronizar(prev).items);
+    if (vista.cambiados > 0) {
+      setToast({
+        type: "info",
+        message: `${vista.cambiados === 1 ? "1 ítem tomó" : `${vista.cambiados} ítems tomaron`} los datos vigentes del catálogo (${vista.nombres.join(", ")}${vista.cambiados > vista.nombres.length ? "…" : ""}): el producto cambió desde que se guardó el borrador.`,
+      });
+    }
+  }, [hydrated, productos, campanasListas]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     let alive = true;
@@ -1469,7 +1543,7 @@ export default function CrearLicitacion() {
   useEffect(() => {
     if (!hydrated) return;
 
-    const copia = items.map((it) => {
+    setItems((prev) => prev.map((it) => {
       const cantidad = Math.max(1, Number(it.cantidad || 1));
 
       if (it.precioManual && (it.precioUnitarioStr ?? "") !== "") {
@@ -1490,10 +1564,7 @@ export default function CrearLicitacion() {
         ...it,
         total: redondear(cantidad * precioConFlete),
       };
-    });
-
-    setItems(copia);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }));
   }, [fletePorUnidad, hydrated]);
 
   /* ============================================================
@@ -1507,7 +1578,9 @@ export default function CrearLicitacion() {
       (campaignPrices && Object.keys(campaignPrices).length > 0) || campanasMargen.length > 0;
     if (!tieneCamp) return;
 
-    const copia = items.map((it) => {
+    // (2026-10-22) Funcional: no pisa lo que otros efectos del mismo ciclo
+    // (sincronización al restaurar el borrador) ya aplicaron sobre los ítems.
+    setItems((prev) => prev.map((it) => {
       if (it.precioManual) return it;
 
       const sku = String(it.sku || "").trim();
@@ -1529,9 +1602,7 @@ export default function CrearLicitacion() {
         precioUnitarioStr: "",
         total: redondear(cantidad * precioConFlete),
       };
-    });
-
-    setItems(copia);
+    }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [campaignPrices, campanasMargen, productos]);
 
@@ -2819,7 +2890,7 @@ export default function CrearLicitacion() {
               placeholder={region ? "Seleccione comuna…" : "Seleccione región primero"}
               menuPortalTarget={document.body}
               isSearchable={true}
-              filterOption={filtrarPorTerminos}
+              filterOption={filtrarOpcionComuna}
               isDisabled={!region}
               value={opcionesComuna(region).find((o) => o.value === comuna) || null}
               onChange={(op) => setComuna(op ? op.value : "")}
@@ -3008,6 +3079,8 @@ export default function CrearLicitacion() {
               // cotización caerá a "Pendiente Aprobación Peso" al guardarse.
               const tieneProductoSel = Boolean(String(it.sku || "").trim() || String(it.producto || "").trim());
               const sinPeso = tieneProductoSel && getPesoParaItem(it) === 0;
+              // Producto del catálogo detrás de la línea (ficha técnica y botón Editar).
+              const prodLinea = buscarProductoPorSku(it.sku) || productos.find((p) => String(p.nombre || "").trim() === String(it.producto || "").trim() && String(it.producto || "").trim()) || null;
 
               return (
                 <SortableItem
@@ -3068,9 +3141,15 @@ export default function CrearLicitacion() {
                       </div>
 
                       <div className={esAdmin ? "md:col-span-3" : "md:col-span-3"}>
-                        <label className="block text-xs text-gray-600 mb-1">
-                          SKU
-                        </label>
+                        {/* (2026-10-22) «Editar» abre Editar Producto en otra pestaña; al guardar,
+                            esta cotización toma los cambios en vivo. Va junto al SKU porque la
+                            cabecera de Producto (vista admin, 135 px a 1280) no tiene espacio. */}
+                        <div className="flex items-center mb-1 cab-sku-editar" style={{ gap: 6, flexWrap: "nowrap", height: 20, overflow: "hidden" }}>
+                          <label className="block text-xs text-gray-600" style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }}>
+                            SKU
+                          </label>
+                          <BotonEditarProducto producto={prodLinea} />
+                        </div>
                         <Select
                           options={opcionesSKU}
                           styles={customStyles}
@@ -3094,7 +3173,7 @@ export default function CrearLicitacion() {
                           </label>
                           {/* Ficha técnica del producto de la línea (2026-10-03). */}
                           <BotonFichaTecnica
-                            producto={buscarProductoPorSku(it.sku) || productos.find((p) => String(p.nombre || "").trim() === String(it.producto || "").trim() && String(it.producto || "").trim()) || null}
+                            producto={prodLinea}
                             onError={(m) => setToast({ type: "error", message: m })}
                           />
                           </div>

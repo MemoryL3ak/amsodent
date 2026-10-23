@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Truck, Calculator } from "lucide-react";
 import { api } from "../lib/api";
+import { buscarLocalidadFlete } from "../constants/regiones";
 
 /* ============================================================
    Calculadora de flete Starken / Blue Express / Despacho interno
@@ -53,6 +54,11 @@ function canonRegion(s) {
   if (n.includes("tarapaca")) return "tarapaca";
   return n;
 }
+
+// Regiones vecinas que el tarifario Starken mezcla entre sí (ver efecto de la
+// región hermana): comunas de Ñuble archivadas bajo Biobío y Tirúa (Biobío)
+// bajo Araucanía. Se prueban en este orden.
+const REGIONES_HERMANAS_STARKEN = { nuble: ["biobio"], biobio: ["nuble", "araucania"] };
 
 export default function CalculadoraFlete({
   pesoTotal,
@@ -130,17 +136,45 @@ export default function CalculadoraFlete({
   }, [regiones, regionCliente]);
 
   // Preselección de la localidad Starken con la comuna del cliente.
+  // (2026-10-22) Calza por nombre, por alias (Natales → PUERTO NATALES, Cabo
+  // de Hornos → PUERTO WILLIAMS, Treguaco → TREHUACO…) y por la agrupación del
+  // Gran Santiago → SANTIAGO; ver ALIAS_COMUNAS en src/constants/regiones.js.
   useEffect(() => {
     if (!localidades.length || !comunaCliente) return;
-    const objetivo = normTexto(comunaCliente);
-    let match = localidades.find((l) => normTexto(l) === objetivo);
-    if (!match) {
-      // p. ej. comuna "Santiago" vs localidad "SANTIAGO CENTRO": solo si hay un único candidato.
-      const candidatos = localidades.filter((l) => normTexto(l).startsWith(objetivo));
-      if (candidatos.length === 1) match = candidatos[0];
-    }
+    const match = buscarLocalidadFlete(comunaCliente, localidades);
     if (match) setLocalidad((prev) => prev || match);
   }, [localidades, comunaCliente]);
+
+  // (2026-10-22) El tarifario Starken sigue archivando comunas de Ñuble bajo
+  // "Biobío" (Trehuaco, Ñiquén, San Fabián, El Carmen) y Tirúa bajo
+  // "Araucanía". Si la comuna del cliente no está entre las localidades de su
+  // región, se busca en las regiones hermanas y, si aparece en una, el cálculo
+  // cambia a esa región (el detalle del flete lo dice). Se intenta una sola vez
+  // por región + comuna.
+  const [hermanaProbada, setHermanaProbada] = useState("");
+  useEffect(() => {
+    if (empresa !== "Starken" || !region || !comunaCliente || !localidades.length || localidad) return;
+    if (buscarLocalidadFlete(comunaCliente, localidades)) return;
+    const hermanas = (REGIONES_HERMANAS_STARKEN[canonRegion(region)] || [])
+      .map((h) => regiones.find((r) => canonRegion(r) === h))
+      .filter(Boolean);
+    const clave = `${region}|${comunaCliente}`;
+    if (!hermanas.length || hermanaProbada === clave) return;
+    setHermanaProbada(clave);
+    (async () => {
+      for (const hermana of hermanas) {
+        try {
+          const data = await api.get(`/fletes/tarifas/localidades?region=${encodeURIComponent(hermana)}`);
+          if (buscarLocalidadFlete(comunaCliente, Array.isArray(data) ? data : [])) {
+            setRegion(hermana);
+            return;
+          }
+        } catch {
+          /* sin tarifario de esa región: se prueba la siguiente */
+        }
+      }
+    })();
+  }, [empresa, region, comunaCliente, localidades, localidad, regiones, hermanaProbada]);
 
   const comunaSinMatch =
     empresa === "Starken" &&

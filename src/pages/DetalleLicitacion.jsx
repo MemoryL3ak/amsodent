@@ -22,6 +22,7 @@ import Select, { components } from "react-select";
 import ProductoPickerModal from "../components/ProductoPickerModal";
 import CalculadoraFlete from "../components/CalculadoraFlete";
 import BotonFichaTecnica from "../components/BotonFichaTecnica";
+import BotonEditarProducto from "../components/BotonEditarProducto";
 import BotonDescargarFichas from "../components/BotonDescargarFichas";
 import EstadoBsaleBadge from "../components/EstadoBsale";
 import BotonImprimirCarta from "../components/BotonImprimirCarta";
@@ -54,7 +55,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { condicionParaCotizacion } from "../lib/condicionesVenta";
 import { escucharProductosActualizados, itemEsDelProducto } from "../lib/productosCanal";
-import { REGIONES_CHILE } from "../constants/regiones";
+import { REGIONES_CHILE, filtrarOpcionComuna } from "../constants/regiones";
 
 // Correos autorizados a aprobar cotizaciones (además del administrador).
 const APROBADORES_AUTORIZADOS = [
@@ -3902,7 +3903,7 @@ export default function EditarLicitacion() {
               placeholder={region ? "Seleccione comuna…" : "Seleccione región primero"}
               menuPortalTarget={document.body}
               isSearchable={true}
-              filterOption={filtrarPorTerminos}
+              filterOption={filtrarOpcionComuna}
               isDisabled={!region || !esEditable}
               value={opcionesComuna(region).find((o) => o.value === comuna) || null}
               onChange={(op) => setComuna(op ? op.value : "")}
@@ -4086,6 +4087,8 @@ export default function EditarLicitacion() {
             {items.map((it, index) => {
               const margenItem = calcularMargenItem(it);
               const isLowMargin = margenItem > 0 && margenItem < 20;
+              // Producto del catálogo detrás de la línea (ficha técnica y botón Editar).
+              const prodLinea = productos.find((p) => String(p.sku || "").trim() && String(p.sku || "").trim() === String(it.sku || "").trim()) || productos.find((p) => String(p.nombre || "").trim() === String(it.producto || "").trim() && String(it.producto || "").trim()) || null;
               // Destaca el ítem cuyo producto no tiene peso registrado
               // (flujo "Pendiente Aprobación Peso").
               const sinPeso =
@@ -4140,9 +4143,15 @@ export default function EditarLicitacion() {
 
                       {/* SKU */}
                       <div className={esAdmin ? "md:col-span-3" : "md:col-span-4"}>
-                        <label className="block text-xs text-gray-600 mb-1">
-                          SKU (opcional)
-                        </label>
+                        {/* (2026-10-22) «Editar» abre Editar Producto en otra pestaña; al guardar,
+                            esta cotización toma los cambios en vivo. Va junto al SKU porque la
+                            cabecera de Producto (vista admin) no tiene espacio. */}
+                        <div className="flex items-center mb-1 cab-sku-editar cab-sku-editar--largo" style={{ gap: 6, flexWrap: "nowrap", height: 20, overflow: "hidden" }}>
+                          <label className="block text-xs text-gray-600" style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }} title="SKU (opcional)">
+                            SKU (opcional)
+                          </label>
+                          {esEditable && <BotonEditarProducto producto={prodLinea} />}
+                        </div>
                         <Select
                           options={opcionesSKU}
                           styles={customStyles}
@@ -4167,7 +4176,7 @@ export default function EditarLicitacion() {
                           </label>
                           {/* Ficha técnica del producto de la línea (2026-10-03). */}
                           <BotonFichaTecnica
-                            producto={productos.find((p) => String(p.sku || "").trim() && String(p.sku || "").trim() === String(it.sku || "").trim()) || productos.find((p) => String(p.nombre || "").trim() === String(it.producto || "").trim() && String(it.producto || "").trim()) || null}
+                            producto={prodLinea}
                             onError={(m) => setToast({ type: "error", message: m })}
                           />
                           </div>
