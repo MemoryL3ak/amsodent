@@ -1299,6 +1299,32 @@ export default function Trazabilidad() {
     };
   }
 
+  // Monto (neto) que ya se despachó y todavía no se facturó: la suma de las
+  // guías de despacho sin factura asociada, la misma regla de la pestaña
+  // Facturas y de la columna "Neto sin Facturar" del reporte. El cliente
+  // particular no usa guías: está por facturar mientras no tenga su
+  // factura/boleta (o pago en efectivo), por el neto cotizado. Un ciclo
+  // cerrado a la fuerza ya no cuenta, igual que en Pendiente por Despachar.
+  function montoPorFacturar(lic) {
+    const vacio = { porFacturar: 0, guiasSinFactura: 0, pendiente: false };
+    if (lic.ciclo_cerrado) return vacio;
+    const facturas = getFacturas(lic.id);
+    if (esParticular(lic)) {
+      if (facturas.length > 0) return vacio;
+      const neto =
+        Number(lic.total_sin_iva || 0) || Math.round(Number(lic.total_con_iva || 0) / 1.19);
+      return { porFacturar: Math.max(0, Math.round(neto)), guiasSinFactura: 0, pendiente: true };
+    }
+    const sinFactura = getGuias(lic.id).filter(
+      (g) => !facturas.some((f) => facturaCubreGuia(f, g.id)),
+    );
+    return {
+      porFacturar: Math.round(sinFactura.reduce((acc, g) => acc + Number(g.monto || 0), 0)),
+      guiasSinFactura: sinFactura.length,
+      pendiente: sinFactura.length > 0,
+    };
+  }
+
   /* ── Reporte de trazabilidad (Excel multi-hoja) ─────────────── */
   // Agregados por cotización. Son la base de las hojas "Resumen" y "Por
   // cotización". Los montos de licitacion_documentos se guardan NETOS (las
@@ -2445,7 +2471,20 @@ export default function Trazabilidad() {
         const totalOCs = dataFiltrada.reduce((acc, l) => acc + getOrdenes(l.id).length, 0);
         const totalGuias = dataFiltrada.reduce((acc, l) => acc + getGuias(l.id).length, 0);
         const totalFacturas = dataFiltrada.reduce((acc, l) => acc + getFacturas(l.id).length, 0);
-        const sinFactura = dataFiltrada.filter((l) => getFacturas(l.id).length === 0).length;
+        // Pendiente por facturar = guías sin factura (neto) de ciclos abiertos,
+        // con cuántas cotizaciones y guías lo componen.
+        const porFacturar = dataFiltrada.reduce(
+          (acc, l) => {
+            const m = montoPorFacturar(l);
+            if (!m.pendiente) return acc;
+            return {
+              monto: acc.monto + m.porFacturar,
+              cotizaciones: acc.cotizaciones + 1,
+              guias: acc.guias + m.guiasSinFactura,
+            };
+          },
+          { monto: 0, cotizaciones: 0, guias: 0 },
+        );
         // Pendiente por despachar = OC − guías, solo de ciclos NO cerrados (no forzados).
         const pendienteDespachar = dataFiltrada.reduce((acc, l) => {
           if (l.ciclo_cerrado) return acc;
@@ -2474,13 +2513,20 @@ export default function Trazabilidad() {
               <div className="stat-sub">documentos</div>
             </div>
             <div className="stat-card">
-              <div className="stat-label">Sin Factura</div>
-              <div className="stat-value" style={{ color: "var(--warning)" }}>{sinFactura}</div>
-              <div className="stat-sub">cotizaciones</div>
+              <div className="stat-label">Pendiente por Facturar</div>
+              <div className="stat-value stat-value-money" style={{ color: "var(--warning)" }}>
+                ${porFacturar.monto.toLocaleString("es-CL")}
+              </div>
+              <div className="stat-sub">
+                {porFacturar.cotizaciones} {porFacturar.cotizaciones === 1 ? "cotización" : "cotizaciones"}
+                {porFacturar.guias > 0
+                  ? ` · ${porFacturar.guias} ${porFacturar.guias === 1 ? "guía" : "guías"} sin factura`
+                  : " · sin factura"}
+              </div>
             </div>
             <div className="stat-card">
               <div className="stat-label">Pendiente por Despachar</div>
-              <div className="stat-value" style={{ color: "#0d9488" }}>
+              <div className="stat-value stat-value-money" style={{ color: "#0d9488" }}>
                 ${pendienteDespachar.toLocaleString("es-CL")}
               </div>
               <div className="stat-sub">OC − guías · ciclos abiertos</div>
