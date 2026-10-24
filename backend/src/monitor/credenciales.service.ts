@@ -14,8 +14,9 @@ import { atiendeWeb } from '../rol-proceso';
    fallas eran 1-4 al día (la alerta exige 5 errores en 5 minutos) y el único
    canal de alerta era… el correo. Este servicio AUTENTICA de verdad contra
    cada proveedor con la llamada más barata que existe, cada pocas horas y a
-   pedido desde el panel, y avisa por la campana a los admins (canal que no
-   depende del correo), con recordatorio diario mientras siga fallando.
+   pedido desde el panel, y avisa por la campana (canal que no depende del
+   correo) y por correo a MONITOR_ALERTA_CORREO, con recordatorio diario
+   mientras siga fallando.
 
    Estados:
      ok              la credencial fue aceptada
@@ -97,6 +98,7 @@ export class CredencialesService implements OnModuleDestroy {
       chequeando: !!this.corriendo,
       intervalo_horas: this.intervaloHoras(),
       en_produccion: this.monitor.enProduccion(),
+      avisos_configurados: this.monitor.hayDestinatariosAlerta(),
       items: Array.from(this.resultados.values()),
     };
   }

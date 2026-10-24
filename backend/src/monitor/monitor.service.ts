@@ -352,7 +352,7 @@ export class MonitorService implements OnModuleInit, OnModuleDestroy {
    * levantado en local terminaba escribiendo en la campana y en el correo de
    * los admins de producción.
    */
-  private async destinatariosAlerta(): Promise<string[]> {
+  private destinatariosAlerta(): string[] {
     return String(process.env.MONITOR_ALERTA_CORREO || '')
       .split(',')
       .map((e) => e.trim().toLowerCase())
@@ -363,13 +363,17 @@ export class MonitorService implements OnModuleInit, OnModuleDestroy {
     return enProduccion();
   }
 
+  hayDestinatariosAlerta(): boolean {
+    return this.destinatariosAlerta().length > 0;
+  }
+
   /**
-   * Aviso operativo a los administradores (2026-10-23): campana + log del
-   * monitor + correo si el SMTP sirve. A diferencia de `alertar`, SÍ cae a
-   * los admins de `profiles` cuando corre en producción, porque estos avisos
-   * (credenciales rechazadas) los tiene que ver quien administra, no solo
-   * quien esté en MONITOR_ALERTA_CORREO. Fuera de Railway solo avisa a
-   * MONITOR_ALERTA_CORREO (o a nadie: queda en el log).
+   * Aviso operativo (2026-10-23): campana + log del monitor + correo si el
+   * SMTP sirve, SOLO a MONITOR_ALERTA_CORREO, igual que `alertar`. Hasta el
+   * 2026-10-24 caía también a todos los admins de `profiles` en producción, y
+   * el aviso técnico de credenciales le llegó a gente que no opera el
+   * sistema. Sin la variable no se avisa a nadie: queda en el log y en
+   * Problemas.
    */
   async notificarAdmins(opts: {
     tipo: string;
@@ -386,21 +390,9 @@ export class MonitorService implements OnModuleInit, OnModuleDestroy {
       metadata: { aviso: opts.tipo, ...(opts.metadata || {}) },
     });
     const client = this.supabase.getClient();
-    const porVariable = await this.destinatariosAlerta();
-    let admins: string[] = [];
-    if (enProduccion()) {
-      try {
-        const { data } = await client.from('profiles').select('email').in('rol', ['admin', 'administrador']);
-        admins = (data || [])
-          .map((p: any) => String(p?.email || '').trim().toLowerCase())
-          .filter((e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e));
-      } catch {
-        /* sin admins: sigue con la variable */
-      }
-    }
-    const destinatarios = Array.from(new Set([...porVariable, ...admins]));
+    const destinatarios = await this.destinatariosAlerta();
     if (!destinatarios.length) {
-      this.logger.warn(`Aviso "${opts.tipo}" sin destinatarios (fuera de Railway y sin MONITOR_ALERTA_CORREO): ${opts.mensaje}`);
+      this.logger.warn(`Aviso "${opts.tipo}" sin destinatarios (falta MONITOR_ALERTA_CORREO): ${opts.mensaje}`);
       return { destinatarios };
     }
     try {

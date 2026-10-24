@@ -142,7 +142,7 @@ export default function MonitorSalud() {
             <span className="mcred-meta">
               {cred?.revisado_en ? `Revisado ${fmtHora(cred.revisado_en)}` : "Aún sin revisar"}
               {cred?.intervalo_horas ? ` · cada ${cred.intervalo_horas} h` : ""}
-              {cred && cred.en_produccion === false ? " · avisos a admins apagados fuera de Railway" : ""}
+              {cred && cred.avisos_configurados === false ? " · sin MONITOR_ALERTA_CORREO: nadie recibe los avisos" : ""}
             </span>
             <button className="btn btn-ghost" onClick={probarAhora} disabled={probando || cred?.chequeando}
               style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
