@@ -37,7 +37,18 @@ import { DevolucionesService, DineroNc } from '../licitaciones/devoluciones.serv
    · ajuste: rebaja de precio por unidad (priceAdjustment: 1), sin devolver
      productos ni mover stock.
    Se pueden emitir varias parciales/ajustes mientras quede saldo; por línea
-   no se devuelve más de lo que queda (las de ajuste no devuelven unidades). */
+   no se devuelve más de lo que queda (las de ajuste no devuelven unidades).
+
+   (2026-10-26) Pedido de Ariel: "que la NC se pueda customizar (eliminar una
+   línea o anulación total) y que corrija glosa: razón social, dirección, giro
+   o nombre del producto, sin modificar precio". La parcial ahora se arma
+   marcando líneas en la pantalla (marcarlas todas completas = anular
+   completa). El cuarto modo, «Corregir texto», copia las 9 NC de texto que la
+   cuenta tiene hechas a mano en Bsale (devoluciones 69, 94, 101, 114…):
+   editTexts 1, type -3, monto 0, todas las líneas con cantidad 0 y la
+   corrección escrita en el motivo («DICE … DEBE DECIR …»). No toca la ficha
+   del cliente. Se registra con clave AMS-NCT-<id> para que Facturación no la
+   confunda con una anulación (allí una NC AMS-NC- sin total anula completo). */
 
 const DTE_FACTURA = 33;
 const DTE_BOLETA = 39;
@@ -48,9 +59,26 @@ const DTE_GUIA = 52;
 
 export const MODOS_NC = [
   { id: 'total', nombre: 'Anular completa', detalle: 'Anula todo el documento y reingresa todo su stock.' },
-  { id: 'parcial', nombre: 'Devolución parcial', detalle: 'Devuelve parte de los productos: se elige cuánto de cada línea y Bsale reingresa ese stock.' },
+  { id: 'parcial', nombre: 'Anular líneas o cantidades', detalle: 'Marca las líneas que anula la nota (o cuántas unidades de cada una): Bsale reingresa ese stock y el resto del documento sigue vigente.' },
   { id: 'ajuste', nombre: 'Ajuste de precio', detalle: 'Rebaja el precio por unidad sin devolver productos (no mueve stock).' },
+  { id: 'texto', nombre: 'Corregir texto', detalle: 'Corrige razón social, dirección, giro o el nombre de un producto. Nota por $0: no cambia montos ni mueve stock.' },
 ];
+
+// Qué puede corregir una NC de texto. `dice` sale del documento original
+// (salvo «otro», que lo escribe la persona); el servidor no confía en el de la pantalla.
+export const CAMPOS_TEXTO = [
+  { id: 'razon_social', nombre: 'Razón social' },
+  { id: 'direccion', nombre: 'Dirección' },
+  { id: 'giro', nombre: 'Giro' },
+  { id: 'producto', nombre: 'Nombre del producto' },
+  { id: 'otro', nombre: 'Otro texto' },
+];
+const diceDelCliente = (c: any, campo: string) =>
+  campo === 'razon_social' ? String(c?.razon_social || '')
+    : campo === 'giro' ? String(c?.giro || '')
+      : campo === 'direccion' ? [c?.direccion, c?.comuna].map((x) => String(x || '').trim()).filter(Boolean).join(', ')
+        : '';
+const comparable = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
 
 /* Qué pasa con el dinero (2026-10-08). Pedido de Ariel: "si se devolverá el
    dinero o se dejará como saldo a favor se determina en el proceso de emisión
@@ -207,7 +235,16 @@ export class BsaleAnulacionesService {
     const ncTipo = tipos.get(DTE_NC);
     if (!ncTipo) problemas.push({ codigo: 'sin_nc', mensaje: 'La cuenta de Bsale no tiene activa la nota de crédito electrónica.' });
 
-    const previas = await this.devolucionesDe(Number(doc.id));
+    // Las NC que solo corrigen texto (monto 0) no acreditan nada: no cuentan
+    // como previas (antes impedían anular completa, p. ej. la factura 836).
+    const todasPrevias = await this.devolucionesDe(Number(doc.id));
+    const esDeTexto = (r: any) => Number(r?.editTexts) === 1 && !(Number(r?.amount) > 0);
+    const previas = todasPrevias.filter((r) => !esDeTexto(r));
+    const deTexto = todasPrevias.filter(esDeTexto);
+    if (deTexto.length) {
+      const nums = deTexto.map((r) => r?.credit_note?.number).filter((n) => n != null);
+      avisos.push({ codigo: 'nc_texto', mensaje: `Tiene nota${deTexto.length === 1 ? '' : 's'} de crédito que solo corrige${deTexto.length === 1 ? '' : 'n'} texto${nums.length ? ` (N° ${nums.join(', ')})` : ''}: no cambian el monto ni impiden otra nota.` });
+    }
     const devueltoMonto = previas.reduce((a, r) => a + (Number(r.amount) || 0), 0);
     const saldoDisponible = Math.max(0, Number(doc.totalAmount || 0) - devueltoMonto);
     if (previas.length && saldoDisponible <= 2) {
@@ -287,6 +324,7 @@ export class BsaleAnulacionesService {
       },
       nc_tipo_id: Number(ncTipo?.id) || null,
       modos: MODOS_NC,
+      campos_texto: CAMPOS_TEXTO,
       saldo: { devuelto: devueltoMonto, disponible: saldoDisponible },
       tipos_devolucion: TIPOS_DEVOLUCION,
       tipo_devolucion: pago.bruto > 0 ? 'devolver' : credito ? 'rebajar_deuda' : 'sin_movimiento',
@@ -670,14 +708,44 @@ export class BsaleAnulacionesService {
     const b: any = await this.preparar(usuario.id, { bsale_id: body?.bsale_id, documento_id: body?.documento_id, tipo: body?.tipo, numero: body?.numero });
     const motivo = texto(body?.motivo, 250);
     if (motivo.length < 5) b.problemas.push({ codigo: 'motivo', mensaje: 'Escribe el motivo (sale impreso en la nota de crédito).' });
-    const tipoDev = dineroDe(body?.tipo_devolucion ?? b.tipo_devolucion);
+    const modo: 'total' | 'parcial' | 'ajuste' | 'texto' = ['parcial', 'ajuste', 'texto'].includes(body?.modo) ? body.modo : 'total';
+    const esTexto = modo === 'texto';
+    // Una NC de texto no mueve dinero: no se pregunta.
+    const tipoDev = esTexto ? dineroDe('sin_movimiento') : dineroDe(body?.tipo_devolucion ?? b.tipo_devolucion);
     if (!tipoDev) b.problemas.push({ codigo: 'tipo_devolucion', mensaje: 'Elige qué pasa con el dinero.' });
-    const modo: 'total' | 'parcial' | 'ajuste' = body?.modo === 'parcial' || body?.modo === 'ajuste' ? body.modo : 'total';
     const o = b.original;
+
+    // Corregir texto: qué dice el documento y qué debe decir.
+    const correcciones: { campo: string; nombre: string; dice: string; debe: string }[] = [];
+    if (esTexto) {
+      for (const c of Array.isArray(body?.correcciones) ? body.correcciones.slice(0, 10) : []) {
+        const campo = CAMPOS_TEXTO.find((x) => x.id === String(c?.campo));
+        if (!campo) continue;
+        const debe = texto(c?.debe_decir, 120);
+        let dice = '';
+        if (campo.id === 'producto') {
+          const l = o.lineas.find((x: any) => x.detalle_id === Number(c?.detalle_id));
+          if (!l) { b.problemas.push({ codigo: 'producto', mensaje: 'Elige el producto cuyo nombre se corrige.' }); continue; }
+          dice = l.producto || l.sku;
+        } else if (campo.id === 'otro') {
+          dice = texto(c?.dice, 120);
+        } else {
+          if (!o.cliente) { b.problemas.push({ codigo: 'sin_cliente', mensaje: `El documento no tiene cliente: no hay ${campo.nombre.toLowerCase()} que corregir.` }); continue; }
+          dice = diceDelCliente(o.cliente, campo.id);
+        }
+        if (!debe) b.problemas.push({ codigo: 'debe_decir', mensaje: `${campo.nombre}: escribe cómo debe decir.` });
+        else if (dice && comparable(dice) === comparable(debe)) b.problemas.push({ codigo: 'sin_cambio', mensaje: `${campo.nombre}: lo que debe decir es igual a lo que dice ahora.` });
+        correcciones.push({ campo: campo.id, nombre: campo.nombre, dice, debe });
+      }
+      if (!correcciones.length) b.problemas.push({ codigo: 'sin_correcciones', mensaje: 'Indica qué se corrige: razón social, dirección, giro, nombre de un producto u otro texto.' });
+    }
 
     // Líneas de la nota según el modo (valor = neto unitario que se acredita).
     const elegidas: any[] = [];
-    if (modo === 'total') {
+    if (esTexto) {
+      // Como las NC de texto hechas en Bsale: todas las líneas, en cero.
+      for (const l of o.lineas) elegidas.push({ ...l, cantidad: 0, valor: 0 });
+    } else if (modo === 'total') {
       if (b.previas.length) b.problemas.push({ codigo: 'nc_parcial', mensaje: 'Este documento ya tiene notas de crédito: para el saldo usa una devolución parcial o un ajuste de precio.' });
       for (const l of o.lineas) elegidas.push({ ...l, valor: l.neto_unitario });
     } else {
@@ -698,8 +766,8 @@ export class BsaleAnulacionesService {
       }
       if (!elegidas.length) b.problemas.push({ codigo: 'sin_lineas', mensaje: modo === 'parcial' ? 'Indica qué productos y cuántas unidades se devuelven.' : 'Indica a qué productos se les rebaja el precio y cuánto por unidad.' });
     }
-    const totales = modo === 'total' ? o.totales : totalesDe(elegidas.map((l) => ({ neto: Math.round(l.cantidad * l.valor) })));
-    if (modo !== 'total' && totales.total > Number(b.saldo?.disponible ?? o.totales.total) + 2) {
+    const totales = esTexto ? { neto: 0, iva: 0, total: 0 } : modo === 'total' ? o.totales : totalesDe(elegidas.map((l) => ({ neto: Math.round(l.cantidad * l.valor) })));
+    if (modo !== 'total' && !esTexto && totales.total > Number(b.saldo?.disponible ?? o.totales.total) + 2) {
       b.problemas.push({ codigo: 'supera_saldo', mensaje: `La nota de crédito ($${totales.total.toLocaleString('es-CL')}) supera el saldo del documento ($${Number(b.saldo.disponible).toLocaleString('es-CL')}).` });
     }
     if (b.problemas.length) {
@@ -721,29 +789,37 @@ export class BsaleAnulacionesService {
       motive: motivo,
       declareSii: 1,
       priceAdjustment: modo === 'ajuste' ? 1 : 0,
-      editTexts: 0,
-      type: tipoDev!.bsale,
+      editTexts: esTexto ? 1 : 0,
+      // -3 es lo que guardan las NC de texto hechas a mano en Bsale.
+      type: esTexto ? -3 : tipoDev!.bsale,
       ...(o.cliente?.rut
         ? { client: { code: o.cliente.rut, company: o.cliente.razon_social, activity: o.cliente.giro || undefined, address: o.cliente.direccion || undefined, municipality: o.cliente.comuna || undefined, city: o.cliente.ciudad || undefined } }
         : {}),
       details: elegidas.map((l: any) => ({ documentDetailId: l.detalle_id, quantity: l.cantidad, unitValue: l.valor })),
     };
     const doc = o.tipo.toLowerCase();
-    const razon = modo === 'total' ? 'Anula documento de referencia' : modo === 'parcial' ? 'Devolución parcial' : 'Corrige montos (ajuste de precio)';
+    const razon = esTexto ? 'Corrige texto' : modo === 'total' ? 'Anula documento de referencia' : modo === 'parcial' ? 'Devolución parcial' : 'Corrige montos (ajuste de precio)';
     const vista = {
       tipo: 'Nota de crédito electrónica',
       sii: true,
       descuenta_stock: false,
-      stock_texto: modo === 'ajuste' ? 'No mueve stock' : 'Reingresa stock',
+      stock_texto: modo === 'ajuste' || esTexto ? 'No mueve stock' : 'Reingresa stock',
       emisor: EMISOR,
       cliente: o.cliente || {},
       lineas: elegidas.map((l: any) => ({ sku: l.sku, producto: l.producto, cantidad: l.cantidad, neto_unitario: l.valor, neto: Math.round(l.cantidad * l.valor) })),
       totales,
       referencias: [{ tipo: o.tipo, folio: o.numero, fecha: o.fecha, razon: `${razon} · ${motivo}` }],
-      forma_pago: tipoDev!.nombre,
-      forma_pago_titulo: 'Qué pasa con el dinero',
+      ...(esTexto ? {} : { forma_pago: tipoDev!.nombre, forma_pago_titulo: 'Qué pasa con el dinero' }),
       fecha_emision: b.fecha_emision,
-      notas: [
+      notas: esTexto ? [
+        `Corrige el texto de la ${doc} N° ${o.numero}: nota de crédito por $0, no cambia montos ni mueve stock.`,
+        ...correcciones.map((c) => `${c.nombre}: dice «${c.dice || '—'}», debe decir «${c.debe}».`),
+        'La corrección va en el motivo, que sale como razón de la referencia (igual que las NC de texto hechas en Bsale).',
+        'No cambia la ficha del cliente en el sistema ni en Bsale: si el error está ahí, corrígela para que no se repita en el próximo documento.',
+        b.cotizacion
+          ? `Quedará registrada en la cotización #${b.cotizacion.id} como nota de crédito que corrige texto: no descuenta nada del saldo.`
+          : 'El documento no está en ninguna cotización: la nota de crédito queda solo en Bsale y en Emitidas.',
+      ] : [
         modo === 'total'
           ? `Anula completa la ${doc} N° ${o.numero} por $${Number(o.totales.total).toLocaleString('es-CL')}.`
           : modo === 'parcial'
@@ -764,14 +840,18 @@ export class BsaleAnulacionesService {
     };
     if (!real) return { simulacion: true, emision_apagada: !simular, solicitud, vista, huella: b.huella, avisos: b.avisos, totales, modo };
 
-    const clave = `AMS-NC-${o.bsale_id}`;
+    // La de texto lleva otra clave: Facturación cuenta las AMS-NC- como anulaciones.
+    const clave = `${esTexto ? 'AMS-NCT' : 'AMS-NC'}-${o.bsale_id}`;
     const { data: previas } = await this.supabase.getClient().from('bsale_emisiones').select('id').eq('clave', clave).eq('estado', 'emitida');
     const salesId = `${clave}-${(previas || []).length}`;
-    const descripcion = modo === 'total'
-      ? `Anula ${doc} N° ${o.numero}: ${motivo}`
-      : modo === 'parcial'
-        ? `Devolución parcial de ${doc} N° ${o.numero}: ${motivo}`
-        : `Ajuste de precio de ${doc} N° ${o.numero}: ${motivo}`;
+    // El prefijo lo lee la pestaña Notas para clasificarla (claseNc).
+    const descripcion = esTexto
+      ? `Corrige texto de ${doc} N° ${o.numero}: ${motivo}`
+      : modo === 'total'
+        ? `Anula ${doc} N° ${o.numero}: ${motivo}`
+        : modo === 'parcial'
+          ? `Devolución parcial de ${doc} N° ${o.numero}: ${motivo}`
+          : `Ajuste de precio de ${doc} N° ${o.numero}: ${motivo}`;
     const r = await this.despachos.emitirReal({
       usuario, clave, salesId, tipo: 'nota_credito', ruta: '/returns.json', solicitud, vista,
       licitacionId: b.cotizacion?.id || null, origenDocId: b.registro?.documento_id || null,
@@ -782,7 +862,7 @@ export class BsaleAnulacionesService {
         const creado = await this.licitaciones.createDocumento({
           licitacion_id: b.registro.licitacion_id, tipo: 'nota_credito', numero: String(nc.number),
           // Las notas de crédito se guardan en BRUTO (así se cargan a mano y así las descuenta Seguimiento de Pagos).
-          monto: Number(nc.totalAmount) || Number(totales.total) || null,
+          monto: esTexto ? 0 : Number(nc.totalAmount) || Number(totales.total) || null,
           fecha_oc: b.fecha_emision, deriva_de_id: b.registro.documento_id, descripcion,
           // Qué pasa con el dinero (2026-10-08): lo lee Trazabilidad → Facturas.
           dinero: tipoDev!.id,
@@ -799,6 +879,10 @@ export class BsaleAnulacionesService {
         return avisos;
       },
     });
+    if (esTexto) {
+      if ((r as any)?.emitida) this.estados.anotarNotaTexto(Number(o.bsale_id), (r as any).numero ?? null);
+      return { ...(r as any), dinero: tipoDev!.id, pendiente_devolver: 0, saldo_favor: 0 };
+    }
     // La factura se ve anulada / con NC de inmediato (pestaña Facturas, Pagos, cotización).
     if ((r as any)?.emitida) this.estados.anotarNotaCredito(Number(o.bsale_id), { numero: (r as any).numero ?? null, total: Number((r as any).total) || Number(totales.total) || null });
     // (2026-10-08) Qué quedó en manos del cliente: devolución pendiente (con

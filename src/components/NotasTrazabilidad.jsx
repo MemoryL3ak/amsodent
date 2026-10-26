@@ -49,7 +49,7 @@ const CLASES = {
   total: { etiqueta: "Anulación total", color: "#b91c1c", fondo: "#fee2e2", detalle: "La nota de crédito suma el total del documento: queda anulado" },
   parcial: { etiqueta: "Devolución parcial", color: "#b45309", fondo: "#fef3c7", detalle: "Devuelve parte de los productos del documento" },
   ajuste: { etiqueta: "Ajuste de precio", color: "#b45309", fondo: "#fef3c7", detalle: "Rebaja el precio sin devolver productos" },
-  texto: { etiqueta: "Corrige texto", color: "#475569", fondo: "#f1f5f9", detalle: "Solo corrige giro, dirección o forma de pago: no cambia el monto" },
+  texto: { etiqueta: "Corrige texto", color: "#475569", fondo: "#f1f5f9", detalle: "Solo corrige texto (razón social, dirección, giro, nombre de un producto…): no cambia el monto" },
   debito: { etiqueta: "Cargo adicional", color: "#6d28d9", fondo: "#ede9fe", detalle: "Aumenta lo que el cliente debe por el documento: intereses, diferencia de precio, un cargo no cobrado" },
 };
 const ORIGENES = {
@@ -61,13 +61,14 @@ function claseNc(d, factura) {
   if (/^Anula /.test(s)) return "total";
   if (/^Devoluci[oó]n parcial/.test(s)) return "parcial";
   if (/^Ajuste de precio/.test(s)) return "ajuste";
+  if (/^Corrige texto/.test(s)) return "texto";
   if (factura && factura.bruto > 0) return Number(d.monto || 0) >= factura.bruto - 2 ? "total" : "parcial";
   return null;
 }
 // «Anula Factura N° 415: el cliente devolvió todo» → «el cliente devolvió todo».
 function motivoDe(descripcion) {
   const s = String(descripcion || "").trim();
-  const m = s.match(/^(Anula|Devoluci[oó]n parcial de|Ajuste de precio de|Nota de d[eé]bito de) .*? N° [^:]+: (.*)$/s);
+  const m = s.match(/^(Anula|Devoluci[oó]n parcial de|Ajuste de precio de|Corrige texto de|Nota de d[eé]bito de) .*? N° [^:]+: (.*)$/s);
   return m ? m[2].trim() : s;
 }
 
@@ -353,7 +354,7 @@ export default function NotasTrazabilidad({ lics = [], documentosMap = {}, estad
               { value: "nd", label: `Notas de débito (${cuenta("nd")})`, color: "#6d28d9" },
               { value: "total", label: `Anulaciones totales (${cuenta("total")})`, color: "#b91c1c", detalle: "NC por el total del documento" },
               { value: "parcial", label: `Parciales y ajustes (${cuenta("parcial")})`, color: "#b45309", detalle: "Devolución parcial o ajuste de precio" },
-              { value: "texto", label: `Corrigen texto (${cuenta("texto")})`, detalle: "Solo giro, dirección o forma de pago: no cambian el monto" },
+              { value: "texto", label: `Corrigen texto (${cuenta("texto")})`, detalle: "Solo corrigen texto (razón social, dirección, giro, producto): no cambian el monto" },
               { value: "bsale", label: `Hechas en Bsale (${cuenta("bsale")})`, color: "#b45309", detalle: "No están registradas en la cotización" },
               { value: "manual", label: `Cargadas a mano (${cuenta("manual")})`, detalle: "Registradas sin emitirlas desde el sistema" },
               { value: "sin_documento", label: `Sin documento asociado (${cuenta("sin_documento")})`, color: "#b45309", detalle: "No se sabe a qué factura o boleta aplican" },

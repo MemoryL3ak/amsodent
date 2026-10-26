@@ -411,9 +411,13 @@ OBSERVACIÓN DE LA GUÍA: la
 observación de cada producto de la cotización se propone en el campo
 «Observación» (atributo adicional) de la guía en Bsale; editable antes de
 simular, hasta 250 caracteres (sirve también para instrucciones de entrega).
-NOTAS DE CRÉDITO: tres modos — anular completa, devolución parcial (cuánto de
-cada producto, reingresa ese stock) y ajuste de precio (rebaja por unidad, no
-mueve stock); varias mientras quede saldo. NOTA DE DÉBITO: aumenta lo que el
+NOTAS DE CRÉDITO: cuatro modos — anular completa; anular líneas o cantidades
+(casilla por línea o cuántas unidades, «Marcar todas»; reingresa ese stock;
+marcar todo el documento = anular completa); ajuste de precio (rebaja por
+unidad, no mueve stock) y corregir texto (razón social, dirección, giro,
+nombre de un producto u otro: «dice / debe decir», el motivo se arma solo con
+«DICE … DEBE DECIR …»; nota por $0, sin stock ni dinero, no toca la ficha del
+cliente). Varias mientras quede saldo; las de texto no cuentan como anulación. NOTA DE DÉBITO: aumenta lo que el
 cliente debe por una factura (intereses, diferencia de precio…), líneas de
 texto libre y el motivo en la referencia; queda en la cotización y Seguimiento
 de Pagos la suma al saldo. TRAZABILIDAD → pestaña FACTURAS: KPIs que filtran al

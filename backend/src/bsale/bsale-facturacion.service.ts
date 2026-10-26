@@ -925,7 +925,7 @@ export class BsaleFacturacionService {
       lics.set(Number(l.id), l);
     }
     const docs = await porLotes(licIds, async (lote) =>
-      (await db.from('licitacion_documentos').select('id, licitacion_id, tipo, numero, monto, pagada, fecha_pago, forma_pago, deriva_de_id, fecha_oc, created_at').in('licitacion_id', lote)).data || []);
+      (await db.from('licitacion_documentos').select('id, licitacion_id, tipo, numero, monto, pagada, fecha_pago, forma_pago, deriva_de_id, fecha_oc, created_at, descripcion').in('licitacion_id', lote)).data || []);
     const docsDe = new Map<number, any[]>();
     for (const d of docs) {
       const k = Number(d.licitacion_id);
@@ -943,7 +943,8 @@ export class BsaleFacturacionService {
         const doc = dl.find((d) => Number(d.id) === Number(e.documento_id))
           || dl.find((d) => d.tipo === 'factura_boleta' && String(d.numero) === String(e.numero)) || null;
         const hijos = (tipo: string) => (doc ? dl.filter((d) => d.tipo === tipo && Number(d.deriva_de_id) === Number(doc.id)) : []);
-        const nc = sumar(hijos('nota_credito'));
+        // Las NC que solo corrigen texto no acreditan nada: Bsale las informa aparte (nc_texto).
+        const nc = sumar(hijos('nota_credito').filter((d) => !/^Corrige texto/.test(String(d.descripcion || ''))));
         const total = Number(e.total) || null;
         return {
           id: e.id,

@@ -181,6 +181,15 @@ export class BsaleEstadosService {
   /* Recién emitida una nota de crédito desde el sistema: se anota en la caché
      para que la factura salga anulada / con NC al tiro, sin releer Bsale
      entero (~18 s). La próxima lectura completa la confirma. */
+  /* Ídem para una NC que solo corrige texto (2026-10-26): va a `nc_texto`. */
+  anotarNotaTexto(bsaleIdReferencia: number, numero: string | number | null) {
+    const datos = this.cache?.datos;
+    if (!datos?.estados || !bsaleIdReferencia || numero == null) return;
+    for (const e of Object.values(datos.estados) as EstadoBsale[]) {
+      if (e.bsale_id === Number(bsaleIdReferencia) && !e.nc_texto.includes(String(numero))) e.nc_texto = [...e.nc_texto, String(numero)];
+    }
+  }
+
   anotarNotaCredito(bsaleIdReferencia: number, nc: { numero: string | number | null; total: number | null }) {
     const datos = this.cache?.datos;
     if (!datos?.estados || !bsaleIdReferencia || !(Number(nc.total) > 0)) return;

@@ -104,7 +104,9 @@ export default function FacturasTrazabilidad({ lics = [], documentosMap = {}, pu
       const notas = (tipo, id) => docs.filter((d) => d.tipo === tipo && d.deriva_de_id === id);
       for (const f of docs) {
         if (f.tipo !== "factura" && f.tipo !== "factura_boleta") continue;
-        const nc = notas("nota_credito", f.id);
+        // Las NC emitidas para corregir texto (monto 0) van aparte, junto a las que Bsale informa en nc_texto.
+        const ncDeTexto = notas("nota_credito", f.id).filter((d) => /^Corrige texto/.test(String(d.descripcion || "")));
+        const nc = notas("nota_credito", f.id).filter((d) => !ncDeTexto.includes(d));
         const nd = notas("nota_debito", f.id);
         const est = estadosBsale?.[f.id];
         // NC: las registradas en la cotización (BRUTO) y las que Bsale conoce (también las hechas allá).
@@ -130,7 +132,7 @@ export default function FacturasTrazabilidad({ lics = [], documentosMap = {}, pu
           ncTotal,
           ncNumeros,
           ncSoloBsale,
-          ncTexto: est?.nc_texto || [],
+          ncTexto: [...new Set([...(est?.nc_texto || []).map(String), ...ncDeTexto.map((d) => String(d.numero || "").trim()).filter(Boolean)])],
           anuladaNc,
           anulada: anuladaNc || est?.estado === "anulado",
           ndTotal: nd.reduce((a, d) => a + Number(d.monto || 0), 0),
@@ -474,7 +476,7 @@ export default function FacturasTrazabilidad({ lics = [], documentosMap = {}, pu
                           </div>
                         )}
                         {f.ncSoloBsale.length > 0 && <div style={{ fontSize: 10.5, color: "var(--text-muted)" }} title="Emitida directamente en Bsale: no está registrada en la cotización">NC {f.ncSoloBsale.join(", ")} hecha en Bsale</div>}
-                        {f.ncTexto.length > 0 && <div style={{ fontSize: 10.5, color: "var(--text-muted)" }} title="Nota de crédito que solo corrige texto (giro, dirección, forma de pago): no cambia el monto">NC {f.ncTexto.join(", ")} corrige texto</div>}
+                        {f.ncTexto.length > 0 && <div style={{ fontSize: 10.5, color: "var(--text-muted)" }} title="Nota de crédito que solo corrige texto (razón social, dirección, giro, nombre de un producto…): no cambia el monto">NC {f.ncTexto.join(", ")} corrige texto</div>}
                         {f.nd.length > 0 && <div style={{ color: "#6d28d9" }} title={f.nd.map((n) => `ND ${n.numero}`).join(", ")}>+ {clp(f.ndTotal)} <span style={{ color: "var(--text-muted)" }}>ND</span></div>}
                         {!(f.ncTotal > 0) && !f.nd.length && !f.ncTexto.length && <span style={{ color: "var(--text-muted)" }}>—</span>}
                       </td>
