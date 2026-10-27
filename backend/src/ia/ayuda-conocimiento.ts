@@ -475,7 +475,10 @@ cotización, enlazada a su guía. No vuelve a descontar stock. Antes de simular
 se pueden editar las líneas: menos cantidad (nunca más que la guía),
 observación, quitarlas, agregar productos del catálogo y cambiar el precio
 neto; una línea de la guía con otro precio va como glosa (texto con SKU y
-nombre, sin producto de Bsale) y tampoco mueve stock. Solo se puede
+nombre, sin producto de Bsale) y tampoco mueve stock. Las líneas de una guía
+que no es de venta (p. ej. «Otros traslados no venta», usada para reponer un
+producto mal enviado) también van como glosa, porque Bsale no deja enlazarlas
+(respondía «Invalid quantity»); la factura igual referencia esa guía. Solo se puede
 facturar desde una guía emitida en Bsale; una guía ya facturada (en el sistema
 o en Bsale) queda bloqueada, y también si la guía de Bsale es de OTRO cliente
 (el número de guía está mal digitado en Trazabilidad: se corrige ahí). El

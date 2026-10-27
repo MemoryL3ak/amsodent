@@ -42,6 +42,14 @@ const normSku = (v: any) => String(v ?? '').replace(/\s+/g, '').toUpperCase();
 const DTE_OC = 801; // código SII de "orden de compra" en una referencia
 const DTE_GUIA = 52; // guía de despacho electrónica
 const DTE_FACTURA = 33; // factura electrónica
+/* (2026-10-27) Tipos de traslado de la guía (indicador del SII) que no
+   constituyen venta: 4 entrega gratuita, 5 traslado interno, 6 otros
+   traslados no venta, 7 guía de devolución, 8 traslado para exportación.
+   Bsale no deja facturar enlazando sus líneas: el detailId responde
+   "Invalid quantity" aunque ninguna factura las haya usado (guía 918, tipo 6:
+   intentos del 23-10 y 27-10). Las facturas enlazadas que sí salieron venían
+   todas de guías tipo 1 (venta) o 2 (ventas por efectuar). */
+const TRASLADOS_NO_VENTA = new Set([4, 5, 6, 7, 8]);
 
 type Problema = { codigo: string; mensaje: string };
 /* (2026-10-24) Lo que la persona puede cambiar de la factura antes de emitir:
@@ -276,8 +284,8 @@ export function armarSolicitud(
        variante + cantidad + precio neto, cuando Bsale ya usó la línea en una
        factura anulada (2026-10-23) o cuando es un producto agregado
        (2026-10-24). O glosa, sin producto, cuando a una línea de la guía le
-       cambiaron el precio (2026-10-27, glosaDe). Qué pasa con el stock: ver
-       decidirDespacho. */
+       cambiaron el precio o la guía no es de venta (2026-10-27, glosaDe y
+       TRASLADOS_NO_VENTA). Qué pasa con el stock: ver decidirDespacho. */
     details: b.lineas.map((l) => ({
       ...(l.glosa
         ? { comment: glosaDe(l), quantity: l.cantidad, netUnitValue: l.neto_unitario_raw || l.neto_unitario || 0, taxId: `[${IVA_ID}]` }
@@ -577,7 +585,16 @@ export class BsaleFacturacionService {
       ...r,
       codigo_sii: dte.get(Number(r?.dte_code?.id)) || 0,
     }));
-    return { doc, detalles, referencias };
+    // Tipo de traslado, del envío de la guía. Sin dato queda null y se enlaza como siempre.
+    let traslado: { codigo: number; nombre: string } | null = null;
+    try {
+      const s = await this.apiGet(`/shippings.json?documentid=${doc.id}&expand=[shipping_type]&limit=5`);
+      const t = ((s?.items || []) as any[])[0]?.shipping_type;
+      if (Number(t?.codeSii)) traslado = { codigo: Number(t.codeSii), nombre: String(t?.name || '').trim() };
+    } catch (e: any) {
+      this.logger.warn(`No se pudo leer el tipo de traslado de la guía ${doc.number} en Bsale: ${String(e?.message || e).slice(0, 120)}`);
+    }
+    return { doc, detalles, referencias, traslado };
   }
 
   /* ¿Ya hay en Bsale una factura que referencie esta guía? La guía no lo dice;
@@ -1090,6 +1107,13 @@ export class BsaleFacturacionService {
       const emision = Number(doc.emissionDate) || 0;
       if (emision) primeraEmision = Math.min(primeraEmision, emision);
 
+      /* (2026-10-27) Guía de un traslado que no es venta (la 918, «Otros
+         traslados no venta», reponía un producto mal enviado en la 874): Bsale
+         no deja enlazar sus líneas (TRASLADOS_NO_VENTA). Van como glosa
+         (glosaDe): sin producto, así que no tocan el stock que la guía sacó. */
+      const t = enBsale.traslado;
+      const noVenta = t && TRASLADOS_NO_VENTA.has(t.codigo) ? t.nombre || `traslado tipo ${t.codigo}` : null;
+
       const lineasGuia = detalles.map((d: any) => ({
         detalle_id: Number(d.id),
         variante_id: Number(d?.variant?.id) || null,
@@ -1106,7 +1130,10 @@ export class BsaleFacturacionService {
         neto_unitario_raw: Number(d.netUnitValueRaw ?? d.netUnitValue) || 0,
         neto: Number(d.netAmount ?? Number(d.quantity || 0) * Number(d.netUnitValue || 0)) || 0,
         // (2026-10-23) false cuando Bsale ya usó la línea en una factura anulada: va copiada, no enlazada.
-        enlazada: true,
+        // (2026-10-27) Tampoco se enlaza la de una guía que no es venta: va como glosa.
+        enlazada: !noVenta,
+        glosa: !!noVenta,
+        traslado_no_venta: noVenta,
         consumida_por: null as string | null,
         repuesto: null as number | null,
         stock_bsale: null as number | null,
@@ -1114,6 +1141,13 @@ export class BsaleFacturacionService {
       if (!lineasGuia.length) problemas.push({ codigo: 'guia_sin_lineas', mensaje: `La guía ${doc.number} no tiene productos en Bsale.` });
       if (lineasGuia.some((l) => !(l.cantidad > 0) || !l.detalle_id)) {
         problemas.push({ codigo: 'linea_invalida', mensaje: `La guía ${doc.number} tiene una línea sin cantidad.` });
+      }
+      if (noVenta && lineasGuia.length) {
+        const una = lineasGuia.length === 1;
+        avisos.push({
+          codigo: 'guia_no_venta',
+          mensaje: `La guía ${doc.number} se emitió en Bsale como «${noVenta}»: no es de venta, y Bsale no deja facturar sus líneas enlazadas (responde «Invalid quantity»). ${una ? 'Su línea va' : `Sus ${lineasGuia.length} líneas van`} como glosa: texto con SKU y nombre, con cantidad y precio, sin producto de Bsale. No mueve stock (la guía ya lo sacó) y la factura igual referencia la guía.`,
+        });
       }
       lineas.push(...lineasGuia);
 
@@ -1234,7 +1268,7 @@ export class BsaleFacturacionService {
            aquí, con el número. Sin despacho no se revisa: solo reserva. */
         if (despacha) {
           const oficina = sucursales.size === 1 ? [...sucursales][0] : null;
-          for (const l of lineas.filter((x) => !x.enlazada && x.variante_id)) {
+          for (const l of lineas.filter((x) => !x.enlazada && !x.glosa && x.variante_id)) {
             const st = await this.stockVariante(l.variante_id!, oficina);
             if (!st) continue;
             l.stock_bsale = st.stock;
@@ -1248,7 +1282,7 @@ export class BsaleFacturacionService {
         }
         for (const g of guias) {
           const deLaGuia = lineas.filter((l) => l.guia === g.numero);
-          const libres = deLaGuia.filter((l) => !l.enlazada);
+          const libres = deLaGuia.filter((l) => !l.enlazada && !l.glosa);
           if (!libres.length) continue;
           const unidades = libres.reduce((a, l) => a + l.cantidad, 0);
           const repuestas = libres.reduce((a, l) => a + (l.repuesto || 0), 0);
@@ -1377,7 +1411,7 @@ export class BsaleFacturacionService {
     const base = JSON.stringify({
       c: b.cliente?.id || 0,
       t: b.tipo_documento_id,
-      l: (b.lineas || []).map((l: any) => [l.detalle_id, l.cantidad, l.neto, ...(l.enlazada === false ? ['copiada'] : [])]),
+      l: (b.lineas || []).map((l: any) => [l.detalle_id, l.cantidad, l.neto, ...(l.enlazada === false ? ['copiada'] : []), ...(l.glosa ? ['glosa'] : [])]),
       r: (b.referencias || []).map((r: any) => [r.codigo_sii, r.folio, r.numero]),
       n: b.totales?.total || 0,
     });
@@ -1478,8 +1512,9 @@ export class BsaleFacturacionService {
       const solicitud = armarSolicitud(b as any, { ...opciones, sales_id: `${clave}-0` });
       const vendedor = await this.ponerVendedor(solicitud, null, licId, usuario.email);
       const formaPago = b.formas_pago.find((f) => f.id === forma);
-      const copiadas = b.lineas.filter((l) => l.enlazada === false && l.consumida_por && !l.extra);
+      const copiadas = b.lineas.filter((l) => l.enlazada === false && l.consumida_por && !l.extra && !l.glosa);
       const agregadas = b.lineas.filter((l) => l.extra);
+      const noVenta = b.lineas.filter((l) => l.traslado_no_venta);
       const despacha = !!(b as any).despacha;
       return {
         simulacion: true,
@@ -1509,11 +1544,14 @@ export class BsaleFacturacionService {
             copiadas.length
               ? `${copiadas.length === b.lineas.length ? 'Las líneas' : `${copiadas.length} líneas`} van copiadas de la guía, no enlazadas: Bsale ya las usó en la factura ${[...new Set(copiadas.map((l) => l.consumida_por))].join(', ')}, que está anulada.`
               : '',
+            noVenta.length
+              ? `${noVenta.length === 1 ? 'La línea' : `${noVenta.length} líneas`} de la guía ${[...new Set(noVenta.map((l) => l.guia))].join(', ')} ${noVenta.length === 1 ? 'va' : 'van'} como glosa: la guía es «${noVenta[0].traslado_no_venta}», no de venta, y Bsale no deja enlazarla.`
+              : '',
             // Aviso general de stock, salvo que la edición ya traiga el suyo.
             edicion.avisos.some((a) => /^La factura (no )?se despacha/.test(a))
               ? ''
               : despacha
-              ? 'La factura se despacha en Bsale: rebaja el stock de sus líneas.'
+              ? `La factura se despacha en Bsale: rebaja el stock de sus líneas${b.lineas.some((l) => l.glosa) ? ' con producto (las glosas no lo tocan)' : ''}.`
               : copiadas.length || agregadas.length
                 ? 'La factura no se despacha en Bsale: las líneas enlazadas a la guía no mueven stock y las copiadas o agregadas quedan reservadas como pendientes de despacho.'
                 : b.lineas.some((l) => l.glosa)
@@ -1588,10 +1626,13 @@ export class BsaleFacturacionService {
         throw new BadGatewayException('Bsale no respondió y no se sabe si la factura se emitió. Vuelve a intentarlo: lleva el mismo identificador, así que no se duplicará.');
       }
       const motivo = String(e?.message || e).slice(0, 400);
-      // "Invalid quantity": una línea de la guía ya la usó otra factura (Bsale no la libera ni al anularla).
+      /* "Invalid quantity": a una línea enlazada de la guía no le queda cantidad
+         por facturar en Bsale. Las guías que no son de venta ya van como glosa
+         (TRASLADOS_NO_VENTA) y las líneas usadas por facturas anuladas, como
+         copia: si aún pasa, la usó una factura que el sistema no reconoce. */
       if (/invalid quantity/i.test(motivo)) {
         throw new BadRequestException(
-          `Bsale rechazó la factura (${motivo}): alguna línea de la guía ya la usó otra factura en Bsale, y anularla no la libera. El sistema solo reconoce las facturas que referencian la guía: revisa en Bsale qué factura usó esas líneas.`,
+          `Bsale rechazó la factura (${motivo}): a alguna línea enlazada de la guía no le queda cantidad por facturar en Bsale. Pasa cuando otra factura ya la usó (anularla no la libera) o cuando la guía no es de venta. El sistema solo reconoce las facturas que referencian la guía: revisa en Bsale qué factura usó esas líneas y el tipo de traslado de la guía.`,
         );
       }
       throw new BadRequestException(`Bsale rechazó la factura: ${motivo}`);

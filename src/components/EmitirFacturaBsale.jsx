@@ -166,12 +166,15 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
   /* Stock (misma regla que decidirDespacho en el servidor): rebajan las líneas
      copiadas tras una NC y las agregadas; las enlazadas a la guía ya las rebajó
      la guía. Una enlazada con otro precio va como glosa, sin producto: no
-     cuenta. Se despacha solo si TODAS las que tienen producto rebajan. */
-  const esGlosa = (l) => l.enlazada !== false && precioCambiado(l);
-  const rebajaLinea = (l) => l.enlazada === false && !!l.consumida_por;
+     cuenta. Tampoco las de una guía que no es de venta, que el servidor ya
+     manda como glosa (l.glosa, 2026-10-27). Se despacha solo si TODAS las que
+     tienen producto rebajan. */
+  const esGlosa = (l) => !!l.glosa || (l.enlazada !== false && precioCambiado(l));
+  const rebajaLinea = (l) => !l.glosa && l.enlazada === false && !!l.consumida_por;
   const hayQueRebajar = lineasActivas.some(rebajaLinea) || extras.length > 0;
   const despachaEdit = hayQueRebajar && !lineasActivas.some((l) => !esGlosa(l) && !rebajaLinea(l));
   const hayGlosas = lineasActivas.some(esGlosa);
+  const hayNoVenta = lineasActivas.some((l) => l.glosa);
   const todasSeleccionadas = (borrador?.guias_disponibles || []).length > 0 && borrador.guias_disponibles.every((g) => seleccion.includes(g.doc_id));
   const opcionesForma = useMemo(
     () => (borrador?.formas_pago || []).map((f) => ({ value: String(f.id), label: f.nombre })),
@@ -438,7 +441,12 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
                                       style={{ width: "100%", height: 26, fontSize: 11.5, marginTop: 3, padding: "0 6px" }}
                                     />
                                   )}
-                                  {!e.quitada && l.enlazada === false && (
+                                  {!e.quitada && l.glosa && (
+                                    <div style={{ fontSize: 11, color: "#92400e", marginTop: 2 }} title="Bsale no deja facturar enlazando las líneas de una guía que no es de venta (responde «Invalid quantity»). Como glosa no toca el stock que la guía ya sacó, pero en Bsale no suma a las ventas del producto.">
+                                      La guía {l.guia} es «{l.traslado_no_venta || "no venta"}»: va como glosa, «{[l.sku, l.producto].filter(Boolean).join(" - ")}», sin producto de Bsale. No mueve stock.
+                                    </div>
+                                  )}
+                                  {!e.quitada && l.enlazada === false && !l.glosa && (
                                     <div style={{ fontSize: 11, color: "#92400e", marginTop: 2 }}>
                                       Copiada, no enlazada: la usó la factura {l.consumida_por || "anulada"}.{" "}
                                       {despachaEdit
@@ -446,7 +454,7 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
                                         : "Queda reservada en Bsale como pendiente de despacho."}
                                     </div>
                                   )}
-                                  {!e.quitada && esGlosa(l) && (
+                                  {!e.quitada && !l.glosa && esGlosa(l) && (
                                     <div style={{ fontSize: 11, color: "#92400e", marginTop: 2 }} title="Bsale no deja cambiar el precio de una línea enlazada a la guía. Como glosa no vuelve a tocar el stock (ya lo rebajó la guía), pero en Bsale no suma a las ventas del producto.">
                                       Con otro precio va como glosa: «{[l.sku, l.producto].filter(Boolean).join(" - ")}», sin producto de Bsale. No mueve stock.
                                     </div>
@@ -641,13 +649,17 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
                       La factura referencia:{" "}
                       {borrador.referencias.map((r) => (r.codigo_sii === 801 ? `orden de compra ${borrador.oc_editable ? (oc.trim().toUpperCase() || r.numero) : r.numero}` : `guía ${r.folio}`)).join(" · ") || "nada"}.{" "}
                       {despachaEdit
-                        ? "La factura se despacha en Bsale: rebaja el stock de todas sus líneas."
+                        ? hayGlosas
+                          ? "La factura se despacha en Bsale: rebaja el stock de sus líneas con producto (las glosas no lo tocan)."
+                          : "La factura se despacha en Bsale: rebaja el stock de todas sus líneas."
                         : hayQueRebajar
                           ? "La factura no se despacha en Bsale, porque lleva líneas cuyo stock ya rebajó la guía: las copiadas o agregadas quedan reservadas como pendientes de despacho."
                           : "La factura no mueve stock: la guía ya lo rebajó."}{" "}
-                      {hayGlosas
-                        ? "Las líneas de la guía con otro precio van como glosa (texto con SKU y nombre, sin producto de Bsale)."
-                        : "Si cambias el precio de una línea de la guía, va como glosa (texto sin producto de Bsale) y tampoco mueve stock."}
+                      {hayNoVenta
+                        ? "Las líneas de una guía que no es de venta van como glosa (texto con SKU y nombre, sin producto de Bsale), igual que las de la guía a las que les cambies el precio."
+                        : hayGlosas
+                          ? "Las líneas de la guía con otro precio van como glosa (texto con SKU y nombre, sin producto de Bsale)."
+                          : "Si cambias el precio de una línea de la guía, va como glosa (texto sin producto de Bsale) y tampoco mueve stock."}
                     </div>
                   </div>
 
