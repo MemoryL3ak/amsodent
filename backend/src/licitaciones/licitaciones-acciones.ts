@@ -12,7 +12,7 @@
 
 export type Accion = {
   fecha: string;
-  accion: string; // aprobacion | estado | edicion | documento | guardado | items | creacion | otro
+  accion: string; // aprobacion | reversion | estado | motivo | edicion | documento | producto | guardado | items | creacion | otro
   detalle: string;
   email: string | null;
   persona?: string | null;
@@ -221,6 +221,38 @@ export function accionesDesdeRegistro(
   return out;
 }
 
+
+/* Ediciones de los productos de la cotización (registro HTTP: PUT
+   /api/productos/:id). Explican, por ejemplo, cuándo y quién completó el peso
+   que tenía la cotización en «Pendiente Aprobación Peso». */
+export type ProductoCotizacion = { id: number; nombre: string; sku: string | null; peso: number | null };
+export const pesoTexto = (kg: any) => {
+  const n = Number(kg);
+  if (!(n > 0)) return 'sin peso';
+  const k = `${n.toLocaleString('es-CL', { maximumFractionDigits: 4 })} kg`;
+  return n < 1 ? `${k} = ${(n * 1000).toLocaleString('es-CL', { maximumFractionDigits: 1 })} g` : k;
+};
+export const nombreProducto = (p: { nombre?: string | null; sku?: string | null }) => `«${String(p?.nombre || p?.sku || 'producto').trim()}»`;
+
+export function accionesDeProductos(
+  logs: { created_at: string; ruta: string; status: number | null; usuario_email: string | null }[],
+  productos: ProductoCotizacion[],
+): Accion[] {
+  const porRuta = new Map(productos.map((p) => [`/api/productos/${p.id}`, p]));
+  return (logs || [])
+    .filter((l) => porRuta.has(l.ruta) && !(Number(l.status) >= 400))
+    .map((l) => {
+      const p = porRuta.get(l.ruta)!;
+      return {
+        fecha: l.created_at,
+        accion: 'producto',
+        detalle: `Editó el producto ${nombreProducto(p)} de esta cotización (hoy pesa ${pesoTexto(p.peso)})`,
+        email: String(l.usuario_email || '').toLowerCase() || null,
+        origen: 'acceso' as const,
+      };
+    });
+}
+
 const partesChile = (iso: string) =>
   Object.fromEntries(
     new Intl.DateTimeFormat('es-CL', { timeZone: 'America/Santiago', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })
@@ -230,33 +262,39 @@ const partesChile = (iso: string) =>
 const horaChile = (iso: string) => { const p = partesChile(iso); return `${p.hour}:${p.minute}`; };
 const fechaHoraChile = (iso: string) => { const p = partesChile(iso); return `${p.day}-${p.month}-${p.year} a las ${p.hour}:${p.minute}`; };
 const quien = (a: Accion) => a.persona || a.email || 'el sistema';
-const lapso = (desde: string, hasta: string) => {
-  const s = Math.max(0, Math.round((new Date(hasta).getTime() - new Date(desde).getTime()) / 1000));
-  if (s < 90) return `${s} segundos después`;
-  const m = Math.round(s / 60);
-  if (m < 90) return `${m} minutos después`;
-  return `el ${fechaHoraChile(hasta)}`;
-};
-// Antes de este arreglo (despliegue de 2026-10-27 13:23 UTC) un guardado con
-// la pantalla vieja devolvía la cotización a pendiente sin que nadie lo eligiera.
+// Antes de este arreglo (despliegue de 2026-10-27 13:23 UTC) guardar desde una
+// pantalla abierta antes de la aprobación devolvía la cotización a pendiente.
 const ARREGLO_ESTADO_VIEJO = '2026-10-27T13:23:00Z';
 
-/* (2026-10-27) El historial crudo «no se entiende» (Ariel): ve «Aprobó» y la
-   cotización sigue pendiente. Aquí se marca el guardado que deshizo una
-   aprobación (y a quién se la deshizo) y se arma un resumen en palabras del
-   estado actual y qué falta. Recibe las acciones ya ordenadas y con nombres. */
+export type ResumenAcciones = { tono: 'alerta' | 'info'; puntos: string[] };
+
+/* (2026-10-27) «No se entiende nada este historial… no ayuda a determinar la
+   razón» (Ariel). Además de la lista, se explica en palabras y con datos:
+   estado actual, por qué quedó pendiente (qué producto no tenía peso y quién
+   lo completó), quién aprobó, por qué volvió a pendiente (desde qué pantalla
+   se guardó: `lecturas` son las aperturas de la cotización, GET
+   /api/licitaciones/:id) y qué falta. Recibe las acciones ordenadas y con
+   nombres; marca como `reversion` el guardado que deshizo una aprobación. */
 export function explicarAcciones(
   acciones: Accion[],
   estadoActual: string | null,
-): { acciones: Accion[]; resumen: { texto: string; tono: 'alerta' | 'info' } | null } {
+  ctx?: { lecturas?: { created_at: string; usuario_email: string | null }[] },
+): { acciones: Accion[]; resumen: ResumenAcciones | null } {
+  const t = (s: string) => new Date(s).getTime();
   let aprobacion: Accion | null = null;
   let pendiente = false;
-  let deshecha: { aprobacion: Accion; por: Accion } | null = null;
+  let entradaPeso: Accion | null = null;
+  let deshecha: { aprobacion: Accion; por: Accion; abierta: string | null } | null = null;
+
   for (const a of acciones) {
     if (a.accion === 'aprobacion') {
       aprobacion = a;
       pendiente = false;
       deshecha = null;
+      continue;
+    }
+    if (a.accion === 'motivo') {
+      if (!entradaPeso) entradaPeso = a;
       continue;
     }
     if (a.accion !== 'estado') continue;
@@ -265,10 +303,21 @@ export function explicarAcciones(
       if (/→ «/.test(a.detalle)) pendiente = false; // pasó a un estado que no es pendiente
       continue;
     }
+    if (m[1] === 'Pendiente Aprobación Peso' && !entradaPeso && !aprobacion) entradaPeso = a;
     if (aprobacion && !pendiente) {
+      // ¿Desde qué pantalla guardó? La última vez que abrió la cotización antes de guardar.
+      const abierta =
+        (ctx?.lecturas || [])
+          .filter((l) => String(l.usuario_email || '').toLowerCase() === a.email && t(l.created_at) <= t(a.fecha))
+          .map((l) => l.created_at)
+          .sort()
+          .pop() || null;
+      const vieja = abierta && t(abierta) < t(aprobacion.fecha) ? abierta : null;
       a.accion = 'reversion';
-      a.detalle = `Al guardar, la cotización volvió a «${m[1]}»: se deshizo la aprobación de ${quien(aprobacion)} de las ${horaChile(aprobacion.fecha)}`;
-      deshecha = { aprobacion, por: a };
+      a.detalle = vieja
+        ? `Guardó desde la pantalla que abrió a las ${horaChile(vieja)}, antes de la aprobación, que todavía decía «${m[1]}»: ese estado quedó encima y se deshizo la aprobación de ${quien(aprobacion)} de las ${horaChile(aprobacion.fecha)}`
+        : `Al guardar, la cotización volvió a «${m[1]}»: se deshizo la aprobación de ${quien(aprobacion)} de las ${horaChile(aprobacion.fecha)}`;
+      deshecha = { aprobacion, por: a, abierta: vieja };
     } else if (pendiente && a.origen === 'acceso' && a.detalle.startsWith('Guardó')) {
       a.detalle = `Guardó la cotización; siguió en «${m[1]}»`;
     }
@@ -277,21 +326,47 @@ export function explicarAcciones(
 
   const estado = String(estadoActual || '').trim();
   if (!estado) return { acciones, resumen: null };
-  if (!estado.startsWith('Pendiente Aprobación')) return { acciones, resumen: { texto: `Hoy está en «${estado}».`, tono: 'info' } };
-  const boton = estado === 'Pendiente Aprobación Peso' ? '«Aprobar peso»' : '«Aprobar»';
-  if (deshecha) {
-    const vieja = deshecha.por.fecha < ARREGLO_ESTADO_VIEJO ? ' con la pantalla que tenía abierta desde antes de la aprobación' : '';
-    return {
-      acciones,
-      resumen: {
-        tono: 'alerta',
-        texto:
-          `Hoy está en «${estado}». ${quien(deshecha.aprobacion)} la aprobó el ${fechaHoraChile(deshecha.aprobacion.fecha)}, pero ` +
-          `${lapso(deshecha.aprobacion.fecha, deshecha.por.fecha)} ${quien(deshecha.por)} guardó la cotización${vieja} y volvió a quedar pendiente. ` +
-          `Hay que aprobarla otra vez con ${boton}.` +
-          (vieja ? ' Desde el 27-10-2026 un guardado así ya no deshace la aprobación.' : ''),
-      },
-    };
+  const puntos: string[] = [`Estado actual: «${estado}».`];
+
+  // Por qué quedó esperando aprobación por peso.
+  if (entradaPeso) {
+    const cuando = entradaPeso.accion === 'motivo' || !acciones.some((a) => a.accion === 'creacion' && t(entradaPeso!.fecha) - t(a.fecha) <= 120_000)
+      ? `el ${fechaHoraChile(entradaPeso.fecha)}`
+      : `al crearla (${fechaHoraChile(entradaPeso.fecha)})`;
+    const editados = acciones.filter((a) => a.accion === 'producto' && t(a.fecha) >= t(entradaPeso!.fecha) && (!aprobacion || t(a.fecha) <= t(aprobacion.fecha) + 600_000));
+    if (entradaPeso.accion === 'motivo') {
+      puntos.push(`Por qué quedó en peso: ${entradaPeso.detalle.replace(/^Quedó en «Pendiente Aprobación Peso» porque /, '')} (${fechaHoraChile(entradaPeso.fecha)}).`);
+    } else if (editados.length) {
+      const e = editados[0];
+      const prod = (e.detalle.match(/producto («[^»]+»)/) || [])[1] || 'un producto';
+      const pesoHoy = (e.detalle.match(/hoy pesa ([^)]+)\)$/) || [])[1] || '';
+      puntos.push(
+        `Por qué quedó en peso: ${cuando} algún producto no tenía peso. El sistema de entonces no anotó cuál, pero después ${quien(e)} editó ${prod} ` +
+          `(${fechaHoraChile(e.fecha)}${pesoHoy ? `; hoy pesa ${pesoHoy}` : ''}), así que lo más probable es que fuera ese.`,
+      );
+    } else {
+      puntos.push(`Por qué quedó en peso: ${cuando} algún producto de la cotización no tenía peso registrado.`);
+    }
   }
-  return { acciones, resumen: { texto: `Hoy está en «${estado}»: espera que un administrador la apruebe con ${boton}.`, tono: 'info' } };
+
+  if (aprobacion) puntos.push(`${quien(aprobacion)} la aprobó el ${fechaHoraChile(aprobacion.fecha)}.`);
+
+  if (deshecha) {
+    const { por, abierta } = deshecha;
+    const m = por.detalle.match(/«(Pendiente Aprobación(?: Peso)?)»/);
+    const pend = m ? m[1] : 'pendiente';
+    puntos.push(
+      abierta
+        ? `Por qué volvió a pendiente: ${quien(por)} tenía la cotización abierta desde las ${horaChile(abierta)}, antes de la aprobación, y la guardó a las ${horaChile(por.fecha)} desde esa misma pantalla. La pantalla todavía decía «${pend}», y al guardar ese estado quedó encima de la aprobación.`
+        : `Por qué volvió a pendiente: ${quien(por)} guardó la cotización a las ${horaChile(por.fecha)} y volvió a quedar en «${pend}».`,
+    );
+    if (t(por.fecha) < t(ARREGLO_ESTADO_VIEJO)) puntos.push('Esto ya está corregido desde el 27-10-2026: al guardar, la pantalla lee el estado actual y no deshace una aprobación.');
+  }
+
+  const pendienteHoy = estado.startsWith('Pendiente Aprobación');
+  if (pendienteHoy) {
+    const boton = estado === 'Pendiente Aprobación Peso' ? '«Aprobar peso»' : '«Aprobar»';
+    puntos.push(deshecha ? `Falta: aprobarla otra vez con ${boton}.` : `Falta: que un administrador la apruebe con ${boton}.`);
+  }
+  return { acciones, resumen: { tono: deshecha && pendienteHoy ? 'alerta' : 'info', puntos } };
 }

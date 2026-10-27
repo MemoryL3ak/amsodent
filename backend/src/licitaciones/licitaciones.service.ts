@@ -6,7 +6,17 @@ import { fueSeleccionado } from '../mercadopublico/seleccion';
 import { MpAdjudicacionesService } from './mp-adjudicaciones.service';
 import { MpColaService } from '../mercadopublico/mp-cola.service';
 import { mpLimitador } from '../mercadopublico/mp-limitador';
-import { Accion, accionDeDocumentoEditado, accionDeGuardado, accionesDesdeRegistro, explicarAcciones, nombreDocumento } from './licitaciones-acciones';
+import {
+  Accion,
+  ProductoCotizacion,
+  ResumenAcciones,
+  accionDeDocumentoEditado,
+  accionDeGuardado,
+  accionesDeProductos,
+  accionesDesdeRegistro,
+  explicarAcciones,
+  nombreDocumento,
+} from './licitaciones-acciones';
 
 /* (2026-10-22) Quién envía la factura de entidad pública cuando no se sabe
    quién la emitió: Ruth (admin@). Misma lista que la copia de esa factura
@@ -1889,7 +1899,7 @@ export class LicitacionesService {
 
   private async accionesDeCotizacion(
     lic: { id: number; created_at?: string | null; creado_por?: string | null; estado?: string | null },
-  ): Promise<{ acciones: Accion[]; acciones_resumen: { texto: string; tono: 'alerta' | 'info' } | null }> {
+  ): Promise<{ acciones: Accion[]; acciones_resumen: ResumenAcciones | null }> {
     const client = this.supabase.getClient();
     const acciones: Accion[] = [];
     let primera: string | null = null;
@@ -1934,6 +1944,46 @@ export class LicitacionesService {
       this.logger.warn(`Historial de acciones ${lic.id}: sin registro HTTP (${e?.message || e})`);
     }
 
+    /* Para explicar el porqué (explicarAcciones): quién editó los productos de
+       la cotización (p. ej. completó el peso) y cuándo se abrió la cotización
+       (desde qué pantalla se guardó). Registro HTTP: 30 días. */
+    let lecturas: { created_at: string; usuario_email: string | null }[] = [];
+    try {
+      const desde = lic.created_at ? new Date(new Date(lic.created_at).getTime() - 60_000).toISOString() : '1970-01-01T00:00:00Z';
+      const { data: items } = await client.from('items_licitacion').select('sku, producto').eq('licitacion_id', lic.id);
+      const skus = [...new Set(((items || []) as any[]).map((i) => String(i.sku || '').trim()).filter(Boolean))];
+      const nombres = [...new Set(((items || []) as any[]).filter((i) => !String(i.sku || '').trim()).map((i) => String(i.producto || '')).filter((n) => n.trim()))];
+      const productos: ProductoCotizacion[] = [];
+      if (skus.length) productos.push(...(((await client.from('productos').select('id, sku, nombre, peso').in('sku', skus)).data || []) as any[]));
+      if (nombres.length) productos.push(...(((await client.from('productos').select('id, sku, nombre, peso').in('nombre', nombres)).data || []) as any[]));
+      const [{ data: edits }, { data: abiertas }] = await Promise.all([
+        productos.length
+          ? client
+              .from('monitor_logs')
+              .select('created_at, ruta, status, usuario_email')
+              .eq('tipo', 'http')
+              .in('metodo', ['PUT', 'PATCH'])
+              .in('ruta', productos.map((p) => `/api/productos/${p.id}`))
+              .gte('created_at', desde)
+              .order('created_at', { ascending: true })
+              .limit(200)
+          : Promise.resolve({ data: [] as any[] }),
+        client
+          .from('monitor_logs')
+          .select('created_at, usuario_email')
+          .eq('tipo', 'http')
+          .eq('metodo', 'GET')
+          .eq('ruta', `/api/licitaciones/${lic.id}`)
+          .gte('created_at', desde)
+          .order('created_at', { ascending: true })
+          .limit(1000),
+      ]);
+      acciones.push(...accionesDeProductos((edits || []) as any[], productos));
+      lecturas = ((abiertas || []) as any[]).map((l) => ({ created_at: l.created_at, usuario_email: String(l.usuario_email || '').toLowerCase() || null }));
+    } catch (e: any) {
+      this.logger.warn(`Historial de acciones ${lic.id}: sin productos ni aperturas (${e?.message || e})`);
+    }
+
     // Nombres de las personas (perfil), una consulta para todos.
     const correos = [...new Set(acciones.map((a) => a.email).filter(Boolean))] as string[];
     if (correos.length) {
@@ -1942,7 +1992,7 @@ export class LicitacionesService {
       for (const a of acciones) if (a.email) a.persona = nombre.get(a.email) || null;
     }
     acciones.sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)));
-    const { resumen } = explicarAcciones(acciones, lic.estado || null);
+    const { resumen } = explicarAcciones(acciones, lic.estado || null, { lecturas });
     return { acciones, acciones_resumen: resumen };
   }
 
@@ -1960,12 +2010,18 @@ export class LicitacionesService {
       }
     }
 
+    // (2026-10-27) Historial de acciones: quién la creó y en qué estado nació.
+    const anotarCreacion = (fila: any) =>
+      fila?.id ? this.registrarAccion(fila.id, 'creacion', `Creó la cotización (estado «${fila.estado || 'En espera'}»)`, body?.creado_por) : Promise.resolve();
     const { data, error } = await this.supabase.getClient()
       .from('licitaciones')
       .insert([body])
       .select()
       .single();
-    if (!error) return data;
+    if (!error) {
+      await anotarCreacion(data);
+      return data;
+    }
 
     // Tolerar columnas aún no migradas (ej. fecha_publicacion_resultados):
     // reintentamos quitando la columna que falta para no romper la creación.
@@ -1984,6 +2040,7 @@ export class LicitacionesService {
         .select()
         .single();
       if (e2) throw new BadRequestException(e2.message);
+      await anotarCreacion(d2);
       return d2;
     }
     throw new BadRequestException(error.message);
@@ -2422,7 +2479,7 @@ export class LicitacionesService {
   // registrado queda "Pendiente Aprobación Peso" y se avisa a TODOS los admin
   // para que completen el peso en el catálogo, recalculen el flete y la
   // aprueben. Lo llama el frontend justo después de guardar en ese estado.
-  async notificarAprobacionPeso(id: number) {
+  async notificarAprobacionPeso(id: number, usuarioEmail?: string) {
     const client = this.supabase.getClient();
     const { data: lic, error } = await client
       .from('licitaciones')
@@ -2442,11 +2499,15 @@ export class LicitacionesService {
       .select('sku, producto')
       .eq('licitacion_id', id);
     const skus = [...new Set((items || []).map((i: any) => String(i.sku || '').trim()).filter(Boolean))];
+    // Tal cual y sin espacios en los bordes: el frontend compara el nombre tal
+    // cual y hay productos guardados con un espacio al final («EVER-X FLOW
+    // BULK »); solo con el recortado no se encontraban y el aviso salía sin
+    // productos (6270, 2026-10-26).
     const nombres = [...new Set(
       (items || [])
         .filter((i: any) => !String(i.sku || '').trim())
-        .map((i: any) => String(i.producto || '').trim())
-        .filter(Boolean),
+        .flatMap((i: any) => [String(i.producto || ''), String(i.producto || '').trim()])
+        .filter((n: string) => n.trim()),
     )];
     const sinPeso: { sku: string | null; nombre: string }[] = [];
     if (skus.length) {
@@ -2460,8 +2521,17 @@ export class LicitacionesService {
       const { data: prods } = await client
         .from('productos').select('sku, nombre, peso').in('nombre', nombres);
       for (const p of prods || []) {
-        if (!(Number(p.peso) > 0)) sinPeso.push({ sku: p.sku || null, nombre: p.nombre });
+        if (!(Number(p.peso) > 0) && !sinPeso.some((x) => x.nombre === p.nombre)) sinPeso.push({ sku: p.sku || null, nombre: p.nombre });
       }
+    }
+
+    // (2026-10-27) Historial de acciones: por qué quedó en peso, una vez por lista.
+    if (sinPeso.length) {
+      const detalle = `Quedó en «Pendiente Aprobación Peso» porque estos productos no tienen peso: ${sinPeso.map((p) => `«${String(p.nombre || p.sku).trim()}»`).join(', ')}`;
+      const { data: ultimo } = await client
+        .from('licitaciones_acciones').select('detalle').eq('licitacion_id', id).eq('accion', 'motivo')
+        .order('created_at', { ascending: false }).limit(1);
+      if ((ultimo || [])[0]?.detalle !== detalle) await this.registrarAccion(id, 'motivo', detalle, usuarioEmail);
     }
 
     const { data: admins } = await client

@@ -277,8 +277,8 @@ export class LicitacionesController {
   // Avisa a los admin que la cotización quedó "Pendiente Aprobación Peso"
   // (productos sin peso registrado). Lo llama el frontend tras guardar.
   @Post(':id/notificar-peso')
-  notificarPeso(@Param('id', ParseIntPipe) id: number) {
-    return this.licitacionesService.notificarAprobacionPeso(id);
+  notificarPeso(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
+    return this.licitacionesService.notificarAprobacionPeso(id, String(req?.user?.email || '').toLowerCase() || undefined);
   }
 
   // Items

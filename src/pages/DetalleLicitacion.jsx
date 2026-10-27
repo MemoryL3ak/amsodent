@@ -6107,6 +6107,8 @@ const ACCION_ESTILOS = {
   aprobacion: { color: "#15803d", label: "Aprobación" },
   reversion:  { color: "#b91c1c", label: "Deshizo la aprobación" },
   estado:     { color: "#7c3aed", label: "Estado" },
+  motivo:     { color: "#7c3aed", label: "Motivo" },
+  producto:   { color: "#0f766e", label: "Producto" },
   edicion:    { color: "#0369a1", label: "Edición" },
   documento:  { color: "#c2570c", label: "Documento" },
   creacion:   { color: "#4f46e5", label: "Creación" },
@@ -6130,17 +6132,30 @@ function ListaAccionesCotizacion({ acciones, resumen }) {
   const alerta = resumen?.tono === "alerta";
   return (
     <div>
-      {/* Resumen en palabras: por qué está como está y qué falta (lo arma el servidor). */}
-      {resumen?.texto && (
+      {/* Resumen en palabras y con datos: estado actual, por qué, quién y qué
+          falta (lo arma el servidor, explicarAcciones). */}
+      {resumen?.puntos?.length > 0 && (
         <div
           style={{
-            fontSize: 13, lineHeight: 1.5, borderRadius: 10, padding: "10px 12px", marginBottom: 10,
+            fontSize: 13, lineHeight: 1.5, borderRadius: 10, padding: "10px 12px", marginBottom: 12,
             color: alerta ? "#7c2d12" : "var(--text)",
             background: alerta ? "#fff7ed" : "var(--bg-subtle, #f8fafc)",
             border: `1px solid ${alerta ? "#fdba74" : "var(--border, #e2e8f0)"}`,
           }}
         >
-          {resumen.texto}
+          <div style={{ fontWeight: 700, marginBottom: 4 }}>{resumen.puntos[0]}</div>
+          {resumen.puntos.length > 1 && (
+            <ul style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 4 }}>
+              {resumen.puntos.slice(1).map((p, i) => (
+                <li key={i} style={{ overflowWrap: "anywhere" }}>{p}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+      {acciones.length > 0 && (
+        <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: ".04em", textTransform: "uppercase", color: "var(--text-muted)", margin: "2px 0 2px" }}>
+          Lo que pasó, en orden
         </div>
       )}
       {!acciones.length && <div style={{ color: "var(--text-muted)", fontSize: 13, padding: "20px 0" }}>Sin acciones registradas todavía.</div>}
