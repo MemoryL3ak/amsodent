@@ -6,7 +6,7 @@ import { fueSeleccionado } from '../mercadopublico/seleccion';
 import { MpAdjudicacionesService } from './mp-adjudicaciones.service';
 import { MpColaService } from '../mercadopublico/mp-cola.service';
 import { mpLimitador } from '../mercadopublico/mp-limitador';
-import { Accion, accionDeDocumentoEditado, accionDeGuardado, accionesDesdeRegistro, nombreDocumento } from './licitaciones-acciones';
+import { Accion, accionDeDocumentoEditado, accionDeGuardado, accionesDesdeRegistro, explicarAcciones, nombreDocumento } from './licitaciones-acciones';
 
 /* (2026-10-22) Quién envía la factura de entidad pública cuando no se sabe
    quién la emitió: Ruth (admin@). Misma lista que la copia de esa factura
@@ -1845,8 +1845,8 @@ export class LicitacionesService {
         ciclo_cerrado: lic.ciclo_cerrado,
       },
       eventos,
-      // (2026-10-27) Quién hizo qué: solo para administradores.
-      ...((await this.esAdministrador(quien)) ? { acciones: await this.accionesDeCotizacion(lic) } : {}),
+      // (2026-10-27) Quién hizo qué, con un resumen en palabras: solo para administradores.
+      ...((await this.esAdministrador(quien)) ? await this.accionesDeCotizacion(lic) : {}),
     };
   }
 
@@ -1887,7 +1887,9 @@ export class LicitacionesService {
     }
   }
 
-  private async accionesDeCotizacion(lic: { id: number; created_at?: string | null; creado_por?: string | null }): Promise<Accion[]> {
+  private async accionesDeCotizacion(
+    lic: { id: number; created_at?: string | null; creado_por?: string | null; estado?: string | null },
+  ): Promise<{ acciones: Accion[]; acciones_resumen: { texto: string; tono: 'alerta' | 'info' } | null }> {
     const client = this.supabase.getClient();
     const acciones: Accion[] = [];
     let primera: string | null = null;
@@ -1939,7 +1941,9 @@ export class LicitacionesService {
       const nombre = new Map(((perfiles || []) as any[]).map((p) => [String(p.email || '').toLowerCase(), String(p.nombre || '').trim()]));
       for (const a of acciones) if (a.email) a.persona = nombre.get(a.email) || null;
     }
-    return acciones.sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)));
+    acciones.sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)));
+    const { resumen } = explicarAcciones(acciones, lic.estado || null);
+    return { acciones, acciones_resumen: resumen };
   }
 
   async create(body: Record<string, any>) {

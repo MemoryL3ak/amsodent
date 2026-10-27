@@ -6105,6 +6105,7 @@ const HISTORIAL_ESTILOS = {
    Ver backend/src/licitaciones/licitaciones-acciones.ts. */
 const ACCION_ESTILOS = {
   aprobacion: { color: "#15803d", label: "Aprobación" },
+  reversion:  { color: "#b91c1c", label: "Deshizo la aprobación" },
   estado:     { color: "#7c3aed", label: "Estado" },
   edicion:    { color: "#0369a1", label: "Edición" },
   documento:  { color: "#c2570c", label: "Documento" },
@@ -6124,19 +6125,25 @@ const fmtFechaHoraChile = (iso) => {
   return { fecha: `${p.day}-${p.month}-${p.year}`, hora: `${p.hour}:${p.minute}:${p.second}` };
 };
 
-function ListaAccionesCotizacion({ acciones }) {
-  if (!acciones.length) {
-    return <div style={{ color: "var(--text-muted)", fontSize: 13, padding: "20px 0" }}>Sin acciones registradas todavía.</div>;
-  }
+function ListaAccionesCotizacion({ acciones, resumen }) {
   const hayAccesos = acciones.some((a) => a.origen === "acceso");
+  const alerta = resumen?.tono === "alerta";
   return (
     <div>
-      {hayAccesos && (
-        <div style={{ fontSize: 11.5, color: "var(--text-muted)", background: "var(--bg-subtle, #f8fafc)", border: "1px solid var(--border, #e2e8f0)", borderRadius: 8, padding: "7px 10px", marginBottom: 10, lineHeight: 1.45 }}>
-          Las acciones marcadas «según accesos» vienen del registro de accesos (30 días): dicen quién guardó y
-          cuándo, pero no el detalle de qué cambió. Desde el 27-10-2026 cada acción queda con su detalle.
+      {/* Resumen en palabras: por qué está como está y qué falta (lo arma el servidor). */}
+      {resumen?.texto && (
+        <div
+          style={{
+            fontSize: 13, lineHeight: 1.5, borderRadius: 10, padding: "10px 12px", marginBottom: 10,
+            color: alerta ? "#7c2d12" : "var(--text)",
+            background: alerta ? "#fff7ed" : "var(--bg-subtle, #f8fafc)",
+            border: `1px solid ${alerta ? "#fdba74" : "var(--border, #e2e8f0)"}`,
+          }}
+        >
+          {resumen.texto}
         </div>
       )}
+      {!acciones.length && <div style={{ color: "var(--text-muted)", fontSize: 13, padding: "20px 0" }}>Sin acciones registradas todavía.</div>}
       {acciones.map((a, i) => {
         const est = ACCION_ESTILOS[a.accion] || ACCION_ESTILOS.otro;
         const { fecha, hora } = fmtFechaHoraChile(a.fecha);
@@ -6150,13 +6157,17 @@ function ListaAccionesCotizacion({ acciones }) {
               <div style={{ display: "flex", alignItems: "baseline", gap: 6, flexWrap: "wrap" }}>
                 <span style={{ fontSize: 12.5, fontWeight: 700, color: "var(--text)", overflowWrap: "anywhere" }}>{a.persona || a.email || "Sistema"}</span>
                 <span style={{ fontSize: 10.5, fontWeight: 700, color: est.color, background: `${est.color}14`, padding: "1px 7px", borderRadius: 9 }}>{est.label}</span>
-                {a.origen === "acceso" && <span style={{ fontSize: 10.5, color: "var(--text-muted)" }}>según accesos</span>}
               </div>
-              <div style={{ fontSize: 12.5, color: "var(--text)", marginTop: 2, overflowWrap: "anywhere", lineHeight: 1.45 }}>{a.detalle}</div>
+              <div style={{ fontSize: 12.5, color: a.accion === "reversion" ? "#991b1b" : "var(--text)", fontWeight: a.accion === "reversion" ? 600 : 400, marginTop: 2, overflowWrap: "anywhere", lineHeight: 1.45 }}>{a.detalle}</div>
             </div>
           </div>
         );
       })}
+      {hayAccesos && (
+        <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 10, lineHeight: 1.45 }}>
+          Lo anterior al 27-10-2026 se reconstruyó del registro del sistema: se sabe quién guardó y cuándo, pero no cada cambio.
+        </div>
+      )}
     </div>
   );
 }
@@ -6238,7 +6249,7 @@ function ModalHistorialCotizacion({ cargando, data, codigo, entidad, onClose }) 
           ) : data?.error ? (
             <div style={{ color: "var(--danger, #dc2626)", fontSize: 13, padding: "20px 0" }}>No se pudo cargar el historial.</div>
           ) : verAcciones ? (
-            <ListaAccionesCotizacion acciones={acciones} />
+            <ListaAccionesCotizacion acciones={acciones} resumen={data?.acciones_resumen} />
           ) : eventos.length === 0 ? (
             <div style={{ color: "var(--text-muted)", fontSize: 13, padding: "20px 0" }}>Sin hitos registrados todavía.</div>
           ) : (
