@@ -641,6 +641,9 @@ export default function EditarLicitacion() {
   // Estado "candidato": al cambiar el select a Perdida, retenemos el cambio hasta que el modal
   // confirme. Si el usuario cancela el modal, restauramos el estado anterior.
   const estadoPrevioRef = useRef("En espera");
+  // (2026-10-27) ¿La persona eligió el estado en el select en esta visita? Un
+  // estado que viene de la carga o del borrador local puede estar viejo.
+  const estadoElegidoRef = useRef(false);
 
   // Una cotización es Cliente Particular si lo dice el Tipo de Cotización
   // (tipo_cliente) O el tipo de compra. No basta tipo_compra: en cotizaciones
@@ -2996,17 +2999,55 @@ export default function EditarLicitacion() {
         })
         .filter(Boolean);
 
-      const estadoSolicitado = estadoBloqueadoPendiente
-        ? estadoActualDB // conserva el pendiente que corresponda (margen o peso)
+      /* (2026-10-27) Estado y aprobación de margen FRESCOS del servidor. La
+         página puede tenerlos viejos: abierta desde antes de que un admin la
+         aprobara, o restaurada del borrador local (que guarda el estado). Con
+         lo viejo, el guardado de la vendedora devolvía a «Pendiente Aprobación
+         Peso» una cotización recién aprobada (6270: aprobada 09:35:14,
+         revertida 09:36:05). */
+      const esPendiente = (v) => String(v || "").startsWith("Pendiente Aprobación");
+      let estadoServidor = null;
+      let margenAprobadoServidor = false;
+      try {
+        const fresca = await api.get(`/licitaciones/${id}`);
+        estadoServidor = fresca?.estado || null;
+        margenAprobadoServidor = fresca?.margen_aprobado === true;
+      } catch {
+        /* sin dato fresco: se sigue con lo de la página */
+      }
+      const estadoDB = estadoServidor || estadoActualDB;
+      const margenAprobadoVigente = margenAprobado || margenAprobadoServidor;
+      const bloqueadoPendiente = !esAdmin && !tieneOcCargada && esPendiente(estadoDB);
+      let estadoSolicitado = bloqueadoPendiente
+        ? estadoDB // conserva el pendiente que corresponda (margen o peso)
         : estado;
+      // Un pendiente no se elige: lo calculan las reglas de abajo. Si ya no
+      // está pendiente en el servidor y nadie lo eligió en esta visita, se
+      // parte del estado del servidor en vez de volver al pendiente viejo.
+      if (esPendiente(estadoSolicitado) && estadoServidor && !esPendiente(estadoServidor) && !estadoElegidoRef.current) {
+        estadoSolicitado = estadoServidor;
+      }
       // Con OC cargada, las aprobaciones no retienen: el cliente ya compró
       // (bypass del pedido 2026-09-04).
-      const requiereAprobacion = margenGeneral < 20 && !margenAprobado && !tieneOcCargada;
+      const requiereAprobacion = margenGeneral < 20 && !margenAprobadoVigente && !tieneOcCargada;
       // Aprobación por PESO: si algún producto de los ítems sigue sin peso
       // registrado, el estado se fuerza a "Pendiente Aprobación Peso" (prima
       // sobre la de margen; "En espera" elegido por un admin se respeta, igual
       // que en la aprobación por margen).
-      const requiereAprobacionPeso = !tieneOcCargada && productosSinPesoDeItems().length > 0;
+      let sinPesoAhora = tieneOcCargada ? [] : productosSinPesoDeItems();
+      if (sinPesoAhora.length > 0 && estadoDB !== "Pendiente Aprobación Peso") {
+        // Antes de mandarla a Peso, el catálogo fresco: el peso pudo
+        // corregirse en Productos con esta página abierta.
+        try {
+          const data = await api.get("/productos");
+          const visibles = (data || []).filter((p) => (p?.estado || "") !== "Inactivo");
+          setProductos(visibles);
+          sinPesoAhora = productosSinPesoDeItems(visibles);
+        } catch {
+          /* se sigue con el catálogo de la página */
+        }
+      }
+      const requiereAprobacionPeso = sinPesoAhora.length > 0;
       let estadoFinal =
         requiereAprobacion && estadoSolicitado !== "En espera"
           ? "Pendiente Aprobación"
@@ -3014,7 +3055,7 @@ export default function EditarLicitacion() {
       if (requiereAprobacionPeso && estadoFinal !== "En espera") {
         estadoFinal = "Pendiente Aprobación Peso";
       }
-      const margenAprobadoFinal = margenGeneral < 20 ? margenAprobado : false;
+      const margenAprobadoFinal = margenGeneral < 20 ? margenAprobadoVigente : false;
       const fechaAdjudicadaFinal =
         estadoFinal === "Adjudicada"
           ? fechaAdjudicada || new Date().toISOString()
@@ -3031,7 +3072,7 @@ export default function EditarLicitacion() {
       }
 
       // Confirmación del Monto Total al pasar a Adjudicada
-      if (estadoFinal === "Adjudicada" && estadoActualDB !== "Adjudicada") {
+      if (estadoFinal === "Adjudicada" && estadoDB !== "Adjudicada") {
         const totalActual = Number(totalConIVA) || 0;
         const decision = await new Promise((resolve) => {
           setAdjudicarPrompt({ stage: "check", total: totalActual, resolve });
@@ -3126,6 +3167,7 @@ export default function EditarLicitacion() {
         return false;
       }
       setEstadoActualDB(estadoFinal);
+      estadoElegidoRef.current = false; // lo elegido ya quedó guardado
       setTipoClienteGuardado(tipoCliente || "");
 
       if (estadoFinal === "Pendiente Aprobación Peso") {
@@ -3133,13 +3175,14 @@ export default function EditarLicitacion() {
         api.post(`/licitaciones/${id}/notificar-peso`).catch((e) =>
           console.warn("No se pudo notificar la aprobación por peso:", e?.message),
         );
-        const sinPeso = productosSinPesoDeItems();
+        const sinPeso = sinPesoAhora;
         setToast({
           type: "warning",
-          message:
-            `Cotización en APROBACIÓN POR PESO: ${sinPeso.length} producto(s) sin peso registrado ` +
-            `(${sinPeso.slice(0, 4).map((p) => p.sku || p.nombre).join(", ")}${sinPeso.length > 4 ? "…" : ""}). ` +
-            `Un administrador debe completar el peso, recalcular el flete y aprobarla.`,
+          message: sinPeso.length
+            ? `Cotización en APROBACIÓN POR PESO: ${sinPeso.length} producto(s) sin peso registrado ` +
+              `(${sinPeso.slice(0, 4).map((p) => p.sku || p.nombre).join(", ")}${sinPeso.length > 4 ? "…" : ""}). ` +
+              `Un administrador debe completar el peso, recalcular el flete y aprobarla.`
+            : "La cotización sigue en APROBACIÓN POR PESO: falta que un administrador la apruebe (botón «Aprobar peso»).",
         });
       } else if (requiereAprobacion) {
         const detalleLineas = lineasBajoMargen.length
@@ -3687,6 +3730,7 @@ export default function EditarLicitacion() {
                   setMotivoDescarte("");
                   setComentarioDescarte("");
                 }
+                estadoElegidoRef.current = true;
                 setEstado(next);
               }}
               disabled={!puedeEditarEstado}
