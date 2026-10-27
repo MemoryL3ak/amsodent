@@ -35,7 +35,7 @@ import { generarPDFcotizacion } from "../utils/generarPDFcotizacion";
 import { calcularLista3 } from "../lib/listas";
 import { precioCampanaMargen } from "../lib/campanasMargen";
 import { useUnsavedChanges } from "../context/UnsavedChangesContext";
-import { GripVertical, Plus, Trash2, MessageSquare, Minus, ChevronUp, ChevronDown, Ban } from "lucide-react";
+import { GripVertical, Plus, Trash2, MessageSquare, Minus, ChevronUp, ChevronDown, Ban, History } from "lucide-react";
 
 import {
   DndContext,
@@ -3486,7 +3486,8 @@ export default function EditarLicitacion() {
             className="btn btn-secondary"
             title="Línea de tiempo con todo lo ocurrido en esta cotización"
           >
-            🕐 Historial
+            <History size={15} strokeWidth={2.2} aria-hidden="true" />
+            Historial
           </button>
           {puedeAprobar && estado === "Pendiente Aprobación" && (
             <button
