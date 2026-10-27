@@ -19,14 +19,15 @@ import RegistrarComprobanteRapido from "./RegistrarComprobanteRapido";
    (2026-10-24, pedido de Ariel) También se pueden editar las líneas: bajar la
    cantidad (nunca subirla: Bsale no deja facturar más que la guía), poner una
    observación por línea, quitar líneas y agregar productos del catálogo que
-   no vienen en la guía. El precio se cambia en los productos agregados y en
-   las líneas copiadas; el de una línea enlazada a la guía lo fija la guía (para
-   otro precio: nota de crédito de ajuste o nota de débito después). Y «Todas
-   las guías» arma una sola factura con todas las guías pendientes.
+   no vienen en la guía. El precio se cambia en cualquier línea: Bsale no deja
+   cambiarlo en una enlazada a la guía, así que esa va como glosa (texto con
+   SKU y nombre, sin producto; ver glosaDe en el servidor, 2026-10-27). Y
+   «Todas las guías» arma una sola factura con todas las guías pendientes.
    Stock (comprobado en Bsale real, ver decidirDespacho en
    bsale-facturacion.service.ts, que esta ventana repite para mostrarlo): una
-   línea enlazada no lo toca; una libre queda reservada como pendiente de
-   despacho; si TODAS son libres la factura se despacha y rebaja el stock.
+   línea enlazada o una glosa no lo toca; una libre queda reservada como
+   pendiente de despacho; si TODAS son libres la factura se despacha y rebaja
+   el stock.
 
    Dos pasos, en orden. 1) "Simular" muestra el documento como quedaría, sin
    emitir ni guardar nada. 2) Solo con esa simulación a la vista aparece
@@ -163,11 +164,14 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
     extras.length > 0 ||
     (borrador?.lineas || []).some((l) => { const e = edits[l.detalle_id]; return !!e && (e.quitada || numero(e.cantidad) !== l.cantidad || (e.nota || "") !== (l.nota || "") || precioCambiado(l)); });
   /* Stock (misma regla que decidirDespacho en el servidor): rebajan las líneas
-     copiadas tras una NC y las agregadas; las enlazadas a la guía y las de
-     precio cambiado ya las rebajó la guía. Se despacha solo si TODAS rebajan. */
+     copiadas tras una NC y las agregadas; las enlazadas a la guía ya las rebajó
+     la guía. Una enlazada con otro precio va como glosa, sin producto: no
+     cuenta. Se despacha solo si TODAS las que tienen producto rebajan. */
+  const esGlosa = (l) => l.enlazada !== false && precioCambiado(l);
   const rebajaLinea = (l) => l.enlazada === false && !!l.consumida_por;
   const hayQueRebajar = lineasActivas.some(rebajaLinea) || extras.length > 0;
-  const despachaEdit = hayQueRebajar && !lineasActivas.some((l) => !rebajaLinea(l));
+  const despachaEdit = hayQueRebajar && !lineasActivas.some((l) => !esGlosa(l) && !rebajaLinea(l));
+  const hayGlosas = lineasActivas.some(esGlosa);
   const todasSeleccionadas = (borrador?.guias_disponibles || []).length > 0 && borrador.guias_disponibles.every((g) => seleccion.includes(g.doc_id));
   const opcionesForma = useMemo(
     () => (borrador?.formas_pago || []).map((f) => ({ value: String(f.id), label: f.nombre })),
@@ -442,6 +446,11 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
                                         : "Queda reservada en Bsale como pendiente de despacho."}
                                     </div>
                                   )}
+                                  {!e.quitada && esGlosa(l) && (
+                                    <div style={{ fontSize: 11, color: "#92400e", marginTop: 2 }} title="Bsale no deja cambiar el precio de una línea enlazada a la guía. Como glosa no vuelve a tocar el stock (ya lo rebajó la guía), pero en Bsale no suma a las ventas del producto.">
+                                      Con otro precio va como glosa: «{[l.sku, l.producto].filter(Boolean).join(" - ")}», sin producto de Bsale. No mueve stock.
+                                    </div>
+                                  )}
                                 </td>
                                 <td style={{ textAlign: "right", whiteSpace: "nowrap", verticalAlign: "top" }}>
                                   {e.quitada ? (
@@ -463,10 +472,8 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
                                   {mala && <div style={{ fontSize: 10.5, color: "#b91c1c" }}>máx. {Number(l.cantidad).toLocaleString("es-CL")}</div>}
                                 </td>
                                 <td style={{ textAlign: "right", whiteSpace: "nowrap", verticalAlign: "top" }}>
-                                  {e.quitada || l.enlazada !== false ? (
-                                    <span title={l.enlazada !== false ? "Lo fija la guía. Para cobrar otro precio, emite con este y después haz una nota de crédito de ajuste de precio (o una nota de débito si sube)." : undefined}>
-                                      {clp(l.neto_unitario)}
-                                    </span>
+                                  {e.quitada ? (
+                                    <span>{clp(l.neto_unitario)}</span>
                                   ) : (
                                     <input
                                       className="input"
@@ -474,7 +481,7 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
                                       value={e.neto_unitario ?? String(precioGuia(l))}
                                       onChange={(ev) => cambiarEdit(l.detalle_id, { neto_unitario: ev.target.value.replace(/[^\d.,]/g, "").slice(0, 12) })}
                                       disabled={!!enviando}
-                                      title={`Precio neto unitario. En la guía: ${clp(precioGuia(l))}`}
+                                      title={`Precio neto unitario. En la guía: ${clp(precioGuia(l))}${l.enlazada !== false ? ". Si lo cambias, la línea va como glosa (texto sin producto de Bsale) y no mueve stock." : ""}`}
                                       style={{ width: 92, height: 28, textAlign: "right", fontSize: 12.5, padding: "0 6px", borderColor: precioDe(l) > 0 ? undefined : "#dc2626" }}
                                     />
                                   )}
@@ -636,8 +643,11 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
                       {despachaEdit
                         ? "La factura se despacha en Bsale: rebaja el stock de todas sus líneas."
                         : hayQueRebajar
-                          ? "La factura no se despacha en Bsale, porque lleva líneas cuyo stock ya rebajó la guía: las copiadas o agregadas quedan reservadas como pendientes de despacho. El precio de las líneas enlazadas lo fija la guía."
-                          : "La factura no mueve stock: la guía ya lo rebajó. El precio de las líneas lo fija la guía."}
+                          ? "La factura no se despacha en Bsale, porque lleva líneas cuyo stock ya rebajó la guía: las copiadas o agregadas quedan reservadas como pendientes de despacho."
+                          : "La factura no mueve stock: la guía ya lo rebajó."}{" "}
+                      {hayGlosas
+                        ? "Las líneas de la guía con otro precio van como glosa (texto con SKU y nombre, sin producto de Bsale)."
+                        : "Si cambias el precio de una línea de la guía, va como glosa (texto sin producto de Bsale) y tampoco mueve stock."}
                     </div>
                   </div>
 

@@ -471,7 +471,11 @@ productos y precios, con referencia a la orden de compra y a la guía. Se elige
 fecha de emisión, plazo de vencimiento y forma de pago (y se puede corregir el
 N° de orden de compra), se marca la casilla de confirmación y se emite: la
 factura electrónica va al SII, su PDF queda guardado y aparece registrada en la
-cotización, enlazada a su guía. No vuelve a descontar stock. Solo se puede
+cotización, enlazada a su guía. No vuelve a descontar stock. Antes de simular
+se pueden editar las líneas: menos cantidad (nunca más que la guía),
+observación, quitarlas, agregar productos del catálogo y cambiar el precio
+neto; una línea de la guía con otro precio va como glosa (texto con SKU y
+nombre, sin producto de Bsale) y tampoco mueve stock. Solo se puede
 facturar desde una guía emitida en Bsale; una guía ya facturada (en el sistema
 o en Bsale) queda bloqueada, y también si la guía de Bsale es de OTRO cliente
 (el número de guía está mal digitado en Trazabilidad: se corrige ahí). El
