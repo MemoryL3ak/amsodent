@@ -259,6 +259,46 @@ export function decidirDespacho<T extends LineaStock>(lineas: T[]) {
   return { despacha: rebajar.length > 0 && yaRebajadas.length === 0, rebajar, yaRebajadas };
 }
 
+/* (2026-10-27) Stock que exige Bsale al despachar. La marca «permite stock
+   negativo» de la variante NO sirve: la emisión #91 (guía 813, cotización
+   4130) cayó con "insufficient stock" por FP00231, que tenía 48 y la factura
+   rebajaba 50, con allowNegativeStock=1 (los productos que crea el sistema
+   llevan esa marca). Solo el stock ilimitado se salta la revisión. Bajo el
+   físico, Bsale rechaza; entre el disponible y el físico (unidades reservadas
+   por otros documentos) no está comprobado: se avisa. */
+export type StockBsale = { fisico: number; disponible: number; reservado: number; ilimitado: boolean };
+export function revisarStock(st: StockBsale | null, cantidad: number): 'ok' | 'falta' | 'reservado' {
+  if (!st || st.ilimitado) return 'ok';
+  if (st.fisico < cantidad) return 'falta';
+  if (st.disponible < cantidad) return 'reservado';
+  return 'ok';
+}
+export function mensajeStock(sku: string, st: StockBsale, cantidad: number, estado: 'falta' | 'reservado', trasNc: boolean) {
+  const n = (x: number) => x.toLocaleString('es-CL');
+  const tiene = st.reservado > 0 ? `tiene ${n(st.fisico)} (${n(st.disponible)} disponibles, ${n(st.reservado)} reservadas por otros documentos)` : `tiene ${n(st.fisico)}`;
+  const ajuste = trasNc
+    ? `Ajusta su stock en Bsale: esas unidades ya salieron con la guía y la nota de crédito las devolvió, así que déjalo en el conteo físico + ${n(cantidad)}.`
+    : 'Ingresa stock en Bsale.';
+  return estado === 'falta'
+    ? `Bsale rechazaría la factura por ${sku}: ${tiene} y la factura, al despacharse, rebaja ${n(cantidad)}. Al despachar Bsale exige stock aunque el producto permita stock negativo. ${ajuste}`
+    : `Ojo con ${sku}: ${tiene} y la factura, al despacharse, rebaja ${n(cantidad)}. Si Bsale descuenta las reservadas, la rechazará («insufficient stock»). ${ajuste}`;
+}
+
+/* Suma por variante lo que rebajan las líneas (una variante puede venir en
+   varias líneas) para revisarlo contra el stock de Bsale una sola vez. */
+function porVariante<T extends { variante_id?: number | null; cantidad: number }>(lineas: T[]) {
+  const out = new Map<number, { lineas: T[]; cantidad: number }>();
+  for (const l of lineas) {
+    const v = Number(l.variante_id) || 0;
+    if (!v) continue;
+    const e = out.get(v) || { lineas: [], cantidad: 0 };
+    e.lineas.push(l);
+    e.cantidad += Number(l.cantidad) || 0;
+    out.set(v, e);
+  }
+  return out;
+}
+
 /* Lo que se le manda a Bsale. Función pura: recibe el borrador ya validado y
    las tres decisiones del usuario (fecha, plazo, forma de pago). */
 export function armarSolicitud(
@@ -675,15 +715,21 @@ export class BsaleFacturacionService {
 
   /* Stock de una variante en Bsale (en la sucursal de la guía, si hay una) y
      si el producto admite quedar en negativo. Nunca lanza: sin dato, null. */
-  private async stockVariante(varianteId: number, oficinaId: number | null): Promise<{ stock: number; permite_negativo: boolean } | null> {
+  private async stockVariante(varianteId: number, oficinaId: number | null): Promise<StockBsale | null> {
     try {
       const [v, s] = await Promise.all([
         this.apiGet(`/variants/${varianteId}.json`),
         this.apiGet(`/stocks.json?variantid=${varianteId}${oficinaId ? `&officeid=${oficinaId}` : ''}&limit=50`),
       ]);
       const items: any[] = s?.items || [];
-      const stock = items.reduce((a, x) => a + (Number(x?.quantityAvailable ?? x?.quantity) || 0), 0);
-      return { stock, permite_negativo: Number(v?.allowNegativeStock) === 1 || Number(v?.unlimitedStock) === 1 };
+      const suma = (f: (x: any) => unknown) => items.reduce((a, x) => a + (Number(f(x)) || 0), 0);
+      return {
+        fisico: suma((x) => x?.quantity),
+        disponible: suma((x) => x?.quantityAvailable ?? x?.quantity),
+        reservado: suma((x) => x?.quantityReserved),
+        // allowNegativeStock no cuenta: Bsale igual exige stock al despachar (revisarStock).
+        ilimitado: Number(v?.unlimitedStock) === 1,
+      };
     } catch (e: any) {
       this.logger.warn(`No se pudo leer el stock de la variante ${varianteId} en Bsale: ${String(e?.message || e).slice(0, 120)}`);
       return null;
@@ -1137,6 +1183,7 @@ export class BsaleFacturacionService {
         consumida_por: null as string | null,
         repuesto: null as number | null,
         stock_bsale: null as number | null,
+        stock_fisico: null as number | null,
       }));
       if (!lineasGuia.length) problemas.push({ codigo: 'guia_sin_lineas', mensaje: `La guía ${doc.number} no tiene productos en Bsale.` });
       if (lineasGuia.some((l) => !(l.cantidad > 0) || !l.detalle_id)) {
@@ -1263,20 +1310,24 @@ export class BsaleFacturacionService {
           l.repuesto = c.repuesto;
         }
         const { despacha } = decidirDespacho(lineas);
-        /* Al despacharse, Bsale exige stock en la sucursal: si el producto no
-           admite negativo y no alcanza, rechazaría la factura. Mejor decirlo
-           aquí, con el número. Sin despacho no se revisa: solo reserva. */
+        /* Al despacharse, Bsale exige stock en la sucursal (ver revisarStock).
+           Mejor decirlo aquí, con el número. Es aviso, no bloqueo: la persona
+           puede quitar la línea o bajar la cantidad; al simular o emitir se
+           revisa de nuevo con lo editado (aplicarEdiciones) y ahí sí se
+           detiene. Sin despacho no se revisa: solo reserva. */
         if (despacha) {
           const oficina = sucursales.size === 1 ? [...sucursales][0] : null;
-          for (const l of lineas.filter((x) => !x.enlazada && !x.glosa && x.variante_id)) {
-            const st = await this.stockVariante(l.variante_id!, oficina);
+          for (const [variante, e] of porVariante(lineas.filter((x) => !x.enlazada && !x.glosa))) {
+            const st = await this.stockVariante(variante, oficina);
             if (!st) continue;
-            l.stock_bsale = st.stock;
-            if (!st.permite_negativo && st.stock < l.cantidad) {
-              problemas.push({
-                codigo: 'stock_insuficiente',
-                mensaje: `Bsale no permite dejar en negativo ${l.sku || l.producto}: tiene ${st.stock.toLocaleString('es-CL')} y la factura, al despacharse, rebaja ${l.cantidad.toLocaleString('es-CL')}. Ingresa stock en Bsale (o permite stock negativo en ese producto) y vuelve a abrir el borrador.`,
-              });
+            for (const l of e.lineas) {
+              l.stock_bsale = st.disponible;
+              l.stock_fisico = st.fisico;
+            }
+            const estado = revisarStock(st, e.cantidad);
+            if (estado !== 'ok') {
+              const l = e.lineas[0];
+              avisos.push({ codigo: estado === 'falta' ? 'stock_insuficiente' : 'stock_reservado', mensaje: mensajeStock(l.sku || l.producto, st, e.cantidad, estado, true) });
             }
           }
         }
@@ -1783,6 +1834,7 @@ export class BsaleFacturacionService {
         consumida_por: null,
         repuesto: null,
         stock_bsale: null,
+        stock_fisico: null,
       });
     }
 
@@ -1793,14 +1845,23 @@ export class BsaleFacturacionService {
     // Stock: solo se mueve si la factura se despacha (decidirDespacho).
     const { despacha, rebajar, yaRebajadas } = decidirDespacho(todas);
     if (despacha) {
-      for (const l of rebajar.filter((x) => x.variante_id)) {
-        const st = await this.stockVariante(l.variante_id, b.sucursal_id);
+      // Con lo editado (cantidades, quitadas, agregadas). Ver revisarStock.
+      const faltan: string[] = [];
+      for (const [variante, e] of porVariante(rebajar)) {
+        const st = await this.stockVariante(variante, b.sucursal_id);
         if (!st) continue;
-        l.stock_bsale = st.stock;
-        if (!st.permite_negativo && st.stock < l.cantidad) {
-          throw new BadRequestException(`Bsale no permite dejar en negativo ${l.sku}: tiene ${st.stock.toLocaleString('es-CL')} y la factura, al despacharse, rebaja ${l.cantidad.toLocaleString('es-CL')}. Ingresa stock en Bsale o permite stock negativo en ese producto.`);
+        for (const l of e.lineas) {
+          l.stock_bsale = st.disponible;
+          l.stock_fisico = st.fisico;
         }
+        const estado = revisarStock(st, e.cantidad);
+        if (estado === 'ok') continue;
+        const l = e.lineas[0];
+        const msg = mensajeStock(l.sku || l.producto, st, e.cantidad, estado, e.lineas.some((x: any) => !x.extra));
+        if (estado === 'falta') faltan.push(msg);
+        else avisos.push(msg);
       }
+      if (faltan.length) throw new BadRequestException(faltan.join(' '));
       if (extras.length) {
         avisos.push(`La factura se despacha en Bsale: rebaja el stock de ${extras.length === 1 ? 'la línea agregada' : `las ${extras.length} líneas agregadas`}${rebajar.length > extras.length ? ' y de las copiadas' : ''}.`);
       }

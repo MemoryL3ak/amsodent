@@ -173,6 +173,8 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
   const rebajaLinea = (l) => !l.glosa && l.enlazada === false && !!l.consumida_por;
   const hayQueRebajar = lineasActivas.some(rebajaLinea) || extras.length > 0;
   const despachaEdit = hayQueRebajar && !lineasActivas.some((l) => !esGlosa(l) && !rebajaLinea(l));
+  // (2026-10-27) Al despacharse, Bsale exige el stock aunque el producto «permita negativo».
+  const faltaStock = (l, cantidad) => despachaEdit && l.stock_fisico != null && Number(l.stock_fisico) < cantidad;
   const hayGlosas = lineasActivas.some(esGlosa);
   const hayNoVenta = lineasActivas.some((l) => l.glosa);
   const todasSeleccionadas = (borrador?.guias_disponibles || []).length > 0 && borrador.guias_disponibles.every((g) => seleccion.includes(g.doc_id));
@@ -447,11 +449,13 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
                                     </div>
                                   )}
                                   {!e.quitada && l.enlazada === false && !l.glosa && (
-                                    <div style={{ fontSize: 11, color: "#92400e", marginTop: 2 }}>
+                                    <div style={{ fontSize: 11, marginTop: 2, ...(faltaStock(l, numero(e.cantidad)) ? { color: "#b91c1c", fontWeight: 600 } : { color: "#92400e" }) }}>
                                       Copiada, no enlazada: la usó la factura {l.consumida_por || "anulada"}.{" "}
-                                      {despachaEdit
-                                        ? `Rebaja stock al despacharse${l.stock_bsale != null ? ` (Bsale tiene ${Number(l.stock_bsale).toLocaleString("es-CL")})` : ""}.`
-                                        : "Queda reservada en Bsale como pendiente de despacho."}
+                                      {!despachaEdit
+                                        ? "Queda reservada en Bsale como pendiente de despacho."
+                                        : faltaStock(l, numero(e.cantidad))
+                                          ? `Rebaja stock al despacharse y en Bsale no alcanza: tiene ${Number(l.stock_fisico).toLocaleString("es-CL")}. Ajusta el stock en Bsale antes de emitir.`
+                                          : `Rebaja stock al despacharse${l.stock_bsale != null ? ` (Bsale tiene ${Number(l.stock_bsale).toLocaleString("es-CL")})` : ""}.`}
                                     </div>
                                   )}
                                   {!e.quitada && !l.glosa && esGlosa(l) && (

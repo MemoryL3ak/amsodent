@@ -478,7 +478,13 @@ neto; una línea de la guía con otro precio va como glosa (texto con SKU y
 nombre, sin producto de Bsale) y tampoco mueve stock. Las líneas de una guía
 que no es de venta (p. ej. «Otros traslados no venta», usada para reponer un
 producto mal enviado) también van como glosa, porque Bsale no deja enlazarlas
-(respondía «Invalid quantity»); la factura igual referencia esa guía. Solo se puede
+(respondía «Invalid quantity»); la factura igual referencia esa guía. Cuando la
+factura se despacha (guía que se vuelve a facturar después de una nota de
+crédito, o productos agregados), la simulación revisa el stock en Bsale y se
+detiene si no alcanza, aunque el producto permita stock negativo: Bsale igual la
+rechazaría («insufficient stock»). Se ajusta el stock en Bsale (si la nota de
+crédito había devuelto esas unidades: conteo físico + lo que rebaja la factura)
+y se vuelve a simular. Solo se puede
 facturar desde una guía emitida en Bsale; una guía ya facturada (en el sistema
 o en Bsale) queda bloqueada, y también si la guía de Bsale es de OTRO cliente
 (el número de guía está mal digitado en Trazabilidad: se corrige ahí). El
