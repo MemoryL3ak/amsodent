@@ -11,6 +11,8 @@ export const MODULOS = [
   { key: "productos", label: "Productos", grupo: "Comercial" },
   // (2026-10-23) Crear productos con el formulario completo (SKU incluido) sin ser admin.
   { key: "crear_productos", label: "Crear productos con SKU (formulario completo)", grupo: "Comercial" },
+  // (2026-10-27) Editar productos del catálogo como un admin (menos aprobar pendientes).
+  { key: "editar_productos", label: "Editar productos (formulario completo)", grupo: "Comercial" },
   // (2026-10-14) Campañas y Campañas de margen: solo admin y quien lo tenga en su perfil.
   { key: "campanas", label: "Campañas y Campañas de margen", grupo: "Comercial" },
   // (2026-10-14) Un vendedor ve solo sus cotizaciones; con esto ve todas.

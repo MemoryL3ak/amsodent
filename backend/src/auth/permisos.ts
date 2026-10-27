@@ -51,6 +51,10 @@ export const MODULOS: string[] = [
   // (2026-10-23) Crear productos con el formulario completo, SKU incluido, sin
   // ser admin (pedido de Ariel para Francisco). Asignable por perfil.
   'crear_productos',
+  // (2026-10-27) Editar productos del catálogo con el formulario completo
+  // (precios, costo, medidas, SKU), como un admin, salvo aprobar los
+  // pendientes. Pedido de Ariel para Francisco. Asignable por perfil.
+  'editar_productos',
   // (2026-10-16) Gestión de compras: adjudicadas vs. stock; asignable por perfil.
   'gestion_compras',
   'cotizaciones_todas',

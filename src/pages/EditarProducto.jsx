@@ -171,6 +171,9 @@ export default function EditarProducto() {
   const [rol, setRol] = useState(null);
   // (2026-10-20) Permiso «ver_costos»: ve el costo (solo lectura) sin ser admin.
   const [verCostos, setVerCostos] = useState(false);
+  // (2026-10-27) Permiso «editar_productos»: edita el formulario completo como
+  // un admin (precios, costo, medidas, SKU, link), salvo aprobar pendientes.
+  const [editaCatalogo, setEditaCatalogo] = useState(false);
 
   // ✅ guardamos el SKU original para evitar "borrados" accidentales
   const [skuOriginal, setSkuOriginal] = useState("");
@@ -241,6 +244,8 @@ export default function EditarProducto() {
     () => rolNorm === "admin" || rolNorm === "administrador",
     [rolNorm]
   );
+  // Edita como admin; aprobar un producto pendiente sigue siendo solo de esAdmin.
+  const editaComoAdmin = esAdmin || editaCatalogo;
 
   const metroCubico = useMemo(() => {
     const a = Number(producto.alto) || 0;
@@ -338,8 +343,8 @@ export default function EditarProducto() {
   const esVentasNoTransitorio = useMemo(() => {
     const estado = (producto?.estado ?? "").toString().trim().toLowerCase();
     const esPendiente = estado === "pendiente aprobación" || estado === "pendiente aprobacion";
-    return rolNorm === "ventas" && !esProductoTransitorio && !esPendiente;
-  }, [rolNorm, esProductoTransitorio, producto]);
+    return rolNorm === "ventas" && !editaCatalogo && !esProductoTransitorio && !esPendiente;
+  }, [rolNorm, editaCatalogo, esProductoTransitorio, producto]);
 
   const estadoMostrado =
     producto.estado ||
@@ -349,8 +354,8 @@ export default function EditarProducto() {
   // ventas/jefes/contabilidad solo lo veían en transitorios o pendientes.
   const mostrarMargen = true;
 
-  // 2) ✅ admin y jefe_ventas pueden editar SKU
-  const puedeEditarSKU = esAdmin || rolNorm === "jefe_ventas";
+  // 2) ✅ admin y jefe_ventas pueden editar SKU (y quien tenga «editar_productos»)
+  const puedeEditarSKU = esAdmin || rolNorm === "jefe_ventas" || editaCatalogo;
 
   useEffect(() => {
     async function obtenerRol() {
@@ -358,6 +363,7 @@ export default function EditarProducto() {
         const perfil = await api.get("/auth/profile");
         setRol(perfil?.rol ?? null);
         setVerCostos(Array.isArray(perfil?.permisos) && perfil.permisos.includes("ver_costos"));
+        setEditaCatalogo(Array.isArray(perfil?.permisos) && perfil.permisos.includes("editar_productos"));
       } catch {
         setRol(null);
       }
@@ -692,7 +698,7 @@ export default function EditarProducto() {
       equivalente_3: (producto.equivalente_3 || "").trim() || null,
     };
 
-    if (esAdmin || (esVentasOJefe && (esProductoTransitorio || esPendienteAprobacion))) {
+    if (editaComoAdmin || (esVentasOJefe && (esProductoTransitorio || esPendienteAprobacion))) {
       payload.costo = numFromCL(producto.costo);
     }
 
@@ -702,8 +708,8 @@ export default function EditarProducto() {
       payload.precio_sugerido = numFromCL(producto.precio_sugerido) || null;
     }
 
-    // El link de referencia solo lo puede modificar el administrador.
-    if (esAdmin) {
+    // El link de referencia solo lo puede modificar el administrador (o «editar_productos»).
+    if (editaComoAdmin) {
       payload.link_referencia = (producto.link_referencia || "").trim() || null;
     }
 
@@ -1091,14 +1097,14 @@ try {
                     className="input"
                     type="url"
                     value={producto.link_referencia || ""}
-                    disabled={!esAdmin}
-                    style={!esAdmin ? { background: "var(--bg)" } : undefined}
+                    disabled={!editaComoAdmin}
+                    style={!editaComoAdmin ? { background: "var(--bg)" } : undefined}
                     onChange={(e) => setProducto((prev) => ({ ...prev, link_referencia: e.target.value }))}
                     placeholder="https://…"
                   />
                   <p style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4 }}>
-                    {esAdmin
-                      ? "Solo el administrador puede modificar este link. No aparece en la ficha PDF."
+                    {editaComoAdmin
+                      ? "Solo el administrador (o quien tenga «Editar productos») puede modificar este link. No aparece en la ficha PDF."
                       : "Link de referencia (solo el administrador puede modificarlo). No aparece en la ficha PDF."}
                   </p>
                 </div>
@@ -1200,7 +1206,7 @@ try {
         // incluso en productos Activos. Para el resto de los roles sigue
         // limitado a transitorios (y a los Pendiente Aprobación, que nacen del
         // mismo flujo de ventas).
-        const medidasEditables = esAdmin || esProductoTransitorio || esPendienteAprobacion;
+        const medidasEditables = editaComoAdmin || esProductoTransitorio || esPendienteAprobacion;
         return (
         <div className="surface">
           <div className="surface-header">
@@ -1260,11 +1266,11 @@ try {
           </div>
           <div className="surface-body">
             <div className={`grid grid-cols-1 ${mostrarMargen ? "md:grid-cols-3" : "md:grid-cols-2"} gap-4`}>
-              {(esAdmin || (esVentasOJefe && (esProductoTransitorio || esPendienteAprobacion)) || verCostos) && (
+              {(editaComoAdmin || (esVentasOJefe && (esProductoTransitorio || esPendienteAprobacion)) || verCostos) && (
                 <>
                   <div>
                     <label className="label">Costo</label>
-                    {esAdmin || (esVentasOJefe && (esProductoTransitorio || esPendienteAprobacion)) ? (
+                    {editaComoAdmin || (esVentasOJefe && (esProductoTransitorio || esPendienteAprobacion)) ? (
                       <MoneyInput
                         value={producto.costo}
                         onChange={(v) => setProducto((prev) => ({ ...prev, costo: formatearCLDesdeString(v) }))}
