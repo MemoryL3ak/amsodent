@@ -6,6 +6,7 @@ import { fueSeleccionado } from '../mercadopublico/seleccion';
 import { MpAdjudicacionesService } from './mp-adjudicaciones.service';
 import { MpColaService } from '../mercadopublico/mp-cola.service';
 import { mpLimitador } from '../mercadopublico/mp-limitador';
+import { Accion, accionDeDocumentoEditado, accionDeGuardado, accionesDesdeRegistro, nombreDocumento } from './licitaciones-acciones';
 
 /* (2026-10-22) Quién envía la factura de entidad pública cuando no se sabe
    quién la emitió: Ruth (admin@). Misma lista que la copia de esa factura
@@ -1694,7 +1695,7 @@ export class LicitacionesService {
      de historial: se arma cruzando las fuentes existentes, tolerando que
      alguna tabla/columna aún no esté migrada.
   =========================================================== */
-  async getHistorial(licId: number) {
+  async getHistorial(licId: number, quien?: { id?: string; email?: string }) {
     const client = this.supabase.getClient();
 
     const [licRes, docsRes, actsRes, gestRes] = await Promise.all([
@@ -1844,7 +1845,101 @@ export class LicitacionesService {
         ciclo_cerrado: lic.ciclo_cerrado,
       },
       eventos,
+      // (2026-10-27) Quién hizo qué: solo para administradores.
+      ...((await this.esAdministrador(quien)) ? { acciones: await this.accionesDeCotizacion(lic) } : {}),
     };
+  }
+
+  /* ===========================================================
+     HISTORIAL DE ACCIONES (2026-10-27, pedido de Ariel)
+     Ver licitaciones-acciones.ts. Registrar nunca hace fallar la acción:
+     si la tabla falta (migración 20261027 pendiente) se avisa una vez en el
+     log y el historial se arma con el registro HTTP del monitor.
+  =========================================================== */
+  private accionesSinTabla = false;
+  async registrarAccion(licId: number, accion: string, detalle: string, usuarioEmail?: string | null, cambios?: Record<string, any> | null) {
+    try {
+      const { error } = await this.supabase.getClient().from('licitaciones_acciones').insert({
+        licitacion_id: licId,
+        accion,
+        detalle: String(detalle).slice(0, 1000),
+        cambios: cambios && Object.keys(cambios).length ? cambios : null,
+        usuario_email: String(usuarioEmail || '').trim().toLowerCase() || null,
+      });
+      if (error && !this.accionesSinTabla) {
+        this.accionesSinTabla = true;
+        this.logger.warn(`Historial de acciones sin registrar (¿falta la migración 20261027_licitaciones_acciones?): ${error.message}`);
+      }
+    } catch (e: any) {
+      this.logger.warn(`Historial de acciones: ${e?.message || e}`);
+    }
+  }
+
+  private async esAdministrador(quien?: { id?: string; email?: string }): Promise<boolean> {
+    if (!quien?.id && !quien?.email) return false;
+    try {
+      const q = this.supabase.getClient().from('profiles').select('rol');
+      const { data } = quien.id ? await q.eq('id', quien.id).maybeSingle() : await q.ilike('email', String(quien.email)).maybeSingle();
+      const rol = String((data as any)?.rol || '').trim().toLowerCase();
+      return rol === 'admin' || rol === 'administrador';
+    } catch {
+      return false;
+    }
+  }
+
+  private async accionesDeCotizacion(lic: { id: number; created_at?: string | null; creado_por?: string | null }): Promise<Accion[]> {
+    const client = this.supabase.getClient();
+    const acciones: Accion[] = [];
+    let primera: string | null = null;
+    const reg = await client
+      .from('licitaciones_acciones')
+      .select('created_at, accion, detalle, usuario_email')
+      .eq('licitacion_id', lic.id)
+      .order('created_at', { ascending: true })
+      .limit(500);
+    if (!reg.error) {
+      for (const r of (reg.data || []) as any[]) {
+        acciones.push({ fecha: r.created_at, accion: r.accion, detalle: r.detalle, email: r.usuario_email || null, origen: 'registro' });
+      }
+      primera = acciones[0]?.fecha || null;
+    }
+
+    // Lo anterior a la primera acción registrada: registro HTTP del monitor.
+    try {
+      const desde = lic.created_at ? new Date(new Date(lic.created_at).getTime() - 60_000).toISOString() : null;
+      let q = client
+        .from('monitor_logs')
+        .select('created_at, metodo, ruta, status, usuario_email')
+        .eq('tipo', 'http')
+        .neq('metodo', 'GET')
+        .like('ruta', `/api/licitaciones/${lic.id}%`)
+        .order('created_at', { ascending: true })
+        .limit(500);
+      if (desde) q = q.gte('created_at', desde);
+      if (primera) q = q.lt('created_at', primera);
+      const [{ data: logs }, { data: avisos }] = await Promise.all([
+        q,
+        client
+          .from('notificaciones')
+          .select('creado_at, metadata')
+          .eq('tipo', 'cotizacion_aprobada')
+          .contains('metadata', { licitacion_id: lic.id })
+          .limit(50),
+      ]);
+      const aprobaciones = ((avisos || []) as any[]).map((a) => ({ creado_at: a.creado_at, aprobador_email: a.metadata?.aprobador_email || null }));
+      acciones.push(...accionesDesdeRegistro(lic.id, (logs || []) as any[], aprobaciones, { fecha: lic.created_at || null, email: lic.creado_por || null }));
+    } catch (e: any) {
+      this.logger.warn(`Historial de acciones ${lic.id}: sin registro HTTP (${e?.message || e})`);
+    }
+
+    // Nombres de las personas (perfil), una consulta para todos.
+    const correos = [...new Set(acciones.map((a) => a.email).filter(Boolean))] as string[];
+    if (correos.length) {
+      const { data: perfiles } = await client.from('profiles').select('email, nombre').in('email', correos);
+      const nombre = new Map(((perfiles || []) as any[]).map((p) => [String(p.email || '').toLowerCase(), String(p.nombre || '').trim()]));
+      for (const a of acciones) if (a.email) a.persona = nombre.get(a.email) || null;
+    }
+    return acciones.sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)));
   }
 
   async create(body: Record<string, any>) {
@@ -1942,14 +2037,17 @@ export class LicitacionesService {
     }
 
     // Estado previo para detectar una aprobación (Pendiente Aprobación → otro).
+    // La fila completa también sirve para anotar qué cambió (registrarAccion).
     let estadoPrevio: string | null = null;
     let margenAprobadoPrevio = false;
+    let filaPrevia: Record<string, any> | null = null;
     try {
       const { data: prev } = await client
         .from('licitaciones')
-        .select('estado, margen_aprobado')
+        .select('*')
         .eq('id', id)
         .single();
+      filaPrevia = prev || null;
       estadoPrevio = prev?.estado || null;
       margenAprobadoPrevio = prev?.margen_aprobado === true;
     } catch { /* no bloquear el update */ }
@@ -2036,6 +2134,11 @@ export class LicitacionesService {
       !!body?.estado &&
       !esPendiente(body.estado) &&
       !['Descartada', 'Cancelada', 'Desierta', 'Perdida'].includes(String(body.estado));
+
+    // (2026-10-27) Historial de acciones: qué cambió este guardado y quién.
+    const hecho = accionDeGuardado(filaPrevia, payload, aprobada);
+    if (hecho) await this.registrarAccion(id, hecho.accion, hecho.detalle, aprobadorEmail, hecho.cambios);
+
     if (aprobada) {
       try {
         await this.notificarAprobacion(data, aprobadorEmail);
@@ -2641,6 +2744,9 @@ export class LicitacionesService {
      frena el registro del documento. */
   async createDocumento(body: Record<string, any>, opts?: { sinAvisoCorreo?: boolean; usuarioEmail?: string | null }) {
     const inserted = await this.insertarDocumento(body, opts);
+    if (Number(body?.licitacion_id) > 0) {
+      await this.registrarAccion(Number(body.licitacion_id), 'documento', `Cargó ${nombreDocumento(body)}`, opts?.usuarioEmail);
+    }
     if (String(body?.tipo || '') === 'orden_compra' && Number.isFinite(Number(body?.licitacion_id))) {
       try {
         await this.adjudicaciones.porOrdenCargada(
@@ -3457,6 +3563,14 @@ export class LicitacionesService {
         .select()
         .single();
 
+    // (2026-10-27) Para el historial de acciones: número, monto o tipo de antes.
+    let docPrevio: Record<string, any> | null = null;
+    if (['numero', 'monto', 'tipo'].some((k) => k in body)) {
+      const { data: d } = await this.supabase.getClient()
+        .from('licitacion_documentos').select('licitacion_id, tipo, numero, monto').eq('id', docId).maybeSingle();
+      docPrevio = d || null;
+    }
+
     let { data, error } = await intentar(body);
 
     // Si falla por una columna opcional aún no migrada (dias_atraso_pago,
@@ -3504,6 +3618,11 @@ export class LicitacionesService {
       }
     }
 
+    const editado = accionDeDocumentoEditado(docPrevio, body);
+    if (editado && Number(docPrevio?.licitacion_id) > 0) {
+      await this.registrarAccion(Number(docPrevio!.licitacion_id), 'documento', editado, email);
+    }
+
     return data;
   }
 
@@ -3520,12 +3639,18 @@ export class LicitacionesService {
     return data || [];
   }
 
-  async deleteDocumento(docId: number) {
+  async deleteDocumento(docId: number, email?: string) {
+    // (2026-10-27) Qué se borra, para el historial de acciones: después ya no está.
+    const { data: previo } = await this.supabase.getClient()
+      .from('licitacion_documentos').select('licitacion_id, tipo, numero, monto').eq('id', docId).maybeSingle();
     const { error } = await this.supabase.getClient()
       .from('licitacion_documentos')
       .delete()
       .eq('id', docId);
     if (error) throw new BadRequestException(error.message);
+    if (Number(previo?.licitacion_id) > 0) {
+      await this.registrarAccion(Number(previo!.licitacion_id), 'documento', `Eliminó ${nombreDocumento(previo!)}`, email);
+    }
     return { deleted: true };
   }
 

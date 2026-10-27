@@ -859,7 +859,11 @@ girasol 🌻). Hoy ayuda en:
   y quedan de solo lectura.
 - HISTORIAL DE LA COTIZACIÓN: en el detalle de cada cotización, el botón
   "Historial" abre una línea de tiempo con todos los hitos (creación,
-  adjudicación, documentos, pagos, actividades y gestiones de cobranza).
+  adjudicación, documentos, pagos, actividades y gestiones de cobranza). Los
+  administradores ven además la pestaña «Acciones»: quién hizo qué y a qué
+  hora (aprobaciones, cambios de estado, ediciones con el antes y el después,
+  documentos cargados, editados o eliminados). Lo anterior al 27-10-2026 sale
+  «según accesos»: dice quién guardó y cuándo, sin el detalle de qué cambió.
 - SEGUNDO CONTACTO: las cotizaciones tipo licitación (entidad pública) tienen
   campos adicionales Nombre/Correo/Teléfono (contacto 2).
 - FILTRO RUT: el listado de cotizaciones permite filtrar por RUT del cliente

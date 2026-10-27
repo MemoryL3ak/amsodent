@@ -244,9 +244,10 @@ export class LicitacionesController {
   // Timeline de la cotización: compone en un solo listado todos los hitos
   // registrados (creación, adjudicación, documentos, pagos, actividades de
   // bitácora y gestiones de cobranza).
+  // (2026-10-27) A los admin también les devuelve quién hizo qué (acciones).
   @Get(':id/historial')
-  getHistorial(@Param('id', ParseIntPipe) id: number) {
-    return this.licitacionesService.getHistorial(id);
+  getHistorial(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
+    return this.licitacionesService.getHistorial(id, { id: req?.user?.id, email: req?.user?.email });
   }
 
   @Get(':id')
@@ -342,8 +343,9 @@ export class LicitacionesController {
   }
 
   @Delete('documentos/:docId')
-  deleteDocumento(@Param('docId', ParseIntPipe) docId: number) {
-    return this.licitacionesService.deleteDocumento(docId);
+  deleteDocumento(@Param('docId', ParseIntPipe) docId: number, @Req() req: any) {
+    // Quién lo elimina queda en el historial de acciones de la cotización.
+    return this.licitacionesService.deleteDocumento(docId, String(req?.user?.email || '').toLowerCase() || undefined);
   }
 
   // ── Dinero de las notas de crédito (2026-10-08): devolución al cliente o

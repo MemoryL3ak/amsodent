@@ -6099,8 +6099,72 @@ const HISTORIAL_ESTILOS = {
   cierre:       { color: "#dc2626", icono: "■", label: "Cierre" },
 };
 
+/* (2026-10-27, pedido de Ariel) Pestaña «Acciones», solo para administradores
+   (el servidor manda `acciones` únicamente a ellos): quién hizo qué y cuándo.
+   Ver backend/src/licitaciones/licitaciones-acciones.ts. */
+const ACCION_ESTILOS = {
+  aprobacion: { color: "#15803d", label: "Aprobación" },
+  estado:     { color: "#7c3aed", label: "Estado" },
+  edicion:    { color: "#0369a1", label: "Edición" },
+  documento:  { color: "#c2570c", label: "Documento" },
+  creacion:   { color: "#4f46e5", label: "Creación" },
+  items:      { color: "#0e7490", label: "Ítems" },
+  guardado:   { color: "#475569", label: "Guardado" },
+  otro:       { color: "#475569", label: "Otro" },
+};
+const fmtFechaHoraChile = (iso) => {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return { fecha: "—", hora: "" };
+  const p = Object.fromEntries(
+    new Intl.DateTimeFormat("es-CL", { timeZone: "America/Santiago", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })
+      .formatToParts(d)
+      .map((x) => [x.type, x.value]),
+  );
+  return { fecha: `${p.day}-${p.month}-${p.year}`, hora: `${p.hour}:${p.minute}:${p.second}` };
+};
+
+function ListaAccionesCotizacion({ acciones }) {
+  if (!acciones.length) {
+    return <div style={{ color: "var(--text-muted)", fontSize: 13, padding: "20px 0" }}>Sin acciones registradas todavía.</div>;
+  }
+  const hayAccesos = acciones.some((a) => a.origen === "acceso");
+  return (
+    <div>
+      {hayAccesos && (
+        <div style={{ fontSize: 11.5, color: "var(--text-muted)", background: "var(--bg-subtle, #f8fafc)", border: "1px solid var(--border, #e2e8f0)", borderRadius: 8, padding: "7px 10px", marginBottom: 10, lineHeight: 1.45 }}>
+          Las acciones marcadas «según accesos» vienen del registro de accesos (30 días): dicen quién guardó y
+          cuándo, pero no el detalle de qué cambió. Desde el 27-10-2026 cada acción queda con su detalle.
+        </div>
+      )}
+      {acciones.map((a, i) => {
+        const est = ACCION_ESTILOS[a.accion] || ACCION_ESTILOS.otro;
+        const { fecha, hora } = fmtFechaHoraChile(a.fecha);
+        return (
+          <div key={i} style={{ display: "flex", gap: 12, padding: "9px 0", borderBottom: i === acciones.length - 1 ? "none" : "1px solid var(--border, #eef2f7)" }}>
+            <div style={{ width: 82, flexShrink: 0, fontSize: 11.5, color: "var(--text-muted)", fontVariantNumeric: "tabular-nums", lineHeight: 1.4 }}>
+              <div>{fecha}</div>
+              <div style={{ fontWeight: 700, color: "var(--text)" }}>{hora}</div>
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 6, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 12.5, fontWeight: 700, color: "var(--text)", overflowWrap: "anywhere" }}>{a.persona || a.email || "Sistema"}</span>
+                <span style={{ fontSize: 10.5, fontWeight: 700, color: est.color, background: `${est.color}14`, padding: "1px 7px", borderRadius: 9 }}>{est.label}</span>
+                {a.origen === "acceso" && <span style={{ fontSize: 10.5, color: "var(--text-muted)" }}>según accesos</span>}
+              </div>
+              <div style={{ fontSize: 12.5, color: "var(--text)", marginTop: 2, overflowWrap: "anywhere", lineHeight: 1.45 }}>{a.detalle}</div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function ModalHistorialCotizacion({ cargando, data, codigo, entidad, onClose }) {
   const eventos = Array.isArray(data?.eventos) ? data.eventos : [];
+  const acciones = Array.isArray(data?.acciones) ? data.acciones : null;
+  const [vista, setVista] = useState("linea");
+  const verAcciones = vista === "acciones" && !!acciones;
 
   const fmtFechaHora = (iso) => {
     const s = String(iso || "");
@@ -6124,7 +6188,10 @@ function ModalHistorialCotizacion({ cargando, data, codigo, entidad, onClose }) 
               Historial de la cotización {codigo}
             </div>
             <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 2 }}>
-              {entidad || ""} · {eventos.length} hito{eventos.length === 1 ? "" : "s"} registrados
+              {entidad || ""} ·{" "}
+              {verAcciones
+                ? `${acciones.length} acci${acciones.length === 1 ? "ón" : "ones"}`
+                : `${eventos.length} hito${eventos.length === 1 ? "" : "s"} registrados`}
             </div>
           </div>
           <button
@@ -6135,20 +6202,42 @@ function ModalHistorialCotizacion({ cargando, data, codigo, entidad, onClose }) 
           </button>
         </div>
 
-        <div style={{ padding: "6px 20px 4px", display: "flex", gap: 10, flexWrap: "wrap", borderBottom: "1px solid var(--border, #eef2f7)" }}>
-          {Object.entries(HISTORIAL_ESTILOS).map(([k, v]) => (
-            <span key={k} style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 10.5, color: "var(--text-muted)", padding: "3px 0" }}>
-              <span style={{ width: 8, height: 8, borderRadius: 4, background: v.color, display: "inline-block" }} />
-              {v.label}
-            </span>
-          ))}
-        </div>
+        {acciones && !cargando && (
+          <div role="tablist" style={{ display: "flex", gap: 6, flexWrap: "wrap", padding: "10px 20px 2px" }}>
+            {[["linea", "Línea de tiempo"], ["acciones", `Acciones (${acciones.length})`]].map(([k, t]) => (
+              <button
+                key={k}
+                type="button"
+                role="tab"
+                aria-selected={vista === k}
+                onClick={() => setVista(k)}
+                className={vista === k ? "btn btn-primary btn-sm" : "btn btn-secondary btn-sm"}
+                title={k === "acciones" ? "Quién hizo qué y cuándo (solo administradores)" : undefined}
+              >
+                {t}
+              </button>
+            ))}
+          </div>
+        )}
 
-        <div style={{ overflowY: "auto", padding: "16px 24px 20px" }}>
+        {!verAcciones && (
+          <div style={{ padding: "6px 20px 4px", display: "flex", gap: 10, flexWrap: "wrap", borderBottom: "1px solid var(--border, #eef2f7)" }}>
+            {Object.entries(HISTORIAL_ESTILOS).map(([k, v]) => (
+              <span key={k} style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 10.5, color: "var(--text-muted)", padding: "3px 0" }}>
+                <span style={{ width: 8, height: 8, borderRadius: 4, background: v.color, display: "inline-block" }} />
+                {v.label}
+              </span>
+            ))}
+          </div>
+        )}
+
+        <div style={{ overflowY: "auto", padding: verAcciones ? "8px 20px 16px" : "16px 24px 20px" }}>
           {cargando ? (
             <div style={{ color: "var(--text-muted)", fontSize: 13, padding: "20px 0" }}>Cargando historial…</div>
           ) : data?.error ? (
             <div style={{ color: "var(--danger, #dc2626)", fontSize: 13, padding: "20px 0" }}>No se pudo cargar el historial.</div>
+          ) : verAcciones ? (
+            <ListaAccionesCotizacion acciones={acciones} />
           ) : eventos.length === 0 ? (
             <div style={{ color: "var(--text-muted)", fontSize: 13, padding: "20px 0" }}>Sin hitos registrados todavía.</div>
           ) : (
