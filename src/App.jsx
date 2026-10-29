@@ -116,7 +116,9 @@ export default function App() {
         {/* RUTAS PÚBLICAS */}
         <Route path="/login" element={<Login />} />
         <Route path="/reset-password" element={<ResetPassword />} />
+        {/* Sorteos: /sorteo/<slug> es el destino del QR de cada sorteo; /sorteo abre el sorteo abierto más reciente */}
         <Route path="/sorteo" element={<SorteoRegistro />} />
+        <Route path="/sorteo/:slug" element={<SorteoRegistro />} />
         <Route path="/evento" element={<EventoRegistro evento="santiago" />} />
         <Route path="/evento-vina" element={<EventoRegistro evento="vina" />} />
         {/* Alias antiguo: el evento de Viña del Mar se publicó primero como "Brasil". */}

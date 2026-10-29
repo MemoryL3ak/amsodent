@@ -660,7 +660,7 @@ recuperaciones de contraseña.
   hasta 20 MB), firma de recepción dibujada y bitácora.
 - /portal-chofer — Portal del Chofer: sus viajes, cambio de estado, foto de
   evidencia y ubicación en vivo cuando está "En ruta".
-- /evento, /evento-vina — inscripción a eventos; /sorteo — registro al sorteo.
+- /evento, /evento-vina — inscripción a eventos; /sorteo/<enlace> — registro a cada sorteo (destino de su QR).
 
 ## MÓDULOS — GRUPO REPORTES
 
@@ -753,9 +753,17 @@ recurso.
 ## MÓDULOS — GRUPO HERRAMIENTAS
 
 ### Sorteo (/sorteo-registros) y Evento (/evento-inscripciones)
-Administración de los registros públicos: KPIs, filtros, QR del portal del
-evento (generar, copiar link, descargar PNG), invitaciones por correo con
-estado de envío y reenvío, confirmación de asistencia.
+Sorteos (desde 2026-10-29 pueden existir varios a la vez): con «Nuevo sorteo»
+se crea uno con título, subtítulo, universidad, premio y colores; cada sorteo
+tiene su QR custom (descargable en PNG, SVG o como afiche) que lleva al
+formulario público /sorteo/<enlace>, donde la gente deja nombre, correo, si
+es estudiante de la universidad y en qué año va. Desde el panel se eligen
+los participantes del sorteo, se filtran y exportan a Excel, se cierran o
+abren las inscripciones, se envía correo a los inscritos y «Elegir ganador»
+sortea uno al azar (se puede repetir para más ganadores o limpiarlos).
+Evento: KPIs, filtros, QR del portal del evento (generar, copiar link,
+descargar PNG), invitaciones por correo con estado de envío y reenvío,
+confirmación de asistencia.
 
 ### Marcar Asistencia (/marcaje)
 Reloj de marcaje de entrada/salida con geolocalización puntual: pide el GPS al

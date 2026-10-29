@@ -26,6 +26,9 @@ type SorteoMailingDto = {
   // Filtros sobre sorteo_participantes:
   soloAceptaron?: boolean; // default true → only acepta_comunicaciones=true
   tipoPerfil?: 'estudiante' | 'egresado' | null;
+  // (2026-10-29) Sorteos múltiples: acotar a un sorteo y al "¿eres estudiante?" nuevo.
+  sorteoId?: number | null;
+  esEstudiante?: boolean | null;
   especialidades?: string[]; // si vacío, ninguno
   emailsExtra?: string[]; // correos adicionales pegados manualmente
 };
@@ -57,6 +60,8 @@ export class MailingsController {
     if (body?.tipoPerfil === 'estudiante' || body?.tipoPerfil === 'egresado') {
       query = query.eq('tipo_perfil', body.tipoPerfil);
     }
+    if (Number(body?.sorteoId) > 0) query = query.eq('sorteo_id', Number(body.sorteoId));
+    if (typeof body?.esEstudiante === 'boolean') query = query.eq('es_estudiante', body.esEstudiante);
     if (Array.isArray(body?.especialidades) && body.especialidades.length > 0) {
       query = query.in('especialidad', body.especialidades);
     }
@@ -241,6 +246,8 @@ export class MailingsController {
     if (body?.tipoPerfil === 'estudiante' || body?.tipoPerfil === 'egresado') {
       query = query.eq('tipo_perfil', body.tipoPerfil);
     }
+    if (Number(body?.sorteoId) > 0) query = query.eq('sorteo_id', Number(body.sorteoId));
+    if (typeof body?.esEstudiante === 'boolean') query = query.eq('es_estudiante', body.esEstudiante);
     if (Array.isArray(body?.especialidades) && body.especialidades.length > 0) {
       query = query.in('especialidad', body.especialidades);
     }

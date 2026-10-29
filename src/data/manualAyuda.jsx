@@ -685,7 +685,7 @@ export const GRUPOS_MANUAL = [
           "Las tarjetas del explorador muestran cuando un producto ya está en el pedido (chip «EN EL PEDIDO») con un contador −/+ para ajustar la cantidad ahí mismo.",
           "/despachos — despachos internos: cambio de estado con nota, evidencia (fotos/PDF hasta 20 MB) y firma de recepción dibujada.",
           "/portal-chofer — los viajes del chofer, con evidencia y ubicación en vivo.",
-          "/evento y /sorteo — formularios públicos de inscripción.",
+          "/evento y /sorteo/<enlace> — formularios públicos de inscripción (cada sorteo tiene el suyo).",
         ],
       },
     ],
@@ -866,6 +866,8 @@ export const GRUPOS_MANUAL = [
         quien: "Marketing y administración",
         resumen: "Los registros de los formularios públicos, con QR, invitaciones y confirmaciones.",
         funciones: [
+          "Sorteos: varios a la vez, cada uno con su QR custom (PNG, SVG o afiche), su formulario público /sorteo/<enlace> y sus participantes (nombre, correo, si es estudiante y en qué año va).",
+          "Elegir ganador al azar con animación, limpiar ganadores, cerrar o abrir inscripciones y exportar a Excel.",
           "QR del portal del evento: generar, copiar el link y descargar el PNG.",
           "Invitaciones por correo con estado de envío y reenvío por fila.",
           "KPIs de inscritos, asistencia confirmada y profesores; envío masivo de correos en el sorteo.",
