@@ -244,6 +244,82 @@ export class InventarioService {
     return normalizarSucursal(data);
   }
 
+  /* (2026-11-02, pedido de Ariel: "leer las mismas que están en Bsale") Trae
+     las sucursales de Bsale al mantenedor: la que ya está enlazada
+     (bsale_office_id) se actualiza con el nombre y la dirección de Bsale; una
+     local sin enlace con el MISMO nombre se enlaza; el resto se crea. Una
+     sucursal inactiva en Bsale se desactiva acá si no tiene stock ni traslados
+     abiertos (si los tiene, queda avisado). Nunca borra nada. */
+  async importarSucursalesBsale(
+    oficinas: Array<{ id: number; nombre: string; direccion?: string; comuna?: string; ciudad?: string; activa: boolean }>,
+  ) {
+    await this.exigirSucursales();
+    const out = { creadas: [] as string[], enlazadas: [] as string[], actualizadas: [] as string[], desactivadas: [] as string[], avisos: [] as string[] };
+    if (!Array.isArray(oficinas) || !oficinas.length) return out;
+    const client = this.supabase.getClient();
+    const locales = await this.listarSucursales();
+    const porOffice = new Map(locales.filter((s) => s.bsale_office_id).map((s) => [Number(s.bsale_office_id), s]));
+    const norm = (v: unknown) => String(v || '').trim().replace(/\s+/g, ' ').toLowerCase();
+    for (const o of oficinas) {
+      const id = Number(o?.id);
+      const nombre = String(o?.nombre || '').trim().replace(/\s+/g, ' ');
+      if (!id || !nombre) continue;
+      const datos = {
+        nombre,
+        direccion: String(o.direccion || '').trim() || null,
+        comuna: String(o.comuna || o.ciudad || '').trim() || null,
+      };
+      const existente = porOffice.get(id);
+      if (existente) {
+        const cambios: Record<string, any> = {};
+        if (existente.nombre !== datos.nombre) cambios.nombre = datos.nombre;
+        if (datos.direccion && existente.direccion !== datos.direccion) cambios.direccion = datos.direccion;
+        if (datos.comuna && existente.comuna !== datos.comuna) cambios.comuna = datos.comuna;
+        if (!o.activa && existente.activa && !existente.es_principal) {
+          try {
+            await this.editarSucursal(existente.id, { activa: false });
+            out.desactivadas.push(existente.nombre);
+          } catch (e: any) {
+            out.avisos.push(`${existente.nombre} está inactiva en Bsale pero no se pudo desactivar acá: ${String(e?.message || e).slice(0, 120)}`);
+          }
+        } else if (o.activa && !existente.activa) {
+          cambios.activa = true;
+        }
+        if (Object.keys(cambios).length) {
+          const { error } = await client.from('inventario_sucursales').update(cambios).eq('id', existente.id);
+          if (error) out.avisos.push(`${existente.nombre}: ${errorSucursal(error.message)}`);
+          else out.actualizadas.push(datos.nombre);
+        }
+        continue;
+      }
+      const homonima = locales.find((s) => !s.bsale_office_id && norm(s.nombre) === norm(nombre));
+      if (homonima) {
+        const { error } = await client
+          .from('inventario_sucursales')
+          .update({ bsale_office_id: id, direccion: homonima.direccion || datos.direccion, comuna: homonima.comuna || datos.comuna })
+          .eq('id', homonima.id);
+        if (error) out.avisos.push(`${homonima.nombre}: ${errorSucursal(error.message)}`);
+        else {
+          out.enlazadas.push(homonima.nombre);
+          porOffice.set(id, { ...homonima, bsale_office_id: id });
+        }
+        continue;
+      }
+      if (!o.activa) continue; // inactiva en Bsale y desconocida acá: no vale la pena crearla
+      const { data, error } = await client
+        .from('inventario_sucursales')
+        .insert([{ ...datos, activa: true, es_principal: false, bsale_office_id: id, orden: locales.length + out.creadas.length }])
+        .select()
+        .single();
+      if (error) out.avisos.push(`${nombre}: ${errorSucursal(error.message)}`);
+      else {
+        out.creadas.push(nombre);
+        porOffice.set(id, normalizarSucursal(data));
+      }
+    }
+    return out;
+  }
+
   private validarSucursal(body: Record<string, any>) {
     const nombre = String(body?.nombre || '').trim().replace(/\s+/g, ' ');
     if (!nombre) throw new BadRequestException('La sucursal necesita un nombre.');

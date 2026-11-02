@@ -38,6 +38,32 @@ function hoyChile(): string {
 
 const texto = (v: unknown, max: number) => String(v ?? '').trim().slice(0, max);
 
+function oficinaDe(o: any) {
+  return {
+    id: Number(o?.id),
+    nombre: String(o?.name || '').trim(),
+    direccion: String(o?.address || '').trim(),
+    comuna: String(o?.municipality || '').trim(),
+    ciudad: String(o?.city || '').trim(),
+    activa: Number(o?.state) === 0,
+  };
+}
+
+/* Body de una sucursal para Bsale (POST/PUT /offices). Chile: comuna en
+   `municipality` y la misma como `city` si no hay otra. */
+function solicitudOficina(s: { nombre?: unknown; direccion?: unknown; comuna?: unknown }) {
+  const comuna = texto(s.comuna, 60);
+  return {
+    name: texto(s.nombre, 80),
+    address: texto(s.direccion, 120),
+    municipality: comuna,
+    city: comuna,
+    country: 'Chile',
+    isVirtual: 0,
+    description: 'Creada desde la plataforma Amsodent',
+  };
+}
+
 @Injectable()
 export class BsaleTrasladosService {
   private readonly logger = new Logger(BsaleTrasladosService.name);
@@ -52,18 +78,69 @@ export class BsaleTrasladosService {
 
   /* Sucursales de la cuenta de Bsale (/offices.json), 10 min en caché. Para
      el mantenedor de sucursales del inventario (elegir bsale_office_id). */
-  async oficinas() {
-    if (this.cacheOficinas && Date.now() - this.cacheOficinas.ts < 10 * 60 * 1000) return this.cacheOficinas.items;
-    const items = (await this.facturacion.todos('/offices.json')).map((o: any) => ({
-      id: Number(o?.id),
-      nombre: String(o?.name || '').trim(),
-      direccion: String(o?.address || '').trim(),
-      comuna: String(o?.municipality || '').trim(),
-      ciudad: String(o?.city || '').trim(),
-      activa: Number(o?.state) === 0,
-    })).filter((o: any) => o.id);
+  async oficinas(fresco = false) {
+    if (!fresco && this.cacheOficinas && Date.now() - this.cacheOficinas.ts < 10 * 60 * 1000) return this.cacheOficinas.items;
+    const items = (await this.facturacion.todos('/offices.json')).map(oficinaDe).filter((o: any) => o.id);
     this.cacheOficinas = { ts: Date.now(), items };
     return items;
+  }
+
+  /* (2026-11-02) Las sucursales de Bsale se leen y se reflejan en el
+     mantenedor (InventarioService.importarSucursalesBsale). Lo llama el front
+     al entrar a Inventario y a la pestaña Sucursales, el botón «Actualizar
+     desde Bsale» y la sincronización de stock. */
+  async importarSucursales() {
+    const oficinas = await this.oficinas(true);
+    const r = await this.inventario.importarSucursalesBsale(oficinas);
+    const n = r.creadas.length + r.enlazadas.length + r.actualizadas.length + r.desactivadas.length;
+    if (n) this.logger.log(`Sucursales desde Bsale: ${r.creadas.length} creadas, ${r.enlazadas.length} enlazadas, ${r.actualizadas.length} actualizadas, ${r.desactivadas.length} desactivadas.`);
+    return { ...r, oficinas, cambios: n };
+  }
+
+  /* (2026-11-02, pedido de Ariel: "si creo algunas desde nuestra plataforma
+     que se envíen a Bsale") Crea la sucursal acá y, con `crear_en_bsale`, también
+     en Bsale (POST /offices.json; la creación depende del plan de la cuenta).
+     Si Bsale la rechaza, la sucursal queda creada acá sin enlace y se avisa. */
+  async crearSucursal(body: Record<string, any>) {
+    const datos = { nombre: body?.nombre, direccion: body?.direccion, comuna: body?.comuna, es_principal: !!body?.es_principal };
+    let bsale: { estado: 'creada' | 'enlazada' | 'omitida' | 'error'; mensaje: string; office_id: number | null } = { estado: 'omitida', mensaje: 'Sin sucursal en Bsale.', office_id: null };
+    let officeId: number | null = body?.bsale_office_id ? Number(body.bsale_office_id) : null;
+    if (officeId) {
+      bsale = { estado: 'enlazada', mensaje: `Enlazada a la sucursal ${officeId} de Bsale.`, office_id: officeId };
+    } else if (body?.crear_en_bsale) {
+      try {
+        const creada = await this.facturacion.apiPost('/offices.json', solicitudOficina(datos));
+        officeId = Number(creada?.id) || null;
+        this.cacheOficinas = null;
+        bsale = officeId
+          ? { estado: 'creada', mensaje: `Creada en Bsale como «${creada?.name || datos.nombre}» (sucursal ${officeId}).`, office_id: officeId }
+          : { estado: 'error', mensaje: 'Bsale respondió sin id de sucursal.', office_id: null };
+      } catch (e: any) {
+        bsale = { estado: 'error', mensaje: `Bsale no la creó: ${String(e?.message || e).slice(0, 200)}. Quedó solo en el sistema; créala en Bsale y enlázala después.`, office_id: null };
+      }
+    }
+    const sucursal = await this.inventario.crearSucursal({ ...datos, bsale_office_id: officeId });
+    return { ...sucursal, bsale };
+  }
+
+  /* Edita acá y, si está enlazada y `actualizar_bsale`, también el nombre y la
+     dirección en Bsale (PUT /offices/{id}.json). Desactivar NO se propaga. */
+  async editarSucursal(id: number, body: Record<string, any>) {
+    const previa = await this.inventario.sucursalPorId(id);
+    const sucursal = await this.inventario.editarSucursal(id, body);
+    let bsale: { estado: 'actualizada' | 'omitida' | 'error'; mensaje: string } = { estado: 'omitida', mensaje: '' };
+    const officeId = sucursal.bsale_office_id;
+    const cambioDatos = sucursal.nombre !== previa.nombre || sucursal.direccion !== previa.direccion || sucursal.comuna !== previa.comuna;
+    if (officeId && body?.actualizar_bsale && cambioDatos) {
+      try {
+        await this.facturacion.apiEnviar('PUT', `/offices/${officeId}.json`, { id: String(officeId), ...solicitudOficina(sucursal) });
+        this.cacheOficinas = null;
+        bsale = { estado: 'actualizada', mensaje: `Nombre y dirección actualizados en Bsale (sucursal ${officeId}).` };
+      } catch (e: any) {
+        bsale = { estado: 'error', mensaje: `Bsale no se actualizó: ${String(e?.message || e).slice(0, 200)}.` };
+      }
+    }
+    return { ...sucursal, bsale };
   }
 
   /* Borrador de la guía para un traslado: qué iría a Bsale y qué lo impide. No escribe nada. */

@@ -602,9 +602,24 @@ export class BsaleService {
         }
       }
 
-      // (2026-11-02) Traslados con guía en Bsale: si Bsale ya los recepcionó
-      // (o anuló la guía) se refleja acá ANTES de comparar el stock, y el
-      // contexto (stock por sucursal, compensaciones) se arma una sola vez.
+      // (2026-11-02) Las sucursales de Bsale se reflejan en el mantenedor antes
+      // de repartir stock: una sucursal nueva en Bsale nace acá ya enlazada y
+      // su stock cae donde corresponde (no se ignora).
+      let sucursalesBsale: any = null;
+      if (await this.inventario.sucursalesListo()) {
+        try {
+          const oficinas = (await this.paginado('/offices.json', '')).map((o: any) => ({
+            id: Number(o?.id), nombre: String(o?.name || '').trim(), direccion: String(o?.address || '').trim(),
+            comuna: String(o?.municipality || '').trim(), ciudad: String(o?.city || '').trim(), activa: Number(o?.state) === 0,
+          }));
+          sucursalesBsale = await this.inventario.importarSucursalesBsale(oficinas);
+        } catch (e: any) {
+          this.logger.warn(`No se pudieron importar las sucursales de Bsale: ${String(e?.message || e).slice(0, 120)}`);
+        }
+      }
+      // Traslados con guía en Bsale: si Bsale ya los recepcionó (o anuló la
+      // guía) se refleja acá ANTES de comparar el stock, y el contexto (stock
+      // por sucursal, compensaciones) se arma una sola vez.
       let ctx = await this.inventario.contextoSincronizacion();
       const trasladosBsale = ctx
         ? await this.inventario.sincronizarTrasladosBsale((id) => this.apiGet(`/shippings/${id}.json`), opts?.usuario || null)
@@ -734,6 +749,7 @@ export class BsaleService {
         oficinas_bsale: [...oficinasVistas].sort((a, b) => a - b),
         oficinas_sin_sucursal: ctx ? [...oficinasVistas].filter((o) => !ctx!.mapeadas.some((m) => m.office === o)).sort((a, b) => a - b) : [],
         traslados_bsale: trasladosBsale,
+        sucursales_bsale: sucursalesBsale,
       };
 
       const { error: errEstado } = await client.from('bsale_estado').upsert([{

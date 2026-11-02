@@ -180,6 +180,42 @@ export default function Inventario() {
   }
   useEffect(() => { cargarSucursales(); }, []);
 
+  // (2026-11-02) Las sucursales de Bsale son las mismas de acá: al entrar (admin)
+  // se importan solas (crea las que falten, enlaza por nombre, actualiza las
+  // enlazadas). También con el botón «Actualizar desde Bsale» de la pestaña.
+  const [importandoBsale, setImportandoBsale] = useState(false);
+  const [importadoAlEntrar, setImportadoAlEntrar] = useState(false);
+  async function importarSucursalesBsale(avisarSiNada) {
+    if (importandoBsale) return;
+    setImportandoBsale(true);
+    try {
+      const r = await api.post("/bsale/traslados/oficinas/importar", {});
+      if (Array.isArray(r?.oficinas)) setOficinasBsale(r.oficinas);
+      if (r?.cambios > 0) {
+        await cargarSucursales();
+        setResumenSuc(null);
+        const partes = [];
+        if (r.creadas?.length) partes.push(`${r.creadas.length} creada${r.creadas.length === 1 ? "" : "s"} (${r.creadas.join(", ")})`);
+        if (r.enlazadas?.length) partes.push(`${r.enlazadas.length} enlazada${r.enlazadas.length === 1 ? "" : "s"} por nombre`);
+        if (r.actualizadas?.length) partes.push(`${r.actualizadas.length} actualizada${r.actualizadas.length === 1 ? "" : "s"}`);
+        if (r.desactivadas?.length) partes.push(`${r.desactivadas.length} desactivada${r.desactivadas.length === 1 ? "" : "s"}`);
+        setToast({ type: "success", message: `Sucursales desde Bsale: ${partes.join(" · ")}.` });
+      } else if (avisarSiNada) {
+        setToast({ type: "info", message: `Sucursales al día con Bsale (${(r?.oficinas || []).length} en Bsale).${r?.avisos?.length ? ` ${r.avisos[0]}` : ""}` });
+      }
+      if (r?.avisos?.length && r?.cambios > 0) setToast({ type: "info", message: r.avisos[0] });
+    } catch (e) {
+      if (avisarSiNada) setToast({ type: "error", message: e?.message || "No se pudieron leer las sucursales de Bsale." });
+    } finally {
+      setImportandoBsale(false);
+    }
+  }
+  useEffect(() => {
+    if (!esAdmin || !conSucursales || importadoAlEntrar) return;
+    setImportadoAlEntrar(true);
+    importarSucursalesBsale(false);
+  }, [esAdmin, conSucursales, importadoAlEntrar]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Cada vez que hay una corrida nueva guardada, se refresca la lista de
   // huérfanos (viene del mismo detalle que alimenta el panel de diferencias).
   const bsaleUltimaCorrida = bsale?.ultima?.actualizado_at || null;
@@ -1215,11 +1251,16 @@ export default function Inventario() {
         <>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
             <p style={{ margin: 0, fontSize: 12.5, color: "var(--text-muted)", flex: 1, minWidth: 240 }}>
-              Sucursales y bodegas propias. La <b>principal</b> recibe los movimientos sin sucursal y las diferencias de la sincronización con Bsale (Bsale tiene una sola sucursal).
+              Son las mismas sucursales de Bsale: las de Bsale se importan solas y las que crees acá se pueden crear también en Bsale. La <b>principal</b> recibe los movimientos sin sucursal. Una bodega sin sucursal en Bsale es solo del sistema.
             </p>
-            <button className="btn btn-primary" onClick={() => setSucModal({ sucursal: null })} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-              <Plus size={14} /> Nueva sucursal
-            </button>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button className="btn btn-secondary" onClick={() => importarSucursalesBsale(true)} disabled={importandoBsale} title="Leer las sucursales de Bsale: crea las que falten, enlaza por nombre y actualiza las enlazadas" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                <RefreshCw size={14} style={importandoBsale ? { animation: "bsale-spin 1s linear infinite" } : undefined} /> {importandoBsale ? "Leyendo Bsale…" : "Actualizar desde Bsale"}
+              </button>
+              <button className="btn btn-primary" onClick={() => setSucModal({ sucursal: null })} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                <Plus size={14} /> Nueva sucursal
+              </button>
+            </div>
           </div>
           <div className="surface" style={{ marginTop: 14, overflowX: "auto" }}>
             {resumenSuc === null ? (
@@ -1525,8 +1566,11 @@ export default function Inventario() {
           onListo={(s, creada) => {
             setSucModal(null);
             setResumenSuc(null);
+            setOficinasBsale(null);
             cargarSucursales();
-            setToast({ type: "success", message: creada ? `Sucursal «${s.nombre}» creada.` : `Sucursal «${s.nombre}» actualizada.` });
+            const b = s?.bsale;
+            const extra = b?.estado === "error" ? ` ${b.mensaje}` : b?.estado === "creada" || b?.estado === "actualizada" ? ` ${b.mensaje}` : "";
+            setToast({ type: b?.estado === "error" ? "info" : "success", message: `${creada ? `Sucursal «${s.nombre}» creada.` : `Sucursal «${s.nombre}» actualizada.`}${extra}` });
           }}
           onError={(m) => setToast({ type: "error", message: m })}
         />
@@ -2353,6 +2397,9 @@ function ModalSucursal({ sucursal, oficinas, onClose, onListo, onError }) {
   const [comuna, setComuna] = useState(sucursal?.comuna || "");
   const [bsaleOffice, setBsaleOffice] = useState(sucursal?.bsale_office_id ? String(sucursal.bsale_office_id) : "");
   const [esPrincipal, setEsPrincipal] = useState(!!sucursal?.es_principal);
+  // (2026-11-02) Lo que se crea o edita acá va también a Bsale (casilla explícita).
+  const [crearEnBsale, setCrearEnBsale] = useState(true);
+  const [actualizarBsale, setActualizarBsale] = useState(true);
   const [guardando, setGuardando] = useState(false);
 
   async function guardar() {
@@ -2360,8 +2407,12 @@ function ModalSucursal({ sucursal, oficinas, onClose, onListo, onError }) {
     if (!nombre.trim()) { onError?.("La sucursal necesita un nombre."); return; }
     setGuardando(true);
     try {
-      const body = { nombre: nombre.trim(), direccion, comuna, bsale_office_id: bsaleOffice ? Number(bsaleOffice) : null, es_principal: esPrincipal };
-      const s = editando ? await api.put(`/inventario/sucursales/${sucursal.id}`, body) : await api.post("/inventario/sucursales", body);
+      const body = {
+        nombre: nombre.trim(), direccion, comuna, bsale_office_id: bsaleOffice ? Number(bsaleOffice) : null, es_principal: esPrincipal,
+        crear_en_bsale: !editando && !bsaleOffice && crearEnBsale,
+        actualizar_bsale: editando && actualizarBsale,
+      };
+      const s = editando ? await api.put(`/bsale/traslados/sucursales/${sucursal.id}`, body) : await api.post("/bsale/traslados/sucursales", body);
       onListo?.(s, !editando);
     } catch (e) {
       onError?.(e?.message || "No se pudo guardar la sucursal.");
@@ -2397,18 +2448,30 @@ function ModalSucursal({ sucursal, oficinas, onClose, onListo, onError }) {
           </div>
         </div>
         <div style={{ marginBottom: 12 }}>
-          <label className="filter-label">Sucursal en Bsale (opcional)</label>
+          <label className="filter-label">Sucursal en Bsale</label>
           {Array.isArray(oficinas) && oficinas.length > 0 ? (
             <DropdownSelect value={bsaleOffice} onChange={setBsaleOffice} style={{ width: "100%" }}
               options={[
-                { value: "", label: "Sin sucursal en Bsale", detalle: "Bodega solo del sistema: la sincronización no la toca" },
+                { value: "", label: editando ? "Sin sucursal en Bsale" : crearEnBsale ? "Nueva: se crea en Bsale al guardar" : "Sin sucursal en Bsale", detalle: editando || !crearEnBsale ? "Bodega solo del sistema: la sincronización no la toca" : "Con el mismo nombre y dirección" },
                 ...oficinas.map((o) => ({ value: String(o.id), label: `${o.nombre} (${o.id})`, detalle: [o.direccion, o.comuna].filter(Boolean).join(", ") || undefined, color: o.activa ? "#16a34a" : "#9ca3af" })),
               ]} />
           ) : (
             <input className="input" inputMode="numeric" value={bsaleOffice} onChange={(e) => setBsaleOffice(e.target.value.replace(/[^\d]/g, ""))} placeholder="id de la sucursal en Bsale (offices.json)" />
           )}
-          <div style={{ fontSize: 11.5, color: "var(--text-muted)", marginTop: 4 }}>
-            Asociada a una sucursal de Bsale, la sincronización deja acá exactamente el stock que Bsale tiene en ella, y los traslados hacia otra sucursal asociada pueden emitir la guía de traslado interno en Bsale.
+          {!editando && !bsaleOffice && (
+            <label style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 12.5, cursor: "pointer", marginTop: 8 }}>
+              <input type="checkbox" checked={crearEnBsale} onChange={(e) => setCrearEnBsale(e.target.checked)} style={{ marginTop: 2 }} />
+              <span><b>Crear también en Bsale</b><span style={{ color: "var(--text-muted)" }}> — queda enlazada de inmediato (si el plan de Bsale no lo permite, se crea solo acá y se avisa).</span></span>
+            </label>
+          )}
+          {editando && sucursal?.bsale_office_id && (
+            <label style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 12.5, cursor: "pointer", marginTop: 8 }}>
+              <input type="checkbox" checked={actualizarBsale} onChange={(e) => setActualizarBsale(e.target.checked)} style={{ marginTop: 2 }} />
+              <span><b>Actualizar también en Bsale</b><span style={{ color: "var(--text-muted)" }}> — nombre y dirección (desactivar no se propaga).</span></span>
+            </label>
+          )}
+          <div style={{ fontSize: 11.5, color: "var(--text-muted)", marginTop: 6 }}>
+            Enlazada a Bsale, la sincronización deja acá exactamente el stock que Bsale tiene en ella y los traslados hacia otra sucursal enlazada pueden emitir la guía de traslado interno.
           </div>
         </div>
         <label style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 12.5, cursor: sucursal?.es_principal ? "default" : "pointer", marginBottom: 16 }}>
