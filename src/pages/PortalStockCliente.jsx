@@ -3818,14 +3818,15 @@ function PanelInventario({ sucursalId, sucursales = [], onCambiarSucursal, setTo
   );
 }
 
-function ModalIngresoInventario({ producto, esAdminPortal, guardando, onCerrar, onGuardar }) {
+function ModalIngresoInventario({ producto, guardando, onCerrar, onGuardar }) {
   const nuevo = !producto;
   const [nombre, setNombre] = useState("");
   const [sku, setSku] = useState("");
   const [marca, setMarca] = useState("");
   const [unidad, setUnidad] = useState("");
-  const [bajo, setBajo] = useState("");
-  const [critico, setCritico] = useState("");
+  // (2026-11-02) Los umbrales (stock bajo / crítico) ya no se piden acá: se
+  // administran en Gestión de Stock por el admin de la cuenta. Ariel: "no
+  // tiene sentido" pedirlos al crear el producto.
   const [cantidad, setCantidad] = useState("");
   const [costo, setCosto] = useState("");
   const [fecha, setFecha] = useState(hoyChile());
@@ -3842,7 +3843,7 @@ function ModalIngresoInventario({ producto, esAdminPortal, guardando, onCerrar, 
     if (!ok) return;
     onGuardar({
       ...(nuevo
-        ? { nuevo: { nombre: nombre.trim(), sku: sku.trim(), marca: marca.trim(), unidad: unidad.trim(), ...(esAdminPortal ? { stock_alerta: Number(bajo) || null, stock_minimo: Number(critico) || 0 } : {}) } }
+        ? { nuevo: { nombre: nombre.trim(), sku: sku.trim(), marca: marca.trim(), unidad: unidad.trim() } }
         : { producto_id: producto.id }),
       cantidad: cant,
       costo_unitario: cst,
@@ -3882,12 +3883,6 @@ function ModalIngresoInventario({ producto, esAdminPortal, guardando, onCerrar, 
               {campo("Marca", <input value={marca} onChange={(e) => setMarca(e.target.value)} placeholder="Opcional" style={styles.input} />)}
               {campo("Formato", <input value={unidad} onChange={(e) => setUnidad(e.target.value)} placeholder="Caja, unidad…" style={styles.input} />)}
             </div>
-            {esAdminPortal && (
-              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                {campo("Stock bajo", <input type="number" min="0" step="any" value={bajo} onChange={(e) => setBajo(e.target.value)} placeholder="0" style={styles.input} />)}
-                {campo("Stock crítico", <input type="number" min="0" step="any" value={critico} onChange={(e) => setCritico(e.target.value)} placeholder="0" style={styles.input} />)}
-              </div>
-            )}
           </>
         )}
 
