@@ -55,6 +55,9 @@ export const MODULOS = [
   // (2026-10-22) "inventario_kpis" ya no es asignable: las tarjetas KPI son
   // solo admin; las columnas Costo/Valorización van con "ver_costos".
   { key: "inventario", label: "Inventario (ver stock) — ya lo ven todos", grupo: "Abastecimiento" },
+  // (2026-11-02) Traslados de stock entre sucursales propias sin ser admin
+  // (crear, recibir y anular). El mantenedor de sucursales sigue siendo solo admin.
+  { key: "inventario_traslados", label: "Inventario: traslados entre sucursales (crear, recibir y anular)", grupo: "Abastecimiento" },
   { key: "ver_costos", label: "Ver el costo de los productos (solo lectura)", grupo: "Comercial" },
   { key: "gestion_compras", label: "Gestión de compras (adjudicadas vs. stock)", grupo: "Abastecimiento" },
   { key: "monitoreo_stock", label: "Monitoreo Stock Clientes", grupo: "Portal del Cliente" },

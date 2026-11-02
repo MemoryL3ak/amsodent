@@ -45,6 +45,10 @@ export const MODULOS: string[] = [
   // KPI del Inventario son SOLO admin (pedido de Ariel); si un perfil viejo
   // aún trae la clave, se ignora.
   'inventario',
+  // (2026-11-02) Traslados de stock entre sucursales propias (crear, recibir
+  // y anular) sin ser admin. Asignable por perfil; el mantenedor de
+  // sucursales y el resto de los movimientos siguen siendo solo admin.
+  'inventario_traslados',
   // (2026-10-20) Ver el costo de los productos (solo lectura) sin ser admin: en
   // la cotización y en la ficha del producto. Asignable por perfil (Francisco).
   'ver_costos',

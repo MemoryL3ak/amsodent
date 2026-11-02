@@ -872,9 +872,11 @@ export class BsaleDespachosService {
   // ── Emisión real (común) ───────────────────────────────────────────────
 
   async emitirReal(p: {
-    usuario: { id: string; email: string }; clave: string; salesId: string; tipo: 'guia' | 'nota_venta' | 'factura' | 'boleta' | 'nota_credito' | 'nota_debito'; ruta: string;
+    // (2026-11-02) 'guia_traslado': guía de traslado interno entre sucursales (bsale-traslados.service).
+    usuario: { id: string; email: string }; clave: string; salesId: string; tipo: 'guia' | 'nota_venta' | 'factura' | 'boleta' | 'nota_credito' | 'nota_debito' | 'guia_traslado'; ruta: string;
     solicitud: Record<string, any>; vista: any; licitacionId: number | null; origenDocId: number | null; lineas: any[];
-    registrar: (doc: any, pdf: { path: string; size: number } | null) => Promise<number | null>;
+    // `respuesta` (2026-11-02): lo que devolvió Bsale completo (en /shippings.json trae el id del despacho, aparte del de la guía).
+    registrar: (doc: any, pdf: { path: string; size: number } | null, respuesta?: any) => Promise<number | null>;
     verificar: (doc: any) => Promise<string[]>; sinPdf?: boolean; bucket?: string;
     // (2026-10-08) Guía, factura o boleta: al quedar registrada se abre la ventana de correo (nunca sale sola).
     correo?: { tipo: 'guia' | 'factura' | 'boleta'; para?: string | null };
@@ -933,7 +935,7 @@ export class BsaleDespachosService {
       fecha_emision: epochAFecha(p.solicitud.emissionDate), updated_at: new Date().toISOString(),
     };
     await db.from('bsale_emisiones').update(emitida).eq('id', emisionId);
-    this.logger.log(`${p.tipo === 'guia' ? 'Guía' : p.tipo === 'factura' ? 'Factura' : p.tipo === 'boleta' ? 'Boleta' : p.tipo === 'nota_credito' ? 'Nota de crédito' : 'Nota de venta'} ${emitida.numero} emitida en Bsale (${p.licitacionId ? `cotización ${p.licitacionId}` : 'libre'}) por ${p.usuario.email}`);
+    this.logger.log(`${p.tipo === 'guia' ? 'Guía' : p.tipo === 'guia_traslado' ? 'Guía de traslado interno' : p.tipo === 'factura' ? 'Factura' : p.tipo === 'boleta' ? 'Boleta' : p.tipo === 'nota_credito' ? 'Nota de crédito' : 'Nota de venta'} ${emitida.numero} emitida en Bsale (${p.licitacionId ? `cotización ${p.licitacionId}` : 'libre'}) por ${p.usuario.email}`);
 
     const avisos = await p.verificar(doc);
     // (2026-10-16) ¿Bsale tomó el vendedor? En guías la API no documenta sellerId: se confirma leyendo el documento.
@@ -959,7 +961,7 @@ export class BsaleDespachosService {
     }
     let documentoId: number | null = null;
     try {
-      documentoId = await p.registrar(doc, pdf);
+      documentoId = await p.registrar(doc, pdf, respuesta);
       /* (2026-10-07) La venta directa crea su cotización al registrar: el
          registro de la emisión nació sin ella y la pestaña «Venta directa» no
          la mostraba. Se toma de la cotización donde quedó el documento. */

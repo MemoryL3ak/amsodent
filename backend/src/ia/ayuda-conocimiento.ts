@@ -253,6 +253,31 @@ la tarjeta Bsale); cada cambio queda como ajuste "Sincronización Bsale" en el
 libro, y las diferencias de catálogo (SKUs en Bsale sin producto interno y
 productos internos sin SKU en Bsale) se listan y exportan a Excel. La
 sincronización NO crea ni borra productos.
+SUCURSALES Y TRASLADOS (nov 2026): el stock total de cada producto se reparte
+entre las sucursales o bodegas propias (pestaña «Sucursales», solo admin:
+crear, editar, marcar la principal, desactivar; la principal recibe los
+movimientos sin sucursal y la sincronización con Bsale). En Stock, bajo el
+nombre del producto se ve el reparto por sucursal y lo que va en tránsito; el
+filtro «Sucursal» muestra el stock de una sola. Entradas, salidas, ajustes y
+la carga masiva son POR SUCURSAL (por defecto la principal). TRASLADOS
+(pestaña «Traslados» y botón «Nuevo traslado»; los hace un admin o quien tenga
+«Inventario: traslados entre sucursales» en su perfil): se eligen origen,
+destino y productos con cantidad; el stock sale del origen de inmediato y
+queda EN TRÁNSITO hasta que alguien lo recibe en el destino («Recibir»); se
+puede recibir menos de lo enviado (la diferencia queda como ajuste en el
+libro) y un traslado en tránsito se puede anular (vuelve al origen).
+«Recibir de inmediato» es para cuando uno mismo lleva la mercadería. El libro
+lleva la sucursal de cada movimiento y el stock que quedó en ella; los
+traslados aparecen como «Traslado · salida» y «Traslado · entrada» (no cambian
+el total). GUÍA DE TRASLADO INTERNO EN BSALE: Bsale mueve mercadería entre sus
+sucursales con una guía de despacho de tipo «Traslados internos»; si las dos
+sucursales del traslado están asociadas a sucursales de Bsale (se eligen en el
+mantenedor), desde la fila del traslado se emite esa guía (botón «Guía Bsale»:
+primero Simular, después Emitir; va al SII). Bsale descuenta el origen al
+emitirla y el destino sube cuando la recepcionan en Bsale; la sincronización
+lo detecta, da el traslado por recibido y deja cada sucursal asociada con el
+stock que Bsale tiene en la suya (las bodegas que solo existen en el sistema
+no se tocan).
 
 ### Campañas (/campanas)
 Precios de campaña por SKU con vigencia (inicio/fin): sobrescriben la lista de

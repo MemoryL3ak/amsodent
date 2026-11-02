@@ -44,6 +44,10 @@ export class InventarioGuard implements CanActivate {
     // (2026-10-22) El costo (y con él la valorización) solo viaja a admin o a
     // quien tenga «ver_costos» en su perfil: resumen() lo omite para el resto.
     request.verCostos = esAdmin || permisos.includes('ver_costos');
+    // (2026-11-02) Para los guards de método (traslados) y la respuesta de
+    // /inventario/sucursales (puede_trasladar).
+    request.esAdmin = esAdmin;
+    request.permisos = permisos;
     return true;
   }
 }

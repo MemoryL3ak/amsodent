@@ -1,5 +1,6 @@
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
+import { InventarioService } from '../inventario/inventario.service';
 
 /* ============================================================================
    Integración con Bsale — etapa 1: catálogo y stock (pedido 2026-09-04)
@@ -55,7 +56,11 @@ export class BsaleService {
   // páginas de Bsale). null = no hay sincronización corriendo.
   private progreso: { fase: 'catalogo' | 'stocks' | 'aplicando'; hechas: number; total: number; actualizados: number } | null = null;
 
-  constructor(private supabase: SupabaseService) {}
+  constructor(
+    private supabase: SupabaseService,
+    // (2026-11-02) El stock se escribe a través de Inventario (ver sincronizar, paso 6).
+    private inventario: InventarioService,
+  ) {}
 
   private get token(): string {
     return (process.env.BSALE_ACCESS_TOKEN || '').trim();
@@ -536,6 +541,19 @@ export class BsaleService {
       //      profundo): consultar solo las variantes matcheadas.
       const stockPorSku = new Map<string, number>();
       for (const { sku } of variantesMatcheadas) if (!stockPorSku.has(sku)) stockPorSku.set(sku, 0);
+      // (2026-11-02) Stock por SUCURSAL de Bsale (office) por SKU: con
+      // sucursales del inventario mapeadas (bsale_office_id), cada una queda
+      // exacta con la suya (InventarioService.aplicarStockExterno).
+      const oficinasPorSku = new Map<string, Record<number, number>>();
+      const oficinasVistas = new Set<number>();
+      const anotarOficina = (sku: string, s: any, disp: number) => {
+        const oid = Number(s?.office?.id);
+        if (!oid) return;
+        oficinasVistas.add(oid);
+        const o = oficinasPorSku.get(sku) || {};
+        o[oid] = (o[oid] || 0) + disp;
+        oficinasPorSku.set(sku, o);
+      };
       // Stock de los SKUs de Bsale que NO tienen producto interno. Solo se
       // conoce cuando se pagina /stocks.json completo (ya viene en las mismas
       // filas, no cuesta llamadas extra); en la estrategia por variante queda
@@ -556,8 +574,10 @@ export class BsaleService {
           if (!sku) continue;
           const disp = Number(s?.quantityAvailable);
           if (!Number.isFinite(disp)) continue;
-          if (stockPorSku.has(sku)) stockPorSku.set(sku, (stockPorSku.get(sku) || 0) + disp);
-          else stockSinProducto.set(sku, (stockSinProducto.get(sku) || 0) + disp);
+          if (stockPorSku.has(sku)) {
+            stockPorSku.set(sku, (stockPorSku.get(sku) || 0) + disp);
+            anotarOficina(sku, s, disp);
+          } else stockSinProducto.set(sku, (stockSinProducto.get(sku) || 0) + disp);
         }
       } else {
         this.progreso = { fase: 'stocks', hechas: 0, total: variantesMatcheadas.length, actualizados: 0 };
@@ -568,7 +588,9 @@ export class BsaleService {
             const r = await this.apiGet(`/stocks.json?variantid=${vid}&limit=${LIMITE_PAGINA}`);
             for (const s of r?.items || []) {
               const disp = Number(s?.quantityAvailable);
-              if (Number.isFinite(disp)) stockPorSku.set(sku, (stockPorSku.get(sku) || 0) + disp);
+              if (!Number.isFinite(disp)) continue;
+              stockPorSku.set(sku, (stockPorSku.get(sku) || 0) + disp);
+              anotarOficina(sku, s, disp);
             }
           }));
           this.progreso = {
@@ -580,9 +602,18 @@ export class BsaleService {
         }
       }
 
+      // (2026-11-02) Traslados con guía en Bsale: si Bsale ya los recepcionó
+      // (o anuló la guía) se refleja acá ANTES de comparar el stock, y el
+      // contexto (stock por sucursal, compensaciones) se arma una sola vez.
+      let ctx = await this.inventario.contextoSincronizacion();
+      const trasladosBsale = ctx
+        ? await this.inventario.sincronizarTrasladosBsale((id) => this.apiGet(`/shippings/${id}.json`), opts?.usuario || null)
+        : null;
+      if (trasladosBsale?.cambios) ctx = await this.inventario.contextoSincronizacion();
+
       // 5. Cruce por SKU y ajustes de stock (solo donde difiere).
       const skusInternos = new Set<string>();
-      const cambios: Array<{ id: number; sku: string; actual: number; nuevo: number }> = [];
+      const cambios: Array<{ id: number; sku: string; actual: number; nuevo: number; porOficina: Record<number, number> | null }> = [];
       const productosSinBsale: Array<{ sku: string; nombre: string }> = [];
       let matcheados = 0;
       for (const p of productos || []) {
@@ -600,7 +631,11 @@ export class BsaleService {
         // Bsale puede quedar negativo (sobreventa); el libro interno no lo
         // permite, así que se piso a 0 y la diferencia queda a la vista allá.
         const nuevo = Math.max(0, Number(stockPorSku.get(sku) || 0));
-        if (nuevo !== actual) cambios.push({ id: Number(p.id), sku, actual, nuevo });
+        // Sin filas de stock en Bsale para el SKU: 0 en todas sus sucursales.
+        const porOficina = oficinasVistas.size ? oficinasPorSku.get(sku) || {} : null;
+        if (this.inventario.requiereCambioSync(ctx, Number(p.id), actual, nuevo, porOficina)) {
+          cambios.push({ id: Number(p.id), sku, actual, nuevo, porOficina });
+        }
       }
       // SKUs de Bsale sin producto interno, con su stock disponible (null si
       // no se conoce). Van primero los que tienen stock: son los que de verdad
@@ -653,26 +688,24 @@ export class BsaleService {
       for (let i = 0; i < cambios.length; i += TANDA) {
         const tanda = cambios.slice(i, i + TANDA);
         await Promise.all(tanda.map(async (c) => {
-          const { error: errUp } = await client
-            .from('productos')
-            .update({ stock: c.nuevo })
-            .eq('id', c.id);
-          if (errUp) {
-            errores.push(`${c.sku}: ${errUp.message.slice(0, 120)}`);
-            return;
+          // (2026-11-02) Escribe el servicio de Inventario (única puerta al
+          // stock): con sucursales, la diferencia cae en la principal — Bsale
+          // tiene una sola — y queda como ajuste «Sincronización Bsale».
+          try {
+            const r = await this.inventario.aplicarStockExterno(c.id, c.nuevo, {
+              sku: c.sku,
+              motivo: 'Sincronización Bsale',
+              referencia: 'bsale',
+              usuario: opts?.usuario || null,
+              stockActual: c.actual,
+              porOficina: c.porOficina,
+              ctx,
+            });
+            for (const aviso of r.avisos) if (errores.length < 50) errores.push(aviso);
+            actualizados += 1;
+          } catch (e: any) {
+            errores.push(`${c.sku}: ${String(e?.message || e).slice(0, 120)}`);
           }
-          const { error: errMov } = await client.from('inventario_movimientos').insert([{
-            producto_id: c.id,
-            sku: c.sku,
-            tipo: 'ajuste',
-            cantidad: c.nuevo - c.actual,
-            stock_resultante: c.nuevo,
-            motivo: 'Sincronización Bsale',
-            referencia: 'bsale',
-            usuario_email: opts?.usuario || null,
-          }]);
-          if (errMov) errores.push(`${c.sku} (movimiento): ${errMov.message.slice(0, 120)}`);
-          actualizados += 1;
         }));
         this.progreso = {
           fase: 'aplicando',
@@ -696,6 +729,11 @@ export class BsaleService {
         skus_bsale_sin_producto_con_stock: stockSinProducto ? skusBsaleSinProductoConStock : null,
         productos_sin_bsale: totalProductosSinBsale,
         errores: errores.slice(0, 20),
+        // (2026-11-02) Sucursales de Bsale vistas en el stock y cuáles no tienen
+        // sucursal del inventario asociada (su stock no se refleja por sucursal).
+        oficinas_bsale: [...oficinasVistas].sort((a, b) => a - b),
+        oficinas_sin_sucursal: ctx ? [...oficinasVistas].filter((o) => !ctx!.mapeadas.some((m) => m.office === o)).sort((a, b) => a - b) : [],
+        traslados_bsale: trasladosBsale,
       };
 
       const { error: errEstado } = await client.from('bsale_estado').upsert([{
