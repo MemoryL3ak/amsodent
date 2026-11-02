@@ -498,9 +498,13 @@ N° de orden de compra), se marca la casilla de confirmación y se emite: la
 factura electrónica va al SII, su PDF queda guardado y aparece registrada en la
 cotización, enlazada a su guía. No vuelve a descontar stock. Antes de simular
 se pueden editar las líneas: menos cantidad (nunca más que la guía),
-observación, quitarlas, agregar productos del catálogo y cambiar el precio
-neto; una línea de la guía con otro precio va como glosa (texto con SKU y
-nombre, sin producto de Bsale) y tampoco mueve stock. Las líneas de una guía
+observación, quitarlas, agregar productos del catálogo, cambiar el precio
+neto y cambiar el SKU (lápiz junto al SKU: otro producto del catálogo; sirve al
+refacturar tras una nota de crédito cuando la guía traía el producto
+equivocado); una línea de la guía con otro precio o SKU va como glosa (texto
+con SKU y nombre, sin producto de Bsale) y tampoco mueve stock, mientras que
+una línea copiada tras una nota de crédito sale con el producto nuevo y es ese
+el que rebaja o reserva stock. Las líneas de una guía
 que no es de venta (p. ej. «Otros traslados no venta», usada para reponer un
 producto mal enviado) también van como glosa, porque Bsale no deja enlazarlas
 (respondía «Invalid quantity»); la factura igual referencia esa guía. Cuando la

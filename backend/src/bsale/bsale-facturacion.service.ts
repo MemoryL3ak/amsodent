@@ -53,11 +53,11 @@ const TRASLADOS_NO_VENTA = new Set([4, 5, 6, 7, 8]);
 
 type Problema = { codigo: string; mensaje: string };
 /* (2026-10-24) Lo que la persona puede cambiar de la factura antes de emitir:
-   de cada línea de la guía, la cantidad (hasta la de la guía), la observación
-   y el precio neto; las que no vienen en `lineas` se quitan. `extras` son
-   productos agregados que no están en la guía (van como líneas libres). Qué
-   rebaja stock lo decide decidirDespacho. */
-type EdicionLinea = { detalle_id: number; cantidad?: number; nota?: string | null; neto_unitario?: number };
+   de cada línea de la guía, la cantidad (hasta la de la guía), la observación,
+   el precio neto y el SKU (otro producto, 2026-11-02); las que no vienen en
+   `lineas` se quitan. `extras` son productos agregados que no están en la
+   guía (van como líneas libres). Qué rebaja stock lo decide decidirDespacho. */
+type EdicionLinea = { detalle_id: number; cantidad?: number; nota?: string | null; neto_unitario?: number; sku?: string; producto?: string };
 type LineaExtra = { sku: string; producto?: string; cantidad: number; neto_unitario: number; nota?: string | null };
 
 function hoyEnChile(ahora = new Date()): string {
@@ -1584,7 +1584,7 @@ export class BsaleFacturacionService {
           emisor: EMISOR,
           cliente: b.cliente,
           // Una glosa se muestra como irá: su texto, sin SKU de Bsale.
-          lineas: b.lineas.map((l) => ({ sku: l.glosa ? '' : l.sku, producto: l.glosa ? glosaDe(l) : l.producto, cantidad: l.cantidad, neto_unitario: l.neto_unitario, neto: l.neto, guia: l.guia || null, enlazada: l.enlazada !== false, extra: !!l.extra, glosa: !!l.glosa, observacion: l.glosa ? null : l.nota || null })),
+          lineas: b.lineas.map((l) => ({ sku: l.glosa ? '' : l.sku, producto: l.glosa ? glosaDe(l) : l.producto, cantidad: l.cantidad, neto_unitario: l.neto_unitario, neto: l.neto, guia: l.guia || null, enlazada: l.enlazada !== false, extra: !!l.extra, glosa: !!l.glosa, observacion: l.glosa ? null : l.nota || null, sku_guia: l.sku_guia || null })),
           totales: b.totales,
           referencias: b.referencias.map(referenciaVista),
           forma_pago: formaPago?.nombre || null,
@@ -1729,9 +1729,10 @@ export class BsaleFacturacionService {
 
   /* (2026-10-24) Aplica lo que la persona editó sobre el borrador del servidor.
      De las líneas de la guía acepta una cantidad menor o igual, la
-     observación, otro precio neto o quitarlas (una enlazada con otro precio
-     va como glosa, ver glosaDe). El producto y la guía salen siempre del
-     borrador del servidor.
+     observación, otro precio neto, otro SKU (2026-11-02) o quitarlas (una
+     enlazada con otro precio o SKU va como glosa, ver glosaDe). La guía sale
+     siempre del borrador del servidor; el producto también, salvo que se
+     cambie el SKU, que se resuelve en Bsale.
      Los productos agregados se resuelven en Bsale por SKU y van como líneas
      libres con el precio neto que se indique. El stock lo decide
      decidirDespacho. */
@@ -1749,6 +1750,8 @@ export class BsaleFacturacionService {
       let menos = 0;
       let precioCambiado = 0;
       const glosas: string[] = [];
+      const skus: string[] = []; // "viejo → nuevo" de cada línea con otro SKU
+      const glosasSku: string[] = [];
       for (const l of base) {
         const e = porId.get(Number(l.detalle_id));
         if (!e) continue; // quitada
@@ -1771,15 +1774,45 @@ export class BsaleFacturacionService {
           if (!Number.isFinite(precio) || precio <= 0) throw new BadRequestException(`${nombre}: el precio neto unitario debe ser mayor que 0.`);
         }
         const cambioPrecio = Math.abs(precio - precioGuia) > 0.005;
-        const glosa = cambioPrecio && l.enlazada !== false;
+        /* (2026-11-02, pedido de Ariel) Otro SKU: al refacturar tras una nota
+           de crédito la guía puede traer el producto equivocado. Se resuelve
+           en Bsale por SKU. Una línea copiada (ya libre) sale con la variante
+           nueva, y es esa la que rebaja o reserva stock (el SKU de la guía lo
+           devolvió la nota de crédito). Una enlazada no puede cambiar de
+           producto (detailId copia el de la guía) y pasarla a libre con otra
+           variante movería un stock que la guía no sacó: va como glosa, igual
+           que con otro precio. */
+        const skuNuevo = normSku(e.sku);
+        const cambioSku = !!skuNuevo && skuNuevo !== normSku(l.sku);
+        let otroSku: Record<string, any> = {};
+        if (cambioSku) {
+          const variante = await this.variantePorSku(skuNuevo);
+          if (!variante) throw new BadRequestException(`${nombre}: el SKU ${skuNuevo} no está en Bsale; no se puede facturar con él.`);
+          const nombreBsale = [variante?.product?.name, variante?.description].map((x: any) => String(x || '').trim()).filter(Boolean).join(' · ');
+          otroSku = {
+            sku: skuNuevo,
+            variante_id: Number(variante.id) || null,
+            producto: String(e.producto || '').trim().slice(0, 160) || nombreBsale || skuNuevo,
+            sku_guia: l.sku,
+            producto_guia: l.producto,
+            sku_editado: true,
+            // El stock que traía el borrador era del producto de la guía.
+            stock_bsale: null,
+            stock_fisico: null,
+          };
+          skus.push(`${l.sku || l.detalle_id} → ${skuNuevo}`);
+        }
+        const glosa = (cambioPrecio || cambioSku) && l.enlazada !== false;
         if (cambioPrecio) precioCambiado++;
-        if (glosa) glosas.push(String(l.sku || l.producto || l.detalle_id));
+        if (glosa && cambioPrecio) glosas.push(String(l.sku || l.producto || l.detalle_id));
+        if (glosa && cambioSku) glosasSku.push(`${l.sku || l.detalle_id} → ${skuNuevo}`);
         if (cantidad < Number(l.cantidad)) menos++;
         lineas.push({
           ...l,
           cantidad,
           nota,
           ...(cambioPrecio ? { neto_unitario: precio, neto_unitario_raw: precio, precio_guia: precioGuia, precio_editado: true } : {}),
+          ...otroSku,
           ...(glosa ? { glosa: true, enlazada: false } : {}),
           neto: Math.round(cantidad * precio),
         });
@@ -1798,6 +1831,18 @@ export class BsaleFacturacionService {
         const una = glosas.length === 1;
         avisos.push(
           `${una ? 'La línea' : 'Las líneas'} con otro precio (${glosas.slice(0, 6).join(', ')}${glosas.length > 6 ? '…' : ''}) ${una ? 'va' : 'van'} como glosa: texto con el SKU y el nombre, sin producto de Bsale, porque Bsale no deja cambiar el precio de una línea enlazada a la guía. No mueve stock (ya lo rebajó la guía), pero en Bsale no suma a las ventas del producto y esa línea de la guía queda sin enlazar a la factura.`,
+        );
+      }
+      if (skus.length) {
+        const una = skus.length === 1;
+        avisos.push(
+          `Cambiaste el SKU de ${una ? 'una línea' : `${skus.length} líneas`} respecto de la guía (${skus.slice(0, 6).join(', ')}${skus.length > 6 ? '…' : ''}): la factura no cuadrará con la guía ni, quizás, con la orden de compra.`,
+        );
+      }
+      if (glosasSku.length) {
+        const una = glosasSku.length === 1;
+        avisos.push(
+          `${una ? 'La línea' : 'Las líneas'} con otro SKU (${glosasSku.slice(0, 6).join(', ')}${glosasSku.length > 6 ? '…' : ''}) ${una ? 'va' : 'van'} como glosa: texto con el SKU y el nombre nuevos, sin producto de Bsale, porque Bsale no deja cambiar el producto de una línea enlazada a la guía. No mueve stock: la guía sigue con el SKU anterior y ya lo rebajó; si lo que salió fue el otro producto, corrige el stock en Bsale a mano. Para que la factura lleve el producto de verdad habría que anular la guía y emitirla de nuevo.`,
         );
       }
     }
@@ -1844,6 +1889,13 @@ export class BsaleFacturacionService {
 
     // Stock: solo se mueve si la factura se despacha (decidirDespacho).
     const { despacha, rebajar, yaRebajadas } = decidirDespacho(todas);
+    const copiadasOtroSku = lineas.filter((l) => l.sku_editado && !l.glosa && !l.extra);
+    if (copiadasOtroSku.length) {
+      const una = copiadasOtroSku.length === 1;
+      avisos.push(
+        `${una ? 'La línea copiada' : `${copiadasOtroSku.length} líneas copiadas`} ${una ? 'sale' : 'salen'} con el producto nuevo (${copiadasOtroSku.map((l) => l.sku).slice(0, 6).join(', ')}${copiadasOtroSku.length > 6 ? '…' : ''}): la nota de crédito había devuelto el stock del SKU de la guía y la factura ${despacha ? 'rebaja' : 'reserva'} el del SKU nuevo.`,
+      );
+    }
     if (despacha) {
       // Con lo editado (cantidades, quitadas, agregadas). Ver revisarStock.
       const faltan: string[] = [];

@@ -155,7 +155,11 @@ export default function VistaPreviaBsale({ vista, solicitud, titulo = "Así qued
                 {lineas.map((l, i) => (
                   <tr key={`${l.sku}-${i}`}>
                     {conGuia && <td style={{ whiteSpace: "nowrap" }}>{l.guia}</td>}
-                    <td style={{ whiteSpace: "nowrap", fontWeight: 600 }}>{l.sku || "—"}</td>
+                    <td style={{ whiteSpace: "nowrap", fontWeight: 600 }}>
+                      {l.sku || "—"}
+                      {/* (2026-11-02) Línea facturada con otro SKU que el de la guía. */}
+                      {l.sku_guia && <div className="sku-guia" style={{ fontSize: 10.5, color: "#92400e", fontWeight: 400 }}>guía {l.sku_guia}</div>}
+                    </td>
                     <td style={{ overflowWrap: "anywhere" }}>
                       {l.producto || "—"}
                       {l.observacion && <div className="obs-linea" style={{ fontSize: 11, color: "#374151", marginTop: 2 }}>{l.observacion}</div>}

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import { AlertTriangle, CheckCircle2, FileText, Info, Loader2, Mail, RotateCcw, Search, Trash2, X } from "lucide-react";
+import { AlertTriangle, CheckCircle2, FileText, Info, Loader2, Mail, Pencil, RotateCcw, Search, Trash2, X } from "lucide-react";
 import { api } from "../lib/api";
 import DateFilter from "./DateFilter";
 import DropdownSelect from "./ui/DropdownSelect";
@@ -23,6 +23,11 @@ import RegistrarComprobanteRapido from "./RegistrarComprobanteRapido";
    cambiarlo en una enlazada a la guía, así que esa va como glosa (texto con
    SKU y nombre, sin producto; ver glosaDe en el servidor, 2026-10-27). Y
    «Todas las guías» arma una sola factura con todas las guías pendientes.
+   (2026-11-02, pedido de Ariel) El SKU también se cambia (lápiz junto al
+   SKU: busca otro producto del catálogo): sirve al refacturar tras una nota
+   de crédito, cuando la guía traía el producto equivocado. Una línea copiada
+   sale con el producto nuevo; una enlazada va como glosa, igual que con otro
+   precio. El servidor resuelve el SKU en Bsale al simular.
    Stock (comprobado en Bsale real, ver decidirDespacho en
    bsale-facturacion.service.ts, que esta ventana repite para mostrarlo): una
    línea enlazada o una glosa no lo toca; una libre queda reservada como
@@ -51,6 +56,28 @@ function sumarDias(iso, dias) {
 const aFecha = (iso) => (iso ? new Date(`${iso}T00:00:00`) : undefined);
 
 const etiqueta = { fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px", color: "var(--text-muted)", display: "block", marginBottom: 4 };
+const normSku = (v) => String(v ?? "").replace(/\s+/g, "").toUpperCase();
+
+/* Busca productos del catálogo (SKU o nombre) con un pequeño retardo. Sirve
+   para agregar líneas y para cambiar el SKU de una (2026-11-02). */
+function useBuscarProductos(q) {
+  const t = q.trim();
+  // Última respuesta y para qué texto era: así «buscando» se deduce sin tocar estado dentro del efecto.
+  const [res, setRes] = useState({ q: "", productos: [] });
+  useEffect(() => {
+    if (t.length < 2) return undefined;
+    let vivo = true;
+    const timer = setTimeout(() => {
+      api
+        .get(`/bsale/libre/productos?q=${encodeURIComponent(t)}`)
+        .then((r) => vivo && setRes({ q: t, productos: Array.isArray(r) ? r : [] }))
+        .catch(() => vivo && setRes({ q: t, productos: [] }));
+    }, 300);
+    return () => { vivo = false; clearTimeout(timer); };
+  }, [t]);
+  const vigente = t.length >= 2 && res.q === t;
+  return { productos: vigente ? res.productos : [], buscando: t.length >= 2 && !vigente };
+}
 
 // `guiaDocIds` (opcional) abre la ventana con varias guías ya elegidas: sirve
 // para retomar un intento que combinaba más de una.
@@ -70,8 +97,11 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
   const [edits, setEdits] = useState({});
   const [extras, setExtras] = useState([]); // { key, sku, producto, cantidad, neto_unitario, nota }
   const [qProducto, setQProducto] = useState("");
-  const [productos, setProductos] = useState([]);
-  const [buscandoProd, setBuscandoProd] = useState(false);
+  const { productos, buscando: buscandoProd } = useBuscarProductos(qProducto);
+  // (2026-11-02) Cambiar el SKU de una línea de la guía: qué línea se edita y qué se busca.
+  const [skuEditando, setSkuEditando] = useState(null);
+  const [qSku, setQSku] = useState("");
+  const { productos: productosSku, buscando: buscandoSku } = useBuscarProductos(qSku);
   const [enviando, setEnviando] = useState(""); // "" | "simular" | "emitir"
   const [resultado, setResultado] = useState(null);
   /* La simulación vale para ESTOS datos: la firma resume lo que la persona
@@ -113,21 +143,6 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
     return () => { vivo = false; };
   }, [licitacionId, seleccion]);
 
-  useEffect(() => {
-    const q = qProducto.trim();
-    if (q.length < 2) { setProductos([]); return undefined; }
-    let vivo = true;
-    setBuscandoProd(true);
-    const t = setTimeout(() => {
-      api
-        .get(`/bsale/libre/productos?q=${encodeURIComponent(q)}`)
-        .then((r) => vivo && setProductos(Array.isArray(r) ? r : []))
-        .catch(() => vivo && setProductos([]))
-        .finally(() => vivo && setBuscandoProd(false));
-    }, 300);
-    return () => { vivo = false; clearTimeout(t); };
-  }, [qProducto]);
-
   // El servidor puede tener la emisión real apagada: ahí solo se simula.
   const apagada = borrador?.modo !== "activa";
   const bloqueada = (borrador?.problemas?.length || 0) > 0;
@@ -144,13 +159,22 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
       return [...prev, { key: `${p.sku}-${Date.now()}`, sku: p.sku, producto: p.nombre, cantidad: "1", neto_unitario: p.lista1 != null && p.lista1 !== "" ? String(p.lista1) : "", nota: "" }];
     });
     setQProducto("");
-    setProductos([]);
   }
   const numero = (v) => { const n = Number(String(v ?? "").replace(",", ".")); return Number.isFinite(n) ? n : NaN; };
   const cantidadDe = (l) => numero(edits[l.detalle_id]?.cantidad ?? l.cantidad);
   const precioGuia = (l) => Number(l.neto_unitario_raw ?? l.neto_unitario) || 0;
   const precioDe = (l) => numero(edits[l.detalle_id]?.neto_unitario ?? precioGuia(l));
   const precioCambiado = (l) => Number.isFinite(precioDe(l)) && Math.abs(precioDe(l) - precioGuia(l)) > 0.005;
+  // (2026-11-02) Otro SKU en una línea de la guía (otro producto del catálogo). El servidor lo resuelve en Bsale.
+  const skuCambiado = (l) => { const s = normSku(edits[l.detalle_id]?.sku); return !!s && s !== normSku(l.sku); };
+  const skuDe = (l) => (skuCambiado(l) ? normSku(edits[l.detalle_id].sku) : l.sku);
+  const productoDe = (l) => (skuCambiado(l) ? edits[l.detalle_id].producto || "" : l.producto);
+  const abrirSku = (l) => { setQSku(""); setSkuEditando(l.detalle_id); };
+  const cerrarSku = () => { setSkuEditando(null); setQSku(""); };
+  const elegirSku = (l, sku, producto) => {
+    cambiarEdit(l.detalle_id, normSku(sku) === normSku(l.sku) ? { sku: undefined, producto: undefined } : { sku: normSku(sku), producto: producto || "" });
+    cerrarSku();
+  };
   const netoLinea = (cant, unit) => Math.round((Number(cant) || 0) * (Number(unit) || 0));
   const lineasActivas = (borrador?.lineas || []).filter((l) => !edits[l.detalle_id]?.quitada);
   const netoEdit =
@@ -162,19 +186,20 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
     extras.some((x) => !(numero(x.cantidad) > 0) || !(numero(x.neto_unitario) > 0));
   const editada =
     extras.length > 0 ||
-    (borrador?.lineas || []).some((l) => { const e = edits[l.detalle_id]; return !!e && (e.quitada || numero(e.cantidad) !== l.cantidad || (e.nota || "") !== (l.nota || "") || precioCambiado(l)); });
+    (borrador?.lineas || []).some((l) => { const e = edits[l.detalle_id]; return !!e && (e.quitada || numero(e.cantidad) !== l.cantidad || (e.nota || "") !== (l.nota || "") || precioCambiado(l) || skuCambiado(l)); });
   /* Stock (misma regla que decidirDespacho en el servidor): rebajan las líneas
      copiadas tras una NC y las agregadas; las enlazadas a la guía ya las rebajó
      la guía. Una enlazada con otro precio va como glosa, sin producto: no
      cuenta. Tampoco las de una guía que no es de venta, que el servidor ya
      manda como glosa (l.glosa, 2026-10-27). Se despacha solo si TODAS las que
      tienen producto rebajan. */
-  const esGlosa = (l) => !!l.glosa || (l.enlazada !== false && precioCambiado(l));
+  const esGlosa = (l) => !!l.glosa || (l.enlazada !== false && (precioCambiado(l) || skuCambiado(l)));
   const rebajaLinea = (l) => !l.glosa && l.enlazada === false && !!l.consumida_por;
   const hayQueRebajar = lineasActivas.some(rebajaLinea) || extras.length > 0;
   const despachaEdit = hayQueRebajar && !lineasActivas.some((l) => !esGlosa(l) && !rebajaLinea(l));
   // (2026-10-27) Al despacharse, Bsale exige el stock aunque el producto «permita negativo».
-  const faltaStock = (l, cantidad) => despachaEdit && l.stock_fisico != null && Number(l.stock_fisico) < cantidad;
+  // Con otro SKU el stock del borrador no sirve (era del producto de la guía): se revisa al simular.
+  const faltaStock = (l, cantidad) => despachaEdit && !skuCambiado(l) && l.stock_fisico != null && Number(l.stock_fisico) < cantidad;
   const hayGlosas = lineasActivas.some(esGlosa);
   const hayNoVenta = lineasActivas.some((l) => l.glosa);
   const todasSeleccionadas = (borrador?.guias_disponibles || []).length > 0 && borrador.guias_disponibles.every((g) => seleccion.includes(g.doc_id));
@@ -207,7 +232,7 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
         ...(borrador.oc_editable && oc.trim() && oc.trim().toUpperCase() !== ocOriginal ? { oc_numero: oc.trim() } : {}),
         huella: borrador.huella,
         // (2026-10-24) Líneas de la guía que se facturan (las quitadas no van), con cantidad y observación; y productos agregados.
-        lineas: lineasActivas.map((l) => ({ detalle_id: l.detalle_id, cantidad: cantidadDe(l), nota: edits[l.detalle_id]?.nota ?? l.nota ?? "", ...(precioCambiado(l) ? { neto_unitario: precioDe(l) } : {}) })),
+        lineas: lineasActivas.map((l) => ({ detalle_id: l.detalle_id, cantidad: cantidadDe(l), nota: edits[l.detalle_id]?.nota ?? l.nota ?? "", ...(precioCambiado(l) ? { neto_unitario: precioDe(l) } : {}), ...(skuCambiado(l) ? { sku: skuDe(l), producto: productoDe(l) } : {}) })),
         extras: extras.map((x) => ({ sku: x.sku, producto: x.producto, cantidad: numero(x.cantidad), neto_unitario: numero(x.neto_unitario), nota: x.nota || "" })),
       });
       setResultado(r);
@@ -427,9 +452,83 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
                             return (
                               <tr key={l.detalle_id} style={e.quitada ? { opacity: 0.45 } : undefined}>
                                 {variasGuias && <td style={{ whiteSpace: "nowrap", verticalAlign: "top" }}>{l.guia}</td>}
-                                <td style={{ whiteSpace: "nowrap", fontWeight: 600, verticalAlign: "top", textDecoration: e.quitada ? "line-through" : "none" }}>{l.sku || "—"}</td>
+                                <td style={{ whiteSpace: "nowrap", fontWeight: 600, verticalAlign: "top", textDecoration: e.quitada ? "line-through" : "none" }}>
+                                  {e.quitada ? (
+                                    l.sku || "—"
+                                  ) : skuEditando === l.detalle_id ? (
+                                    /* (2026-11-02) Buscador de SKU en la misma celda. La lista va debajo, dentro de la fila (no flotando), para que el recuadro desplazable de la tabla no la recorte. */
+                                    <div className="cambiar-sku" style={{ width: 280, maxWidth: "100%", whiteSpace: "normal", fontWeight: 400 }}>
+                                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                        <input
+                                          className="input"
+                                          autoFocus
+                                          value={qSku}
+                                          onChange={(ev) => setQSku(ev.target.value)}
+                                          onKeyDown={(ev) => {
+                                            if (ev.key === "Escape") { ev.preventDefault(); cerrarSku(); }
+                                            if (ev.key === "Enter") {
+                                              ev.preventDefault();
+                                              const p = productosSku[0];
+                                              if (p) elegirSku(l, p.sku, p.nombre);
+                                              else if (qSku.trim().length >= 2 && !buscandoSku) elegirSku(l, qSku, "");
+                                            }
+                                          }}
+                                          onBlur={() => setTimeout(cerrarSku, 150)}
+                                          disabled={!!enviando}
+                                          placeholder="Otro SKU o nombre de producto…"
+                                          title={`En la guía: ${l.sku || "—"}${l.producto ? ` · ${l.producto}` : ""}. Escape cancela.`}
+                                          style={{ flex: "1 1 auto", minWidth: 0, height: 28, fontSize: 12, padding: "0 6px" }}
+                                        />
+                                        {buscandoSku && <Loader2 size={13} className="spin" style={{ color: "var(--text-muted)", flexShrink: 0 }} />}
+                                      </div>
+                                      {qSku.trim().length >= 2 && (
+                                        <div onMouseDown={(ev) => ev.preventDefault()} style={{ marginTop: 3, border: "1px solid var(--border)", borderRadius: 8, background: "var(--surface)", maxHeight: 160, overflow: "auto" }}>
+                                          {productosSku.slice(0, 8).map((p) => (
+                                            <button key={p.sku} type="button" onClick={() => elegirSku(l, p.sku, p.nombre)} style={{ display: "block", width: "100%", textAlign: "left", padding: "5px 8px", background: "none", border: "none", cursor: "pointer", fontSize: 12, overflowWrap: "anywhere" }}>
+                                              <b>{p.sku}</b> · {p.nombre}
+                                            </button>
+                                          ))}
+                                          {!buscandoSku && productosSku.length === 0 && (
+                                            <button type="button" onClick={() => elegirSku(l, qSku, "")} style={{ display: "block", width: "100%", textAlign: "left", padding: "5px 8px", background: "none", border: "none", cursor: "pointer", fontSize: 12, color: "#92400e", overflowWrap: "anywhere" }} title="No está en el catálogo del sistema: se busca en Bsale al simular">
+                                              Usar «{normSku(qSku)}» tal cual (se verifica en Bsale al simular)
+                                            </button>
+                                          )}
+                                        </div>
+                                      )}
+                                    </div>
+                                  ) : (
+                                    <>
+                                      <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
+                                        {skuDe(l) || "—"}
+                                        <button
+                                          type="button"
+                                          className="btn btn-ghost btn-sm cambiar-sku-boton"
+                                          onClick={() => abrirSku(l)}
+                                          disabled={!!enviando}
+                                          title={skuCambiado(l) ? `Cambiar el SKU otra vez (en la guía: ${l.sku || "—"})` : "Cambiar el SKU: facturar esta línea con otro producto del catálogo"}
+                                          style={{ padding: 2, height: "auto", minHeight: 20 }}
+                                        >
+                                          <Pencil size={11} />
+                                        </button>
+                                      </span>
+                                      {skuCambiado(l) && (
+                                        <div style={{ fontSize: 10.5, color: "#92400e", fontWeight: 400 }}>
+                                          guía {l.sku || "—"}{" "}
+                                          <button type="button" className="btn-link" onClick={() => cambiarEdit(l.detalle_id, { sku: undefined, producto: undefined })} disabled={!!enviando} style={{ fontSize: 10.5, padding: 0, background: "none", border: "none", color: "var(--primary)", cursor: "pointer", textDecoration: "underline" }}>
+                                            volver
+                                          </button>
+                                        </div>
+                                      )}
+                                    </>
+                                  )}
+                                </td>
                                 <td style={{ overflowWrap: "anywhere", whiteSpace: "normal", minWidth: 180 }}>
-                                  <div style={{ textDecoration: e.quitada ? "line-through" : "none" }}>{l.producto || "—"}</div>
+                                  <div style={{ textDecoration: e.quitada ? "line-through" : "none" }}>
+                                    {productoDe(l) || (skuCambiado(l) ? <i style={{ color: "var(--text-muted)" }}>nombre según Bsale</i> : "—")}
+                                  </div>
+                                  {!e.quitada && skuCambiado(l) && (
+                                    <div style={{ fontSize: 10.5, color: "var(--text-muted)" }}>En la guía: {[l.sku, l.producto].filter(Boolean).join(" · ") || "—"}</div>
+                                  )}
                                   {e.quitada ? (
                                     <div style={{ fontSize: 11, color: "var(--text-muted)" }}>No se factura.</div>
                                   ) : (
@@ -445,13 +544,15 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
                                   )}
                                   {!e.quitada && l.glosa && (
                                     <div style={{ fontSize: 11, color: "#92400e", marginTop: 2 }} title="Bsale no deja facturar enlazando las líneas de una guía que no es de venta (responde «Invalid quantity»). Como glosa no toca el stock que la guía ya sacó, pero en Bsale no suma a las ventas del producto.">
-                                      La guía {l.guia} es «{l.traslado_no_venta || "no venta"}»: va como glosa, «{[l.sku, l.producto].filter(Boolean).join(" - ")}», sin producto de Bsale. No mueve stock.
+                                      La guía {l.guia} es «{l.traslado_no_venta || "no venta"}»: va como glosa, «{[skuDe(l), productoDe(l)].filter(Boolean).join(" - ")}», sin producto de Bsale. No mueve stock.
                                     </div>
                                   )}
                                   {!e.quitada && l.enlazada === false && !l.glosa && (
                                     <div style={{ fontSize: 11, marginTop: 2, ...(faltaStock(l, numero(e.cantidad)) ? { color: "#b91c1c", fontWeight: 600 } : { color: "#92400e" }) }}>
                                       Copiada, no enlazada: la usó la factura {l.consumida_por || "anulada"}.{" "}
-                                      {!despachaEdit
+                                      {skuCambiado(l)
+                                        ? `Sale con ${skuDe(l)} en vez de ${l.sku || "—"}: ${despachaEdit ? "rebaja su stock al despacharse (se revisa al simular)" : "queda reservado en Bsale como pendiente de despacho"}; el de ${l.sku || "la guía"} lo había devuelto la nota de crédito.`
+                                        : !despachaEdit
                                         ? "Queda reservada en Bsale como pendiente de despacho."
                                         : faltaStock(l, numero(e.cantidad))
                                           ? `Rebaja stock al despacharse y en Bsale no alcanza: tiene ${Number(l.stock_fisico).toLocaleString("es-CL")}. Ajusta el stock en Bsale antes de emitir.`
@@ -459,8 +560,8 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
                                     </div>
                                   )}
                                   {!e.quitada && !l.glosa && esGlosa(l) && (
-                                    <div style={{ fontSize: 11, color: "#92400e", marginTop: 2 }} title="Bsale no deja cambiar el precio de una línea enlazada a la guía. Como glosa no vuelve a tocar el stock (ya lo rebajó la guía), pero en Bsale no suma a las ventas del producto.">
-                                      Con otro precio va como glosa: «{[l.sku, l.producto].filter(Boolean).join(" - ")}», sin producto de Bsale. No mueve stock.
+                                    <div style={{ fontSize: 11, color: "#92400e", marginTop: 2 }} title="Bsale no deja cambiar el precio ni el producto de una línea enlazada a la guía. Como glosa no vuelve a tocar el stock (ya lo rebajó la guía), pero en Bsale no suma a las ventas del producto.">
+                                      Con otro {[skuCambiado(l) ? "SKU" : "", precioCambiado(l) ? "precio" : ""].filter(Boolean).join(" y ")} va como glosa: «{[skuDe(l), productoDe(l)].filter(Boolean).join(" - ")}», sin producto de Bsale. No mueve stock{skuCambiado(l) ? `: la guía sigue con ${l.sku || "su SKU"}` : ""}.
                                     </div>
                                   )}
                                 </td>
@@ -660,10 +761,10 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
                           ? "La factura no se despacha en Bsale, porque lleva líneas cuyo stock ya rebajó la guía: las copiadas o agregadas quedan reservadas como pendientes de despacho."
                           : "La factura no mueve stock: la guía ya lo rebajó."}{" "}
                       {hayNoVenta
-                        ? "Las líneas de una guía que no es de venta van como glosa (texto con SKU y nombre, sin producto de Bsale), igual que las de la guía a las que les cambies el precio."
+                        ? "Las líneas de una guía que no es de venta van como glosa (texto con SKU y nombre, sin producto de Bsale), igual que las de la guía a las que les cambies el precio o el SKU."
                         : hayGlosas
-                          ? "Las líneas de la guía con otro precio van como glosa (texto con SKU y nombre, sin producto de Bsale)."
-                          : "Si cambias el precio de una línea de la guía, va como glosa (texto sin producto de Bsale) y tampoco mueve stock."}
+                          ? "Las líneas de la guía con otro precio o SKU van como glosa (texto con SKU y nombre, sin producto de Bsale)."
+                          : "Si cambias el precio o el SKU de una línea de la guía, va como glosa (texto sin producto de Bsale) y tampoco mueve stock; en una línea copiada tras una nota de crédito, el SKU nuevo sale como producto."}
                     </div>
                   </div>
 
