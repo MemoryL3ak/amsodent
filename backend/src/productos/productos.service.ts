@@ -116,6 +116,15 @@ export class ProductosService {
       'largo',
       'ancho',
       'alto',
+      // (2026-11-03) Nueva Cotización también usa este listado (antes leía la
+      // tabla directo): equivalencias, volumen, antigüedad del transitorio y
+      // link de referencia, para que el catálogo traiga `ficha_completa`.
+      'metro_cubico',
+      'equivalente_1',
+      'equivalente_2',
+      'equivalente_3',
+      'created_at',
+      'link_referencia',
       ...ProductosService.CAMPOS_FICHA,
     ].join(', ');
 
@@ -148,6 +157,12 @@ export class ProductosService {
       largo: p.largo,
       ancho: p.ancho,
       alto: p.alto,
+      metro_cubico: p.metro_cubico,
+      equivalente_1: p.equivalente_1,
+      equivalente_2: p.equivalente_2,
+      equivalente_3: p.equivalente_3,
+      created_at: p.created_at,
+      link_referencia: p.link_referencia,
       ficha_completa: ProductosService.CAMPOS_FICHA.every(
         (k) => String(p?.[k] ?? '').trim().length > 0,
       ),

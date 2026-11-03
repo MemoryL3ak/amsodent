@@ -15,6 +15,9 @@ import CalculadoraFlete from "../components/CalculadoraFlete";
 import BotonFichaTecnica from "../components/BotonFichaTecnica";
 import BotonEditarProducto from "../components/BotonEditarProducto";
 import BotonDescargarFichas from "../components/BotonDescargarFichas";
+import ChipSinFicha from "../components/ChipSinFicha";
+import ConfirmModal from "../components/ConfirmModal";
+import { CAMPOS_FICHA_TECNICA, fichaTecnicaCompleta, productosSinFichaDeItems, resumenSinFicha } from "../utils/fichaTecnicaCompleta";
 
 import {
   DndContext,
@@ -510,6 +513,9 @@ export default function CrearLicitacion() {
   const [madreId, setMadreId] = useState(null);
   // Sugerencia post-guardado: {madreId, codigoMadre, form, items, conEquiv}.
   const [sugerenciaEquiv, setSugerenciaEquiv] = useState(null);
+  // (2026-11-03) Productos sin ficha técnica completa al guardar: se pide
+  // confirmar que la cotización quede guardada SIN su PDF.
+  const [confirmFichas, setConfirmFichas] = useState(null);
 
   /* ============================================================
      ✅ Persistir items inmediatamente (para no perder orden si se cae)
@@ -1047,14 +1053,17 @@ export default function CrearLicitacion() {
     async function cargar() {
       // Solo las columnas que usa el picker / cálculo de precios: evita traer
       // las fichas técnicas (textos largos) que disparan el tamaño del payload.
-      const { data } = await supabase
-        .from("productos")
-        .select("id, sku, nombre, marca, categoria, formato, costo, lista1, lista2, lista3, equivalente_1, equivalente_2, equivalente_3, peso, metro_cubico, estado, created_at, link_referencia")
-        .in("estado", ["Activo", "Transitorio"])
-        .order("id")
-        .limit(20000);
-
-      setProductos(data || []);
+      // (2026-11-03) Se lee el listado liviano del backend (antes se leía la
+      // tabla directo), que además trae `ficha_completa` calculado en el
+      // servidor: el botón «Ficha» de cada línea se pinta según eso y la
+      // cotización se guarda sin PDF mientras falte alguna ficha.
+      try {
+        const data = await api.get("/productos/list");
+        setProductos((data || []).filter((p) => ["Activo", "Transitorio"].includes(String(p?.estado || ""))));
+      } catch (e) {
+        console.error("Error cargando productos:", e);
+        setProductos([]);
+      }
     }
     cargar();
   }, []);
@@ -1087,8 +1096,12 @@ export default function CrearLicitacion() {
       );
       if (!skus.length && !nombres.length) return;
       try {
+        // (2026-11-03) Con los textos de la ficha técnica (solo son los
+        // productos de esta cotización): así el color del botón «Ficha»
+        // también se refresca al volver a la pestaña.
         const campos =
-          "id, sku, nombre, marca, categoria, formato, costo, lista1, lista2, lista3, equivalente_1, equivalente_2, equivalente_3, peso, metro_cubico, estado, created_at, link_referencia";
+          "id, sku, nombre, marca, categoria, formato, costo, lista1, lista2, lista3, equivalente_1, equivalente_2, equivalente_3, peso, metro_cubico, estado, created_at, link_referencia, " +
+          CAMPOS_FICHA_TECNICA.join(", ");
         const [porSku, porNombre] = await Promise.all([
           skus.length
             ? supabase.from("productos").select(campos).in("sku", skus)
@@ -1896,7 +1909,7 @@ export default function CrearLicitacion() {
      ✅ FIX: filtra ítems vacíos + valida mínimos
      ✅ FIX: inserta items en batch + agrega `orden`
 ============================================================ */
-  async function guardarLicitacion() {
+  async function guardarLicitacion(opts = {}) {
     setToast(null);
 
     if (guardando || generandoPDF || guardandoRef.current) return;
@@ -2116,6 +2129,32 @@ export default function CrearLicitacion() {
         return;
       }
 
+      // (2026-11-03) Pedido de Ariel: el PDF de la cotización no se emite
+      // mientras algún producto del catálogo tenga la ficha técnica
+      // incompleta. La cotización se guarda igual (los transitorios nacen sin
+      // ficha y el flujo de aprobación no la necesita), pero sin PDF: se
+      // genera desde el detalle («PDF Carta») cuando todas estén completas.
+      // Antes de avisar se relee cada producto marcado: la ficha pudo
+      // completarse en otra pestaña o por otro usuario.
+      let sinFicha = productosSinFichaDeItems(itemsParaGuardar, productos);
+      if (sinFicha.length) {
+        const frescos = (
+          await Promise.all(sinFicha.map((p) => api.get(`/productos/${p.id}`).catch(() => null)))
+        ).filter((p) => p?.id);
+        if (frescos.length) {
+          const porId = new Map(frescos.map((p) => [p.id, p]));
+          const catalogoFresco = productos.map((p) => (porId.has(p.id) ? { ...p, ...porId.get(p.id) } : p));
+          setProductos(catalogoFresco);
+          sinFicha = productosSinFichaDeItems(itemsParaGuardar, catalogoFresco);
+        }
+      }
+      // Las que van a aprobación (margen o peso) no generan PDF ahora de todos
+      // modos: el aviso se da al guardar las que sí lo generarían.
+      if (sinFicha.length && !requiereAprobacionPeso && !requiereAprobacion && !opts.sinFichaConfirmado) {
+        setConfirmFichas(sinFicha);
+        return;
+      }
+
       // Para cliente particular el id_licitacion final = String(id interno). Como necesitamos
       // el id antes del INSERT, mandamos un placeholder único y lo reemplazamos con un UPDATE
       // posterior. El placeholder evita colisiones por UNIQUE constraint.
@@ -2310,6 +2349,21 @@ export default function CrearLicitacion() {
         return;
       }
 
+      // (2026-11-03) Fichas técnicas incompletas: queda guardada, sin PDF.
+      if (sinFicha.length) {
+        setToast({
+          type: "warning",
+          message:
+            `La cotización "${nombre}" (N° ${idLicitacion}) quedó guardada SIN PDF: ${resumenSinFicha(sinFicha)}. ` +
+            "Completa las fichas en Productos → Editar y genera el PDF desde el detalle de la cotización («PDF Carta»).",
+        });
+        localStorage.removeItem(STORAGE_KEY);
+        const sugerenciaFicha = !madreId ? construirSugerenciaHija(idLicitacion, itemsParaGuardar) : null;
+        limpiarDatos(false);
+        if (sugerenciaFicha) setSugerenciaEquiv(sugerenciaFicha);
+        return;
+      }
+
       // ✅ generar PDF (con el orden del array filtrado)
       setGenerandoPDF(true);
       setToast({ type: "info", message: "Generando PDF…" });
@@ -2422,6 +2476,10 @@ export default function CrearLicitacion() {
     }
   }
 
+  // (2026-11-03) Productos del catálogo de esta cotización con la ficha
+  // técnica incompleta (chip arriba de los ítems; se guarda sin PDF).
+  const productosSinFicha = useMemo(() => productosSinFichaDeItems(items, productos), [items, productos]);
+
   /* ============================================================
      OPCIONES SELECT (SKU: solo productos con SKU)
   ============================================================ */
@@ -2529,6 +2587,21 @@ export default function CrearLicitacion() {
           onClose={() => setToast(null)}
         />
       )}
+
+      {/* (2026-11-03) Fichas técnicas incompletas: se guarda, pero sin PDF. */}
+      <ConfirmModal
+        open={Boolean(confirmFichas?.length)}
+        title="Fichas técnicas incompletas"
+        message={`${resumenSinFicha(confirmFichas || [], 6)}. La cotización se puede guardar, pero su PDF no se generará hasta que todas las fichas técnicas estén completas (Productos → Editar); después se genera desde el detalle de la cotización con «PDF Carta». ¿Guardar la cotización sin PDF?`}
+        confirmText="Guardar sin PDF"
+        cancelText="Volver"
+        confirmTone="warning"
+        onCancel={() => setConfirmFichas(null)}
+        onConfirm={() => {
+          setConfirmFichas(null);
+          guardarLicitacion({ sinFichaConfirmado: true });
+        }}
+      />
 
       {/* Sugerencia post-guardado: crear cotización alternativa con equivalencias */}
       {sugerenciaEquiv && (
@@ -3125,6 +3198,10 @@ export default function CrearLicitacion() {
       <div className="surface">
         <div className="surface-header" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
           <h3 className="surface-title">Ítems</h3>
+          <div style={{ display: "inline-flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          {/* (2026-11-03) Productos con la ficha técnica incompleta: mientras
+              haya alguno, la cotización se guarda sin PDF. */}
+          <ChipSinFicha productos={productosSinFicha} />
           {/* (2026-10-07) Todas las fichas técnicas de los productos de la
               cotización en un ZIP (los que están en el catálogo). */}
           <BotonDescargarFichas
@@ -3142,6 +3219,7 @@ export default function CrearLicitacion() {
             nombreZip={`fichas-tecnicas-${(idLicitacionInput || "nueva-cotizacion").toString().trim()}`}
             onAviso={(tipo, mensaje) => setToast({ type: tipo, message: mensaje })}
           />
+          </div>
         </div>
         <div className="surface-body">
 
@@ -3260,9 +3338,11 @@ export default function CrearLicitacion() {
                           <label className="block text-xs text-gray-600" style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }} title="Producto">
                             Producto *
                           </label>
-                          {/* Ficha técnica del producto de la línea (2026-10-03). */}
+                          {/* Ficha técnica del producto de la línea (2026-10-03).
+                              (2026-11-03) Verde = ficha completa, rojo = incompleta. */}
                           <BotonFichaTecnica
                             producto={prodLinea}
+                            completa={fichaTecnicaCompleta(prodLinea)}
                             onError={(m) => setToast({ type: "error", message: m })}
                           />
                           </div>
@@ -3773,7 +3853,7 @@ export default function CrearLicitacion() {
         </button>
 
         <button
-          onClick={guardarLicitacion}
+          onClick={() => guardarLicitacion()}
           disabled={guardando || generandoPDF || clienteBloqueado}
           title={clienteBloqueado ? "Cliente bloqueado por cobranza: no se puede guardar la cotización" : undefined}
           className={`btn btn-primary ${guardando || generandoPDF || clienteBloqueado ? "opacity-60 cursor-not-allowed" : ""}`}

@@ -24,6 +24,8 @@ import CalculadoraFlete from "../components/CalculadoraFlete";
 import BotonFichaTecnica from "../components/BotonFichaTecnica";
 import BotonEditarProducto from "../components/BotonEditarProducto";
 import BotonDescargarFichas from "../components/BotonDescargarFichas";
+import ChipSinFicha from "../components/ChipSinFicha";
+import { fichaTecnicaCompleta, productosSinFichaDeItems, resumenSinFicha } from "../utils/fichaTecnicaCompleta";
 import EstadoBsaleBadge from "../components/EstadoBsale";
 import BotonImprimirCarta from "../components/BotonImprimirCarta";
 import AnularGuiaBsale from "../components/AnularGuiaBsale";
@@ -1131,6 +1133,10 @@ export default function EditarLicitacion() {
   // ── Aprobación por PESO (2026-09-01) ──────────────────────────────────
   // Productos del catálogo usados en los ítems que NO tienen peso registrado.
   // Acepta una lista fresca para re-verificar tras corregir el catálogo.
+  // (2026-11-03) Productos del catálogo de esta cotización con la ficha
+  // técnica incompleta (chip arriba de los ítems; «PDF Carta» se retiene).
+  const productosSinFicha = useMemo(() => productosSinFichaDeItems(items, productos), [items, productos]);
+
   function productosSinPesoDeItems(listaProductos = productos) {
     const vistos = new Set();
     const lista = [];
@@ -2752,6 +2758,37 @@ export default function EditarLicitacion() {
       return;
     }
 
+    // (2026-11-03) Pedido de Ariel: el PDF no se emite mientras algún producto
+    // del catálogo tenga la ficha técnica incompleta. Antes de bloquear se
+    // relee cada producto marcado (la ficha pudo completarse en otra pestaña
+    // o por otro usuario). La vista para impresora térmica no es el PDF: pasa.
+    if (modo !== "termica") {
+      let sinFicha = productosSinFichaDeItems(items, productos);
+      if (sinFicha.length) {
+        setGenerandoPDF(true);
+        try {
+          const frescos = (
+            await Promise.all(sinFicha.map((p) => api.get(`/productos/${p.id}`).catch(() => null)))
+          ).filter((p) => p?.id);
+          if (frescos.length) {
+            const porId = new Map(frescos.map((p) => [p.id, p]));
+            const catalogoFresco = productos.map((p) => (porId.has(p.id) ? { ...p, ...porId.get(p.id) } : p));
+            setProductos(catalogoFresco);
+            sinFicha = productosSinFichaDeItems(items, catalogoFresco);
+          }
+        } finally {
+          setGenerandoPDF(false);
+        }
+      }
+      if (sinFicha.length) {
+        setToast({
+          type: "error",
+          message: `No se puede generar el PDF: ${resumenSinFicha(sinFicha)}. Completa las fichas en Productos → Editar y vuelve a intentar.`,
+        });
+        return;
+      }
+    }
+
     setGenerandoPDF(true);
     setToast({ type: "info", message: "Generando PDF…" });
 
@@ -4120,6 +4157,10 @@ export default function EditarLicitacion() {
       <div className="surface">
         <div className="surface-header" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
           <h3 className="surface-title">Ítems</h3>
+          <div style={{ display: "inline-flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          {/* (2026-11-03) Productos con la ficha técnica incompleta: mientras
+              haya alguno no se genera el PDF de la cotización. */}
+          <ChipSinFicha productos={productosSinFicha} />
           {/* (2026-10-07) Todas las fichas técnicas de los productos de la
               cotización en un ZIP (los que están en el catálogo). */}
           <BotonDescargarFichas
@@ -4137,6 +4178,7 @@ export default function EditarLicitacion() {
             nombreZip={`fichas-tecnicas-${(idLicitacionInput || id || "").toString().trim()}`}
             onAviso={(tipo, mensaje) => setToast({ type: tipo, message: mensaje })}
           />
+          </div>
         </div>
         <div className="surface-body">
       <DndContext
@@ -4239,9 +4281,11 @@ export default function EditarLicitacion() {
                           <label className="block text-xs text-gray-600" style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }} title="Producto">
                             Producto *
                           </label>
-                          {/* Ficha técnica del producto de la línea (2026-10-03). */}
+                          {/* Ficha técnica del producto de la línea (2026-10-03).
+                              (2026-11-03) Verde = ficha completa, rojo = incompleta. */}
                           <BotonFichaTecnica
                             producto={prodLinea}
+                            completa={fichaTecnicaCompleta(prodLinea)}
                             onError={(m) => setToast({ type: "error", message: m })}
                           />
                           </div>
@@ -5578,9 +5622,15 @@ export default function EditarLicitacion() {
             className="btn btn-secondary"
             type="button"
             disabled={guardando || generandoPDF}
-            title="PDF de la cotización en tamaño carta"
+            title={
+              productosSinFicha.length
+                ? `No se puede generar todavía: ${resumenSinFicha(productosSinFicha, 6)}. Completa las fichas en Productos → Editar.`
+                : "PDF de la cotización en tamaño carta"
+            }
+            // (2026-11-03) En rojo mientras falte alguna ficha técnica: el clic explica cuáles.
+            style={productosSinFicha.length ? { borderColor: "#fca5a5", color: "#b91c1c", background: "#fef2f2" } : undefined}
           >
-            {generandoPDF ? "Generando…" : "PDF carta"}
+            {generandoPDF ? "Generando…" : "PDF Carta"}
           </button>
         )}
         {estado !== "Pendiente Aprobación" && estado !== "Pendiente Aprobación Peso" && (

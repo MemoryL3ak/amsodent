@@ -23,6 +23,7 @@ import Toast from "../components/Toast";
 import BotonDescargarFichas from "../components/BotonDescargarFichas";
 import EnviarPendientesBsale from "../components/EnviarPendientesBsale";
 import { descargarFichaTecnica } from "../utils/generarFichaTecnica";
+import { fichaTecnicaCompleta } from "../utils/fichaTecnicaCompleta";
 import { calcularLista3 } from "../lib/listas";
 import { precioCampanaMargen } from "../lib/campanasMargen";
 import { useStickyState } from "../lib/useStickyState";
@@ -47,26 +48,9 @@ function contieneTodosLosTokens(texto, query) {
   return tokens.every((tok) => t.includes(tok));
 }
 
-// Campos que deben estar llenos para considerar la ficha técnica "completa".
-const CAMPOS_FICHA_TECNICA = [
-  "presentacion",
-  "descripcion",
-  "composicion",
-  "uso_indicaciones",
-  "beneficios",
-  "modo_uso",
-  "almacenamiento",
-  "datos_clave",
-];
-
-function fichaTecnicaCompleta(p) {
-  // El listado liviano (/productos/list) ya trae el booleano calculado en el
-  // servidor; si está presente lo usamos en vez de revisar los campos largos.
-  if (typeof p?.ficha_completa === "boolean") return p.ficha_completa;
-  return CAMPOS_FICHA_TECNICA.every(
-    (k) => String(p?.[k] ?? "").trim().length > 0,
-  );
-}
+// (2026-11-03) El criterio de ficha técnica "completa" vive en
+// utils/fichaTecnicaCompleta.js (mismo que usan las cotizaciones y el
+// backend): el listado liviano (/productos/list) trae el booleano calculado.
 
 // Menú desplegable de acciones (Inactivar / Eliminar) para roles con permiso.
 const ANCHO_MENU_ACC = 210;
@@ -1006,8 +990,8 @@ export default function Productos() {
                           disabled={generandoFichaId === p.id}
                           title={
                             fichaCompleta
-                              ? "Producto destacado · tiene ficha técnica — descargar PDF"
-                              : "Descargar ficha técnica en PDF"
+                              ? "Ficha técnica completa — descargar PDF"
+                              : "Ficha técnica INCOMPLETA (faltan campos): las cotizaciones con este producto no generan su PDF hasta completarla. Descargar la ficha como está (PDF)"
                           }
                           style={
                             fichaCompleta
@@ -1018,7 +1002,8 @@ export default function Productos() {
                                   fontWeight: 700,
                                   boxShadow: "0 2px 9px -2px rgba(245,158,11,.7)",
                                 }
-                              : undefined
+                              : // (2026-11-03) Incompleta en rojo, para distinguirla a primera vista.
+                                { background: "#fef2f2", color: "#b91c1c", borderColor: "#fca5a5" }
                           }
                         >
                           <FileDown size={14} />

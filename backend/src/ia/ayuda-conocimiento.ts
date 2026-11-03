@@ -110,18 +110,27 @@ Detalle (/detalle/:id).
 ### Nueva Cotización (/crear)
 Formulario de creación: cliente, tipo de compra, condición de venta, lista de
 precios, ítems (buscador por SKU con modal de productos; botón "Ficha" en cada
-línea para abrir la ficha técnica en PDF del producto), flete estimado con
-calculadora por courier, margen por línea visible para todos. Si hay productos
-equivalentes se ofrece crear una cotización hija (jerarquía madre/hija). Puede
-nacer vinculada a una postulación de Mercado Público o a una solicitud del
-portal de stock de clientes.
+línea para abrir la ficha técnica en PDF del producto: VERDE = ficha completa,
+ROJO = incompleta; arriba de los ítems un chip rojo cuenta los productos sin
+ficha completa), flete estimado con calculadora por courier, margen por línea
+visible para todos. Si hay productos equivalentes se ofrece crear una
+cotización hija (jerarquía madre/hija). Puede nacer vinculada a una postulación
+de Mercado Público o a una solicitud del portal de stock de clientes.
+FICHAS TÉCNICAS (nov 2026): si algún producto del catálogo tiene la ficha
+técnica incompleta, al guardar se avisa y la cotización queda guardada SIN PDF;
+se completan las fichas en Productos → Editar y el PDF se genera desde el
+Detalle con «PDF Carta».
 
 ### Detalle de Cotización (/detalle/:id)
 La ficha completa: ítems, márgenes, estado, y el árbol de DOCUMENTOS del ciclo:
 orden_compra → guia_despacho (con empresa y N° seguimiento) → factura /
 factura_boleta → comprobante_pago / webpay / efectivo / nota_credito. Cada
 documento lleva número, fecha, monto NETO y PDF adjunto. Además: aprobar margen
-(admin/jefe), compartir el Portal del Cliente, exportar PDF de la cotización.
+(admin/jefe), compartir el Portal del Cliente, exportar PDF de la cotización
+(botón «PDF Carta»; desde nov 2026 solo cuando TODOS los productos del catálogo
+tienen la ficha técnica completa: si falta alguna, el botón se ve en rojo, dice
+cuáles son y no genera el PDF hasta completarlas en Productos → Editar.
+«Impresora térmica» no tiene esa exigencia).
 DamarIA puede leer un PDF de factura o guía y precargar sus datos (botón con el
 girasol en Trazabilidad).
 
@@ -220,7 +229,10 @@ agregarlo al ítem; si se corrige en Productos → Editar (otra pestaña), al
 guardar los datos nuevos llegan solos al aviso y a las líneas de la cotización
 en curso (salvo costo/precio editados a mano en la línea). Carga masiva
 por planilla con historial y rollback (deshace esa carga y las posteriores).
-Filtros de completitud: SKU asignado, con/sin peso, con/sin medidas. Al crear
+Filtros de completitud: SKU asignado, con/sin peso, con/sin medidas. En la
+grilla el botón "Ficha" va en NARANJO con la ficha técnica completa
+(presentación, descripción, composición, uso e indicaciones, beneficios, modo
+de uso, almacenamiento y datos clave) y en ROJO si faltan campos. Al crear
 un producto queda a la vista con botones "Abrir ficha técnica", "Descargar
 PDF" y "Ver / editar producto".
 BSALE: un producto nuevo con SKU, o uno al que se le asigna SKU, se crea solo
