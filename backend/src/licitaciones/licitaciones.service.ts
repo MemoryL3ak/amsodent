@@ -3714,18 +3714,50 @@ export class LicitacionesService {
   }
 
   async deleteDocumento(docId: number, email?: string) {
+    const db = this.supabase.getClient();
     // (2026-10-27) Qué se borra, para el historial de acciones: después ya no está.
-    const { data: previo } = await this.supabase.getClient()
+    const { data: previo } = await db
       .from('licitacion_documentos').select('licitacion_id, tipo, numero, monto').eq('id', docId).maybeSingle();
-    const { error } = await this.supabase.getClient()
+    // (2026-11-03) Una factura se lleva sus notas de crédito y débito. Si se
+    // quedaban, la FK dejaba su deriva_de_id en NULL y Seguimiento de Pagos las
+    // repartía en cascada sobre las otras facturas de la cotización: la NC que
+    // anulaba la factura vieja aparecía descontando la nueva (#4940 factura 925
+    // con la NC 187; #5125 factura 922 con las NC 185 y 186). Las notas siguen
+    // emitidas en Bsale y registradas en bsale_emisiones.
+    let notas: any[] = [];
+    if (previo && ['factura', 'factura_boleta'].includes(String(previo.tipo))) {
+      const { data } = await db
+        .from('licitacion_documentos').select('id, tipo, numero, monto, bucket, storage_path')
+        .eq('deriva_de_id', docId).in('tipo', ['nota_credito', 'nota_debito']);
+      notas = data || [];
+    }
+    const { error } = await db
       .from('licitacion_documentos')
       .delete()
       .eq('id', docId);
     if (error) throw new BadRequestException(error.message);
-    if (Number(previo?.licitacion_id) > 0) {
-      await this.registrarAccion(Number(previo!.licitacion_id), 'documento', `Eliminó ${nombreDocumento(previo!)}`, email);
+    if (notas.length) {
+      const { error: eNotas } = await db
+        .from('licitacion_documentos').delete().in('id', notas.map((n) => Number(n.id)));
+      if (eNotas) {
+        this.logger.warn(`Factura ${docId} eliminada pero sus notas quedaron sueltas: ${eNotas.message}`);
+        notas = [];
+      } else {
+        for (const n of notas) {
+          if (!n.bucket || !n.storage_path) continue;
+          const { error: eArchivo } = await db.storage.from(String(n.bucket)).remove([String(n.storage_path)]);
+          if (eArchivo) this.logger.warn(`Archivo de la nota ${n.numero} sin borrar: ${eArchivo.message}`);
+        }
+      }
     }
-    return { deleted: true };
+    if (Number(previo?.licitacion_id) > 0) {
+      const etiqueta = (n: any) => `${n.tipo === 'nota_debito' ? 'N.D.' : 'N.C.'} ${n.numero || 's/n'}`;
+      const conNotas = notas.length
+        ? ` y ${notas.length === 1 ? 'su nota' : `sus ${notas.length} notas`} (${notas.map(etiqueta).join(', ')}), que siguen en Bsale`
+        : '';
+      await this.registrarAccion(Number(previo!.licitacion_id), 'documento', `Eliminó ${nombreDocumento(previo!)}${conNotas}`, email);
+    }
+    return { deleted: true, notas: notas.map((n) => ({ id: n.id, tipo: n.tipo, numero: n.numero })) };
   }
 
   // Storage — contención auditoría 2026-09-04: estos endpoints usan la llave

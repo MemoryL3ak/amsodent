@@ -59,6 +59,7 @@ import { condicionParaCotizacion } from "../lib/condicionesVenta";
 import { leerGiros, tieneGiro } from "../lib/giros";
 import { GirosRapidos } from "../components/GirosEditor";
 import { escucharProductosActualizados, itemEsDelProducto } from "../lib/productosCanal";
+import { avisoEliminarFacturaConNotas, notasDeFactura, textoNotas } from "../lib/notasSinFactura";
 import { REGIONES_CHILE, filtrarOpcionComuna } from "../constants/regiones";
 
 // Correos autorizados a aprobar cotizaciones (además del administrador).
@@ -1307,8 +1308,11 @@ export default function EditarLicitacion() {
 
     setToast(null);
 
+    // Una factura se lleva sus notas de crédito/débito (las borra el backend; ver lib/notasSinFactura.js).
+    let notas = [];
     try {
-      await api.delete(`/licitaciones/documentos/${doc.id}`);
+      const r = await api.delete(`/licitaciones/documentos/${doc.id}`);
+      notas = Array.isArray(r?.notas) ? r.notas : [];
     } catch (errDb) {
       console.error("Error eliminando documento:", errDb);
       setToast({ type: "error", message: "No se pudo eliminar el documento." });
@@ -1323,7 +1327,7 @@ export default function EditarLicitacion() {
       }
     }
 
-    setToast({ type: "success", message: "Documento eliminado." });
+    setToast({ type: "success", message: notas.length ? `Documento eliminado junto con ${textoNotas(notas)}.` : "Documento eliminado." });
     await cargarDocumentosLicitacion();
   }
 
@@ -5687,7 +5691,7 @@ export default function EditarLicitacion() {
           DOC_TIPOS[docAEliminar?.tipo] || "documento"
         }${docAEliminar?.numero ? ` (${docAEliminar.numero})` : ""}${
           docAEliminar?.file_name ? ` - ${docAEliminar.file_name}` : ""
-        }. Esta acción no se puede deshacer.`}
+        }. Esta acción no se puede deshacer.${avisoEliminarFacturaConNotas(notasDeFactura(documentos, docAEliminar))}`}
         onCancel={() => {
           setConfirmEliminarDocOpen(false);
           setDocAEliminar(null);

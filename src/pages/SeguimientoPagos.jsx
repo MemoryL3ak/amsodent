@@ -13,6 +13,7 @@ import SeguimientoPagoParticular from "../components/SeguimientoPagoParticular";
 import { MEDIOS_PARTICULAR, OPCIONES_CUOTAS, esPagoTarjeta, limitarCuotas, planDeFactura, soloDigitos } from "../lib/pagosParticular";
 import EstadoBsaleBadge from "../components/EstadoBsale";
 import { useEstadosBsale } from "../lib/estadosBsale";
+import { esNotaSinSuFactura } from "../lib/notasSinFactura";
 
 // Normaliza el nombre de archivo para el storage (sin acentos ni símbolos).
 function normalizarNombreArchivo(nombre) {
@@ -244,7 +245,9 @@ function fmtCLP(value) {
    módulo guardan `deriva_de_id` = la factura. Los que no lo traen (comprobantes
    subidos desde Trazabilidad) se aplican en cascada a las facturas de la
    cotización, de la más antigua a la más nueva, hasta cubrir cada una; con una
-   sola factura eso equivale a imputárselo a ella. */
+   sola factura eso equivale a imputárselo a ella. Excepción: una nota de
+   crédito/débito emitida desde la app que perdió su factura (se eliminó la
+   factura) no se reparte; ver lib/notasSinFactura.js. */
 /* Diferencia que se considera redondeo y no deuda. Los montos se guardan
    netos y se llevan a bruto × 1,19 al leer; el pago se digita bruto y se
    guarda neto. Entre una conversión y otra se pierden unos pocos pesos: la
@@ -323,8 +326,13 @@ function calcularCuentas({ facturas, licMap, montoOcMap, pagosMap, notasCreditoM
       }
     };
 
-    repartir(notasDebitoMap?.[lid], (c, _d, m) => { c.nd += m; }, (d) => Number(d?.monto || 0));
-    repartir(notasCreditoMap?.[lid], (c, _d, m) => { c.nc += m; }, (d) => Number(d?.monto || 0));
+    // (2026-11-03) Una nota emitida desde la app que perdió su factura (se
+    // eliminó la factura y el vínculo quedó en NULL) no se reparte: en Bsale
+    // sigue anulando a la original y no debe descontar de la factura nueva
+    // (#5125: las NC 185 y 186 de la 862 aparecían descontando la 922).
+    const conSuFactura = (docs) => (docs || []).filter((d) => !esNotaSinSuFactura(d, (id) => porId.has(id)));
+    repartir(conSuFactura(notasDebitoMap?.[lid]), (c, _d, m) => { c.nd += m; }, (d) => Number(d?.monto || 0));
+    repartir(conSuFactura(notasCreditoMap?.[lid]), (c, _d, m) => { c.nc += m; }, (d) => Number(d?.monto || 0));
     repartir(multasMap?.[lid], (c, _d, m) => { c.multas += m; }, (d) => Number(d?.monto || 0));
     // Pagos: lo recibido se guarda NETO (× 1,19 al leer). La comisión del
     // medio de pago (Transbank/Getnet) va aparte y en bruto: no se recibió,

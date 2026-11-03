@@ -81,6 +81,7 @@ import FacturasTrazabilidad from "../components/FacturasTrazabilidad";
 import NotasTrazabilidad from "../components/NotasTrazabilidad";
 import { useEstadosBsale } from "../lib/estadosBsale";
 import { pedirPendientesFacturar } from "../lib/pendientesFacturar";
+import { avisoEliminarFacturaConNotas, esNotaSinSuFactura, notasDeFactura, textoNotas } from "../lib/notasSinFactura";
 
 // Mapping empresa courier → builder de URL de tracking. Si la empresa no
 // tiene URL o no hay número, devuelve "" (no renderizamos el link).
@@ -1351,7 +1352,9 @@ export default function Trazabilidad() {
     const ocs = docs.filter((d) => d.tipo === "orden_compra");
     const guias = docs.filter((d) => d.tipo === "guia_despacho");
     const facturas = docs.filter((d) => d.tipo === "factura" || d.tipo === "factura_boleta");
-    const notasCredito = docs.filter((d) => d.tipo === "nota_credito");
+    // Una NC que perdió su factura (se eliminó) no descuenta: misma regla que Seguimiento de Pagos.
+    const idsFacturas = new Set(facturas.map((f) => f.id));
+    const notasCredito = docs.filter((d) => d.tipo === "nota_credito" && !esNotaSinSuFactura(d, (id) => idsFacturas.has(id)));
     const multas = docs.filter((d) => d.tipo === "multa");
     const pagos = docs.filter(
       (d) => d.tipo === "comprobante_pago" || d.tipo === "webpay" || d.tipo === "efectivo",
@@ -2278,8 +2281,11 @@ export default function Trazabilidad() {
     if (!doc?.id) return;
     setToast(null);
 
+    // El backend se lleva las notas de crédito/débito de la factura (ver lib/notasSinFactura.js).
+    let notas = [];
     try {
-      await api.delete(`/licitaciones/documentos/${doc.id}`);
+      const r = await api.delete(`/licitaciones/documentos/${doc.id}`);
+      notas = Array.isArray(r?.notas) ? r.notas : [];
     } catch (errDb) {
       setToast({ type: "error", message: "No se pudo eliminar la factura." });
       return;
@@ -2293,7 +2299,7 @@ export default function Trazabilidad() {
       }
     }
 
-    setToast({ type: "success", message: "Factura eliminada." });
+    setToast({ type: "success", message: notas.length ? `Factura eliminada junto con ${textoNotas(notas)}.` : "Factura eliminada." });
     await refrescarDocumentosLic(doc.licitacion_id);
   }
 
@@ -3549,7 +3555,7 @@ export default function Trazabilidad() {
         title="Eliminar factura"
         message={`Vas a eliminar Factura${confirmEliminar?.numero ? ` (${confirmEliminar.numero})` : ""}${
           confirmEliminar?.file_name ? ` - ${confirmEliminar.file_name}` : ""
-        }. Esta acción no se puede deshacer.`}
+        }. Esta acción no se puede deshacer.${avisoEliminarFacturaConNotas(notasDeFactura(documentosMap[confirmEliminar?.licitacion_id], confirmEliminar))}`}
         onCancel={() => setConfirmEliminar(null)}
         onConfirm={async () => {
           const doc = confirmEliminar;
