@@ -230,11 +230,12 @@ export default function SidebarLayout() {
     puede("campanas") && { to: "/campanas-margen", icon: Percent, label: "Campañas de margen" },
   ].filter(Boolean);
 
-  // Abastecimiento (solo admin): el lado de la COMPRA — a quién le compramos,
-  // las órdenes de compra emitidas y el stock valorizado.
+  // Abastecimiento: el lado de la COMPRA — a quién le compramos, las órdenes
+  // de compra emitidas y el stock valorizado. (2026-11-03) Proveedores y
+  // Órdenes de Compra ya no son solo admin: van por permiso de perfil.
   const abastecimientoNav = [
-    esAdmin && { to: "/proveedores", icon: Building2, label: "Proveedores" },
-    esAdmin && { to: "/ordenes-compra", icon: FileText, label: "Órdenes de Compra" },
+    puede("proveedores") && { to: "/proveedores", icon: Building2, label: "Proveedores" },
+    puede("ordenes_compra") && { to: "/ordenes-compra", icon: FileText, label: "Órdenes de Compra" },
     // Inventario mueve stock y valorización a costo: solo administración.
     // (2026-10-14) Inventario por permiso (ventas lo ve sin KPIs ni acciones), no solo admin.
     puede("inventario") && { to: "/inventario", icon: Boxes, label: "Inventario" },

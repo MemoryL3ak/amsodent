@@ -60,6 +60,10 @@ export const MODULOS = [
   { key: "inventario_traslados", label: "Inventario: traslados entre sucursales (crear, recibir y anular)", grupo: "Abastecimiento" },
   { key: "ver_costos", label: "Ver el costo de los productos (solo lectura)", grupo: "Comercial" },
   { key: "gestion_compras", label: "Gestión de compras (adjudicadas vs. stock)", grupo: "Abastecimiento" },
+  // (2026-11-03) Proveedores y Órdenes de Compra a proveedores, asignables por
+  // perfil (antes solo admin). El backend exige el mismo permiso.
+  { key: "proveedores", label: "Proveedores (catálogo de a quién le compramos)", grupo: "Abastecimiento" },
+  { key: "ordenes_compra", label: "Órdenes de Compra a proveedores", grupo: "Abastecimiento" },
   { key: "monitoreo_stock", label: "Monitoreo Stock Clientes", grupo: "Portal del Cliente" },
   { key: "portal_accesos", label: "Acceso Portal Clientes", grupo: "Portal del Cliente" },
   // "Recursos Humanos" NO es asignable por perfil: es solo admin (sueldos,

@@ -24,9 +24,11 @@ Monitoreo Stock), contabilidad (Contabilidad: correo, chat, Seguimiento de Pagos
 Cobranza, metas).
 Además el admin puede crear "perfiles de permisos" a medida (módulo Usuarios) que
 asignan módulos específicos a un usuario, por sobre el fallback del rol.
-Solo admin (nunca asignable por perfil): Órdenes de Compra a proveedores,
-Proveedores, Inventario, Análisis Mercado Público, Recursos Humanos,
-Comunicaciones (correo masivo), Monitoreo del Sistema, widget DamarIA de datos.
+Solo admin (nunca asignable por perfil): Análisis Mercado Público, Recursos
+Humanos, Comunicaciones (correo masivo), Monitoreo del Sistema, widget DamarIA
+de datos. Desde nov 2026 Proveedores y Órdenes de Compra a proveedores SÍ son
+asignables por perfil (permisos "proveedores" y "ordenes_compra", grupo
+Abastecimiento); Inventario lo ven todos (mover stock sigue siendo admin).
 "Mi Ficha" y el "Centro de Ayuda" los ven todos los usuarios autenticados.
 
 ## FLUJO DE NEGOCIO COMPLETO (el ciclo de una venta pública)
@@ -145,12 +147,12 @@ tiro desde una copia guardada (hasta 6 h) y tiene el botón «Actualizar desde
 Mercado Público» para pedirla en vivo. «Confirmar postulaciones» encola el
 trabajo al ROBOT de Mercado Público y muestra el avance.
 
-### Órdenes de Compra a proveedores (/ordenes-compra) — solo admin
+### Órdenes de Compra a proveedores (/ordenes-compra) — admin o permiso "ordenes_compra"
 OC de COMPRA a proveedores (no confundir con la OC que emite el cliente).
 Numeración correlativa #0001, mismo buscador de productos que la cotización,
 costo unitario de compra, export a PDF con formato de marca.
 
-### Proveedores (/proveedores) — solo admin
+### Proveedores (/proveedores) — admin o permiso "proveedores"
 Catálogo de proveedores: razón social, RUT, contacto, correo, teléfono, rubro,
 MARCAS que distribuye (selector con las marcas del catálogo de productos; se
 puede crear una marca nueva escribiéndola) y PALABRAS CLAVE libres. Marcas y

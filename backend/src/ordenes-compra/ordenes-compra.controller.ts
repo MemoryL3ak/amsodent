@@ -4,9 +4,11 @@ import {
 } from '@nestjs/common';
 import { OrdenesCompraService } from './ordenes-compra.service';
 import { AuthGuard } from '../auth/auth.guard';
+import { ModuloGuard } from '../auth/modulo.guard';
 
+// (2026-11-03) Entra el admin o quien tenga `ordenes_compra` en su perfil.
 @Controller('ordenes-compra')
-@UseGuards(AuthGuard)
+@UseGuards(AuthGuard, ModuloGuard('ordenes_compra', 'Órdenes de Compra'))
 export class OrdenesCompraController {
   constructor(private ordenesService: OrdenesCompraService) {}
 

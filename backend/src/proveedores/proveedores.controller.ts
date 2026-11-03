@@ -4,9 +4,11 @@ import {
 } from '@nestjs/common';
 import { ProveedoresService } from './proveedores.service';
 import { AuthGuard } from '../auth/auth.guard';
+import { ModuloGuard } from '../auth/modulo.guard';
 
+// (2026-11-03) Entra el admin o quien tenga `proveedores` en su perfil.
 @Controller('proveedores')
-@UseGuards(AuthGuard)
+@UseGuards(AuthGuard, ModuloGuard('proveedores', 'Proveedores'))
 export class ProveedoresController {
   constructor(private proveedores: ProveedoresService) {}
 

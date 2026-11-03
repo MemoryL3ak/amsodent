@@ -61,6 +61,11 @@ export const MODULOS: string[] = [
   'editar_productos',
   // (2026-10-16) Gestión de compras: adjudicadas vs. stock; asignable por perfil.
   'gestion_compras',
+  // (2026-11-03) Proveedores y Órdenes de Compra a proveedores por perfil
+  // (pedido de Ariel: «habilitar módulo de abastecimiento a Francisco»).
+  // Antes eran solo admin por el menú y el backend no los restringía.
+  'proveedores',
+  'ordenes_compra',
   'cotizaciones_todas',
   'usuarios',
   'monitoreo_usuarios',

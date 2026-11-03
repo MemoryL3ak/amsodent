@@ -144,10 +144,12 @@ export default function App() {
           {/* LICITACIONES */}
           <Route path="crear" element={<CrearLicitacion />} />
           <Route path="licitaciones-disponibles" element={<LicitacionesDisponibles />} />
-          <Route path="ordenes-compra" element={<OrdenesCompra />} />
-          <Route path="ordenes-compra/nueva" element={<CrearOrdenCompra />} />
-          <Route path="ordenes-compra/:id" element={<CrearOrdenCompra />} />
-          <Route path="proveedores" element={<Proveedores />} />
+          {/* ABASTECIMIENTO (2026-11-03): Órdenes de Compra a proveedores y
+              Proveedores por permiso de perfil (antes solo los escondía el menú). */}
+          <Route path="ordenes-compra" element={<RequireModulo modulo="ordenes_compra"><OrdenesCompra /></RequireModulo>} />
+          <Route path="ordenes-compra/nueva" element={<RequireModulo modulo="ordenes_compra"><CrearOrdenCompra /></RequireModulo>} />
+          <Route path="ordenes-compra/:id" element={<RequireModulo modulo="ordenes_compra"><CrearOrdenCompra /></RequireModulo>} />
+          <Route path="proveedores" element={<RequireModulo modulo="proveedores"><Proveedores /></RequireModulo>} />
           <Route path="listar" element={<ListarLicitaciones />} />
           <Route path="detalle/:id" element={<DetalleLicitacionRoute />} />
 
