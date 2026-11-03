@@ -622,8 +622,11 @@ function ModalHabilitar({ clienteInicial, onCerrar, onHecho, onError }) {
         <UserPlus size={18} /> Habilitar acceso al portal
       </h2>
 
+      {/* (2026-11-03) Cada vista lleva su key: al elegir un cliente React
+          reemplaza el bloque completo en vez de reciclar la lista de
+          resultados como fila de la contraseña (quedaban «fantasmas»). */}
       {!cliente ? (
-        <div style={s.modalBody}>
+        <div style={s.modalBody} key="buscar">
           <label style={s.label}>Buscar cliente (razón social o RUT)</label>
           <div style={s.searchWrap}>
             <Search size={15} style={{ color: "#94a3b8" }} />
@@ -638,8 +641,10 @@ function ModalHabilitar({ clienteInicial, onCerrar, onHecho, onError }) {
           {buscando && <div style={s.hintMini}>Buscando…</div>}
           {resultados.length > 0 && (
             <div style={s.resultados}>
-              {resultados.map((c) => (
-                <button key={c.rut} style={s.resItem} onClick={() => setCliente(c)}>
+              {/* key por id: el maestro puede traer el mismo RUT varias veces
+                  (escrito distinto) y las keys repetidas rompían el modal. */}
+              {resultados.map((c, i) => (
+                <button key={c.id || `${c.rut}-${i}`} style={s.resItem} onClick={() => setCliente(c)}>
                   <div style={{ fontWeight: 700, color: "#0f172a" }}>{c.nombre}</div>
                   <div style={{ fontSize: 12, color: "#64748b" }}>
                     {c.rut_formateado}
@@ -654,7 +659,7 @@ function ModalHabilitar({ clienteInicial, onCerrar, onHecho, onError }) {
           )}
         </div>
       ) : (
-        <div style={s.modalBody}>
+        <div style={s.modalBody} key="seleccionado">
           <div style={s.clienteSel}>
             <div>
               <div style={{ fontWeight: 700, color: "#0f172a" }}>
