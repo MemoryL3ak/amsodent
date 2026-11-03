@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AlertTriangle, CheckCircle2, FileText, Info, Loader2, Mail, Pencil, RotateCcw, Search, Trash2, X } from "lucide-react";
 import { api } from "../lib/api";
@@ -170,10 +170,38 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
   const skuDe = (l) => (skuCambiado(l) ? normSku(edits[l.detalle_id].sku) : l.sku);
   const productoDe = (l) => (skuCambiado(l) ? edits[l.detalle_id].producto || "" : l.producto);
   const abrirSku = (l) => { setQSku(""); setSkuEditando(l.detalle_id); };
-  const cerrarSku = () => { setSkuEditando(null); setQSku(""); };
+  const cerrarSku = () => { setSkuEditando(null); setQSku(""); enterRef.current = null; };
   const elegirSku = (l, sku, producto) => {
     cambiarEdit(l.detalle_id, normSku(sku) === normSku(l.sku) ? { sku: undefined, producto: undefined } : { sku: normSku(sku), producto: producto || "" });
     cerrarSku();
+  };
+  /* (2026-11-03) Enter en el buscador de SKU. Con la búsqueda lista toma el
+     primer resultado (o el código tal cual si no hay ninguno). Si la búsqueda
+     todavía va en camino (retardo + consulta), antes Enter no hacía nada y
+     parecía que «no se actualizaba»: ahora consulta de inmediato y aplica lo
+     que llegue, salvo que mientras tanto se escriba otra cosa o se cierre el
+     editor. */
+  const enterRef = useRef(null); // { t, id } del Enter que espera su búsqueda
+  const aplicarEnter = (l, lista, t) => {
+    const p = lista[0];
+    if (p) elegirSku(l, p.sku, p.nombre);
+    else if (t.length >= 2) elegirSku(l, t, "");
+  };
+  const enterSku = (l) => {
+    const t = qSku.trim();
+    if (!buscandoSku) { aplicarEnter(l, productosSku, t); return; }
+    if (t.length < 2) return;
+    const marca = { t, id: l.detalle_id };
+    enterRef.current = marca;
+    api
+      .get(`/bsale/libre/productos?q=${encodeURIComponent(t)}`)
+      .then((r) => (Array.isArray(r) ? r : []))
+      .catch(() => [])
+      .then((lista) => {
+        if (enterRef.current !== marca) return;
+        enterRef.current = null;
+        aplicarEnter(l, lista, t);
+      });
   };
   const netoLinea = (cant, unit) => Math.round((Number(cant) || 0) * (Number(unit) || 0));
   const lineasActivas = (borrador?.lineas || []).filter((l) => !edits[l.detalle_id]?.quitada);
@@ -463,15 +491,10 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
                                           className="input"
                                           autoFocus
                                           value={qSku}
-                                          onChange={(ev) => setQSku(ev.target.value)}
+                                          onChange={(ev) => { setQSku(ev.target.value); enterRef.current = null; }}
                                           onKeyDown={(ev) => {
                                             if (ev.key === "Escape") { ev.preventDefault(); cerrarSku(); }
-                                            if (ev.key === "Enter") {
-                                              ev.preventDefault();
-                                              const p = productosSku[0];
-                                              if (p) elegirSku(l, p.sku, p.nombre);
-                                              else if (qSku.trim().length >= 2 && !buscandoSku) elegirSku(l, qSku, "");
-                                            }
+                                            if (ev.key === "Enter") { ev.preventDefault(); enterSku(l); }
                                           }}
                                           onBlur={() => setTimeout(cerrarSku, 150)}
                                           disabled={!!enviando}
@@ -486,6 +509,7 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
                                           {productosSku.slice(0, 8).map((p) => (
                                             <button key={p.sku} type="button" onClick={() => elegirSku(l, p.sku, p.nombre)} style={{ display: "block", width: "100%", textAlign: "left", padding: "5px 8px", background: "none", border: "none", cursor: "pointer", fontSize: 12, overflowWrap: "anywhere" }}>
                                               <b>{p.sku}</b> · {p.nombre}
+                                              {p.origen === "bsale" && <span style={{ color: "var(--text-muted)" }} title="No está en el catálogo del sistema (o está sin SKU): nombre y producto según Bsale"> · solo en Bsale</span>}
                                             </button>
                                           ))}
                                           {!buscandoSku && productosSku.length === 0 && (
@@ -708,7 +732,7 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
                         {productos.slice(0, 12).map((p) => (
                           <button key={p.sku} type="button" onClick={() => agregarExtra(p)} style={{ display: "flex", justifyContent: "space-between", gap: 8, width: "100%", textAlign: "left", padding: "7px 10px", background: "none", border: "none", cursor: "pointer", fontSize: 12.5 }}>
                             <span style={{ minWidth: 0, overflowWrap: "anywhere" }}><b>{p.sku}</b> · {p.nombre}</span>
-                            <span style={{ color: "var(--text-muted)", whiteSpace: "nowrap" }}>{p.lista1 ? clp(p.lista1) : ""}</span>
+                            <span style={{ color: "var(--text-muted)", whiteSpace: "nowrap" }}>{p.origen === "bsale" ? "solo en Bsale" : p.lista1 ? clp(p.lista1) : ""}</span>
                           </button>
                         ))}
                       </div>

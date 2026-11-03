@@ -1929,7 +1929,8 @@ export class BsaleFacturacionService {
 
   // Variante de Bsale por SKU (misma regla que bsale-despachos.service: activa primero).
   private cacheVariantes = new Map<string, { ts: number; variante: any }>();
-  private async variantePorSku(sku: string): Promise<any | null> {
+  // Pública desde 2026-11-03: el buscador de productos de bsale-libre la usa para resolver un SKU que no está en el catálogo.
+  async variantePorSku(sku: string): Promise<any | null> {
     const k = normSku(sku);
     if (!k) return null;
     const hit = this.cacheVariantes.get(k);

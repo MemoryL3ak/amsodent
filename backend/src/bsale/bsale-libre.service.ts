@@ -234,7 +234,16 @@ export class BsaleLibreService {
   }
 
   /* Productos del catálogo que calzan (SKU o nombre), con sus listas: para
-     agregarlos como líneas. Si el SKU no está en Bsale se dice al simular. */
+     agregarlos como líneas o cambiar el SKU de una. Si el SKU no está en Bsale
+     se dice al simular.
+     (2026-11-03) Si lo escrito parece un SKU (letras y al menos un dígito, sin
+     espacios) y ningún producto del catálogo tiene ese SKU exacto, se busca la
+     variante en Bsale: hay productos que en el sistema están sin SKU o que
+     solo existen en Bsale (PH00302, Clorhexidina 2% 125 ml, al refacturar la
+     #5424), y la factura igual puede salir con ellos. Esa variante llega
+     primera, con `origen: 'bsale'`, su nombre según Bsale y sin listas de
+     precio; antes el editor de SKU solo podía tomar el código «tal cual» y la
+     línea quedaba como «nombre según Bsale» hasta simular. */
   async buscarProductos(userId: string, q: string) {
     await this.facturacion.exigirRolGuia(userId);
     const t = texto(q, 60);
@@ -246,13 +255,26 @@ export class BsaleLibreService {
       .select('sku, nombre, formato, lista1, lista2, stock, estado')
       .or(`sku.ilike.${patron},nombre.ilike.${patron}`)
       .limit(40);
-    return (data || [])
+    const resultados: any[] = (data || [])
       .filter((p: any) => String(p.estado || '') !== 'Inactivo' && normSku(p.sku))
       .slice(0, 15)
       .map((p: any) => ({
         sku: normSku(p.sku), nombre: String(p.nombre || ''), formato: String(p.formato || ''),
         lista1: Number(p.lista1) || 0, lista2: Number(p.lista2) || 0, stock: Number(p.stock) || 0,
       }));
+    const k = normSku(t);
+    const pareceSku = /^(?=.*\d)[A-Z0-9][A-Z0-9._-]{3,}$/.test(k);
+    if (pareceSku && !resultados.some((p) => p.sku === k)) {
+      const v = await this.facturacion.variantePorSku(k).catch(() => null);
+      if (v) {
+        const nombre = [v?.product?.name, v?.description].map((x: any) => String(x || '').trim()).filter(Boolean).join(' · ');
+        resultados.unshift({
+          sku: normSku(v.code) || k, nombre: nombre || k, formato: '',
+          lista1: null, lista2: null, stock: null, origen: 'bsale', variante_id: Number(v.id) || null,
+        });
+      }
+    }
+    return resultados;
   }
 
   /* Datos de una cotización para armar su documento (2026-10-07): boleta o
