@@ -12,7 +12,9 @@ import { abrirFichaTecnica } from "../utils/generarFichaTecnica";
 
    (2026-11-03) `completa` pinta el botón según el estado de la ficha técnica:
    verde = completa, rojo = incompleta (el PDF de la cotización no se emite
-   hasta completarla), índigo = no se sabe (el catálogo no trajo el dato). */
+   hasta completarla), índigo = no se sabe (el catálogo no trajo el dato).
+   (2026-11-04) `admin`: al administrador no se le retiene el PDF de la
+   cotización, así que el aviso de la ficha incompleta lo dice. */
 
 const TONOS = {
   completa: { border: "#86efac", background: "#dcfce7", color: "#15803d" },
@@ -20,7 +22,7 @@ const TONOS = {
   neutra: { border: "#c7d2fe", background: "#eef2ff", color: "#4338ca" },
 };
 
-export default function BotonFichaTecnica({ producto, completa = null, onError }) {
+export default function BotonFichaTecnica({ producto, completa = null, admin = false, onError }) {
   const [generando, setGenerando] = useState(false);
   if (!producto?.id) return null;
   const etiqueta = producto.sku || producto.nombre || "el producto";
@@ -28,6 +30,8 @@ export default function BotonFichaTecnica({ producto, completa = null, onError }
   const titulo =
     completa === true
       ? `Ficha técnica completa · abrir la ficha de ${etiqueta} (PDF)`
+      : completa === false && admin
+      ? `Ficha técnica INCOMPLETA de ${etiqueta}: complétala en Productos → Editar. Como administrador puedes generar el PDF de la cotización igual; el resto del equipo no hasta que todas las fichas estén completas. Clic para abrir la ficha como está (PDF).`
       : completa === false
       ? `Ficha técnica INCOMPLETA de ${etiqueta}: complétala en Productos → Editar. El PDF de la cotización no se puede generar hasta que todas las fichas estén completas. Clic para abrir la ficha como está (PDF).`
       : `Abrir la ficha técnica de ${etiqueta} (PDF)`;

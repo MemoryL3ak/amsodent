@@ -2150,7 +2150,9 @@ export default function CrearLicitacion() {
       }
       // Las que van a aprobación (margen o peso) no generan PDF ahora de todos
       // modos: el aviso se da al guardar las que sí lo generarían.
-      if (sinFicha.length && !requiereAprobacionPeso && !requiereAprobacion && !opts.sinFichaConfirmado) {
+      // (2026-11-04) El administrador no queda bloqueado: guarda y genera el
+      // PDF igual; el aviso final le recuerda qué fichas siguen pendientes.
+      if (sinFicha.length && !esAdmin && !requiereAprobacionPeso && !requiereAprobacion && !opts.sinFichaConfirmado) {
         setConfirmFichas(sinFicha);
         return;
       }
@@ -2349,8 +2351,9 @@ export default function CrearLicitacion() {
         return;
       }
 
-      // (2026-11-03) Fichas técnicas incompletas: queda guardada, sin PDF.
-      if (sinFicha.length) {
+      // (2026-11-03) Fichas técnicas incompletas: queda guardada, sin PDF
+      // (salvo el administrador, que sigue y genera el PDF igual).
+      if (sinFicha.length && !esAdmin) {
         setToast({
           type: "warning",
           message:
@@ -2459,10 +2462,18 @@ export default function CrearLicitacion() {
         total_con_iva: formatear(totalConIVA),
       });
 
-      setToast({
-        type: "success",
-        message: `La cotización "${nombre}" fue creada correctamente.`,
-      });
+      if (sinFicha.length) {
+        // Solo llega aquí el administrador: PDF generado pese a las fichas pendientes.
+        setToast({
+          type: "warning",
+          message: `La cotización "${nombre}" fue creada y su PDF se generó como administrador con ${resumenSinFicha(sinFicha)}. El resto del equipo no puede generarlo hasta completarlas en Productos → Editar.`,
+        });
+      } else {
+        setToast({
+          type: "success",
+          message: `La cotización "${nombre}" fue creada correctamente.`,
+        });
+      }
 
       localStorage.removeItem(STORAGE_KEY);
       // Solo las cotizaciones MADRE analizan equivalencias (las hijas no).
@@ -3201,7 +3212,7 @@ export default function CrearLicitacion() {
           <div style={{ display: "inline-flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           {/* (2026-11-03) Productos con la ficha técnica incompleta: mientras
               haya alguno, la cotización se guarda sin PDF. */}
-          <ChipSinFicha productos={productosSinFicha} />
+          <ChipSinFicha productos={productosSinFicha} admin={esAdmin} />
           {/* (2026-10-07) Todas las fichas técnicas de los productos de la
               cotización en un ZIP (los que están en el catálogo). */}
           <BotonDescargarFichas
@@ -3343,6 +3354,7 @@ export default function CrearLicitacion() {
                           <BotonFichaTecnica
                             producto={prodLinea}
                             completa={fichaTecnicaCompleta(prodLinea)}
+                            admin={esAdmin}
                             onError={(m) => setToast({ type: "error", message: m })}
                           />
                           </div>

@@ -2766,6 +2766,9 @@ export default function EditarLicitacion() {
     // del catálogo tenga la ficha técnica incompleta. Antes de bloquear se
     // relee cada producto marcado (la ficha pudo completarse en otra pestaña
     // o por otro usuario). La vista para impresora térmica no es el PDF: pasa.
+    // (2026-11-04) El administrador no queda bloqueado: genera el PDF igual y
+    // el aviso final le recuerda qué fichas siguen pendientes.
+    let avisoFichasAdmin = "";
     if (modo !== "termica") {
       let sinFicha = productosSinFichaDeItems(items, productos);
       if (sinFicha.length) {
@@ -2784,7 +2787,9 @@ export default function EditarLicitacion() {
           setGenerandoPDF(false);
         }
       }
-      if (sinFicha.length) {
+      if (sinFicha.length && esAdmin) {
+        avisoFichasAdmin = resumenSinFicha(sinFicha);
+      } else if (sinFicha.length) {
         setToast({
           type: "error",
           message: `No se puede generar el PDF: ${resumenSinFicha(sinFicha)}. Completa las fichas en Productos → Editar y vuelve a intentar.`,
@@ -2936,7 +2941,14 @@ export default function EditarLicitacion() {
         await generarPDFcotizacion(datosPdf);
       }
 
-      setToast({ type: "success", message: modo === "termica" ? "Vista para impresora térmica abierta." : "PDF generado correctamente." });
+      if (avisoFichasAdmin) {
+        setToast({
+          type: "warning",
+          message: `PDF generado como administrador con ${avisoFichasAdmin}. El resto del equipo no puede generarlo hasta completarlas en Productos → Editar.`,
+        });
+      } else {
+        setToast({ type: "success", message: modo === "termica" ? "Vista para impresora térmica abierta." : "PDF generado correctamente." });
+      }
     } finally {
       setGenerandoPDF(false);
     }
@@ -4164,7 +4176,7 @@ export default function EditarLicitacion() {
           <div style={{ display: "inline-flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           {/* (2026-11-03) Productos con la ficha técnica incompleta: mientras
               haya alguno no se genera el PDF de la cotización. */}
-          <ChipSinFicha productos={productosSinFicha} />
+          <ChipSinFicha productos={productosSinFicha} admin={esAdmin} />
           {/* (2026-10-07) Todas las fichas técnicas de los productos de la
               cotización en un ZIP (los que están en el catálogo). */}
           <BotonDescargarFichas
@@ -4290,6 +4302,7 @@ export default function EditarLicitacion() {
                           <BotonFichaTecnica
                             producto={prodLinea}
                             completa={fichaTecnicaCompleta(prodLinea)}
+                            admin={esAdmin}
                             onError={(m) => setToast({ type: "error", message: m })}
                           />
                           </div>
@@ -5627,12 +5640,21 @@ export default function EditarLicitacion() {
             type="button"
             disabled={guardando || generandoPDF}
             title={
-              productosSinFicha.length
+              productosSinFicha.length && esAdmin
+                ? `${resumenSinFicha(productosSinFicha, 6)}. Como administrador puedes generar el PDF igual; el resto del equipo no hasta completarlas en Productos → Editar.`
+                : productosSinFicha.length
                 ? `No se puede generar todavía: ${resumenSinFicha(productosSinFicha, 6)}. Completa las fichas en Productos → Editar.`
                 : "PDF de la cotización en tamaño carta"
             }
             // (2026-11-03) En rojo mientras falte alguna ficha técnica: el clic explica cuáles.
-            style={productosSinFicha.length ? { borderColor: "#fca5a5", color: "#b91c1c", background: "#fef2f2" } : undefined}
+            // (2026-11-04) Para el administrador va en ámbar: no lo bloquea, solo le avisa.
+            style={
+              productosSinFicha.length && esAdmin
+                ? { borderColor: "#fcd34d", color: "#b45309", background: "#fffbeb" }
+                : productosSinFicha.length
+                ? { borderColor: "#fca5a5", color: "#b91c1c", background: "#fef2f2" }
+                : undefined
+            }
           >
             {generandoPDF ? "Generando…" : "PDF Carta"}
           </button>

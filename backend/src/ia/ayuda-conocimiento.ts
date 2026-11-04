@@ -121,7 +121,9 @@ de Mercado Público o a una solicitud del portal de stock de clientes.
 FICHAS TÉCNICAS (nov 2026): si algún producto del catálogo tiene la ficha
 técnica incompleta, al guardar se avisa y la cotización queda guardada SIN PDF;
 se completan las fichas en Productos → Editar y el PDF se genera desde el
-Detalle con «PDF Carta».
+Detalle con «PDF Carta». EXCEPCIÓN: el rol admin no queda bloqueado: guarda y
+genera el PDF igual, con un aviso que lista las fichas pendientes (el chip
+sobre los ítems se le muestra en ámbar en vez de rojo).
 
 ### Detalle de Cotización (/detalle/:id)
 La ficha completa: ítems, márgenes, estado, y el árbol de DOCUMENTOS del ciclo:
@@ -131,8 +133,10 @@ documento lleva número, fecha, monto NETO y PDF adjunto. Además: aprobar marge
 (admin/jefe), compartir el Portal del Cliente, exportar PDF de la cotización
 (botón «PDF Carta»; desde nov 2026 solo cuando TODOS los productos del catálogo
 tienen la ficha técnica completa: si falta alguna, el botón se ve en rojo, dice
-cuáles son y no genera el PDF hasta completarlas en Productos → Editar.
-«Impresora térmica» no tiene esa exigencia).
+cuáles son y no genera el PDF hasta completarlas en Productos → Editar. El rol
+admin es la excepción: a él el botón se le ve en ámbar, genera el PDF igual y
+el aviso le recuerda qué fichas faltan. «Impresora térmica» no tiene esa
+exigencia).
 DamarIA puede leer un PDF de factura o guía y precargar sus datos (botón con el
 girasol en Trazabilidad).
 
