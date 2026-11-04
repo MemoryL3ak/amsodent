@@ -38,13 +38,20 @@ export default function BotonFichaTecnica({ producto, completa = null, onError }
     try {
       await abrirFichaTecnica(producto, {
         cargar: async () => {
-          const completo = await api.get(`/productos/${producto.id}`).catch(() => null);
-          return { ...producto, ...(completo || {}) };
+          // (2026-11-04) Si el producto completo no llega, no se abre una ficha
+          // a medias (sin foto ni textos): se avisa y se vuelve a intentar.
+          let completo = null;
+          for (let i = 0; i < 3 && !completo; i++) {
+            completo = await api.get(`/productos/${producto.id}`).catch(() => null);
+            if (!completo && i < 2) await new Promise((r) => setTimeout(r, 700 * (i + 1)));
+          }
+          if (!completo) throw new Error(`No se pudo cargar el producto ${etiqueta} para armar la ficha técnica. Intenta de nuevo en unos segundos.`);
+          return { ...producto, ...completo };
         },
       });
     } catch (e) {
       console.error(e);
-      onError?.(`No se pudo generar la ficha técnica de ${etiqueta}.`);
+      onError?.(e?.message?.startsWith("No se pudo cargar") ? e.message : `No se pudo generar la ficha técnica de ${etiqueta}.`);
     } finally {
       setGenerando(false);
     }

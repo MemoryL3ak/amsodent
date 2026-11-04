@@ -35,8 +35,13 @@ export default function BotonDescargarFichas({
         onProgreso: (p) => setProgreso({ hechos: p.hechos, total: p.total }),
         debeCancelar: () => cancelar.current,
       });
+      // (2026-11-04) Lo que no salió bien se dice con nombre: fichas que no se
+      // generaron (y por qué) y fichas que salieron sin la foto.
+      const lista6 = (l) => `${l.slice(0, 6).join(", ")}${l.length > 6 ? ` y ${l.length - 6} más` : ""}`;
+      const sinFoto = r.sinFoto?.length ? ` ${r.sinFoto.length} salió${r.sinFoto.length === 1 ? "" : "eron"} sin foto (no se pudo cargar la imagen): ${lista6(r.sinFoto)}.` : "";
       if (r.cancelado) onAviso?.("info", `Descarga cancelada (${r.generadas} de ${n} fichas listas, no se descargó nada).`);
-      else if (r.fallidas.length) onAviso?.("warning", `ZIP con ${r.generadas} fichas. No se pudieron generar: ${r.fallidas.slice(0, 6).join(", ")}${r.fallidas.length > 6 ? "…" : ""}.`);
+      else if (r.fallidas.length) onAviso?.("warning", `ZIP con ${r.generadas} de ${n} fichas. No se generaron ${r.fallidas.length}: ${lista6(r.fallidas)}. Vuelve a descargar para completarlas.${sinFoto}`);
+      else if (sinFoto) onAviso?.("warning", `ZIP descargado con ${r.generadas} fichas.${sinFoto} Vuelve a descargar para completarlas.`);
       else onAviso?.("success", `ZIP descargado con ${r.generadas} ficha${r.generadas === 1 ? "" : "s"} técnica${r.generadas === 1 ? "" : "s"}.`);
     } catch (e) {
       onAviso?.("error", e?.message || "No se pudieron generar las fichas técnicas.");

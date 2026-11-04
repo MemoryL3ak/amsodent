@@ -63,6 +63,33 @@ async function resolverImagenProducto(producto) {
   return (await dataUrlFromStoragePath("product-images", raw)) || "";
 }
 
+/* (2026-11-04) La foto del producto, con reintentos. Al bajar muchas fichas
+   seguidas (ZIP) una URL firmada o una descarga podía fallar de pasada y la
+   ficha salía sin foto sin que nadie lo supiera: ahora se intenta hasta tres
+   veces y quien llama sabe si al final faltó (`sinFoto`). */
+const espera = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function cargarImagenProducto(producto, intentos = 3) {
+  if (!producto?.imagen_url) return "";
+  for (let i = 0; i < intentos; i++) {
+    const img = await resolverImagenProducto(producto);
+    const src = img && img.startsWith("data:") ? img : (await urlToDataUrl(img)) || img || "";
+    if (src) return src;
+    if (i + 1 < intentos) await espera(600 * (i + 1));
+  }
+  return "";
+}
+
+/* Logo y marca de agua: son los mismos para todas las fichas, se traen una
+   sola vez por sesión (antes se pedían ficha por ficha). */
+const estaticos = new Map();
+function estaticoDataUrl(url) {
+  if (!estaticos.has(url)) {
+    estaticos.set(url, urlToDataUrl(url).then((v) => { if (!v) estaticos.delete(url); return v; }));
+  }
+  return estaticos.get(url);
+}
+
 /* ============================================================
    API pública
 ============================================================ */
@@ -100,16 +127,13 @@ export async function descargarFichaTecnica(producto, opciones) {
   const logoUrl = `${window.location.origin}/logo_superior_ficha.png`;
   const marcaAguaUrl = `${window.location.origin}/logo_marca_agua.png`;
 
-  const [logoSrc, marcaAguaSrc, productoImg] = await Promise.all([
-    urlToDataUrl(logoUrl),
-    urlToDataUrl(marcaAguaUrl),
-    resolverImagenProducto(producto),
+  const [logoSrc, marcaAguaSrc, productoSrc] = await Promise.all([
+    estaticoDataUrl(logoUrl),
+    estaticoDataUrl(marcaAguaUrl),
+    cargarImagenProducto(producto),
   ]);
-
-  const productoSrc =
-    productoImg && productoImg.startsWith("data:")
-      ? productoImg
-      : (await urlToDataUrl(productoImg)) || productoImg || null;
+  // `onEstado`: avisa si el producto tiene foto registrada pero no se pudo cargar.
+  opciones?.onEstado?.({ sinFoto: Boolean(producto.imagen_url) && !productoSrc });
 
   const pdfBlob = await pdf(
     <FichaTecnicaDocument
