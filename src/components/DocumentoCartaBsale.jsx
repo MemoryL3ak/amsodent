@@ -91,7 +91,11 @@ export function DocumentoCartaBsale({ d }) {
           <Fila etiqueta="Fecha emisión" valor={fecha(d.fecha)} />
           {d.vencimiento && d.vencimiento !== d.fecha && <Fila etiqueta="Vencimiento" valor={fecha(d.vencimiento)} />}
           <Fila etiqueta="Forma de pago" valor={d.forma_pago} />
+          {/* Despacho de la guía: dirección de entrega y, si no es el mismo cliente, quién recibe (2026-11-04). */}
           {d.despacho && <Fila etiqueta="Despacho" valor={[d.despacho.direccion, d.despacho.comuna, d.despacho.ciudad].filter(Boolean).join(", ")} />}
+          {d.despacho?.destinatario && d.despacho.destinatario.trim().toLowerCase() !== String(c.razon_social || "").trim().toLowerCase() && (
+            <Fila etiqueta="Destinatario" valor={d.despacho.destinatario} />
+          )}
           <Fila etiqueta="Vendedor" valor={d.vendedor} />
         </View>
 

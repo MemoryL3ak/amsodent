@@ -68,6 +68,28 @@ export class BsaleImpresionService {
 
     const c = d.client || {};
     const nombreCliente = String(c.company || `${c.firstName || ''} ${c.lastName || ''}`).trim();
+    /* (2026-11-04) Dirección de despacho de la GUÍA. En Bsale el documento
+       (address/municipality/city) lleva siempre la dirección del cliente, aunque
+       la guía se haya emitido con otra de entrega: esa queda en el despacho
+       (/shippings, con el destinatario). Caso guía 958: se envió «Las Violetas
+       805» y el formato carta imprimía «Las Delicias N° 355» dos veces. */
+    let despacho: { direccion: string; comuna: string; ciudad: string; destinatario: string | null } | null = d.address
+      ? { direccion: String(d.address || '').trim(), comuna: String(d.municipality || '').trim(), ciudad: String(d.city || '').trim(), destinatario: null }
+      : null;
+    if (codigoSii === 52) {
+      try {
+        const r = await this.facturacion.apiGet(`/shippings.json?documentid=${id}&limit=1`);
+        const s = (r?.items || [])[0];
+        if (String(s?.address || '').trim()) {
+          despacho = {
+            direccion: String(s.address || '').trim(),
+            comuna: String(s.municipality || '').trim(),
+            ciudad: String(s.city || '').trim(),
+            destinatario: String(s.recipient || '').replace(/\s+/g, ' ').trim() || null,
+          };
+        }
+      } catch { /* sin el despacho se imprime la dirección del documento, como antes */ }
+    }
     return {
       emisor: { ...EMISOR, rut: EMISOR.rut },
       resolucion: this.resolucion,
@@ -88,7 +110,7 @@ export class BsaleImpresionService {
         ciudad: String(c.city || '').trim(),
         email: String(c.email || '').trim(),
       },
-      despacho: d.address ? { direccion: String(d.address || ''), comuna: String(d.municipality || ''), ciudad: String(d.city || '') } : null,
+      despacho,
       forma_pago: ((d.payments?.items || d.payments || []) as any[]).map((p) => p?.name).filter(Boolean).join(', ') || null,
       vendedor: ((d.sellers?.items || []) as any[]).map((s) => `${s.firstName || ''} ${s.lastName || ''}`.replace(/\s+/g, ' ').trim()).filter(Boolean).join(', ') || null,
       lineas: detalles.map((x: any) => {
