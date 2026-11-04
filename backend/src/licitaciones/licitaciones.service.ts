@@ -6,6 +6,8 @@ import { fueSeleccionado } from '../mercadopublico/seleccion';
 import { MpAdjudicacionesService } from './mp-adjudicaciones.service';
 import { MpColaService } from '../mercadopublico/mp-cola.service';
 import { mpLimitador } from '../mercadopublico/mp-limitador';
+import { plantillaOcCargada } from '../correos/correos.templates';
+import { TIPO_OC_CARGADA, avisoOcCargada, clp as clpAviso, fechaCorta } from './oc-cargada-aviso';
 import {
   Accion,
   ProductoCotizacion,
@@ -2831,8 +2833,79 @@ export class LicitacionesService {
       } catch (e: any) {
         this.logger.warn(`La OC se registró pero no se pudo adjudicar la cotización #${body.licitacion_id}: ${String(e?.message || e)}`);
       }
+      // (2026-11-04) Si la cargó otra persona, el dueño de la cotización se entera
+      // (campana + ventana flotante + correo). Nunca frena el registro.
+      await this.avisarOcCargadaPorOtro(Number(inserted?.id), body, opts?.usuarioEmail);
     }
     return inserted;
+  }
+
+  /* (2026-11-04) Otra persona cargó una orden de compra en la cotización: el
+     dueño (vendedor_correo o creado_por) recibe el aviso `oc_cargada` en la
+     campana —que en la plataforma levanta una ventana flotante— y un correo
+     con el detalle (quién, N° de OC, monto neto, cliente). Si la carga el
+     propio vendedor, o no se sabe quién la cargó, no hay aviso. Nunca lanza. */
+  private async avisarOcCargadaPorOtro(docId: number, body: Record<string, any>, cargadoPor?: string | null) {
+    try {
+      const client = this.supabase.getClient();
+      const licId = Number(body?.licitacion_id);
+      const quienCorreo = String(cargadoPor || '').trim().toLowerCase();
+      if (!docId || !licId || !quienCorreo) return;
+
+      const { data: lic } = await client
+        .from('licitaciones')
+        .select('id, id_licitacion, nombre, nombre_entidad, vendedor_correo, vendedor_nombre, creado_por')
+        .eq('id', licId)
+        .maybeSingle();
+      if (!lic) return;
+
+      let quienNombre = '';
+      try {
+        const { data: p } = await client.from('profiles').select('nombre').ilike('email', quienCorreo).maybeSingle();
+        quienNombre = String((p as any)?.nombre || '').trim();
+      } catch { /* sin nombre: va el correo */ }
+
+      const aviso = avisoOcCargada(
+        lic as any,
+        { documentoId: docId, numero: body?.numero, monto: body?.monto, fechaOc: body?.fecha_oc },
+        quienCorreo,
+        quienNombre,
+      );
+      if (!aviso) {
+        this.logger.log(`OC #${docId} de la cotización ${licId}: la cargó el propio vendedor o no hay vendedor — sin aviso`);
+        return;
+      }
+
+      const { error } = await client.from('notificaciones').insert([
+        { user_email: aviso.destinatario, tipo: TIPO_OC_CARGADA, mensaje: aviso.mensaje, link: aviso.link, metadata: aviso.metadata },
+      ]);
+      if (error) this.logger.warn(`OC cargada: sin campana para ${aviso.destinatario}: ${error.message}`);
+      else this.logger.log(`OC cargada por ${quienCorreo}: aviso a ${aviso.destinatario} (lic=${licId}, doc=${docId})`);
+
+      const base = String(process.env.APP_PUBLIC_URL || process.env.PUBLIC_APP_URL || process.env.FRONTEND_URL || '')
+        .trim()
+        .replace(/\/+$/, '');
+      const plantilla = plantillaOcCargada({
+        vendedorNombre: (lic as any).vendedor_nombre || null,
+        cargadoPorNombre: aviso.metadata.cargado_por_nombre,
+        cargadoPorCorreo: quienCorreo,
+        cliente: aviso.metadata.cliente,
+        idCotizacion: aviso.metadata.id_licitacion || String(lic.id),
+        nombreCotizacion: (lic as any).nombre || null,
+        numeroOc: aviso.metadata.numero,
+        montoNetoTexto: aviso.metadata.monto ? `${clpAviso(aviso.metadata.monto)} neto` : null,
+        fechaOc: fechaCorta(aviso.metadata.fecha_oc),
+        enlace: base ? `${base}${aviso.link}` : null,
+      });
+      try {
+        // replyTo: si el vendedor responde, le llega a quien cargó la OC.
+        await this.mailings.enviarUno({ para: aviso.destinatario, asunto: plantilla.asunto, cuerpoHtml: plantilla.html, replyTo: quienCorreo });
+      } catch (e: any) {
+        this.logger.warn(`OC cargada: el correo a ${aviso.destinatario} no salió (la campana sí quedó): ${e?.message || e}`);
+      }
+    } catch (e: any) {
+      this.logger.warn(`OC cargada: aviso al vendedor falló: ${e?.message || e}`);
+    }
   }
 
   private async insertarDocumento(body: Record<string, any>, opts?: { sinAvisoCorreo?: boolean; usuarioEmail?: string | null }) {

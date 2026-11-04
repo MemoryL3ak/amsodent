@@ -69,6 +69,7 @@ import GoogleAuthSync from "./GoogleAuthSync";
 import DamarIAWidget from "./DamarIAWidget";
 import useChatNoLeidos from "../hooks/useChatNoLeidos";
 import AvisoMensajeChat from "./AvisoMensajeChat";
+import AvisoOcCargada from "./AvisoOcCargada";
 
 const ROLE_LABELS = {
   admin:                "Administrador",
@@ -454,6 +455,8 @@ export default function SidebarLayout() {
       <RecordatoriosCierre />
       {/* (2026-10-07) Guías sin N° de seguimiento: insiste hasta completarlas. */}
       <RecordatoriosSeguimiento />
+      {/* (2026-11-04) Otra persona cargó una OC en una cotización mía: ventana flotante. */}
+      <AvisoOcCargada />
       {esAdmin && <DamarIAWidget />}
       <AvisoMensajeChat
         aviso={avisoChat}

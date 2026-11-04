@@ -794,6 +794,13 @@ Avisos en la plataforma: stock crítico/bajo de clientes, documentos subidos por
 el portal, recordatorio de equivalencias (cada 2 horas, 08:00-20:00) y facturas
 vencidas (a jefe_ventas_especial, 08:00). Clic en la notificación navega al
 recurso.
+Orden de compra cargada por otra persona (desde 2026-11-04): cuando alguien
+que no es el vendedor de la cotización le carga una orden de compra, el
+vendedor (vendedor_correo o, si no hay, creado_por) recibe el aviso
+«oc_cargada» en la campana, una ventana flotante abajo a la derecha de la
+plataforma («Ver cotización» abre el detalle; «Entendido» la marca leída) y
+un correo con el detalle (quién la cargó, N° de OC, monto neto, cliente). Si la
+carga el mismo vendedor, no se avisa.
 
 ## MÓDULOS — GRUPO HERRAMIENTAS
 

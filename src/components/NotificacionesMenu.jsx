@@ -11,6 +11,7 @@ import {
   Trophy,
   Inbox,
   CalendarPlus,
+  ClipboardCheck,
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { api } from "../lib/api";
@@ -342,6 +343,15 @@ function getNotifVisuales(notif) {
       color: "#b45309",
       bg: "#fef3c7",
       etiqueta: "Stock bajo",
+    };
+  }
+  // (2026-11-04) Otra persona cargó una orden de compra en una cotización del usuario.
+  if (tipo === "oc_cargada") {
+    return {
+      icono: ClipboardCheck,
+      color: "#0f766e",
+      bg: "#ccfbf1",
+      etiqueta: "Orden de compra",
     };
   }
   // (2026-10-19) Un cliente pide una reunión desde el portal: abre la Bitácora prellenada.

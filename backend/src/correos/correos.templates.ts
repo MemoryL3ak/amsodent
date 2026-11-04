@@ -952,3 +952,54 @@ export function plantillaBienvenidaChofer(
     }),
   };
 }
+
+/* (2026-11-04) Aviso interno al vendedor dueño de la cotización cuando OTRA
+   persona carga una orden de compra en ella. Sale junto con el aviso de la
+   campana (que en la plataforma levanta una ventana flotante). */
+export type DatosOcCargada = {
+  vendedorNombre?: string | null;
+  cargadoPorNombre: string;
+  cargadoPorCorreo?: string | null;
+  cliente: string;
+  idCotizacion: string;
+  nombreCotizacion?: string | null;
+  numeroOc?: string | null;
+  montoNetoTexto?: string | null;
+  fechaOc?: string | null;
+  enlace?: string | null;
+};
+
+export function plantillaOcCargada(datos: DatosOcCargada): PlantillaResultado {
+  const quien = String(datos.cargadoPorNombre || '').trim() || 'Otro usuario';
+  const cliente = String(datos.cliente || '').trim() || 'el cliente';
+  const nombreCot = String(datos.nombreCotizacion || '').trim();
+  const filas = [
+    filaDato('🏢', 'Cliente', cliente),
+    filaDato('🧾', 'Cotización', `${datos.idCotizacion}${nombreCot ? ` · ${nombreCot}` : ''}`),
+    datos.numeroOc ? filaDato('📋', 'N° de orden de compra', datos.numeroOc) : '',
+    datos.montoNetoTexto ? filaDato('💰', 'Monto', datos.montoNetoTexto) : '',
+    datos.fechaOc ? filaDato('📅', 'Fecha de la OC', datos.fechaOc) : '',
+    filaDato('🙋', 'Cargada por', `${quien}${datos.cargadoPorCorreo ? ` (${datos.cargadoPorCorreo})` : ''}`, true),
+  ]
+    .filter(Boolean)
+    .join('');
+  const saludo = datos.vendedorNombre ? `Hola ${escapeHtml(datos.vendedorNombre)},` : 'Hola,';
+  const contenido = `
+    ${insignia('📋')}
+    ${titulo('Orden de compra cargada', `${quien} cargó una orden de compra en tu cotización.`)}
+    <p style="margin:0 0 14px;">${saludo}</p>
+    <p style="margin:0 0 20px;color:${C.suave};">
+      Te avisamos porque eres el vendedor responsable de esta cotización. Revisa el documento
+      y sigue con el ciclo: guía de despacho, factura y cobranza.
+    </p>
+    ${tarjetaDatos('Detalle de la orden de compra', filas)}
+    ${datos.enlace ? botonCta('Ver la cotización', datos.enlace) : ''}
+    ${nota('🔔&nbsp;&nbsp;Este aviso también quedó en tu campana de notificaciones de la plataforma.')}`;
+  return {
+    asunto: `Orden de compra cargada en tu cotización ${datos.idCotizacion}${datos.numeroOc ? ` · OC ${datos.numeroOc}` : ''}`,
+    html: envolver({
+      preheader: `${quien} cargó la orden de compra${datos.numeroOc ? ` ${datos.numeroOc}` : ''} de ${cliente} en tu cotización ${datos.idCotizacion}.`,
+      contenido,
+    }),
+  };
+}

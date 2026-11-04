@@ -11,6 +11,7 @@ export const TIPOS_ALERTA = {
   factura_vencida: "Factura vencida",
   devolucion_pendiente: "Devolución pendiente al cliente",
   oc_agradecimiento: "Correo de agradecimiento OC",
+  oc_cargada: "Orden de compra cargada por otra persona",
   guia_despacho_enviar: "Enviar guía de despacho",
   factura_enviar: "Enviar factura o boleta",
   info_despacho_agradecimiento: "Correo de despacho",

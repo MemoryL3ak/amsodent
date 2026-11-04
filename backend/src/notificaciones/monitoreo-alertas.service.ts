@@ -20,7 +20,7 @@ import { SupabaseService } from '../supabase/supabase.service';
      · oc_agradecimiento / guia_despacho_enviar / info_despacho_agradecimiento →
        el correo se envió (el aviso se marca leído al enviarlo; también si se
        descartó, por eso dice «enviado o descartado»).
-     · el resto (mp_estado_auto, mp_adjudicada, cotizacion_aprobada, chat,
+     · el resto (mp_estado_auto, mp_adjudicada, cotizacion_aprobada, oc_cargada, chat,
        portal…) son informativas: solo cuenta si se leyó.
    Estados: cumplida · pendiente · incumplida · informativa. */
 

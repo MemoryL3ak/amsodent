@@ -856,6 +856,7 @@ export const GRUPOS_MANUAL = [
           "Stock crítico o bajo de clientes del portal; documentos subidos por el cliente.",
           "Recordatorio de equivalencias pendientes (cada 2 horas, de 08:00 a 20:00).",
           "Facturas vencidas: aviso diario a los jefe_ventas_especial a las 08:00 con link a Seguimiento de Pagos.",
+          "Orden de compra cargada por otra persona (desde noviembre 2026): cuando alguien que no es el vendedor de la cotización le carga una orden de compra, el vendedor recibe el aviso en la campana, una ventana flotante abajo a la derecha de la plataforma (con «Ver cotización» y «Entendido») y un correo con el detalle: quién la cargó, N° de OC, monto neto y cliente. Si la carga el mismo vendedor, no se avisa.",
         ],
       },
     ],
