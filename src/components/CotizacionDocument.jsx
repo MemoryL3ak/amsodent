@@ -142,6 +142,12 @@ const s = StyleSheet.create({
   },
   bankValue: { fontSize: 8.5, paddingVertical: 4, paddingHorizontal: 6, flex: 1, color: TEXT },
 
+  /* (2026-11-05) Tiempo de entrega: va debajo de los datos de transferencia.
+     La columna izquierda mantiene el ancho del bloque bancario. */
+  leftCol: { width: 250 },
+  entregaBox: { borderWidth: 1, borderColor: BORDER_TBL, marginTop: 10 },
+  entregaText: { fontSize: 9, color: TEXT, lineHeight: 1.35, paddingVertical: 6, paddingHorizontal: 8 },
+
   /* Right col (totales + obs) */
   rightCol: { width: 260 },
   totales: {
@@ -375,13 +381,21 @@ export function CotizacionDocument({ datos, items, logoSrc, marcaAguaSrc }) {
                 el bloque entero se vaya a la página siguiente antes que
                 quedar partido entre dos. */}
             <View style={s.bottomRow} wrap={false}>
-                <View style={s.bankWrap}>
-                  <Text style={s.bankHeader}>DATOS PARA TRANSFERENCIA BANCARIA</Text>
-                  <BankRow label="Banco:" value="Banco Santander Chile" first />
-                  <BankRow label="Cuenta Corriente:" value="96608446" />
-                  <BankRow label="R.U.T.:" value="78.087.954-8" />
-                  <BankRow label="Empresa:" value="Amsodent Medical Spa" />
-                  <BankRow label="Aviso Email:" value="contacto@amsodentmedical.cl" />
+                <View style={s.leftCol}>
+                  <View style={s.bankWrap}>
+                    <Text style={s.bankHeader}>DATOS PARA TRANSFERENCIA BANCARIA</Text>
+                    <BankRow label="Banco:" value="Banco Santander Chile" first />
+                    <BankRow label="Cuenta Corriente:" value="96608446" />
+                    <BankRow label="R.U.T.:" value="78.087.954-8" />
+                    <BankRow label="Empresa:" value="Amsodent Medical Spa" />
+                    <BankRow label="Aviso Email:" value="contacto@amsodentmedical.cl" />
+                  </View>
+                  {String(datos.tiempo_entrega || "").trim() ? (
+                    <View style={s.entregaBox}>
+                      <Text style={s.bankHeader}>TIEMPO DE ENTREGA</Text>
+                      <Text style={s.entregaText}>{String(datos.tiempo_entrega).trim()}</Text>
+                    </View>
+                  ) : null}
                 </View>
 
                 <View style={s.rightCol}>

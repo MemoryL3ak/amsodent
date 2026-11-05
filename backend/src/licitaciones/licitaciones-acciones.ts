@@ -48,6 +48,7 @@ export const CAMPOS_ACCION: Record<string, { nombre: string; tipo?: TipoCampo }>
   estado_entrega: { nombre: 'estado de entrega' },
   ciclo_cerrado: { nombre: 'ciclo cerrado', tipo: 'si_no' },
   observaciones: { nombre: 'observaciones', tipo: 'largo' },
+  tiempo_entrega: { nombre: 'tiempo de entrega', tipo: 'largo' },
   motivo_perdida: { nombre: 'motivo de pérdida' },
   motivo_descarte: { nombre: 'motivo de descarte' },
 };

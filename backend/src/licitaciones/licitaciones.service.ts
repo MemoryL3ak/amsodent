@@ -2035,6 +2035,8 @@ export class LicitacionesService {
     if (msg.includes('sucursal')) { delete bodyWithout.sucursal; removed = true; }
     if (msg.includes('jerarquia')) { delete bodyWithout.jerarquia; removed = true; }
     if (msg.includes('madre_id')) { delete bodyWithout.madre_id; removed = true; }
+    // (2026-11-05) Migración 20261105_licitaciones_tiempo_entrega sin aplicar.
+    if (msg.includes('tiempo_entrega')) { delete bodyWithout.tiempo_entrega; removed = true; }
     if (removed) {
       const { data: d2, error: e2 } = await this.supabase.getClient()
         .from('licitaciones')

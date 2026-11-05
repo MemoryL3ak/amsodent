@@ -505,6 +505,12 @@ export default function CrearLicitacion() {
 
   // ✅ Observaciones generales
   const [observaciones, setObservaciones] = useState("");
+  // (2026-11-05) Tiempo de entrega: obligatorio en cotizaciones de Mercado
+  // Público (junto con las observaciones); sale en el PDF bajo los datos de
+  // transferencia. Columna licitaciones.tiempo_entrega.
+  const [tiempoEntrega, setTiempoEntrega] = useState("");
+  // Misma regla que al guardar: es pública todo lo que no sea cliente particular.
+  const esPublicaForm = !(tipoCliente.toLowerCase() === "cliente particular" || tipoCompra === "Cliente particular");
 
   // ── Cotizaciones madre/hija por productos equivalentes ──────────────────
   // madreId: si está seteado, este formulario está creando una cotización HIJA
@@ -812,6 +818,7 @@ export default function CrearLicitacion() {
       setComuna(data.comuna || "");
 
       setObservaciones(data.observaciones || "");
+      setTiempoEntrega(data.tiempoEntrega || "");
 
       const cargados = Array.isArray(data.items) ? data.items : [];
       if (cargados.length > 0) {
@@ -995,6 +1002,7 @@ export default function CrearLicitacion() {
       comuna,
       items,
       observaciones,
+      tiempoEntrega,
       madre_id: madreId,
       // Vínculos con el origen de la cotización. Van SÍ o SÍ en el borrador:
       // este autoguardado reescribe la clave completa, así que lo que no esté
@@ -1043,6 +1051,7 @@ export default function CrearLicitacion() {
     comuna,
     items,
     observaciones,
+    tiempoEntrega,
     madreId,
     disponibleId,
     solicitudStockId,
@@ -1783,6 +1792,7 @@ export default function CrearLicitacion() {
     setItems([crearItemVacio()]);
 
     setObservaciones("");
+    setTiempoEntrega("");
     setMadreId(null);
 
     if (showToast) {
@@ -1843,7 +1853,7 @@ export default function CrearLicitacion() {
         nombre, fechaHoraCierre, monto, listado, rutEntidad, nombreEntidad, giro,
         tipoCliente, departamento, municipalidad, direccion, sucursal, contacto,
         email, telefono, condVenta, fleteEstimado, tipoCompra, region, comuna,
-        observaciones, fechaPublicacionResultados,
+        observaciones, tiempoEntrega, fechaPublicacionResultados,
       },
     };
   }
@@ -1888,6 +1898,7 @@ export default function CrearLicitacion() {
     setRegion(f.region || "");
     setComuna(f.comuna || "");
     setObservaciones(f.observaciones || "");
+    setTiempoEntrega(f.tiempoEntrega || "");
     setFechaPublicacionResultados(f.fechaPublicacionResultados || "");
     setItems(s.items.map((it) => ({ ...it })));
     setToast({
@@ -1951,6 +1962,9 @@ export default function CrearLicitacion() {
     if (!tipoCompra) errores.push("Tipo de Compra");
     if (!region) errores.push("Región");
     if (!comuna) errores.push("Comuna");
+    // (2026-11-05) Mercado Público: tiempo de entrega y observaciones obligatorios.
+    if (!esClienteParticular && !tiempoEntrega.trim()) errores.push("Tiempo de Entrega");
+    if (!esClienteParticular && !String(observaciones || "").trim()) errores.push("Observaciones");
 
     if (errores.length > 0) {
       guardandoRef.current = false;
@@ -2225,6 +2239,8 @@ export default function CrearLicitacion() {
             total_iva: totalIVA,
 
             observaciones: observaciones || null,
+            // Solo con dato, para no romper si la migración 20261105 aún no está aplicada.
+            ...(tiempoEntrega.trim() ? { tiempo_entrega: tiempoEntrega.trim() } : {}),
 
             vendedor_nombre: vendedorNombreFinal || null,
             vendedor_celular: vendedorCelularFinal || null,
@@ -2391,6 +2407,7 @@ export default function CrearLicitacion() {
         condicion_venta: condVenta,
 
         observaciones: (observaciones ?? "").toString(),
+        tiempo_entrega: tiempoEntrega.trim(),
 
         items: (() => {
           // (Punto 10 — 2026-09-10) Cliente particular: el flete va como ítem
@@ -3836,7 +3853,21 @@ export default function CrearLicitacion() {
           <h3 className="surface-title">Observaciones</h3>
         </div>
         <div className="surface-body">
-          <label>Observaciones generales</label>
+          {/* (2026-11-05) En Mercado Público ambos campos son obligatorios. */}
+          <label>
+            Tiempo de Entrega{esPublicaForm && <span style={{ color: "#dc2626" }}> *</span>}
+          </label>
+          <input
+            className="w-full rounded-md border border-gray-300 px-3 py-2 campo-tiempo-entrega"
+            style={{ marginBottom: 12 }}
+            value={tiempoEntrega}
+            maxLength={200}
+            onChange={(e) => setTiempoEntrega(e.target.value)}
+            placeholder="Ej: 5 días hábiles desde la orden de compra"
+          />
+          <label>
+            Observaciones generales{esPublicaForm && <span style={{ color: "#dc2626" }}> *</span>}
+          </label>
           <textarea
             style={{ minHeight: "110px" }}
             value={observaciones}

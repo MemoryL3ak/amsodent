@@ -466,6 +466,7 @@ export default function EditarLicitacion() {
       region: region || "",
       comuna: comuna || "",
       observaciones: observaciones || "",
+      tiempoEntrega: tiempoEntrega || "",
       items: (items || []).map((it) => ({
         sku: it?.sku || "",
         producto: it?.producto || "",
@@ -560,6 +561,9 @@ export default function EditarLicitacion() {
   const [montoAdicionalOC, setMontoAdicionalOC] = useState("");
 
   const [observaciones, setObservaciones] = useState("");
+  // (2026-11-05) Tiempo de entrega: obligatorio en Mercado Público mientras la
+  // cotización está abierta; sale en el PDF bajo los datos de transferencia.
+  const [tiempoEntrega, setTiempoEntrega] = useState("");
 
   const [vendedorNombre, setVendedorNombre] = useState("");
   const [vendedorCelular, setVendedorCelular] = useState("");
@@ -818,6 +822,9 @@ export default function EditarLicitacion() {
 ============================================================ */
   const ESTADOS_EDITABLES = ["En espera", "Pendiente Aprobación", "Pendiente Aprobación Peso"];
   const esEditable = ESTADOS_EDITABLES.includes(estado);
+  // (2026-11-05) Mercado Público con la cotización abierta: tiempo de entrega y
+  // observaciones obligatorios (al guardar y al generar el PDF).
+  const exigeEntregaYObs = !esCotizacionParticular && esEditable;
   // La cotización ERA editable según lo guardado en la base: cubre el caso de
   // editar ítems y adjudicar en el MISMO guardado (el select ya dice
   // "Adjudicada", esEditable pasa a false, pero los cambios pendientes de los
@@ -1732,6 +1739,7 @@ export default function EditarLicitacion() {
       setFletePorPagar(Boolean(data.fletePorPagar));
       setRetiroEnLocal(Boolean(data.retiroEnLocal));
       setObservaciones(data.observaciones || "");
+      setTiempoEntrega(data.tiempoEntrega || "");
       setMotivoPerdida(data.motivoPerdida || "");
       setMotivoPerdidaOtro(data.motivoPerdidaOtro || "");
       setMotivoDescarte(data.motivoDescarte || "");
@@ -1802,6 +1810,7 @@ export default function EditarLicitacion() {
       retiroEnLocal,
       items,
       observaciones,
+      tiempoEntrega,
       vendedorNombre,
       vendedorCelular,
       vendedorCorreo,
@@ -1841,6 +1850,7 @@ export default function EditarLicitacion() {
     retiroEnLocal,
     items,
     observaciones,
+    tiempoEntrega,
     vendedorNombre,
     vendedorCelular,
     vendedorCorreo,
@@ -1880,6 +1890,7 @@ export default function EditarLicitacion() {
       fletePorPagar: Boolean(fletePorPagar),
       retiroEnLocal: Boolean(retiroEnLocal),
       observaciones: observaciones || "",
+      tiempoEntrega: tiempoEntrega || "",
 
       vendedorNombre: vendedorNombre || "",
       vendedorCelular: vendedorCelular || "",
@@ -1962,6 +1973,7 @@ export default function EditarLicitacion() {
     retiroEnLocal,
     items,
     observaciones,
+    tiempoEntrega,
     vendedorNombre,
     vendedorCelular,
     vendedorCorreo,
@@ -2036,6 +2048,7 @@ export default function EditarLicitacion() {
     setEstadoEnvioActualizado(lic.estado_envio_actualizado_at || "");
 
     setObservaciones(lic.observaciones || "");
+    setTiempoEntrega(lic.tiempo_entrega || "");
     setMotivoPerdida(lic.motivo_perdida || "");
     setMotivoPerdidaOtro(lic.motivo_perdida_otro || "");
     setMotivoDescarte(lic.motivo_descarte || "");
@@ -2239,6 +2252,7 @@ export default function EditarLicitacion() {
       setRetiroEnLocalDB(Boolean(lic.retiro_en_local));
 
       setObservaciones(lic.observaciones || "");
+      setTiempoEntrega(lic.tiempo_entrega || "");
       setMotivoPerdida(lic.motivo_perdida || "");
       setMotivoPerdidaOtro(lic.motivo_perdida_otro || "");
       setMotivoDescarte(lic.motivo_descarte || "");
@@ -2762,6 +2776,18 @@ export default function EditarLicitacion() {
       return;
     }
 
+    // (2026-11-05) Mercado Público: el PDF lleva el tiempo de entrega (bajo los
+    // datos de transferencia) y las observaciones; sin ellos no se emite
+    // mientras la cotización siga abierta y se puedan completar.
+    if (exigeEntregaYObs && (!tiempoEntrega.trim() || !String(observaciones || "").trim())) {
+      const faltan = [!tiempoEntrega.trim() && "el Tiempo de Entrega", !String(observaciones || "").trim() && "las Observaciones"].filter(Boolean).join(" y ");
+      setToast({
+        type: "error",
+        message: `Falta completar ${faltan} (obligatorio en cotizaciones de Mercado Público): complétalo en la sección Observaciones y guarda antes de generar el PDF.`,
+      });
+      return;
+    }
+
     // (2026-11-03) Pedido de Ariel: el PDF no se emite mientras algún producto
     // del catálogo tenga la ficha técnica incompleta. Antes de bloquear se
     // relee cada producto marcado (la ficha pudo completarse en otra pestaña
@@ -2860,6 +2886,7 @@ export default function EditarLicitacion() {
         vendedor_correo: (vendedorCorreo || "").toString(),
 
         observaciones: (observaciones ?? "").toString(),
+        tiempo_entrega: (tiempoEntrega ?? "").toString().trim(),
 
         items: (() => {
           // (Punto 10 — 2026-09-10) Cliente particular: el flete va como ítem
@@ -2978,6 +3005,11 @@ export default function EditarLicitacion() {
     if (!tipoCompra) errores.push("Tipo de Compra");
     if (!region) errores.push("Región");
     if (!comuna) errores.push("Comuna");
+    // (2026-11-05) Mercado Público: tiempo de entrega y observaciones son
+    // obligatorios mientras la cotización está abierta. Una ya cerrada
+    // (adjudicada, perdida…) que nunca los tuvo se sigue pudiendo guardar.
+    if (exigeEntregaYObs && !tiempoEntrega.trim()) errores.push("Tiempo de Entrega");
+    if (exigeEntregaYObs && !String(observaciones || "").trim()) errores.push("Observaciones");
 
     if (errores.length > 0) {
       setToast({
@@ -3201,6 +3233,8 @@ export default function EditarLicitacion() {
           total_iva: totalIVA,
 
           observaciones: observaciones || null,
+          // (2026-11-05) Si la migración 20261105 aún no está, el backend quita la columna y reintenta.
+          tiempo_entrega: tiempoEntrega.trim() || null,
 
           // Punto 35: motivo de pérdida (solo persistir si estado es Perdida; si cambia a otro
           // estado limpiamos para no dejar datos colgando).
@@ -4845,8 +4879,22 @@ export default function EditarLicitacion() {
           <h3 className="surface-title">Observaciones</h3>
         </div>
         <div className="surface-body">
+        {/* (2026-11-05) En Mercado Público ambos campos son obligatorios. */}
         <label className="block text-sm font-medium text-gray-700 mb-1">
-          Observaciones generales
+          Tiempo de Entrega{!esCotizacionParticular && <span style={{ color: "#dc2626" }}> *</span>}
+        </label>
+        <input
+          className={`${inputClass} campo-tiempo-entrega`}
+          style={{ marginBottom: 12 }}
+          value={tiempoEntrega}
+          maxLength={200}
+          onChange={(e) => setTiempoEntrega(e.target.value)}
+          placeholder="Ej: 5 días hábiles desde la orden de compra"
+          disabled={!esEditable}
+        />
+
+        <label className="block text-sm font-medium text-gray-700 mb-1">
+          Observaciones generales{!esCotizacionParticular && <span style={{ color: "#dc2626" }}> *</span>}
         </label>
 
         <textarea

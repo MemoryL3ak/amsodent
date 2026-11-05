@@ -60,6 +60,7 @@ export function htmlCotizacionTermica(d) {
     ${linea("IVA 19%", d.iva)}
     <div class="l total"><span>TOTAL</span><span>${esc(d.total_con_iva)}</span></div>
   </div>
+  ${d.tiempo_entrega ? `<div class="sep"></div><div class="mut"><b>Tiempo de entrega:</b> ${esc(d.tiempo_entrega)}</div>` : ""}
   ${d.observaciones ? `<div class="sep"></div><div class="mut"><b>Observaciones:</b> ${esc(d.observaciones)}</div>` : ""}
   <div class="sep"></div>
   <div class="pie">Vendedor: ${esc(d.vendedor_nombre || "")}${d.vendedor_celular ? ` · ${esc(d.vendedor_celular)}` : ""}${d.vendedor_correo ? `<br>${esc(d.vendedor_correo)}` : ""}</div>

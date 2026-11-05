@@ -2163,6 +2163,8 @@ export class StockClientesService {
       vendedor_celular: lic.vendedor_celular || '',
       vendedor_correo: lic.vendedor_correo || '',
       observaciones: lic.observaciones || '',
+      // (2026-11-05) Sale en el PDF bajo los datos de transferencia.
+      tiempo_entrega: lic.tiempo_entrega || '',
       items: (items || []).map((it: any, i: number) => ({
         n: i + 1,
         sku: String(it.sku || '').trim(),
