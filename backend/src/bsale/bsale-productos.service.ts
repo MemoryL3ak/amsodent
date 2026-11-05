@@ -182,7 +182,51 @@ export class BsaleProductosService {
      actualizan nombre y descripción del producto, descripción y código de la
      variante y los precios de las listas. No probado contra Bsale real: si
      Bsale rechaza el PUT, queda en bsale_sync_error y la ficha lo muestra. */
-  async actualizar(producto: Record<string, any>, opts: { motivo?: string } = {}): Promise<ResultadoBsale> {
+  /* (2026-11-05) Revisión del envío de precios a Bsale (pedido de Ariel:
+     "revisar actualización de precios desde Amsodent a Bsale"). El cambio de
+     precio solo viajaba si el producto ya tenía anotada su variante de Bsale
+     (`bsale_variant_id`), y eso solo se anota al crear el producto desde acá
+     o al asignarle el SKU: casi todo el catálogo existía en Bsale desde antes
+     y nunca quedó enlazado, así que sus precios no llegaban.
+     Ahora, antes de actualizar, el producto con SKU sin enlazar se busca en
+     Bsale por su código y se enlaza (o se crea si no existe). Cuando recién se
+     enlaza y lo único que cambió son precios, van SOLO los precios: no se pisa
+     el nombre que el producto tiene en Bsale. */
+  async enviarCambios(producto: Record<string, any>, opts: { motivo?: string; soloPrecios?: boolean } = {}): Promise<ResultadoBsale> {
+    if (!this.activa) return { estado: 'apagada', mensaje: 'El envío de productos a Bsale está apagado en el servidor.' };
+    if (Number(producto?.bsale_variant_id)) return this.actualizar(producto, opts);
+    const r = await this.sincronizar(producto, opts);
+    // Creado recién (ya lleva sus precios), error o sin SKU: no hay más que hacer.
+    if (r.estado !== 'ya_existia' || !r.variante_id || !normSku(producto?.sku)) return r;
+    const act = await this.actualizar({ ...producto, bsale_variant_id: r.variante_id, bsale_product_id: r.producto_id }, opts);
+    return {
+      ...act,
+      avisos: [
+        `El producto no estaba enlazado a Bsale: se enlazó por su SKU con la variante ${r.variante_id}${r.nombre_bsale ? ` («${r.nombre_bsale}»)` : ''}.`,
+        ...(act.avisos || []),
+      ],
+    };
+  }
+
+  /* Varios productos, uno tras otro (Bsale corta las llamadas simultáneas):
+     los cambios de precio de una carga masiva. */
+  async enviarCambiosVarios(productos: Record<string, any>[], opts: { motivo?: string; soloPrecios?: boolean; tope?: number } = {}) {
+    const tope = Math.max(1, Math.min(Number(opts.tope) || 300, 2000));
+    const resumen = { total: 0, actualizados: 0, creados: 0, con_precios: 0, errores: 0, omitidos: 0 };
+    for (const p of productos.slice(0, tope)) {
+      resumen.total++;
+      const r = await this.enviarCambios(p, opts);
+      if (r.estado === 'actualizado') resumen.actualizados++;
+      else if (r.estado === 'creado') resumen.creados++;
+      else if (r.estado === 'error') resumen.errores++;
+      else resumen.omitidos++;
+      if ((r.precios || []).length) resumen.con_precios++;
+    }
+    if (productos.length > tope) resumen.omitidos += productos.length - tope;
+    return resumen;
+  }
+
+  async actualizar(producto: Record<string, any>, opts: { motivo?: string; soloPrecios?: boolean } = {}): Promise<ResultadoBsale> {
     const sku = normSku(producto?.sku);
     const id = Number(producto?.id) || null;
     const varianteId = Number(producto?.bsale_variant_id) || null;
@@ -199,13 +243,16 @@ export class BsaleProductosService {
         const v = await this.facturacion.apiGet(`/variants/${varianteId}.json?expand=[product]`);
         productoId = Number(v?.product?.id) || null;
       }
-      if (productoId) {
+      // `soloPrecios`: no se tocan nombre, descripción ni código en Bsale.
+      if (productoId && !opts.soloPrecios) {
         const tipo = await this.tipoPara(producto.categoria);
         await this.facturacion.apiEnviar('PUT', `/products/${productoId}.json`, { id: productoId, name: nombre, description: descripcion, productTypeId: tipo.id });
       }
-      await this.facturacion.apiEnviar('PUT', `/variants/${varianteId}.json`, {
-        id: varianteId, ...(productoId ? { productId: productoId } : {}), description: String(producto.formato || '').trim().slice(0, 80), ...(sku ? { code: sku } : {}),
-      });
+      if (!opts.soloPrecios) {
+        await this.facturacion.apiEnviar('PUT', `/variants/${varianteId}.json`, {
+          id: varianteId, ...(productoId ? { productId: productoId } : {}), description: String(producto.formato || '').trim().slice(0, 80), ...(sku ? { code: sku } : {}),
+        });
+      }
       const precios: ResultadoBsale['precios'] = [];
       for (const l of LISTAS) {
         const neto = Math.round(Number(producto[l.campo]) || 0);

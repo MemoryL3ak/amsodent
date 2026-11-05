@@ -171,6 +171,16 @@ export default function EditarProducto() {
   const [rol, setRol] = useState(null);
   // (2026-10-20) Permiso «ver_costos»: ve el costo (solo lectura) sin ser admin.
   const [verCostos, setVerCostos] = useState(false);
+  // (2026-11-05) Historial de cambios de precio del producto (alerta de
+  // actualización de precio): antes → después, quién y cuándo. El servidor
+  // solo manda el costo a quien puede verlo.
+  const [historialPrecios, setHistorialPrecios] = useState([]);
+  const cargarHistorialPrecios = () =>
+    api
+      .get(`/productos/${id}/precios-cambios`)
+      .then((r) => setHistorialPrecios(Array.isArray(r?.cambios) ? r.cambios : []))
+      .catch(() => setHistorialPrecios([]));
+  useEffect(() => { cargarHistorialPrecios(); }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
   // (2026-10-27) Permiso «editar_productos»: edita el formulario completo como
   // un admin (precios, costo, medidas, SKU, link), salvo aprobar pendientes.
   const [editaCatalogo, setEditaCatalogo] = useState(false);
@@ -729,6 +739,8 @@ export default function EditarProducto() {
 
     // (2026-10-16) La cotización abierta en otra pestaña recibe el producto actualizado.
     avisarProductoActualizado(id);
+    // El cambio de precio se registra en segundo plano: se relee un momento después.
+    setTimeout(cargarHistorialPrecios, 1500);
 
     setSkuOriginal(skuFinal ?? "");
     setProducto((prev) => ({
@@ -1387,6 +1399,33 @@ try {
                 </>
               )}
             </div>
+            {historialPrecios.length > 0 && (
+              <div className="historial-precios" style={{ marginTop: 16, borderTop: "1px solid var(--border)", paddingTop: 12 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px", color: "var(--text-muted)", marginBottom: 6 }}>
+                  Historial de cambios de precio
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 190, overflowY: "auto" }}>
+                  {historialPrecios.map((c) => {
+                    const sube = Number(c.nuevo) > Number(c.anterior);
+                    return (
+                      <div key={c.id} style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "baseline", fontSize: 12.5 }}>
+                        <span style={{ color: "var(--text-muted)", whiteSpace: "nowrap", minWidth: 78 }}>
+                          {new Date(c.created_at).toLocaleDateString("es-CL", { day: "2-digit", month: "2-digit", year: "numeric" })}
+                        </span>
+                        <span style={{ fontWeight: 700, minWidth: 52 }}>{{ costo: "Costo", lista1: "Lista 1", lista2: "Lista 2", lista3: "Lista 3" }[c.campo] || c.campo}</span>
+                        <span style={{ whiteSpace: "nowrap" }}>
+                          {c.anterior == null ? "—" : `$${Math.round(Number(c.anterior)).toLocaleString("es-CL")}`}{" → "}
+                          <b style={{ color: sube ? "#b45309" : "#15803d" }}>{c.nuevo == null ? "—" : `$${Math.round(Number(c.nuevo)).toLocaleString("es-CL")}`}</b>
+                        </span>
+                        <span style={{ color: "var(--text-muted)", overflowWrap: "anywhere" }}>
+                          {[c.origen === "carga_masiva" ? "carga masiva" : c.origen === "reversion" ? "carga deshecha" : "", c.usuario_email].filter(Boolean).join(" · ")}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

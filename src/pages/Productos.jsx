@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { supabase } from "../lib/supabase";
 import { api } from "../lib/api";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
+import DropdownSelect from "../components/ui/DropdownSelect";
 import ConfirmModal from "../components/ConfirmModal";
 import Select from "react-select";
 import {
@@ -52,6 +53,24 @@ function contieneTodosLosTokens(texto, query) {
 // (2026-11-03) El criterio de ficha técnica "completa" vive en
 // utils/fichaTecnicaCompleta.js (mismo que usan las cotizaciones y el
 // backend): el listado liviano (/productos/list) trae el booleano calculado.
+
+/* (2026-11-05) Alerta de actualización de precio: días desde el último cambio
+   (Infinity si nunca cambió) y el texto «antes → después» de los cambios
+   recientes de un producto. */
+function diasDesdePrecio(p) {
+  const t = p?.precio_actualizado_at ? new Date(p.precio_actualizado_at).getTime() : NaN;
+  return Number.isFinite(t) ? (Date.now() - t) / 86400000 : Infinity;
+}
+const NOMBRE_CAMPO_PRECIO = { costo: "Costo", lista1: "Lista 1", lista2: "Lista 2", lista3: "Lista 3" };
+const pesosCL = (n) => (n == null ? "—" : `$${Math.round(Number(n) || 0).toLocaleString("es-CL")}`);
+function tituloCambioPrecio(p, cambios) {
+  const base = "Última actualización de precio (costo o listas)";
+  if (!cambios?.length) return base;
+  const lineas = cambios.map(
+    (c) => `${NOMBRE_CAMPO_PRECIO[c.campo] || c.campo}: ${pesosCL(c.anterior)} → ${pesosCL(c.nuevo)} (${new Date(c.created_at).toLocaleDateString("es-CL")}${c.usuario_email ? `, ${c.usuario_email}` : ""})`,
+  );
+  return `${base}\n${lineas.join("\n")}`;
+}
 
 // Nombre de cada campo de la ficha en el reporte «Sin ficha completa».
 const ETIQUETAS_FICHA = {
@@ -264,6 +283,36 @@ export default function Productos() {
   const [filtroSkuAsignado, setFiltroSkuAsignado] = useStickyState("productos.filtroSkuAsignado", "");
   const [filtroPeso, setFiltroPeso] = useStickyState("productos.filtroPeso", "");
   const [filtroMedidas, setFiltroMedidas] = useStickyState("productos.filtroMedidas", "");
+  /* (2026-11-05) Alerta de actualización de precio: filtro «Precio actualizado»
+     (últimos 7 o 30 días, según productos.precio_actualizado_at) y, para los
+     recién cambiados, el «antes → después» (GET /productos/precios/cambios).
+     El aviso de la campana abre esta página con ?precio=7. */
+  const [filtroPrecio, setFiltroPrecio] = useStickyState("productos.filtroPrecio", "");
+  const [cambiosPrecio, setCambiosPrecio] = useState(new Map()); // producto_id → [{campo, anterior, nuevo, created_at, usuario_email}]
+  const [parametros, setParametros] = useSearchParams();
+  useEffect(() => {
+    const dias = parametros.get("precio");
+    if (dias !== "7" && dias !== "30") return;
+    setFiltroPrecio(dias);
+    const sin = new URLSearchParams(parametros);
+    sin.delete("precio");
+    setParametros(sin, { replace: true });
+  }, [parametros]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    api
+      .get("/productos/precios/cambios?dias=30")
+      .then((r) => {
+        const m = new Map();
+        // Vienen del más nuevo al más viejo: queda el último cambio de cada campo.
+        for (const c of r?.cambios || []) {
+          const lista = m.get(c.producto_id) || [];
+          if (!lista.some((x) => x.campo === c.campo)) lista.push(c);
+          m.set(c.producto_id, lista);
+        }
+        setCambiosPrecio(m);
+      })
+      .catch(() => setCambiosPrecio(new Map()));
+  }, []);
   const [ordenTabla, setOrdenTabla] = useStickyState("productos.ordenTabla", { key: null, dir: "asc" });
   // Qué lista de precios muestra la columna "Precio Unitario" (lista1 | lista2 | lista3).
   // Lista 3 NO está en la DB: es un valor calculado = lista2 * FACTOR_LISTA_3.
@@ -451,8 +500,9 @@ export default function Productos() {
         matchTri(filtroSkuAsignado, tieneSku) &&
         matchTri(filtroPeso, tienePeso) &&
         matchTri(filtroMedidas, tieneMedidas);
+      const matchPrecio = !filtroPrecio || diasDesdePrecio(p) <= Number(filtroPrecio);
 
-      return matchSKU && matchProducto && matchCategoria && matchMarca && matchEstado && matchCompletitud;
+      return matchSKU && matchProducto && matchCategoria && matchMarca && matchEstado && matchCompletitud && matchPrecio;
     })
     .sort((a, b) => {
       if (!ordenTabla.key) return 0;
@@ -691,7 +741,7 @@ export default function Productos() {
 
 
   /* (2026-09-24) Volver a ver todo sin ir borrando filtro por filtro. */
-  const hayFiltros = filtroSKU !== "" || filtroProducto !== "" || filtroCategoria !== "" || filtroMarcas.length > 0 || filtroEstado !== "" || filtroSkuAsignado !== "" || filtroPeso !== "" || filtroMedidas !== "";
+  const hayFiltros = filtroSKU !== "" || filtroProducto !== "" || filtroCategoria !== "" || filtroMarcas.length > 0 || filtroEstado !== "" || filtroSkuAsignado !== "" || filtroPeso !== "" || filtroMedidas !== "" || filtroPrecio !== "";
   function limpiarFiltros() {
     setFiltroSKU("");
     setFiltroProducto("");
@@ -701,6 +751,7 @@ export default function Productos() {
     setFiltroSkuAsignado("");
     setFiltroPeso("");
     setFiltroMedidas("");
+    setFiltroPrecio("");
   }
 
   return (
@@ -813,16 +864,13 @@ export default function Productos() {
 
         <div className="filter-field">
           <label className="filter-label">Categoría</label>
-          <select
-            className="input"
+          <DropdownSelect
             value={filtroCategoria}
-            onChange={(e) => setFiltroCategoria(e.target.value)}
-          >
-            <option value="">Todas las Categorías</option>
-            {categoriasUnicas.map((cat) => (
-              <option key={cat} value={cat}>{cat}</option>
-            ))}
-          </select>
+            onChange={setFiltroCategoria}
+            minWidth={200}
+            style={{ width: "100%" }}
+            options={[{ value: "", label: "Todas las Categorías" }, ...categoriasUnicas.map((cat) => ({ value: cat, label: cat }))]}
+          />
         </div>
 
         <div className="filter-field" style={{flex: 2, minWidth: 180}}>
@@ -853,56 +901,64 @@ export default function Productos() {
 
         <div className="filter-field">
           <label className="filter-label">Estado</label>
-          <select
-            className="input"
+          <DropdownSelect
             value={filtroEstado}
-            onChange={(e) => setFiltroEstado(e.target.value)}
-          >
-            <option value="">Todos los estados</option>
-            <option value="Activo">Activo</option>
-            <option value="Inactivo">Inactivo</option>
-            <option value="Transitorio">Transitorio</option>
-            <option value="Pendiente Aprobación">Pendiente Aprobación</option>
-          </select>
+            onChange={setFiltroEstado}
+            minWidth={190}
+            style={{ width: "100%" }}
+            options={[
+              { value: "", label: "Todos los estados" },
+              { value: "Activo", label: "Activo" },
+              { value: "Inactivo", label: "Inactivo" },
+              { value: "Transitorio", label: "Transitorio" },
+              { value: "Pendiente Aprobación", label: "Pendiente Aprobación" },
+            ]}
+          />
         </div>
 
         <div className="filter-field" title="Productos con o sin SKU asignado">
           <label className="filter-label">SKU asignado</label>
-          <select
-            className="input"
+          <DropdownSelect
             value={filtroSkuAsignado}
-            onChange={(e) => setFiltroSkuAsignado(e.target.value)}
-          >
-            <option value="">Todos</option>
-            <option value="con">Con SKU</option>
-            <option value="sin">Sin SKU</option>
-          </select>
+            onChange={setFiltroSkuAsignado}
+            minWidth={140}
+            style={{ width: "100%" }}
+            options={[{ value: "", label: "Todos" }, { value: "con", label: "Con SKU" }, { value: "sin", label: "Sin SKU" }]}
+          />
         </div>
 
         <div className="filter-field" title="Peso (kg) informado: se usa para el cálculo de flete">
           <label className="filter-label">Peso</label>
-          <select
-            className="input"
+          <DropdownSelect
             value={filtroPeso}
-            onChange={(e) => setFiltroPeso(e.target.value)}
-          >
-            <option value="">Todos</option>
-            <option value="con">Con peso</option>
-            <option value="sin">Sin peso</option>
-          </select>
+            onChange={setFiltroPeso}
+            minWidth={140}
+            style={{ width: "100%" }}
+            options={[{ value: "", label: "Todos" }, { value: "con", label: "Con peso" }, { value: "sin", label: "Sin peso" }]}
+          />
         </div>
 
         <div className="filter-field" title="Medidas completas (largo, ancho y alto): si falta una, cuenta como sin medidas">
           <label className="filter-label">Medidas</label>
-          <select
-            className="input"
+          <DropdownSelect
             value={filtroMedidas}
-            onChange={(e) => setFiltroMedidas(e.target.value)}
-          >
-            <option value="">Todas</option>
-            <option value="con">Con medidas</option>
-            <option value="sin">Sin medidas</option>
-          </select>
+            onChange={setFiltroMedidas}
+            minWidth={150}
+            style={{ width: "100%" }}
+            options={[{ value: "", label: "Todas" }, { value: "con", label: "Con medidas" }, { value: "sin", label: "Sin medidas" }]}
+          />
+        </div>
+
+        {/* (2026-11-05) Alerta de actualización de precio */}
+        <div className="filter-field filtro-precio-actualizado" title="Productos cuyo costo o lista de precios cambió hace poco">
+          <label className="filter-label">Precio actualizado</label>
+          <DropdownSelect
+            value={filtroPrecio}
+            onChange={setFiltroPrecio}
+            minWidth={170}
+            style={{ width: "100%" }}
+            options={[{ value: "", label: "Todos" }, { value: "7", label: "Últimos 7 días", color: "#d97706" }, { value: "30", label: "Últimos 30 días" }]}
+          />
         </div>
         <BotonLimpiarFiltros hay={hayFiltros} onLimpiar={limpiarFiltros} />
       </div>
@@ -960,30 +1016,27 @@ export default function Productos() {
                     >
                       Precio Neto{sortIndicator("precio")}
                     </span>
-                    <select
+                    <DropdownSelect
                       value={listaPrecio}
-                      onChange={(e) => setListaPrecio(e.target.value)}
-                      onClick={(e) => e.stopPropagation()}
+                      onChange={setListaPrecio}
+                      className="selector-lista-precio"
+                      minWidth={120}
                       title="Elegir qué lista de precios mostrar"
                       style={{
                         marginTop: 2,
                         padding: 0,
                         border: "none",
                         background: "transparent",
-                        color: "var(--primary, #28aeb1)",
                         fontSize: 11,
                         fontWeight: 600,
                         textTransform: "none",
                         letterSpacing: 0,
-                        cursor: "pointer",
-                        appearance: "auto",
                         width: "fit-content",
+                        gap: 3,
+                        height: "auto",
                       }}
-                    >
-                      <option value="lista1">Lista 1 ▾</option>
-                      <option value="lista2">Lista 2 ▾</option>
-                      <option value="lista3">Lista 3 ▾</option>
-                    </select>
+                      options={[{ value: "lista1", label: "Lista 1" }, { value: "lista2", label: "Lista 2" }, { value: "lista3", label: "Lista 3" }]}
+                    />
                   </div>
                 </th>
                 <th className="col-bruto">Precio Bruto</th>
@@ -1031,8 +1084,13 @@ export default function Productos() {
                         </div>
                         {p.precio_actualizado_at && (
                           <div
-                            title="Última actualización de precio (costo o listas)"
-                            style={{fontSize: 11, fontWeight: 400, color: "var(--text-muted)"}}
+                            className={diasDesdePrecio(p) <= 7 ? "precio-reciente" : undefined}
+                            title={tituloCambioPrecio(p, cambiosPrecio.get(p.id))}
+                            style={
+                              diasDesdePrecio(p) <= 7
+                                ? { fontSize: 11, fontWeight: 700, color: "#b45309", background: "#fef3c7", borderRadius: 6, padding: "1px 6px", width: "fit-content", marginTop: 2 }
+                                : { fontSize: 11, fontWeight: 400, color: "var(--text-muted)" }
+                            }
                           >
                             Act. {new Date(p.precio_actualizado_at).toLocaleDateString("es-CL", { day: "2-digit", month: "2-digit", year: "numeric" })}
                           </div>
@@ -1269,7 +1327,7 @@ function CargaMasivaProductosModal({ onClose, onSuccess, onToast }) {
       } else {
         onToast?.({
           type: "success",
-          message: `Listo: ${res.creados} creados, ${res.actualizados} actualizados.${res.bsale_en_cola ? ` Los ${res.bsale_en_cola} productos nuevos se están creando en Bsale en segundo plano.` : ""}`,
+          message: `Listo: ${res.creados} creados, ${res.actualizados} actualizados.${res.bsale_en_cola ? ` Los ${res.bsale_en_cola} productos nuevos se están creando en Bsale en segundo plano.` : ""}${res.precios_cambiados ? ` ${res.precios_cambiados} producto${res.precios_cambiados === 1 ? " cambió" : "s cambiaron"} de precio (el equipo recibe el aviso)${res.bsale_precios_en_cola ? ` y ${res.bsale_precios_en_cola === 1 ? "su precio se está enviando" : "sus precios se están enviando"} a Bsale` : ""}.` : ""}`,
         });
       }
     } catch (e) {

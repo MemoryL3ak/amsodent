@@ -19,6 +19,7 @@ export const TIPOS_ALERTA = {
   mp_adjudicada: "Adjudicada en MP",
   mp_oc_emitida: "OC emitida en MP",
   cotizacion_aprobada: "Cotización aprobada",
+  precio_actualizado: "Precio de producto actualizado",
   portal_upload: "Documento subido por el cliente",
   stock_solicitud_cotizacion: "Solicitud de cotización (portal)",
   portal_solicitud_reunion: "Solicitud de reunión (portal)",

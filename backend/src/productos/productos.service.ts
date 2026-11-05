@@ -1,6 +1,7 @@
 import { Injectable, BadRequestException, NotFoundException, Logger, Optional } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
 import { BsaleProductosService } from '../bsale/bsale-productos.service';
+import { CambioPrecio, cambiosDePrecio, PreciosCambiosService } from './precios-cambios.service';
 
 @Injectable()
 export class ProductosService {
@@ -10,6 +11,8 @@ export class ProductosService {
     private supabase: SupabaseService,
     // Opcional para que las pruebas puedan crear el servicio sin Bsale.
     @Optional() private bsaleProductos?: BsaleProductosService,
+    // (2026-11-05) Historial y aviso de los cambios de precio.
+    @Optional() private preciosCambios?: PreciosCambiosService,
   ) {}
 
   /* El producto se crea en Bsale (pedido de Ariel, 2026-10-03; desde el
@@ -28,6 +31,18 @@ export class ProductosService {
     if (!this.bsaleProductos) return null;
     try {
       return await this.bsaleProductos.actualizar(producto, { motivo });
+    } catch (e: any) {
+      return { estado: 'error', mensaje: String(e?.message || e).slice(0, 300) };
+    }
+  }
+
+  /* (2026-11-05) Producto con SKU que aún no está enlazado a su variante de
+     Bsale: se enlaza por el código (o se crea) y recién ahí se actualiza. Ver
+     BsaleProductosService.enviarCambios. */
+  private async enviarCambiosABsale(producto: any, motivo: string, soloPrecios: boolean) {
+    if (!this.bsaleProductos) return null;
+    try {
+      return await this.bsaleProductos.enviarCambios(producto, { motivo, soloPrecios });
     } catch (e: any) {
       return { estado: 'error', mensaje: String(e?.message || e).slice(0, 300) };
     }
@@ -329,6 +344,10 @@ export class ProductosService {
 
     const skus = Array.from(new Set(validRows.map((r) => r.sku.trim())));
     const nuevosParaBsale: any[] = [];
+    // (2026-11-05) Productos existentes a los que esta carga les cambió un
+    // precio: van al historial/aviso y, los de lista 1 o 2, a Bsale.
+    const cambiosPrecio: CambioPrecio[] = [];
+    const preciosParaBsale: any[] = [];
 
     // Productos existentes para clasificar creados vs actualizados. Se trae la
     // fila COMPLETA (no solo los precios) porque de ahí sale la foto del
@@ -439,6 +458,13 @@ export class ProductosService {
           const antes: Record<string, any> = {};
           for (const k of Object.keys(body)) antes[k] = previo[k] ?? null;
           auditoria.push({ producto_id: id, sku, accion: 'actualizado', antes, despues: body });
+          const cambios = cambiosDePrecio(previo, body, { id, sku, nombre: body.nombre ?? (previo as any).nombre });
+          if (cambios.length) {
+            cambiosPrecio.push(...cambios);
+            if (cambios.some((c) => c.campo === 'lista1' || c.campo === 'lista2') && String((previo as any).estado || '') !== 'Inactivo') {
+              preciosParaBsale.push({ ...previo, ...body, id });
+            }
+          }
         }
       }
     }
@@ -458,7 +484,24 @@ export class ProductosService {
         .then((r) => this.logger.log(`Carga masiva → Bsale: ${JSON.stringify(r)}`))
         .catch((e) => this.logger.warn(`Carga masiva → Bsale falló: ${e?.message || e}`));
     }
-    return { creados, actualizados, ignorados, errores, carga_id: carga?.id ?? null, bsale_en_cola: bsaleEnCola };
+    // (2026-11-05) Los precios que cambió la carga también van a Bsale (antes
+    // solo viajaban los productos nuevos), en segundo plano y de a uno.
+    let bsalePreciosEnCola = 0;
+    if (this.bsaleProductos && preciosParaBsale.length) {
+      bsalePreciosEnCola = preciosParaBsale.length;
+      void this.bsaleProductos
+        .enviarCambiosVarios(preciosParaBsale, { motivo: `carga masiva${meta?.archivo ? ` ${meta.archivo}` : ''}`, soloPrecios: true, tope: 2000 })
+        .then((r) => this.logger.log(`Carga masiva → precios en Bsale: ${JSON.stringify(r)}`))
+        .catch((e) => this.logger.warn(`Carga masiva → precios en Bsale falló: ${e?.message || e}`));
+    }
+    if (this.preciosCambios && cambiosPrecio.length) {
+      void this.preciosCambios.registrar(cambiosPrecio, { usuario: meta?.email, origen: 'carga_masiva', carga_id: carga?.id ?? null });
+    }
+    return {
+      creados, actualizados, ignorados, errores, carga_id: carga?.id ?? null, bsale_en_cola: bsaleEnCola,
+      precios_cambiados: new Set(cambiosPrecio.map((c) => c.producto_id)).size,
+      bsale_precios_en_cola: bsalePreciosEnCola,
+    };
   }
 
   /* ── Historial de cargas masivas ─────────────────────────────────────────
@@ -563,6 +606,8 @@ export class ProductosService {
     let productosBorrados = 0;
     let productosRestaurados = 0;
     const errores: string[] = [];
+    const cambiosPrecio: CambioPrecio[] = [];
+    const idsPreciosBsale = new Set<number>();
 
     for (const carga of cargas || []) {
       const { data: items, error: errItems } = await client
@@ -582,7 +627,15 @@ export class ProductosService {
           if (Object.keys(antes).length === 0) continue;
           const { error } = await client.from('productos').update(antes).eq('id', it.producto_id);
           if (error) errores.push(`No se pudo restaurar el producto ${it.sku}: ${error.message}`);
-          else productosRestaurados += 1;
+          else {
+            productosRestaurados += 1;
+            // (2026-11-05) Precios que la reversión devuelve a su valor anterior.
+            const cambios = cambiosDePrecio(it.despues || {}, antes, { id: it.producto_id, sku: it.sku, nombre: antes.nombre ?? (it.despues || {}).nombre });
+            if (cambios.length) {
+              cambiosPrecio.push(...cambios);
+              if (cambios.some((c) => c.campo === 'lista1' || c.campo === 'lista2')) idsPreciosBsale.add(Number(it.producto_id));
+            }
+          }
         }
       }
 
@@ -598,10 +651,29 @@ export class ProductosService {
       if (errEstado) errores.push(`Carga ${carga.id}: ${errEstado.message}`);
     }
 
+    // (2026-11-05) Los precios restaurados quedan en el historial (con aviso) y
+    // vuelven a Bsale, en segundo plano.
+    if (this.preciosCambios && cambiosPrecio.length) {
+      void this.preciosCambios.registrar(cambiosPrecio, { usuario: email, origen: 'reversion', carga_id: id });
+    }
+    if (this.bsaleProductos && idsPreciosBsale.size) {
+      const ids = [...idsPreciosBsale];
+      void (async () => {
+        const filas: any[] = [];
+        for (let i = 0; i < ids.length; i += 200) {
+          const { data } = await client.from('productos').select('*').in('id', ids.slice(i, i + 200));
+          filas.push(...(((data as any[]) || []).filter((p) => String(p?.estado || '') !== 'Inactivo')));
+        }
+        const r = await this.bsaleProductos!.enviarCambiosVarios(filas, { motivo: `reversión de la carga ${id}`, soloPrecios: true, tope: 2000 });
+        this.logger.log(`Reversión de carga ${id} → precios en Bsale: ${JSON.stringify(r)}`);
+      })().catch((e) => this.logger.warn(`Reversión de carga ${id} → precios en Bsale falló: ${e?.message || e}`));
+    }
+
     return {
       revertidas: (cargas || []).length,
       productos_borrados: productosBorrados,
       productos_restaurados: productosRestaurados,
+      precios_restaurados: new Set(cambiosPrecio.map((c) => c.producto_id)).size,
       errores,
     };
   }
@@ -696,7 +768,7 @@ export class ProductosService {
     return resultado;
   }
 
-  async update(id: number, body: Record<string, any>) {
+  async update(id: number, body: Record<string, any>, usuario?: string | null) {
     // `propagar` es una instrucción del cliente, no una columna del producto.
     const propagar = body?.propagar !== false;
     if (body && 'propagar' in body) {
@@ -711,7 +783,7 @@ export class ProductosService {
       const { data } = await this.supabase
         .getClient()
         .from('productos')
-        .select('sku, costo, nombre, marca, categoria, formato, lista1, lista2, bsale_variant_id')
+        .select('sku, costo, nombre, marca, categoria, formato, lista1, lista2, lista3, bsale_variant_id')
         .eq('id', id)
         .maybeSingle();
       anterior = (data as any) || null;
@@ -761,16 +833,32 @@ export class ProductosService {
     // un transitorio sin SKU que aún no está en Bsale se envía al editarlo (2026-10-07).
     // (2026-10-09) Un producto que YA está en Bsale y cambia de nombre, marca,
     // categoría, formato o precios se actualiza allá (pedido de Ariel).
-    const tocaBsale = ['nombre', 'marca', 'categoria', 'formato', 'lista1', 'lista2'].some(
+    const cambiaDatos = ['nombre', 'marca', 'categoria', 'formato'].some(
       (k) => body?.[k] !== undefined && String(body[k] ?? '').trim() !== String(anterior?.[k] ?? '').trim(),
     );
+    // Los precios se comparan como números («25126» y 25126.00 son lo mismo).
+    const cambiaPrecios = ['lista1', 'lista2'].some(
+      (k) => body?.[k] !== undefined && body?.[k] !== null && (Number(body[k]) || 0) !== (Number(anterior?.[k]) || 0),
+    );
+    const tocaBsale = cambiaDatos || cambiaPrecios;
+    const inactivo = String((data as any)?.estado || '') === 'Inactivo';
     const bsale = skuAhora && skuAhora !== skuAntes
       ? await this.enviarABsale(data, skuAntes ? `SKU cambiado (antes ${skuAntes})` : 'SKU asignado')
-      : !skuAhora && !(data as any)?.bsale_variant_id && String((data as any)?.estado || '') !== 'Inactivo'
+      : !skuAhora && !(data as any)?.bsale_variant_id && !inactivo
         ? await this.enviarABsale(data, 'transitorio editado')
         : (data as any)?.bsale_variant_id && tocaBsale
           ? await this.actualizarEnBsale(data, 'producto editado')
-          : null;
+          // (2026-11-05) Con SKU pero sin enlazar a Bsale (casi todo el catálogo
+          // existía allá desde antes): antes el cambio no se enviaba.
+          : skuAhora && tocaBsale && !inactivo
+            ? await this.enviarCambiosABsale(data, 'producto editado', !cambiaDatos)
+            : null;
+
+    // (2026-11-05) Historial y aviso del cambio de precio. No frena el guardado.
+    if (this.preciosCambios) {
+      const cambios = cambiosDePrecio(anterior, body, data as any);
+      if (cambios.length) void this.preciosCambios.registrar(cambios, { usuario, origen: 'edicion' });
+    }
     return { ...(data as any), propagado, ...(bsale ? { bsale } : {}) };
   }
 

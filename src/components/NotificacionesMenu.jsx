@@ -13,6 +13,7 @@ import {
   CalendarPlus,
   ClipboardCheck,
   ShoppingCart,
+  Tag,
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { api } from "../lib/api";
@@ -414,6 +415,15 @@ function getNotifVisuales(notif) {
       color: "#6d28d9",
       bg: "#ede9fe",
       etiqueta: "Aprobación peso",
+    };
+  }
+  // (2026-11-05) Alerta de actualización de precio: abre Productos con los recién cambiados.
+  if (tipo === "precio_actualizado") {
+    return {
+      icono: Tag,
+      color: "#b45309",
+      bg: "#fef3c7",
+      etiqueta: "Precio actualizado",
     };
   }
   // (2026-11-05) Pedidos que llegan del portal del cliente (también saltan en

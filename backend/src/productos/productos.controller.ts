@@ -7,11 +7,15 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { ProductosService } from './productos.service';
 import { AuthGuard } from '../auth/auth.guard';
 import { AdminGuard } from '../auth/admin.guard';
+import { PreciosCambiosService } from './precios-cambios.service';
 
 @Controller('productos')
 @UseGuards(AuthGuard)
 export class ProductosController {
-  constructor(private productosService: ProductosService) {}
+  constructor(
+    private productosService: ProductosService,
+    private preciosCambios: PreciosCambiosService,
+  ) {}
 
   @Get()
   findAll() {
@@ -26,6 +30,19 @@ export class ProductosController {
   @Get('campaign-prices')
   getCampaignPrices() {
     return this.productosService.getCampaignPrices();
+  }
+
+  /* (2026-11-05) Cambios de precio recientes (alerta de actualización de
+     precio): Productos los usa para mostrar el «antes → después». El costo
+     solo viaja a quien puede verlo (admin o permiso ver_costos). */
+  @Get('precios/cambios')
+  async cambiosDePrecio(@Req() req: any, @Query('dias') dias?: string) {
+    return this.preciosCambios.recientes(Number(dias) || 30, await this.preciosCambios.puedeVerCostos(String(req?.user?.id || '')));
+  }
+
+  @Get(':id/precios-cambios')
+  async cambiosDePrecioDeProducto(@Req() req: any, @Param('id', ParseIntPipe) id: number) {
+    return this.preciosCambios.deProducto(id, await this.preciosCambios.puedeVerCostos(String(req?.user?.id || '')));
   }
 
   @Get(':id')
@@ -90,8 +107,8 @@ export class ProductosController {
   }
 
   @Put(':id')
-  update(@Param('id', ParseIntPipe) id: number, @Body() body: any) {
-    return this.productosService.update(id, body);
+  update(@Param('id', ParseIntPipe) id: number, @Body() body: any, @Req() req: any) {
+    return this.productosService.update(id, body, (req?.user?.email || '').toLowerCase());
   }
 
   @Delete(':id')
