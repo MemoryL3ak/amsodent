@@ -166,6 +166,11 @@ export class ProductosService {
       ficha_completa: ProductosService.CAMPOS_FICHA.every(
         (k) => String(p?.[k] ?? '').trim().length > 0,
       ),
+      // (2026-11-05) Qué campos le faltan a la ficha: lo usa el reporte
+      // «SKU sin ficha completa» de Productos, sin traer los textos largos.
+      ficha_faltantes: ProductosService.CAMPOS_FICHA.filter(
+        (k) => String(p?.[k] ?? '').trim().length === 0,
+      ),
     }));
   }
 

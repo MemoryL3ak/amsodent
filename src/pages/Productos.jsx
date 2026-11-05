@@ -18,12 +18,13 @@ import {
   History,
   Undo2,
   CloudUpload,
+  FileWarning,
 } from "lucide-react";
 import Toast from "../components/Toast";
 import BotonDescargarFichas from "../components/BotonDescargarFichas";
 import EnviarPendientesBsale from "../components/EnviarPendientesBsale";
 import { descargarFichaTecnica } from "../utils/generarFichaTecnica";
-import { fichaTecnicaCompleta } from "../utils/fichaTecnicaCompleta";
+import { fichaTecnicaCompleta, CAMPOS_FICHA_TECNICA } from "../utils/fichaTecnicaCompleta";
 import { calcularLista3 } from "../lib/listas";
 import { precioCampanaMargen } from "../lib/campanasMargen";
 import { useStickyState } from "../lib/useStickyState";
@@ -51,6 +52,18 @@ function contieneTodosLosTokens(texto, query) {
 // (2026-11-03) El criterio de ficha técnica "completa" vive en
 // utils/fichaTecnicaCompleta.js (mismo que usan las cotizaciones y el
 // backend): el listado liviano (/productos/list) trae el booleano calculado.
+
+// Nombre de cada campo de la ficha en el reporte «Sin ficha completa».
+const ETIQUETAS_FICHA = {
+  presentacion: "Presentación",
+  descripcion: "Descripción",
+  composicion: "Composición",
+  uso_indicaciones: "Uso / indicaciones",
+  beneficios: "Beneficios",
+  modo_uso: "Modo de uso",
+  almacenamiento: "Almacenamiento",
+  datos_clave: "Datos clave",
+};
 
 // Menú desplegable de acciones (Inactivar / Eliminar) para roles con permiso.
 const ANCHO_MENU_ACC = 210;
@@ -619,6 +632,57 @@ export default function Productos() {
   }
 
   /* ============================================================
+     REPORTE: productos con SKU pero sin ficha técnica completa
+     (2026-11-05, pedido de Ariel: "emitir reporte con SKU pero sin ficha
+     completa"). Respeta los filtros activos y dice qué campo falta en cada
+     uno; esos productos son los que retienen el PDF de las cotizaciones.
+  ============================================================ */
+  const conSkuSinFicha = productosFiltrados.filter(
+    (p) => String(p.sku || "").trim() && fichaTecnicaCompleta(p) === false,
+  );
+  async function exportarSinFicha() {
+    if (conSkuSinFicha.length === 0) {
+      setToast({ type: "info", message: "Con el filtro actual no hay productos con SKU y ficha técnica incompleta." });
+      return;
+    }
+    try {
+      const XLSX = await import("xlsx");
+      const faltantesDe = (p) =>
+        Array.isArray(p.ficha_faltantes)
+          ? p.ficha_faltantes
+          : CAMPOS_FICHA_TECNICA.filter((k) => String(p?.[k] ?? "").trim().length === 0);
+      const filas = conSkuSinFicha.map((p) => {
+        const faltan = new Set(faltantesDe(p));
+        const fila = {
+          SKU: p.sku || "",
+          Producto: p.nombre || "",
+          Marca: p.marca || "",
+          Categoría: p.categoria || "",
+          Formato: p.formato || "",
+          Estado: (p.estado || "Activo").toString().trim(),
+          "Campos que faltan": faltan.size,
+        };
+        // Una columna por campo de la ficha: «Falta» o «OK», para filtrar en Excel.
+        for (const k of CAMPOS_FICHA_TECNICA) fila[ETIQUETAS_FICHA[k] || k] = faltan.has(k) ? "Falta" : "OK";
+        return fila;
+      });
+      filas.sort((a, b) => b["Campos que faltan"] - a["Campos que faltan"] || String(a.SKU).localeCompare(String(b.SKU)));
+      const ws = XLSX.utils.json_to_sheet(filas);
+      ws["!cols"] = [{ wch: 14 }, { wch: 48 }, { wch: 18 }, { wch: 20 }, { wch: 16 }, { wch: 12 }, { wch: 10 }, ...CAMPOS_FICHA_TECNICA.map(() => ({ wch: 15 }))];
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "SKU sin ficha completa");
+      XLSX.writeFile(wb, `productos-sin-ficha-completa-${new Date().toISOString().slice(0, 10)}.xlsx`);
+      setToast({
+        type: "success",
+        message: `Reporte descargado: ${filas.length} producto${filas.length === 1 ? "" : "s"} con SKU y ficha técnica incompleta (con el filtro actual).`,
+      });
+    } catch (e) {
+      console.error(e);
+      setToast({ type: "error", message: "No se pudo generar el reporte de fichas incompletas." });
+    }
+  }
+
+  /* ============================================================
      UI
   ============================================================ */
   if (perfilLoading) {
@@ -691,6 +755,21 @@ export default function Productos() {
             titulo="Descargar en un ZIP las fichas técnicas de los productos filtrados que tienen la ficha completa"
             onAviso={(tipo, mensaje) => setToast({ type: tipo, message: mensaje })}
           />
+          {/* (2026-11-05) Reporte Excel de los productos con SKU cuya ficha técnica está incompleta. */}
+          <button
+            type="button"
+            className="btn btn-secondary btn-reporte-sin-ficha"
+            onClick={exportarSinFicha}
+            disabled={conSkuSinFicha.length === 0}
+            style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
+            title={
+              conSkuSinFicha.length
+                ? `Descargar en Excel los ${conSkuSinFicha.length} productos filtrados que tienen SKU pero la ficha técnica incompleta, con los campos que le faltan a cada uno`
+                : "Con el filtro actual no hay productos con SKU y ficha técnica incompleta"
+            }
+          >
+            <FileWarning size={14} /> Sin ficha completa{conSkuSinFicha.length ? ` (${conSkuSinFicha.length})` : ""}
+          </button>
           {/* (2026-10-07) Transitorios sin SKU y demás productos que aún no están en Bsale. */}
           {rolNorm === "admin" && (
             <button
