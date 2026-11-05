@@ -12,6 +12,7 @@ import {
   Inbox,
   CalendarPlus,
   ClipboardCheck,
+  ShoppingCart,
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { api } from "../lib/api";
@@ -413,6 +414,16 @@ function getNotifVisuales(notif) {
       color: "#6d28d9",
       bg: "#ede9fe",
       etiqueta: "Aprobación peso",
+    };
+  }
+  // (2026-11-05) Pedidos que llegan del portal del cliente (también saltan en
+  // la ventana flotante, para el administrador y el dueño de la cartera).
+  if (tipo === "stock_solicitud_cotizacion" || tipo.startsWith("pedido_portal")) {
+    return {
+      icono: ShoppingCart,
+      color: "#0369a1",
+      bg: "#e0f2fe",
+      etiqueta: "Pedido del portal",
     };
   }
   if (tipo.startsWith("stock")) {

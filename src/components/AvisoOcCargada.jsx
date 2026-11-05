@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ClipboardCheck, X, ExternalLink, Check } from "lucide-react";
+import { ClipboardCheck, X, ExternalLink, Check, ShoppingCart } from "lucide-react";
 import { api } from "../lib/api";
 import { supabase } from "../lib/supabase";
 import { useUnsavedChanges } from "../context/UnsavedChangesContext";
@@ -14,7 +14,46 @@ import { useUnsavedChanges } from "../context/UnsavedChangesContext";
    aviso del chat, y si hay varias se muestran de a una. */
 
 const POLL_MS = 45_000;
-const TIPO = "oc_cargada";
+
+/* (2026-11-05) La misma ventana avisa también los pedidos que llegan del
+   portal del cliente, al administrador y al dueño de la cartera (pedido de
+   Ariel). Es una sola cola, de a un aviso, para que no se monten dos ventanas
+   en la misma esquina. Los avisos del portal solo saltan si son recientes:
+   los antiguos sin leer se quedan en la campana y no inundan la pantalla. */
+const RECIENTE_MS = 72 * 3600 * 1000;
+const esReciente = (n) => Date.now() - new Date(n?.creado_at || 0).getTime() < RECIENTE_MS;
+const pedidoPortal = (titulo) => ({
+  titulo,
+  aria: titulo,
+  Icono: ShoppingCart,
+  valido: (n) => !!n?.metadata?.solicitud_id && esReciente(n),
+  quien: (m) => m.razon_social || m.rut_formateado || "Cliente del portal",
+  datos: (m) => [
+    ["Pedido", `N° ${m.solicitud_id}`],
+    Number(m.total_items) > 0 ? ["Productos", m.total_items] : null,
+    m.rut_formateado ? ["RUT", m.rut_formateado] : null,
+  ],
+  destino: (n) => `/pedidos-portal?pedido=${n.metadata.solicitud_id}`,
+  boton: "Ver pedido",
+});
+const TIPOS = {
+  oc_cargada: {
+    titulo: "Orden de compra cargada",
+    aria: "Orden de compra cargada en tu cotización",
+    Icono: ClipboardCheck,
+    valido: (n) => !!n?.metadata?.licitacion_id,
+    quien: (m) => m.cargado_por_nombre || m.cargado_por || "Otro usuario",
+    datos: (m) => [
+      m.numero ? ["N° OC", m.numero] : null,
+      Number(m.monto) > 0 ? ["Monto neto", clp(m.monto)] : null,
+      m.fecha_oc ? ["Fecha OC", fechaCorta(m.fecha_oc)] : null,
+    ],
+    destino: (n) => n.link || `/detalle/${n.metadata.licitacion_id}`,
+    boton: "Ver cotización",
+  },
+  stock_solicitud_cotizacion: pedidoPortal("Nuevo pedido del portal"),
+  pedido_portal_aprobado: pedidoPortal("Pedido del portal aprobado"),
+};
 
 const clp = (n) => `$${Math.round(Number(n) || 0).toLocaleString("es-CL")}`;
 
@@ -43,7 +82,7 @@ export default function AvisoOcCargada() {
     try {
       const r = await api.get("/notificaciones?soloNoLeidas=true");
       const lista = (Array.isArray(r) ? r : []).filter(
-        (n) => n?.tipo === TIPO && n?.metadata?.licitacion_id && !atendidasRef.current.has(n.id),
+        (n) => TIPOS[n?.tipo]?.valido(n) && !atendidasRef.current.has(n.id),
       );
       setPendientes(lista);
     } catch {
@@ -71,7 +110,7 @@ export default function AvisoOcCargada() {
           "postgres_changes",
           { event: "INSERT", schema: "public", table: "notificaciones", filter: `user_email=eq.${email}` },
           (payload) => {
-            if (payload?.new?.tipo === TIPO) cargar();
+            if (TIPOS[payload?.new?.tipo]) cargar();
           },
         )
         .subscribe();
@@ -96,16 +135,14 @@ export default function AvisoOcCargada() {
   if (!actual) return null;
 
   const m = actual.metadata || {};
-  const quien = m.cargado_por_nombre || m.cargado_por || "Otro usuario";
+  const cfg = TIPOS[actual.tipo];
+  const Icono = cfg.Icono;
+  const quien = cfg.quien(m);
   const restantes = pendientes.length - 1;
-  const datos = [
-    m.numero ? ["N° OC", m.numero] : null,
-    Number(m.monto) > 0 ? ["Monto neto", clp(m.monto)] : null,
-    m.fecha_oc ? ["Fecha OC", fechaCorta(m.fecha_oc)] : null,
-  ].filter(Boolean);
+  const datos = cfg.datos(m).filter(Boolean);
 
   function verCotizacion() {
-    const destino = actual.link || `/detalle/${m.licitacion_id}`;
+    const destino = cfg.destino(actual);
     marcarLeida(actual.id);
     requestNavigation(destino);
   }
@@ -114,7 +151,8 @@ export default function AvisoOcCargada() {
     <div
       role="dialog"
       aria-live="polite"
-      aria-label="Orden de compra cargada en tu cotización"
+      aria-label={cfg.aria}
+      data-tipo={actual.tipo}
       style={{
         position: "fixed",
         right: 16,
@@ -161,10 +199,10 @@ export default function AvisoOcCargada() {
             flexShrink: 0,
           }}
         >
-          <ClipboardCheck size={17} />
+          <Icono size={17} />
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <strong style={{ display: "block", fontSize: 14, lineHeight: 1.2 }}>Orden de compra cargada</strong>
+          <strong style={{ display: "block", fontSize: 14, lineHeight: 1.2 }}>{cfg.titulo}</strong>
           <span
             style={{
               fontSize: 11.5,
@@ -285,7 +323,7 @@ export default function AvisoOcCargada() {
             boxShadow: "var(--shadow-sm)",
           }}
         >
-          Ver cotización <ExternalLink size={13} />
+          {cfg.boton} <ExternalLink size={13} />
         </button>
       </div>
     </div>

@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useState, useRef } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../lib/api";
 import Toast from "../components/Toast";
 import { descargarReportePDF } from "../lib/reporteStock";
@@ -238,6 +238,33 @@ export default function PedidosPortal() {
       );
     });
   }, [pedidos, fTexto, fEstado, fOrigen]);
+
+  /* (2026-11-05) El aviso de un pedido nuevo (campana o ventana flotante) llega
+     con ?pedido=ID: se abre ese pedido en su página, una sola vez por cada id.
+     Si los filtros lo esconden, se limpian para que aparezca. */
+  const [parametros, setParametros] = useSearchParams();
+  const pedidoPedido = Number(parametros.get("pedido")) || null;
+  useEffect(() => {
+    if (!pedidoPedido || loading) return;
+    const enTodos = pedidos.findIndex((s) => Number(s.id) === pedidoPedido);
+    if (enTodos < 0) {
+      if (pedidos.length) setToast({ type: "warning", message: `El pedido N° ${pedidoPedido} no está en tu bandeja.` });
+    } else {
+      const idx = filtrados.findIndex((s) => Number(s.id) === pedidoPedido);
+      if (idx < 0) {
+        // Con los filtros puestos no se ve: se limpian y este efecto vuelve a correr.
+        setFTexto(""); setFEstado(""); setFOrigen("");
+        return;
+      }
+      setPagina(Math.floor(idx / POR_PAGINA) + 1);
+      setExpandidoId(pedidos[enTodos].id);
+      setTimeout(() => document.getElementById(`pedido-portal-${pedidoPedido}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 80);
+    }
+    // El parámetro se consume: recargar o filtrar después no vuelve a abrirlo.
+    const sinPedido = new URLSearchParams(parametros);
+    sinPedido.delete("pedido");
+    setParametros(sinPedido, { replace: true });
+  }, [pedidoPedido, loading, pedidos, filtrados]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const totalPaginas = Math.max(1, Math.ceil(filtrados.length / POR_PAGINA));
   const paginaActual = Math.min(pagina, totalPaginas);
@@ -674,6 +701,7 @@ export default function PedidosPortal() {
                   return (
                     <Fragment key={s.id}>
                       <tr
+                        id={`pedido-portal-${s.id}`}
                         onClick={() => setExpandidoId(abierto ? null : s.id)}
                         style={{ cursor: "pointer", background: abierto ? "#f8fafc" : undefined }}
                         title={abierto ? "Ocultar el detalle" : "Ver el detalle del pedido"}

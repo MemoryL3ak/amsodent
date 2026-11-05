@@ -3,6 +3,7 @@ import { SupabaseService } from '../supabase/supabase.service';
 import { MailingsService } from '../mailings/mailings.service';
 import { OfertasPortalService } from './ofertas-portal.service';
 import { PortalModulosService } from './portal-modulos.service';
+import { destinatariosCampanaPedido } from './destinatarios-pedido';
 
 /* ── Flujo de aprobación y pago de los pedidos del portal (2026-09-16) ────
    Un pedido recorre estas etapas, cada una con responsable y hora:
@@ -1076,10 +1077,12 @@ export class PedidosFlujoService {
   }
 
   /* ── KPI de tiempos de respuesta (punto 18) ──────────────────────────── */
-  async kpis(desde?: string, hasta?: string) {
+  // `soloRuts`: los clientes de la cartera de quien consulta (null = todos).
+  async kpis(desde?: string, hasta?: string, soloRuts: string[] | null = null) {
     let q = this.client
       .from(TABLA)
       .select('id, created_at, aprobado_cliente_at, validado_at, pago_at, flujo_estado, sos, monto_total');
+    if (soloRuts) q = q.in('rut', soloRuts.length ? soloRuts.slice(0, 400) : ['—']);
     if (desde) q = q.gte('created_at', desde);
     if (hasta) q = q.lte('created_at', `${hasta}T23:59:59`);
     const { data, error } = await q;
@@ -1120,18 +1123,16 @@ export class PedidosFlujoService {
 
   private async notificarPlataforma(pedido: any) {
     try {
-      const { data: destinatarios } = await this.client
-        .from('stock_destinatarios')
-        .select('user_email, recibe_campana, activo')
-        .eq('activo', true);
-      const rows = (destinatarios || [])
-        .filter((d: any) => d?.user_email && d.recibe_campana !== false)
-        .map((d: any) => ({
-          user_email: String(d.user_email).toLowerCase(),
+      // (2026-11-05) Además de los destinatarios configurados, les llega a los
+      // administradores y al dueño de la cartera (destinatarios-pedido.ts).
+      const destinatarios = await destinatariosCampanaPedido(this.client, pedido.rut);
+      const rows = destinatarios
+        .map((email) => ({
+          user_email: email,
           tipo: 'pedido_portal_aprobado',
           mensaje: `${pedido.razon_social || pedido.rut} aprobó el pedido N° ${pedido.id}: hay que validar existencias.`,
           link: `/pedidos-portal?pedido=${pedido.id}`,
-          metadata: { solicitud_id: pedido.id, rut: pedido.rut },
+          metadata: { solicitud_id: pedido.id, rut: pedido.rut, razon_social: pedido.razon_social || null },
         }));
       if (rows.length) await this.client.from('notificaciones').insert(rows);
     } catch (e: any) {

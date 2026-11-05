@@ -16,6 +16,8 @@ import { OfertasPortalService } from './ofertas-portal.service';
 import { PortalModulosService, MODULOS_PORTAL } from './portal-modulos.service';
 import { InventarioPortalService } from './inventario-portal.service';
 import { firmarImagenesProductos } from './imagenes-productos';
+import { destinatariosCampanaPedido, vendedorDeCartera } from './destinatarios-pedido';
+import { esRolAdmin, permisosEfectivos } from '../auth/permisos';
 import {
   plantillaAlertaStock,
   plantillaSolicitudCotizacion,
@@ -1990,27 +1992,30 @@ export class StockClientesService {
       .select('user_email, recibe_campana, recibe_correo, activo')
       .eq('activo', true);
     const lista = (destinatarios || []).filter((d: any) => d?.user_email);
-    if (lista.length === 0) return;
 
     const cliente = args.razonSocial || args.rutFmt;
     const mensaje = `${cliente} solicita cotización por ${args.items.length} producto${args.items.length === 1 ? '' : 's'}.`;
 
-    // Campana
-    const rowsCampana = lista
-      .filter((d: any) => d.recibe_campana !== false)
-      .map((d: any) => ({
-        user_email: String(d.user_email).toLowerCase(),
-        tipo: 'stock_solicitud_cotizacion',
-        mensaje,
-        link: `/monitoreo-stock?solicitud=${args.solicitudId}`,
-        metadata: {
-          rut: args.rut,
-          rut_formateado: args.rutFmt,
-          razon_social: args.razonSocial,
-          solicitud_id: args.solicitudId,
-          total_items: args.items.length,
-        },
-      }));
+    // Campana (y ventana flotante): destinatarios configurados + administradores
+    // + dueño de la cartera del cliente (2026-11-05, destinatarios-pedido.ts).
+    // El enlace abre el pedido en la bandeja «Pedidos del Portal».
+    const paraCampana = await destinatariosCampanaPedido(client, args.rut).catch((e: any) => {
+      this.logger.warn(`Destinatarios del pedido ${args.solicitudId}: ${e?.message || e}`);
+      return lista.filter((d: any) => d.recibe_campana !== false).map((d: any) => String(d.user_email).toLowerCase());
+    });
+    const rowsCampana = paraCampana.map((email) => ({
+      user_email: email,
+      tipo: 'stock_solicitud_cotizacion',
+      mensaje,
+      link: `/pedidos-portal?pedido=${args.solicitudId}`,
+      metadata: {
+        rut: args.rut,
+        rut_formateado: args.rutFmt,
+        razon_social: args.razonSocial,
+        solicitud_id: args.solicitudId,
+        total_items: args.items.length,
+      },
+    }));
     if (rowsCampana.length > 0) {
       const { error } = await client.from('notificaciones').insert(rowsCampana);
       if (error) this.logger.warn(`Notificación campana (solicitud) falló: ${error.message}`);
@@ -2026,7 +2031,7 @@ export class StockClientesService {
       process.env.APP_PUBLIC_URL || process.env.PUBLIC_APP_URL || '',
     ).trim();
     const enlace = enlaceBase
-      ? `${enlaceBase.replace(/\/+$/, '')}/monitoreo-stock?solicitud=${args.solicitudId}`
+      ? `${enlaceBase.replace(/\/+$/, '')}/pedidos-portal?pedido=${args.solicitudId}`
       : undefined;
 
     const { asunto, html } = plantillaSolicitudCotizacion({
@@ -2345,17 +2350,44 @@ export class StockClientesService {
   // solicitudes generados desde el portal cliente, de cualquier cliente y sin
   // importar el origen (carrito del Explorador de Precios o Gestión de
   // Stock), con la cotización vinculada, la sucursal y los mensajes sin leer.
-  async listarSolicitudesTodas(limit = 400) {
+  /* (2026-11-05) Qué pedidos del portal ve una persona de la plataforma: todos
+     si es admin o tiene «monitoreo_stock»; si no, solo los de los clientes de
+     su cartera (clientes.vendedor_asignado = su correo). Así el dueño de la
+     cartera puede abrir el pedido que se le avisa sin ver los de los demás. */
+  async alcancePedidos(usuario: { id?: string; email?: string }): Promise<{ todos: boolean; ruts: string[] }> {
     const client = this.supabase.getClient();
+    const email = String(usuario?.email || '').trim().toLowerCase();
+    const { data: perfil } = await client.from('profiles').select('rol, permission_profile_id').eq('id', String(usuario?.id || '')).maybeSingle();
+    const rol = String((perfil as any)?.rol || '').trim().toLowerCase();
+    let permisosPerfil: any = null;
+    if ((perfil as any)?.permission_profile_id) {
+      const { data: asignado } = await client.from('permission_profiles').select('permisos').eq('id', (perfil as any).permission_profile_id).maybeSingle();
+      permisosPerfil = (asignado as any)?.permisos ?? null;
+    }
+    if (esRolAdmin(rol) || permisosEfectivos(rol, permisosPerfil).includes('monitoreo_stock')) return { todos: true, ruts: [] };
+    if (!email) return { todos: false, ruts: [] };
+    const { data: cartera } = await client.from('clientes').select('rut').ilike('vendedor_asignado', email).range(0, 9999);
+    const ruts = [...new Set(((cartera || []) as any[]).map((c) => normalizarRut(c?.rut)).filter(Boolean))];
+    return { todos: false, ruts };
+  }
+
+  async listarSolicitudesTodas(limit = 400, soloRuts: string[] | null = null) {
+    const client = this.supabase.getClient();
+    if (soloRuts && !soloRuts.length) return [];
+    // En el pedido el RUT va normalizado (el del token del portal), así que se filtra en la consulta.
+    const enConsulta = !!soloRuts && soloRuts.length <= 400;
     const res = await this.seleccionarSolicitudes(
       'id, rut, razon_social, sucursal_id, items, nota, contacto_nombre, contacto_email, contacto_telefono, estado, respondida_at, created_at, licitacion_id',
-      (cols) =>
-        client
-          .from('stock_solicitudes_cotizacion')
-          .select(cols)
-          .order('created_at', { ascending: false })
-          .limit(limit),
+      (cols) => {
+        let q = client.from('stock_solicitudes_cotizacion').select(cols);
+        if (enConsulta) q = q.in('rut', soloRuts as string[]);
+        return q.order('created_at', { ascending: false }).limit(soloRuts && !enConsulta ? 2000 : limit);
+      },
     );
+    if (soloRuts && !enConsulta && !res.error) {
+      const permitidos = new Set(soloRuts);
+      res.data = ((res.data || []) as any[]).filter((r) => permitidos.has(normalizarRut(r?.rut))).slice(0, limit);
+    }
     if (res.error) throw new BadRequestException(res.error.message);
     const rows: any[] = await this.enriquecerSolicitudes(res.data || [], 'equipo');
 
@@ -2482,12 +2514,10 @@ export class StockClientesService {
     if (!rutN) return null;
     const client = this.supabase.getClient();
 
-    const { data: cli } = await client
-      .from('clientes')
-      .select('rut, vendedor_asignado')
-      .eq('rut', rutN)
-      .maybeSingle();
-    const correo = String(cli?.vendedor_asignado || '').trim().toLowerCase();
+    // (2026-11-05) El RUT de `clientes` viene con puntos, con guion o plano:
+    // se busca por todas sus formas (con `.eq` al RUT plano casi nunca calzaba
+    // y el cliente se quedaba sin ver a su ejecutivo).
+    const correo = await vendedorDeCartera(client, rutN);
     if (!correo) return null;
 
     const { data: perfil } = await client

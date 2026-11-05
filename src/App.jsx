@@ -492,7 +492,10 @@ export default function App() {
           <Route
             path="pedidos-portal"
             element={
-              <RequireModulo modulo="monitoreo_stock">
+              /* (2026-11-05) El dueño de la cartera recibe el aviso de sus
+                 pedidos: entra aunque no tenga «monitoreo_stock» y el servidor
+                 le muestra solo los de sus clientes. */
+              <RequireModulo modulo={["monitoreo_stock", "mis_clientes"]}>
                 <PedidosPortal />
               </RequireModulo>
             }

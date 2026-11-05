@@ -655,10 +655,12 @@ export class StockClientesController {
 
   // (2026-09-10) Bandeja "Pedidos del Portal": todos los pedidos/solicitudes
   // del portal cliente, de cualquier cliente y origen.
+  // (2026-11-05) Sin «monitoreo_stock» solo se ven los pedidos de la propia cartera.
   @UseGuards(AuthGuard)
   @Get('solicitudes')
-  async listarSolicitudesTodas() {
-    return await this.stockClientes.listarSolicitudesTodas();
+  async listarSolicitudesTodas(@Req() req: any) {
+    const alcance = await this.stockClientes.alcancePedidos({ id: req?.user?.id, email: req?.user?.email });
+    return await this.stockClientes.listarSolicitudesTodas(400, alcance.todos ? null : alcance.ruts);
   }
 
   // Sucursales de un cliente (para el detalle/monitoreo admin).
@@ -756,8 +758,9 @@ export class StockClientesController {
   // Punto 18: KPI de tiempos de respuesta del submódulo de pedidos.
   @UseGuards(AuthGuard)
   @Get('solicitudes-kpis')
-  async kpisPedidos(@Query('desde') desde?: string, @Query('hasta') hasta?: string) {
-    return await this.pedidosFlujo.kpis(desde, hasta);
+  async kpisPedidos(@Req() req: any, @Query('desde') desde?: string, @Query('hasta') hasta?: string) {
+    const alcance = await this.stockClientes.alcancePedidos({ id: req?.user?.id, email: req?.user?.email });
+    return await this.pedidosFlujo.kpis(desde, hasta, alcance.todos ? null : alcance.ruts);
   }
 
   // Vincula la solicitud con la cotización creada a partir de ella.
