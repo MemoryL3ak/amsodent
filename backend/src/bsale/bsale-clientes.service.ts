@@ -22,49 +22,8 @@ import { BsaleFacturacionService, normRut } from './bsale-facturacion.service';
    mostrarlo. Con BSALE_EMISION=off solo se informa (misma llave que el resto
    de la emisión). La misma lectura de giros está en src/lib/giros.js. */
 
-export const GIRO_MAX = 80; // largo de cada giro en la ficha
-export const GIROS_MAX = 6; // cuántos giros admite la ficha
-export const ACTIVITY_MAX = 80; // lo que se manda a Bsale (un solo texto)
-export const SEPARADOR_GIROS = ' / ';
-
-const clave = (s: any) => String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
-
-/* Lista limpia: sin vacíos ni repetidos (sin distinguir mayúsculas ni tildes),
-   cada uno recortado a GIRO_MAX y como mucho GIROS_MAX. Acepta un arreglo o un
-   texto con un giro por línea. */
-export function normalizarGiros(valor: any): string[] {
-  const crudos: any[] = Array.isArray(valor) ? valor : String(valor ?? '').split(/\r?\n/);
-  const vistos = new Set<string>();
-  const out: string[] = [];
-  for (const v of crudos) {
-    const g = String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, GIRO_MAX).trim();
-    if (!g) continue;
-    const k = clave(g);
-    if (vistos.has(k)) continue;
-    vistos.add(k);
-    out.push(g);
-    if (out.length >= GIROS_MAX) break;
-  }
-  return out;
-}
-
-/* Un solo texto para `activity`: los giros que quepan, en orden, unidos con « / ». */
-export function girosParaBsale(giros: any): string {
-  const lista = normalizarGiros(giros);
-  if (!lista.length) return '';
-  let acc = '';
-  for (const g of lista) {
-    const sig = acc ? `${acc}${SEPARADOR_GIROS}${g}` : g;
-    if (sig.length > ACTIVITY_MAX) break;
-    acc = sig;
-  }
-  return acc || lista[0].slice(0, ACTIVITY_MAX).trim();
-}
-
-/* Giros de una fila de `clientes` (tolera la columna sin migrar). */
-export function leerGiros(fila: any): string[] {
-  return normalizarGiros(Array.isArray(fila?.giros) ? fila.giros : []);
-}
+import { ACTIVITY_MAX, clave, girosParaBsale, leerGiros, normalizarGiros } from './bsale-giros';
+export { ACTIVITY_MAX, GIRO_MAX, GIROS_MAX, SEPARADOR_GIROS, girosParaBsale, leerGiros, normalizarGiros } from './bsale-giros';
 
 export type ResultadoGirosBsale = {
   estado: 'actualizado' | 'sin_cambios' | 'no_esta_en_bsale' | 'apagada' | 'sin_rut' | 'sin_giros' | 'error';
@@ -134,6 +93,9 @@ export class BsaleClientesService {
     const esperado = girosParaBsale(ficha?.giros || []);
     const enBsale = String(activityBsale ?? '').replace(/\s+/g, ' ').trim();
     if (!esperado || clave(esperado) === clave(enBsale)) return null;
+    // (2026-11-05) Al emitir una factura se elige UNO de los giros de la ficha
+    // y Bsale queda con ese: no es una diferencia que avisar.
+    if ((ficha?.giros || []).some((g: string) => clave(g) === clave(enBsale))) return null;
     return `En Bsale el giro de este cliente es «${enBsale || '—'}» y en su ficha «${esperado}»: el documento sale con el de Bsale. Para cambiarlo, guarda la ficha del cliente (se envía a Bsale) o corrígelo en Bsale.`;
   }
 

@@ -83,6 +83,8 @@ export class BsaleFacturacionController {
       // (2026-10-24) Edición de líneas: cantidad/observación/precio/quitar de las de la guía, y productos agregados.
       lineas?: { detalle_id: number; cantidad?: number; nota?: string | null; neto_unitario?: number }[];
       extras?: { sku: string; producto?: string; cantidad: number; neto_unitario: number; nota?: string | null }[];
+      // (2026-11-05) Giro con el que sale la factura, cuando la ficha del cliente tiene varios.
+      giro?: string;
     },
   ) {
     return this.facturacion.emitir(

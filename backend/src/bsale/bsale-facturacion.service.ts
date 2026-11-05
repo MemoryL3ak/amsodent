@@ -12,6 +12,7 @@ import { SupabaseService } from '../supabase/supabase.service';
 import { CorreosService } from '../correos/correos.service';
 import { LicitacionesService } from '../licitaciones/licitaciones.service';
 import { permisosEfectivos } from '../auth/permisos';
+import { ACTIVITY_MAX, leerGiros, mismoGiro, variantesRutFicha } from './bsale-giros';
 
 /* ── Emisión de facturas en Bsale desde el sistema (2026-10-02) ──────────────
    La factura se arma A PARTIR DE LA GUÍA DE DESPACHO que ya existe en Bsale,
@@ -1278,6 +1279,18 @@ export class BsaleFacturacionService {
       avisos.push({ codigo: 'cotizacion_sin_rut', mensaje: `La cotización no tiene RUT cargado: no se pudo comprobar que la guía sea de este cliente (${cliente.code}).` });
     }
 
+    /* (2026-11-05) Pedido de Ariel: "al emitir una factura de un cliente que
+       tiene más de un giro registrado, seleccionar qué giro queremos para la
+       factura". Bsale guarda UN giro por cliente y el documento sale con el
+       que tenga al emitir, así que el elegido se le pone al cliente justo
+       antes (ver ponerGiroCliente). Solo se ofrece cuando la ficha tiene más
+       de uno; por defecto, el que Bsale ya tiene si es uno de ellos, y si no,
+       el principal (el primero de la ficha). */
+    const giroBsale = String(cliente?.activity || '').replace(/\s+/g, ' ').trim();
+    const girosFicha = cliente ? await this.girosDeFicha(cliente.code || lic.rut_entidad) : [];
+    const giros = girosFicha.length > 1 ? girosFicha : [];
+    const giroElegido = giros.find((g) => mismoGiro(g, giroBsale)) || giros[0] || null;
+
     // ¿Alguna ya está facturada en Bsale?
     let recuperar: { emision_id: number; numero: string; doc: any } | null = null;
     if (guias.length && Number.isFinite(primeraEmision)) {
@@ -1412,6 +1425,9 @@ export class BsaleFacturacionService {
             ciudad: String(cliente.city || ''),
           }
         : null,
+      // Giros de la ficha para elegir con cuál sale la factura ([] = no se elige).
+      giros,
+      giro_elegido: giroElegido,
       guias,
       guias_disponibles: disponibles,
       lineas,
@@ -1457,6 +1473,35 @@ export class BsaleFacturacionService {
     return items.find((d) => Number(d?.state) !== 1) || items[0] || null;
   }
 
+  /* (2026-11-05) Giros de la ficha del cliente en el sistema (clientes.giros).
+     [] si no hay ficha, si el RUT no calza o si la columna no está migrada. */
+  private async girosDeFicha(rut: any): Promise<string[]> {
+    const variantes = variantesRutFicha(rut);
+    if (!variantes.length) return [];
+    const { data, error } = await this.supabase.getClient().from('clientes').select('id, giros').in('rut', variantes).order('id', { ascending: true }).limit(1);
+    if (error) return [];
+    return leerGiros((data || [])[0]);
+  }
+
+  /* Deja en Bsale el giro elegido para la factura. Se repiten los datos que
+     Bsale ya tiene para que el PUT no los borre (igual que al guardar la
+     ficha, BsaleClientesService.sincronizarGiros). Si falla, no se emite. */
+  private async ponerGiroCliente(clienteId: number, giro: string) {
+    try {
+      const c = await this.apiGet(`/clients/${clienteId}.json`);
+      const solicitud: Record<string, any> = { id: clienteId, activity: giro.slice(0, ACTIVITY_MAX) };
+      for (const k of ['firstName', 'lastName', 'company', 'email', 'phone', 'address', 'city', 'municipality', 'note', 'facebook', 'twitter', 'hasCredit', 'maxCredit', 'accumulatePoints']) {
+        if (c?.[k] !== undefined && c[k] !== null) solicitud[k] = c[k];
+      }
+      const r = await this.apiEnviar('PUT', `/clients/${clienteId}.json`, solicitud);
+      const quedo = String(r?.activity ?? '').replace(/\s+/g, ' ').trim();
+      if (quedo && !mismoGiro(quedo, solicitud.activity)) throw new Error(`Bsale guardó «${quedo}»`);
+      this.logger.log(`Giro del cliente ${clienteId} en Bsale: «${solicitud.activity}» (elegido para la factura)`);
+    } catch (e: any) {
+      throw new BadRequestException(`No se pudo dejar en Bsale el giro elegido («${giro}»): ${String(e?.message || e).slice(0, 200)}. La factura no se emitió.`);
+    }
+  }
+
   // Resume lo que define la factura; si cambia entre revisar y emitir, se frena.
   huellaDe(b: any): string {
     const base = JSON.stringify({
@@ -1484,6 +1529,8 @@ export class BsaleFacturacionService {
       simular?: boolean;
       lineas?: EdicionLinea[];
       extras?: LineaExtra[];
+      // (2026-11-05) Giro con el que sale la factura (uno de los de la ficha).
+      giro?: string;
     },
   ) {
     await this.exigirRol(usuario.id);
@@ -1559,6 +1606,17 @@ export class BsaleFacturacionService {
 
     const opciones = { fecha_emision: fecha, dias_vencimiento: dias, forma_pago_id: forma };
 
+    // (2026-11-05) Giro elegido: debe ser uno de los de la ficha. Si no es el
+    // que Bsale tiene hoy, se le pone al cliente antes de emitir.
+    const giroPedido = String(body?.giro ?? '').replace(/\s+/g, ' ').trim();
+    const giroFactura = giroPedido ? b.giros.find((g) => mismoGiro(g, giroPedido)) || null : null;
+    if (giroPedido && !giroFactura) throw new BadRequestException('El giro elegido no está entre los de la ficha del cliente. Vuelve a abrir el borrador.');
+    const giroAntes = String(b.cliente?.giro || '');
+    const cambiaGiro = !!giroFactura && !mismoGiro(giroFactura, giroAntes);
+    const avisoGiro = cambiaGiro
+      ? `La factura sale con el giro «${giroFactura}»: el cliente queda con ese giro en Bsale (hoy tiene «${giroAntes || '—'}»).`
+      : '';
+
     if (!real) {
       const solicitud = armarSolicitud(b as any, { ...opciones, sales_id: `${clave}-0` });
       const vendedor = await this.ponerVendedor(solicitud, null, licId, usuario.email);
@@ -1582,7 +1640,7 @@ export class BsaleFacturacionService {
           descuenta_stock: despacha || copiadas.length + agregadas.length > 0,
           stock_texto: despacha ? 'Se despacha: rebaja el stock' : copiadas.length + agregadas.length ? 'Reserva stock (pendiente de despacho)' : 'No mueve stock',
           emisor: EMISOR,
-          cliente: b.cliente,
+          cliente: cambiaGiro && b.cliente ? { ...b.cliente, giro: giroFactura } : b.cliente,
           // Una glosa se muestra como irá: su texto, sin SKU de Bsale.
           lineas: b.lineas.map((l) => ({ sku: l.glosa ? '' : l.sku, producto: l.glosa ? glosaDe(l) : l.producto, cantidad: l.cantidad, neto_unitario: l.neto_unitario, neto: l.neto, guia: l.guia || null, enlazada: l.enlazada !== false, extra: !!l.extra, glosa: !!l.glosa, observacion: l.glosa ? null : l.nota || null, sku_guia: l.sku_guia || null })),
           totales: b.totales,
@@ -1610,6 +1668,7 @@ export class BsaleFacturacionService {
                   : 'Las líneas quedan enlazadas a la guía: el stock no se descuenta otra vez.',
             ...edicion.avisos,
             ...(vendedor.aviso ? [vendedor.aviso] : []),
+            avisoGiro,
           ].filter(Boolean),
         },
       };
@@ -1629,6 +1688,8 @@ export class BsaleFacturacionService {
     const salesId = `${clave}-${previas || 0}`;
     const solicitud = armarSolicitud(b as any, { ...opciones, sales_id: salesId });
     await this.ponerVendedor(solicitud, null, licId, usuario.email);
+    // Antes de registrar el intento: si Bsale no toma el giro, no se emite.
+    if (cambiaGiro && b.cliente) await this.ponerGiroCliente(Number(b.cliente.id), giroFactura as string);
 
     const fila = {
       sales_id: salesId,
@@ -1723,6 +1784,7 @@ export class BsaleFacturacionService {
       if (faltan.length) avisosEmision.push(`Bsale no tomó la observación de ${faltan.join(', ')}: revísala en el documento en Bsale.`);
     }
     avisosEmision.push(...edicion.avisos);
+    if (avisoGiro) avisosEmision.push(`La factura salió con el giro «${giroFactura}»: el cliente quedó con ese giro en Bsale (antes «${giroAntes || '—'}»).`);
 
     return this.registrarEnSistema({ id: emisionId, ...fila, ...emitida }, usuario.email, avisosEmision);
   }

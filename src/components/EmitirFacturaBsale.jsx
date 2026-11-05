@@ -93,6 +93,8 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
   const [dias, setDias] = useState("");
   const [forma, setForma] = useState("");
   const [oc, setOc] = useState("");
+  // (2026-11-05) Giro con el que sale la factura, cuando la ficha del cliente tiene más de uno.
+  const [giro, setGiro] = useState("");
   // (2026-10-24) Edición de líneas: por detalle_id { cantidad, nota, quitada }; y productos agregados.
   const [edits, setEdits] = useState({});
   const [extras, setExtras] = useState([]); // { key, sku, producto, cantidad, neto_unitario, nota }
@@ -113,6 +115,7 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
     dias,
     forma,
     oc: oc.trim().toUpperCase(),
+    giro,
     edits,
     extras: extras.map((x) => [x.sku, x.cantidad, x.neto_unitario, x.nota]),
   });
@@ -137,6 +140,7 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
         setDias((v) => (v !== "" ? v : String(b.dias_vencimiento ?? 30)));
         setForma((v) => (v && b.formas_pago.some((f) => String(f.id) === String(v)) ? v : String(b.forma_pago_id ?? "")));
         setOc((b.referencias.find((r) => r.codigo_sii === 801) || {}).numero || "");
+        setGiro((v) => (v && (b.giros || []).includes(v) ? v : b.giro_elegido || ""));
       })
       .catch((e) => vivo && setError(e?.message || "No se pudo consultar Bsale."))
       .finally(() => vivo && setCargando(false));
@@ -231,6 +235,9 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
   const hayGlosas = lineasActivas.some(esGlosa);
   const hayNoVenta = lineasActivas.some((l) => l.glosa);
   const todasSeleccionadas = (borrador?.guias_disponibles || []).length > 0 && borrador.guias_disponibles.every((g) => seleccion.includes(g.doc_id));
+  // (2026-11-05) Solo se elige giro cuando la ficha del cliente tiene más de uno.
+  const eligeGiro = (borrador?.giros || []).length > 1;
+  const opcionesGiro = useMemo(() => (borrador?.giros || []).map((g) => ({ value: g, label: g })), [borrador]);
   const opcionesForma = useMemo(
     () => (borrador?.formas_pago || []).map((f) => ({ value: String(f.id), label: f.nombre })),
     [borrador],
@@ -258,6 +265,7 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
         forma_pago_id: Number(forma),
         // Solo viaja si se corrigió: el servidor usa la de la guía por defecto.
         ...(borrador.oc_editable && oc.trim() && oc.trim().toUpperCase() !== ocOriginal ? { oc_numero: oc.trim() } : {}),
+        ...(eligeGiro && giro ? { giro } : {}),
         huella: borrador.huella,
         // (2026-10-24) Líneas de la guía que se facturan (las quitadas no van), con cantidad y observación; y productos agregados.
         lineas: lineasActivas.map((l) => ({ detalle_id: l.detalle_id, cantidad: cantidadDe(l), nota: edits[l.detalle_id]?.nota ?? l.nota ?? "", ...(precioCambiado(l) ? { neto_unitario: precioDe(l) } : {}), ...(skuCambiado(l) ? { sku: skuDe(l), producto: productoDe(l) } : {}) })),
@@ -408,8 +416,19 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
                           <div style={{ fontWeight: 600 }}>{borrador.cliente.razon_social || "—"}</div>
                           <div>RUT {borrador.cliente.rut || "—"}</div>
                           <div style={{ color: "var(--text-muted)", fontSize: 12 }}>
-                            {[borrador.cliente.giro, borrador.cliente.direccion, borrador.cliente.comuna].filter(Boolean).join(" · ") || "Sin giro ni dirección"}
+                            {[eligeGiro ? "" : borrador.cliente.giro, borrador.cliente.direccion, borrador.cliente.comuna].filter(Boolean).join(" · ") || (eligeGiro ? "Sin dirección" : "Sin giro ni dirección")}
                           </div>
+                          {eligeGiro && (
+                            <div className="factura-giro" style={{ marginTop: 8 }}>
+                              <span style={etiqueta}>Giro de esta factura</span>
+                              <DropdownSelect value={giro} onChange={setGiro} options={opcionesGiro} disabled={!!enviando} minWidth={240} style={{ width: "100%" }} />
+                              <div style={{ color: "var(--text-muted)", fontSize: 11.5, marginTop: 4 }}>
+                                {giro && giro.trim().toLowerCase() === String(borrador.cliente.giro || "").trim().toLowerCase()
+                                  ? "Es el giro que el cliente tiene hoy en Bsale."
+                                  : `En Bsale hoy tiene «${borrador.cliente.giro || "—"}»: al emitir quedará con el giro elegido.`}
+                              </div>
+                            </div>
+                          )}
                         </div>
                       ) : (
                         <div style={{ fontSize: 13, color: "var(--text-muted)" }}>Sin cliente.</div>
