@@ -1301,7 +1301,7 @@ function FeatureItem({ icono: Icono, titulo, texto, delay = 0 }) {
    PASO 3 — Declaración de productos + semáforo
    ────────────────────────────────────────────────────────────────────── */
 function PantallaDeclaracion({ cliente, setToast }) {
-  const [tab, setTab] = useState("resumen"); // resumen | declaracion | inventario | solicitudes | explorador | usuarios
+  const [tab, setTab] = useState("resumen"); // resumen | declaracion | recepcion | inventario | solicitudes | explorador | usuarios
   /* (2026-10-19) Inventario por lotes de costo: con las tablas listas, en
      Gestión de Stock el stock solo baja, el precio unitario no se edita (es el
      costo promedio de los lotes) y los productos nuevos entran por Inventario. */
@@ -1361,7 +1361,7 @@ function PantallaDeclaracion({ cliente, setToast }) {
   const habil = (clave) => (clave === "solicitudes" ? habilCrudo(clave) || puedePedir : habilCrudo(clave));
   const permitido = (t) =>
     t === "resumen" ||
-    (t === "usuarios" ? esAdminPortal : t === "explorador" ? habil("explorador") || puedePedir : t === "inventario" ? habil("declaracion") && inventarioListo : habil(t));
+    (t === "usuarios" ? esAdminPortal : t === "explorador" ? habil("explorador") || puedePedir : t === "inventario" || t === "recepcion" ? habil("declaracion") && inventarioListo : habil(t));
   const tabActiva = permitido(tab) ? tab : "resumen";
   // Cupo de crédito, para mostrarlo en el resumen comercial (punto 7 y 29).
   const [creditoCliente, setCreditoCliente] = useState(null);
@@ -1695,7 +1695,7 @@ function PantallaDeclaracion({ cliente, setToast }) {
         setToast({
           type: "warning",
           titulo: "Aquí el stock solo puede bajar",
-          mensaje: `Para sumar stock a «${subidos[0].nombre}»${subidos.length > 1 ? ` y ${subidos.length - 1} más` : ""} usa Inventario: cada ingreso queda con su costo.`,
+          mensaje: `Para sumar stock a «${subidos[0].nombre}»${subidos.length > 1 ? ` y ${subidos.length - 1} más` : ""} usa Recepción o Inventario: cada ingreso queda con su costo.`,
         });
         return;
       }
@@ -2051,6 +2051,14 @@ function PantallaDeclaracion({ cliente, setToast }) {
       ) : tabActiva === "explorador" ? (
         // Sin Explorador habilitado, la pestaña muestra solo el carrito ("Mi pedido").
         <PanelExploradorPrecios soloCarrito={!habil("explorador")} />
+      ) : tabActiva === "recepcion" ? (
+        <PanelRecepcion
+          sucursalId={sucursalId}
+          sucursales={sucursales}
+          onCambiarSucursal={(v) => setSucursalId(v || null)}
+          setToast={setToast}
+          onCambio={() => setRecargaStock((n) => n + 1)}
+        />
       ) : tabActiva === "inventario" ? (
         <PanelInventario
           sucursalId={sucursalId}
@@ -2079,7 +2087,7 @@ function PantallaDeclaracion({ cliente, setToast }) {
             <div style={styles.declTitulo}>{inventarioListo ? "Stock de la clínica" : "Inventario Clínica"}</div>
             <div style={styles.declSub}>
               {inventarioListo
-                ? "Registre lo que se usa: aquí el stock solo baja (lo que entra se ingresa en Inventario, con su costo). El precio unitario es el costo promedio de lo que queda."
+                ? "Registre lo que se usa: aquí el stock solo baja (lo que entra se ingresa en Recepción o en Inventario, con su costo). El precio unitario promedio es el costo promedio de lo que queda."
                 : "Declare su stock actual y los umbrales de stock bajo y crítico. El semáforo se calcula automáticamente."}
               {!esAdminPortal && " El stock bajo y el crítico los define el administrador de la cuenta."}
             </div>
@@ -2091,8 +2099,8 @@ function PantallaDeclaracion({ cliente, setToast }) {
               disabled={itemsCriticos.length + itemsBajos.length === 0}
             />
             {inventarioListo ? (
-              <button onClick={() => setTab("inventario")} style={styles.btnSecundarioOutline} className="btn-hover ir-inventario" title="Los productos nuevos y el stock que entra se ingresan en Inventario, con su costo">
-                <PackagePlus size={15} /> Ingresar stock en Inventario
+              <button onClick={() => setTab("recepcion")} style={styles.btnSecundarioOutline} className="btn-hover ir-recepcion" title="Registrar la mercadería que llegó: con su guía, factura o despacho interno, o sin documento">
+                <Truck size={15} /> Recibir mercadería
               </button>
             ) : (
               <>
@@ -2288,7 +2296,7 @@ function PantallaDeclaracion({ cliente, setToast }) {
                         onChange={(e) => actualizarItem(idx, "stock_actual", e.target.value)}
                         placeholder="0"
                         max={inventarioListo && it.id && stockGuardado.has(it.id) ? stockGuardado.get(it.id) : undefined}
-                        title={inventarioListo ? "Aquí el stock solo puede bajar (lo que se usa). Para sumar stock usa Inventario." : undefined}
+                        title={inventarioListo ? "Aquí el stock solo puede bajar (lo que se usa). Para sumar stock usa Recepción o Inventario." : undefined}
                         className={inventarioListo && it.id && (Number(it.stock_actual) || 0) > (stockGuardado.get(it.id) ?? Infinity) ? "stock-sube" : undefined}
                         style={{ ...styles.cellInput, textAlign: "right", ...(inventarioListo && it.id && (Number(it.stock_actual) || 0) > (stockGuardado.get(it.id) ?? Infinity) ? { borderColor: "#dc2626", color: "#b91c1c" } : {}) }}
                       />
@@ -3393,6 +3401,8 @@ function TabNavigator({ tab, onChange, contadorSolicitudes, contadorOfertas = 0,
     { id: "resumen", label: "Resumen", icono: Activity },
     habil("declaracion") && { id: "declaracion", label: "Gestión de Stock", icono: Database },
     // (2026-10-19) Ingresos de stock por lotes de costo; va con Gestión de Stock.
+    // (2026-11-05) Recepción: cargar stock según la guía, factura o despacho interno (o sin documento).
+    habil("declaracion") && conInventario && { id: "recepcion", label: "Recepción", icono: Truck },
     habil("declaracion") && conInventario && { id: "inventario", label: "Inventario", icono: Boxes },
     habil("solicitudes") && { id: "solicitudes", label: "Mis cotizaciones", icono: FileSpreadsheet },
     habil("ofertas") && { id: "ofertas", label: "Ofertas", icono: Tag },
@@ -3672,8 +3682,8 @@ function PanelInventario({ sucursalId, sucursales = [], onCambiarSucursal, setTo
         <div>
           <div style={styles.declTitulo}>Inventario</div>
           <div style={styles.declSub}>
-            Aquí entra el stock nuevo: cada ingreso queda como un lote con su costo. Lo que se usa se descuenta en
-            Gestión de Stock, primero del lote más antiguo, y el precio unitario es el costo promedio de lo que queda.
+            Aquí entra el stock nuevo: cada ingreso queda como un lote con su costo (también los que llegan por Recepción). Lo que se usa se
+            descuenta en Gestión de Stock, primero del lote más antiguo, y el precio unitario promedio es el costo promedio de lo que queda.
           </div>
         </div>
         <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
@@ -3913,6 +3923,525 @@ function ModalIngresoInventario({ producto, guardando, onCerrar, onGuardar }) {
           <button type="button" onClick={guardar} disabled={!ok} style={{ ...styles.btnPrimarioChico, opacity: ok ? 1 : 0.55, cursor: ok ? "pointer" : "not-allowed" }}>
             <Save size={14} /> {guardando ? "Guardando…" : nuevo ? "Crear e ingresar" : "Ingresar stock"}
           </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+/* ──────────────────────────────────────────────────────────────────────
+   Recepción de mercadería (2026-11-05)
+   Pedido de Ariel: "Crear módulo «Recepción», el cual sirve para cargar stock.
+   El stock se carga según Guía, Factura o Despacho Interno o sin documentos
+   asociados". Es el ingreso del Inventario, pero partiendo de lo que llegó:
+   se elige la guía, la factura o el despacho interno que Amsodent emitió (sus
+   productos, cantidades y precios se cargan solos) o se arma a mano sin
+   documento. Cada línea entra al Inventario como un lote con su costo. El
+   historial queda con su documento, quién la registró y el detalle.
+   El cálculo vive en el backend (recepcion-portal.service.ts).
+   ────────────────────────────────────────────────────────────────────── */
+const TIPOS_RECEPCION = [
+  { clave: "guia", nombre: "Guía de despacho", detalle: "Una guía que le emitió Amsodent", Icono: Truck },
+  { clave: "factura", nombre: "Factura", detalle: "Una factura o boleta de Amsodent", Icono: FileText },
+  { clave: "despacho_interno", nombre: "Despacho interno", detalle: "Reparto propio de Amsodent", Icono: ClipboardCheck },
+  { clave: "sin_documento", nombre: "Sin documento", detalle: "Otro proveedor, muestras, ajustes", Icono: PackagePlus },
+];
+const nombreTipoRecepcion = (clave) => TIPOS_RECEPCION.find((t) => t.clave === clave)?.nombre || "Documento";
+const RECEPCIONES_POR_PAGINA = 10;
+const soloDigitos = (v) => String(v ?? "").replace(/[^\d]/g, "");
+const aNumero = (v) => Number(String(v ?? "").replace(",", ".")) || 0;
+let secuenciaLineaRecepcion = 0;
+const nuevaLineaManual = () => ({ key: `m${++secuenciaLineaRecepcion}`, origen: "manual", producto_id: "", nombre: "", sku: "", formato: "", cantidad: "", costo: "" });
+
+function PanelRecepcion({ sucursalId, sucursales = [], onCambiarSucursal, setToast, onCambio }) {
+  const [datos, setDatos] = useState(null);
+  const [cargando, setCargando] = useState(true);
+  const [error, setError] = useState("");
+  const [abierta, setAbierta] = useState(null);
+  const [pagina, setPagina] = useState(1);
+  const [nueva, setNueva] = useState(false);
+
+  const cargar = useCallback(async () => {
+    if (!sucursalId) return;
+    setCargando(true);
+    setError("");
+    try {
+      setDatos(await apiRequest(`/stock-clientes/recepciones?sucursal_id=${sucursalId}`));
+    } catch (e) {
+      setError(e?.message || "No se pudieron cargar las recepciones.");
+    } finally {
+      setCargando(false);
+    }
+  }, [sucursalId]);
+  useEffect(() => { cargar(); }, [cargar]);
+  useEffect(() => { setPagina(1); setAbierta(null); }, [sucursalId]);
+
+  const recepciones = datos?.recepciones || [];
+  const paginas = Math.max(1, Math.ceil(recepciones.length / RECEPCIONES_POR_PAGINA));
+  const paginaActual = Math.min(pagina, paginas);
+  const visibles = recepciones.slice((paginaActual - 1) * RECEPCIONES_POR_PAGINA, paginaActual * RECEPCIONES_POR_PAGINA);
+
+  return (
+    <div style={styles.declCard} className="panel-recepcion">
+      <div style={styles.declCardHeader}>
+        <div>
+          <div style={styles.declTitulo}>Recepción</div>
+          <div style={styles.declSub}>
+            Registre la mercadería que llega: elija la guía, la factura o el despacho interno de Amsodent (sus productos se cargan solos) o
+            ingrésela sin documento. Cada producto recibido entra al Inventario como un lote con su costo y sube el stock.
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          <button onClick={() => setNueva(true)} disabled={datos?.listo === false || !sucursalId} style={{ ...styles.btnPrimarioChico, opacity: datos?.listo === false ? 0.55 : 1 }} className="btn-hover btn-nueva-recepcion">
+            <PackagePlus size={15} /> Nueva recepción
+          </button>
+        </div>
+      </div>
+
+      {sucursales.length > 1 && (
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", padding: "0 0 14px", borderBottom: "1px solid #eef2f7", marginBottom: 14 }}>
+          <span style={{ fontSize: 13, fontWeight: 600, color: "#334155" }}>Sucursal:</span>
+          <DropdownSelect
+            value={sucursalId ?? ""}
+            onChange={onCambiarSucursal}
+            minWidth={240}
+            style={{ width: 260, flex: "0 1 260px", minWidth: 180, maxWidth: "100%", height: 38, fontSize: 13.5, borderRadius: 8 }}
+            options={sucursales.map((s) => ({ value: s.id, label: s.nombre, detalle: s.direccion || undefined }))}
+          />
+        </div>
+      )}
+
+      {datos?.listo === false ? (
+        <div style={{ padding: 16, color: "#92400e", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 10, fontSize: 13 }}>{datos.mensaje}</div>
+      ) : cargando && !datos ? (
+        <div style={{ padding: 24, color: "#64748b", fontSize: 13 }}>Cargando recepciones…</div>
+      ) : error ? (
+        <div style={{ padding: 24, color: "#b91c1c", fontSize: 13 }}>{error}</div>
+      ) : !recepciones.length ? (
+        <div style={{ padding: 24, color: "#64748b", fontSize: 13 }}>
+          Todavía no hay recepciones registradas en esta sucursal. Use «Nueva recepción» cuando llegue mercadería.
+        </div>
+      ) : (
+        <>
+          <div style={{ overflowX: "auto" }}>
+            <table className="tabla-recepciones-portal" style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 620 }}>
+              <thead>
+                <tr style={{ background: "#f8fafc" }}>
+                  <th style={{ ...thPortal, width: 26 }} aria-label="Detalle" />
+                  <th style={thPortal}>Fecha</th>
+                  <th style={thPortal}>Documento</th>
+                  <th style={{ ...thPortal, textAlign: "right" }}>Productos</th>
+                  <th style={{ ...thPortal, textAlign: "right" }}>Unidades</th>
+                  <th style={{ ...thPortal, textAlign: "right" }}>Valor (a costo)</th>
+                  <th style={thPortal}>Registró</th>
+                </tr>
+              </thead>
+              <tbody>
+                {visibles.map((r) => {
+                  const ab = abierta === r.id;
+                  return (
+                    <Fragment key={r.id}>
+                      <tr style={{ borderTop: "1px solid #f1f5f9", cursor: "pointer" }} onClick={() => setAbierta(ab ? null : r.id)} title={ab ? "Ocultar el detalle" : "Ver los productos recibidos"}>
+                        <td style={tdPortal}>{ab ? <ChevronDown size={15} /> : <ChevronRight size={15} />}</td>
+                        <td style={{ ...tdPortal, whiteSpace: "nowrap" }}>
+                          <div style={{ fontWeight: 700, color: "#0f172a" }}>{fmtFechaCL(r.fecha)}</div>
+                          <div style={{ fontSize: 11.5, color: "#94a3b8" }}>N° {r.id}</div>
+                        </td>
+                        <td style={{ ...tdPortal, minWidth: 150 }}>
+                          <div style={{ fontWeight: 600, color: "#0f172a", overflowWrap: "anywhere" }}>{r.documento}</div>
+                          {r.nota && <div style={{ fontSize: 11.5, color: "#64748b", overflowWrap: "anywhere" }}>{r.nota}</div>}
+                        </td>
+                        <td style={{ ...tdPortal, textAlign: "right" }}>{r.total_lineas}</td>
+                        <td style={{ ...tdPortal, textAlign: "right", fontWeight: 700, whiteSpace: "nowrap" }}>{fmtCant(r.total_unidades)}</td>
+                        <td style={{ ...tdPortal, textAlign: "right", whiteSpace: "nowrap" }}>{fmtPesos(r.total_valor)}</td>
+                        <td style={{ ...tdPortal, fontSize: 12, color: "#64748b", overflowWrap: "anywhere" }}>{r.usuario || "—"}</td>
+                      </tr>
+                      {ab && (
+                        <tr className="detalle-recepcion">
+                          <td colSpan={7} style={{ background: "#f8fafc", padding: "10px 14px" }}>
+                            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, background: "#fff", borderRadius: 8 }}>
+                              <thead>
+                                <tr>
+                                  <th style={thPortal}>Producto</th>
+                                  <th style={{ ...thPortal, textAlign: "right" }}>Cantidad</th>
+                                  <th style={{ ...thPortal, textAlign: "right" }}>Costo unit.</th>
+                                  <th style={{ ...thPortal, textAlign: "right" }}>Subtotal</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {r.lineas.map((l) => (
+                                  <tr key={l.id} style={{ borderTop: "1px solid #f1f5f9" }}>
+                                    <td style={tdPortal}>
+                                      <span style={{ fontWeight: 600, color: "#0f172a", overflowWrap: "anywhere" }}>{l.nombre}</span>
+                                      {l.sku && <span style={{ color: "#94a3b8" }}> · {l.sku}</span>}
+                                      {l.producto_creado && <span style={{ marginLeft: 6, fontSize: 10.5, fontWeight: 700, color: "#0369a1", background: "#e0f2fe", borderRadius: 999, padding: "1px 7px" }}>nuevo en inventario</span>}
+                                    </td>
+                                    <td style={{ ...tdPortal, textAlign: "right", fontWeight: 700 }}>+{fmtCant(l.cantidad)}</td>
+                                    <td style={{ ...tdPortal, textAlign: "right" }}>{fmtPesos(l.costo_unitario)}</td>
+                                    <td style={{ ...tdPortal, textAlign: "right" }}>{fmtPesos(l.cantidad * l.costo_unitario)}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          {recepciones.length > RECEPCIONES_POR_PAGINA && (
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap", marginTop: 10, fontSize: 12.5, color: "#64748b" }}>
+              <span>{(paginaActual - 1) * RECEPCIONES_POR_PAGINA + 1}–{Math.min(paginaActual * RECEPCIONES_POR_PAGINA, recepciones.length)} de {recepciones.length} recepciones</span>
+              <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+                <button type="button" style={styles.btnSecundarioChico} disabled={paginaActual <= 1} onClick={() => { setPagina(paginaActual - 1); setAbierta(null); }}>Anterior</button>
+                <span>Página {paginaActual} de {paginas}</span>
+                <button type="button" style={styles.btnSecundarioChico} disabled={paginaActual >= paginas} onClick={() => { setPagina(paginaActual + 1); setAbierta(null); }}>Siguiente</button>
+              </span>
+            </div>
+          )}
+        </>
+      )}
+
+      {nueva && (
+        <ModalNuevaRecepcion
+          sucursalId={sucursalId}
+          onCerrar={() => setNueva(false)}
+          onRegistrada={(r) => {
+            setNueva(false);
+            const conError = (r?.errores || []).length;
+            setToast({
+              type: conError ? "warning" : "success",
+              titulo: `Recepción N° ${r?.id} registrada`,
+              mensaje: `${r?.lineas} producto${r?.lineas === 1 ? "" : "s"} y ${fmtCant(r?.unidades)} unidades entraron al Inventario${r?.creados ? ` (${r.creados} producto${r.creados === 1 ? " nuevo" : "s nuevos"})` : ""}.${conError ? ` ${conError} línea${conError === 1 ? "" : "s"} no se pudo ingresar: ${r.errores.slice(0, 2).map((e) => e.nombre || `línea ${e.linea}`).join(", ")}.` : ""}`,
+            });
+            cargar();
+            onCambio?.();
+          }}
+          setToast={setToast}
+        />
+      )}
+    </div>
+  );
+}
+
+function ModalNuevaRecepcion({ sucursalId, onCerrar, onRegistrada, setToast }) {
+  const [tipo, setTipo] = useState("");
+  const [documentos, setDocumentos] = useState(null); // del tipo elegido
+  const [docId, setDocId] = useState(""); // id del documento | "otro"
+  const [numeroLibre, setNumeroLibre] = useState("");
+  const [fuente, setFuente] = useState("");
+  const [lineas, setLineas] = useState([]);
+  const [cargandoLineas, setCargandoLineas] = useState(false);
+  const [propios, setPropios] = useState([]); // productos del inventario del cliente
+  const [fecha, setFecha] = useState(hoyChile());
+  const [nota, setNota] = useState("");
+  const [guardando, setGuardando] = useState(false);
+  const [error, setError] = useState("");
+
+  // Inventario del cliente: para elegir el producto en las líneas a mano.
+  useEffect(() => {
+    apiRequest(`/stock-clientes/inventario?sucursal_id=${sucursalId}`)
+      .then((r) => setPropios(Array.isArray(r?.productos) ? r.productos : []))
+      .catch(() => setPropios([]));
+  }, [sucursalId]);
+
+  function elegirTipo(clave) {
+    setTipo(clave);
+    setDocId("");
+    setNumeroLibre("");
+    setFuente("");
+    setError("");
+    setDocumentos(null);
+    if (clave === "sin_documento") { setLineas([nuevaLineaManual()]); return; }
+    setLineas([]);
+    apiRequest(`/stock-clientes/recepciones/documentos?tipo=${clave}`)
+      .then((r) => setDocumentos(Array.isArray(r?.documentos) ? r.documentos : []))
+      .catch((e) => { setDocumentos([]); setError(e?.message || "No se pudieron cargar los documentos."); });
+  }
+
+  async function elegirDocumento(valor) {
+    setDocId(valor);
+    setError("");
+    setFuente("");
+    if (!valor) { setLineas([]); return; }
+    if (valor === "otro") { setLineas([nuevaLineaManual()]); return; }
+    setCargandoLineas(true);
+    try {
+      const r = await apiRequest(`/stock-clientes/recepciones/documentos/${valor}/lineas?sucursal_id=${sucursalId}`);
+      setFuente(r?.fuente || "");
+      setLineas((r?.lineas || []).map((l) => ({
+        key: `d${++secuenciaLineaRecepcion}`,
+        origen: "documento",
+        sku: l.sku || "",
+        nombre: l.nombre || "",
+        formato: l.formato || "",
+        cantidad: String(l.cantidad ?? ""),
+        cantidadDoc: Number(l.cantidad) || 0,
+        costo: String(Math.round(Number(l.costo_unitario) || 0)),
+        producto_id: l.producto_id || "",
+        producto_nombre: l.producto_nombre || "",
+      })));
+    } catch (e) {
+      setLineas([]);
+      setError(e?.message || "No se pudieron cargar los productos del documento.");
+    } finally {
+      setCargandoLineas(false);
+    }
+  }
+
+  const cambiar = (key, cambio) => setLineas((prev) => prev.map((l) => (l.key === key ? { ...l, ...cambio } : l)));
+  const quitar = (key) => setLineas((prev) => prev.filter((l) => l.key !== key));
+
+  const activas = lineas.filter((l) => aNumero(l.cantidad) > 0);
+  const unidades = activas.reduce((a, l) => a + aNumero(l.cantidad), 0);
+  const valor = activas.reduce((a, l) => a + aNumero(l.cantidad) * (Number(soloDigitos(l.costo)) || 0), 0);
+  const docElegido = (documentos || []).find((d) => String(d.id) === String(docId)) || null;
+  const necesitaDocumento = tipo && tipo !== "sin_documento";
+  const documentoListo = !necesitaDocumento || (docId === "otro" ? numeroLibre.trim().length > 0 : !!docElegido);
+  const lineaIncompleta = activas.find((l) => soloDigitos(l.costo) === "" || (l.origen === "manual" && !l.producto_id) || (l.origen === "manual" && l.producto_id === "__nuevo" && !l.nombre.trim()));
+  const puedeGuardar = !!tipo && documentoListo && activas.length > 0 && !lineaIncompleta && !guardando;
+
+  async function guardar() {
+    if (!puedeGuardar) return;
+    setGuardando(true);
+    setError("");
+    try {
+      const r = await apiRequest("/stock-clientes/recepciones", {
+        method: "POST",
+        body: JSON.stringify({
+          tipo_documento: tipo,
+          documento_id: docElegido ? docElegido.id : null,
+          documento_numero: docId === "otro" ? numeroLibre.trim() : docElegido?.numero || "",
+          sucursal_id: sucursalId,
+          fecha,
+          nota: nota.trim(),
+          lineas: activas.map((l) => {
+            const base = { cantidad: aNumero(l.cantidad), costo_unitario: Number(soloDigitos(l.costo)) || 0, sku: l.sku, nombre: l.nombre };
+            if (l.origen === "manual") {
+              return l.producto_id === "__nuevo"
+                ? { ...base, nuevo: { nombre: l.nombre.trim(), sku: l.sku.trim(), unidad: l.formato.trim() } }
+                : { ...base, producto_id: Number(l.producto_id) };
+            }
+            return l.producto_id ? { ...base, producto_id: Number(l.producto_id) } : { ...base, nuevo: { nombre: l.nombre, sku: l.sku, unidad: l.formato } };
+          }),
+        }),
+      });
+      onRegistrada(r);
+    } catch (e) {
+      setError(e?.message || "No se pudo registrar la recepción.");
+      setToast?.({ type: "error", titulo: "No se pudo registrar", mensaje: e?.message || "Intente nuevamente." });
+      setGuardando(false);
+    }
+  }
+
+  const opcionesPropios = [
+    ...propios.map((p) => ({ value: p.id, label: p.nombre, detalle: [p.sku, `stock ${fmtCant(p.stock_actual)}`].filter(Boolean).join(" · ") })),
+    { value: "__nuevo", label: "Producto nuevo…", detalle: "Se crea en su inventario con esta recepción" },
+  ];
+  const celda = { ...tdPortal, padding: "8px 8px" };
+  const inputChico = { ...styles.input, height: 34, padding: "0 8px", fontSize: 13, marginTop: 0, textAlign: "right" };
+
+  return createPortal(
+    <div
+      onMouseDown={(e) => { if (e.target === e.currentTarget && !guardando) onCerrar(); }}
+      style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,.55)", backdropFilter: "blur(4px)", zIndex: 13000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+    >
+      <div className="modal-nueva-recepcion" role="dialog" aria-modal="true" aria-label="Nueva recepción" style={{ width: 820, maxWidth: "100%", maxHeight: "92vh", background: "#fff", borderRadius: 16, boxShadow: "0 24px 60px -12px rgba(15,23,42,.30)", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        <div style={{ padding: "16px 22px 10px", display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
+          <div>
+            <h3 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: "#0f172a", display: "flex", alignItems: "center", gap: 8 }}>
+              <PackagePlus size={18} style={{ color: TEAL }} /> Nueva recepción
+            </h3>
+            <div style={{ fontSize: 13, color: "#64748b", marginTop: 2 }}>¿Con qué documento llegó la mercadería?</div>
+          </div>
+          <button type="button" onClick={onCerrar} disabled={guardando} aria-label="Cerrar" style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8", padding: 4 }}><X size={18} /></button>
+        </div>
+
+        <div style={{ padding: "0 22px 14px", overflowY: "auto" }}>
+          {/* 1. Tipo de documento */}
+          <div className="tipos-recepcion" role="radiogroup" aria-label="Documento de la recepción" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 8, marginBottom: 14 }}>
+            {TIPOS_RECEPCION.map((t) => {
+              const activo = tipo === t.clave;
+              return (
+                <button
+                  key={t.clave}
+                  type="button"
+                  role="radio"
+                  aria-checked={activo}
+                  onClick={() => elegirTipo(t.clave)}
+                  disabled={guardando}
+                  style={{ textAlign: "left", border: `1.5px solid ${activo ? TEAL : "#e2e8f0"}`, background: activo ? "#f0fdfa" : "#fff", borderRadius: 12, padding: "10px 12px", cursor: "pointer", display: "flex", gap: 10, alignItems: "flex-start" }}
+                >
+                  <t.Icono size={18} style={{ color: activo ? TEAL : "#94a3b8", flexShrink: 0, marginTop: 1 }} />
+                  <span style={{ minWidth: 0 }}>
+                    <span style={{ display: "block", fontSize: 13.5, fontWeight: 700, color: "#0f172a" }}>{t.nombre}</span>
+                    <span style={{ display: "block", fontSize: 11.5, color: "#64748b", lineHeight: 1.35 }}>{t.detalle}</span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* 2. El documento */}
+          {necesitaDocumento && (
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 12 }}>
+              <label style={{ ...styles.label, flex: "2 1 320px", minWidth: 0, marginBottom: 0 }}>
+                {nombreTipoRecepcion(tipo)}
+                {documentos === null ? (
+                  <div style={{ ...styles.input, display: "flex", alignItems: "center", color: "#94a3b8" }}>Cargando documentos…</div>
+                ) : (
+                  <DropdownSelect
+                    value={docId}
+                    onChange={elegirDocumento}
+                    placeholder={documentos.length ? "Elija el documento…" : "No hay documentos de este tipo: escriba el número"}
+                    minWidth={360}
+                    disabled={guardando}
+                    style={{ width: "100%", height: 40, fontSize: 13.5, borderRadius: 8, marginTop: 6 }}
+                    options={[
+                      ...documentos.map((d) => ({
+                        value: d.id,
+                        label: `N° ${d.numero || "s/n"}${d.fecha ? ` · ${fmtFechaCL(d.fecha)}` : ""}`,
+                        detalle: `${d.cotizacion ? `Cotización ${d.cotizacion}` : ""}${d.recibido ? `${d.cotizacion ? " · " : ""}Ya recibido el ${fmtFechaCL(d.recibido.ultima)} (${fmtCant(d.recibido.unidades)} u.)` : ""}` || undefined,
+                        color: d.recibido ? "#d97706" : undefined,
+                      })),
+                      { value: "otro", label: "Otro: escribir el número", detalle: "El documento no está en la lista" },
+                    ]}
+                  />
+                )}
+              </label>
+              {docId === "otro" && (
+                <label style={{ ...styles.label, flex: "1 1 180px", minWidth: 0, marginBottom: 0 }}>
+                  N° del documento *
+                  <input value={numeroLibre} onChange={(e) => setNumeroLibre(e.target.value.slice(0, 60))} placeholder="Ej: 12345" style={styles.input} />
+                </label>
+              )}
+            </div>
+          )}
+          {docElegido?.recibido && (
+            <div style={{ fontSize: 12.5, color: "#92400e", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 10, padding: "8px 12px", marginBottom: 12 }}>
+              Este documento ya se recibió el {fmtFechaCL(docElegido.recibido.ultima)} ({fmtCant(docElegido.recibido.unidades)} unidades en {docElegido.recibido.recepciones} recepci{docElegido.recibido.recepciones === 1 ? "ón" : "ones"}). Regístrelo de nuevo solo si llegó otra parte.
+            </div>
+          )}
+
+          {/* 3. Los productos */}
+          {tipo && (docId || tipo === "sin_documento") && (
+            cargandoLineas ? (
+              <div style={{ padding: 18, color: "#64748b", fontSize: 13 }}>Cargando los productos del documento…</div>
+            ) : (
+              <>
+                {fuente === "cotizacion" && (
+                  <div style={{ fontSize: 12, color: "#64748b", marginBottom: 8 }}>
+                    Los productos se tomaron de la cotización de este documento: revise las cantidades que efectivamente llegaron.
+                  </div>
+                )}
+                {lineas.length > 0 && (
+                  <div style={{ overflowX: "auto", border: "1px solid #eef2f7", borderRadius: 10 }}>
+                    <table className="tabla-lineas-recepcion" style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 560 }}>
+                      <thead>
+                        <tr style={{ background: "#f8fafc" }}>
+                          <th style={thPortal}>Producto</th>
+                          <th style={{ ...thPortal, textAlign: "right", width: 110 }}>Cantidad recibida</th>
+                          <th style={{ ...thPortal, textAlign: "right", width: 120 }} title="Lo que costó cada unidad, sin IVA">Costo unit. (neto)</th>
+                          <th style={{ ...thPortal, textAlign: "right", width: 100 }}>Subtotal</th>
+                          <th style={{ ...thPortal, width: 34 }} aria-label="Quitar" />
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {lineas.map((l) => (
+                          <tr key={l.key} style={{ borderTop: "1px solid #f1f5f9", opacity: aNumero(l.cantidad) > 0 ? 1 : 0.55 }}>
+                            <td style={{ ...celda, minWidth: 200 }}>
+                              {l.origen === "documento" ? (
+                                <>
+                                  <div style={{ fontWeight: 700, color: "#0f172a", overflowWrap: "anywhere" }}>{l.nombre}</div>
+                                  <div style={{ fontSize: 11.5, color: "#94a3b8" }}>
+                                    {[l.sku, l.formato].filter(Boolean).join(" · ")}
+                                    <span style={{ marginLeft: l.sku || l.formato ? 6 : 0, fontWeight: 700, color: l.producto_id ? "#0f766e" : "#0369a1" }}>
+                                      {l.producto_id ? "Ya está en su inventario" : "Se agrega a su inventario"}
+                                    </span>
+                                  </div>
+                                </>
+                              ) : (
+                                <>
+                                  <DropdownSelect
+                                    value={l.producto_id}
+                                    onChange={(v) => cambiar(l.key, { producto_id: v })}
+                                    placeholder="Elija el producto…"
+                                    minWidth={300}
+                                    disabled={guardando}
+                                    style={{ width: "100%", height: 34, fontSize: 13, borderRadius: 8 }}
+                                    options={opcionesPropios}
+                                  />
+                                  {l.producto_id === "__nuevo" && (
+                                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 }}>
+                                      <input value={l.nombre} onChange={(e) => cambiar(l.key, { nombre: e.target.value.slice(0, 200) })} placeholder="Nombre del producto *" style={{ ...inputChico, textAlign: "left", flex: "2 1 160px", minWidth: 0 }} />
+                                      <input value={l.sku} onChange={(e) => cambiar(l.key, { sku: e.target.value.slice(0, 80) })} placeholder="SKU" style={{ ...inputChico, textAlign: "left", flex: "1 1 80px", minWidth: 0 }} />
+                                      <input value={l.formato} onChange={(e) => cambiar(l.key, { formato: e.target.value.slice(0, 50) })} placeholder="Formato" style={{ ...inputChico, textAlign: "left", flex: "1 1 80px", minWidth: 0 }} />
+                                    </div>
+                                  )}
+                                </>
+                              )}
+                            </td>
+                            <td style={celda}>
+                              <input type="number" min="0" step="any" value={l.cantidad} onChange={(e) => cambiar(l.key, { cantidad: e.target.value })} placeholder="0" aria-label="Cantidad recibida" style={inputChico} />
+                              {l.origen === "documento" && aNumero(l.cantidad) !== l.cantidadDoc && (
+                                <div style={{ fontSize: 10.5, color: "#b45309", textAlign: "right", marginTop: 2 }}>documento: {fmtCant(l.cantidadDoc)}</div>
+                              )}
+                            </td>
+                            <td style={celda}>
+                              <input inputMode="numeric" value={l.costo === "" ? "" : `$${Number(soloDigitos(l.costo) || 0).toLocaleString("es-CL")}`} onChange={(e) => cambiar(l.key, { costo: soloDigitos(e.target.value) })} placeholder="$0" aria-label="Costo unitario" style={inputChico} />
+                            </td>
+                            <td style={{ ...celda, textAlign: "right", whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>{fmtPesos(aNumero(l.cantidad) * (Number(soloDigitos(l.costo)) || 0))}</td>
+                            <td style={{ ...celda, textAlign: "right" }}>
+                              <button type="button" onClick={() => quitar(l.key)} disabled={guardando} title="Quitar de la recepción" style={{ background: "none", border: "none", cursor: "pointer", color: "#b91c1c", padding: 4 }}><Trash2 size={14} /></button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+                {!lineas.length && docElegido && (
+                  <div style={{ padding: 14, color: "#64748b", fontSize: 13, background: "#f8fafc", borderRadius: 10 }}>
+                    Este documento no trae productos: agréguelos a mano.
+                  </div>
+                )}
+                <button type="button" onClick={() => setLineas((prev) => [...prev, nuevaLineaManual()])} disabled={guardando} style={{ ...styles.btnSecundarioChico, marginTop: 10, display: "inline-flex", alignItems: "center", gap: 5 }}>
+                  <Plus size={14} /> Agregar producto
+                </button>
+
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 14 }}>
+                  <label style={{ ...styles.label, flex: "0 1 180px", minWidth: 150, marginBottom: 0 }}>
+                    Fecha de recepción
+                    <input type="date" value={fecha} max={hoyChile()} onChange={(e) => setFecha(e.target.value)} style={styles.input} />
+                  </label>
+                  <label style={{ ...styles.label, flex: "1 1 260px", minWidth: 0, marginBottom: 0 }}>
+                    Nota <span style={{ fontWeight: 400, opacity: 0.7, textTransform: "none" }}>(opcional)</span>
+                    <input value={nota} onChange={(e) => setNota(e.target.value.slice(0, 300))} placeholder="Quién recibió, estado de los bultos…" style={styles.input} />
+                  </label>
+                </div>
+              </>
+            )
+          )}
+          {error && <div style={{ color: "#b91c1c", fontSize: 12.5, marginTop: 10 }}>{error}</div>}
+        </div>
+
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", padding: "12px 22px", borderTop: "1px solid #eef2f7", background: "#f8fafc" }}>
+          <span style={{ fontSize: 12.5, color: "#475569" }}>
+            {activas.length
+              ? <><strong style={{ color: "#0f172a" }}>{activas.length}</strong> producto{activas.length === 1 ? "" : "s"} · <strong style={{ color: "#0f172a" }}>{fmtCant(unidades)}</strong> unidades · <strong style={{ color: "#0f172a" }}>{fmtPesos(valor)}</strong></>
+              : tipo ? "Indique la cantidad recibida de al menos un producto." : "Elija el tipo de documento para comenzar."}
+            {lineaIncompleta && <span style={{ color: "#b45309" }}> Falta el producto o el costo en una línea.</span>}
+          </span>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <button type="button" onClick={onCerrar} disabled={guardando} style={styles.btnSecundarioChico}>Cancelar</button>
+            <button type="button" className="btn-registrar-recepcion" onClick={guardar} disabled={!puedeGuardar} style={{ ...styles.btnPrimarioChico, opacity: puedeGuardar ? 1 : 0.55, cursor: puedeGuardar ? "pointer" : "not-allowed" }}>
+              <Save size={14} /> {guardando ? "Registrando…" : "Registrar recepción"}
+            </button>
+          </div>
         </div>
       </div>
     </div>,

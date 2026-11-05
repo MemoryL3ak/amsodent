@@ -17,6 +17,7 @@ import { StockClientesService, rolDeToken } from './stock-clientes.service';
 import { ExploradorService } from './explorador.service';
 import { ExploradorProductosService } from './explorador-productos.service';
 import { InventarioPortalService } from './inventario-portal.service';
+import { RecepcionPortalService } from './recepcion-portal.service';
 import { PedidosFlujoService } from './pedidos-flujo.service';
 import { WebpayService } from './webpay.service';
 import { OfertasPortalService } from './ofertas-portal.service';
@@ -36,6 +37,7 @@ export class StockClientesController {
     private modulos: PortalModulosService,
     private exploradorProductos: ExploradorProductosService,
     private inventario: InventarioPortalService,
+    private recepcion: RecepcionPortalService,
   ) {}
 
   /* ── Módulos del portal (2026-10-05) ── Qué secciones ve la cuenta. */
@@ -436,6 +438,38 @@ export class StockClientesController {
   async inventarioCargaMasiva(@Req() req: any, @Body() body: any) {
     await this.modulos.exigir(req.stockPortal.rut, 'declaracion');
     return await this.inventario.cargaMasiva(req.stockPortal, body);
+  }
+
+  /* ── Recepción de mercadería (2026-11-05) ── Cargar stock según la guía, la
+     factura o el despacho interno que Amsodent le emitió al cliente, o sin
+     documento. Cada línea recibida es un lote del Inventario. Va con Gestión
+     de Stock; la registran el administrador y el asistente de la cuenta. */
+  @UseGuards(StockPortalGuard)
+  @Get('recepciones')
+  async recepcionesListar(@Req() req: any, @Query('sucursal_id') sucursalId?: string) {
+    await this.modulos.exigir(req.stockPortal.rut, 'declaracion');
+    return await this.recepcion.listar(req.stockPortal.rut, sucursalId);
+  }
+
+  @UseGuards(StockPortalGuard)
+  @Get('recepciones/documentos')
+  async recepcionesDocumentos(@Req() req: any, @Query('tipo') tipo?: string) {
+    await this.modulos.exigir(req.stockPortal.rut, 'declaracion');
+    return await this.recepcion.documentos(req.stockPortal.rut, tipo);
+  }
+
+  @UseGuards(StockPortalGuard)
+  @Get('recepciones/documentos/:id/lineas')
+  async recepcionesLineas(@Req() req: any, @Param('id') id: string, @Query('sucursal_id') sucursalId?: string) {
+    await this.modulos.exigir(req.stockPortal.rut, 'declaracion');
+    return await this.recepcion.lineasDeDocumento(req.stockPortal.rut, Number(id), sucursalId);
+  }
+
+  @UseGuards(StockPortalGuard)
+  @Post('recepciones')
+  async recepcionesCrear(@Req() req: any, @Body() body: any) {
+    await this.modulos.exigir(req.stockPortal.rut, 'declaracion');
+    return await this.recepcion.crear(req.stockPortal, body);
   }
 
   /* ── Solicitar una reunión (2026-10-19) ── Le llega a Lisbeth para agendarla. */
