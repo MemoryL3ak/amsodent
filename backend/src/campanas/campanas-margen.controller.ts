@@ -18,9 +18,10 @@ export class CampanasMargenController {
     return this.campanas.listar();
   }
 
+  // Las que rigen hoy al cotizar en la plataforma (canal plataforma o ambos, con cupo disponible).
   @Get('vigentes')
   vigentes() {
-    return this.campanas.vigentes();
+    return this.campanas.vigentes('plataforma');
   }
 
   @Post()

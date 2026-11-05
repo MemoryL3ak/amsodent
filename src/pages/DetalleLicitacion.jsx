@@ -25,7 +25,7 @@ import BotonFichaTecnica from "../components/BotonFichaTecnica";
 import BotonEditarProducto from "../components/BotonEditarProducto";
 import BotonDescargarFichas from "../components/BotonDescargarFichas";
 import ChipSinFicha from "../components/ChipSinFicha";
-import { fichaTecnicaCompleta, productosSinFichaDeItems, resumenSinFicha } from "../utils/fichaTecnicaCompleta";
+import { fichaTecnicaCompleta, productoDeItem, productosSinFichaDeItems, resumenSinFicha } from "../utils/fichaTecnicaCompleta";
 import EstadoBsaleBadge from "../components/EstadoBsale";
 import BotonImprimirCarta from "../components/BotonImprimirCarta";
 import AnularGuiaBsale from "../components/AnularGuiaBsale";
@@ -35,7 +35,7 @@ import EmitirDespachoBsale from "../components/EmitirDespachoBsale";
 import DocumentoLibreBsale from "../components/DocumentoLibreBsale";
 import { generarPDFcotizacion } from "../utils/generarPDFcotizacion";
 import { calcularLista3 } from "../lib/listas";
-import { precioCampanaMargen } from "../lib/campanasMargen";
+import { precioCampanaMargen, campanaDeLinea } from "../lib/campanasMargen";
 import { useUnsavedChanges } from "../context/UnsavedChangesContext";
 import { GripVertical, Plus, Trash2, MessageSquare, Minus, ChevronUp, ChevronDown, Ban, History } from "lucide-react";
 
@@ -2090,6 +2090,8 @@ export default function EditarLicitacion() {
           mostrarObs: Boolean(i.observacion),
           precioManual: false,
           precioUnitarioStr: "",
+          campanaMargenId: i.campana_margen_id ?? null,
+          campanaMargenPrecio: i.campana_margen_id ? precioBase : null,
         };
       }) || [];
 
@@ -2294,6 +2296,9 @@ export default function EditarLicitacion() {
             mostrarObs: Boolean(i.observacion),
             precioManual: false,
             precioUnitarioStr: "",
+            // (2026-11-05) Campaña de margen con la que se vendió la línea.
+            campanaMargenId: i.campana_margen_id ?? null,
+            campanaMargenPrecio: i.campana_margen_id ? precioBase : null,
           };
         }) || [];
 
@@ -3355,6 +3360,11 @@ export default function EditarLicitacion() {
           // KPIs de margen de los paneles, para que digan lo mismo que acá.
           costo: getCostoParaItem(it),
         };
+        // (2026-11-05) Campaña de margen con la que se vende la línea (suma a
+        // su cupo al adjudicarse). Viaja cuando la hay, o para quitarla si la
+        // línea la tenía y su precio ya no es el de la campaña.
+        const campanaId = campanaDeLinea(it, productoDeItem(it, productos), listado, campanasMargen);
+        if (campanaId || it.campanaMargenId) payload.campana_margen_id = campanaId;
 
         if (it.id_item) {
           try {

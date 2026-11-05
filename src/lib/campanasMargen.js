@@ -97,14 +97,55 @@ export function precioCampanaMargen(prod, listado, campanas) {
   return null;
 }
 
-/** vigente | programada | terminada | pausada, según la fecha de hoy (YYYY-MM-DD). */
+/** vigente | programada | terminada | pausada | agotada, según la fecha de hoy (YYYY-MM-DD).
+    (2026-11-05) «agotada»: está en su vigencia pero ya vendió todo su cupo de
+    unidades (limite_unidades), así que dejó de aplicar antes de la fecha. */
 export function estadoCampanaMargen(campana, hoy) {
   if (campana?.activa === false) return "pausada";
   const desde = String(campana?.desde || "").slice(0, 10);
   const hasta = String(campana?.hasta || "").slice(0, 10);
   if (hoy < desde) return "programada";
   if (hoy > hasta) return "terminada";
+  if (campana?.agotada) return "agotada";
   return "vigente";
+}
+
+/* ── Un solo módulo de campañas (2026-11-05) ────────────────────────────────
+   Cada campaña tiene un canal: «plataforma» (se aplica al cotizar en la
+   plataforma), «portal» (es una oferta en el portal del cliente) o «ambos».
+   Las anteriores no traen el dato y son de la plataforma. */
+export const CANALES_CAMPANA = [
+  { value: "plataforma", label: "Plataforma Amsodent", detalle: "Se aplica al cotizar en la plataforma" },
+  { value: "portal", label: "Portal del cliente", detalle: "El cliente la ve en la pestaña «Ofertas» de su portal" },
+  { value: "ambos", label: "Plataforma y portal", detalle: "Rige en los dos" },
+];
+export const canalCampana = (c) => (["plataforma", "portal", "ambos"].includes(c?.canal) ? c.canal : "plataforma");
+export const rigeEnPlataforma = (c) => canalCampana(c) !== "portal";
+export const rigeEnPortal = (c) => canalCampana(c) !== "plataforma";
+
+/** Precio del cliente del portal: lista 2 y, si no tiene, lista 1 (igual que el servidor). */
+export function precioPortalDe(prod) {
+  return Number(prod?.lista2) || Number(prod?.lista1) || 0;
+}
+
+/* ¿Con qué campaña de margen se está vendiendo esta línea de la cotización?
+   Lo guarda la cotización en cada ítem (campana_margen_id): al adjudicarse,
+   sus unidades suman al cupo de la campaña.
+     · si el precio de la línea es el de la campaña vigente para su producto en
+       esta lista, esa campaña;
+     · si la línea ya traía una (cotización guardada, o pedido del portal con
+       oferta) y su precio no cambió, la conserva aunque la campaña ya no esté
+       vigente: la venta se hizo con ella;
+     · si no, ninguna (null).
+   `item`: { precio, campanaMargenId?, campanaMargenPrecio? }. */
+export function campanaDeLinea(item, prod, listado, campanas) {
+  const precio = Math.round(Number(item?.precio || 0));
+  if (!(precio > 0)) return null;
+  const vigente = prod ? precioCampanaMargen(prod, listado, campanas) : null;
+  if (vigente && Math.round(vigente.precio) === precio) return vigente.campana.id;
+  const previa = item?.campanaMargenId ?? null;
+  if (previa && (item.campanaMargenPrecio == null || Math.round(Number(item.campanaMargenPrecio)) === precio)) return previa;
+  return null;
 }
 
 /** Fecha de hoy en Chile, YYYY-MM-DD (misma regla que el backend). */

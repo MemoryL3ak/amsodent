@@ -469,6 +469,9 @@ export default function PedidosPortal() {
         // al cliente (validado por el servidor al recibir el pedido) es el
         // que debe quedar en la cotización, no el de lista.
         precio_oferta: i?.oferta ? Number(i?.precio_referencia || 0) || 0 : 0,
+        // (2026-11-05) La oferta es una campaña de margen: su id viaja para que
+        // la línea de la cotización sume al cupo de la campaña al adjudicarse.
+        oferta_id: Number(i?.oferta?.id) || null,
         oferta_nombre: i?.oferta?.nombre || "",
         oferta_pct: Number(i?.oferta?.descuento_pct || 0) || 0,
       }));
@@ -532,8 +535,9 @@ export default function PedidosPortal() {
           </p>
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          {/* Atajo a la pantalla donde se publican las ofertas especiales del portal. */}
-          <Link to="/ofertas-portal" className="btn btn-secondary" title="Publicar y administrar las ofertas especiales que ve el cliente en su portal">
+          {/* Atajo a la pantalla donde se publican las ofertas del portal: desde el
+              2026-11-05 son campañas de margen de canal «Portal del cliente». */}
+          <Link to="/campanas-margen" className="btn btn-secondary" title="Las ofertas que ve el cliente en su portal se crean en Campañas de margen, eligiendo «Portal del cliente» en «Dónde aplica»">
             Ofertas del portal
           </Link>
           <button type="button" className="btn btn-secondary" onClick={cargar} title="Actualizar">

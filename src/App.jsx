@@ -39,12 +39,10 @@ import MonitoreoSistema from "./pages/MonitoreoSistema";
 // USUARIOS
 import ConfiguracionUsuarios from "./pages/ConfiguracionUsuarios";
 
-// CAMPAÑAS
-import CampanasProductos from "./pages/CampanasProductos";
+// CAMPAÑAS — (2026-11-05) un solo módulo: Campañas de margen. El módulo
+// «Campañas» (precio fijo por SKU) y «Ofertas del Portal» se eliminaron; sus
+// rutas antiguas redirigen acá.
 import CampanasMargen from "./pages/CampanasMargen";
-import OfertasPortal from "./pages/OfertasPortal";
-import CrearCampana from "./pages/CrearCampana";
-import EditarCampana from "./pages/EditarCampana";
 import CotizacionesPorVendedor from "./pages/CotizacionesPorVendedor";
 import PanelIndicadores from "./pages/PanelIndicadores";
 import AnalisisMercadoPublico from "./pages/AnalisisMercadoPublico";
@@ -219,33 +217,15 @@ export default function App() {
           {/* USUARIOS */}
           <Route path="usuarios" element={<ConfiguracionUsuarios />} />
 
-          {/* CAMPAÑAS — (2026-10-14) solo admin y quien tenga el módulo en su perfil */}
-          <Route
-            path="campanas"
-            element={
-              <RequireModulo modulo="campanas">
-                <CampanasProductos />
-              </RequireModulo>
-            }
-          />
-          <Route
-            path="campanas/nueva"
-            element={
-              <RequireRole allow={["admin"]}>
-                <CrearCampana />
-              </RequireRole>
-            }
-          />
-          <Route
-            path="campanas/editar/:id"
-            element={
-              <RequireModulo modulo="campanas">
-                <EditarCampana />
-              </RequireModulo>
-            }
-          />
+          {/* CAMPAÑAS — (2026-10-14) solo admin y quien tenga el módulo en su perfil.
+              (2026-11-05) El módulo «Campañas» (precio fijo por SKU) se eliminó:
+              sus rutas llevan a Campañas de margen, el único módulo de campañas. */}
+          <Route path="campanas" element={<Navigate to="/campanas-margen" replace />} />
+          <Route path="campanas/nueva" element={<Navigate to="/campanas-margen" replace />} />
+          <Route path="campanas/editar/:id" element={<Navigate to="/campanas-margen" replace />} />
           {/* Campañas de margen por marca/categoría (2026-10-01). La ven quienes
-              ven Campañas; crear y cambiar es solo admin (lo valida el backend). */}
+              ven Campañas; crear y cambiar es solo admin (lo valida el backend).
+              También lleva las ofertas del portal del cliente (canal) y el cupo. */}
           <Route
             path="campanas-margen"
             element={
@@ -504,14 +484,8 @@ export default function App() {
           {/* OFERTAS DEL PORTAL (2026-10-02): las ofertas especiales que ve el
               cliente en su portal. La ven quienes ven los pedidos del portal;
               crear y cambiar es solo admin (lo valida el backend). */}
-          <Route
-            path="ofertas-portal"
-            element={
-              <RequireModulo modulo="monitoreo_stock">
-                <OfertasPortal />
-              </RequireModulo>
-            }
-          />
+          {/* (2026-11-05) Las ofertas del portal se gestionan en Campañas de margen (canal «Portal del cliente»). */}
+          <Route path="ofertas-portal" element={<Navigate to="/campanas-margen" replace />} />
 
           {/* EXPLORADOR DE PRODUCTOS (antes de Precios, 2026-09-24). Es el mismo
               buscador del portal del cliente, traído a la plataforma.

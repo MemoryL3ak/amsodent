@@ -1,53 +1,60 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
-import { hoyEnChile } from '../campanas/campanas-margen.service';
+import { CampanasMargenService } from '../campanas/campanas-margen.service';
 import { firmarImagenesProductos } from './imagenes-productos';
 
 /* ============================================================================
-   Ofertas especiales del portal del cliente (2026-10-02)
+   Ofertas del portal del cliente (2026-10-02)
    ----------------------------------------------------------------------------
-   Una oferta es una regla: "a estos productos / estas categorías / estas
-   marcas, un X % de descuento sobre el precio del cliente, entre estas
-   fechas". Se configura en la plataforma (/ofertas-portal) y el cliente la ve
-   en la pestaña «Ofertas» de su portal, con el precio normal tachado y el de
-   oferta.
+   Lo que el cliente ve en la pestaña «Ofertas» de su portal: productos con el
+   precio normal tachado y el de oferta.
+
+   (2026-11-05) Las ofertas ya no tienen su propio módulo ni su propia tabla
+   (pedido de Ariel: "la campaña de portal Amsodent y portal cliente se deben
+   gestionar desde el único módulo campaña de margen"). Una oferta del portal
+   es ahora una CAMPAÑA DE MARGEN cuyo canal es `portal` o `ambos`
+   (CampanasMargenService.vigentes('portal')): mismas reglas de alcance
+   (marcas, categorías, SKUs y desmarcados), misma vigencia y mismo cupo de
+   unidades — una campaña agotada deja de salir en el portal. La tabla
+   `portal_ofertas` quedó como historia (la migración 20261105 copia sus
+   ofertas a campañas).
 
    El precio de oferta NO se guarda: se calcula acá cada vez, desde el precio
-   vigente del producto (lista 2, el mismo que muestra el Showroom y con el que
-   nace la cotización de un pedido del portal). Y se calcula SIEMPRE en el
-   servidor: cuando el pedido llega, cada línea que dice venir de una oferta se
-   vuelve a validar y a preciar acá. Lo que manda el navegador no se usa — si
-   no, bastaría editar el carrito para inventarse un descuento.
+   vigente del producto para el cliente del portal (lista 2 y, si no tiene,
+   lista 1: el mismo que muestra el Showroom y con el que nace la cotización
+   de un pedido del portal). Y se calcula SIEMPRE en el servidor: cuando el
+   pedido llega, cada línea que dice venir de una oferta se vuelve a validar y
+   a preciar acá. Lo que manda el navegador no se usa — si no, bastaría editar
+   el carrito para inventarse un descuento.
 
-   Si dos ofertas alcanzan al mismo producto, gana la de mayor descuento: es lo
-   que el cliente esperaría y evita tener que ordenar las ofertas entre sí.
+   Si dos campañas alcanzan al mismo producto, gana la de mayor descuento: es
+   lo que el cliente esperaría.
 ============================================================================ */
-
-const MIGRACION = 'Falta aplicar la migración 20261002_portal_ofertas.sql en Supabase.';
-const RE_FECHA = /^\d{4}-\d{2}-\d{2}$/;
-const ALCANCES = ['producto', 'categoria', 'marca'];
-// Bajo este margen (sobre la venta) una cotización queda "Pendiente Aprobación".
-const MARGEN_APROBACION = 20;
 
 export interface Oferta {
   id: number;
   nombre: string;
   descripcion: string | null;
-  alcance: 'producto' | 'categoria' | 'marca';
-  valores: string[];
   descuento_pct: number;
   desde: string;
   hasta: string;
-  activa: boolean;
-  created_at?: string;
+  marcas: string[];
+  categorias: string[];
+  skus: string[];
+  skus_excluidos: string[];
+  /* Resumen del alcance para mostrarlo: por producto, categoría, marca, varios
+     criterios a la vez o todo el catálogo. */
+  alcance: 'producto' | 'categoria' | 'marca' | 'mixto' | 'catalogo';
 }
 
 const norm = (v: any) =>
   String(v ?? '')
     .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
+    .replace(/[\u0300-\u036f]/g, '')
     .trim()
     .toLowerCase();
+const normSku = (v: any) => String(v ?? '').replace(/\s+/g, '').toUpperCase();
+const lista = (v: any): string[] => (Array.isArray(v) ? v.map((x) => String(x ?? '').trim()).filter(Boolean) : []);
 
 /** Precio del cliente del portal: lista 2 y, si no tiene, lista 1 (como el Showroom). */
 export function precioClientePortal(prod: any): number {
@@ -58,21 +65,26 @@ export function precioConDescuento(precio: number, pct: number): number {
   return Math.round(Number(precio || 0) * (1 - Number(pct || 0) / 100));
 }
 
-/* ¿La oferta alcanza al producto? Por SKU, categoría o marca según su alcance.
-   Sin tildes ni mayúsculas: el catálogo tiene la misma marca escrita de varias
-   formas. Una oferta sin valores no alcanza a nada (no existe "todo el
-   catálogo en oferta" por descuido). */
-export function ofertaAlcanza(prod: any, oferta: Pick<Oferta, 'alcance' | 'valores'>): boolean {
-  const valores = (Array.isArray(oferta?.valores) ? oferta.valores : []).map(norm).filter(Boolean);
-  if (!valores.length) return false;
-  if (oferta.alcance === 'producto') return !!norm(prod?.sku) && valores.includes(norm(prod.sku));
-  if (oferta.alcance === 'categoria') return !!norm(prod?.categoria) && valores.includes(norm(prod.categoria));
-  if (oferta.alcance === 'marca') return !!norm(prod?.marca) && valores.includes(norm(prod.marca));
-  return false;
+/* ¿La oferta alcanza al producto? La misma regla que las campañas de margen al
+   cotizar (src/lib/campanasMargen.js → campanaAlcanza): el producto necesita
+   SKU; marcas, categorías y SKUs vacíos significan «todos»; con más de un
+   filtro debe cumplirlos todos; y lo desmarcado queda fuera. Sin tildes ni
+   mayúsculas: el catálogo tiene la misma marca escrita de varias formas. */
+export function ofertaAlcanza(prod: any, oferta: Pick<Oferta, 'marcas' | 'categorias' | 'skus' | 'skus_excluidos'>): boolean {
+  const sku = normSku(prod?.sku);
+  if (!sku) return false;
+  const skus = lista(oferta?.skus);
+  if (skus.length && !skus.some((s) => normSku(s) === sku)) return false;
+  if (lista(oferta?.skus_excluidos).some((s) => normSku(s) === sku)) return false;
+  const marcas = lista(oferta?.marcas);
+  if (marcas.length && !marcas.some((m) => norm(m) === norm(prod?.marca))) return false;
+  const categorias = lista(oferta?.categorias);
+  if (categorias.length && !categorias.some((c) => norm(c) === norm(prod?.categoria))) return false;
+  return true;
 }
 
 /** La oferta de mayor descuento que alcanza al producto, o null. */
-export function mejorOferta<T extends Pick<Oferta, 'alcance' | 'valores' | 'descuento_pct'>>(
+export function mejorOferta<T extends Pick<Oferta, 'marcas' | 'categorias' | 'skus' | 'skus_excluidos' | 'descuento_pct'>>(
   prod: any,
   ofertas: T[],
 ): T | null {
@@ -84,36 +96,43 @@ export function mejorOferta<T extends Pick<Oferta, 'alcance' | 'valores' | 'desc
   return mejor;
 }
 
-function estadoDe(o: Oferta, hoy: string): 'vigente' | 'programada' | 'terminada' | 'pausada' {
-  if (o.activa === false) return 'pausada';
-  if (hoy < String(o.desde).slice(0, 10)) return 'programada';
-  if (hoy > String(o.hasta).slice(0, 10)) return 'terminada';
-  return 'vigente';
+/* Campaña de margen → oferta del portal. */
+export function ofertaDeCampana(c: any): Oferta {
+  const marcas = lista(c?.marcas);
+  const categorias = lista(c?.categorias);
+  const skus = lista(c?.skus);
+  const criterios = [skus.length > 0, categorias.length > 0, marcas.length > 0].filter(Boolean).length;
+  return {
+    id: Number(c.id),
+    nombre: String(c.nombre || ''),
+    descripcion: c.descripcion ?? null,
+    descuento_pct: Number(c.margen_pct) || 0,
+    desde: String(c.desde || '').slice(0, 10),
+    hasta: String(c.hasta || '').slice(0, 10),
+    marcas,
+    categorias,
+    skus,
+    skus_excluidos: lista(c?.skus_excluidos),
+    alcance: criterios === 0 ? 'catalogo' : criterios > 1 ? 'mixto' : skus.length ? 'producto' : categorias.length ? 'categoria' : 'marca',
+  };
 }
 
 @Injectable()
 export class OfertasPortalService {
-  constructor(private supabase: SupabaseService) {}
+  constructor(
+    private supabase: SupabaseService,
+    private campanas: CampanasMargenService,
+  ) {}
 
   private get client() {
     return this.supabase.getClient();
-  }
-
-  private sinTabla(error: any): boolean {
-    const msg = String(error?.message || '');
-    return /portal_ofertas/i.test(msg) && /(schema cache|does not exist|not find)/i.test(msg);
-  }
-
-  private error(error: any): never {
-    if (this.sinTabla(error)) throw new BadRequestException(MIGRACION);
-    throw new BadRequestException(String(error?.message || 'No se pudo guardar la oferta.'));
   }
 
   // ── Catálogo ────────────────────────────────────────────────────────────
 
   /* Productos que pueden entrar a una oferta: activos, con SKU (es lo que
      identifica la línea en el pedido) y con precio. En memoria un minuto: la
-     vitrina, la simulación y la validación del pedido piden lo mismo. */
+     vitrina y la validación del pedido piden lo mismo. */
   private catalogo: { ts: number; filas: any[] } | null = null;
 
   private async productos(): Promise<any[]> {
@@ -142,169 +161,17 @@ export class OfertasPortalService {
 
   // ── Reglas ──────────────────────────────────────────────────────────────
 
-  private async todas(): Promise<Oferta[]> {
-    const { data, error } = await this.client
-      .from('portal_ofertas')
-      .select('*')
-      .order('created_at', { ascending: false });
-    if (error) {
-      if (this.sinTabla(error)) return [];
-      throw new BadRequestException(error.message);
-    }
-    return (data || []) as Oferta[];
-  }
-
-  /** Las que rigen hoy. Si algo falla responde vacío: sin ofertas, no sin portal. */
+  /* Las que rigen hoy en el portal: campañas de margen activas, en su
+     vigencia, con cupo disponible y de canal `portal` o `ambos`. Solo las que
+     de verdad descuentan. Si algo falla responde vacío: sin ofertas, no sin
+     portal. */
   async vigentes(): Promise<Oferta[]> {
-    const hoy = hoyEnChile();
-    const { data, error } = await this.client
-      .from('portal_ofertas')
-      .select('*')
-      .eq('activa', true)
-      .lte('desde', hoy)
-      .gte('hasta', hoy)
-      .order('created_at', { ascending: false });
-    if (error) return [];
-    return (data || []) as Oferta[];
-  }
-
-  /** Listado para la plataforma: cada oferta con su estado y a cuántos productos alcanza. */
-  async listar() {
-    const [ofertas, productos] = await Promise.all([this.todas(), this.productos()]);
-    const hoy = hoyEnChile();
-    return ofertas.map((o) => ({
-      ...o,
-      estado: estadoDe(o, hoy),
-      productos: productos.reduce((acc, p) => acc + (ofertaAlcanza(p, o) ? 1 : 0), 0),
-    }));
-  }
-
-  private datos(body: any) {
-    const nombre = String(body?.nombre || '').trim().slice(0, 120);
-    if (!nombre) throw new BadRequestException('La oferta necesita un nombre.');
-
-    const alcance = String(body?.alcance || '').trim();
-    if (!ALCANCES.includes(alcance)) {
-      throw new BadRequestException('Elige si la oferta es por producto, categoría o marca.');
+    try {
+      const campanas = await this.campanas.vigentes('portal');
+      return campanas.map(ofertaDeCampana).filter((o) => o.descuento_pct > 0);
+    } catch {
+      return [];
     }
-    const valores = [
-      ...new Set<string>(
-        (Array.isArray(body?.valores) ? body.valores : [])
-          .map((v: any) => String(v ?? '').trim().slice(0, 120))
-          .filter(Boolean),
-      ),
-    ];
-    if (!valores.length) {
-      const que = alcance === 'producto' ? 'un producto' : alcance === 'categoria' ? 'una categoría' : 'una marca';
-      throw new BadRequestException(`Elige al menos ${que} para la oferta.`);
-    }
-
-    const pct = Number(body?.descuento_pct);
-    if (!Number.isFinite(pct) || pct <= 0 || pct >= 100) {
-      throw new BadRequestException('El descuento debe ser mayor que 0 y menor que 100 %.');
-    }
-
-    const desde = String(body?.desde || '').slice(0, 10);
-    const hasta = String(body?.hasta || '').slice(0, 10);
-    if (!RE_FECHA.test(desde) || !RE_FECHA.test(hasta)) {
-      throw new BadRequestException('Indica las fechas de inicio y término.');
-    }
-    if (hasta < desde) throw new BadRequestException('La fecha de término no puede ser anterior al inicio.');
-
-    return {
-      nombre,
-      descripcion: String(body?.descripcion || '').trim().slice(0, 300) || null,
-      alcance,
-      valores,
-      descuento_pct: Math.round(pct * 100) / 100,
-      desde,
-      hasta,
-      activa: body?.activa !== false,
-    };
-  }
-
-  async crear(body: any, creadorEmail?: string | null) {
-    const { data, error } = await this.client
-      .from('portal_ofertas')
-      .insert({ ...this.datos(body), creado_por: creadorEmail || null })
-      .select()
-      .single();
-    if (error) this.error(error);
-    return data;
-  }
-
-  async actualizar(id: number, body: any) {
-    const { data, error } = await this.client
-      .from('portal_ofertas')
-      .update({ ...this.datos(body), updated_at: new Date().toISOString() })
-      .eq('id', id)
-      .select()
-      .maybeSingle();
-    if (error) this.error(error);
-    if (!data) throw new NotFoundException('Oferta no encontrada.');
-    return data;
-  }
-
-  async activar(id: number, activa: boolean) {
-    const { data, error } = await this.client
-      .from('portal_ofertas')
-      .update({ activa, updated_at: new Date().toISOString() })
-      .eq('id', id)
-      .select()
-      .maybeSingle();
-    if (error) this.error(error);
-    if (!data) throw new NotFoundException('Oferta no encontrada.');
-    return data;
-  }
-
-  async eliminar(id: number) {
-    const { error } = await this.client.from('portal_ofertas').delete().eq('id', id);
-    if (error) this.error(error);
-    return { ok: true };
-  }
-
-  // ── Simulación (para quien configura la oferta) ─────────────────────────
-
-  /* Qué le hace una regla al catálogo, antes de guardarla: a cuántos productos
-     alcanza, cuánto bajan y —lo que importa para no regalar plata— cuántos
-     quedan bajo el costo o bajo el margen que obliga a aprobar la cotización. */
-  async simular(body: any) {
-    const alcance = String(body?.alcance || '').trim();
-    const valores = Array.isArray(body?.valores) ? body.valores : [];
-    const pct = Number(body?.descuento_pct);
-    if (!ALCANCES.includes(alcance) || !valores.length || !Number.isFinite(pct) || pct <= 0 || pct >= 100) {
-      return { total: 0, bajo_costo: 0, margen_bajo: 0, ejemplos: [] };
-    }
-    const regla = { alcance: alcance as Oferta['alcance'], valores };
-    const filas = (await this.productos())
-      .filter((p) => ofertaAlcanza(p, regla))
-      .map((p) => {
-        const normal = precioClientePortal(p);
-        const oferta = precioConDescuento(normal, pct);
-        const costo = Number(p.costo) || 0;
-        const margen = costo > 0 && oferta > 0 ? ((oferta - costo) / oferta) * 100 : null;
-        return {
-          sku: p.sku,
-          nombre: p.nombre,
-          marca: p.marca || null,
-          costo,
-          precio_normal: normal,
-          precio_oferta: oferta,
-          margen_pct: margen === null ? null : Math.round(margen * 10) / 10,
-        };
-      });
-    const bajoCosto = filas.filter((f) => f.costo > 0 && f.precio_oferta < f.costo);
-    const margenBajo = filas.filter((f) => f.margen_pct !== null && f.margen_pct < MARGEN_APROBACION);
-    // Los ejemplos parten por los que quedan peor parados: es lo que hay que mirar.
-    const ejemplos = [...filas]
-      .sort((a, b) => (a.margen_pct ?? 999) - (b.margen_pct ?? 999))
-      .slice(0, 6);
-    return {
-      total: filas.length,
-      bajo_costo: bajoCosto.length,
-      margen_bajo: margenBajo.length,
-      ejemplos,
-    };
   }
 
   // ── Vitrina del portal ──────────────────────────────────────────────────
@@ -405,9 +272,11 @@ export class OfertasPortalService {
   /* Recibe las líneas de un pedido del portal y vuelve a preciar las que dicen
      venir de una oferta (`oferta_id` + `sku`):
        · si hay una oferta vigente que alcanza a ese producto, la línea queda
-         con el precio de oferta calculado ACÁ y la marca `oferta`;
-       · si no (venció, se pausó, el producto ya no está), pierde la marca y
-         queda con el precio normal del producto.
+         con el precio de oferta calculado ACÁ y la marca `oferta` (su `id` es
+         el de la campaña: con él la venta suma al cupo cuando la cotización
+         del pedido se adjudica);
+       · si no (venció, se pausó, se agotó, el producto ya no está), pierde la
+         marca y queda con el precio normal del producto.
      En ningún caso se usa el precio que mandó el navegador. Best-effort: si el
      catálogo no se puede leer, las líneas quedan sin oferta. */
   async aplicarAItems<T extends Record<string, any>>(items: T[]): Promise<T[]> {

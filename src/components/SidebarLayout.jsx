@@ -15,14 +15,12 @@ import {
   Package,
   Boxes,
   Users,
-  Megaphone,
   ShoppingCart,
   Target,
   BarChart2,
   Activity,
   UserCog,
   UserCheck,
-  Tag,
   LogOut,
   CreditCard,
   Gift,
@@ -226,8 +224,9 @@ export default function SidebarLayout() {
     puede("productos") && { to: "/productos",   icon: Package,       label: "Productos" },
     // (2026-10-09) Explorador de productos: en Comercial y para todos los roles (antes «Explorador de Precios», solo admin, en Reportes).
     { to: "/explorador-precios", icon: Store, label: "Explorador de Productos" },
-    puede("campanas") && { to: "/campanas",    icon: Megaphone,     label: "Campañas" },
     // (2026-10-01) Margen por marca / categoría sobre una lista, con vigencia.
+    // (2026-11-05) Único módulo de campañas: «Campañas» (precio fijo por SKU) y
+    // «Ofertas del Portal» se eliminaron; las del portal son un canal de estas.
     puede("campanas") && { to: "/campanas-margen", icon: Percent, label: "Campañas de margen" },
   ].filter(Boolean);
 
@@ -298,8 +297,6 @@ export default function SidebarLayout() {
   const portalClienteNav = [
     puede("monitoreo_stock") && { to: "/monitoreo-stock", icon: PackageSearch, label: "Monitoreo Stock Clientes" },
     puede("monitoreo_stock") && { to: "/pedidos-portal", icon: ShoppingCart, label: "Pedidos del Portal" },
-    // (2026-10-02) Ofertas especiales que ve el cliente en su portal.
-    puede("monitoreo_stock") && { to: "/ofertas-portal", icon: Tag, label: "Ofertas del Portal" },
     puede("portal_accesos") && { to: "/portal-accesos", icon: KeyRound, label: "Acceso Portal Clientes" },
   ].filter(Boolean);
 

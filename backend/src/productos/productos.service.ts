@@ -893,16 +893,12 @@ export class ProductosService {
     return { path: fileName };
   }
 
+  /* (2026-11-05) El módulo «Campañas» (precio fijo por SKU, tablas
+     product_campaigns) se eliminó a pedido de Ariel: queda solo Campañas de
+     margen. La ruta se conserva respondiendo vacío para las pantallas y la app
+     móvil que todavía la consultan: ningún precio fijo de campaña vuelve a
+     aplicarse. */
   async getCampaignPrices() {
-    const hoy = new Date().toISOString().slice(0, 10);
-    const { data, error } = await this.supabase
-      .getClient()
-      .from('product_campaign_items')
-      .select('sku, precio_campania, product_campaigns!inner(start_date, end_date, created_at)')
-      .lte('product_campaigns.start_date', hoy)
-      .gte('product_campaigns.end_date', hoy)
-      .order('created_at', { foreignTable: 'product_campaigns', ascending: false });
-    if (error) throw new BadRequestException(error.message);
-    return data;
+    return [];
   }
 }

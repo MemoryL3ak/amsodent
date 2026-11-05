@@ -13,8 +13,9 @@ export const MODULOS = [
   { key: "crear_productos", label: "Crear productos con SKU (formulario completo)", grupo: "Comercial" },
   // (2026-10-27) Editar productos del catálogo como un admin (menos aprobar pendientes).
   { key: "editar_productos", label: "Editar productos (formulario completo)", grupo: "Comercial" },
-  // (2026-10-14) Campañas y Campañas de margen: solo admin y quien lo tenga en su perfil.
-  { key: "campanas", label: "Campañas y Campañas de margen", grupo: "Comercial" },
+  // (2026-10-14) Campañas: solo admin y quien lo tenga en su perfil.
+  // (2026-11-05) Un solo módulo: Campañas de margen (plataforma y portal del cliente).
+  { key: "campanas", label: "Campañas de margen (plataforma y portal)", grupo: "Comercial" },
   // (2026-10-14) Un vendedor ve solo sus cotizaciones; con esto ve todas.
   { key: "cotizaciones_todas", label: "Ver todas las cotizaciones (no solo las propias)", grupo: "Comercial" },
   // Venta directa (2026-10-07): listado y documentos de las ventas directas.

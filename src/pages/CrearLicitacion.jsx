@@ -8,7 +8,7 @@ import Toast from "../components/Toast";
 import Select, { components } from "react-select";
 import { generarPDFcotizacion } from "../utils/generarPDFcotizacion";
 import { calcularLista3 } from "../lib/listas";
-import { precioCampanaMargen } from "../lib/campanasMargen";
+import { precioCampanaMargen, campanaDeLinea } from "../lib/campanasMargen";
 import ProductoPickerModal from "../components/ProductoPickerModal";
 import ModalValidarTransitorio from "../components/ModalValidarTransitorio";
 import CalculadoraFlete from "../components/CalculadoraFlete";
@@ -17,7 +17,7 @@ import BotonEditarProducto from "../components/BotonEditarProducto";
 import BotonDescargarFichas from "../components/BotonDescargarFichas";
 import ChipSinFicha from "../components/ChipSinFicha";
 import ConfirmModal from "../components/ConfirmModal";
-import { CAMPOS_FICHA_TECNICA, fichaTecnicaCompleta, productosSinFichaDeItems, resumenSinFicha } from "../utils/fichaTecnicaCompleta";
+import { CAMPOS_FICHA_TECNICA, fichaTecnicaCompleta, productoDeItem, productosSinFichaDeItems, resumenSinFicha } from "../utils/fichaTecnicaCompleta";
 
 import {
   DndContext,
@@ -906,6 +906,9 @@ export default function CrearLicitacion() {
           cantidad,
           precio,
           ...(conOferta ? { precioManual: true, precioUnitarioStr: formatearCLDesdeString(String(precio)) } : {}),
+          // (2026-11-05) La oferta del portal es una campaña de margen: la línea
+          // queda ligada a ella y, al adjudicarse, sus unidades suman al cupo.
+          ...(conOferta && Number(it.oferta_id) > 0 ? { campanaMargenId: Number(it.oferta_id), campanaMargenPrecio: precio } : {}),
           costo: Number(prod.costo ?? 0),
           total: redondear(cantidad * (Number(precio || 0) + Number(fletePorUnidad || 0))),
           observacion,
@@ -1266,50 +1269,9 @@ export default function CrearLicitacion() {
 
     async function cargarCampanasVigentes() {
       try {
-        const hoy = new Date().toISOString().slice(0, 10);
-
-        const { data: camps, error: eCamps } = await supabase
-          .from("product_campaigns")
-          .select("id, created_at, start_date, end_date")
-          .lte("start_date", hoy)
-          .gte("end_date", hoy)
-          .order("created_at", { ascending: false });
-
-        if (eCamps) throw eCamps;
-
-        const ids = (camps || []).map((c) => c.id);
-        if (ids.length === 0) {
-          if (alive) setCampaignPrices({});
-          return;
-        }
-
-        const { data: its, error: eIts } = await supabase
-          .from("product_campaign_items")
-          .select("campaign_id, sku, producto, precio_campania")
-          .in("campaign_id", ids);
-
-        if (eIts) throw eIts;
-
-        const map = {};
-        for (const campId of ids) {
-          for (const it of its || []) {
-            if (it.campaign_id !== campId) continue;
-
-            const sku = String(it.sku || "").trim();
-            if (!sku) continue;
-
-            if (map[sku] == null) {
-              map[sku] = {
-                precio: Number(it.precio_campania || 0),
-                producto: it.producto ? String(it.producto) : null,
-              };
-            }
-          }
-        }
-
-        if (alive) setCampaignPrices(map);
-      } catch (err) {
-        console.error("Error cargando campañas vigentes:", err);
+        /* (2026-11-05) El módulo «Campañas» (precio fijo por SKU) se eliminó:
+           ya no se leen product_campaigns y ningún precio fijo de campaña se
+           aplica. Quedan las campañas de margen (abajo). */
         if (alive) setCampaignPrices({});
       } finally {
         // Campañas de margen: si fallan, se cotiza con el precio de lista.
@@ -2287,6 +2249,12 @@ export default function CrearLicitacion() {
           // (editado a mano o el de catálogo al guardar): es lo que leen los
           // KPIs de margen de los paneles, para que digan lo mismo que acá.
           costo: getCostoParaItem(it),
+          // (2026-11-05) Campaña de margen con la que se vende la línea (suma
+          // a su cupo al adjudicarse). Solo viaja cuando la hay.
+          ...((() => {
+            const campanaId = campanaDeLinea(it, productoDeItem(it, productos), listado, campanasMargen);
+            return campanaId ? { campana_margen_id: campanaId } : {};
+          })()),
         };
       });
 
