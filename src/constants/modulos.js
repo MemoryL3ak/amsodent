@@ -43,6 +43,8 @@ export const MODULOS = [
   // negocio. Costo y margen solo los ven admin y jefaturas de ventas; las
   // tablas crudas y el SQL libre siguen siendo solo admin.
   { key: "reporteria", label: "Reportería (reportes a medida)", grupo: "Reportes" },
+  // (2026-11-05) Repositorio de documentos de la empresa y su vigencia.
+  { key: "repositorio", label: "Repositorio de documentos (subir, editar y eliminar)", grupo: "Herramientas" },
   // "Análisis Mercado Público" NO es asignable por perfil: es solo admin
   // (RequireRole en la ruta + AdminGuard en el backend).
   { key: "sorteo", label: "Sorteo", grupo: "Herramientas" },

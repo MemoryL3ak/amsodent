@@ -1,6 +1,7 @@
 import { Zip, ZipPassThrough } from "fflate";
 import { api } from "../lib/api";
 import { descargarFichaTecnica } from "./generarFichaTecnica";
+import { bytesDocumentoRepositorio } from "../lib/repositorio";
 
 /* ── Varias fichas técnicas en un ZIP (2026-10-07) ───────────────────────────
    Pedido de Ariel: "botón para descargar todas las fichas técnicas de los
@@ -48,8 +49,9 @@ const nombreArchivo = (p, i) =>
 
 /**
  * @param {object[]} productos  productos del catálogo (al menos `id`; el resto se pide)
- * @param {{ nombreZip?: string, onProgreso?: (p: {hechos:number,total:number,actual?:string}) => void, debeCancelar?: () => boolean }} [op]
- * @returns {Promise<{ generadas: number, fallidas: string[], sinFoto: string[], cancelado: boolean }>}
+ * @param {{ nombreZip?: string, extras?: {id:number,nombre:string,archivo?:string}[], onProgreso?: (p: {hechos:number,total:number,actual?:string}) => void, debeCancelar?: () => boolean }} [op]
+ *   `extras` (2026-11-05): documentos del Repositorio que van en el mismo ZIP, en la carpeta «Documentos».
+ * @returns {Promise<{ generadas: number, fallidas: string[], sinFoto: string[], cancelado: boolean, extras: number, extrasFallidos: string[] }>}
  */
 export async function descargarFichasZip(productos, op = {}) {
   const lista = (productos || []).filter(Boolean);
@@ -121,6 +123,29 @@ export async function descargarFichasZip(productos, op = {}) {
       : "No se pudo generar ninguna ficha técnica.");
   }
 
+  // (2026-11-05) Documentos del repositorio elegidos en la ventana de descarga:
+  // van tal cual, en la carpeta «Documentos». Si uno no se puede bajar, el ZIP
+  // sale igual y se informa cuál faltó.
+  let extras = 0;
+  const extrasFallidos = [];
+  for (const doc of op.extras || []) {
+    if (op.debeCancelar?.()) return { generadas, fallidas, sinFoto, cancelado: true, extras, extrasFallidos };
+    try {
+      const { bytes, nombre: original } = await bytesDocumentoRepositorio(doc.id);
+      const ext = (String(original || doc.archivo || "").match(/\.([a-z0-9]{2,5})$/i) || [])[1] || "pdf";
+      let nombre = nombreArchivo({ sku: "", nombre: doc.nombre }, 0).replace(/^SIN-SKU - /, "") || `documento-${doc.id}`;
+      while (usados.has(`documentos/${nombre}`.toLowerCase())) nombre = `${nombre} (${doc.id})`;
+      usados.add(`documentos/${nombre}`.toLowerCase());
+      const archivo = new ZipPassThrough(`Documentos/${nombre}.${ext.toLowerCase()}`);
+      zip.add(archivo);
+      archivo.push(bytes, true);
+      extras++;
+    } catch (e) {
+      console.error("Documento del repositorio", doc?.nombre, e);
+      extrasFallidos.push(doc?.nombre || `#${doc?.id}`);
+    }
+  }
+
   zip.end();
   await terminado;
   if (falloZip) throw falloZip;
@@ -133,5 +158,5 @@ export async function descargarFichasZip(productos, op = {}) {
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 60 * 1000);
-  return { generadas, fallidas, sinFoto, cancelado: false };
+  return { generadas, fallidas, sinFoto, cancelado: false, extras, extrasFallidos };
 }

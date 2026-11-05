@@ -14,6 +14,7 @@ import {
   ClipboardCheck,
   ShoppingCart,
   Tag,
+  FolderOpen,
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { api } from "../lib/api";
@@ -415,6 +416,16 @@ function getNotifVisuales(notif) {
       color: "#6d28d9",
       bg: "#ede9fe",
       etiqueta: "Aprobación peso",
+    };
+  }
+  // (2026-11-05) Vigencia del Repositorio de documentos: por vencer o vencido.
+  if (tipo === "documento_por_vencer") {
+    const vencido = Number(meta?.dias_restantes) <= 0;
+    return {
+      icono: FolderOpen,
+      color: vencido ? "#b91c1c" : "#b45309",
+      bg: vencido ? "#fee2e2" : "#fef3c7",
+      etiqueta: vencido ? "Documento vencido" : "Documento por vencer",
     };
   }
   // (2026-11-05) Alerta de actualización de precio: abre Productos con los recién cambiados.

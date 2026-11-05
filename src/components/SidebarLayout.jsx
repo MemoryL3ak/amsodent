@@ -12,6 +12,7 @@ import {
   FilePlus,
   ClipboardList,
   FileText,
+  FolderOpen,
   Package,
   Boxes,
   Users,
@@ -284,6 +285,8 @@ export default function SidebarLayout() {
     puede("marcaje") && { to: "/marcaje", icon: Clock, label: "Marcar Asistencia" },
     // Portal del trabajador: visible para todo el equipo (cada uno ve lo suyo).
     { to: "/mi-ficha", icon: UserCircle2, label: "Mi Ficha" },
+    // (2026-11-05) Patente, estatutos, cartas de garantía… con su vigencia. Para todos (subir es por permiso).
+    { to: "/repositorio-documentos", icon: FolderOpen, label: "Repositorio de documentos" },
     // Centro de Ayuda: manual de la plataforma + DamarIA guía, para todos.
     { to: "/ayuda", icon: LifeBuoy, label: "Centro de Ayuda" },
   ].filter(Boolean);

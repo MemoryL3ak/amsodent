@@ -39,6 +39,8 @@ import MonitoreoSistema from "./pages/MonitoreoSistema";
 // USUARIOS
 import ConfiguracionUsuarios from "./pages/ConfiguracionUsuarios";
 
+// (2026-11-05) Repositorio de documentos de la empresa con su vigencia.
+import RepositorioDocumentos from "./pages/RepositorioDocumentos";
 // CAMPAÑAS — (2026-11-05) un solo módulo: Campañas de margen. El módulo
 // «Campañas» (precio fijo por SKU) y «Ofertas del Portal» se eliminaron; sus
 // rutas antiguas redirigen acá.
@@ -484,6 +486,10 @@ export default function App() {
           {/* OFERTAS DEL PORTAL (2026-10-02): las ofertas especiales que ve el
               cliente en su portal. La ven quienes ven los pedidos del portal;
               crear y cambiar es solo admin (lo valida el backend). */}
+          {/* (2026-11-05) Repositorio de documentos: lo ve y descarga cualquier
+              usuario; subir, editar y eliminar lo valida el servidor (módulo «repositorio»). */}
+          <Route path="repositorio-documentos" element={<RepositorioDocumentos />} />
+
           {/* (2026-11-05) Las ofertas del portal se gestionan en Campañas de margen (canal «Portal del cliente»). */}
           <Route path="ofertas-portal" element={<Navigate to="/campanas-margen" replace />} />
 

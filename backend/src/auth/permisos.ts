@@ -73,6 +73,10 @@ export const MODULOS: string[] = [
   // Reportería (2026-09-24): reportes a medida sin SQL sobre vistas de
   // negocio. Asignable por perfil; no va en ningún ROLE_DEFAULTS.
   'reporteria',
+  // (2026-11-05) Repositorio de documentos de la empresa (patente, estatutos,
+  // cartas de garantía…) con su vigencia: subir, editar y eliminar. Ver y
+  // descargar lo puede cualquier usuario con sesión. Asignable por perfil.
+  'repositorio',
 ];
 
 // Módulos visibles para todos los roles autenticados (base comercial + comunicación).
