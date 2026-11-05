@@ -1021,7 +1021,7 @@ function DetalleDeclaracion({ declaracion, onCerrar, setToast }) {
       "Stock actual",
       "Stock bajo",
       "Stock crítico",
-      "Precio unitario",
+      "Precio unitario promedio",
       "Total",
       "Estado",
     ];

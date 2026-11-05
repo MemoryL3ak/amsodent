@@ -1794,7 +1794,8 @@ function PantallaDeclaracion({ cliente, setToast }) {
       "Stock actual",
       "Stock bajo",
       "Stock crítico",
-      "Precio unitario",
+      // (2026-11-05) Con Inventario el precio es el promedio ponderado de los lotes.
+      inventarioListo ? "Precio unitario promedio" : "Precio unitario",
       "Total",
       "Estado",
     ];
@@ -2040,7 +2041,7 @@ function PantallaDeclaracion({ cliente, setToast }) {
           conStock={habil("declaracion")}
         />
       ) : tabActiva === "usuarios" ? (
-        <PanelUsuariosPortal setToast={setToast} />
+        <PanelUsuariosPortal setToast={setToast} usuarioActual={cliente?.usuario || null} />
       ) : tabActiva === "ofertas" ? (
         <PanelOfertas datos={ofertasPortal} />
       ) : tabActiva === "showroom" ? (
@@ -2178,15 +2179,20 @@ function PantallaDeclaracion({ cliente, setToast }) {
                 >
                   Stock crítico
                 </th>
+                {/* (2026-11-05) Pedido de Ariel: la columna se llama «Precio Unitario
+                    Promedio» (con Inventario es el promedio ponderado de los lotes). */}
                 <th
+                  className="th-precio-promedio"
                   style={{ ...styles.th, minWidth: 76, textAlign: "right" }}
-                  title="Precio unitario de referencia para valorizar su inventario."
+                  title={inventarioListo
+                    ? "Precio Unitario Promedio: costo promedio de lo que queda, pesado por la cantidad de cada lote del Inventario."
+                    : "Precio unitario de referencia para valorizar su inventario."}
                 >
-                  Precio unit.
+                  {inventarioListo ? "Precio unit. promedio" : "Precio unit."}
                 </th>
                 <th
                   style={{ ...styles.th, minWidth: 72, textAlign: "right" }}
-                  title="Stock actual × precio unitario."
+                  title={inventarioListo ? "Stock actual × precio unitario promedio." : "Stock actual × precio unitario."}
                 >
                   Total
                 </th>
@@ -4048,7 +4054,16 @@ function ModalCargaInventario({ onCerrar, onCargar, setToast }) {
   );
 }
 
-function PanelUsuariosPortal({ setToast }) {
+function PanelUsuariosPortal({ setToast, usuarioActual = null }) {
+  // (2026-11-05) La eliminación se confirma con una ventana propia del portal
+  // (antes era el diálogo nativo del navegador). No se ofrece para el usuario
+  // con el que se está conectado: el servidor igual lo rechaza.
+  const [porEliminar, setPorEliminar] = useState(null);
+  const [eliminando, setEliminando] = useState(false);
+  const esYo = (u) =>
+    !!usuarioActual &&
+    ((usuarioActual.id != null && Number(usuarioActual.id) === Number(u.id)) ||
+      (!!usuarioActual.email && String(usuarioActual.email).toLowerCase() === String(u.email || "").toLowerCase()));
   const [usuarios, setUsuarios] = useState([]);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState("");
@@ -4095,14 +4110,21 @@ function PanelUsuariosPortal({ setToast }) {
     }
   }
 
-  async function eliminar(u) {
-    if (!window.confirm(`¿Quitar el acceso de ${u.email}? Podrá volver a crearlo cuando quiera.`)) return;
+  async function eliminar() {
+    const u = porEliminar;
+    if (!u || eliminando) return;
+    setEliminando(true);
     try {
       await apiRequest(`/stock-clientes/usuarios/${u.id}`, { method: "DELETE" });
-      setToast({ type: "success", titulo: "Usuario eliminado", mensaje: `${u.email} ya no puede ingresar.` });
+      setPorEliminar(null);
+      setToast({ type: "success", titulo: "Usuario eliminado", mensaje: `${u.email} ya no puede ingresar al portal.` });
       cargar();
     } catch (e) {
+      // Se cierra la ventana para que el aviso de error quede a la vista.
+      setPorEliminar(null);
       setToast({ type: "error", titulo: "No se pudo eliminar", mensaje: e?.message || "Intente nuevamente." });
+    } finally {
+      setEliminando(false);
     }
   }
 
@@ -4171,9 +4193,15 @@ function PanelUsuariosPortal({ setToast }) {
                     <button type="button" onClick={() => setModal({ usuario: u })} title="Editar" style={iconBtnPortal}>
                       <UserCog size={15} />
                     </button>
-                    <button type="button" onClick={() => eliminar(u)} title="Quitar acceso" style={{ ...iconBtnPortal, color: "#b91c1c" }}>
-                      <Trash2 size={15} />
-                    </button>
+                    {esYo(u) ? (
+                      <span title="Es el usuario con el que está conectado: no puede eliminarse a sí mismo" style={{ ...iconBtnPortal, color: "#cbd5e1", cursor: "not-allowed", display: "inline-flex" }}>
+                        <Trash2 size={15} />
+                      </span>
+                    ) : (
+                      <button type="button" className="btn-eliminar-usuario-portal" onClick={() => setPorEliminar(u)} title="Eliminar usuario" style={{ ...iconBtnPortal, color: "#b91c1c" }}>
+                        <Trash2 size={15} />
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -4190,6 +4218,18 @@ function PanelUsuariosPortal({ setToast }) {
           onGuardar={guardar}
         />
       )}
+      {porEliminar && (
+        <ConfirmarPortal
+          titulo="Eliminar usuario"
+          mensaje={<>¿Eliminar el acceso de <strong>{porEliminar.email}</strong>{porEliminar.nombre ? ` (${porEliminar.nombre})` : ""}?</>}
+          detalle="Dejará de poder ingresar al portal de inmediato. Los pedidos y movimientos que registró se conservan, y puede volver a crearlo cuando quiera."
+          textoConfirmar="Eliminar usuario"
+          textoOcupado="Eliminando…"
+          ocupado={eliminando}
+          onConfirmar={eliminar}
+          onCancelar={() => setPorEliminar(null)}
+        />
+      )}
     </div>
   );
 }
@@ -4197,6 +4237,57 @@ function PanelUsuariosPortal({ setToast }) {
 const thPortal = { textAlign: "left", padding: "9px 12px", fontSize: 10.5, fontWeight: 800, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".04em" };
 const tdPortal = { padding: "10px 12px", color: "#334155", verticalAlign: "top" };
 const iconBtnPortal = { background: "none", border: "none", cursor: "pointer", color: TEAL, padding: 5 };
+
+/* ── Confirmación del portal (2026-11-05) ────────────────────────────────────
+   Reemplaza al diálogo nativo del navegador (window.confirm) al eliminar un
+   usuario de la cuenta y al cerrar un pedido con crédito. Va por encima de
+   los demás modales del portal (13000). Escape o clic afuera cancelan. */
+function ConfirmarPortal({ titulo, mensaje, detalle, textoConfirmar = "Confirmar", textoOcupado = "Procesando…", tono = "peligro", ocupado = false, onConfirmar, onCancelar }) {
+  useEffect(() => {
+    const alTeclear = (e) => { if (e.key === "Escape" && !ocupado) onCancelar?.(); };
+    window.addEventListener("keydown", alTeclear);
+    return () => window.removeEventListener("keydown", alTeclear);
+  }, [ocupado, onCancelar]);
+  const color = tono === "peligro" ? "#dc2626" : TEAL;
+  const Icono = tono === "peligro" ? AlertTriangle : CheckCircle2;
+  return createPortal(
+    <div
+      className="confirmar-portal"
+      role="dialog"
+      aria-modal="true"
+      aria-label={titulo}
+      onMouseDown={(e) => { if (e.target === e.currentTarget && !ocupado) onCancelar?.(); }}
+      style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,.55)", backdropFilter: "blur(4px)", zIndex: 13500, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+    >
+      <div style={{ width: 420, maxWidth: "100%", background: "#fff", borderRadius: 16, padding: 22, boxShadow: "0 24px 60px -12px rgba(15,23,42,.30)" }}>
+        <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+          <span style={{ flex: "0 0 auto", width: 38, height: 38, borderRadius: 999, background: tono === "peligro" ? "#fee2e2" : "#ccfbf1", color, display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
+            <Icono size={19} />
+          </span>
+          <div style={{ minWidth: 0 }}>
+            <h3 style={{ margin: "2px 0 6px", fontSize: 16, fontWeight: 800, color: "#0f172a" }}>{titulo}</h3>
+            <div style={{ fontSize: 13.5, color: "#334155", lineHeight: 1.5, overflowWrap: "anywhere" }}>{mensaje}</div>
+            {detalle && <div style={{ fontSize: 12.5, color: "#64748b", lineHeight: 1.5, marginTop: 8 }}>{detalle}</div>}
+          </div>
+        </div>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 18, flexWrap: "wrap" }}>
+          <button type="button" onClick={onCancelar} disabled={ocupado} style={styles.btnSecundarioChico}>Cancelar</button>
+          <button
+            type="button"
+            className="confirmar-portal-ok"
+            onClick={onConfirmar}
+            disabled={ocupado}
+            autoFocus
+            style={{ ...styles.btnPrimarioChico, ...(tono === "peligro" ? { background: color } : {}), opacity: ocupado ? 0.6 : 1, cursor: ocupado ? "wait" : "pointer" }}
+          >
+            {ocupado ? textoOcupado : textoConfirmar}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
 
 function ModalUsuarioPortal({ usuario, guardando, onCerrar, onGuardar }) {
   const [email, setEmail] = useState(usuario?.email || "");
@@ -5483,8 +5574,10 @@ function PanelMisSolicitudes({ solicitudes, cotizacionesHist = [], cargando, onS
     apiRequest("/stock-clientes/mi-credito").then(setCredito).catch(() => setCredito(null));
   }, []);
 
+  // (2026-11-05) Se confirma con la ventana del portal, no con el diálogo del navegador.
+  const [porPagarCredito, setPorPagarCredito] = useState(null);
   async function pagarConCredito(s) {
-    if (!window.confirm(`¿Cerrar el pedido N° ${s.id} por ${fmtMoneda(s.monto_total)} con tu línea de crédito?`)) return;
+    setPorPagarCredito(null);
     setTrabajando(s.id);
     try {
       const r = await apiRequest(`/stock-clientes/mis-solicitudes/${s.id}/pagar-credito`, { method: "POST" });
@@ -5693,7 +5786,7 @@ function PanelMisSolicitudes({ solicitudes, cotizacionesHist = [], cargando, onS
                   onAprobar={() => aprobar(s)}
                   onModificar={() => modificarCotizacion(s)}
                   onPagar={() => pagar(s)}
-                  onPagarCredito={() => pagarConCredito(s)}
+                  onPagarCredito={() => setPorPagarCredito(s)}
                   onSos={() => pedirSos(s)}
                 />
                 {items.length > 0 && (
@@ -5776,6 +5869,17 @@ function PanelMisSolicitudes({ solicitudes, cotizacionesHist = [], cargando, onS
           </div>
         );
       })}
+      {porPagarCredito && (
+        <ConfirmarPortal
+          tono="ok"
+          titulo="Cerrar el pedido con crédito"
+          mensaje={<>¿Cerrar el pedido N° <strong>{porPagarCredito.id}</strong> por <strong>{fmtMoneda(porPagarCredito.monto_total)}</strong> con tu línea de crédito?</>}
+          detalle="El monto se descuenta de tu cupo disponible."
+          textoConfirmar="Cerrar con crédito"
+          onConfirmar={() => pagarConCredito(porPagarCredito)}
+          onCancelar={() => setPorPagarCredito(null)}
+        />
+      )}
     </div>
   );
 }

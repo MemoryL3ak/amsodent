@@ -28,6 +28,7 @@ import {
 } from "lucide-react";
 import { api } from "../lib/api";
 import Toast from "../components/Toast";
+import ConfirmModal from "../components/ConfirmModal";
 import DropdownSelect from "../components/ui/DropdownSelect";
 import { REGIONES_CHILE } from "../constants/regiones";
 
@@ -93,6 +94,22 @@ function fmtFechaHora(iso) {
 
 const VIGENCIA_LABEL = { "1m": "1 mes", "3m": "3 meses", indefinido: "Indefinido" };
 
+/* ── ¿Inició sesión desde que se le habilitó la cuenta? (2026-11-05) ─────────
+   Pedido de Ariel: un indicador para confirmar si el cliente entró o no a su
+   cuenta recién habilitada. «Ingresó» = su último acceso es posterior a la
+   (última) habilitación; un ingreso anterior a volver a habilitarlo no cuenta.
+   El último acceso del RUT lo marca cualquier persona de la cuenta. */
+function inicioSesion(a) {
+  if (!a?.ultimo_acceso) return "sin_ingresar";
+  if (!a.acceso_habilitado_en) return "ingreso";
+  return new Date(a.ultimo_acceso).getTime() >= new Date(a.acceso_habilitado_en).getTime() ? "ingreso" : "sin_ingresar";
+}
+function diasDesde(iso) {
+  if (!iso) return null;
+  const d = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
+  return Number.isFinite(d) && d >= 0 ? d : null;
+}
+
 /* Secciones del portal que se encienden o apagan por cliente (2026-10-05).
    Debe calzar con MODULOS_PORTAL del backend (portal-modulos.service.ts).
    `pide`: desde esa sección el cliente arma pedidos. */
@@ -151,19 +168,39 @@ export default function AccesoPortalClientes() {
     [recuperaciones],
   );
 
+  // (2026-11-05) Filtro por inicio de sesión (solo cuentas habilitadas).
+  const [filtroIngreso, setFiltroIngreso] = useState("");
+  const conteoIngreso = useMemo(() => {
+    const habilitados = accesos.filter((a) => a.acceso_habilitado);
+    const ingresaron = habilitados.filter((a) => inicioSesion(a) === "ingreso").length;
+    return { ingresaron, sinIngresar: habilitados.length - ingresaron };
+  }, [accesos]);
   const accesosFiltrados = useMemo(() => {
     const q = busqueda.trim().toLowerCase();
-    if (!q) return accesos;
     return accesos.filter(
       (a) =>
-        String(a.razon_social || "").toLowerCase().includes(q) ||
-        String(a.rut_formateado || "").toLowerCase().includes(q) ||
-        String(a.email || "").toLowerCase().includes(q),
+        (!filtroIngreso || (a.acceso_habilitado && inicioSesion(a) === filtroIngreso)) &&
+        (!q ||
+          String(a.razon_social || "").toLowerCase().includes(q) ||
+          String(a.rut_formateado || "").toLowerCase().includes(q) ||
+          String(a.email || "").toLowerCase().includes(q)),
     );
-  }, [accesos, busqueda]);
+  }, [accesos, busqueda, filtroIngreso]);
 
-  async function deshabilitar(rut, razon) {
-    if (!window.confirm(`¿Deshabilitar el acceso al portal de ${razon || rut}?`)) return;
+  /* (2026-11-05) Las confirmaciones de esta pantalla (deshabilitar un acceso,
+     eliminar un usuario, enviar el acceso) usaban el diálogo nativo del
+     navegador; ahora van con la ventana de confirmación del sistema. */
+  const [confirmar, setConfirmar] = useState(null); // { title, message, confirmText, confirmTone, onConfirm }
+  function deshabilitar(rut, razon) {
+    setConfirmar({
+      title: "Deshabilitar acceso al portal",
+      message: `${razon || rut} dejará de poder ingresar al portal del cliente: ninguno de sus usuarios podrá entrar hasta que lo vuelvas a habilitar. Sus datos (stock, pedidos y usuarios) se conservan.`,
+      confirmText: "Deshabilitar acceso",
+      onConfirm: () => deshabilitarAhora(rut),
+    });
+  }
+  async function deshabilitarAhora(rut) {
+    setConfirmar(null);
     try {
       await api.post("/stock-clientes/accesos/deshabilitar", { rut });
       setToast({ type: "success", message: "Acceso deshabilitado." });
@@ -244,9 +281,23 @@ export default function AccesoPortalClientes() {
                 onChange={(e) => setBusqueda(e.target.value)}
               />
             </div>
-            <button style={s.btnGhost} onClick={cargar}>
-              <RefreshCw size={14} /> Actualizar
-            </button>
+            <div className="filtro-inicio-sesion" style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginLeft: "auto" }}>
+              <DropdownSelect
+                value={filtroIngreso}
+                onChange={setFiltroIngreso}
+                minWidth={230}
+                style={{ width: 240, maxWidth: "100%", height: 38, fontSize: 13 }}
+                title="Filtrar las cuentas habilitadas según si el cliente ya inició sesión"
+                options={[
+                  { value: "", label: "Inicio de sesión: todos" },
+                  { value: "sin_ingresar", label: `Sin iniciar sesión (${conteoIngreso.sinIngresar})`, color: "#b45309" },
+                  { value: "ingreso", label: `Ya iniciaron sesión (${conteoIngreso.ingresaron})`, color: "#15803d" },
+                ]}
+              />
+              <button style={s.btnGhost} onClick={cargar}>
+                <RefreshCw size={14} /> Actualizar
+              </button>
+            </div>
           </div>
 
           {cargando ? (
@@ -255,7 +306,11 @@ export default function AccesoPortalClientes() {
             <div style={s.vacio}>
               {accesos.length === 0
                 ? "Aún no hay clientes con acceso. Use “Habilitar acceso”."
-                : "Sin resultados para su búsqueda."}
+                : filtroIngreso && !busqueda.trim()
+                  ? filtroIngreso === "sin_ingresar"
+                    ? "Todas las cuentas habilitadas ya iniciaron sesión."
+                    : "Ninguna cuenta habilitada ha iniciado sesión todavía."
+                  : "Sin resultados para su búsqueda."}
             </div>
           ) : (
             <div style={s.tablaWrap}>
@@ -266,7 +321,7 @@ export default function AccesoPortalClientes() {
                     <th style={s.th}>Estado</th>
                     <th style={s.th}>Vigencia</th>
                     <th style={s.th}>Expira</th>
-                    <th style={s.th}>Último acceso</th>
+                    <th style={s.th}>Inicio de sesión</th>
                     <th style={{ ...s.th, textAlign: "right" }}>Acciones</th>
                   </tr>
                 </thead>
@@ -412,6 +467,15 @@ export default function AccesoPortalClientes() {
         />
       )}
 
+      <ConfirmModal
+        open={!!confirmar}
+        title={confirmar?.title}
+        message={confirmar?.message}
+        confirmText={confirmar?.confirmText}
+        confirmTone={confirmar?.confirmTone || "danger"}
+        onConfirm={() => confirmar?.onConfirm?.()}
+        onCancel={() => setConfirmar(null)}
+      />
       {toast && (
         <Toast type={toast.type} message={toast.message} onClose={() => setToast(null)} />
       )}
@@ -430,6 +494,8 @@ function FilaAcceso({ a, onRegenerar, onReHabilitar, onDeshabilitar, onSucursale
     estado = { txt: "Habilitado", bg: "#dcfce7", color: "#15803d", Icon: ShieldCheck };
   }
   const EstadoIcon = estado.Icon;
+  const ingreso = inicioSesion(a) === "ingreso";
+  const diasHabilitado = diasDesde(a.acceso_habilitado_en);
   return (
     <tr style={s.tr}>
       <td style={s.td}>
@@ -458,7 +524,29 @@ function FilaAcceso({ a, onRegenerar, onReHabilitar, onDeshabilitar, onSucursale
       </td>
       <td style={s.td}>{VIGENCIA_LABEL[a.acceso_vigencia] || "—"}</td>
       <td style={s.td}>{a.acceso_expira ? fmtFecha(a.acceso_expira) : "Sin término"}</td>
-      <td style={s.td}>{a.ultimo_acceso ? fmtFechaHora(a.ultimo_acceso) : "Nunca"}</td>
+      <td style={s.td}>
+        {/* (2026-11-05) ¿Entró desde que se le habilitó la cuenta? */}
+        {a.acceso_habilitado ? (
+          ingreso ? (
+            <span className="chip-inicio-sesion" style={{ ...s.estadoChip, background: "#dcfce7", color: "#15803d" }} title="Inició sesión después de que se le habilitó la cuenta">
+              <CheckCircle2 size={12} /> Inició sesión
+            </span>
+          ) : (
+            <span className="chip-inicio-sesion" style={{ ...s.estadoChip, background: "#fef3c7", color: "#b45309" }} title="Todavía no inicia sesión desde que se le habilitó la cuenta">
+              <Clock size={12} /> Sin iniciar sesión
+            </span>
+          )
+        ) : null}
+        <div style={{ fontSize: 12, color: "#64748b", marginTop: a.acceso_habilitado ? 4 : 0 }}>
+          {ingreso
+            ? `Último acceso: ${fmtFechaHora(a.ultimo_acceso)}`
+            : a.ultimo_acceso
+              ? `Último acceso ${fmtFechaHora(a.ultimo_acceso)}, antes de volver a habilitarla`
+              : a.acceso_habilitado && diasHabilitado != null
+                ? `Habilitada hace ${diasHabilitado === 0 ? "menos de un día" : `${diasHabilitado} día${diasHabilitado === 1 ? "" : "s"}`}: nunca ha entrado`
+                : "Nunca ha entrado"}
+        </div>
+      </td>
       <td style={s.td}>
         {/* Los botones envuelven en dos filas cuando no caben, en vez de
             empujar la tabla fuera de la pantalla. */}
@@ -1127,10 +1215,18 @@ function ModalUsuariosPortal({ rut, razonSocial, onCerrar, onOk, onError }) {
   // de acceso y la vigencia. La clave no se puede recuperar (va con hash),
   // así que el correo lleva una clave temporal nueva y la anterior deja de
   // servir; por eso se confirma antes.
-  async function enviarAcceso(u) {
-    if (!window.confirm(
-      `Se enviará a ${u.email} un correo con el enlace al portal, su correo de acceso y una clave temporal nueva (la clave actual dejará de servir). ¿Enviar?`,
-    )) return;
+  const [confirmar, setConfirmar] = useState(null); // { title, message, confirmText, confirmTone, onConfirm }
+  function enviarAcceso(u) {
+    setConfirmar({
+      title: "Enviar datos de acceso",
+      message: `Se enviará a ${u.email} un correo con el enlace al portal, su correo de acceso y una clave temporal nueva. La clave actual dejará de servir.`,
+      confirmText: "Enviar acceso",
+      confirmTone: "primary",
+      onConfirm: () => enviarAccesoAhora(u),
+    });
+  }
+  async function enviarAccesoAhora(u) {
+    setConfirmar(null);
     setGuardando(true);
     try {
       const res = await api.post(`/stock-clientes/accesos/usuarios/${u.id}/enviar-acceso`, { rut });
@@ -1146,8 +1242,16 @@ function ModalUsuariosPortal({ rut, razonSocial, onCerrar, onOk, onError }) {
     }
   }
 
-  async function eliminar(u) {
-    if (!window.confirm(`¿Quitar el acceso de ${u.email}? Podrá volver a crearlo cuando quiera.`)) return;
+  function eliminar(u) {
+    setConfirmar({
+      title: "Eliminar usuario del portal",
+      message: `Se eliminará el usuario ${u.email}: dejará de poder ingresar al portal de inmediato. Sus pedidos y movimientos se conservan y puedes volver a crearlo cuando quieras. Si solo quieres suspenderlo, usa «Desactivar».`,
+      confirmText: "Eliminar usuario",
+      onConfirm: () => eliminarAhora(u),
+    });
+  }
+  async function eliminarAhora(u) {
+    setConfirmar(null);
     setGuardando(true);
     try {
       await api.delete(`/stock-clientes/accesos/usuarios/${u.id}?rut=${encodeURIComponent(rut)}`);
@@ -1283,6 +1387,15 @@ function ModalUsuariosPortal({ rut, razonSocial, onCerrar, onOk, onError }) {
       <div style={s.modalFooter}>
         <button style={s.btnGhost} onClick={onCerrar}>Cerrar</button>
       </div>
+      <ConfirmModal
+        open={!!confirmar}
+        title={confirmar?.title}
+        message={confirmar?.message}
+        confirmText={confirmar?.confirmText}
+        confirmTone={confirmar?.confirmTone || "danger"}
+        onConfirm={() => confirmar?.onConfirm?.()}
+        onCancel={() => setConfirmar(null)}
+      />
     </Overlay>
   );
 }
@@ -1361,8 +1474,9 @@ function SeccionTiendasExplorador({ onOk, onError }) {
     }
   }
 
+  const [porEliminar, setPorEliminar] = useState(null);
   async function eliminar(t) {
-    if (!window.confirm(`¿Eliminar la tienda ${t.nombre} del explorador? Su histórico de precios se conserva.`)) return;
+    setPorEliminar(null);
     try {
       await api.delete(`/stock-clientes/explorador/tiendas/${t.id}`);
       setTiendas((prev) => prev.filter((x) => x.id !== t.id));
@@ -1488,7 +1602,7 @@ function SeccionTiendasExplorador({ onOk, onError }) {
                         <Pencil size={14} />
                       </button>
                       {!esPropia && (
-                        <button type="button" title="Eliminar" onClick={() => eliminar(t)} style={{ background: "none", border: "none", cursor: "pointer", color: "#b91c1c", padding: 5 }}>
+                        <button type="button" title="Eliminar" onClick={() => setPorEliminar(t)} style={{ background: "none", border: "none", cursor: "pointer", color: "#b91c1c", padding: 5 }}>
                           <Trash2 size={14} />
                         </button>
                       )}
@@ -1513,6 +1627,14 @@ function SeccionTiendasExplorador({ onOk, onError }) {
           onError={onError}
         />
       )}
+      <ConfirmModal
+        open={!!porEliminar}
+        title="Eliminar tienda del explorador"
+        message={`Se eliminará la tienda ${porEliminar?.nombre || ""} del explorador de precios. Su histórico de precios se conserva.`}
+        confirmText="Eliminar tienda"
+        onConfirm={() => eliminar(porEliminar)}
+        onCancel={() => setPorEliminar(null)}
+      />
     </section>
   );
 }
