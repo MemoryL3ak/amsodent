@@ -3544,43 +3544,93 @@ export class LicitacionesService {
      y cuánto se ganó con ese producto.
 
      Se cruza con la cotización para tener la fecha y saber si se adjudicó:
-     un precio que ganó vale más que uno que solo se ofertó. */
-  async historialPreciosProducto(qRaw: string) {
+     un precio que ganó vale más que uno que solo se ofertó.
+
+     (2026-11-05) Pedido de Ariel: "análisis histórico de productos en
+     cotizaciones… no trae todos los productos". La búsqueda dejaba cosas
+     afuera por cuatro razones, todas corregidas aquí:
+       · buscaba el texto tal cual: «guante nitrilo» no encontraba «GUANTE DE
+         NITRILO» y «algodon» no encontraba «algodón». Ahora se busca por
+         palabras (todas deben estar, en cualquier orden) y sin tildes;
+       · traía hasta 4.000 filas SIN orden y PostgREST corta en 1.000: se
+         perdían cotizaciones al azar. Ahora se pagina de la más nueva a la
+         más antigua y, si aun así se llega al tope, se avisa;
+       · una coma o un paréntesis en la búsqueda rompían el filtro;
+       · las variantes se agrupaban por nombre exacto: el mismo SKU escrito de
+         dos formas salía como dos productos. Ahora se agrupan por SKU (o por
+         el nombre sin tildes ni mayúsculas cuando no hay SKU).
+     Con `sku` se trae un producto exacto (desde la tabla de productos
+     cotizados). */
+  async historialPreciosProducto(qRaw: string, opts: { sku?: string } = {}) {
     const q = String(qRaw || '').trim();
-    if (q.length < 3) {
+    const skuExacto = String(opts.sku || '').replace(/\s+/g, '').trim();
+    if (!skuExacto && q.length < 3) {
       throw new BadRequestException('Escribe al menos 3 letras para buscar el producto.');
     }
     const client = this.supabase.getClient();
-    const patron = `%${q.replace(/[%_]/g, '')}%`;
+    const norm = (s: any) => String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+    // Palabras de la búsqueda: sin tildes y sin los signos que rompen el filtro.
+    const tokens = [...new Set(norm(q).split(/[^a-z0-9.\-\/+]+/).filter((t) => t.length >= 2))];
+    if (!skuExacto && !tokens.length) {
+      throw new BadRequestException('Escribe al menos una palabra del nombre o el SKU del producto.');
+    }
 
-    const { data: items, error } = await client
-      .from('items_licitacion')
-      .select('id, licitacion_id, producto, sku, formato, cantidad, valor_unitario, costo')
-      .or(`producto.ilike.${patron},sku.ilike.${patron}`)
-      .limit(4000);
-    if (error) throw new BadRequestException(error.message);
-    const filas = (items || []).filter((i: any) => Number(i?.valor_unitario) > 0);
+    // La base no ignora tildes: en la palabra más larga, las vocales y la «n»
+    // van como comodín de UN carácter (así «algodon» trae «algodón» y «nino»,
+    // «niño»); el calce exacto de todas las palabras se hace acá.
+    const TOPE = 15_000;
+    const PAGINA = 1000;
+    const larga = [...tokens].sort((a, b) => b.length - a.length)[0] || '';
+    const patron = `%${larga.replace(/[aeioun]/g, '_')}%`;
+    const items: any[] = [];
+    let truncado = false;
+    for (let desde = 0; ; desde += PAGINA) {
+      let consulta = client
+        .from('items_licitacion')
+        .select('id, licitacion_id, producto, sku, formato, cantidad, valor_unitario, costo');
+      consulta = skuExacto
+        ? consulta.ilike('sku', skuExacto.replace(/[%_]/g, ''))
+        : consulta.or(`producto.ilike."${patron}",sku.ilike."${patron}"`);
+      const { data, error } = await consulta.order('id', { ascending: false }).range(desde, desde + PAGINA - 1);
+      if (error) throw new BadRequestException(error.message);
+      items.push(...(data || []));
+      if ((data || []).length < PAGINA) break;
+      if (items.length >= TOPE) { truncado = true; break; }
+    }
+    const filas = items.filter((i: any) => {
+      if (!(Number(i?.valor_unitario) > 0)) return false;
+      if (skuExacto) return true;
+      const texto = norm(`${i?.producto || ''} ${i?.sku || ''}`);
+      return tokens.every((t) => texto.includes(t));
+    });
     if (filas.length === 0) {
-      return { consulta: q, total: 0, productos: [], serie: [], resumen: null };
+      return { consulta: q || skuExacto, total: 0, productos: [], serie: [], resumen: null, truncado };
     }
 
     // Fecha y desenlace de cada cotización involucrada.
     const licIds = [...new Set(filas.map((i: any) => i.licitacion_id).filter(Boolean))];
     const licMap: Record<number, any> = {};
-    for (let i = 0; i < licIds.length; i += 500) {
-      const { data: lics } = await client
+    for (let i = 0; i < licIds.length; i += 300) {
+      const { data: lics, error: errLics } = await client
         .from('licitaciones')
-        .select('id, id_licitacion, nombre_entidad, estado, fecha, fecha_adjudicada, tipo_cliente')
-        .in('id', licIds.slice(i, i + 500));
+        .select('id, id_licitacion, nombre_entidad, estado, fecha, fecha_adjudicada, tipo_cliente, tipo_compra')
+        .in('id', licIds.slice(i, i + 300));
+      if (errLics) throw new BadRequestException(errLics.message);
       (lics || []).forEach((l: any) => { licMap[l.id] = l; });
     }
 
+    const claveDe = (it: any) => {
+      const sku = String(it.sku || '').replace(/\s+/g, '').toUpperCase();
+      return sku ? `s:${sku}` : `n:${norm(it.producto).replace(/\s+/g, ' ').trim()}`;
+    };
     const serie = filas
       .map((it: any) => {
         const lic = licMap[it.licitacion_id] || {};
         const fecha = String(lic.fecha_adjudicada || lic.fecha || '').slice(0, 10);
+        const particular = String(lic.tipo_cliente || '').toLowerCase().includes('particular') || lic.tipo_compra === 'Cliente particular';
         return {
           fecha,
+          clave: claveDe(it),
           producto: it.producto,
           sku: it.sku || null,
           formato: it.formato || null,
@@ -3591,6 +3641,7 @@ export class LicitacionesService {
           numero: lic.id_licitacion || null,
           cliente: lic.nombre_entidad || null,
           estado: lic.estado || null,
+          tipo: particular ? 'particular' : 'publica',
           adjudicada: String(lic.estado || '').toLowerCase().includes('adjudicada'),
         };
       })
@@ -3601,34 +3652,81 @@ export class LicitacionesService {
     const adjudicados = serie.filter((s) => s.adjudicada).map((s) => s.precio);
     const prom = (xs: number[]) => (xs.length ? Math.round(xs.reduce((a, b) => a + b, 0) / xs.length) : null);
 
-    // Variantes encontradas, para cuando la búsqueda calza con varios productos.
-    const porNombre = new Map<string, { nombre: string; sku: string | null; veces: number; ultimo: number }>();
+    // Variantes encontradas (por SKU, o por nombre cuando no hay SKU). El
+    // nombre que se muestra es el de la cotización más reciente.
+    const variantes = new Map<string, { clave: string; nombre: string; sku: string | null; veces: number; ultimo: number }>();
     for (const s of serie) {
-      const k = `${s.producto}||${s.sku || ''}`;
-      const previo = porNombre.get(k);
-      porNombre.set(k, {
-        nombre: s.producto,
-        sku: s.sku,
-        veces: (previo?.veces || 0) + 1,
-        ultimo: s.precio,
-      });
+      const previo = variantes.get(s.clave);
+      variantes.set(s.clave, { clave: s.clave, nombre: s.producto, sku: s.sku || previo?.sku || null, veces: (previo?.veces || 0) + 1, ultimo: s.precio });
     }
 
     return {
-      consulta: q,
+      consulta: q || skuExacto,
       total: serie.length,
-      productos: [...porNombre.values()].sort((a, b) => b.veces - a.veces).slice(0, 30),
+      truncado,
+      productos: [...variantes.values()].sort((a, b) => b.veces - a.veces).slice(0, 200),
       serie,
-      resumen: {
-        cotizaciones: serie.length,
-        adjudicadas: adjudicados.length,
-        precio_min: Math.min(...precios),
-        precio_max: Math.max(...precios),
-        precio_promedio: prom(precios),
-        precio_promedio_adjudicado: prom(adjudicados),
-        ultimo_precio: serie[serie.length - 1]?.precio ?? null,
-        ultima_fecha: serie[serie.length - 1]?.fecha ?? null,
-      },
+      resumen: serie.length
+        ? {
+            cotizaciones: serie.length,
+            adjudicadas: adjudicados.length,
+            precio_min: Math.min(...precios),
+            precio_max: Math.max(...precios),
+            precio_promedio: prom(precios),
+            precio_promedio_adjudicado: prom(adjudicados),
+            ultimo_precio: serie[serie.length - 1]?.precio ?? null,
+            ultima_fecha: serie[serie.length - 1]?.fecha ?? null,
+          }
+        : null,
+    };
+  }
+
+  /* ── Productos cotizados: el histórico completo (2026-11-05) ──────────────
+     Todos los productos que hemos cotizado, uno por fila (agrupados por SKU,
+     o por nombre cuando no tienen), con cuántas veces se cotizaron, cuántas
+     se ganaron, las unidades y sus precios. La agregación la hace la base
+     (función productos_cotizados_resumen, migración 20261105): traer todas
+     las líneas al servidor para sumarlas sería demasiado pesado. Sin la
+     migración se avisa y la búsqueda por producto sigue funcionando. */
+  async productosCotizados(filtros: { desde?: string; hasta?: string; tipo?: string; q?: string }) {
+    const fecha = (v: any) => (/^\d{4}-\d{2}-\d{2}$/.test(String(v || '')) ? String(v) : null);
+    const tipo = filtros?.tipo === 'publica' || filtros?.tipo === 'particular' ? filtros.tipo : null;
+    const args = { p_desde: fecha(filtros?.desde), p_hasta: fecha(filtros?.hasta), p_tipo: tipo, p_q: String(filtros?.q || '').trim().slice(0, 120) || null };
+    const client = this.supabase.getClient();
+    const filas: any[] = [];
+    const PAGINA = 1000;
+    for (let desde = 0; desde < 30_000; desde += PAGINA) {
+      const { data, error } = await client.rpc('productos_cotizados_resumen', args).range(desde, desde + PAGINA - 1);
+      if (error) {
+        if (/productos_cotizados_resumen|PGRST202|42883|schema cache|does not exist/i.test(`${error.code} ${error.message}`)) {
+          return { listo: false, mensaje: 'Falta aplicar la migración 20261105_productos_cotizados_resumen en Supabase.', productos: [] };
+        }
+        throw new BadRequestException(error.message);
+      }
+      filas.push(...(data || []));
+      if ((data || []).length < PAGINA) break;
+    }
+    const n = (v: any) => (v == null ? null : Number(v));
+    return {
+      listo: true,
+      productos: filas.map((f: any) => ({
+        clave: f.clave,
+        sku: f.sku || null,
+        producto: f.producto || '',
+        formato: f.formato || null,
+        cotizaciones: Number(f.cotizaciones) || 0,
+        adjudicadas: Number(f.adjudicadas) || 0,
+        unidades: Number(f.unidades) || 0,
+        unidades_adjudicadas: Number(f.unidades_adjudicadas) || 0,
+        precio_min: n(f.precio_min),
+        precio_max: n(f.precio_max),
+        precio_promedio: n(f.precio_promedio),
+        precio_promedio_adjudicado: n(f.precio_promedio_adjudicado),
+        ultimo_precio: n(f.ultimo_precio),
+        ultima_fecha: f.ultima_fecha || null,
+        monto_adjudicado: Number(f.monto_adjudicado) || 0,
+        clientes: Number(f.clientes) || 0,
+      })),
     };
   }
 

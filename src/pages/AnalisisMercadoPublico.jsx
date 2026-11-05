@@ -1164,7 +1164,7 @@ export default function AnalisisMercadoPublico() {
       {/* Cotizaciones cuyo estado no calza con Mercado Público */}
       <EstadoMpCotizaciones setToast={setToast} />
 
-      {/* Historial de precios de cualquier producto que hayamos cotizado */}
+      {/* Análisis histórico: todos los productos cotizados y el historial de precios de cada uno */}
       <HistorialPreciosProducto />
 
       {/* ── Análisis GLOBAL de productos: todo Mercado Público, hayamos
@@ -2359,27 +2359,156 @@ function EstadoMpCotizaciones({ setToast }) {
   );
 }
 
-/* ── Historial de precios de un producto (2026-09-16, punto 22) ────────────
-   Antes solo se podía mirar lo que el análisis de Mercado Público había
-   capturado. Esto busca CUALQUIER producto en todo lo que hemos cotizado
-   alguna vez, para validar un precio antes de ofertarlo: qué cobramos, en
-   qué rango, y cuál es el precio con el que efectivamente ganamos.
+/* ── Análisis histórico de productos en cotizaciones ───────────────────────
+   (2026-09-16, punto 22) Nació como «Historial de precios de un producto»:
+   buscar CUALQUIER producto en todo lo que hemos cotizado, para validar un
+   precio antes de ofertarlo: qué cobramos, en qué rango y con cuál ganamos.
+
+   (2026-11-05) Pedido de Ariel: "análisis histórico de productos en
+   cotizaciones (mejorar el actual análisis de Mercado Público porque no trae
+   todos los productos)". El análisis de productos de arriba solo cubre lo
+   sincronizado desde Mercado Público; aquí está TODO lo cotizado, público o
+   particular:
+     · «Productos cotizados»: una fila por producto (agrupado por SKU) con
+       cuántas veces se cotizó, cuántas se ganó, unidades y precios. Se
+       filtra por período, tipo y texto, se ordena, se pagina y baja a Excel.
+       Un clic en la fila abre su historial.
+     · «Historial de un producto»: la búsqueda ahora es por palabras y sin
+       tildes, trae todas las cotizaciones (no solo las primeras) y la tabla
+       se pagina completa.
    ───────────────────────────────────────────────────────────────────────── */
+const sinTildesHist = (s) => String(s ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+const POR_PAGINA_RANKING = 12;
+const POR_PAGINA_SERIE = 25;
+const PERIODOS_HIST = [
+  { value: "12", label: "Últimos 12 meses" },
+  { value: "24", label: "Últimos 24 meses" },
+  { value: "todo", label: "Todo el historial" },
+];
+const TIPOS_HIST = [
+  { value: "", label: "Públicas y particulares" },
+  { value: "publica", label: "Mercado Público" },
+  { value: "particular", label: "Particulares" },
+];
+const fechaCorta = (f) => (f ? String(f).slice(0, 10).split("-").reverse().join("-") : "—");
+const mesesAtras = (n) => {
+  const d = new Date();
+  d.setMonth(d.getMonth() - n);
+  return d.toISOString().slice(0, 10);
+};
+
+function Paginador({ pagina, total, porPagina, onCambiar, etiqueta }) {
+  const paginas = Math.max(1, Math.ceil(total / porPagina));
+  if (total <= porPagina) return null;
+  return (
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap", marginTop: 8, fontSize: 11.5, color: "var(--text-muted)" }}>
+      <span>
+        {(pagina - 1) * porPagina + 1}–{Math.min(pagina * porPagina, total)} de {total.toLocaleString("es-CL")} {etiqueta}
+      </span>
+      <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+        <button type="button" className="btn btn-secondary btn-sm" disabled={pagina <= 1} onClick={() => onCambiar(pagina - 1)} style={{ fontSize: 11.5 }}>Anterior</button>
+        <span>Página {pagina} de {paginas}</span>
+        <button type="button" className="btn btn-secondary btn-sm" disabled={pagina >= paginas} onClick={() => onCambiar(pagina + 1)} style={{ fontSize: 11.5 }}>Siguiente</button>
+      </span>
+    </div>
+  );
+}
+
 function HistorialPreciosProducto() {
+  /* ── Productos cotizados (todos) ── */
+  const [periodo, setPeriodo] = useState("12");
+  const [tipo, setTipo] = useState("");
+  const [ranking, setRanking] = useState(null); // { listo, mensaje?, productos }
+  const [cargandoRanking, setCargandoRanking] = useState(true);
+  const [errorRanking, setErrorRanking] = useState("");
+  const [filtro, setFiltro] = useState("");
+  const [orden, setOrden] = useState({ key: "cotizaciones", dir: "desc" });
+  const [pagina, setPagina] = useState(1);
+
+  useEffect(() => {
+    let vivo = true;
+    setCargandoRanking(true);
+    setErrorRanking("");
+    const params = new URLSearchParams();
+    if (periodo !== "todo") params.set("desde", mesesAtras(Number(periodo)));
+    if (tipo) params.set("tipo", tipo);
+    api
+      .get(`/licitaciones/productos/cotizados?${params.toString()}`)
+      .then((r) => { if (vivo) setRanking(r || { listo: true, productos: [] }); })
+      .catch((e) => { if (vivo) { setErrorRanking(e?.message || "No se pudieron cargar los productos cotizados."); setRanking(null); } })
+      .finally(() => vivo && setCargandoRanking(false));
+    return () => { vivo = false; };
+  }, [periodo, tipo]);
+
+  const filas = useMemo(() => {
+    const palabras = sinTildesHist(filtro).split(/\s+/).filter(Boolean);
+    const lista = (ranking?.productos || []).filter((p) => {
+      if (!palabras.length) return true;
+      const texto = sinTildesHist(`${p.producto} ${p.sku || ""}`);
+      return palabras.every((w) => texto.includes(w));
+    });
+    const valor = (p) =>
+      orden.key === "tasa" ? (p.cotizaciones ? p.adjudicadas / p.cotizaciones : 0)
+        : orden.key === "producto" ? sinTildesHist(p.producto)
+        : orden.key === "ultima_fecha" ? String(p.ultima_fecha || "")
+        : Number(p[orden.key]) || 0;
+    const dir = orden.dir === "asc" ? 1 : -1;
+    return [...lista].sort((a, b) => {
+      const va = valor(a);
+      const vb = valor(b);
+      return (typeof va === "string" ? va.localeCompare(vb, "es") : va - vb) * dir;
+    });
+  }, [ranking, filtro, orden]);
+  useEffect(() => { setPagina(1); }, [filtro, orden, periodo, tipo]);
+  const paginaRanking = Math.min(pagina, Math.max(1, Math.ceil(filas.length / POR_PAGINA_RANKING)));
+  const visibles = filas.slice((paginaRanking - 1) * POR_PAGINA_RANKING, paginaRanking * POR_PAGINA_RANKING);
+  const ordenar = (key) => setOrden((o) => (o.key === key ? { key, dir: o.dir === "desc" ? "asc" : "desc" } : { key, dir: key === "producto" ? "asc" : "desc" }));
+  const flecha = (key) => (orden.key !== key ? "" : orden.dir === "desc" ? " ↓" : " ↑");
+
+  async function exportarRanking() {
+    if (!filas.length) return;
+    const XLSX = await import("xlsx");
+    const ws = XLSX.utils.json_to_sheet(filas.map((p) => ({
+      SKU: p.sku || "",
+      Producto: p.producto,
+      Formato: p.formato || "",
+      Cotizaciones: p.cotizaciones,
+      Adjudicadas: p.adjudicadas,
+      "% adjudicación": p.cotizaciones ? Math.round((p.adjudicadas / p.cotizaciones) * 100) : 0,
+      "Unidades cotizadas": p.unidades,
+      "Unidades adjudicadas": p.unidades_adjudicadas,
+      "Precio promedio": p.precio_promedio ?? "",
+      "Precio promedio ganador": p.precio_promedio_adjudicado ?? "",
+      "Precio mínimo": p.precio_min ?? "",
+      "Precio máximo": p.precio_max ?? "",
+      "Último precio": p.ultimo_precio ?? "",
+      "Última cotización": p.ultima_fecha || "",
+      "Monto adjudicado (neto)": Math.round(p.monto_adjudicado || 0),
+      Clientes: p.clientes,
+    })));
+    ws["!cols"] = [{ wch: 14 }, { wch: 52 }, { wch: 14 }, ...Array.from({ length: 13 }, () => ({ wch: 16 }))];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Productos cotizados");
+    XLSX.writeFile(wb, `productos_cotizados_${new Date().toISOString().slice(0, 10)}.xlsx`);
+  }
+
+  /* ── Historial de un producto ── */
   const [q, setQ] = useState("");
   const [datos, setDatos] = useState(null);
   const [cargando, setCargando] = useState(false);
   const [error, setError] = useState("");
-  const [variante, setVariante] = useState(""); // "nombre||sku" o "" = todas
+  const [variante, setVariante] = useState(""); // clave del producto o "" = todas
   const [soloAdjudicadas, setSoloAdjudicadas] = useState(false);
+  const [tipoSerie, setTipoSerie] = useState("");
+  const [paginaSerie, setPaginaSerie] = useState(1);
+  const detalleRef = useRef(null);
 
-  async function buscar(e) {
-    e?.preventDefault?.();
-    const texto = q.trim();
-    if (texto.length < 3) { setError("Escribe al menos 3 letras."); return; }
-    setCargando(true); setError(""); setVariante("");
+  async function cargarHistorial(params, claveInicial = "") {
+    setCargando(true); setError(""); setVariante(""); setPaginaSerie(1);
     try {
-      setDatos(await api.get(`/licitaciones/productos/historial-precios?q=${encodeURIComponent(texto)}`));
+      const r = await api.get(`/licitaciones/productos/historial-precios?${params.toString()}`);
+      setDatos(r);
+      if (claveInicial && (r?.productos || []).some((p) => p.clave === claveInicial)) setVariante(claveInicial);
     } catch (err) {
       setError(err?.message || "No se pudo buscar el producto.");
       setDatos(null);
@@ -2387,17 +2516,29 @@ function HistorialPreciosProducto() {
       setCargando(false);
     }
   }
+  function buscar(e) {
+    e?.preventDefault?.();
+    const texto = q.trim();
+    if (texto.length < 3) { setError("Escribe al menos 3 letras."); return; }
+    cargarHistorial(new URLSearchParams({ q: texto }));
+  }
+  // Desde la tabla de productos cotizados: por SKU exacto o, si no tiene, por su nombre.
+  function verProducto(p) {
+    setQ(p.sku || p.producto);
+    setTipoSerie(tipo);
+    cargarHistorial(p.sku ? new URLSearchParams({ sku: p.sku }) : new URLSearchParams({ q: p.producto }), p.clave);
+    setTimeout(() => detalleRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 60);
+  }
 
-  // La serie que se grafica: filtrada por variante y por si ganó o no.
+  // La serie que se grafica: filtrada por variante, tipo y por si ganó o no.
   const serie = useMemo(() => {
     let s = datos?.serie || [];
-    if (variante) {
-      const [nombre, sku] = variante.split("||");
-      s = s.filter((p) => p.producto === nombre && (p.sku || "") === sku);
-    }
+    if (variante) s = s.filter((p) => p.clave === variante);
+    if (tipoSerie) s = s.filter((p) => p.tipo === tipoSerie);
     if (soloAdjudicadas) s = s.filter((p) => p.adjudicada);
     return s;
-  }, [datos, variante, soloAdjudicadas]);
+  }, [datos, variante, tipoSerie, soloAdjudicadas]);
+  useEffect(() => { setPaginaSerie(1); }, [variante, tipoSerie, soloAdjudicadas]);
 
   const resumen = useMemo(() => {
     if (!serie.length) return null;
@@ -2414,111 +2555,211 @@ function HistorialPreciosProducto() {
       ultimo: serie[serie.length - 1],
     };
   }, [serie]);
+  const serieReciente = useMemo(() => [...serie].reverse(), [serie]);
+  const paginaSerieActual = Math.min(paginaSerie, Math.max(1, Math.ceil(serieReciente.length / POR_PAGINA_SERIE)));
+
+  const th = { padding: "6px 10px", whiteSpace: "nowrap", cursor: "pointer", userSelect: "none" };
+  const td = { padding: "6px 10px" };
+  const num = { ...td, textAlign: "right", whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" };
 
   return (
-    <div style={{ marginTop: 16, marginBottom: 16 }}>
+    <div style={{ marginTop: 16, marginBottom: 16 }} className="analisis-historico-productos">
       <Panel
-        titulo="Historial de precios de un producto"
-        sub="Busca cualquier producto en todo lo que hemos cotizado y mira a qué precios se ofertó y con cuáles se ganó"
-        extra={
-          <form onSubmit={buscar} style={{ display: "flex", gap: 6, alignItems: "center" }}>
-            <input
-              className="input"
-              placeholder="Nombre o SKU del producto…"
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              style={{ height: 30, fontSize: 12, width: 220 }}
-            />
-            <button className="btn btn-secondary btn-sm" type="submit" disabled={cargando} style={{ fontSize: 11.5 }}>
-              {cargando ? "Buscando…" : "Buscar"}
-            </button>
-          </form>
-        }
+        titulo="Análisis histórico de productos en cotizaciones"
+        sub="Todo lo que hemos cotizado, público o particular: cuántas veces, cuánto se ganó y a qué precios. Un clic en un producto abre su historial."
       >
-        {error ? (
-          <div style={{ color: "#b91c1c", fontSize: 12.5, padding: "10px 0" }}>{error}</div>
-        ) : !datos ? (
-          <Vacio texto="Escribe el nombre o el SKU de un producto para ver su historial de precios." />
-        ) : datos.total === 0 ? (
-          <Vacio texto={`No hemos cotizado nunca un producto que calce con «${datos.consulta}».`} />
+        {/* ── Productos cotizados ── */}
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 10 }}>
+          <DropdownSelect value={periodo} onChange={setPeriodo} options={PERIODOS_HIST} minWidth={180} style={{ height: 30, fontSize: 12, width: 180, flex: "0 1 180px" }} title="Período (según la fecha de adjudicación o, si no tiene, la de la cotización)" />
+          <DropdownSelect value={tipo} onChange={setTipo} options={TIPOS_HIST} minWidth={200} style={{ height: 30, fontSize: 12, width: 200, flex: "0 1 200px" }} title="Tipo de cotización" />
+          <input
+            className="input"
+            placeholder="Filtrar por nombre o SKU…"
+            value={filtro}
+            onChange={(e) => setFiltro(e.target.value)}
+            style={{ height: 30, fontSize: 12, flex: "1 1 200px", minWidth: 160, maxWidth: 340 }}
+          />
+          <span style={{ fontSize: 11.5, color: "var(--text-muted)", marginLeft: "auto", whiteSpace: "nowrap" }}>
+            {cargandoRanking ? "Cargando…" : `${filas.length.toLocaleString("es-CL")} producto${filas.length === 1 ? "" : "s"}`}
+          </span>
+          <button type="button" className="btn btn-secondary btn-sm" onClick={exportarRanking} disabled={!filas.length} style={{ fontSize: 11.5, display: "inline-flex", alignItems: "center", gap: 5 }} title="Descargar en Excel todos los productos del filtro actual">
+            <Download size={12} /> Excel
+          </button>
+        </div>
+
+        {errorRanking ? (
+          <div style={{ color: "#b91c1c", fontSize: 12.5, padding: "10px 0" }}>{errorRanking}</div>
+        ) : ranking && ranking.listo === false ? (
+          <div style={{ fontSize: 12.5, color: "#92400e", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "10px 12px" }}>
+            {ranking.mensaje || "La tabla de productos cotizados aún no está disponible."} Mientras tanto, la búsqueda de abajo ya trae el historial completo de cualquier producto.
+          </div>
+        ) : cargandoRanking && !ranking ? (
+          <Vacio texto="Cargando los productos cotizados…" />
+        ) : !filas.length ? (
+          <Vacio texto={(ranking?.productos || []).length ? "Ningún producto calza con el filtro." : "No hay cotizaciones con productos en este período."} />
         ) : (
           <>
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginBottom: 12 }}>
-              <DropdownSelect
-                value={variante}
-                onChange={setVariante}
-                style={{ height: 30, fontSize: 12, maxWidth: 420 }}
-                title="La búsqueda puede calzar con varios productos; elige uno para ver su curva sola"
-                minWidth={320}
-                options={[
-                  { value: "", label: `Todas las coincidencias (${datos.total} cotizaciones)` },
-                  ...(datos.productos || []).map((p) => ({
-                    value: `${p.nombre}||${p.sku || ""}`,
-                    label: `${p.nombre}${p.sku ? ` · ${p.sku}` : ""} (${p.veces})`,
-                  })),
-                ]}
-              />
-              <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, cursor: "pointer" }}>
-                <input type="checkbox" checked={soloAdjudicadas} onChange={(e) => setSoloAdjudicadas(e.target.checked)} />
-                Solo los precios con los que ganamos
-              </label>
+            <div style={{ border: "1px solid var(--border)", borderRadius: 8, overflowX: "auto", opacity: cargandoRanking ? 0.6 : 1 }}>
+              <table className="tabla-productos-cotizados" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, background: "var(--surface)", minWidth: 820 }}>
+                <thead>
+                  <tr style={{ background: "var(--bg)", color: "var(--text-muted)", textAlign: "left" }}>
+                    <th style={th} onClick={() => ordenar("producto")}>Producto{flecha("producto")}</th>
+                    <th style={{ ...th, textAlign: "right" }} onClick={() => ordenar("cotizaciones")} title="Cotizaciones en que aparece">Cotiz.{flecha("cotizaciones")}</th>
+                    <th style={{ ...th, textAlign: "right" }} onClick={() => ordenar("tasa")} title="Cotizaciones adjudicadas y su porcentaje">Ganadas{flecha("tasa")}</th>
+                    <th style={{ ...th, textAlign: "right" }} onClick={() => ordenar("unidades")} title="Unidades cotizadas (y adjudicadas)">Unidades{flecha("unidades")}</th>
+                    <th style={{ ...th, textAlign: "right" }} onClick={() => ordenar("precio_promedio")} title="Precio unitario promedio cotizado (incluye el flete prorrateado cuando la cotización lo llevaba)">Precio prom.{flecha("precio_promedio")}</th>
+                    <th style={{ ...th, textAlign: "right" }} onClick={() => ordenar("precio_promedio_adjudicado")} title="Promedio de los precios con los que se ganó">Prom. ganador{flecha("precio_promedio_adjudicado")}</th>
+                    <th style={{ ...th, textAlign: "right" }} onClick={() => ordenar("ultima_fecha")} title="Último precio cotizado y su fecha">Último{flecha("ultima_fecha")}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {visibles.map((p) => (
+                    <tr key={p.clave} onClick={() => verProducto(p)} style={{ borderTop: "1px solid var(--border)", cursor: "pointer" }} title="Ver el historial de precios de este producto">
+                      <td style={{ ...td, minWidth: 220 }}>
+                        <div style={{ fontWeight: 600, overflowWrap: "anywhere" }}>{p.producto || "—"}</div>
+                        <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{[p.sku || "sin SKU", p.formato].filter(Boolean).join(" · ")}</div>
+                      </td>
+                      <td style={{ ...num, fontWeight: 700 }}>{p.cotizaciones.toLocaleString("es-CL")}</td>
+                      <td style={{ ...num, color: p.adjudicadas ? "#15803d" : "var(--text-muted)" }}>
+                        {p.adjudicadas.toLocaleString("es-CL")}
+                        <span style={{ fontSize: 11, marginLeft: 4 }}>({p.cotizaciones ? Math.round((p.adjudicadas / p.cotizaciones) * 100) : 0}%)</span>
+                      </td>
+                      <td style={num}>
+                        {Number(p.unidades).toLocaleString("es-CL", { maximumFractionDigits: 1 })}
+                        <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{Number(p.unidades_adjudicadas).toLocaleString("es-CL", { maximumFractionDigits: 1 })} adjud.</div>
+                      </td>
+                      <td style={num}>
+                        {fmt$(p.precio_promedio)}
+                        <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{fmt$(p.precio_min)} – {fmt$(p.precio_max)}</div>
+                      </td>
+                      <td style={{ ...num, fontWeight: 700, color: p.precio_promedio_adjudicado != null ? "#15803d" : "var(--text-muted)" }}>{fmt$(p.precio_promedio_adjudicado)}</td>
+                      <td style={num}>
+                        {fmt$(p.ultimo_precio)}
+                        <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{fechaCorta(p.ultima_fecha)}</div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
-
-            {!resumen ? (
-              <Vacio texto="Sin datos para ese filtro." />
-            ) : (
-              <>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(140px, 100%), 1fr))", gap: 10, marginBottom: 14 }}>
-                  <MiniDato etiqueta="Último precio" valor={fmt$(resumen.ultimo?.precio)} detalle={resumen.ultimo?.fecha} />
-                  <MiniDato etiqueta="Promedio" valor={fmt$(resumen.promedio)} detalle={`${resumen.n} cotizaciones`} />
-                  <MiniDato etiqueta="Promedio ganador" valor={fmt$(resumen.promedioAdj)} detalle={`${resumen.adjudicadas} adjudicadas`} destacado />
-                  <MiniDato etiqueta="Mínimo" valor={fmt$(resumen.min)} detalle="el más bajo ofertado" />
-                  <MiniDato etiqueta="Máximo" valor={fmt$(resumen.max)} detalle="el más alto ofertado" />
-                </div>
-
-                <GraficoPrecios serie={serie} />
-
-                <div style={{ border: "1px solid var(--border)", borderRadius: 8, overflowX: "auto", marginTop: 12 }}>
-                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, background: "var(--surface)", minWidth: 680 }}>
-                    <thead>
-                      <tr style={{ background: "var(--bg)", color: "var(--text-muted)", textAlign: "left" }}>
-                        <th style={{ padding: "6px 10px" }}>Fecha</th>
-                        <th style={{ padding: "6px 10px" }}>Cotización</th>
-                        <th style={{ padding: "6px 10px" }}>Cliente</th>
-                        <th style={{ padding: "6px 10px", textAlign: "right" }}>Cant.</th>
-                        <th style={{ padding: "6px 10px", textAlign: "right" }}>Precio unit.</th>
-                        <th style={{ padding: "6px 10px" }}>Resultado</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {[...serie].reverse().slice(0, 25).map((p, i) => (
-                        <tr key={`${p.licitacion_id}-${i}`} style={{ borderTop: "1px solid var(--border)" }}>
-                          <td style={{ padding: "5px 10px", whiteSpace: "nowrap" }}>{p.fecha.split("-").reverse().join("-")}</td>
-                          <td style={{ padding: "5px 10px" }}>
-                            <Link to={`/detalle/${p.licitacion_id}`} className="table-link">{p.numero || `#${p.licitacion_id}`}</Link>
-                          </td>
-                          <td style={{ padding: "5px 10px", maxWidth: 220 }}>
-                            <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={p.cliente || ""}>{p.cliente || "—"}</div>
-                          </td>
-                          <td style={{ padding: "5px 10px", textAlign: "right" }}>{p.cantidad}</td>
-                          <td style={{ padding: "5px 10px", textAlign: "right", fontWeight: 700 }}>{fmt$(p.precio)}</td>
-                          <td style={{ padding: "5px 10px", color: p.adjudicada ? "#15803d" : "var(--text-muted)", fontWeight: p.adjudicada ? 700 : 400 }}>
-                            {p.adjudicada ? "Ganada" : p.estado || "—"}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-                {serie.length > 25 && (
-                  <p style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 8, marginBottom: 0 }}>
-                    Se listan las 25 más recientes; el gráfico y los promedios usan las {serie.length}.
-                  </p>
-                )}
-              </>
-            )}
+            <Paginador pagina={paginaRanking} total={filas.length} porPagina={POR_PAGINA_RANKING} onCambiar={setPagina} etiqueta="productos" />
           </>
         )}
+
+        {/* ── Historial de un producto ── */}
+        <div ref={detalleRef} style={{ borderTop: "1px solid var(--border)", marginTop: 16, paddingTop: 14, scrollMarginTop: 80 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 700 }}>Historial de precios de un producto</div>
+              <div style={{ fontSize: 11.5, color: "var(--text-muted)" }}>Busca por palabras del nombre (en cualquier orden, con o sin tildes) o por SKU</div>
+            </div>
+            <form onSubmit={buscar} style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+              <input
+                className="input"
+                placeholder="Nombre o SKU del producto…"
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                style={{ height: 30, fontSize: 12, width: 240, maxWidth: "100%" }}
+              />
+              <button className="btn btn-secondary btn-sm" type="submit" disabled={cargando} style={{ fontSize: 11.5 }}>
+                {cargando ? "Buscando…" : "Buscar"}
+              </button>
+            </form>
+          </div>
+
+          {error ? (
+            <div style={{ color: "#b91c1c", fontSize: 12.5, padding: "10px 0" }}>{error}</div>
+          ) : cargando && !datos ? (
+            <Vacio texto="Buscando…" />
+          ) : !datos ? (
+            <Vacio texto="Elige un producto de la tabla o escribe su nombre o SKU para ver su historial de precios." />
+          ) : datos.total === 0 ? (
+            <Vacio texto={`No hemos cotizado nunca un producto que calce con «${datos.consulta}».`} />
+          ) : (
+            <>
+              {datos.truncado && (
+                <div style={{ fontSize: 11.5, color: "#92400e", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "6px 10px", marginBottom: 10 }}>
+                  La búsqueda calza con demasiadas líneas: se muestran las más recientes. Escribe más palabras o el SKU para verlas todas.
+                </div>
+              )}
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginBottom: 12 }}>
+                <DropdownSelect
+                  value={variante}
+                  onChange={setVariante}
+                  style={{ height: 30, fontSize: 12, maxWidth: 420, flex: "1 1 260px", minWidth: 200 }}
+                  title="La búsqueda puede calzar con varios productos; elige uno para ver su curva sola"
+                  minWidth={320}
+                  options={[
+                    { value: "", label: `Todas las coincidencias (${datos.total} cotizaciones)` },
+                    ...(datos.productos || []).map((p) => ({
+                      value: p.clave,
+                      label: `${p.nombre}${p.sku ? ` · ${p.sku}` : ""} (${p.veces})`,
+                    })),
+                  ]}
+                />
+                <DropdownSelect value={tipoSerie} onChange={setTipoSerie} options={TIPOS_HIST} minWidth={200} style={{ height: 30, fontSize: 12, width: 200, flex: "0 1 200px" }} title="Tipo de cotización" />
+                <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, cursor: "pointer" }}>
+                  <input type="checkbox" checked={soloAdjudicadas} onChange={(e) => setSoloAdjudicadas(e.target.checked)} />
+                  Solo los precios con los que ganamos
+                </label>
+              </div>
+
+              {!resumen ? (
+                <Vacio texto="Sin datos para ese filtro." />
+              ) : (
+                <>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(140px, 100%), 1fr))", gap: 10, marginBottom: 14 }}>
+                    <MiniDato etiqueta="Último precio" valor={fmt$(resumen.ultimo?.precio)} detalle={resumen.ultimo?.fecha} />
+                    <MiniDato etiqueta="Promedio" valor={fmt$(resumen.promedio)} detalle={`${resumen.n} cotizaciones`} />
+                    <MiniDato etiqueta="Promedio ganador" valor={fmt$(resumen.promedioAdj)} detalle={`${resumen.adjudicadas} adjudicadas`} destacado />
+                    <MiniDato etiqueta="Mínimo" valor={fmt$(resumen.min)} detalle="el más bajo ofertado" />
+                    <MiniDato etiqueta="Máximo" valor={fmt$(resumen.max)} detalle="el más alto ofertado" />
+                  </div>
+
+                  <GraficoPrecios serie={serie} />
+
+                  <div style={{ border: "1px solid var(--border)", borderRadius: 8, overflowX: "auto", marginTop: 12 }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, background: "var(--surface)", minWidth: 720 }}>
+                      <thead>
+                        <tr style={{ background: "var(--bg)", color: "var(--text-muted)", textAlign: "left" }}>
+                          <th style={{ padding: "6px 10px" }}>Fecha</th>
+                          <th style={{ padding: "6px 10px" }}>Cotización</th>
+                          <th style={{ padding: "6px 10px" }}>Cliente</th>
+                          <th style={{ padding: "6px 10px" }}>Producto</th>
+                          <th style={{ padding: "6px 10px", textAlign: "right" }}>Cant.</th>
+                          <th style={{ padding: "6px 10px", textAlign: "right" }}>Precio unit.</th>
+                          <th style={{ padding: "6px 10px" }}>Resultado</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {serieReciente.slice((paginaSerieActual - 1) * POR_PAGINA_SERIE, paginaSerieActual * POR_PAGINA_SERIE).map((p, i) => (
+                          <tr key={`${p.licitacion_id}-${i}`} style={{ borderTop: "1px solid var(--border)" }}>
+                            <td style={{ padding: "5px 10px", whiteSpace: "nowrap" }}>{p.fecha.split("-").reverse().join("-")}</td>
+                            <td style={{ padding: "5px 10px" }}>
+                              <Link to={`/detalle/${p.licitacion_id}`} className="table-link">{p.numero || `#${p.licitacion_id}`}</Link>
+                            </td>
+                            <td style={{ padding: "5px 10px", maxWidth: 200 }}>
+                              <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={p.cliente || ""}>{p.cliente || "—"}</div>
+                            </td>
+                            <td style={{ padding: "5px 10px", maxWidth: 240 }}>
+                              <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={`${p.producto || ""}${p.sku ? ` · ${p.sku}` : ""}`}>{p.producto || "—"}</div>
+                            </td>
+                            <td style={{ padding: "5px 10px", textAlign: "right" }}>{p.cantidad}</td>
+                            <td style={{ padding: "5px 10px", textAlign: "right", fontWeight: 700 }}>{fmt$(p.precio)}</td>
+                            <td style={{ padding: "5px 10px", color: p.adjudicada ? "#15803d" : "var(--text-muted)", fontWeight: p.adjudicada ? 700 : 400 }}>
+                              {p.adjudicada ? "Ganada" : p.estado || "—"}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <Paginador pagina={paginaSerieActual} total={serieReciente.length} porPagina={POR_PAGINA_SERIE} onCambiar={setPaginaSerie} etiqueta="cotizaciones" />
+                </>
+              )}
+            </>
+          )}
+        </div>
       </Panel>
     </div>
   );

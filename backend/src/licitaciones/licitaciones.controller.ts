@@ -186,8 +186,15 @@ export class LicitacionesController {
   /* (2026-09-16, punto 22) Historial de precios de CUALQUIER producto que
      hayamos cotizado alguna vez, para validar un precio antes de ofertarlo. */
   @Get('productos/historial-precios')
-  historialPreciosProducto(@Query('q') q: string) {
-    return this.licitacionesService.historialPreciosProducto(q);
+  historialPreciosProducto(@Query('q') q: string, @Query('sku') sku?: string) {
+    return this.licitacionesService.historialPreciosProducto(q, { sku });
+  }
+
+  /* (2026-11-05) Análisis histórico: todos los productos cotizados, uno por
+     fila, con sus veces, unidades y precios (lo agrega la base). */
+  @Get('productos/cotizados')
+  productosCotizados(@Query('desde') desde?: string, @Query('hasta') hasta?: string, @Query('tipo') tipo?: string, @Query('q') q?: string) {
+    return this.licitacionesService.productosCotizados({ desde, hasta, tipo, q });
   }
 
   /* Catálogo de palabras clave y búsquedas guardadas del explorador. Van antes
