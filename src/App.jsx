@@ -39,6 +39,8 @@ import MonitoreoSistema from "./pages/MonitoreoSistema";
 // USUARIOS
 import ConfiguracionUsuarios from "./pages/ConfiguracionUsuarios";
 
+// (2026-11-05) Apertura y cierre de caja de la sala de ventas.
+import Caja from "./pages/Caja";
 // (2026-11-05) Repositorio de documentos de la empresa con su vigencia.
 import RepositorioDocumentos from "./pages/RepositorioDocumentos";
 // CAMPAÑAS — (2026-11-05) un solo módulo: Campañas de margen. El módulo
@@ -489,6 +491,16 @@ export default function App() {
           {/* (2026-11-05) Repositorio de documentos: lo ve y descarga cualquier
               usuario; subir, editar y eliminar lo valida el servidor (módulo «repositorio»). */}
           <Route path="repositorio-documentos" element={<RepositorioDocumentos />} />
+
+          {/* (2026-11-05) Caja: administradores, el usuario de la tienda y los perfiles con el módulo «caja». */}
+          <Route
+            path="caja"
+            element={
+              <RequireModulo modulo="caja">
+                <Caja />
+              </RequireModulo>
+            }
+          />
 
           {/* (2026-11-05) Las ofertas del portal se gestionan en Campañas de margen (canal «Portal del cliente»). */}
           <Route path="ofertas-portal" element={<Navigate to="/campanas-margen" replace />} />

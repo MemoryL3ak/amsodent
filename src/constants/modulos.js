@@ -18,6 +18,8 @@ export const MODULOS = [
   { key: "campanas", label: "Campañas de margen (plataforma y portal)", grupo: "Comercial" },
   // (2026-10-14) Un vendedor ve solo sus cotizaciones; con esto ve todas.
   { key: "cotizaciones_todas", label: "Ver todas las cotizaciones (no solo las propias)", grupo: "Comercial" },
+  // (2026-11-05) Apertura y cierre de caja de la sala de ventas (el usuario de la tienda lo tiene siempre).
+  { key: "caja", label: "Caja (apertura y cierre de la sala de ventas)", grupo: "Comercial" },
   // Venta directa (2026-10-07): listado y documentos de las ventas directas.
   // Emite quien tiene rol admin, contabilidad o jefe de ventas especial, o
   // este módulo o «Facturación» entre sus permisos (perfil o rol).

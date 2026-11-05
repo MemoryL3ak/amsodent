@@ -1,6 +1,6 @@
 import { Injectable, BadRequestException, UnauthorizedException } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
-import { permisosEfectivos } from './permisos';
+import { permisosDeUsuario } from './permisos';
 
 @Injectable()
 export class AuthService {
@@ -49,7 +49,8 @@ export class AuthService {
     }
     return {
       ...data,
-      permisos: permisosEfectivos(data?.rol, permisosPerfil),
+      // (2026-11-05) Con el correo: el usuario de la tienda recibe además la caja.
+      permisos: permisosDeUsuario(data?.rol, permisosPerfil, data?.email),
       perfil_nombre: perfilNombre,
     };
   }

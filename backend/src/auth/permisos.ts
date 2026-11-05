@@ -77,6 +77,10 @@ export const MODULOS: string[] = [
   // cartas de garantía…) con su vigencia: subir, editar y eliminar. Ver y
   // descargar lo puede cualquier usuario con sesión. Asignable por perfil.
   'repositorio',
+  // (2026-11-05) Apertura y cierre de caja de la sala de ventas. Además de
+  // quien lo tenga en su perfil, lo recibe siempre el usuario de la tienda
+  // (ver permisosDeUsuario): la caja asocia solo sus ventas.
+  'caja',
 ];
 
 // Módulos visibles para todos los roles autenticados (base comercial + comunicación).
@@ -119,6 +123,21 @@ export const ROLE_DEFAULTS: Record<string, string[]> = {
 // KPI y la valorización son solo de los admin; el costo por fila, además, de
 // quien tenga 'ver_costos' en su perfil).
 export const PARA_TODOS = ['inventario'];
+
+/* (2026-11-05) Usuario de la sala de ventas: el único cuyas ventas entran a la
+   caja y el que siempre puede abrirla y cerrarla. Se puede cambiar con
+   CAJA_USUARIO sin tocar el código. */
+export function cajaUsuario(): string {
+  return String(process.env.CAJA_USUARIO || 'ventas@amsodentmedical.cl').trim().toLowerCase();
+}
+
+/* Permisos efectivos de una persona concreta: los de su rol o perfil, más la
+   caja si es el usuario de la tienda. */
+export function permisosDeUsuario(rol: string | undefined, permisosPerfil: any, email?: string | null): string[] {
+  const permisos = permisosEfectivos(rol, permisosPerfil);
+  const correo = String(email || '').trim().toLowerCase();
+  return correo && correo === cajaUsuario() && !permisos.includes('caja') ? [...permisos, 'caja'] : permisos;
+}
 
 // Permisos efectivos de un usuario: perfil asignado o, en su defecto, por rol.
 export function permisosEfectivos(rol: string | undefined, permisosPerfil?: any): string[] {

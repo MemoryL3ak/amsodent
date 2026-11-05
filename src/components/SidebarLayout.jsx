@@ -13,6 +13,7 @@ import {
   ClipboardList,
   FileText,
   FolderOpen,
+  Vault,
   Package,
   Boxes,
   Users,
@@ -213,6 +214,8 @@ export default function SidebarLayout() {
     // (2026-10-07) Boletas y facturas al instante, con su listado y sus notas.
     // Quien tiene Facturación también la ve: emitir exige el mismo rol.
     (puede("venta_directa") || puede("facturacion")) && { to: "/venta-directa", icon: HandCoins, label: "Venta directa" },
+    // (2026-11-05) Apertura y cierre de caja de la sala de ventas (solo las ventas del usuario de la tienda).
+    puede("caja") && { to: "/caja", icon: Vault, label: "Caja" },
     // Antes vivía como pestaña del Chat Grupal; conserva el mismo permiso para
     // que la vean exactamente quienes ya la veían ahí.
     puede("chat") && { to: "/licitaciones-disponibles", icon: Inbox, label: "Mercado Público" },
