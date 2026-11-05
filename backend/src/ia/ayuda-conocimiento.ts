@@ -29,7 +29,11 @@ Humanos, Comunicaciones (correo masivo), Monitoreo del Sistema, widget DamarIA
 de datos. Desde nov 2026 Proveedores y Órdenes de Compra a proveedores SÍ son
 asignables por perfil (permisos "proveedores" y "ordenes_compra", grupo
 Abastecimiento); Inventario lo ven todos (mover stock sigue siendo admin).
-"Mi Ficha" y el "Centro de Ayuda" los ven todos los usuarios autenticados.
+"Mi Ficha", el "Centro de Ayuda" y el "Repositorio de documentos" (ver y
+descargar) los ven todos los usuarios autenticados. Desde nov 2026 hay dos
+permisos nuevos asignables por perfil: "caja" (apertura y cierre de caja; el
+usuario de la tienda ventas@amsodentmedical.cl lo tiene siempre) y
+"repositorio" (subir, editar y eliminar documentos del repositorio).
 
 ## FLUJO DE NEGOCIO COMPLETO (el ciclo de una venta pública)
 
@@ -124,6 +128,12 @@ se completan las fichas en Productos → Editar y el PDF se genera desde el
 Detalle con «PDF Carta». EXCEPCIÓN: el rol admin no queda bloqueado: guarda y
 genera el PDF igual, con un aviso que lista las fichas pendientes (el chip
 sobre los ítems se le muestra en ámbar en vez de rojo).
+TIEMPO DE ENTREGA Y OBSERVACIONES (desde nov 2026): en las cotizaciones de
+Mercado Público (entidad pública) el campo «Tiempo de Entrega» (texto libre,
+ej. "5 días hábiles desde la orden de compra") y las «Observaciones» son
+OBLIGATORIOS; están en la sección Observaciones del formulario. En cliente
+particular son opcionales. El tiempo de entrega sale en el PDF debajo de
+«Datos para transferencia bancaria».
 
 ### Detalle de Cotización (/detalle/:id)
 La ficha completa: ítems, márgenes, estado, y el árbol de DOCUMENTOS del ciclo:
@@ -139,6 +149,13 @@ el aviso le recuerda qué fichas faltan. «Impresora térmica» no tiene esa
 exigencia).
 DamarIA puede leer un PDF de factura o guía y precargar sus datos (botón con el
 girasol en Trazabilidad).
+En una cotización de Mercado Público abierta (En espera) no se puede guardar
+ni generar el PDF sin «Tiempo de Entrega» y «Observaciones» (nov 2026); una ya
+cerrada (adjudicada, perdida…) que nunca los tuvo se sigue pudiendo guardar.
+«Fichas técnicas» (ZIP): desde nov 2026 al pinchar se abre una ventana que
+pregunta si se quieren AGREGAR DOCUMENTOS DEL REPOSITORIO (patente, estatutos,
+cartas de garantía…): los marcados van en el mismo ZIP, en la carpeta
+«Documentos».
 
 ### Mercado Público (/licitaciones-disponibles)
 Explorador de la API de Mercado Público (búsqueda por texto, región, estado,
@@ -253,6 +270,30 @@ asignarle el SKU después, se le pone a esa misma variante. «Pendientes en
 Bsale» (admin, en Productos) envía los que quedaron sin enviar: Simular cuenta
 cuántos (por defecto solo los sin SKU) y «Enviar a Bsale» los procesa de a uno
 en segundo plano mostrando el avance.
+REPORTE «SIN FICHA COMPLETA» (nov 2026): botón «Sin ficha completa (N)» que
+descarga en Excel los productos filtrados que tienen SKU pero la ficha técnica
+incompleta, con una columna por campo de la ficha («Falta» / «OK»). Son los que
+retienen el PDF de las cotizaciones.
+ALERTA DE ACTUALIZACIÓN DE PRECIO (nov 2026): cada cambio de costo o de lista
+de un producto (al editarlo, en una carga masiva o al deshacer una carga) queda
+en su historial (antes → después, quién y cuándo; se ve en la ficha de edición,
+bajo la lista de precios). Si cambió una LISTA de precios, todo el equipo
+recibe un aviso en la campana ("Precio actualizado: SKU — producto · Lista 1
+$25.126 → $26.000"); el costo no se difunde. Los avisos se agrupan: mientras
+hay uno sin leer de las últimas horas se actualiza ese. El aviso abre Productos
+con el filtro «Precio actualizado: últimos 7 días» (también hay 30 días); la
+fecha «Act.» de un precio reciente va resaltada y al pasar el cursor muestra el
+antes → después. Requiere la migración 20261105_productos_precio_cambios para
+el historial (el aviso sale igual sin ella).
+PRECIOS HACIA BSALE (corregido nov 2026): al cambiar la lista 1 o la lista 2 de
+un producto con SKU, el precio se actualiza en Bsale (WEB-PARTICULAR y PRECIO
+MP). Antes solo viajaba si el producto ya estaba enlazado a Bsale, y casi todo
+el catálogo no lo estaba; ahora el producto se enlaza solo por su SKU al
+editarlo. Si lo único que cambió son precios, no se toca el nombre que tiene en
+Bsale. La carga masiva y deshacer una carga también envían los precios que
+cambian. El resultado se ve en el aviso al guardar.
+El pie de la ficha técnica lleva el correo lisbeth.riquelme@amsodentmedical.cl
+y el teléfono de la tienda.
 
 ### Inventario (/inventario) — lo ven todos (oct 2026)
 Todos ven el stock; las tarjetas KPI (valorización, unidades…) SOLO los admin
@@ -297,12 +338,6 @@ lo detecta, da el traslado por recibido y deja cada sucursal asociada con el
 stock que Bsale tiene en la suya (las bodegas que solo existen en el sistema
 no se tocan).
 
-### Campañas (/campanas)
-Precios de campaña por SKU con vigencia (inicio/fin): sobrescriben la lista de
-precios al cotizar y se destacan en Productos. Al crear una campaña se elige la
-LISTA DE PRECIOS asociada (1, 2 o 3): el precio unitario de referencia de cada
-SKU sale de esa lista. Crear campañas es solo admin.
-
 ### Venta directa (/venta-directa)
 Módulo comercial (2026-10-07) para boletas y facturas al instante: «Nueva
 boleta» / «Nueva factura» emite en Bsale y crea sola la cotización con esos
@@ -318,6 +353,31 @@ la venta es a cliente particular (toda venta directa sin cotización enlazada lo
 es) ni con transporte «Entrega inmediata». La ven
 quienes tienen Venta directa o Facturación;
 emitir exige rol administración, contabilidad o jefatura de ventas especial.
+
+### Caja (/caja) — nov 2026
+APERTURA Y CIERRE DE CAJA de la sala de ventas. Un turno se abre declarando el
+fondo en efectivo y se cierra con el arqueo: se cuenta el efectivo y el sistema
+dice cuánto debía haber y si cuadra, sobra o falta. Al turno se le asocian SOLO
+las ventas directas (boletas y facturas de «Venta directa») que emitió el
+usuario de la tienda, ventas@amsodentmedical.cl, desde la apertura; las ventas
+de otros usuarios nunca entran a la caja.
+Efectivo esperado = fondo inicial + ventas en efectivo + ingresos − egresos
+registrados a mano. Tarjeta, transferencia y demás medios se informan por medio
+de pago (para cuadrar los vouchers) pero no mueven el efectivo; las ventas a
+crédito y las anuladas con nota de crédito no cuentan. El medio de pago sale
+del comprobante que la venta directa registra al emitir.
+- «Abrir caja»: fondo inicial y observación opcional. Solo una caja abierta.
+- «Movimiento de efectivo»: egreso (retiro a banco, gasto menor, devolución en
+  efectivo) o ingreso (sencillo, reposición del fondo), con su motivo. Las
+  notas de crédito del turno se listan como referencia: si se devolvió
+  efectivo, se registra como egreso.
+- «Cerrar caja»: muestra el arqueo y pide el efectivo contado; si no calza con
+  lo esperado hay que explicar la diferencia. Al cerrar queda la foto del turno.
+- Pestaña «Historial»: turnos cerrados con quién abrió y cerró, fondo, ventas,
+  efectivo esperado, contado y el resultado del arqueo; cada uno se despliega
+  con sus ventas y movimientos y se descarga en Excel.
+Acceso: administradores, el usuario de la tienda (siempre) y los perfiles con
+el módulo «Caja». Requiere la migración 20261105_caja.
 
 ### Gestión de compras (/gestion-compras) — oct 2026
 Admin y quien tenga «Gestión de compras» en su perfil. Cotizaciones ADJUDICADAS
@@ -346,29 +406,56 @@ forzado) con lo que quedó sin despachar y el monto con que se cerró. Orden por
 defecto: adjudicación más antigua primero (el mismo en que se reparte el stock).
 
 ### Campañas de margen (/campanas-margen)
+Es el ÚNICO módulo de campañas (desde nov 2026): el módulo «Campañas» (precio
+fijo por SKU, /campanas) y el de «Ofertas del Portal» (/ofertas-portal) se
+ELIMINARON; sus rutas antiguas llevan aquí. Ningún precio fijo de campaña se
+aplica ya al cotizar.
 Solo productos CON SKU (oct 2026): un transitorio no entra, tampoco al cotizar.
-Campaña por MARCA, CATEGORÍA y/o lista de SKUs, sobre una lista de precios
-(1, 2 o 3) y con vigencia. En vez de fijar un precio por SKU, aplica un % de
-DESCUENTO sobre el precio de lista (desde 2026-10-07; antes era un margen fijo):
-mientras está vigente, el precio de esos productos en esa lista es precio de
-lista × (1 − descuento). Ej.: 10 % sobre $10.000 → $9.000. No
-reescribe el catálogo: al terminar la vigencia vuelve solo el precio de lista.
+Campaña por MARCA, CATEGORÍA y/o lista de SKUs, con vigencia. En vez de fijar
+un precio por SKU, aplica un % de DESCUENTO sobre el precio de lista: mientras
+está vigente, el precio de esos productos es precio de lista × (1 − descuento).
+Ej.: 10 % sobre $10.000 → $9.000. No reescribe el catálogo: al terminar vuelve
+solo el precio de lista.
+DÓNDE APLICA (canal), se elige al crearla:
+- «Plataforma Amsodent»: se aplica al cotizar en la plataforma, sobre la lista
+  de precios elegida (1, 2 o 3).
+- «Portal del cliente»: es una OFERTA del portal. El cliente la ve en la
+  pestaña «Ofertas» de su portal con el precio normal tachado, el de oferta,
+  cuánto ahorra y hasta cuándo rige. El descuento va sobre el precio del
+  cliente del portal (lista 2 y, si el producto no tiene, lista 1).
+- «Plataforma y portal»: rige en los dos.
+En el listado cada campaña lleva la etiqueta de su canal.
+LÍMITE DE UNIDADES (cupo, opcional): la campaña termina al venderse esa
+cantidad de unidades o al llegar su fecha de término, lo que pase primero.
+Cada venta suma al contador: se cuentan las unidades de las líneas de
+cotizaciones ADJUDICADAS que se vendieron con el precio de la campaña (también
+las que vienen de un pedido del portal con oferta). Al completar el cupo queda
+«Agotada» y deja de aplicar en la plataforma y en el portal; si una venta se
+revierte, el contador baja solo. El listado muestra «vendidas / cupo».
 Al crearla se ve una simulación: a cuántos productos alcanza y con qué margen
-queda cada uno; avisa los que quedan bajo su costo o con menos de 20 %.
+queda cada uno; avisa los que quedan bajo su costo o con menos de 20 %. Todos
+vienen marcados y se pueden desmarcar los que no entran.
 Pestaña «Productos y margen»: catálogo completo con filtros (texto, marcas,
 categorías, lista, en campaña, margen) y KPIs del filtro: margen promedio a
 precio de lista y con campañas vigentes, cuántos bajo 20 % y sin costo.
 Descuento masivo (admin): % sobre la lista de los filtrados, «Simular» (margen
 antes/después) y «Crear campaña» (abre la campaña armada por marca/categoría o
-por los SKUs filtrados para ponerle nombre y fechas). Marcas, categorías o SKUs vacíos = todos; con más
-de un filtro, el producto debe cumplirlos todos (solo SKUs = solo esos
-productos). Los SKUs se pegan como texto (coma, espacio o salto de línea) y la
-pantalla avisa cuáles no están en el catálogo. Productos sin precio en esa
-lista quedan fuera. Orden al
-cotizar: campaña por producto (SKU) → campaña de margen → precio de lista; si
-dos campañas de margen alcanzan al mismo producto manda la más nueva. Si tras
-el descuento queda margen bajo 20%, la cotización queda "Pendiente Aprobación". Se puede
-pausar y reanudar. La ve quien ve Campañas; crear y cambiar es solo admin.
+por los SKUs filtrados para ponerle nombre y fechas). Marcas, categorías o SKUs
+vacíos = todos; con más de un filtro, el producto debe cumplirlos todos. Los
+SKUs se pegan como texto (coma, espacio o salto de línea) y la pantalla avisa
+cuáles no están en el catálogo. Productos sin precio quedan fuera.
+Al cotizar: campaña de margen → precio de lista. Si dos campañas alcanzan al
+mismo producto en la misma lista, en la plataforma manda la más nueva; en el
+portal, la de mayor descuento. Si tras el descuento queda margen bajo 20 %, la
+cotización queda "Pendiente Aprobación". Se puede pausar y reanudar.
+En el portal el precio de oferta lo valida el servidor al recibir el pedido (si
+la campaña venció, se pausó o se agotó, la línea vuelve al precio normal), se
+ve en Pedidos del Portal con la marca "Oferta", y la cotización que se crea
+desde el pedido nace con ese precio, la observación "Oferta especial" y ligada
+a la campaña para sumar a su cupo.
+La ve quien tiene el módulo de campañas; crear, cambiar, pausar y eliminar es
+solo admin. Requiere la migración 20261105_campanas_unificadas para el canal y
+el cupo (sin ella solo existen campañas de la plataforma sin cupo).
 
 ## MÓDULOS — GRUPO POST-VENTA
 
@@ -663,22 +750,6 @@ crítico, solo el admin. SOLICITAR REUNIÓN: el cliente elige motivo (o «Otros�
 y lo escribe); le llega a Lisbeth (campana + correo) y el aviso abre la
 Bitácora con la reunión prellenada.
 
-### Ofertas del Portal (/ofertas-portal)
-Las OFERTAS ESPECIALES que el cliente ve en la pestaña "Ofertas" de su portal.
-Una oferta es un descuento en % por PRODUCTO, CATEGORÍA o MARCA, con fecha de
-inicio y de término. El descuento se aplica sobre el precio del cliente del
-portal (lista 2); el cliente ve el precio normal tachado, el precio de oferta,
-cuánto ahorra y hasta cuándo rige, y agrega los productos al carrito de
-siempre. Al crear la oferta se muestra una simulación: cuántos productos
-entran y cuántos quedan bajo el costo o bajo 20 % de margen (en ese caso la
-cotización puede quedar "Pendiente Aprobación"). Si dos ofertas alcanzan al
-mismo producto, el cliente ve la de mayor descuento. Se pueden pausar y
-reanudar. El precio de oferta lo valida el servidor al recibir el pedido (si
-la oferta ya venció, la línea vuelve al precio normal), se ve en Pedidos del
-Portal con la marca "Oferta", y al crear la cotización desde el pedido el ítem
-nace con ese precio y la observación "Oferta especial". Verlas: quien ve
-Pedidos del Portal. Crear, editar, pausar y eliminar: solo admin.
-
 ### Acceso Portal Clientes (/portal-accesos)
 MÓDULOS POR CLIENTE: el botón "Módulos" de cada cliente enciende o apaga las
 secciones de su portal (Gestión de Stock, Mis cotizaciones, Ofertas, Showroom,
@@ -689,6 +760,12 @@ sigue como "Mi pedido". El servidor lo exige: una sección apagada no entrega
 sus datos y, sin Ofertas, los pedidos van a precio normal.
 Credenciales del portal de stock: crear, renovar, revocar; y pestaña de
 recuperaciones de contraseña.
+INICIO DE SESIÓN (nov 2026): la columna «Inicio de sesión» dice si el cliente
+ya entró a su cuenta desde que se le habilitó («Inició sesión», con su último
+acceso) o no («Sin iniciar sesión», con hace cuántos días se habilitó). El
+filtro junto al buscador separa las que ya iniciaron sesión de las que no.
+Las confirmaciones (deshabilitar un acceso, eliminar un usuario, enviar el
+acceso) usan la ventana de confirmación del sistema.
 
 ### Portales públicos (sin sesión interna)
 - /portal — Portal del Cliente: entra con RUT + N° de cotización; ve sus
@@ -710,6 +787,19 @@ recuperaciones de contraseña.
 - /portal-chofer — Portal del Chofer: sus viajes, cambio de estado, foto de
   evidencia y ubicación en vivo cuando está "En ruta".
 - /evento, /evento-vina — inscripción a eventos; /sorteo/<enlace> — registro a cada sorteo (destino de su QR).
+RECEPCIÓN (pestaña del portal del cliente, nov 2026): sirve para cargar stock
+según lo que llegó. «Nueva recepción» pregunta con qué documento llegó la
+mercadería: Guía de despacho, Factura o Despacho interno de Amsodent —se elige
+de la lista (los ya recibidos vienen marcados) y sus productos, cantidades y
+precios netos llegan precargados para confirmar lo recibido— o «Sin documento»
+(se arma a mano con productos del inventario o nuevos). Cada producto recibido
+entra al Inventario como un lote con su costo, sube el stock y recalcula el
+precio unitario promedio. Queda el historial con su documento, quién la
+registró y el detalle. Requiere la migración 20261105_portal_recepciones.
+En Gestión de Stock la columna del precio se llama «Precio unit. promedio» y
+el stock solo puede bajar: lo que entra se registra en Recepción o en
+Inventario. Eliminar un usuario de la cuenta pide confirmación en una ventana
+propia del portal (ya no el diálogo del navegador).
 
 ## MÓDULOS — GRUPO REPORTES
 
@@ -752,6 +842,19 @@ nada. Si la cuota diaria del ticket se agota, el robot se pausa hasta el día
 siguiente; si la API deja de responder, reintenta a los 10 minutos. La
 pantalla avisa en ambos casos. Si el aviso dice que el robot NO está activo,
 hay que revisar el servicio worker en Railway (APP_ROL=worker).
+ANÁLISIS HISTÓRICO DE PRODUCTOS EN COTIZACIONES (nov 2026): todo lo que hemos
+cotizado, público o particular, no solo lo sincronizado desde Mercado Público.
+«Productos cotizados» lista una fila por producto (agrupado por SKU, o por
+nombre si no tiene) con cotizaciones, ganadas y su %, unidades cotizadas y
+adjudicadas, precio promedio, promedio ganador, mínimo, máximo y último precio.
+Se filtra por período (12 meses, 24 meses o todo), tipo (Mercado Público o
+particulares) y texto; se ordena por cualquier columna, se pagina y baja a
+Excel. Un clic en un producto abre su historial de precios (gráfico, resumen y
+todas sus cotizaciones, paginadas). La búsqueda del historial es por palabras
+en cualquier orden y sin tildes, y trae todas las cotizaciones. La tabla
+requiere la migración 20261105_productos_cotizados_resumen; la búsqueda por
+producto funciona sin ella. El precio es el cotizado (incluye el flete
+prorrateado cuando la cotización lo llevaba).
 
 ### Panel de Ejecutivos (/cotizaciones-vendedor)
 Rendimiento por vendedor: cotizaciones, adjudicaciones, ventas y resumen
@@ -805,6 +908,14 @@ vendedor (vendedor_correo o, si no hay, creado_por) recibe el aviso
 plataforma («Ver cotización» abre el detalle; «Entendido» la marca leída) y
 un correo con el detalle (quién la cargó, N° de OC, monto neto, cliente). Si la
 carga el mismo vendedor, no se avisa.
+Desde nov 2026 además: PEDIDO DEL PORTAL — cuando llega un pedido del portal
+del cliente (o el administrador de la cuenta aprueba el de un asistente) lo
+reciben en la campana y en una ventana flotante los destinatarios configurados,
+TODOS los administradores y el vendedor dueño de la cartera del cliente; «Ver
+pedido» abre la bandeja con ese pedido desplegado. PRECIO ACTUALIZADO — aviso a
+todo el equipo cuando cambia una lista de precios de un producto. DOCUMENTO POR
+VENCER — aviso a quienes gestionan el Repositorio de documentos a 30, 15 y 7
+días del vencimiento y el día que vence.
 
 ## MÓDULOS — GRUPO HERRAMIENTAS
 
@@ -831,6 +942,22 @@ pantalla e historial propio.
 El portal del trabajador: vacaciones disponibles, días administrativos,
 antigüedad, liquidaciones (ver detalle y FIRMAR digitalmente), documentos,
 evaluaciones y solicitudes de vacaciones/permisos (enviar y anular).
+
+### Repositorio de documentos (/repositorio-documentos) — nov 2026
+Los documentos de la empresa que se piden una y otra vez: patente comercial,
+estatutos, cartas de garantía, certificados y otros. Cada uno tiene nombre,
+tipo, fecha de emisión, fecha de vencimiento (vacía = no vence), descripción y
+su archivo (PDF, imagen, Word o Excel, hasta 20 MB). VIGENCIA: Vigente, Por
+vencer (a 30 días o menos), Vencido o Sin vencimiento; las tarjetas de arriba
+filtran por vigencia y hay filtros por texto, tipo y vigencia. «Descargar» abre
+el archivo; «Editar» cambia los datos o reemplaza el archivo (renovación);
+«Eliminar» lo quita. A 30, 15 y 7 días del vencimiento y el día que vence,
+quienes gestionan el repositorio reciben el aviso en la campana.
+Al descargar las fichas técnicas de una cotización (o desde Productos) una
+ventana ofrece agregar documentos del repositorio al mismo ZIP.
+Lo ven y descargan todos los usuarios (menú Herramientas). Subir, editar y
+eliminar: administradores o perfiles con el permiso «Repositorio de
+documentos». Requiere la migración 20261105_repositorio_documentos.
 
 ## MÓDULOS — GRUPO ADMINISTRACIÓN
 
@@ -983,7 +1110,9 @@ girasol 🌻). Hoy ayuda en:
   Explorador de Precios o Gestión de Stock). Muestra cliente, contacto,
   sucursal, ítems con referencias, nota y mensajes; permite cambiar estado,
   abrir la cotización vinculada o crear una nueva precargada desde el pedido.
-  Acceso: mismos permisos que Monitoreo Stock (ventas especial y admin).
+  Acceso: quien tiene Monitoreo Stock ve todos los pedidos. Desde nov 2026 el
+  vendedor dueño de la cartera también entra (lo lleva el aviso del pedido) y
+  ve solo los pedidos de los clientes de su cartera.
 - CORREO ALTERNO: en Usuarios, cada persona puede tener una segunda casilla
   asociada (profiles.email_alterno); la plataforma reconoce ambos correos
   como el mismo usuario (ej: Jeremías con jer.consorcio@gmail.com y
