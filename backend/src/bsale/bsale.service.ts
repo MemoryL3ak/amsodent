@@ -214,7 +214,14 @@ export class BsaleService {
     const candidatos: any[] = r?.items || [];
     const doc = candidatos.find((d: any) => Number(d?.state) !== 1) || candidatos[0];
     if (!doc) return { disponible: true, encontrado: false, numero: num };
-    const detalles: any[] = doc?.details?.items || doc?.details || [];
+    let detalles: any[] = doc?.details?.items || doc?.details || [];
+    // (2026-11-06) `expand=[details]` solo trae las primeras 25 líneas: una guía
+    // más larga se leía a medias y sus últimos productos figuraban sin
+    // despachar (cotización 3383-80-COT26-1, guía 966 de 33 líneas). Si el
+    // documento declara más líneas de las que vinieron, se bajan todas.
+    if (Array.isArray(detalles) && Number(doc?.details?.count || 0) > detalles.length && doc?.id != null) {
+      detalles = await this.paginado(`/documents/${Number(doc.id)}/details.json`);
+    }
     const referencias: any[] = doc?.references?.items || doc?.references || [];
     return {
       disponible: true,
@@ -423,8 +430,9 @@ export class BsaleService {
     const vigentes = guias.filter((g) => !g.anulada && g.id != null).slice(0, 12);
     for (const g of vigentes) {
       try {
-        const det = await this.apiGet(`/documents/${g.id}/details.json?limit=50`);
-        for (const it of det?.items || []) {
+        // Todas las páginas: una guía de más de 50 líneas quedaba a medias.
+        const det = await this.paginado(`/documents/${g.id}/details.json`);
+        for (const it of det) {
           const sku = String(it?.variant?.code || '').trim();
           const nombre = String(it?.variant?.description || '').trim();
           const key = sku || nombre.toLowerCase();
