@@ -258,12 +258,11 @@ export function FichaTecnicaDocument({ producto, logoSrc, marcaAguaSrc, producto
         )}
 
         {/* Footer */}
-        {/* (2026-11-05) Contacto de Lisbeth y de la tienda: constants/contactoFichas.js */}
+        {/* (2026-11-05) Correo y teléfonos de contacto: constants/contactoFichas.js */}
         <View style={s.footer}>
           <Text style={s.footerText}>{CONTACTO_FICHA.direccion}</Text>
           <View style={s.footerFonos}>
-            {CONTACTO_FICHA.telefonoTienda ? <Text style={s.footerText}>Tienda: {CONTACTO_FICHA.telefonoTienda}</Text> : null}
-            {CONTACTO_FICHA.telefonoLisbeth ? <Text style={s.footerText}>Lisbeth Riquelme: {CONTACTO_FICHA.telefonoLisbeth}</Text> : null}
+            {(CONTACTO_FICHA.telefonos || []).filter(Boolean).map((fono) => <Text key={fono} style={s.footerText}>{fono}</Text>)}
           </View>
           <Text style={s.footerText}>{CONTACTO_FICHA.correo}</Text>
         </View>
