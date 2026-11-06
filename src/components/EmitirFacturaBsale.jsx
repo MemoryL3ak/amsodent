@@ -94,7 +94,8 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
   const [forma, setForma] = useState("");
   const [oc, setOc] = useState("");
   // (2026-11-05) Giro con el que sale la factura, cuando la ficha del cliente tiene más de uno.
-  const [giro, setGiro] = useState("");
+  // (2026-11-06) Se puede elegir más de uno: a Bsale van unidos con « / ».
+  const [girosSel, setGirosSel] = useState([]);
   // (2026-10-24) Edición de líneas: por detalle_id { cantidad, nota, quitada }; y productos agregados.
   const [edits, setEdits] = useState({});
   const [extras, setExtras] = useState([]); // { key, sku, producto, cantidad, neto_unitario, nota }
@@ -115,7 +116,7 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
     dias,
     forma,
     oc: oc.trim().toUpperCase(),
-    giro,
+    giros: girosSel,
     edits,
     extras: extras.map((x) => [x.sku, x.cantidad, x.neto_unitario, x.nota]),
   });
@@ -140,7 +141,11 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
         setDias((v) => (v !== "" ? v : String(b.dias_vencimiento ?? 30)));
         setForma((v) => (v && b.formas_pago.some((f) => String(f.id) === String(v)) ? v : String(b.forma_pago_id ?? "")));
         setOc((b.referencias.find((r) => r.codigo_sii === 801) || {}).numero || "");
-        setGiro((v) => (v && (b.giros || []).includes(v) ? v : b.giro_elegido || ""));
+        // Lo ya marcado se conserva (en el orden de la ficha); si no hay nada, lo que propone el servidor.
+        setGirosSel((v) => {
+          const vigentes = (b.giros || []).filter((g) => v.includes(g));
+          return vigentes.length ? vigentes : b.giros_elegidos || [];
+        });
       })
       .catch((e) => vivo && setError(e?.message || "No se pudo consultar Bsale."))
       .finally(() => vivo && setCargando(false));
@@ -237,7 +242,11 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
   const todasSeleccionadas = (borrador?.guias_disponibles || []).length > 0 && borrador.guias_disponibles.every((g) => seleccion.includes(g.doc_id));
   // (2026-11-05) Solo se elige giro cuando la ficha del cliente tiene más de uno.
   const eligeGiro = (borrador?.giros || []).length > 1;
-  const opcionesGiro = useMemo(() => (borrador?.giros || []).map((g) => ({ value: g, label: g })), [borrador]);
+  // Texto que recibe Bsale: los giros marcados, en el orden de la ficha, unidos con « / ».
+  const giroTexto = girosSel.join(" / ");
+  const giroMax = borrador?.giro_max || 80;
+  const giroExcede = giroTexto.length > giroMax;
+  const alternarGiro = (g) => setGirosSel((v) => (borrador?.giros || []).filter((x) => (x === g ? !v.includes(g) : v.includes(x))));
   const opcionesForma = useMemo(
     () => (borrador?.formas_pago || []).map((f) => ({ value: String(f.id), label: f.nombre })),
     [borrador],
@@ -265,7 +274,7 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
         forma_pago_id: Number(forma),
         // Solo viaja si se corrigió: el servidor usa la de la guía por defecto.
         ...(borrador.oc_editable && oc.trim() && oc.trim().toUpperCase() !== ocOriginal ? { oc_numero: oc.trim() } : {}),
-        ...(eligeGiro && giro ? { giro } : {}),
+        ...(eligeGiro && girosSel.length ? { giros: girosSel } : {}),
         huella: borrador.huella,
         // (2026-10-24) Líneas de la guía que se facturan (las quitadas no van), con cantidad y observación; y productos agregados.
         lineas: lineasActivas.map((l) => ({ detalle_id: l.detalle_id, cantidad: cantidadDe(l), nota: edits[l.detalle_id]?.nota ?? l.nota ?? "", ...(precioCambiado(l) ? { neto_unitario: precioDe(l) } : {}), ...(skuCambiado(l) ? { sku: skuDe(l), producto: productoDe(l) } : {}) })),
@@ -283,7 +292,7 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
 
   // (2026-10-08) Emitido el documento, al cerrar se abre la ventana de correo para enviárselo al cliente.
   const cerrar = () => { if (enviando) return; if (resultado?.emitida) window.dispatchEvent(new Event("correos:check")); onCerrar?.(); };
-  const completo = !cargando && !enviando && borrador && !bloqueada && fecha && dias !== "" && forma && !cantidadInvalida && lineasActivas.length + extras.length > 0;
+  const completo = !cargando && !enviando && borrador && !bloqueada && fecha && dias !== "" && forma && !cantidadInvalida && lineasActivas.length + extras.length > 0 && !(eligeGiro && giroExcede);
   const puedeSimular = completo;
   // Emitir solo después de simular estos mismos datos (o al registrar una ya emitida).
   const puedeEmitir = completo && !apagada && (borrador.recuperar || (simulacionVigente && confirmo));
@@ -420,12 +429,25 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
                           </div>
                           {eligeGiro && (
                             <div className="factura-giro" style={{ marginTop: 8 }}>
-                              <span style={etiqueta}>Giro de esta factura</span>
-                              <DropdownSelect value={giro} onChange={setGiro} options={opcionesGiro} disabled={!!enviando} minWidth={240} style={{ width: "100%" }} />
-                              <div style={{ color: "var(--text-muted)", fontSize: 11.5, marginTop: 4 }}>
-                                {giro && giro.trim().toLowerCase() === String(borrador.cliente.giro || "").trim().toLowerCase()
-                                  ? "Es el giro que el cliente tiene hoy en Bsale."
-                                  : `En Bsale hoy tiene «${borrador.cliente.giro || "—"}»: al emitir quedará con el giro elegido.`}
+                              <span style={etiqueta}>Giros de esta factura (uno o más)</span>
+                              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                                {(borrador.giros || []).map((g) => {
+                                  const marcado = girosSel.includes(g);
+                                  const unico = marcado && girosSel.length === 1;
+                                  return (
+                                    <label key={g} className="factura-giro-opcion" title={unico ? "La factura necesita al menos un giro" : undefined} style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "5px 8px", borderRadius: 8, border: `1px solid ${marcado ? "var(--primary, #2563eb)" : "var(--border)"}`, background: marcado ? "rgba(37, 99, 235, 0.06)" : "transparent", cursor: enviando || unico ? "default" : "pointer", fontSize: 12.5 }}>
+                                      <input type="checkbox" checked={marcado} disabled={!!enviando || unico} onChange={() => alternarGiro(g)} style={{ marginTop: 2 }} />
+                                      <span style={{ overflowWrap: "anywhere" }}>{g}</span>
+                                    </label>
+                                  );
+                                })}
+                              </div>
+                              <div className="factura-giro-texto" style={{ color: giroExcede ? "#b91c1c" : "var(--text-muted)", fontSize: 11.5, marginTop: 4 }}>
+                                {giroExcede
+                                  ? `Los giros marcados suman ${giroTexto.length} caracteres y Bsale admite ${giroMax}: desmarca alguno.`
+                                  : giroTexto.trim().toLowerCase() === String(borrador.cliente.giro || "").trim().toLowerCase()
+                                    ? `Es el giro que el cliente tiene hoy en Bsale (${giroTexto.length}/${giroMax}).`
+                                    : `La factura saldrá con «${giroTexto}» (${giroTexto.length}/${giroMax}). En Bsale hoy tiene «${borrador.cliente.giro || "—"}»: al emitir quedará con lo marcado.`}
                               </div>
                             </div>
                           )}

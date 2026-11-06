@@ -12,7 +12,7 @@ import { SupabaseService } from '../supabase/supabase.service';
 import { CorreosService } from '../correos/correos.service';
 import { LicitacionesService } from '../licitaciones/licitaciones.service';
 import { permisosEfectivos } from '../auth/permisos';
-import { ACTIVITY_MAX, leerGiros, mismoGiro, variantesRutFicha } from './bsale-giros';
+import { ACTIVITY_MAX, girosEnActividad, leerGiros, mismoGiro, textoDeGiros, variantesRutFicha } from './bsale-giros';
 
 /* ── Emisión de facturas en Bsale desde el sistema (2026-10-02) ──────────────
    La factura se arma A PARTIR DE LA GUÍA DE DESPACHO que ya existe en Bsale,
@@ -1284,12 +1284,16 @@ export class BsaleFacturacionService {
        factura". Bsale guarda UN giro por cliente y el documento sale con el
        que tenga al emitir, así que el elegido se le pone al cliente justo
        antes (ver ponerGiroCliente). Solo se ofrece cuando la ficha tiene más
-       de uno; por defecto, el que Bsale ya tiene si es uno de ellos, y si no,
-       el principal (el primero de la ficha). */
+       de uno; por defecto, los que Bsale ya tiene si son de la ficha, y si no,
+       el principal (el primero de la ficha).
+       (2026-11-06) «Elegir más de un giro al facturar»: se pueden marcar
+       varios; a Bsale van unidos con « / » en el orden de la ficha, igual que
+       cuando se guarda la ficha del cliente, y deben caber en ACTIVITY_MAX. */
     const giroBsale = String(cliente?.activity || '').replace(/\s+/g, ' ').trim();
     const girosFicha = cliente ? await this.girosDeFicha(cliente.code || lic.rut_entidad) : [];
     const giros = girosFicha.length > 1 ? girosFicha : [];
-    const giroElegido = giros.find((g) => mismoGiro(g, giroBsale)) || giros[0] || null;
+    const enBsale = girosEnActividad(giros, giroBsale);
+    const girosElegidos = enBsale.length ? enBsale : giros.slice(0, 1);
 
     // ¿Alguna ya está facturada en Bsale?
     let recuperar: { emision_id: number; numero: string; doc: any } | null = null;
@@ -1427,7 +1431,8 @@ export class BsaleFacturacionService {
         : null,
       // Giros de la ficha para elegir con cuál sale la factura ([] = no se elige).
       giros,
-      giro_elegido: giroElegido,
+      giros_elegidos: girosElegidos,
+      giro_max: ACTIVITY_MAX,
       guias,
       guias_disponibles: disponibles,
       lineas,
@@ -1531,6 +1536,8 @@ export class BsaleFacturacionService {
       extras?: LineaExtra[];
       // (2026-11-05) Giro con el que sale la factura (uno de los de la ficha).
       giro?: string;
+      // (2026-11-06) Varios giros de la ficha: a Bsale van unidos con « / ».
+      giros?: string[];
     },
   ) {
     await this.exigirRol(usuario.id);
@@ -1606,11 +1613,19 @@ export class BsaleFacturacionService {
 
     const opciones = { fecha_emision: fecha, dias_vencimiento: dias, forma_pago_id: forma };
 
-    // (2026-11-05) Giro elegido: debe ser uno de los de la ficha. Si no es el
-    // que Bsale tiene hoy, se le pone al cliente antes de emitir.
-    const giroPedido = String(body?.giro ?? '').replace(/\s+/g, ' ').trim();
-    const giroFactura = giroPedido ? b.giros.find((g) => mismoGiro(g, giroPedido)) || null : null;
-    if (giroPedido && !giroFactura) throw new BadRequestException('El giro elegido no está entre los de la ficha del cliente. Vuelve a abrir el borrador.');
+    // (2026-11-05) Giro elegido: debe ser de los de la ficha. Si no es el que
+    // Bsale tiene hoy, se le pone al cliente antes de emitir.
+    // (2026-11-06) Pueden ser varios (`giros`); `giro` (uno solo) sigue valiendo.
+    const limpio = (v: any) => String(v ?? '').replace(/\s+/g, ' ').trim();
+    const pedidos: string[] = (Array.isArray(body?.giros) ? body.giros : [body?.giro]).map(limpio).filter(Boolean);
+    const fuera = pedidos.filter((p) => !b.giros.some((g) => mismoGiro(g, p)));
+    if (fuera.length) throw new BadRequestException(`El giro «${fuera[0]}» no está entre los de la ficha del cliente. Vuelve a abrir el borrador.`);
+    // En el orden de la ficha, sin repetidos.
+    const elegidos = b.giros.filter((g) => pedidos.some((p) => mismoGiro(g, p)));
+    const giroFactura = elegidos.length ? textoDeGiros(elegidos) : null;
+    if (giroFactura && giroFactura.length > ACTIVITY_MAX) {
+      throw new BadRequestException(`Los giros elegidos suman ${giroFactura.length} caracteres y Bsale admite ${ACTIVITY_MAX}: elige menos giros para esta factura.`);
+    }
     const giroAntes = String(b.cliente?.giro || '');
     const cambiaGiro = !!giroFactura && !mismoGiro(giroFactura, giroAntes);
     const avisoGiro = cambiaGiro

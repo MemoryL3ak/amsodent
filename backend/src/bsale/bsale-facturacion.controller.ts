@@ -85,6 +85,7 @@ export class BsaleFacturacionController {
       extras?: { sku: string; producto?: string; cantidad: number; neto_unitario: number; nota?: string | null }[];
       // (2026-11-05) Giro con el que sale la factura, cuando la ficha del cliente tiene varios.
       giro?: string;
+      giros?: string[];
     },
   ) {
     return this.facturacion.emitir(

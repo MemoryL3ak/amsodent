@@ -50,6 +50,21 @@ export function leerGiros(fila: any): string[] {
 /* ¿Son el mismo giro? (sin distinguir mayúsculas, tildes ni espacios dobles) */
 export const mismoGiro = (a: any, b: any) => clave(a) === clave(b);
 
+/* Texto de `activity` para un grupo de giros, COMPLETO (sin recortar): el que
+   elige los giros de una factura necesita saber si caben, no que se pierdan. */
+export function textoDeGiros(giros: any): string {
+  return normalizarGiros(giros).join(SEPARADOR_GIROS);
+}
+
+/* De los giros de la ficha, cuáles están hoy en el `activity` de Bsale (que
+   puede traer uno solo o varios unidos con « / »). */
+export function girosEnActividad(girosFicha: string[], actividad: any): string[] {
+  const texto = String(actividad ?? '').replace(/\s+/g, ' ').trim();
+  if (!texto) return [];
+  const partes = texto.split(SEPARADOR_GIROS).map((p) => p.trim()).filter(Boolean);
+  return (girosFicha || []).filter((g) => mismoGiro(g, texto) || partes.some((p) => mismoGiro(p, g)));
+}
+
 /* El RUT se guarda en la ficha en varios formatos (con puntos, con guion,
    plano, con k minúscula): todas las formas de escribir el mismo RUT. */
 export function variantesRutFicha(rut: any): string[] {
