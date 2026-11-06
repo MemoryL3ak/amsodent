@@ -30,10 +30,13 @@ de datos. Desde nov 2026 Proveedores y Órdenes de Compra a proveedores SÍ son
 asignables por perfil (permisos "proveedores" y "ordenes_compra", grupo
 Abastecimiento); Inventario lo ven todos (mover stock sigue siendo admin).
 "Mi Ficha", el "Centro de Ayuda" y el "Repositorio de documentos" (ver y
-descargar) los ven todos los usuarios autenticados. Desde nov 2026 hay dos
-permisos nuevos asignables por perfil: "caja" (apertura y cierre de caja; el
-usuario de la tienda ventas@amsodentmedical.cl lo tiene siempre) y
-"repositorio" (subir, editar y eliminar documentos del repositorio).
+descargar) los ven todos los usuarios autenticados; subir, editar y eliminar
+documentos del repositorio es SOLO de administradores (ya no existe el permiso
+"repositorio"). Desde nov 2026 hay dos permisos nuevos asignables por perfil:
+"caja" (apertura y cierre de caja; el usuario de la tienda
+ventas@amsodentmedical.cl lo tiene siempre) y "recepcion_stock" (Recepción de
+stock, grupo Abastecimiento). «Movimiento diario de productos» lo ve quien
+tiene "gestion_compras".
 
 ## FLUJO DE NEGOCIO COMPLETO (el ciclo de una venta pública)
 
@@ -132,8 +135,12 @@ TIEMPO DE ENTREGA Y OBSERVACIONES (desde nov 2026): en las cotizaciones de
 Mercado Público (entidad pública) el campo «Tiempo de Entrega» (texto libre,
 ej. "5 días hábiles desde la orden de compra") y las «Observaciones» son
 OBLIGATORIOS; están en la sección Observaciones del formulario. En cliente
-particular son opcionales. El tiempo de entrega sale en el PDF debajo de
+particular el tiempo de entrega NO se pide (el campo no aparece) y las
+observaciones son opcionales. El tiempo de entrega sale en el PDF debajo de
 «Datos para transferencia bancaria».
+CLIENTE PARTICULAR (nov 2026): la Nueva Cotización ya no pide «Nombre
+Cotización»: la cotización queda con el nombre del cliente. Tampoco lleva
+«Tiempo de Entrega».
 
 ### Detalle de Cotización (/detalle/:id)
 La ficha completa: ítems, márgenes, estado, y el árbol de DOCUMENTOS del ciclo:
@@ -201,6 +208,14 @@ giros viajan cuando se cree el cliente al emitirle su primer documento (guía,
 factura libre o venta directa). Si la ficha y Bsale dicen giros distintos, al
 armar el documento se avisa: sale con el de Bsale (se corrige guardando la
 ficha, que lo reenvía, o en Bsale).
+GIROS AL EMITIR UNA FACTURA (nov 2026): si la ficha del cliente tiene más de
+un giro, la ventana de emisión de la factura muestra «Giros de esta factura»
+con una casilla por giro: se marca UNO O MÁS (por defecto, los que el cliente
+ya tiene en Bsale si son de la ficha; si no, el principal). Los marcados salen
+unidos con « / » en el orden de la ficha y deben caber en 80 caracteres (la
+ventana muestra el texto y el conteo). Al emitir, el cliente queda en Bsale con
+lo marcado; la simulación lo muestra antes y, si Bsale no acepta el cambio, la
+factura no se emite.
 ASIGNACIÓN DE CARTERA (/asignacion-cartera, solo admin; también con el botón
 "Asignar cartera" de Clientes): para repartir clientes entre vendedores EN
 MASA. Se filtra por nombre/RUT, tipo, región, vendedor asignado y "le cotiza"
@@ -293,7 +308,7 @@ editarlo. Si lo único que cambió son precios, no se toca el nombre que tiene e
 Bsale. La carga masiva y deshacer una carga también envían los precios que
 cambian. El resultado se ve en el aviso al guardar.
 El pie de la ficha técnica lleva el correo lisbeth.riquelme@amsodentmedical.cl
-y el teléfono de la tienda.
+y los dos teléfonos de contacto: +56 9 2641 1469 y +56 9 7286 8713.
 
 ### Inventario (/inventario) — lo ven todos (oct 2026)
 Todos ven el stock; las tarjetas KPI (valorización, unidades…) SOLO los admin
@@ -373,6 +388,16 @@ del comprobante que la venta directa registra al emitir.
   efectivo, se registra como egreso.
 - «Cerrar caja»: muestra el arqueo y pide el efectivo contado; si no calza con
   lo esperado hay que explicar la diferencia. Al cerrar queda la foto del turno.
+- Pestaña «Reporte diario» (nov 2026): por DÍA, las ventas directas de la
+  tienda separadas por medio de pago —efectivo, tarjeta de débito, tarjeta de
+  crédito y otros medios—, con cuántas ventas y cuánto en cada uno; los
+  ingresos y egresos de efectivo; el total de movimientos de la caja; y el
+  SALDO QUE DEBERÍA QUEDAR EN CAJA = efectivo con que partió el día + ventas en
+  efectivo + ingresos − egresos. Cada día se despliega con la cuenta del saldo,
+  los turnos y su arqueo, las ventas y los movimientos; el botón de la
+  impresora lo imprime o guarda en PDF y «Excel» baja el período completo. Sin
+  fechas muestra los últimos 30 días (hasta 92 por consulta). Débito y crédito
+  se separan por la forma de pago de Bsale con que se emitió la venta.
 - Pestaña «Historial»: turnos cerrados con quién abrió y cerró, fondo, ventas,
   efectivo esperado, contado y el resultado del arqueo; cada uno se despliega
   con sus ventas y movimientos y se descarga en Excel.
@@ -400,10 +425,59 @@ todas), vendedor, orden y «Adjudicadas desde» (nunca antes del 16-10-2026).
 Pestaña «Por comprar»: por SKU, falta, stock, costo, valor estimado, en qué
 cotizaciones, con totales al pie; los transitorios sin SKU y lo que no está en
 el catálogo siempre por comprar. «Exportar» baja la pestaña visible en CSV.
+NOVEDADES nov 2026:
+- Columna «OC» (N° de la orden de compra de la cotización) y filtro «Entidad»
+  (pública / particular), que vale también en «Por comprar» y en el consolidado.
+- PROVEEDORES POR PRODUCTO: en «Por comprar», la columna «Proveedores» permite
+  elegir uno o MÁS proveedores para cada producto (se guarda al marcar; desde
+  el mismo desplegable se agrega un proveedor nuevo con su razón social).
+- Pestaña «CONSOLIDADO COMPRAS»: esa selección agrupada por proveedor: qué
+  productos comprarle, unidades y valor estimado; al desplegarlo se ven sus
+  productos y con qué otros proveedores se cotiza cada uno. Avisa cuántos
+  productos por comprar siguen sin proveedor.
+- «DECLARAR QUIEBRE DE STOCK» (botón arriba): se elige un producto con despacho
+  pendiente y, opcionalmente, motivo, fecha estimada de reposición y un
+  documento de respaldo. Al declarar, el vendedor de cada cotización afectada
+  recibe el aviso «quiebre_stock» en la campana y una ventana flotante. Queda
+  en la pestaña «QUIEBRES DE STOCK» (con el respaldo y las cotizaciones
+  afectadas) y el producto lleva la etiqueta «Quiebre de stock». Sale solo de
+  la lista cuando esas cotizaciones quedan despachadas; también se quita a mano.
+  Requiere la migración 20261106_gestion_compras_proveedores_quiebres.
+- Corregido: una guía de más de 25 líneas se leía a medias y sus últimos
+  productos figuraban sin despachar; ahora se leen todas las líneas.
 Cierre forzado (ciclo_cerrado): la cotización deja de tomar stock y no entra en
 «Por comprar»; queda con estado «Cierre forzado» (filtro Todas / Cierre
 forzado) con lo que quedó sin despachar y el monto con que se cerró. Orden por
 defecto: adjudicación más antigua primero (el mismo en que se reparte el stock).
+
+### Recepción de stock (/recepcion-stock) — nov 2026
+Admin y quien tenga «Recepción de stock» (recepcion_stock) en su perfil. Es la
+«Recepción de stock» de BSALE hecha desde la plataforma: sirve para CARGAR
+STOCK. Se elige la sucursal que recibe, con qué documento llegó la mercadería
+—GUÍA de despacho, FACTURA, DESPACHO INTERNO o SIN DOCUMENTO— y su número, la
+fecha del documento, proveedor y nota opcionales, y los productos (se buscan
+por SKU o nombre) con su cantidad y costo neto unitario. Dos pasos: «Simular»
+(muestra lo que se enviará a Bsale y cómo queda el stock; no escribe; avisa si
+la sucursal no está asociada a Bsale, si un SKU no está en Bsale o si ya hay
+una recepción con ese documento) y «Registrar recepción» (solo con una
+simulación vigente y sin problemas): crea la recepción en Bsale y suma las
+unidades al inventario de la sucursal, como entrada del libro. Si Bsale la
+rechaza, el inventario no se toca. Bandeja con una fila por recepción y su
+detalle, filtros, tarjetas del mes y Excel. Para mover stock entre sucursales
+propias se sigue usando Inventario → Traslados. Requiere la migración
+20261106_recepciones_stock. (Es distinto de la pestaña «Recepción» del portal
+del cliente, que carga el inventario propio de la clínica.)
+
+### Movimiento diario de productos (/movimiento-productos) — nov 2026
+Admin y quien tenga «Gestión de compras». Qué productos SALIERON cada día y
+cuántas unidades, según la creación de las guías de despacho: lee de Bsale las
+guías electrónicas emitidas en el período (por su fecha), estén o no
+registradas en una cotización; las anuladas se muestran pero no cuentan. Vista
+«Por día» (guías, productos distintos, unidades y neto; al desplegar, los
+productos del día con sus guías y las guías con cliente, PDF y cotización) y
+«Por producto» (unidades, días con salida, guías y neto del período). Filtros
+por fechas (sin fechas, los últimos 7 días; hasta 62 por consulta) y búsqueda;
+Excel con el período.
 
 ### Campañas de margen (/campanas-margen)
 Es el ÚNICO módulo de campañas (desde nov 2026): el módulo «Campañas» (precio
@@ -797,8 +871,9 @@ entra al Inventario como un lote con su costo, sube el stock y recalcula el
 precio unitario promedio. Queda el historial con su documento, quién la
 registró y el detalle. Requiere la migración 20261105_portal_recepciones.
 En Gestión de Stock la columna del precio se llama «Precio unit. promedio» y
-el stock solo puede bajar: lo que entra se registra en Recepción o en
-Inventario. Eliminar un usuario de la cuenta pide confirmación en una ventana
+el stock solo puede DISMINUIR (botón «−» o escribiendo una cantidad menor; el
+campo no acepta un número mayor al guardado): lo que entra se registra en
+Recepción o en Inventario. Eliminar un usuario de la cuenta pide confirmación en una ventana
 propia del portal (ya no el diálogo del navegador).
 
 ## MÓDULOS — GRUPO REPORTES
@@ -914,8 +989,11 @@ reciben en la campana y en una ventana flotante los destinatarios configurados,
 TODOS los administradores y el vendedor dueño de la cartera del cliente; «Ver
 pedido» abre la bandeja con ese pedido desplegado. PRECIO ACTUALIZADO — aviso a
 todo el equipo cuando cambia una lista de precios de un producto. DOCUMENTO POR
-VENCER — aviso a quienes gestionan el Repositorio de documentos a 30, 15 y 7
-días del vencimiento y el día que vence.
+VENCER — aviso a los administradores a 30, 15 y 7 días del vencimiento y el
+día que vence. QUIEBRE DE STOCK — cuando en Gestión de compras se declara el
+quiebre de un producto, el vendedor de cada cotización que lo tiene por
+despachar recibe el aviso en la campana y una ventana flotante («Ver
+cotización»).
 
 ## MÓDULOS — GRUPO HERRAMIENTAS
 
@@ -952,12 +1030,12 @@ vencer (a 30 días o menos), Vencido o Sin vencimiento; las tarjetas de arriba
 filtran por vigencia y hay filtros por texto, tipo y vigencia. «Descargar» abre
 el archivo; «Editar» cambia los datos o reemplaza el archivo (renovación);
 «Eliminar» lo quita. A 30, 15 y 7 días del vencimiento y el día que vence,
-quienes gestionan el repositorio reciben el aviso en la campana.
+los administradores reciben el aviso en la campana.
 Al descargar las fichas técnicas de una cotización (o desde Productos) una
 ventana ofrece agregar documentos del repositorio al mismo ZIP.
 Lo ven y descargan todos los usuarios (menú Herramientas). Subir, editar y
-eliminar: administradores o perfiles con el permiso «Repositorio de
-documentos». Requiere la migración 20261105_repositorio_documentos.
+eliminar: SOLO administradores (desde el 2026-11-06 ya no hay permiso por
+perfil). Requiere la migración 20261105_repositorio_documentos.
 
 ## MÓDULOS — GRUPO ADMINISTRACIÓN
 
