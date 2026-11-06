@@ -382,6 +382,47 @@ export class BsaleService {
     };
   }
 
+  /* (2026-11-06) Guías de despacho (SII 52) emitidas en Bsale entre dos fechas
+     (YYYY-MM-DD, por fecha de emisión), con cliente, sucursal y TODAS sus
+     líneas. Es la base del «Movimiento diario de productos»: lo que salió
+     cada día según la creación de las guías, estén o no registradas en una
+     cotización del sistema. */
+  async guiasEmitidas(desde: string, hasta: string) {
+    if (!this.token) return { disponible: false as const, motivo: 'Falta BSALE_ACCESS_TOKEN en el backend.', guias: [] as any[] };
+    // Bsale guarda la fecha de emisión como las 00:00 UTC de ese día.
+    const d1 = Math.floor(Date.parse(`${desde}T00:00:00Z`) / 1000);
+    const d2 = Math.floor(Date.parse(`${hasta}T23:59:59Z`) / 1000);
+    const docs = await this.paginado('/documents.json', `&codesii=52&emissiondaterange=[${d1},${d2}]&expand=[details,client,office]`);
+    const guias: any[] = [];
+    for (const doc of docs) {
+      let detalles: any[] = doc?.details?.items || [];
+      // expand=[details] trae solo las primeras 25 líneas.
+      if (Number(doc?.details?.count || 0) > detalles.length && doc?.id != null) {
+        detalles = await this.paginado(`/documents/${Number(doc.id)}/details.json`);
+      }
+      const cli = doc?.client || {};
+      guias.push({
+        id: Number(doc?.id),
+        numero: String(doc?.number ?? ''),
+        fecha: doc?.emissionDate ? new Date(Number(doc.emissionDate) * 1000).toISOString().slice(0, 10) : null,
+        generada: doc?.generationDate ? new Date(Number(doc.generationDate) * 1000).toISOString() : null,
+        anulada: Number(doc?.state) === 1,
+        neto: Number(doc?.netAmount || 0),
+        cliente: String(cli?.company || `${cli?.firstName || ''} ${cli?.lastName || ''}`).replace(/\s+/g, ' ').trim(),
+        rut: String(cli?.code || '').trim(),
+        sucursal: String(doc?.office?.name || '').trim(),
+        url_pdf: doc?.urlPdf || doc?.urlPublicView || null,
+        items: (Array.isArray(detalles) ? detalles : []).map((d: any) => ({
+          sku: String(d?.variant?.code || '').trim(),
+          producto: String(d?.variant?.description || '').trim(),
+          cantidad: Number(d?.quantity || 0),
+          neto: Number(d?.netAmount ?? (Number(d?.quantity || 0) * Number(d?.netUnitValue || 0))) || 0,
+        })),
+      });
+    }
+    return { disponible: true as const, guias };
+  }
+
   /* Despacho según Bsale para UNA orden de compra (pedido 2026-09-04): busca
      TODAS las guías electrónicas (SII 52) emitidas desde la fecha de la OC
      cuyas referencias apuntan a ese N° de OC — incluidas las que nadie

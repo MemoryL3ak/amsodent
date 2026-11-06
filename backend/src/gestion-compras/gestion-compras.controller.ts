@@ -4,6 +4,7 @@ import { AuthGuard } from '../auth/auth.guard';
 import { GestionComprasGuard } from './gestion-compras.guard';
 import { GestionComprasService } from './gestion-compras.service';
 import { GestionComprasExtrasService, MAX_BYTES_RESPALDO } from './gestion-compras-extras.service';
+import { MovimientoProductosService } from './movimiento-productos.service';
 
 const email = (req: any) => String(req?.user?.email || '').trim().toLowerCase();
 
@@ -14,7 +15,14 @@ export class GestionComprasController {
   constructor(
     private gestion: GestionComprasService,
     private extras: GestionComprasExtrasService,
+    private movimiento: MovimientoProductosService,
   ) {}
+
+  /* (2026-11-06) Movimiento diario de productos: lo que salió cada día según las guías emitidas. */
+  @Get('movimiento-diario')
+  movimientoDiario(@Query('desde') desde?: string, @Query('hasta') hasta?: string) {
+    return this.movimiento.diario(desde, hasta);
+  }
 
   @Get()
   resumen(@Query('desde') desde?: string) {

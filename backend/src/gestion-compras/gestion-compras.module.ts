@@ -3,11 +3,12 @@ import { BsaleModule } from '../bsale/bsale.module';
 import { GestionComprasController } from './gestion-compras.controller';
 import { GestionComprasService } from './gestion-compras.service';
 import { GestionComprasExtrasService } from './gestion-compras-extras.service';
+import { MovimientoProductosService } from './movimiento-productos.service';
 
 @Module({
   // BsaleModule: lo despachado sale de las guías leídas en Bsale (BsaleService).
   imports: [BsaleModule],
   controllers: [GestionComprasController],
-  providers: [GestionComprasService, GestionComprasExtrasService],
+  providers: [GestionComprasService, GestionComprasExtrasService, MovimientoProductosService],
 })
 export class GestionComprasModule {}
