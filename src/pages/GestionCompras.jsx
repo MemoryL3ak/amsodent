@@ -219,6 +219,8 @@ function SelectorProveedores({ entrada, proveedores, deshabilitado, motivo, onCa
       onChange={(ids) => onCambiar(entrada, ids)}
       options={opciones}
       placeholder={proveedores.length ? "Elegir proveedores…" : "Agregar proveedor…"}
+      // Con más de uno, primero cuántos son: el nombre largo del primero no debe esconder que hay más.
+      resumen={(elegidos) => (elegidos.length === 0 ? (proveedores.length ? "Elegir proveedores…" : "Agregar proveedor…") : elegidos.length === 1 ? elegidos[0].label : `${elegidos.length} · ${elegidos.map((o) => o.label).join(", ")}`)}
       minWidth={280}
       disabled={deshabilitado}
       title={deshabilitado ? motivo : undefined}

@@ -4073,7 +4073,7 @@ a.ayuda-ruta-chip:hover { background: var(--primary-mid); }
 .gc-proveedor-nuevo .btn { white-space: nowrap; display: inline-flex; align-items: center; gap: 4px; }
 .gestion-compras .gc-enlace { background: none; border: none; padding: 0; color: var(--primary-dark); font: inherit; font-weight: 600; cursor: pointer; text-decoration: underline; }
 .gestion-compras .gc-tabla-consolidado .gc-cot-id { cursor: inherit; }
-.gestion-compras .gc-col-motivo { max-width: 260px; overflow-wrap: anywhere; font-size: 12.5px; }
+.gestion-compras .gc-col-motivo { min-width: 190px; max-width: 280px; overflow-wrap: anywhere; font-size: 12.5px; }
 .gestion-compras .gc-col-acciones { width: 76px; text-align: right; }
 .gestion-compras .gc-acciones .btn-quiebre { color: #b91c1c; border-color: #fecaca; }
 .gestion-compras .gc-acciones .btn-quiebre:hover:not(:disabled) { background: #fef2f2; }
