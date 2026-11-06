@@ -73,10 +73,9 @@ export const MODULOS: string[] = [
   // Reportería (2026-09-24): reportes a medida sin SQL sobre vistas de
   // negocio. Asignable por perfil; no va en ningún ROLE_DEFAULTS.
   'reporteria',
-  // (2026-11-05) Repositorio de documentos de la empresa (patente, estatutos,
-  // cartas de garantía…) con su vigencia: subir, editar y eliminar. Ver y
-  // descargar lo puede cualquier usuario con sesión. Asignable por perfil.
-  'repositorio',
+  // (2026-11-06) El Repositorio de documentos ya no tiene permiso por perfil:
+  // lo ve y descarga cualquier usuario con sesión; subir, editar y eliminar es
+  // solo de administradores (AdminGuard en repositorio.controller).
   // (2026-11-05) Apertura y cierre de caja de la sala de ventas. Además de
   // quien lo tenga en su perfil, lo recibe siempre el usuario de la tienda
   // (ver permisosDeUsuario): la caja asocia solo sus ventas.

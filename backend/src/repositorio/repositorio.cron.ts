@@ -1,7 +1,7 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
 import { correTareasDeFondo, MOTIVO_SIN_FONDO } from '../rol-proceso';
-import { esRolAdmin, permisosEfectivos } from '../auth/permisos';
+import { esRolAdmin } from '../auth/permisos';
 import { diasEntre, hoyEnChile } from './repositorio.service';
 
 /* ============================================================================
@@ -9,7 +9,7 @@ import { diasEntre, hoyEnChile } from './repositorio.service';
    ----------------------------------------------------------------------------
    Una vez al día (09:00 de Chile) revisa los documentos con fecha de
    vencimiento y avisa en la campana a quienes gestionan el repositorio (los
-   administradores y los perfiles con el módulo «repositorio»):
+   administradores; desde 2026-11-06 solo ellos suben y editan):
 
      a 30 días · a 15 días · a 7 días · el día que vence (y ya vencido)
 
@@ -109,21 +109,12 @@ export class RepositorioCron implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  /* Quiénes gestionan el repositorio: admins y perfiles con el módulo. */
+  /* Quiénes gestionan el repositorio: los administradores. */
   private async destinatarios(): Promise<string[]> {
     const db = this.supabase.getClient();
-    const [{ data: perfiles }, { data: permisos }] = await Promise.all([
-      db.from('profiles').select('email, rol, permission_profile_id'),
-      db.from('permission_profiles').select('id, permisos'),
-    ]);
-    const porPerfil = new Map<string, any>(((permisos || []) as any[]).map((p) => [String(p.id), p.permisos]));
+    const { data: perfiles } = await db.from('profiles').select('email, rol');
     const lista = ((perfiles || []) as any[])
-      .filter((p) => {
-        const rol = String(p?.rol || '').trim().toLowerCase();
-        if (esRolAdmin(rol)) return true;
-        const propios = p?.permission_profile_id ? porPerfil.get(String(p.permission_profile_id)) ?? null : null;
-        return permisosEfectivos(rol, propios).includes('repositorio');
-      })
+      .filter((p) => esRolAdmin(String(p?.rol || '').trim().toLowerCase()))
       .map((p) => String(p?.email || '').trim().toLowerCase())
       .filter((e) => /^[^@\s]+@[^@\s]+$/.test(e));
     return [...new Set(lista)];

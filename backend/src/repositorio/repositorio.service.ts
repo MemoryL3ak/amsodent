@@ -19,8 +19,8 @@ import { SupabaseService } from '../supabase/supabase.service';
    · Ver la lista y descargar: cualquier usuario con sesión. Se necesita al
      bajar las fichas técnicas de una cotización: la ventana ofrece sumar al
      ZIP documentos del repositorio (pedido de Ariel).
-   · Subir, editar, reemplazar el archivo y eliminar: quien tenga el módulo
-     «repositorio» en su perfil (o sea admin).
+   · Subir, editar, reemplazar el archivo y eliminar: solo administradores
+     (2026-11-06; ya no existe el permiso «repositorio» por perfil).
 
    Los archivos van al bucket PRIVADO `repositorio` de Supabase Storage; se
    entregan con una URL firmada de corta duración. Tabla y bucket: migración

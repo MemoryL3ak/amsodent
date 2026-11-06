@@ -489,7 +489,7 @@ export default function App() {
               cliente en su portal. La ven quienes ven los pedidos del portal;
               crear y cambiar es solo admin (lo valida el backend). */}
           {/* (2026-11-05) Repositorio de documentos: lo ve y descarga cualquier
-              usuario; subir, editar y eliminar lo valida el servidor (módulo «repositorio»). */}
+              usuario; subir, editar y eliminar es solo admin (lo valida el servidor). */}
           <Route path="repositorio-documentos" element={<RepositorioDocumentos />} />
 
           {/* (2026-11-05) Caja: administradores, el usuario de la tienda y los perfiles con el módulo «caja». */}

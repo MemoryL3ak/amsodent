@@ -18,7 +18,7 @@ import { abrirDocumentoRepositorio, pesoLegible } from "../lib/repositorio";
 
    Cualquier usuario los ve y los descarga (también se pueden sumar al ZIP de
    fichas técnicas de una cotización); subir, editar, reemplazar el archivo y
-   eliminar es de quien tenga el módulo «Repositorio de documentos» (o admin).
+   eliminar es solo de administradores (2026-11-06, pedido de Ariel).
    Tabla compacta paginada; las tarjetas de arriba filtran por vigencia. */
 
 const POR_PAGINA = 10;
@@ -42,9 +42,9 @@ const textoDias = (d) => {
 };
 
 export default function RepositorioDocumentos() {
-  const { rol, puede } = useAuth();
+  const { rol } = useAuth();
   const rolNorm = String(rol || "").trim().toLowerCase();
-  const puedeGestionar = rolNorm === "admin" || rolNorm === "administrador" || puede("repositorio");
+  const puedeGestionar = rolNorm === "admin" || rolNorm === "administrador";
 
   const [datos, setDatos] = useState(null); // { listo, mensaje?, categorias, documentos }
   const [cargando, setCargando] = useState(true);
