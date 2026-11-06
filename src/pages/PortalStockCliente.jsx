@@ -1706,6 +1706,19 @@ function PantallaDeclaracion({ cliente, setToast }) {
   // Stock guardado de cada producto (por id): aquí solo se puede bajar.
   const stockGuardado = useMemo(() => new Map(baseline.filter((b) => b.id).map((b) => [b.id, Number(b.stock_actual) || 0])), [baseline]);
 
+  /* (2026-11-06, pedido de Ariel) «El stock actual solo puede tener la opción
+     de disminuir: el stock positivo se determina solamente en Inventario
+     cuando cargamos». Antes el campo dejaba escribir un número mayor y recién
+     al guardar avisaba; ahora el control no sube: lo escrito se recorta al
+     stock guardado y el botón «−» rebaja de a una unidad. */
+  function cambiarStock(idx, it, valor) {
+    const tope = inventarioListo ? (it.id && stockGuardado.has(it.id) ? stockGuardado.get(it.id) : 0) : null;
+    if (tope == null || valor === "") { actualizarItem(idx, "stock_actual", valor); return; }
+    const n = Number(valor);
+    if (!Number.isFinite(n)) return;
+    actualizarItem(idx, "stock_actual", n >= tope ? tope : n < 0 ? 0 : valor);
+  }
+
   async function guardar() {
     const limpios = items
       .map((it) => {
@@ -2087,7 +2100,7 @@ function PantallaDeclaracion({ cliente, setToast }) {
             <div style={styles.declTitulo}>{inventarioListo ? "Stock de la clínica" : "Inventario Clínica"}</div>
             <div style={styles.declSub}>
               {inventarioListo
-                ? "Registre lo que se usa: aquí el stock solo baja (lo que entra se ingresa en Recepción o en Inventario, con su costo). El precio unitario promedio es el costo promedio de lo que queda."
+                ? "Registre lo que se usa: aquí el stock solo puede disminuir (botón «−» o escribiendo una cantidad menor). Lo que entra se carga en Inventario o en Recepción, con su costo. El precio unitario promedio es el costo promedio de lo que queda."
                 : "Declare su stock actual y los umbrales de stock bajo y crítico. El semáforo se calcula automáticamente."}
               {!esAdminPortal && " El stock bajo y el crítico los define el administrador de la cuenta."}
             </div>
@@ -2288,6 +2301,39 @@ function PantallaDeclaracion({ cliente, setToast }) {
                       />
                     </td>
                     <td style={styles.td}>
+                      {inventarioListo ? (() => {
+                        // Solo baja: «−» rebaja una unidad y lo escrito no pasa del stock guardado.
+                        const tope = it.id && stockGuardado.has(it.id) ? stockGuardado.get(it.id) : 0;
+                        const actual = Number(it.stock_actual) || 0;
+                        const rebajado = actual < tope - 1e-9;
+                        return (
+                          <div className="stock-solo-baja" style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                            <button
+                              type="button"
+                              className="stock-menos"
+                              onClick={() => cambiarStock(idx, it, String(Math.max(0, Math.round((actual - 1) * 100) / 100)))}
+                              disabled={actual <= 0}
+                              title="Rebajar una unidad"
+                              aria-label={`Rebajar una unidad de ${it.nombre || "este producto"}`}
+                              style={{ flex: "0 0 26px", width: 26, height: 30, borderRadius: 6, border: "1px solid #cbd5e1", background: actual <= 0 ? "#f1f5f9" : "#fff", color: actual <= 0 ? "#cbd5e1" : "#334155", fontSize: 16, fontWeight: 700, lineHeight: 1, cursor: actual <= 0 ? "not-allowed" : "pointer", padding: 0 }}
+                            >
+                              −
+                            </button>
+                            <input
+                              type="number"
+                              min="0"
+                              max={tope}
+                              step="any"
+                              value={it.stock_actual}
+                              onChange={(e) => cambiarStock(idx, it, e.target.value)}
+                              placeholder="0"
+                              disabled={tope <= 0}
+                              title={tope <= 0 ? "Sin stock: lo que entra se carga en Inventario o en Recepción." : `Aquí el stock solo puede bajar (lo que se usa): como máximo ${tope.toLocaleString("es-CL")}. Lo que entra se carga en Inventario o en Recepción.`}
+                              style={{ ...styles.cellInput, textAlign: "right", minWidth: 0, flex: "1 1 auto", ...(rebajado ? { borderColor: "#f59e0b", background: "#fffbeb" } : {}), ...(tope <= 0 ? { background: "#f8fafc", color: "#64748b", cursor: "not-allowed" } : {}) }}
+                            />
+                          </div>
+                        );
+                      })() : (
                       <input
                         type="number"
                         min="0"
@@ -2295,11 +2341,9 @@ function PantallaDeclaracion({ cliente, setToast }) {
                         value={it.stock_actual}
                         onChange={(e) => actualizarItem(idx, "stock_actual", e.target.value)}
                         placeholder="0"
-                        max={inventarioListo && it.id && stockGuardado.has(it.id) ? stockGuardado.get(it.id) : undefined}
-                        title={inventarioListo ? "Aquí el stock solo puede bajar (lo que se usa). Para sumar stock usa Recepción o Inventario." : undefined}
-                        className={inventarioListo && it.id && (Number(it.stock_actual) || 0) > (stockGuardado.get(it.id) ?? Infinity) ? "stock-sube" : undefined}
-                        style={{ ...styles.cellInput, textAlign: "right", ...(inventarioListo && it.id && (Number(it.stock_actual) || 0) > (stockGuardado.get(it.id) ?? Infinity) ? { borderColor: "#dc2626", color: "#b91c1c" } : {}) }}
+                        style={{ ...styles.cellInput, textAlign: "right" }}
                       />
+                      )}
                     </td>
                     <td style={styles.td}>
                       <input
