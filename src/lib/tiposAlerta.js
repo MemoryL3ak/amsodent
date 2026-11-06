@@ -21,6 +21,7 @@ export const TIPOS_ALERTA = {
   cotizacion_aprobada: "Cotización aprobada",
   precio_actualizado: "Precio de producto actualizado",
   documento_por_vencer: "Documento del repositorio por vencer",
+  quiebre_stock: "Quiebre de stock en un producto de tu cotización",
   portal_upload: "Documento subido por el cliente",
   stock_solicitud_cotizacion: "Solicitud de cotización (portal)",
   portal_solicitud_reunion: "Solicitud de reunión (portal)",

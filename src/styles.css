@@ -4064,6 +4064,20 @@ a.ayuda-ruta-chip:hover { background: var(--primary-mid); }
 .gestion-compras .gc-tabla-compras tfoot td { background: #f8fafc; border-top: 2px solid var(--border); font-weight: 600; font-size: 12.5px; color: var(--text); padding-top: 10px; padding-bottom: 10px; }
 .gestion-compras .gc-totales-nota { font-size: 11px; color: var(--text-muted); font-weight: 400; margin-top: 2px; }
 
+/* (2026-11-06) Columna OC, proveedores por producto, consolidado y quiebres de stock */
+.gestion-compras .gc-col-oc { max-width: 150px; overflow-wrap: anywhere; font-size: 12.5px; }
+.gestion-compras .gc-etiqueta-quiebre { color: #b91c1c; background: #fef2f2; border-color: #fecaca; text-transform: none; }
+.gestion-compras .gc-col-proveedores { width: 210px; min-width: 170px; max-width: 240px; }
+.gestion-compras .gc-selector-proveedores { min-width: 0; }
+.gc-proveedor-nuevo { display: flex; gap: 6px; align-items: center; }
+.gc-proveedor-nuevo .btn { white-space: nowrap; display: inline-flex; align-items: center; gap: 4px; }
+.gestion-compras .gc-enlace { background: none; border: none; padding: 0; color: var(--primary-dark); font: inherit; font-weight: 600; cursor: pointer; text-decoration: underline; }
+.gestion-compras .gc-tabla-consolidado .gc-cot-id { cursor: inherit; }
+.gestion-compras .gc-col-motivo { max-width: 260px; overflow-wrap: anywhere; font-size: 12.5px; }
+.gestion-compras .gc-col-acciones { width: 76px; text-align: right; }
+.gestion-compras .gc-acciones .btn-quiebre { color: #b91c1c; border-color: #fecaca; }
+.gestion-compras .gc-acciones .btn-quiebre:hover:not(:disabled) { background: #fef2f2; }
+
 /* Paginación y pie */
 .gestion-compras .gc-paginacion { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; padding: 10px 4px; font-size: 12.5px; color: var(--text-soft); }
 .gestion-compras .gc-paginacion-botones { display: flex; gap: 6px; }

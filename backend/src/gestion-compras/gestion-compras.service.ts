@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
 import { BsaleService } from '../bsale/bsale.service';
+import { CotizacionAfectada, GestionComprasExtrasService } from './gestion-compras-extras.service';
 
 /* ── Gestión de compras (2026-10-16) ─────────────────────────────────────────
    Pedido de Ariel: "traer todas las cotizaciones adjudicadas (desde ahora en
@@ -36,7 +37,14 @@ import { BsaleService } from '../bsale/bsale.service';
      despachar ya no se despacha ni se compra. La cotización no toma stock, no
      entra en «Por comprar» y sale con estado «cerrada» (en la pantalla solo con
      el filtro Todas / Cierre forzado), con lo que quedó sin despachar y el
-     monto con que se cerró (monto_forzado). */
+     monto con que se cerró (monto_forzado).
+   · (2026-11-06, pedidos de Ariel) Cada cotización trae su N° de orden de
+     compra (`oc`) y el filtro pública / particular vale también en «Por
+     comprar»: cada producto lleva el desglose `por_tipo`. Cada fila lleva la
+     `clave` del producto (la de «Por comprar»): con ella se guardan los
+     proveedores elegidos (pestaña «Consolidado Compras») y los quiebres de
+     stock declarados (pestaña «Quiebres de stock»); ver
+     gestion-compras-extras.service.ts. */
 
 export const INICIO_GESTION_COMPRAS = '2026-10-16';
 
@@ -66,6 +74,7 @@ export class GestionComprasService {
   constructor(
     private supabase: SupabaseService,
     private bsale: BsaleService,
+    private extras: GestionComprasExtrasService,
   ) {}
 
   async resumen(desdeIn?: string) {
@@ -85,7 +94,22 @@ export class GestionComprasService {
       .range(0, 5000);
     if (error) throw new BadRequestException(error.message);
     const cotizaciones = (lics || []) as any[];
-    if (!cotizaciones.length) return this.vacio(desde, avisos);
+    if (!cotizaciones.length) return this.conExtras(this.vacio(desde, avisos), desde);
+
+    // 1b. N° de orden de compra de cada cotización (puede haber más de una).
+    const ocPorLic = new Map<number, string[]>();
+    const idsLic = cotizaciones.map((c) => Number(c.id));
+    for (let i = 0; i < idsLic.length; i += 150) {
+      const { data: ocs, error: eOc } = await db.from('licitacion_documentos').select('licitacion_id, numero').eq('tipo', 'orden_compra').in('licitacion_id', idsLic.slice(i, i + 150)).order('id', { ascending: true }).range(0, 9999);
+      if (eOc) { this.logger.warn(`Gestión de compras: no se pudieron leer las órdenes de compra: ${eOc.message}`); break; }
+      for (const d of (ocs || []) as any[]) {
+        const n = String(d.numero || '').trim();
+        if (!n) continue;
+        const l = ocPorLic.get(Number(d.licitacion_id)) || [];
+        if (!l.includes(n)) l.push(n);
+        ocPorLic.set(Number(d.licitacion_id), l);
+      }
+    }
 
     // 2. Cotizado vs. despachado por producto (guías leídas de Bsale).
     let filas: any[] = [];
@@ -157,6 +181,7 @@ export class GestionComprasService {
     const salida: any[] = [];
     for (const c of cotizaciones) {
       const cerrada = c.ciclo_cerrado === true;
+      const tipoCot = /particular/i.test(String(c.tipo_cliente || '')) ? 'particular' : 'publica';
       const productos = (filasPorLic.get(Number(c.id)) || []).map((f) => {
         const enCatalogo = catalogoDe(f);
         // Si calzó por nombre con un producto con SKU, la fila toma ese SKU.
@@ -171,12 +196,15 @@ export class GestionComprasService {
         const falta = cerrada ? 0 : pendiente - asignado;
         const ck = k || clave('', f.producto);
         if (falta > 0) {
-          const e = compras.get(ck) || { sku, producto: enCatalogo?.nombre || String(f.producto || ''), producto_id: enCatalogo?.id ?? null, sin_sku: !sku, en_catalogo: !!enCatalogo, stock: enCatalogo ? enCatalogo.stock : null, costo: enCatalogo ? enCatalogo.costo : null, por_despachar: 0, falta: 0, cotizaciones: [] as number[] };
+          const e = compras.get(ck) || { sku, producto: enCatalogo?.nombre || String(f.producto || ''), producto_id: enCatalogo?.id ?? null, sin_sku: !sku, en_catalogo: !!enCatalogo, stock: enCatalogo ? enCatalogo.stock : null, costo: enCatalogo ? enCatalogo.costo : null, por_despachar: 0, falta: 0, cotizaciones: [] as number[], clave: ck, por_tipo: { publica: { falta: 0, por_despachar: 0, cotizaciones: [] as number[] }, particular: { falta: 0, por_despachar: 0, cotizaciones: [] as number[] } } };
           e.falta += falta;
           if (!e.cotizaciones.includes(Number(c.id))) e.cotizaciones.push(Number(c.id));
+          e.por_tipo[tipoCot].falta += falta;
+          if (!e.por_tipo[tipoCot].cotizaciones.includes(Number(c.id))) e.por_tipo[tipoCot].cotizaciones.push(Number(c.id));
           compras.set(ck, e);
         }
         const fila = {
+          clave: ck,
           sku,
           producto: String(f.producto || '') || enCatalogo?.nombre || '',
           producto_id: enCatalogo?.id ?? null,
@@ -206,10 +234,12 @@ export class GestionComprasService {
       salida.push({
         id: Number(c.id),
         codigo: c.id_licitacion || null,
+        oc: (ocPorLic.get(Number(c.id)) || []).join(', '),
         cliente: c.nombre_entidad || '',
         rut: c.rut_entidad || '',
         particular: /particular/i.test(String(c.tipo_cliente || '')),
         vendedor: c.vendedor_nombre || c.vendedor_correo || c.creado_por || '',
+        vendedor_correo: String(c.vendedor_correo || c.creado_por || '').trim().toLowerCase(),
         fecha_adjudicada: String(c.fecha_adjudicada || '').slice(0, 10),
         neto: Number(c.total_sin_iva) || 0,
         estado,
@@ -226,7 +256,10 @@ export class GestionComprasService {
     for (const cot of salida) for (const p of cot.productos) {
       if (cot.cerrada) continue; // lo que quedó sin despachar en una cerrada no se va a despachar
       const e = compras.get(claveCompraDe.get(p) || clave(p.sku, p.producto));
-      if (e) e.por_despachar += p.por_despachar;
+      if (e) {
+        e.por_despachar += p.por_despachar;
+        e.por_tipo[cot.particular ? 'particular' : 'publica'].por_despachar += p.por_despachar;
+      }
     }
     const listaCompras = [...compras.values()]
       .map((e) => ({ ...e, valor_estimado: e.costo ? Math.round(e.costo * e.falta) : null }))
@@ -235,7 +268,7 @@ export class GestionComprasService {
     const enGestion = salida.filter((c) => c.estado !== 'despachada' && c.estado !== 'sin_items' && c.estado !== 'cerrada');
     const porDespacharTotal = enGestion.reduce((a, c) => a + c.unidades.por_despachar, 0);
     const asignadoTotal = enGestion.reduce((a, c) => a + c.unidades.asignadas, 0);
-    return {
+    return this.conExtras({
       inicio: INICIO_GESTION_COMPRAS,
       desde,
       actualizado_at: new Date().toISOString(),
@@ -255,7 +288,66 @@ export class GestionComprasService {
       cotizaciones: salida.reverse(), // la más reciente arriba
       compras: listaCompras,
       avisos,
-    };
+    }, desde);
+  }
+
+  /* (2026-11-06) Suma al resumen los proveedores elegidos por producto y los
+     quiebres de stock activos, con lo que cada uno tiene HOY por despachar.
+     Un quiebre cuyas cotizaciones ya no tienen ese producto pendiente se
+     cierra solo («cuando se despache, se elimine»); eso solo se decide con el
+     resumen completo, para no confundir «despachado» con «fuera del filtro
+     de fecha». */
+  private async conExtras<T extends { cotizaciones: any[]; compras: any[] }>(r: T, desde: string) {
+    const [proveedores, asignadas, activos] = await Promise.all([this.extras.proveedores(), this.extras.asignaciones(), this.extras.quiebresActivos()]);
+    const idsProveedor = new Set(proveedores.map((p) => p.id));
+    for (const e of r.compras) e.proveedores = (asignadas.porClave.get(e.clave) || []).filter((id) => idsProveedor.has(id));
+
+    const completo = desde === INICIO_GESTION_COMPRAS;
+    const porId = new Map<number, any>(r.cotizaciones.map((c) => [Number(c.id), c]));
+    const esDelQuiebre = (q: { clave: string; sku: string; producto_id: number | null }, p: any) =>
+      p.clave === q.clave || (!!q.sku && String(p.sku || '').toUpperCase() === q.sku.toUpperCase()) || (q.producto_id != null && p.producto_id === q.producto_id);
+    const despachados: number[] = [];
+    const quiebres: any[] = [];
+    for (const q of activos.quiebres) {
+      const cotizaciones = q.cotizaciones.map((c) => {
+        const cot = porId.get(Number(c.id));
+        // Fuera del resumen: con filtro de fecha no se sabe (queda lo que tenía); completo, ya no está adjudicada.
+        if (!cot) return { ...c, pendiente: completo ? 0 : Number(c.pendiente) || 0 };
+        const pendiente = cot.cerrada ? 0 : cot.productos.filter((p: any) => esDelQuiebre(q, p)).reduce((a: number, p: any) => a + (Number(p.por_despachar) || 0), 0);
+        return { ...c, pendiente };
+      });
+      const pendiente = cotizaciones.reduce((a, c) => a + c.pendiente, 0);
+      if (completo && pendiente <= 0) { despachados.push(q.id); continue; }
+      quiebres.push({ ...q, cotizaciones, pendiente });
+    }
+    if (despachados.length) await this.extras.resolver(despachados, 'despachado', null);
+
+    // Marca en el detalle y en «Por comprar» los productos con quiebre declarado.
+    for (const c of r.cotizaciones) for (const p of c.productos) p.quiebre = quiebres.some((q) => esDelQuiebre(q, p));
+    for (const e of r.compras) e.quiebre_id = quiebres.find((q) => esDelQuiebre(q, e))?.id ?? null;
+
+    return { ...r, proveedores, proveedores_listo: asignadas.listo, quiebres, quiebres_listo: activos.listo };
+  }
+
+  /* Declara el quiebre de stock de un producto: busca en el resumen completo
+     las cotizaciones que lo tienen por despachar y avisa a sus vendedores. */
+  async declararQuiebre(body: any, file: Express.Multer.File | undefined, email: string) {
+    const claveProducto = String(body?.clave || '').trim();
+    if (!claveProducto) throw new BadRequestException('Elige el producto con quiebre de stock.');
+    const r = await this.resumen();
+    const porCot = new Map<number, CotizacionAfectada>();
+    let producto: { clave: string; sku: string; producto: string; producto_id: number | null } | null = null;
+    for (const c of r.cotizaciones as any[]) {
+      if (c.cerrada) continue;
+      for (const p of c.productos) {
+        if (p.clave !== claveProducto || !(p.por_despachar > 0)) continue;
+        if (!producto) producto = { clave: p.clave, sku: p.sku || '', producto: p.producto || '', producto_id: p.producto_id ?? null };
+        const previo = porCot.get(c.id);
+        porCot.set(c.id, { id: c.id, codigo: c.codigo, cliente: c.cliente, vendedor: c.vendedor, vendedor_correo: c.vendedor_correo, pendiente: (previo?.pendiente || 0) + p.por_despachar });
+      }
+    }
+    if (!producto) throw new BadRequestException('Ese producto ya no tiene unidades por despachar en las cotizaciones adjudicadas.');
+    return this.extras.declarar(body, file, email, [...porCot.values()], producto);
   }
 
   private vacio(desde: string, avisos: string[]) {

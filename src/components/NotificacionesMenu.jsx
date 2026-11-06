@@ -15,6 +15,7 @@ import {
   ShoppingCart,
   Tag,
   FolderOpen,
+  PackageX,
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { api } from "../lib/api";
@@ -426,6 +427,15 @@ function getNotifVisuales(notif) {
       color: vencido ? "#b91c1c" : "#b45309",
       bg: vencido ? "#fee2e2" : "#fef3c7",
       etiqueta: vencido ? "Documento vencido" : "Documento por vencer",
+    };
+  }
+  // (2026-11-06) Quiebre de stock declarado en Gestión de compras: al vendedor de la cotización afectada.
+  if (tipo === "quiebre_stock") {
+    return {
+      icono: PackageX,
+      color: "#b91c1c",
+      bg: "#fee2e2",
+      etiqueta: "Quiebre de stock",
     };
   }
   // (2026-11-05) Alerta de actualización de precio: abre Productos con los recién cambiados.

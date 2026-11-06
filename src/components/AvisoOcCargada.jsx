@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ClipboardCheck, X, ExternalLink, Check, ShoppingCart } from "lucide-react";
+import { ClipboardCheck, X, ExternalLink, Check, ShoppingCart, PackageX } from "lucide-react";
 import { api } from "../lib/api";
 import { supabase } from "../lib/supabase";
 import { useUnsavedChanges } from "../context/UnsavedChangesContext";
@@ -47,6 +47,23 @@ const TIPOS = {
       m.numero ? ["N° OC", m.numero] : null,
       Number(m.monto) > 0 ? ["Monto neto", clp(m.monto)] : null,
       m.fecha_oc ? ["Fecha OC", fechaCorta(m.fecha_oc)] : null,
+    ],
+    destino: (n) => n.link || `/detalle/${n.metadata.licitacion_id}`,
+    boton: "Ver cotización",
+  },
+  /* (2026-11-06) Quiebre de stock declarado en Gestión de compras: salta al
+     vendedor de cada cotización que tiene ese producto por despachar. */
+  quiebre_stock: {
+    titulo: "Quiebre de stock",
+    aria: "Quiebre de stock en un producto de tu cotización",
+    Icono: PackageX,
+    valido: (n) => !!n?.metadata?.licitacion_id && esReciente(n),
+    quien: (m) => m.cliente || `Cotización #${m.licitacion_id}`,
+    datos: (m) => [
+      ["Cotización", `#${m.licitacion_id}`],
+      m.sku ? ["SKU", m.sku] : null,
+      Number(m.pendiente) > 0 ? ["Por despachar", Number(m.pendiente).toLocaleString("es-CL")] : null,
+      m.fecha_estimada ? ["Reposición", fechaCorta(m.fecha_estimada)] : null,
     ],
     destino: (n) => n.link || `/detalle/${n.metadata.licitacion_id}`,
     boton: "Ver cotización",
