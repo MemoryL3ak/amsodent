@@ -2185,7 +2185,8 @@ function PantallaDeclaracion({ cliente, setToast }) {
                 <th style={{ ...styles.th, minWidth: 88 }}>Marca</th>
                 <th style={{ ...styles.th, minWidth: 64 }}>Formato</th>
                 <th style={{ ...styles.th, minWidth: 110 }} title="Ubicación física del producto (bodega, caja, estante). Gestiona tu lista con «Gestionar ubicaciones».">Ubicación</th>
-                <th style={{ ...styles.th, minWidth: 60, textAlign: "right" }}>
+                {/* (2026-11-06) Con el control que solo baja (botón «−» + campo) la columna necesita más ancho. */}
+                <th style={{ ...styles.th, minWidth: inventarioListo ? 104 : 60, textAlign: "right" }}>
                   Stock actual
                 </th>
                 <th
