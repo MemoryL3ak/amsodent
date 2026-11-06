@@ -4889,9 +4889,12 @@ export default function EditarLicitacion() {
           <h3 className="surface-title">Observaciones</h3>
         </div>
         <div className="surface-body">
-        {/* (2026-11-05) En Mercado Público ambos campos son obligatorios. */}
+        {/* (2026-11-05) En Mercado Público ambos campos son obligatorios.
+            (2026-11-06) En cliente particular el tiempo de entrega no va. */}
+        {!esCotizacionParticular && (
+        <>
         <label className="block text-sm font-medium text-gray-700 mb-1">
-          Tiempo de Entrega{!esCotizacionParticular && <span style={{ color: "#dc2626" }}> *</span>}
+          Tiempo de Entrega<span style={{ color: "#dc2626" }}> *</span>
         </label>
         <input
           className={`${inputClass} campo-tiempo-entrega`}
@@ -4902,6 +4905,8 @@ export default function EditarLicitacion() {
           placeholder="Ej: 5 días hábiles desde la orden de compra"
           disabled={!esEditable}
         />
+        </>
+        )}
 
         <label className="block text-sm font-medium text-gray-700 mb-1">
           Observaciones generales{!esCotizacionParticular && <span style={{ color: "#dc2626" }}> *</span>}

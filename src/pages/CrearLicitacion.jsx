@@ -1900,6 +1900,10 @@ export default function CrearLicitacion() {
     }
 
     const esClienteParticular = tipoCliente.toLowerCase() === "cliente particular" || tipoCompra === "Cliente particular";
+    // (2026-11-06) Cliente particular no pide «Nombre Cotización»: queda el del cliente.
+    const nombreFinal = esClienteParticular
+      ? (String(nombreEntidad || "").trim() || String(nombre || "").trim() || "Cliente particular")
+      : nombre;
     // El checkbox se oculta al cambiar de tipo, pero su estado sobrevivía y se
     // guardaba igual: el flag solo vale si la cotización ES particular.
     const fletePorPagarEfectivo = fletePorPagar && esClienteParticular;
@@ -1909,7 +1913,8 @@ export default function CrearLicitacion() {
     const errores = [];
     // Para cliente particular el ID se genera automáticamente (igual al id interno) — no validamos.
     if (!esClienteParticular && !idLicitacionInput) errores.push("ID Licitación");
-    if (!nombre) errores.push("Nombre Licitación");
+    // (2026-11-06) En cliente particular el nombre no se pide: es el del cliente.
+    if (!esClienteParticular && !nombre) errores.push("Nombre Licitación");
     // Cliente particular no lleva fecha/hora de cierre.
     if (!esClienteParticular && !fechaHoraCierre) errores.push("Fecha y Hora de Cierre");
     // Licitaciones exigen fecha de publicación de resultados.
@@ -2144,7 +2149,7 @@ export default function CrearLicitacion() {
       try {
         lic = await api.post("/licitaciones", {
             id_licitacion: idLicitacionParaInsert,
-            nombre,
+            nombre: nombreFinal,
             fecha_hora_cierre: esClienteParticular ? null : (fechaHoraCierre || null),
             ...(fechaHoraCotizacion
               ? { fecha_hora: new Date(fechaHoraCotizacion).toISOString(), fecha: fechaHoraCotizacion.slice(0, 10) }
@@ -2202,7 +2207,8 @@ export default function CrearLicitacion() {
 
             observaciones: observaciones || null,
             // Solo con dato, para no romper si la migración 20261105 aún no está aplicada.
-            ...(tiempoEntrega.trim() ? { tiempo_entrega: tiempoEntrega.trim() } : {}),
+            // (2026-11-06) Cliente particular no lleva tiempo de entrega.
+            ...(!esClienteParticular && tiempoEntrega.trim() ? { tiempo_entrega: tiempoEntrega.trim() } : {}),
 
             vendedor_nombre: vendedorNombreFinal || null,
             vendedor_celular: vendedorCelularFinal || null,
@@ -2341,7 +2347,7 @@ export default function CrearLicitacion() {
         setToast({
           type: "warning",
           message:
-            `La cotización "${nombre}" (N° ${idLicitacion}) quedó guardada SIN PDF: ${resumenSinFicha(sinFicha)}. ` +
+            `La cotización "${nombreFinal}" (N° ${idLicitacion}) quedó guardada SIN PDF: ${resumenSinFicha(sinFicha)}. ` +
             "Completa las fichas en Productos → Editar y genera el PDF desde el detalle de la cotización («PDF Carta»).",
         });
         localStorage.removeItem(STORAGE_KEY);
@@ -2375,7 +2381,7 @@ export default function CrearLicitacion() {
         condicion_venta: condVenta,
 
         observaciones: (observaciones ?? "").toString(),
-        tiempo_entrega: tiempoEntrega.trim(),
+        tiempo_entrega: esClienteParticular ? "" : tiempoEntrega.trim(),
 
         items: (() => {
           // (Punto 10 — 2026-09-10) Cliente particular: el flete va como ítem
@@ -2451,12 +2457,12 @@ export default function CrearLicitacion() {
         // Solo llega aquí el administrador: PDF generado pese a las fichas pendientes.
         setToast({
           type: "warning",
-          message: `La cotización "${nombre}" fue creada y su PDF se generó como administrador con ${resumenSinFicha(sinFicha)}. El resto del equipo no puede generarlo hasta completarlas en Productos → Editar.`,
+          message: `La cotización "${nombreFinal}" fue creada y su PDF se generó como administrador con ${resumenSinFicha(sinFicha)}. El resto del equipo no puede generarlo hasta completarlas en Productos → Editar.`,
         });
       } else {
         setToast({
           type: "success",
-          message: `La cotización "${nombre}" fue creada correctamente.`,
+          message: `La cotización "${nombreFinal}" fue creada correctamente.`,
         });
       }
 
@@ -2777,16 +2783,20 @@ export default function CrearLicitacion() {
             )}
           </div>
 
+          {/* (2026-11-06) Cliente particular: sin «Nombre Cotización» (pedido de
+              Ariel). La cotización queda con el nombre del cliente. */}
+          {esPublicaForm && (
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
               Nombre Cotización *
             </label>
             <input
-              className="w-full rounded-md border border-gray-300 px-3 py-2"
+              className="w-full rounded-md border border-gray-300 px-3 py-2 campo-nombre-cotizacion"
               value={nombre}
               onChange={(e) => setNombre(e.target.value)}
             />
           </div>
+          )}
 
           {/* (2026-09-24) Fecha y hora de la COTIZACION, editable. Antes quedaba
               siempre la del momento de guardar, y una cotizacion cargada con
@@ -3821,9 +3831,12 @@ export default function CrearLicitacion() {
           <h3 className="surface-title">Observaciones</h3>
         </div>
         <div className="surface-body">
-          {/* (2026-11-05) En Mercado Público ambos campos son obligatorios. */}
+          {/* (2026-11-05) En Mercado Público ambos campos son obligatorios.
+              (2026-11-06) En cliente particular el tiempo de entrega no va. */}
+          {esPublicaForm && (
+          <>
           <label>
-            Tiempo de Entrega{esPublicaForm && <span style={{ color: "#dc2626" }}> *</span>}
+            Tiempo de Entrega<span style={{ color: "#dc2626" }}> *</span>
           </label>
           <input
             className="w-full rounded-md border border-gray-300 px-3 py-2 campo-tiempo-entrega"
@@ -3833,6 +3846,8 @@ export default function CrearLicitacion() {
             onChange={(e) => setTiempoEntrega(e.target.value)}
             placeholder="Ej: 5 días hábiles desde la orden de compra"
           />
+          </>
+          )}
           <label>
             Observaciones generales{esPublicaForm && <span style={{ color: "#dc2626" }}> *</span>}
           </label>
