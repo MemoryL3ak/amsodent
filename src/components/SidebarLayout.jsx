@@ -40,6 +40,8 @@ import {
   Wrench,
   Shield,
   PackageSearch,
+  PackagePlus,
+  CalendarRange,
   Wallet,
   KeyRound,
   Landmark,
@@ -245,6 +247,9 @@ export default function SidebarLayout() {
     puede("inventario") && { to: "/inventario", icon: Boxes, label: "Inventario" },
     // (2026-10-16) Adjudicadas vs. stock y lo que falta comprar.
     puede("gestion_compras") && { to: "/gestion-compras", icon: ShoppingCart, label: "Gestión de compras" },
+    // (2026-11-06) Recepción de stock (la de Bsale) y movimiento diario según las guías emitidas.
+    puede("recepcion_stock") && { to: "/recepcion-stock", icon: PackagePlus, label: "Recepción de stock" },
+    puede("gestion_compras") && { to: "/movimiento-productos", icon: CalendarRange, label: "Movimiento diario" },
   ].filter(Boolean);
 
   const postVentaNav = [

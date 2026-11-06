@@ -16,6 +16,8 @@ import { BsaleImpresionService } from './bsale-impresion.service';
 import { BsaleClientesService } from './bsale-clientes.service';
 import { BsaleTrasladosController } from './bsale-traslados.controller';
 import { BsaleTrasladosService } from './bsale-traslados.service';
+import { BsaleRecepcionesController } from './bsale-recepciones.controller';
+import { BsaleRecepcionesService } from './bsale-recepciones.service';
 import { LicitacionesModule } from '../licitaciones/licitaciones.module';
 import { CorreosModule } from '../correos/correos.module';
 import { InventarioModule } from '../inventario/inventario.module';
@@ -28,8 +30,9 @@ import { InventarioModule } from '../inventario/inventario.module';
   // del servicio de Inventario (stock por sucursal + libro).
   imports: [LicitacionesModule, CorreosModule, InventarioModule],
   // BsaleTraslados (2026-11-02): guía de traslado interno entre sucursales para los traslados del inventario.
-  controllers: [BsaleController, BsaleFacturacionController, BsaleDespachosController, BsaleLibreController, BsaleAnulacionesController, BsaleTrasladosController],
-  providers: [BsaleService, BsaleCron, BsaleFacturacionService, BsaleDespachosService, BsaleLibreService, BsaleProductosService, BsaleAnulacionesService, BsaleEstadosService, BsaleImpresionService, BsaleClientesService, BsaleTrasladosService],
+  // BsaleRecepciones (2026-11-06): recepción de stock (guía, factura, despacho interno o sin documento).
+  controllers: [BsaleController, BsaleFacturacionController, BsaleDespachosController, BsaleLibreController, BsaleAnulacionesController, BsaleTrasladosController, BsaleRecepcionesController],
+  providers: [BsaleService, BsaleCron, BsaleFacturacionService, BsaleDespachosService, BsaleLibreService, BsaleProductosService, BsaleAnulacionesService, BsaleEstadosService, BsaleImpresionService, BsaleClientesService, BsaleTrasladosService, BsaleRecepcionesService],
   // Productos: un producto nuevo con SKU (o al que se le asigna uno) se crea en Bsale.
   // BsaleService: Gestión de compras lee lo despachado por producto (2026-10-16).
   // BsaleClientesService: los giros de la ficha del cliente van al `activity` de Bsale (2026-10-23).

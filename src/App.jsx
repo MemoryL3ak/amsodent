@@ -22,6 +22,8 @@ import CrearProducto from "./pages/CrearProducto";
 import EditarProducto from "./pages/EditarProducto";
 import Inventario from "./pages/Inventario";
 import GestionCompras from "./pages/GestionCompras";
+import MovimientoProductos from "./pages/MovimientoProductos";
+import RecepcionStock from "./pages/RecepcionStock";
 
 // CLIENTES
 import Clientes from "./pages/Clientes";
@@ -176,6 +178,25 @@ export default function App() {
             element={
               <RequireModulo modulo="gestion_compras">
                 <GestionCompras />
+              </RequireModulo>
+            }
+          />
+          {/* MOVIMIENTO DIARIO DE PRODUCTOS (2026-11-06): lo que salió cada día
+              según las guías emitidas; lo ve quien tiene Gestión de compras. */}
+          <Route
+            path="movimiento-productos"
+            element={
+              <RequireModulo modulo="gestion_compras">
+                <MovimientoProductos />
+              </RequireModulo>
+            }
+          />
+          {/* RECEPCIÓN DE STOCK (2026-11-06): la recepción de Bsale, por permiso. */}
+          <Route
+            path="recepcion-stock"
+            element={
+              <RequireModulo modulo="recepcion_stock">
+                <RecepcionStock />
               </RequireModulo>
             }
           />

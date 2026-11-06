@@ -64,7 +64,10 @@ export const MODULOS = [
   // (crear, recibir y anular). El mantenedor de sucursales sigue siendo solo admin.
   { key: "inventario_traslados", label: "Inventario: traslados entre sucursales (crear, recibir y anular)", grupo: "Abastecimiento" },
   { key: "ver_costos", label: "Ver el costo de los productos (solo lectura)", grupo: "Comercial" },
-  { key: "gestion_compras", label: "Gestión de compras (adjudicadas vs. stock)", grupo: "Abastecimiento" },
+  { key: "gestion_compras", label: "Gestión de compras y movimiento diario de productos", grupo: "Abastecimiento" },
+  // (2026-11-06) Recepción de stock (la de Bsale): cargar stock con guía,
+  // factura, despacho interno o sin documento.
+  { key: "recepcion_stock", label: "Recepción de stock (cargar stock en Bsale y en el inventario)", grupo: "Abastecimiento" },
   // (2026-11-03) Proveedores y Órdenes de Compra a proveedores, asignables por
   // perfil (antes solo admin). El backend exige el mismo permiso.
   { key: "proveedores", label: "Proveedores (catálogo de a quién le compramos)", grupo: "Abastecimiento" },

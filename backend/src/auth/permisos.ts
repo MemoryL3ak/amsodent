@@ -76,6 +76,9 @@ export const MODULOS: string[] = [
   // (2026-11-06) El Repositorio de documentos ya no tiene permiso por perfil:
   // lo ve y descarga cualquier usuario con sesión; subir, editar y eliminar es
   // solo de administradores (AdminGuard en repositorio.controller).
+  // (2026-11-06) Recepción de stock (la de Bsale): cargar stock con guía,
+  // factura, despacho interno o sin documento. Asignable por perfil.
+  'recepcion_stock',
   // (2026-11-05) Apertura y cierre de caja de la sala de ventas. Además de
   // quien lo tenga en su perfil, lo recibe siempre el usuario de la tienda
   // (ver permisosDeUsuario): la caja asocia solo sus ventas.
