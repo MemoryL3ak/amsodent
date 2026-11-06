@@ -37,6 +37,25 @@ import { cajaUsuario } from '../auth/permisos';
    Al cerrar se guarda la foto del turno (totales por medio y arqueo): el
    historial no cambia aunque después se anule una venta.
 
+   REPORTE DIARIO (2026-11-06, pedido de Ariel: «la caja debería mostrar un
+   reporte diario de las ventas que se registraron: total de movimientos de la
+   caja, cuántas ventas se hicieron con tarjeta de débito, crédito, efectivo.
+   Y según el movimiento, cuánto saldo debería quedar en caja»). Una fila por
+   día (hora de Chile) con las ventas directas del usuario de la tienda por
+   medio de pago, los ingresos y egresos de efectivo y el saldo que debería
+   quedar en la caja:
+
+     saldo del día = efectivo con que partió el día
+                   + ventas del día en efectivo + ingresos − egresos
+
+   «Efectivo con que partió el día» es el fondo del primer turno del día o,
+   si la caja venía abierta de antes, lo que ese turno debía tener a las
+   00:00. No se guarda nada nuevo: se calcula de las ventas, los turnos y los
+   movimientos, así que el reporte de cualquier día queda disponible.
+   Débito y crédito: la venta directa guarda ambas como «tarjeta», pero el
+   comprobante conserva el nombre de la forma de pago de Bsale en su
+   descripción («… (TARJETA DEBITO).»): de ahí se separan.
+
    Solo puede haber un turno abierto. Lo abren y cierran el usuario de la
    tienda, los administradores y los perfiles con el módulo «caja».
    Tablas: caja_sesiones y caja_movimientos (migración 20261105_caja).
@@ -47,6 +66,8 @@ const MAX_MONTO = 1_000_000_000;
 
 export const MEDIOS: Record<string, string> = {
   efectivo: 'Efectivo',
+  tarjeta_debito: 'Tarjeta de débito',
+  tarjeta_credito: 'Tarjeta de crédito',
   tarjeta: 'Tarjeta',
   transbank: 'Transbank',
   getnet: 'Getnet',
@@ -81,6 +102,36 @@ const medioDe = (v: any) => {
   if (/saldo/.test(m)) return 'otro';
   return m.replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') || 'otro';
 };
+
+/* Medio de pago de un comprobante de venta directa. La forma de pago de Bsale
+   va entre paréntesis al final de la descripción: con ella se distingue la
+   tarjeta de débito de la de crédito (forma_pago guarda solo «tarjeta»). */
+export function medioDeComprobante(c: any): string {
+  const forma = String(String(c?.descripcion || '').match(/\(([^()]+)\)\.?\s*$/)?.[1] || '').toLowerCase();
+  if (/d[eé]bito/.test(forma)) return 'tarjeta_debito';
+  if (/tarjeta/.test(forma) && /cr[eé]dito/.test(forma)) return 'tarjeta_credito';
+  return medioDe(c?.forma_pago);
+}
+
+const ZONA = 'America/Santiago';
+export const fechaChile = (iso: any) =>
+  new Intl.DateTimeFormat('en-CA', { timeZone: ZONA, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(iso));
+/* Instante en que el reloj de Chile marca las 00:00 de esa fecha. */
+export function inicioDiaChile(ymd: string): Date {
+  const base = new Date(`${ymd}T00:00:00Z`);
+  const p = new Intl.DateTimeFormat('en-CA', {
+    timeZone: ZONA, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+  }).formatToParts(base);
+  const v = (t: string) => Number(p.find((x) => x.type === t)?.value || 0);
+  const comoUtc = Date.UTC(v('year'), v('month') - 1, v('day'), v('hour') % 24, v('minute'), v('second'));
+  return new Date(base.getTime() - (comoUtc - base.getTime()));
+}
+export const sumarDias = (ymd: string, n: number) => {
+  const d = new Date(`${ymd}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+};
+const MAX_DIAS_REPORTE = 92;
 
 /* Resumen del turno a partir de sus ventas y movimientos (función pura). */
 export function resumirTurno(fondo: number, ventas: VentaCaja[], movimientos: { tipo: string; monto: number }[]) {
@@ -196,7 +247,7 @@ export class CajaService {
       const doc = docs.get(Number(e.documento_id)) || null;
       const ps = pagos.get(Number(e.documento_id)) || [];
       // Con comprobante: su medio. Sin comprobante pero marcada pagada: el del documento. Si no, fue a crédito.
-      const medio = ps.length ? medioDe(ps[0].forma_pago) : doc?.pagada ? medioDe(doc.forma_pago) : 'credito';
+      const medio = ps.length ? medioDeComprobante(ps[0]) : doc?.pagada ? medioDe(doc.forma_pago) : 'credito';
       const total = Math.round(Number(e.total) || 0);
       const licId = Number(e.licitacion_id) || Number(doc?.licitacion_id) || 0;
       return {
@@ -343,6 +394,135 @@ export class CajaService {
     if (!data) throw new ConflictException('La caja ya fue cerrada por otra persona.');
     this.logger.log(`Caja ${sesion.id} cerrada por ${email}: esperado $${resumen.efectivo_esperado}, contado $${contado}, diferencia $${diferencia}`);
     return { ok: true, sesion: this.vista(data), resumen };
+  }
+
+  /* Reporte diario: una fila por día (hora de Chile) con actividad, del más
+     nuevo al más antiguo. Sin fechas: los últimos 30 días. */
+  async reporteDiario(desdeIn?: string, hastaIn?: string) {
+    const usuario = cajaUsuario();
+    const esFecha = (s: any) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ''));
+    const hoy = fechaChile(new Date().toISOString());
+    let hasta = esFecha(hastaIn) ? String(hastaIn) : hoy;
+    if (hasta > hoy) hasta = hoy;
+    let desde = esFecha(desdeIn) ? String(desdeIn) : sumarDias(hasta, -29);
+    if (desde > hasta) desde = hasta;
+    if (sumarDias(desde, MAX_DIAS_REPORTE) < hasta) desde = sumarDias(hasta, -MAX_DIAS_REPORTE);
+    const inicio = inicioDiaChile(desde);
+    const fin = new Date(inicioDiaChile(sumarDias(hasta, 1)).getTime() - 1);
+    const base = { usuario_caja: usuario, medios: MEDIOS, desde, hasta, hoy };
+
+    // Turnos que tocan el rango (abiertos antes de que termine y no cerrados antes de que empiece).
+    const { data: ses, error } = await this.db
+      .from('caja_sesiones')
+      .select('*')
+      .lte('abierta_at', fin.toISOString())
+      .or(`cerrada_at.is.null,cerrada_at.gte."${inicio.toISOString()}"`)
+      .order('abierta_at', { ascending: true })
+      .range(0, 999);
+    if (error) {
+      if (this.sinTabla(error)) return { listo: false, mensaje: MIGRACION, ...base, dias: [], totales: null };
+      throw new BadRequestException(error.message);
+    }
+    const sesiones = (ses || []) as any[];
+    const ms = (iso: any) => new Date(iso).getTime();
+
+    const movimientos: any[] = [];
+    const ids = sesiones.map((s) => Number(s.id));
+    for (let i = 0; i < ids.length; i += 200) {
+      const { data, error: e2 } = await this.db
+        .from('caja_movimientos')
+        .select('id, sesion_id, tipo, monto, motivo, usuario_email, created_at')
+        .in('sesion_id', ids.slice(i, i + 200))
+        .order('id', { ascending: true })
+        .range(0, 4999);
+      if (e2) throw new BadRequestException(e2.message);
+      movimientos.push(...((data || []) as any[]).map((m) => ({ ...m, monto: Number(m.monto) || 0 })));
+    }
+
+    // Las ventas se leen desde el turno más antiguo que toca el rango: con
+    // ellas se sabe con cuánto efectivo amaneció una caja que venía abierta.
+    const desdeDatos = sesiones.length && ms(sesiones[0].abierta_at) < inicio.getTime() ? new Date(sesiones[0].abierta_at) : inicio;
+    const { ventas, notas_credito } = await this.ventasDelTurno(desdeDatos.toISOString(), fin.toISOString());
+
+    const suma = (lista: any[], tipo: string) => lista.filter((m) => m.tipo === tipo).reduce((a, m) => a + (Number(m.monto) || 0), 0);
+    const grupo = (lista: VentaCaja[]) => ({ ventas: lista.length, total: lista.reduce((a, v) => a + v.total, 0) });
+    const dias: any[] = [];
+    for (let f = hasta; f >= desde; f = sumarDias(f, -1)) {
+      const ini = inicioDiaChile(f).getTime();
+      const finDia = inicioDiaChile(sumarDias(f, 1)).getTime() - 1;
+      const enDia = (iso: any) => { const t = ms(iso); return t >= ini && t <= finDia; };
+      const vDia = ventas.filter((v) => enDia(v.hora));
+      const mDia = movimientos.filter((m) => enDia(m.created_at));
+      const tDia = sesiones.filter((s) => ms(s.abierta_at) <= finDia && (!s.cerrada_at || ms(s.cerrada_at) >= ini));
+      if (!vDia.length && !mDia.length && !tDia.length) continue;
+
+      // Efectivo con que partió el día.
+      let fondo = 0;
+      const primero = tDia[0];
+      if (primero) {
+        fondo = Number(primero.monto_inicial) || 0;
+        const abre = ms(primero.abierta_at);
+        if (abre < ini) {
+          // La caja venía abierta: lo que ese turno debía tener a las 00:00.
+          const efectivoAntes = ventas.filter((v) => !v.anulada && v.medio === 'efectivo' && ms(v.hora) >= abre && ms(v.hora) < ini).reduce((a, v) => a + v.total, 0);
+          const movAntes = movimientos.filter((m) => Number(m.sesion_id) === Number(primero.id) && ms(m.created_at) < ini);
+          fondo += efectivoAntes + suma(movAntes, 'ingreso') - suma(movAntes, 'egreso');
+        }
+      }
+      const r = resumirTurno(fondo, vDia, mDia);
+      const validas = vDia.filter((v) => !v.anulada);
+      const de = (...medios: string[]) => grupo(validas.filter((v) => medios.includes(v.medio)));
+      const fuera = validas.filter((v) => !sesiones.some((s) => ms(v.hora) >= ms(s.abierta_at) && (!s.cerrada_at || ms(v.hora) <= ms(s.cerrada_at)))).length;
+      const ncDia = notas_credito.filter((n) => enDia(n.hora));
+      dias.push({
+        fecha: f,
+        sin_turno: !tDia.length,
+        turnos: tDia.map((s) => this.vista(s)),
+        fondo_inicial: Math.round(fondo),
+        ventas: r.ventas,
+        anuladas: r.anuladas,
+        total_ventas: r.total_ventas,
+        total_cobrado: r.total_cobrado,
+        efectivo: de('efectivo'),
+        debito: de('tarjeta_debito'),
+        credito_tarjeta: de('tarjeta_credito'),
+        otros: grupo(validas.filter((v) => !['efectivo', 'tarjeta_debito', 'tarjeta_credito', 'credito'].includes(v.medio))),
+        por_cobrar: de('credito'),
+        por_medio: r.por_medio,
+        ingresos: r.ingresos,
+        egresos: r.egresos,
+        n_ingresos: mDia.filter((m) => m.tipo === 'ingreso').length,
+        n_egresos: mDia.filter((m) => m.tipo === 'egreso').length,
+        // Todo lo que pasó por la caja en el día: ventas más entradas y salidas de efectivo a mano.
+        movimientos: r.ventas + mDia.length,
+        saldo_esperado: r.efectivo_esperado,
+        fuera_de_turno: fuera,
+        notas_credito: ncDia.length,
+        total_notas_credito: ncDia.reduce((a, n) => a + n.total, 0),
+        detalle_ventas: [...vDia].reverse(),
+        detalle_movimientos: [...mDia].reverse(),
+      });
+    }
+    const tot = (campo: string) => dias.reduce((a, d) => a + (Number(d[campo]) || 0), 0);
+    const totGrupo = (campo: string) => ({ ventas: dias.reduce((a, d) => a + d[campo].ventas, 0), total: dias.reduce((a, d) => a + d[campo].total, 0) });
+    return {
+      listo: true,
+      ...base,
+      dias,
+      totales: {
+        dias: dias.length,
+        ventas: tot('ventas'),
+        total_ventas: tot('total_ventas'),
+        efectivo: totGrupo('efectivo'),
+        debito: totGrupo('debito'),
+        credito_tarjeta: totGrupo('credito_tarjeta'),
+        otros: totGrupo('otros'),
+        por_cobrar: totGrupo('por_cobrar'),
+        ingresos: tot('ingresos'),
+        egresos: tot('egresos'),
+        movimientos: tot('movimientos'),
+      },
+    };
   }
 
   /* Turnos cerrados, del más nuevo al más antiguo. */

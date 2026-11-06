@@ -20,6 +20,12 @@ export class CajaController {
     return this.caja.historial(Number(limite) || 200);
   }
 
+  // (2026-11-06) Reporte diario: ventas por medio de pago, movimientos y saldo que debería quedar en caja.
+  @Get('reporte-diario')
+  reporteDiario(@Query('desde') desde?: string, @Query('hasta') hasta?: string) {
+    return this.caja.reporteDiario(desde, hasta);
+  }
+
   @Get('turnos/:id')
   turno(@Param('id', ParseIntPipe) id: number) {
     return this.caja.turno(id);
