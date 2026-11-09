@@ -662,6 +662,15 @@ export class PedidosFlujoService {
       pago_link: null,
       validado_cliente_at: null,
       validado_cliente_por: null,
+      // (2026-11-09) Reenviar la lista ES la aprobación del cliente sobre los
+      // productos nuevos: queda fechada igual que al aprobar, y la validación
+      // anterior se limpia como en una reversa (el paso ya no vale).
+      aprobado_cliente_at: ahora,
+      aprobado_cliente_por: actorEmail,
+      validado_at: null,
+      validado_por: null,
+      pago_estado: null,
+      pago_monto: null,
       updated_at: ahora,
     };
     if (String(body?.nota || '').trim()) {
@@ -685,6 +694,10 @@ export class PedidosFlujoService {
           disponibilidad: null,
           monto_total: null,
           pago_link: null,
+          aprobado_cliente_at: ahora,
+          aprobado_cliente_por: actorEmail,
+          validado_at: null,
+          validado_por: null,
           updated_at: ahora,
           flujo_estado: 'aprobado_cliente',
         })

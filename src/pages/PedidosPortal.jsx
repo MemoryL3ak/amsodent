@@ -3,6 +3,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../lib/api";
 import Toast from "../components/Toast";
 import { descargarReportePDF } from "../lib/reporteStock";
+import { fmtFechaHoraChile } from "../lib/fechaChile";
 import BotonLimpiarFiltros from "../components/BotonLimpiarFiltros";
 import DropdownSelect from "../components/ui/DropdownSelect";
 import {
@@ -90,13 +91,9 @@ function formatearRutVisual(input) {
 
 const fmtCLP = (n) => `$${Math.round(Number(n) || 0).toLocaleString("es-CL")}`;
 
-function fmtFechaHora(iso) {
-  const s = String(iso || "");
-  if (!s) return "—";
-  const [y, m, d] = s.slice(0, 10).split("-");
-  const hora = s.length > 10 ? s.slice(11, 16) : "";
-  return `${d}-${m}-${y}${hora ? ` · ${hora}` : ""}`;
-}
+// (2026-11-09) Antes cortaba el texto del timestamp y mostraba la hora UTC:
+// un pedido enviado a las 09:59 salía «12:59». Ahora va en hora de Chile.
+const fmtFechaHora = (iso) => fmtFechaHoraChile(iso);
 
 // Origen del pedido: el carrito del explorador deja referencia de tienda /
 // precio / url en los ítems (y lo dice la nota); lo demás viene de la

@@ -57,6 +57,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { condicionParaCotizacion } from "../lib/condicionesVenta";
 import { leerGiros, tieneGiro } from "../lib/giros";
+import { fmtFechaHoraChile as fmtFechaHoraCL } from "../lib/fechaChile";
 import { GirosRapidos } from "../components/GirosEditor";
 import { escucharProductosActualizados, itemEsDelProducto } from "../lib/productosCanal";
 import { avisoEliminarFacturaConNotas, notasDeFactura, textoNotas } from "../lib/notasSinFactura";
@@ -6332,15 +6333,8 @@ function ModalHistorialCotizacion({ cargando, data, codigo, entidad, onClose }) 
   const [vista, setVista] = useState("linea");
   const verAcciones = vista === "acciones" && !!acciones;
 
-  const fmtFechaHora = (iso) => {
-    const s = String(iso || "");
-    if (!s) return "—";
-    const fecha = s.slice(0, 10);
-    const hora = s.length > 10 ? s.slice(11, 16) : "";
-    const [y, m, d] = fecha.split("-");
-    if (!y || !m || !d) return s;
-    return `${d}-${m}-${y}${hora && hora !== "00:00" ? ` · ${hora}` : ""}`;
-  };
+  // (2026-11-09) En hora de Chile; antes mostraba la hora UTC del timestamp.
+  const fmtFechaHora = (iso) => fmtFechaHoraCL(iso, { ocultarMedianoche: true });
 
   return (
     <div
