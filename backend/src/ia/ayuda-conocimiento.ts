@@ -1215,8 +1215,8 @@ girasol 🌻). Hoy ayuda en:
   de lista; el link cobra el total con IVA) →
   Pagado (Webpay o crédito; 48-72 hrs para despachar). PAGO POR WEBPAY
   (desde el 09-11-2026): el cliente paga en la página de pago de Amsodent en
-  webpay.cl (link fijo, escribe él el monto) y presiona «Ya pagué» en el
-  portal; el pedido sigue «Por pagar» con la marca «Pago informado» y avisa al
+  webpay.cl (link fijo, escribe él el monto) y presiona «Confirmar pago» en
+  el portal; el pedido sigue «Por pagar» con la marca «Pago informado» y avisa al
   equipo. Quien lo ve en el portal de Transbank presiona «Registrar pago
   recibido» (monto, código de autorización y nota opcionales) y el pedido
   queda Pagado, con aviso al cliente por portal y correo. Paradas y salidas:

@@ -1019,7 +1019,7 @@ export class PedidosFlujoService {
       throw new BadRequestException('El pedido todavía no está validado por Amsodent, así que aún no se puede pagar.');
     }
     if (pedido.pago_estado === 'informado') {
-      return { ok: true, pedido, mensaje: 'Ya nos habías avisado de este pago: lo estamos verificando.' };
+      return { ok: true, pedido, mensaje: 'Ya registramos la confirmación de este pago y la estamos verificando.' };
     }
 
     const ahora = new Date().toISOString();
@@ -1052,7 +1052,7 @@ export class PedidosFlujoService {
     return {
       ok: true,
       pedido: data,
-      mensaje: 'Gracias. Amsodent verifica el pago en Webpay y te avisa en cuanto quede confirmado.',
+      mensaje: 'Recibimos tu confirmación. Amsodent verificará la transacción en Webpay y te avisará cuando el pago quede acreditado.',
     };
   }
 

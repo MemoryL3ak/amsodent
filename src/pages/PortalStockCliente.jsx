@@ -6332,8 +6332,8 @@ function PanelMisSolicitudes({ solicitudes, cotizacionesHist = [], cargando, onS
       setPorInformarPago(null);
       setToast?.({
         type: "success",
-        titulo: "Pago informado",
-        mensaje: r?.mensaje || "Amsodent verifica el pago y te avisa en cuanto quede confirmado.",
+        titulo: "Confirmación recibida",
+        mensaje: r?.mensaje || "Amsodent verificará la transacción y te avisará cuando el pago quede acreditado.",
       });
       onRecargar?.();
     } catch (e) {
@@ -6557,11 +6557,11 @@ function PanelMisSolicitudes({ solicitudes, cotizacionesHist = [], cargando, onS
       {porInformarPago && (
         <ConfirmarPortal
           tono="ok"
-          titulo="Avisar que ya pagaste"
+          titulo="Confirmar pago"
           mensaje={
             <>
-              ¿Ya pagaste <strong>{fmtMoneda(porInformarPago.pedido.monto_total)}</strong> del pedido N°{" "}
-              <strong>{porInformarPago.pedido.id}</strong> en Webpay?
+              Confirma que realizaste el pago de <strong>{fmtMoneda(porInformarPago.pedido.monto_total)}</strong> del
+              pedido N° <strong>{porInformarPago.pedido.id}</strong> en Webpay.
               <input
                 type="text"
                 value={porInformarPago.nota}
@@ -6572,8 +6572,8 @@ function PanelMisSolicitudes({ solicitudes, cotizacionesHist = [], cargando, onS
               />
             </>
           }
-          detalle="Amsodent revisa el pago en Webpay y te avisa en cuanto quede confirmado."
-          textoConfirmar="Sí, ya pagué"
+          detalle="Amsodent verificará la transacción en Webpay y te avisará cuando el pago quede acreditado."
+          textoConfirmar="Confirmar pago"
           textoOcupado="Enviando…"
           ocupado={trabajando === porInformarPago.pedido.id}
           onConfirmar={() => informarPago(porInformarPago.pedido, porInformarPago.nota)}
@@ -6929,8 +6929,8 @@ function BloqueFlujoPedido({ pedido, esAdminPortal, trabajando, credito, onAprob
           )}
           {pagoInformado ? (
             <div style={{ margin: "8px 0 0", border: "1px solid #ddd6fe", background: "#f5f3ff", borderRadius: 10, padding: "9px 12px", fontSize: 12.5, color: "#5b21b6", lineHeight: 1.5 }}>
-              <strong>Nos avisaste que pagaste{informadoAt ? ` el ${fmtFechaHora(informadoAt)}` : ""}.</strong>{" "}
-              Amsodent está verificando el pago en Webpay y te avisa en cuanto quede confirmado.
+              <strong>Confirmaste el pago{informadoAt ? ` el ${fmtFechaHora(informadoAt)}` : ""}.</strong>{" "}
+              Amsodent está verificando la transacción en Webpay y te avisará cuando el pago quede acreditado.
             </div>
           ) : esAdminPortal && (
             <ol style={{ margin: "8px 0 0", paddingLeft: 18, fontSize: 12, color: "#475569", lineHeight: 1.6 }}>
@@ -6939,7 +6939,7 @@ function BloqueFlujoPedido({ pedido, esAdminPortal, trabajando, credito, onAprob
                 Escribe el monto exacto: <strong style={{ color: "#0f172a" }}>{fmtMoneda(pedido.monto_total)}</strong>. Si
                 te pide una descripción, pon <strong>Pedido N° {pedido.id}</strong>.
               </li>
-              <li>Al terminar, vuelve aquí y presiona <strong>Ya pagué</strong> para que lo confirmemos.</li>
+              <li>Al terminar, vuelve a esta página y presiona <strong>Confirmar pago</strong> para que verifiquemos la transacción.</li>
             </ol>
           )}
         </div>
@@ -6967,7 +6967,7 @@ function BloqueFlujoPedido({ pedido, esAdminPortal, trabajando, credito, onAprob
               Pagar {fmtMoneda(pedido.monto_total)} con Webpay ↗
             </a>
             <button type="button" onClick={onInformarPago} disabled={trabajando} style={{ ...styles.btnSecundarioChico, opacity: trabajando ? 0.6 : 1 }}>
-              {trabajando ? "Enviando…" : "Ya pagué"}
+              {trabajando ? "Enviando…" : "Confirmar pago"}
             </button>
           </>
         )}
