@@ -55,6 +55,8 @@ export const MENSAJE_PAGADO =
 
 const TABLA = 'stock_solicitudes_cotizacion';
 const TABLA_EVENTOS = 'stock_solicitud_eventos';
+// IVA que se agrega sobre los precios netos al calcular el monto a pagar.
+const IVA_PEDIDO = 0.19;
 
 @Injectable()
 export class PedidosFlujoService {
@@ -782,10 +784,14 @@ export class PedidosFlujoService {
     })).filter((d) => d.nombre);
 
     // Si no vino monto, se calcula con lo que efectivamente hay disponible.
-    const montoCalculado = disponibilidad.reduce(
+    // (2026-11-09) Los precios unitarios llegan NETOS (como en la cotización) y
+    // el link de pago cobra con IVA: el respaldo también lo agrega, para que un
+    // cliente nunca pague sin IVA si el navegador no mandó el total.
+    const montoNeto = disponibilidad.reduce(
       (acc, d) => acc + d.cantidad_disponible * d.precio_unitario,
       0,
     );
+    const montoCalculado = Math.round(montoNeto * (1 + IVA_PEDIDO));
     const monto = Math.round(Number(body?.monto_total) || montoCalculado);
     if (monto <= 0) {
       throw new BadRequestException(
