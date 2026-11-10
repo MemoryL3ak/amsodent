@@ -99,6 +99,13 @@ const VIGENCIA_LABEL = { "1m": "1 mes", "3m": "3 meses", indefinido: "Indefinido
    cuenta recién habilitada. «Ingresó» = su último acceso es posterior a la
    (última) habilitación; un ingreso anterior a volver a habilitarlo no cuenta.
    El último acceso del RUT lo marca cualquier persona de la cuenta. */
+/* Estado de la cuenta: habilitado | expirado | deshabilitado (el mismo criterio del chip de la fila). */
+function estadoAcceso(a) {
+  if (!a?.acceso_habilitado) return "deshabilitado";
+  if (!a.vigente) return "expirado";
+  return "habilitado";
+}
+const ORDEN_ESTADO = { habilitado: 0, expirado: 1, deshabilitado: 2 };
 function inicioSesion(a) {
   if (!a?.ultimo_acceso) return "sin_ingresar";
   if (!a.acceso_habilitado_en) return "ingreso";
@@ -120,6 +127,7 @@ const MODULOS_PORTAL = [
   { clave: "showroom", nombre: "Showroom", detalle: "Catálogo de venta al público con precio sugerido.", pide: true },
   { clave: "explorador", nombre: "Explorador de precios", detalle: "Comparador de precios de otras tiendas dentales.", pide: true },
   { clave: "actividad", nombre: "Actividad", detalle: "Línea de tiempo de los pedidos de la cuenta.", pide: false },
+  { clave: "facturas", nombre: "Facturas", detalle: "Facturas emitidas con su condición de pago, vencimiento, estado y PDF.", pide: false },
 ];
 const modulosCompletos = (m) => {
   const r = {};
@@ -127,7 +135,6 @@ const modulosCompletos = (m) => {
   if (MODULOS_PORTAL.some((x) => x.pide && r[x.clave])) r.solicitudes = true;
   return r;
 };
-  { clave: "facturas", nombre: "Facturas", detalle: "Facturas emitidas con su condición de pago, vencimiento, estado y PDF.", pide: false },
 const modulosApagados = (m) => MODULOS_PORTAL.filter((x) => modulosCompletos(m)[x.clave] === false).map((x) => x.nombre);
 
 export default function AccesoPortalClientes() {
@@ -176,17 +183,39 @@ export default function AccesoPortalClientes() {
     const ingresaron = habilitados.filter((a) => inicioSesion(a) === "ingreso").length;
     return { ingresaron, sinIngresar: habilitados.length - ingresaron };
   }, [accesos]);
+  /* (2026-11-09) Pedido de Ariel: el listado se veía desordenado porque las
+     cuentas deshabilitadas figuraban mezcladas con las activas. Ahora hay un
+     filtro de estado que parte en «Activas» (habilitadas y expiradas; las
+     deshabilitadas quedan fuera, con un aviso de cuántas son) y el listado se
+     ordena por estado —habilitadas, expiradas, deshabilitadas— y dentro de
+     cada estado por razón social. */
+  const [filtroEstado, setFiltroEstado] = useState("activas");
+  const conteoEstado = useMemo(() => {
+    const c = { habilitadas: 0, expiradas: 0, deshabilitadas: 0 };
+    for (const a of accesos) c[estadoAcceso(a) === "habilitado" ? "habilitadas" : estadoAcceso(a) === "expirado" ? "expiradas" : "deshabilitadas"] += 1;
+    return c;
+  }, [accesos]);
   const accesosFiltrados = useMemo(() => {
     const q = busqueda.trim().toLowerCase();
-    return accesos.filter(
-      (a) =>
-        (!filtroIngreso || (a.acceso_habilitado && inicioSesion(a) === filtroIngreso)) &&
-        (!q ||
-          String(a.razon_social || "").toLowerCase().includes(q) ||
-          String(a.rut_formateado || "").toLowerCase().includes(q) ||
-          String(a.email || "").toLowerCase().includes(q)),
-    );
-  }, [accesos, busqueda, filtroIngreso]);
+    const pasaEstado = (a) => {
+      const e = estadoAcceso(a);
+      if (filtroEstado === "todas") return true;
+      if (filtroEstado === "activas") return e !== "deshabilitado";
+      return e === filtroEstado;
+    };
+    return accesos
+      .filter(
+        (a) =>
+          pasaEstado(a) &&
+          (!filtroIngreso || (a.acceso_habilitado && inicioSesion(a) === filtroIngreso)) &&
+          (!q ||
+            String(a.razon_social || "").toLowerCase().includes(q) ||
+            String(a.rut_formateado || "").toLowerCase().includes(q) ||
+            String(a.email || "").toLowerCase().includes(q)),
+      )
+      .sort((a, b) => ORDEN_ESTADO[estadoAcceso(a)] - ORDEN_ESTADO[estadoAcceso(b)] || String(a.razon_social || "").localeCompare(String(b.razon_social || ""), "es", { sensitivity: "base" }));
+  }, [accesos, busqueda, filtroIngreso, filtroEstado]);
+  const deshabilitadasOcultas = filtroEstado === "activas" && !busqueda.trim() ? conteoEstado.deshabilitadas : 0;
 
   /* (2026-11-05) Las confirmaciones de esta pantalla (deshabilitar un acceso,
      eliminar un usuario, enviar el acceso) usaban el diálogo nativo del
@@ -284,6 +313,20 @@ export default function AccesoPortalClientes() {
             </div>
             <div className="filtro-inicio-sesion" style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginLeft: "auto" }}>
               <DropdownSelect
+                value={filtroEstado}
+                onChange={setFiltroEstado}
+                minWidth={230}
+                style={{ width: 230, maxWidth: "100%", height: 38, fontSize: 13 }}
+                title="Qué cuentas se muestran según su estado"
+                options={[
+                  { value: "activas", label: `Activas (${conteoEstado.habilitadas + conteoEstado.expiradas})`, detalle: "Habilitadas y expiradas; las deshabilitadas quedan fuera" },
+                  { value: "habilitado", label: `Habilitadas (${conteoEstado.habilitadas})`, color: "#15803d" },
+                  { value: "expirado", label: `Expiradas (${conteoEstado.expiradas})`, color: "#b45309" },
+                  { value: "deshabilitado", label: `Deshabilitadas (${conteoEstado.deshabilitadas})`, color: "#64748b" },
+                  { value: "todas", label: `Todas (${accesos.length})` },
+                ]}
+              />
+              <DropdownSelect
                 value={filtroIngreso}
                 onChange={setFiltroIngreso}
                 minWidth={230}
@@ -311,10 +354,25 @@ export default function AccesoPortalClientes() {
                   ? filtroIngreso === "sin_ingresar"
                     ? "Todas las cuentas habilitadas ya iniciaron sesión."
                     : "Ninguna cuenta habilitada ha iniciado sesión todavía."
-                  : "Sin resultados para su búsqueda."}
+                  : filtroEstado !== "todas" && !busqueda.trim()
+                    ? filtroEstado === "deshabilitado"
+                      ? "No hay cuentas deshabilitadas."
+                      : filtroEstado === "expirado"
+                        ? "No hay cuentas expiradas."
+                        : filtroEstado === "habilitado"
+                          ? "No hay cuentas habilitadas."
+                          : `No hay cuentas activas. ${conteoEstado.deshabilitadas} deshabilitada${conteoEstado.deshabilitadas === 1 ? "" : "s"}: elige «Deshabilitadas» o «Todas» para verlas.`
+                    : "Sin resultados para su búsqueda."}
             </div>
           ) : (
             <div style={s.tablaWrap}>
+              {deshabilitadasOcultas > 0 && (
+                <div className="aviso-deshabilitadas" style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", padding: "8px 16px", fontSize: 12.5, color: "#64748b", borderBottom: "1px solid #f1f5f9" }}>
+                  <ShieldOff size={13} style={{ flexShrink: 0 }} />
+                  <span>{deshabilitadasOcultas} cuenta{deshabilitadasOcultas === 1 ? "" : "s"} deshabilitada{deshabilitadasOcultas === 1 ? "" : "s"} no se {deshabilitadasOcultas === 1 ? "muestra" : "muestran"}.</span>
+                  <button type="button" onClick={() => setFiltroEstado("deshabilitado")} style={{ background: "none", border: "none", padding: 0, color: "var(--primary, #28aeb1)", fontWeight: 600, cursor: "pointer", fontSize: 12.5 }}>Ver deshabilitadas</button>
+                </div>
+              )}
               <table style={s.tabla}>
                 <thead>
                   <tr>
@@ -498,7 +556,7 @@ function FilaAcceso({ a, onRegenerar, onReHabilitar, onDeshabilitar, onSucursale
   const ingreso = inicioSesion(a) === "ingreso";
   const diasHabilitado = diasDesde(a.acceso_habilitado_en);
   return (
-    <tr style={s.tr}>
+    <tr style={{ ...s.tr, ...(a.acceso_habilitado ? {} : { opacity: 0.72 }) }}>
       <td style={s.td}>
         <div style={{ fontWeight: 700, color: "#0f172a" }}>
           {a.razon_social || "—"}
