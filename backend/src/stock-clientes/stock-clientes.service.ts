@@ -1896,13 +1896,18 @@ export class StockClientesService {
     const contactoTelefono = String(body?.contacto_telefono || '').trim() || null;
     const nota = String(body?.nota || '').trim().slice(0, 1000) || null;
 
-    /* (2026-11-09) Todo pedido nace esperando la aprobación del administrador
-       de la cuenta, también el que envía el propio administrador. Antes (desde
-       el 2026-09-16) el del administrador salía aprobado solo, con su correo
-       como aprobador y la misma hora del envío: la bandeja mostraba «Aprobado
-       por el cliente» sin que nadie hubiera aprobado nada (solicitud 28). La
-       plataforma se entera recién cuando se aprueba (aprobarComoCliente). */
+    /* Etapa inicial según quién envía. El pedido que arma un asistente espera
+       la aprobación del administrador de la cuenta (punto 9). El que envía el
+       propio administrador va directo a Amsodent: él es quien aprueba, y lo
+       que el cliente aprueba después es la cotización que le enviamos.
+       (2026-11-09: por unas horas todo pedido nació esperando aprobación y el
+       administrador veía «Aprobar» sin haber recibido cotización; se volvió a
+       esta regla.) `aprobado_cliente_at` = hora en que llegó a Amsodent, que
+       es desde donde se miden los KPI; la bandeja no muestra ese paso como
+       aprobación cuando coincide con el envío. */
     const rol = rolDeToken(payload);
+    const directoAAmsodent = rol === 'admin';
+    const ahoraIso = new Date().toISOString();
     const SECCIONES = ['stock', 'explorador', 'showroom', 'ofertas'];
     const origenSeccion = SECCIONES.includes(String(body?.origen_seccion || ''))
       ? String(body.origen_seccion)
@@ -1910,9 +1915,11 @@ export class StockClientesService {
 
     const camposFlujo = {
       origen_seccion: origenSeccion,
-      flujo_estado: 'pendiente_aprobacion',
+      flujo_estado: directoAAmsodent ? 'aprobado_cliente' : 'pendiente_aprobacion',
       creado_por_usuario_id: payload.usuario_id ?? null,
       creado_por_email: payload.usuario_email ?? null,
+      aprobado_cliente_at: directoAAmsodent ? ahoraIso : null,
+      aprobado_cliente_por: directoAAmsodent ? (payload.usuario_email || 'cuenta principal') : null,
     };
 
     const client = this.supabase.getClient();
@@ -1935,24 +1942,21 @@ export class StockClientesService {
     // Si la migración del flujo aún no está aplicada, el pedido se crea igual
     // (y se comporta como antes: sin etapa de aprobación).
     let conFlujo = true;
-    if (error && /flujo_estado|creado_por|origen_seccion/.test(error.message)) {
+    if (error && /flujo_estado|creado_por|aprobado_cliente|origen_seccion/.test(error.message)) {
       conFlujo = false;
       ({ data: solicitud, error } = await insertar(base));
     }
     if (error) throw new BadRequestException(error.message);
 
-    // Mientras espera la aprobación del cliente, la plataforma NO se entera:
-    // avisar de un pedido que su propio administrador todavía no aprobó sería
-    // ruido (punto 10 — la plataforma se entera cuando se aprueba).
-    if (conFlujo) {
+    // Mientras espera la aprobación del administrador, la plataforma NO se
+    // entera: avisar de un pedido que la cuenta todavía no aprobó sería ruido
+    // (punto 10 — la plataforma se entera cuando se aprueba).
+    if (conFlujo && !directoAAmsodent) {
       return {
         ok: true,
         solicitud: { id: solicitud?.id, items: items.length },
         flujo_estado: 'pendiente_aprobacion',
-        mensaje:
-          rol === 'admin'
-            ? 'Tu pedido quedó esperando tu aprobación: apruébalo en «Mis cotizaciones» para enviarlo a Amsodent.'
-            : 'Tu pedido quedó esperando la aprobación del administrador de la cuenta.',
+        mensaje: 'Tu pedido quedó esperando la aprobación del administrador de la cuenta, que lo envía a Amsodent.',
       };
     }
 
@@ -2441,7 +2445,7 @@ export class StockClientesService {
     // corre, se cae a la lista básica de siempre.
     const COLS_FLUJO =
       COLS_BASE +
-      ', flujo_estado, disponibilidad, monto_total, sos, pago_estado, pago_medio, pago_at, pago_detalle, aprobado_cliente_at, validado_at' +
+      ', flujo_estado, disponibilidad, monto_total, sos, pago_estado, pago_medio, pago_at, pago_detalle, aprobado_cliente_at, validado_at, creado_por_email' +
       // (2026-10-01) Faltaban: sin ellas el portal no sabia que la cotizacion
       // ya estaba validada por el cliente y el boton seguia ofreciendose.
       ', validado_cliente_at, validado_cliente_por, modificacion_pedida_at, origen_seccion';

@@ -988,10 +988,9 @@ vendedor (vendedor_correo o, si no hay, creado_por) recibe el aviso
 plataforma («Ver cotización» abre el detalle; «Entendido» la marca leída) y
 un correo con el detalle (quién la cargó, N° de OC, monto neto, cliente). Si la
 carga el mismo vendedor, no se avisa.
-Desde nov 2026 además: PEDIDO DEL PORTAL — cuando el administrador de la
-cuenta del cliente aprueba un pedido del portal (desde el 09-11-2026 todo
-pedido espera esa aprobación, también el que envía el propio administrador) lo
-reciben en la campana y en una ventana flotante los destinatarios configurados,
+Desde nov 2026 además: PEDIDO DEL PORTAL — cuando un pedido del portal llega
+a Amsodent (lo envía el administrador de la cuenta del cliente, o lo aprueba si
+lo armó un asistente) lo reciben en la campana y en una ventana flotante los destinatarios configurados,
 TODOS los administradores y el vendedor dueño de la cartera del cliente; «Ver
 pedido» abre la bandeja con ese pedido desplegado. PRECIO ACTUALIZADO — aviso a
 todo el equipo cuando cambia una lista de precios de un producto. DOCUMENTO POR
@@ -1205,8 +1204,10 @@ girasol 🌻). Hoy ayuda en:
   vendedor dueño de la cartera también entra (lo lleva el aviso del pedido) y
   ve solo los pedidos de los clientes de su cartera.
 - FLUJO DEL PEDIDO DEL PORTAL (etapas, desde el 09-11-2026): Espera al cliente
-  (todo pedido nace aquí, también el que envía el administrador de la cuenta;
-  avanza cuando ese administrador lo aprueba) → Por revisar
+  (solo el pedido que arma un asistente de la cuenta, hasta que el
+  administrador lo aprueba con «Aprobar y enviar a Amsodent»; el que envía el
+  administrador llega directo a Por revisar; mientras espera, Amsodent no
+  puede rechazarlo ni marcarlo SOS) → Por revisar
   (nadie de Amsodent lo tomó) → En revisión («Tomar el pedido»: queda a nombre
   de quien lo toma y el cliente lo ve) → Cotización enviada (crear la cotización
   desde el pedido la vincula y avisa al cliente, que puede darla por buena o

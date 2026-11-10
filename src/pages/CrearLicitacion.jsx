@@ -846,8 +846,35 @@ export default function CrearLicitacion() {
         );
       }
       // Pedido del portal: productos por SKU, a resolver cuando cargue el catálogo.
-      if (Array.isArray(data.itemsPorSku) && data.itemsPorSku.length > 0) {
-        setItemsPendientesPorSku({ lista: data.itemsPorSku, sinSku: Number(data.itemsSinSku || 0) });
+      const pendientes = Array.isArray(data.itemsPorSku) && data.itemsPorSku.length > 0
+        ? { lista: data.itemsPorSku, sinSku: Number(data.itemsSinSku || 0) }
+        : null;
+      /* (2026-11-09) Cotización desde un pedido del portal: los datos del
+         cliente salen de su ficha, como al escribir el RUT a mano. Antes el
+         borrador traía «Entidad Pública» fijo y un cliente particular quedaba
+         cotizado como público. La ficha se aplica ANTES de armar las líneas
+         porque el precio depende de la lista (1 particular, 2 pública). El
+         contacto del pedido (quien lo hizo) manda sobre el de la ficha.
+         `aplicarFicha` no se vuelve a guardar en el borrador, así que recargar
+         la página no pisa lo que el vendedor haya cambiado. */
+      if (data.aplicarFicha && data.rutEntidad) {
+        (async () => {
+          try {
+            const ficha = await api.get(`/clientes?rut=${encodeURIComponent(data.rutEntidad)}`);
+            if (ficha) {
+              aplicarCliente(ficha);
+              if (data.contacto) setContacto(data.contacto);
+              if (data.email) setEmail(data.email);
+              if (data.telefono) setTelefono(data.telefono);
+            }
+          } catch (e) {
+            console.error("No se pudo leer la ficha del cliente del pedido:", e);
+          } finally {
+            if (pendientes) setItemsPendientesPorSku(pendientes);
+          }
+        })();
+      } else if (pendientes) {
+        setItemsPendientesPorSku(pendientes);
       }
     } catch (e) {
       console.error("Error cargando borrador de licitación", e);

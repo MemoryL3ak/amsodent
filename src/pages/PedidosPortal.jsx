@@ -559,12 +559,15 @@ export default function PedidosPortal() {
         oferta_pct: Number(i?.oferta?.descuento_pct || 0) || 0,
       }));
     const sinSku = items.length - itemsPorSku.length;
+    /* (2026-11-09) El tipo de cliente ya no va fijo en «Entidad Pública»: un
+       cliente particular (ej. Jeremias Alarcon) salía cotizado como público,
+       con lista 2 y «Compra ágil». /crear lee la ficha del cliente por su RUT
+       (aplicarFicha) antes de armar las líneas, así que tipo, tipo de compra,
+       lista de precios, giro, dirección y condición de venta salen de ella. */
     const draft = {
       rutEntidad: formatearRutVisual(s.rut),
       nombreEntidad: s.razon_social || "",
-      tipoCliente: "Entidad Pública",
-      tipoCompra: "Compra ágil",
-      listado: "2",
+      aplicarFicha: true,
       contacto: s.contacto_nombre || "",
       email: s.contacto_email || "",
       telefono: s.contacto_telefono || "",
@@ -1324,9 +1327,20 @@ function PanelFlujoPedido({ pedido, ocupado = false, onValidar, onTomar, onObser
   /* (2026-11-09) Pasos intermedios con quién y cuándo. «Cotización enviada»
      aparece solo si hay cotización (en pedidos anteriores a la migración la
      fecha es la de la respuesta). */
+  /* El pedido que envía el administrador de la cuenta llega directo, sin paso
+     de aprobación: su `aprobado_cliente_at` es la hora del envío (sirve a los
+     KPI), y mostrarlo como «Aprobado por el cliente» decía que alguien aprobó
+     algo que nadie aprobó (solicitud 28). Solo se muestra la aprobación real:
+     la del administrador sobre el pedido que armó un asistente. */
+  const envioDirecto = Boolean(
+    pedido.aprobado_cliente_at && pedido.created_at &&
+    Math.abs(new Date(pedido.aprobado_cliente_at) - new Date(pedido.created_at)) < 60000,
+  );
   const pasos = [
     { key: "enviado", label: "Enviado", fecha: pedido.created_at, quien: quienDe(pedido.creado_por_email) },
-    { key: "aprobado", label: "Aprobado por el cliente", fecha: pedido.aprobado_cliente_at, quien: quienDe(pedido.aprobado_cliente_por) },
+    ...(envioDirecto
+      ? []
+      : [{ key: "aprobado", label: "Aprobado por el cliente", fecha: pedido.aprobado_cliente_at, quien: quienDe(pedido.aprobado_cliente_por) }]),
     { key: "revision", label: "En revisión", fecha: pedido.revision_iniciada_at, quien: quienDe(pedido.revision_por) },
     ...(conCotizacion
       ? [{
@@ -1532,12 +1546,14 @@ function PanelFlujoPedido({ pedido, ocupado = false, onValidar, onTomar, onObser
             Volver atrás
           </button>
         )}
-        {!cerrado && (
+        {/* (2026-11-09) Mientras espera la aprobación del administrador de la
+            cuenta, el pedido no llegó a Amsodent: no se rechaza ni se marca SOS. */}
+        {!cerrado && estado !== "pendiente_aprobacion" && (
           <button type="button" className="btn btn-secondary btn-sm" onClick={onRechazar} disabled={ocupado} style={{ color: "#b91c1c" }} title="Cierra el pedido con un motivo que el cliente lee">
             Rechazar
           </button>
         )}
-        {estado !== "rechazado" && estado !== "cancelado" && (
+        {estado !== "rechazado" && estado !== "cancelado" && estado !== "pendiente_aprobacion" && (
           <button
             type="button"
             className="btn btn-secondary btn-sm"

@@ -1484,10 +1484,15 @@ export class PedidosFlujoService {
       throw new BadRequestException('El pedido ya está pagado: no se puede rechazar. Si corresponde devolver el dinero, va por fuera del flujo.');
     }
     if (esCerrado(actual)) throw new BadRequestException('Este pedido ya está cerrado.');
+    // (2026-11-09) Mientras espera la aprobación del administrador de la cuenta
+    // el pedido todavía no llegó a Amsodent: no hay nada que rechazar.
+    if (actual === 'pendiente_aprobacion') {
+      throw new BadRequestException('El pedido todavía espera la aprobación del cliente: aún no llega a Amsodent.');
+    }
     const ahora = new Date().toISOString();
     const data = await this.mover(
       id,
-      TODOS.filter((e) => !esCerrado(e)),
+      TODOS.filter((e) => !esCerrado(e) && e !== 'pendiente_aprobacion'),
       'rechazado',
       { rechazado_at: ahora, rechazado_por: actorEmail, rechazo_motivo: texto, estado: 'cancelada' },
       { tipo: 'rechazado', actorTipo: 'plataforma', actorEmail, detalle: texto.slice(0, 300) },

@@ -2588,8 +2588,8 @@ function PantallaDeclaracion({ cliente, setToast }) {
             setToast({
               type: "success",
               titulo: "Solicitud enviada",
-              // (2026-11-09) Todo pedido nace esperando la aprobación del
-              // administrador: el servidor dice a quién le toca aprobarlo.
+              // (2026-11-09) Si el pedido espera la aprobación del administrador
+              // de la cuenta (lo armó un asistente), el servidor lo dice.
               mensaje: resumen.mensaje
                 ? `Recibimos su solicitud por ${resumen.items} producto${resumen.items === 1 ? "" : "s"}. ${resumen.mensaje}`
                 : `Recibimos su solicitud por ${resumen.items} producto${resumen.items === 1 ? "" : "s"}. Nuestro equipo se contactará a la brevedad.`,
@@ -6845,9 +6845,12 @@ function BloqueFlujoPedido({ pedido, esAdminPortal, trabajando, credito, onAprob
 
       {estado === "pendiente_aprobacion" && (
         <p style={{ fontSize: 12.5, color: "#475569", margin: "8px 0 0", lineHeight: 1.5 }}>
+          {/* (2026-11-09) Solo llegan aquí los pedidos que arma un asistente: el
+              del administrador va directo a Amsodent. Aprobar es enviarlo, no
+              aceptar una cotización (esa se acepta cuando llega). */}
           {esAdminPortal
-            ? "Este pedido está esperando tu aprobación. Al aprobarlo, lo enviamos a revisión con Amsodent."
-            : "Este pedido está esperando la aprobación del administrador de la cuenta."}
+            ? `${pedido.creado_por_email ? `${String(pedido.creado_por_email).split("@")[0]} armó este pedido` : "Este pedido lo armó un usuario de tu cuenta"}. Revísalo y apruébalo para enviarlo a Amsodent, que te responderá con la cotización.`
+            : "Este pedido está esperando la aprobación del administrador de la cuenta, que lo envía a Amsodent."}
         </p>
       )}
       {estado === "aprobado_cliente" && (
@@ -6953,7 +6956,7 @@ function BloqueFlujoPedido({ pedido, esAdminPortal, trabajando, credito, onAprob
       <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
         {estado === "pendiente_aprobacion" && esAdminPortal && (
           <button type="button" onClick={onAprobar} disabled={trabajando} style={{ ...styles.btnPrimarioChico, opacity: trabajando ? 0.6 : 1 }}>
-            {trabajando ? "Aprobando…" : "Aprobar pedido"}
+            {trabajando ? "Enviando…" : "Aprobar y enviar a Amsodent"}
           </button>
         )}
         {estado === "validado_plataforma" && esAdminPortal && !pagoInformado && (
