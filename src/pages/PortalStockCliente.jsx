@@ -1,5 +1,6 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
+import { esSanBernardo } from "../constants/regiones";
 import {
   ShieldCheck,
   UserCog,
@@ -182,13 +183,6 @@ const carritoConOtraCasa = (carrito) =>
     const tienda = String(c?.tienda || "").trim();
     return tienda !== "" && !/amsodent/i.test(tienda);
   });
-
-const esSanBernardo = (comuna) =>
-  String(comuna || "")
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .trim()
-    .toLowerCase() === "san bernardo";
 
 // Aviso del umbral: si falta poco, dice cuánto; si ya lo superó, lo celebra.
 // En San Bernardo no hay umbral que mostrar: siempre es gratis.

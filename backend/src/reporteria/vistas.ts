@@ -37,6 +37,7 @@ const TIPO_DESPACHO = `case
     when coalesce(l.retiro_en_local, false) then 'Entrega en local (el cliente retira, sin flete)'
     when coalesce(l.flete_por_pagar, false) then 'Por pagar (lo paga el cliente)'
     when coalesce(l.flete_estimado, 0) > 0 then 'Incluido en la cotización'
+    when lower(trim(coalesce(l.comuna, ''))) = 'san bernardo' then 'Gratis (destino San Bernardo)'
     else 'Sin flete / retiro'
   end`;
 const OC_AGG = `(

@@ -161,6 +161,7 @@ export const GRUPOS_MANUAL = [
           "Ítems por SKU con buscador y modal de productos; los precios de campaña vigente se aplican solos. Cada línea con un producto del catálogo tiene el botón «Ficha» (junto a «Buscar catálogo») que abre su ficha técnica en PDF; también en el detalle de la cotización. El botón va en verde si la ficha técnica está completa y en rojo si le faltan campos; arriba de los ítems un chip rojo cuenta los productos sin ficha completa y los lista al pasar el mouse.",
           "Margen por línea visible para todos; el costo del ítem queda congelado y es el que usarán los paneles y comisiones para siempre.",
           "Flete estimado con calculadora por courier (peso/volumen de los productos). Flete GRATIS: destino San Bernardo siempre (sin mínimo), o compra ≥ $70.000 (bruto) con destino en la Región Metropolitana.",
+          "Destino San Bernardo (Región Metropolitana), desde noviembre 2026: al elegir esa comuna el Flete Estimado queda fijo en «GRATIS · $0», la calculadora se deshabilita y no se exige calcular nada. Vale para cualquier origen de la cotización (particular, entidad pública, portal, Mercado Público). En cliente particular el PDF lo declara como ítem «Despacho / Flete — GRATIS (destino San Bernardo)».",
           "Cliente particular puede marcar «Flete por pagar»: la cotización no cobra flete (el cliente lo paga al courier al recibir) y el PDF lo declara como ítem «Despacho / Flete — POR PAGAR»; con esa opción no se exige calcular el flete.",
           "Cliente particular también puede marcar «Entrega en local»: el cliente retira en nuestro local, el flete queda en $0 y el PDF lo declara como ítem «Despacho / Flete — ENTREGA EN LOCAL». Es excluyente con «Flete por pagar» y tampoco exige calcular el flete.",
           "Cotización hija: si hay productos equivalentes, el sistema ofrece crear la variante (jerarquía madre/hija).",
@@ -171,7 +172,7 @@ export const GRUPOS_MANUAL = [
         ],
         tips: [
           "Si el margen general es menor a 20%, la cotización queda \"Pendiente Aprobación\" y no genera PDF hasta que la apruebe una jefatura.",
-          "Sin flete calculado no se genera la cotización ni su PDF: usa la calculadora y aplica el resultado, aunque sea $0.",
+          "Sin flete calculado no se genera la cotización ni su PDF: usa la calculadora y aplica el resultado, aunque sea $0. Se exceptúan el destino San Bernardo, «Flete por pagar» y «Entrega en local».",
           "Fichas técnicas (desde noviembre 2026): si algún producto del catálogo tiene la ficha técnica incompleta, al guardar se avisa y la cotización queda guardada SIN PDF. Se completan las fichas en Productos → Editar y el PDF se genera desde el detalle de la cotización con «PDF Carta». El administrador no tiene esa restricción: guarda y genera el PDF igual, y el aviso le lista las fichas pendientes (el chip sobre los ítems se le muestra en ámbar en vez de rojo).",
           "Un cliente con facturas en mora queda bloqueado: el sistema no deja guardar cotizaciones nuevas para él.",
         ],

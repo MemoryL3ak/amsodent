@@ -61,7 +61,7 @@ import { fmtFechaHoraChile as fmtFechaHoraCL } from "../lib/fechaChile";
 import { GirosRapidos } from "../components/GirosEditor";
 import { escucharProductosActualizados, itemEsDelProducto } from "../lib/productosCanal";
 import { avisoEliminarFacturaConNotas, notasDeFactura, textoNotas } from "../lib/notasSinFactura";
-import { REGIONES_CHILE, filtrarOpcionComuna } from "../constants/regiones";
+import { REGIONES_CHILE, filtrarOpcionComuna, fleteGratisSanBernardo } from "../constants/regiones";
 
 // Correos autorizados a aprobar cotizaciones (además del administrador).
 const APROBADORES_AUTORIZADOS = [
@@ -823,6 +823,15 @@ export default function EditarLicitacion() {
 ============================================================ */
   const ESTADOS_EDITABLES = ["En espera", "Pendiente Aprobación", "Pendiente Aprobación Peso"];
   const esEditable = ESTADOS_EDITABLES.includes(estado);
+  /* (2026-11-09) Destino San Bernardo (RM): flete $0 fijo, sin calcularlo y
+     para cualquier origen. `destinoSanBernardo` libera el PDF siempre; el
+     forzado a $0 (`fleteSanBernardo`) solo actúa mientras la cotización se
+     puede editar, para no tocar los totales de una ya cerrada. */
+  const destinoSanBernardo = fleteGratisSanBernardo(comuna, region);
+  const fleteSanBernardo = destinoSanBernardo && esEditable;
+  useEffect(() => {
+    if (fleteSanBernardo && Number(fleteEstimado) !== 0) setFleteEstimado(0);
+  }, [fleteSanBernardo, fleteEstimado]);
   // (2026-11-05) Mercado Público con la cotización abierta: tiempo de entrega y
   // observaciones obligatorios (al guardar y al generar el PDF).
   const exigeEntregaYObs = !esCotizacionParticular && esEditable;
@@ -2765,14 +2774,15 @@ export default function EditarLicitacion() {
 
     // (Punto 9 — 2026-09-10) Sin flete calculado no se genera el PDF. Un flete
     // $0 solo pasa cuando calza con la regla de despacho gratis (compra ≥
-    // $70.000 con destino en la Región Metropolitana); en cualquier otro caso
-    // se recuerda pasar por la Calculadora de Flete.
+    // $70.000 con destino en la Región Metropolitana, o destino San Bernardo
+    // desde 2026-11-09); en cualquier otro caso se recuerda pasar por la
+    // Calculadora de Flete.
     const regionNormPdf = String(region || "").trim().toLowerCase();
     const esRMPdf =
       regionNormPdf === "rm" ||
       regionNormPdf === "santiago" ||
       regionNormPdf.includes("metropolitana");
-    const fleteGratisEvidente = Number(totalConIVA) >= 70000 && esRMPdf;
+    const fleteGratisEvidente = (Number(totalConIVA) >= 70000 && esRMPdf) || destinoSanBernardo;
     if (!(Number(fleteEstimado) > 0) && !fleteGratisEvidente && !fletePorPagarEfectivo && !retiroEnLocalEfectivo) {
       setToast({
         type: "warning",
@@ -2953,6 +2963,21 @@ export default function EditarLicitacion() {
               n: filas.length + 1,
               sku: "",
               producto: "Despacho / Flete — ENTREGA EN LOCAL (el cliente retira en nuestro local)",
+              formato: "",
+              cantidad: 1,
+              precio_unitario: "$0",
+              total: "$0",
+              observacion: "",
+            });
+          }
+          // (2026-11-09) Destino San Bernardo con flete $0: el PDF que separa
+          // el flete (particular o nacida del portal) lo declara como ítem sin
+          // costo. Con flete diluido no hay nada que mostrar.
+          if ((esParticularPdf || vieneDelPortal) && destinoSanBernardo && !(Number(fleteEstimado) > 0) && !fletePorPagar && !retiroEnLocal) {
+            filas.push({
+              n: filas.length + 1,
+              sku: "",
+              producto: "Despacho / Flete — GRATIS (destino San Bernardo)",
               formato: "",
               cantidad: 1,
               precio_unitario: "$0",
@@ -3219,7 +3244,8 @@ export default function EditarLicitacion() {
           // "Flete por pagar" es EXCLUSIVO de cliente particular: si la
           // cotización dejó de serlo, el flag se apaga al guardar (así una
           // pública no queda con flete $0 sin que el PDF lo diga).
-          flete_estimado: fletePorPagarEfectivo || retiroEnLocalEfectivo ? 0 : Number(fleteEstimado),
+          // (2026-11-09) Destino San Bernardo: siempre $0.
+          flete_estimado: fletePorPagarEfectivo || retiroEnLocalEfectivo || fleteSanBernardo ? 0 : Number(fleteEstimado),
           // Se envía solo si hay algo que decir (true, o volver a false tras
           // haber estado guardado en true): tolera la migración 20260914.
           ...(fletePorPagarEfectivo || fletePorPagarDB ? { flete_por_pagar: fletePorPagarEfectivo } : {}),
@@ -4707,6 +4733,15 @@ export default function EditarLicitacion() {
                 <div className="form-display form-display-value" style={{ color: "#0f766e", fontWeight: 700 }}>
                   ENTREGA EN LOCAL · $0
                 </div>
+              ) : fleteSanBernardo ? (
+                /* (2026-11-09) Destino San Bernardo: $0 fijo, sin calculadora
+                   ni edición manual. */
+                <>
+                  <div className="form-display form-display-value" style={{ color: "#15803d", fontWeight: 700 }}>
+                    GRATIS · $0
+                  </div>
+                  <div className="field-hint">Destino San Bernardo: despacho sin costo, no requiere cálculo.</div>
+                </>
               ) : esAdmin ? (
                 <input
                   type="number"
@@ -4786,7 +4821,7 @@ export default function EditarLicitacion() {
             totalCompra={totalConIVA}
             origen={vieneDelPortal ? "portal" : ""}
             solicitudStockId={solicitudStockId}
-            deshabilitado={!esEditable || fletePorPagar || retiroEnLocal}
+            deshabilitado={!esEditable || fletePorPagar || retiroEnLocal || fleteSanBernardo}
             onAplicar={(neto) => setFleteEstimado(neto)}
           />
         </div>

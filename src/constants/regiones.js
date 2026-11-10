@@ -483,6 +483,27 @@ export function normalizarGeo(s) {
     .toLowerCase();
 }
 
+// ¿El texto nombra a la Región Metropolitana? Acepta "RM", "Santiago" y
+// cualquier variante de "Metropolitana" (los tarifarios la llaman distinto).
+export function esRegionMetropolitana(region) {
+  const n = normalizarGeo(region);
+  return n === "rm" || n === "santiago" || n.includes("metropolitana");
+}
+
+// ¿La comuna es San Bernardo? (comuna de la bodega de Amsodent).
+export function esSanBernardo(comuna) {
+  return normalizarGeo(comuna) === "san bernardo";
+}
+
+// (2026-11-09) Pedido de Ariel: toda cotización con destino San Bernardo,
+// Región Metropolitana, lleva flete $0 sin pasar por la calculadora y sin
+// importar su origen (particular, entidad pública, portal, Mercado Público).
+// La región vacía se tolera: San Bernardo solo existe en la RM.
+export function fleteGratisSanBernardo(comuna, region) {
+  if (!esSanBernardo(comuna)) return false;
+  return !String(region ?? "").trim() || esRegionMetropolitana(region);
+}
+
 // Todos los nombres con que se conoce una comuna de la lista (el de la lista primero).
 export function nombresDeComuna(comuna) {
   const c = String(comuna ?? "").trim();
