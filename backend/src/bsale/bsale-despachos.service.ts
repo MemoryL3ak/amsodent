@@ -4,6 +4,7 @@ import { LicitacionesService } from '../licitaciones/licitaciones.service';
 import { CorreosService } from '../correos/correos.service';
 import { BsaleService } from './bsale.service';
 import { BsaleClientesService } from './bsale-clientes.service';
+import { LotesService, notaConLotes } from '../inventario/lotes.service';
 import {
   BsaleFacturacionService,
   epochAFecha,
@@ -103,7 +104,15 @@ export class BsaleDespachosService {
     private bsaleClientes: BsaleClientesService,
     // Opcional para las pruebas: sin él no se envía el correo automático.
     @Optional() private correos?: CorreosService,
+    // (2026-11-09) Lotes y vencimientos: el listbox de cada producto de la guía.
+    @Optional() private lotes?: LotesService,
   ) {}
+
+  /** Lotes con unidades disponibles de cada SKU (listbox de la guía libre y de la venta directa). */
+  async lotesDisponibles(skus: string[]) {
+    if (!this.lotes) return { listo: false, hoy: hoyEnChile(), lotes: {} };
+    return this.lotes.disponiblesPorSku(skus);
+  }
 
   /** A quién se enviaría el documento (lo muestra la simulación). */
   async correoPrevio(licitacionId: number | null, para?: string | null) {
@@ -374,6 +383,15 @@ export class BsaleDespachosService {
         observacion: String(it.observacion || '').trim(),
       });
     }
+    // (2026-11-09) Lotes con unidades disponibles de cada producto: el listbox de la línea.
+    let lotesListo = false;
+    if (this.lotes) {
+      try {
+        lotesListo = await this.lotes.listo();
+        const mapa = await this.lotes.porSku(lineas.map((l) => l.sku));
+        for (const l of lineas) l.lotes = (mapa.get(l.sku) || []).map(({ id, lote, vencimiento, recibido, despachado, disponible }) => ({ id, lote, vencimiento, recibido, despachado, disponible }));
+      } catch { /* sin lotes la guía sale igual */ }
+    }
     // Stock en Bsale de lo que falta por despachar (2026-10-09).
     const sinStock = await this.anotarStock(lineas.filter((l) => l.en_bsale && l.pendiente > 0).map((l) => Object.assign(l, { cantidad: l.pendiente })));
     if (sinStock) avisos.push({ codigo: 'sin_stock', mensaje: sinStock });
@@ -407,6 +425,7 @@ export class BsaleDespachosService {
       tipo_documento_id: Number(tipoGuia?.id) || 0,
       cliente,
       lineas,
+      lotes_listo: lotesListo,
       totales,
       guias_bsale: guiasBsale.map((g: any) => ({ numero: String(g.numero), fecha: g.emitida, neto: g.neto })),
       guias_sistema: guiasSistema.map((g: any) => ({ doc_id: g.id, numero: String(g.numero || ''), fecha: String(g.fecha_oc || g.created_at || '').slice(0, 10) || null })),
@@ -623,6 +642,8 @@ export class BsaleDespachosService {
       // antiguas) o, si tampoco viene, la propuesta con las de los productos.
       observacion?: string;
       observaciones?: Record<string, string>;
+      // (2026-11-09) Lotes elegidos por SKU: [{ lote_id, cantidad? }] (un solo lote sin cantidad = toda la línea).
+      lotes?: Record<string, { lote_id: number; cantidad?: number }[]>;
       cliente?: Record<string, any>; fecha_emision?: string; huella?: string; simular?: boolean;
     },
   ) {
@@ -654,6 +675,10 @@ export class BsaleDespachosService {
     const textoObservacion = notasPorLinea
       ? limpiarObservacion(body?.observacion)
       : body?.observacion === undefined ? observacionSugerida(elegidas) : body.observacion;
+    // (2026-11-09) Lotes y vencimientos elegidos: van escritos en la nota de la línea, antes de la observación.
+    const lotes = this.lotes ? await this.lotes.asignar(elegidas.map((l) => ({ sku: l.sku, cantidad: l.cantidad })), body?.lotes) : { porSku: new Map(), problemas: [] as string[], avisos: [] as string[] };
+    if (lotes.problemas.length) throw new BadRequestException(lotes.problemas.join(' '));
+    for (const l of elegidas) l.nota = notaConLotes(lotes.porSku.get(l.sku)?.texto, notasPorLinea ? l.observacion : '');
 
     const fecha = String(body?.fecha_emision || b.fecha_emision).slice(0, 10);
     if (!Number.isFinite(fechaAEpoch(fecha))) throw new BadRequestException('La fecha de emisión no es válida.');
@@ -699,8 +724,8 @@ export class BsaleDespachosService {
       // Con orden registrada en Bsale, las líneas salen de ella (así Bsale las enlaza).
       details: elegidas.map((l) => ({
         ...(l.detalle_id ? { detailId: l.detalle_id, quantity: l.cantidad } : { code: l.sku, quantity: l.cantidad, netUnitValue: l.neto_unitario, taxId: `[${IVA_ID}]` }),
-        // Observación del producto → nota de su línea en Bsale (2026-10-08).
-        ...(notasPorLinea && l.observacion ? { comment: l.observacion } : {}),
+        // Observación del producto → nota de su línea en Bsale (2026-10-08); desde 2026-11-09 con sus lotes adelante.
+        ...(l.nota ? { comment: l.nota } : {}),
       })),
       references: b.referencias.map((r: any) => referenciaParaBsale(r, emision)),
       salesId,
@@ -713,7 +738,7 @@ export class BsaleDespachosService {
       sii: true,
       descuenta_stock: true,
       clienteNuevo: (cli as any).clienteNuevo,
-      lineas: elegidas.map((l) => ({ sku: l.sku, producto: l.producto, cantidad: l.cantidad, neto_unitario: l.neto_unitario, neto: l.neto, pendiente_despues: Math.max(0, l.pendiente - l.cantidad), observacion: notasPorLinea ? l.observacion || null : null, stock_bsale: l.stock_bsale ?? null })),
+      lineas: elegidas.map((l) => ({ sku: l.sku, producto: l.producto, cantidad: l.cantidad, neto_unitario: l.neto_unitario, neto: l.neto, pendiente_despues: Math.max(0, l.pendiente - l.cantidad), observacion: l.nota || null, stock_bsale: l.stock_bsale ?? null })),
       totales,
       fecha_emision: fecha,
       despacho: { ...despacho, tipo_traslado: traslado?.nombre || null },
@@ -722,6 +747,8 @@ export class BsaleDespachosService {
         'Bsale descuenta el stock al emitir la guía.',
         ...(elegidas.some((l) => l.stock_bsale != null && Number(l.stock_bsale) < Number(l.cantidad)) ? [`Sin stock suficiente en Bsale: ${elegidas.filter((l) => l.stock_bsale != null && Number(l.stock_bsale) < Number(l.cantidad)).map((l) => `${l.sku} (hay ${l.stock_bsale}, van ${l.cantidad})`).join(' · ')}.`] : []),
         ...(notasPorLinea && elegidas.some((l) => l.observacion) ? ['La observación de cada producto va en su línea de la guía.'] : []),
+        ...(lotes.porSku.size ? ['El lote y el vencimiento de cada producto van escritos en su línea de la guía.'] : []),
+        ...lotes.avisos,
         ...(obs.aviso ? [obs.aviso] : []),
       ],
     });
@@ -731,11 +758,11 @@ export class BsaleDespachosService {
     await this.facturacion.ponerVendedor(solicitud, vista, null, usuario.email);
     if (!real) return { simulacion: true, emision_apagada: body?.simular !== true, solicitud, totales, vista };
 
-    return this.emitirReal({
+    const r = await this.emitirReal({
       usuario, clave, salesId, tipo: 'guia', ruta: '/shippings.json', solicitud, vista,
       licitacionId: b.cotizacion.id, origenDocId: b.oc.id,
       correo: { tipo: 'guia' },
-      lineas: elegidas.map((l) => ({ sku: l.sku, cantidad: l.cantidad, neto_unitario: l.neto_unitario, ...(l.observacion ? { observacion: l.observacion } : {}) })),
+      lineas: elegidas.map((l) => ({ sku: l.sku, cantidad: l.cantidad, neto_unitario: l.neto_unitario, ...(l.observacion ? { observacion: l.observacion } : {}), ...(lotes.porSku.get(l.sku) ? { lotes: lotes.porSku.get(l.sku)!.asignaciones } : {}) })),
       registrar: async (doc: any, pdf: any) => {
         // La guía queda en Trazabilidad como si se hubiera subido a mano (y avisa al vendedor).
         const creado = await this.licitaciones.createDocumento({
@@ -775,13 +802,19 @@ export class BsaleDespachosService {
         } catch { /* la verificación no frena nada */ }
         const sinObs = obs.atributo ? await this.avisoObservacion(Number(doc.id), doc.number, obs.texto) : null;
         if (sinObs) avisos.push(sinObs);
-        if (notasPorLinea) {
-          const sinNotas = await this.avisoNotasLineas(Number(doc.id), doc.number, elegidas);
+        if (elegidas.some((l) => l.nota)) {
+          const sinNotas = await this.avisoNotasLineas(Number(doc.id), doc.number, elegidas.map((l) => ({ ...l, observacion: l.nota })));
           if (sinNotas) avisos.push(sinNotas);
         }
         return avisos;
       },
     });
+    // (2026-11-09) Lo que la guía sacó de cada lote (anularla en Bsale lo devuelve).
+    if (r?.emitida && lotes.porSku.size && this.lotes) {
+      const aviso = await this.lotes.registrarSalidas(lotes.porSku, { origen: 'guia_oc', bsale_document_id: r.bsale_id || null, guia_numero: r.numero || null, licitacion_id: b.cotizacion.id, documento_id: r.documento_id || null, usuario_email: usuario.email || null });
+      if (aviso) r.avisos.push(aviso);
+    }
+    return r;
   }
 
   /* ¿Bsale guardó la nota de cada línea (`comment` → `note`)? Se confirma

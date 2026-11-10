@@ -13,6 +13,7 @@ import CamposSeguimientoGuia from "./CamposSeguimientoGuia";
 import CampoObservacionGuia, { OBSERVACION_GUIA_MAX } from "./CampoObservacionGuia";
 import CrearClienteBsale from "./CrearClienteBsale";
 import RegistrarComprobanteRapido from "./RegistrarComprobanteRapido";
+import SelectorLotes, { cuerpoLotes, problemaLotes, useLotesPorSku } from "./SelectorLotes";
 
 /* ── Guía o factura LIBRE en Bsale (2026-10-03) ──────────────────────────────
    Sin orden de compra ni cotización de por medio: se elige el cliente por RUT
@@ -206,6 +207,10 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
   const guiaParticular = ventaDirecta && (cotLigada ? desde?.cotizacion?.particular === true : true);
   const guiaSinCorreo = ventaDirecta && conGuia && guiaPosible ? (guiaParticular ? "particular" : seguimiento.empresa === "Entrega inmediata" ? "entrega_inmediata" : null) : null;
   const diasEfectivos = esGuia ? 0 : esBoleta ? 0 : ventaDirecta && !aCredito ? 0 : Number(dias);
+  // (2026-11-09) Lotes y vencimientos por producto en la guía (libre o la de la venta directa).
+  const { lotes: lotesPorSku, hoy: hoyLotes } = useLotesPorSku(lineas.map((l) => l.sku), conObsGuia);
+  const [lotesSel, setLotesSel] = useState({});
+  const lotesConProblema = conObsGuia && lineas.some((l) => problemaLotes(lotesSel[l.sku], lotesPorSku[l.sku], Number(l.cantidad) || 0));
 
   const totales = useMemo(() => {
     const neto = Math.round(lineas.reduce((a, l) => a + (Number(l.cantidad) || 0) * (Number(l.neto_unitario) || 0), 0));
@@ -229,6 +234,7 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
           ...(!esGuia && refGuia.numero.trim() ? [{ tipo: "guia", numero: refGuia.numero.trim(), fecha: refGuia.fecha || null }] : []),
         ],
     ...(!ventaDirecta && cotizacion.trim() ? { cotizacion_id: Number(cotizacion.trim().replace(/\D/g, "")) } : {}),
+    ...(conObsGuia ? { lotes: cuerpoLotes(lineas, lotesSel, lotesPorSku) } : {}),
   });
   // Firma de lo decidido: la simulación y la confirmación valen solo para estos datos.
   const firma = JSON.stringify(cuerpo());
@@ -258,7 +264,7 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
   // (2026-10-08) Emitido el documento, al cerrar se abre la ventana de correo para enviárselo al cliente.
   const cerrar = () => { if (enviando) return; if (resultado?.emitida) window.dispatchEvent(new Event("correos:check")); onCerrar?.(); };
   const obsMax = desde?.observacion_max || OBSERVACION_GUIA_MAX;
-  const listoParaSimular = !!opciones && !enviando && (!!cliente || esBoleta) && lineas.length > 0 && !!fecha && (!conObsGuia || observacion.trim().length <= obsMax) && (!comprobanteObligatorio || !!comprobante.trim());
+  const listoParaSimular = !!opciones && !enviando && (!!cliente || esBoleta) && lineas.length > 0 && !!fecha && (!conObsGuia || observacion.trim().length <= obsMax) && !lotesConProblema && (!comprobanteObligatorio || !!comprobante.trim());
   const puedeEmitir = listoParaSimular && !apagada && simulacionVigente && confirmo;
   const nombreDoc = esGuia ? "guía" : esBoleta ? "boleta" : "factura";
   const titulo = ventaDirecta
@@ -558,6 +564,20 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
                         {conObsGuia && (
                           <tr className="fila-observacion-linea">
                             <td colSpan="6" style={{ padding: "0 10px 8px", borderTop: 0 }}>
+                              {/* (2026-11-09) Lotes y vencimientos del producto: uno o más. */}
+                              {(lotesPorSku[l.sku]?.length > 0 || lotesSel[l.sku]?.ids?.length > 0) && (
+                                <div style={{ marginBottom: 6 }}>
+                                  <SelectorLotes
+                                    sku={l.sku}
+                                    lotes={lotesPorSku[l.sku]}
+                                    cantidad={Number(l.cantidad) || 0}
+                                    valor={lotesSel[l.sku]}
+                                    onChange={(v) => setLotesSel((prev) => ({ ...prev, [l.sku]: v }))}
+                                    disabled={!!enviando}
+                                    hoy={hoyLotes}
+                                  />
+                                </div>
+                              )}
                               <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                                 <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px", color: "var(--text-muted)", whiteSpace: "nowrap" }} title="Va en la línea de este producto en la guía (nota del detalle en Bsale)">
                                   Observación {l.sku}

@@ -10,6 +10,7 @@ import BotonImprimirCarta from "./BotonImprimirCarta";
 import BotonImprimirTermica from "./BotonImprimirTermica";
 import CamposSeguimientoGuia from "./CamposSeguimientoGuia";
 import CampoObservacionGuia, { OBSERVACION_GUIA_MAX } from "./CampoObservacionGuia";
+import SelectorLotes, { cuerpoLotes, problemaLotes } from "./SelectorLotes";
 
 /* ── Emitir guía de despacho / registrar orden en Bsale (2026-10-02) ─────────
    Ventana del módulo Facturación para una orden de compra:
@@ -43,12 +44,14 @@ export default function EmitirDespachoBsale({ tipo = "guia", licitacionId, ocDoc
   // Por SKU (como las cantidades): si la cotización repite un SKU, sus observaciones se juntan.
   const [obsLineas, setObsLineas] = useState({});
   const [obsCotizacion, setObsCotizacion] = useState({});
+  // (2026-11-09) Lotes y vencimientos elegidos por SKU (salen escritos en la línea de la guía).
+  const [lotesSel, setLotesSel] = useState({});
   const [cliente, setCliente] = useState(null);
   const [fecha, setFecha] = useState("");
   const [enviando, setEnviando] = useState("");
   const [resultado, setResultado] = useState(null);
   // La simulación y la confirmación valen para estos datos; si cambian, caducan.
-  const firma = JSON.stringify({ cantidades, despacho, cliente, fecha, observacion, obsLineas });
+  const firma = JSON.stringify({ cantidades, despacho, cliente, fecha, observacion, obsLineas, lotesSel });
   const [simuladoCon, setSimuladoCon] = useState(null);
   const [confirmadoCon, setConfirmadoCon] = useState(null);
   const simulacionVigente = !!resultado?.simulacion && simuladoCon === firma;
@@ -77,6 +80,7 @@ export default function EmitirDespachoBsale({ tipo = "guia", licitacionId, ocDoc
         }
         setObsLineas(porSku);
         setObsCotizacion({ ...porSku });
+        setLotesSel({});
       })
       .catch((e) => vivo && setError(e?.message || "No se pudo consultar Bsale."))
       .finally(() => vivo && setCargando(false));
@@ -95,6 +99,13 @@ export default function EmitirDespachoBsale({ tipo = "guia", licitacionId, ocDoc
     return { neto, iva, total: neto + iva };
   }, [lineasElegidas]);
   const excesos = useMemo(() => (borrador?.lineas || []).filter((l) => esGuia && Number(cantidades[l.sku]) > l.pendiente + 1e-9), [borrador, cantidades, esGuia]);
+  // Lotes disponibles por SKU (vienen en el borrador) y si la elección de alguno no cuadra.
+  const lotesPorSku = useMemo(() => {
+    const m = {};
+    for (const l of borrador?.lineas || []) if (!(l.sku in m)) m[l.sku] = l.lotes || [];
+    return m;
+  }, [borrador]);
+  const lotesConProblema = esGuia && lineasElegidas.some((l) => problemaLotes(lotesSel[l.sku], lotesPorSku[l.sku], l.cantidad));
 
   const opcionesTraslado = useMemo(() => (borrador?.tipos_traslado || []).map((t) => ({ value: String(t.id), label: t.nombre })), [borrador]);
 
@@ -117,7 +128,7 @@ export default function EmitirDespachoBsale({ tipo = "guia", licitacionId, ocDoc
         fecha_emision: fecha,
         huella: borrador.huella,
         ...(esGuia && accion !== "simular" ? { seguimiento } : {}),
-        ...(esGuia ? { observacion, observaciones: Object.fromEntries(lineasElegidas.map((l) => [l.sku, obsLineas[l.sku] ?? l.observacion ?? ""])) } : {}),
+        ...(esGuia ? { observacion, observaciones: Object.fromEntries(lineasElegidas.map((l) => [l.sku, obsLineas[l.sku] ?? l.observacion ?? ""])), lotes: cuerpoLotes(lineasElegidas, lotesSel, lotesPorSku) } : {}),
         ...(esGuia ? { lineas: lineasElegidas.map((l) => ({ sku: l.sku, cantidad: l.cantidad })), despacho: { ...despacho, tipo_traslado_id: Number(despacho?.tipo_traslado_id) } } : {}),
         ...(cliente?.nuevo ? { cliente } : {}),
       });
@@ -136,7 +147,7 @@ export default function EmitirDespachoBsale({ tipo = "guia", licitacionId, ocDoc
   const faltaDespacho = esGuia && despacho && (!despacho.direccion?.trim() || !despacho.comuna?.trim() || !despacho.ciudad?.trim() || !despacho.destinatario?.trim() || !despacho.tipo_traslado_id);
   const faltaCliente = cliente?.nuevo && (!cliente.rut?.trim() || !cliente.razon_social?.trim() || !cliente.giro?.trim() || !cliente.direccion?.trim() || !cliente.comuna?.trim());
   const obsMax = borrador?.observacion_max || OBSERVACION_GUIA_MAX;
-  const completo = !cargando && !enviando && borrador && !bloqueada && fecha && !excesos.length && !faltaDespacho && !faltaCliente && (esGuia ? lineasElegidas.length > 0 && observacion.trim().length <= obsMax : true);
+  const completo = !cargando && !enviando && borrador && !bloqueada && fecha && !excesos.length && !faltaDespacho && !faltaCliente && !lotesConProblema && (esGuia ? lineasElegidas.length > 0 && observacion.trim().length <= obsMax : true);
   const puedeEmitir = completo && !apagada && simulacionVigente && confirmo;
   const titulo = esGuia ? "Emitir guía de despacho en Bsale" : "Registrar la orden en Bsale";
   const verbo = esGuia ? "Emitir guía" : "Registrar orden";
@@ -307,6 +318,20 @@ export default function EmitirDespachoBsale({ tipo = "guia", licitacionId, ocDoc
                               {esGuia && l.en_bsale && primeraDelSku && (
                                 <tr className="fila-observacion-linea" style={{ opacity: cant > 0 ? 1 : 0.55 }}>
                                   <td colSpan={8} style={{ padding: "0 10px 8px", borderTop: 0 }}>
+                                    {/* (2026-11-09) Lotes y vencimientos del producto: uno o más. */}
+                                    {(lotesPorSku[l.sku]?.length > 0 || lotesSel[l.sku]?.ids?.length > 0) && (
+                                      <div style={{ marginBottom: 6 }}>
+                                        <SelectorLotes
+                                          sku={l.sku}
+                                          lotes={lotesPorSku[l.sku]}
+                                          cantidad={cant}
+                                          valor={lotesSel[l.sku]}
+                                          onChange={(v) => setLotesSel((prev) => ({ ...prev, [l.sku]: v }))}
+                                          disabled={!!enviando || cant <= 0}
+                                          hoy={borrador.fecha_emision}
+                                        />
+                                      </div>
+                                    )}
                                     <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                                       <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px", color: "var(--text-muted)", whiteSpace: "nowrap" }} title="De la cotización; se puede completar. Va en la línea de este producto en la guía (nota del detalle en Bsale).">
                                         Observación {l.sku}

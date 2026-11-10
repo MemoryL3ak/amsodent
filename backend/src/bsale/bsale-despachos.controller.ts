@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { AuthGuard } from '../auth/auth.guard';
 import { BsaleDespachosService } from './bsale-despachos.service';
 
@@ -13,6 +13,13 @@ export class BsaleDespachosController {
   @Get('pendientes')
   pendientes(@Req() req: any) {
     return this.despachos.pendientes(String(req?.user?.id || ''));
+  }
+
+  // (2026-11-09) Lotes con unidades disponibles de cada SKU (?skus=A,B): el
+  // listbox de lotes de la guía libre y de la venta directa. Solo lectura.
+  @Get('lotes')
+  lotes(@Query('skus') skus?: string) {
+    return this.despachos.lotesDisponibles(String(skus || '').split(',').map((s) => s.trim()).filter(Boolean).slice(0, 300));
   }
 
   // Borrador de la guía (qué falta por despachar según Bsale). No escribe nada.

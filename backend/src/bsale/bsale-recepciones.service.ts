@@ -4,6 +4,7 @@ import { SupabaseService } from '../supabase/supabase.service';
 import { InventarioService, Sucursal } from '../inventario/inventario.service';
 import { BsaleFacturacionService } from './bsale-facturacion.service';
 import { BsaleDespachosService } from './bsale-despachos.service';
+import { LotesService, MIGRACION_LOTES, fechaCorta, fechaValida, normLote } from '../inventario/lotes.service';
 
 /* ============================================================================
    Recepción de stock (la de Bsale) — 2026-11-06
@@ -34,6 +35,14 @@ import { BsaleDespachosService } from './bsale-despachos.service';
 
    NUNCA se ha registrado una recepción real desde acá: la primera debe
    supervisarse en Bsale (Inventario → Recepciones).
+
+   (2026-11-09) LOTE Y VENCIMIENTO por línea, obligatorios (pedido de Ariel:
+   «se debe ingresar el lote y fecha de vencimiento por producto»; van
+   asociados). Un mismo producto puede llegar en varios lotes: una línea por
+   lote. Bsale no recibe lotes por API, así que a Bsale va una línea por
+   variante y costo (como antes) y el lote queda acá: al aceptarla Bsale, cada
+   línea crea o reutiliza su lote (LotesService.enlazarRecepcion) y las guías
+   lo ofrecen después. Migración 20261109_lotes_vencimiento.
    Tablas: recepciones_stock y recepcion_stock_lineas (migración
    20261106_recepciones_stock). Para recibir un traslado ENTRE sucursales
    propias sigue estando Inventario → Traslados.
@@ -64,6 +73,8 @@ type LineaLista = {
   producto_id: number;
   sku: string;
   nombre: string;
+  lote: string;
+  vencimiento: string;
   cantidad: number;
   costo_unitario: number;
   costo_catalogo: number;
@@ -81,6 +92,7 @@ export class BsaleRecepcionesService {
     private inventario: InventarioService,
     private facturacion: BsaleFacturacionService,
     private despachos: BsaleDespachosService,
+    private lotes: LotesService,
   ) {}
 
   private get db() {
@@ -99,9 +111,10 @@ export class BsaleRecepcionesService {
     const conSucursales = await this.inventario.sucursalesListo();
     const sucursales = conSucursales ? (await this.inventario.listarSucursales()).filter((s) => s.activa) : [];
     const { data: provs } = await this.db.from('proveedores').select('id, razon_social, rut').order('razon_social', { ascending: true }).range(0, 1999);
+    const lotesListo = listo ? await this.lotes.listo() : false;
     return {
-      listo,
-      mensaje: listo ? null : MIGRACION,
+      listo: listo && lotesListo,
+      mensaje: !listo ? MIGRACION : !lotesListo ? MIGRACION_LOTES : null,
       tipos: TIPOS_DOCUMENTO.map(({ clave, nombre, conNumero }) => ({ clave, nombre, con_numero: conNumero })),
       sucursales: sucursales.map((s) => ({ id: s.id, nombre: s.nombre, es_principal: s.es_principal, bsale_office_id: s.bsale_office_id })),
       proveedores: ((provs || []) as any[]).map((p) => ({ id: Number(p.id), razon_social: String(p.razon_social || ''), rut: String(p.rut || '') })),
@@ -156,11 +169,13 @@ export class BsaleRecepcionesService {
       if (data) proveedor = { id: Number(data.id), razon_social: String(data.razon_social || '') };
     }
 
-    // Líneas: un producto por línea (las repetidas se suman), cantidad > 0 y costo ≥ 0.
+    // Líneas: producto + lote + vencimiento (las repetidas se suman), cantidad > 0 y costo ≥ 0.
+    // (2026-11-09) Lote y vencimiento obligatorios: un mismo producto puede venir en varios lotes.
+    if (!(await this.lotes.listo())) problemas.push(MIGRACION_LOTES);
     const crudas: any[] = Array.isArray(body?.lineas) ? body.lineas : [];
     if (!crudas.length) throw new BadRequestException('Agrega al menos un producto a la recepción.');
     if (crudas.length > MAX_LINEAS) throw new BadRequestException(`Una recepción admite hasta ${MAX_LINEAS} líneas: sepárala en dos.`);
-    const pedidas = new Map<number, { cantidad: number; costo: number | null }>();
+    const pedidas = new Map<string, { id: number; lote: string; vencimiento: string; cantidad: number; costo: number | null }>();
     for (const l of crudas) {
       const id = Number(l?.producto_id);
       const cantidad = numero(l?.cantidad);
@@ -168,10 +183,15 @@ export class BsaleRecepcionesService {
       if (!(cantidad > 0)) { problemas.push('Hay una línea con cantidad 0 o inválida.'); continue; }
       const costoCrudo = l?.costo_unitario === '' || l?.costo_unitario == null ? null : numero(l.costo_unitario);
       if (costoCrudo != null && !(costoCrudo >= 0)) { problemas.push('Hay una línea con costo inválido.'); continue; }
-      const previa = pedidas.get(id);
-      pedidas.set(id, { cantidad: redondo((previa?.cantidad || 0) + cantidad), costo: costoCrudo ?? previa?.costo ?? null });
+      const lote = normLote(l?.lote);
+      const vencimiento = fechaValida(l?.vencimiento);
+      if (!lote) problemas.push('Indica el lote de cada producto.');
+      if (!vencimiento) problemas.push(String(l?.vencimiento || '').trim() ? 'Hay una fecha de vencimiento inválida.' : 'Indica la fecha de vencimiento de cada producto.');
+      const clave = `${id}|${lote}|${vencimiento || ''}`;
+      const previa = pedidas.get(clave);
+      pedidas.set(clave, { id, lote, vencimiento: vencimiento || '', cantidad: redondo((previa?.cantidad || 0) + cantidad), costo: costoCrudo ?? previa?.costo ?? null });
     }
-    const ids = [...pedidas.keys()];
+    const ids = [...new Set([...pedidas.values()].map((p) => p.id))];
     const productos = new Map<number, any>();
     for (let i = 0; i < ids.length; i += 200) {
       const { data, error } = await this.db.from('productos').select('id, sku, nombre, costo, stock, bsale_variant_id').in('id', ids.slice(i, i + 200));
@@ -187,13 +207,17 @@ export class BsaleRecepcionesService {
     }
 
     const lineas: LineaLista[] = [];
-    for (const [id, pedido] of pedidas) {
+    // Un producto en varios lotes se consulta en Bsale una sola vez.
+    const variantes = new Map<number, number | null>();
+    for (const pedido of pedidas.values()) {
+      const id = pedido.id;
       const p = productos.get(id);
       if (!p) { problemas.push(`El producto ${id} ya no existe en el catálogo.`); continue; }
       const sku = String(p.sku || '').trim();
       if (!sku) { problemas.push(`«${p.nombre}» no tiene SKU: no se puede recibir en Bsale.`); continue; }
       let varianteId: number | null = Number(p.bsale_variant_id) > 0 ? Number(p.bsale_variant_id) : null;
-      if (!varianteId && this.facturacion.configurado) {
+      if (!varianteId && variantes.has(id)) varianteId = variantes.get(id) ?? null;
+      else if (!varianteId && this.facturacion.configurado) {
         try {
           const v = await this.despachos.variantePorSku(sku);
           varianteId = v ? Number(v.id) : null;
@@ -201,12 +225,15 @@ export class BsaleRecepcionesService {
           problemas.push(`No se pudo consultar el SKU ${sku} en Bsale: ${String(e?.message || e).slice(0, 120)}`);
         }
         if (!varianteId) problemas.push(`El SKU ${sku} («${p.nombre}») no está en Bsale: créalo allá o guarda el producto en el catálogo para que se enlace.`);
+        variantes.set(id, varianteId);
       }
       const costoCatalogo = Number(p.costo) || 0;
       lineas.push({
         producto_id: id,
         sku,
         nombre: String(p.nombre || ''),
+        lote: pedido.lote,
+        vencimiento: pedido.vencimiento,
         cantidad: pedido.cantidad,
         costo_unitario: redondo(pedido.costo ?? costoCatalogo),
         costo_catalogo: costoCatalogo,
@@ -222,15 +249,22 @@ export class BsaleRecepcionesService {
       unidades: redondo(lineas.reduce((a, l) => a + l.cantidad, 0)),
       costo: Math.round(lineas.reduce((a, l) => a + l.cantidad * l.costo_unitario, 0)),
     };
+    // Bsale no recibe lotes: una línea por variante y costo (varios lotes del mismo producto se suman).
+    const paraBsale = new Map<string, { quantity: number; variantId: number | null; cost: number }>();
+    for (const l of lineas) {
+      const k = `${l.variante_id}|${l.costo_unitario}`;
+      const previa = paraBsale.get(k);
+      paraBsale.set(k, { quantity: redondo((previa?.quantity || 0) + l.cantidad), variantId: l.variante_id, cost: l.costo_unitario });
+    }
     // Lo que recibe Bsale. El número va siempre: «Sin documento» lleva «0».
     const solicitud = {
       document: tipo.bsale,
       officeId: sucursal?.bsale_office_id != null ? String(sucursal.bsale_office_id) : null,
       documentNumber: documentoNumero || '0',
       note: [nota, proveedor ? `Proveedor: ${proveedor.razon_social}` : '', documentoFecha ? `Fecha del documento: ${documentoFecha.split('-').reverse().join('-')}` : ''].filter(Boolean).join(' · ').slice(0, 250) || 'Recepción registrada desde la plataforma Amsodent',
-      details: lineas.map((l) => ({ quantity: l.cantidad, variantId: l.variante_id, cost: l.costo_unitario })),
+      details: [...paraBsale.values()],
     };
-    const huella = createHash('sha1').update(JSON.stringify({ solicitud, lineas: lineas.map((l) => [l.producto_id, l.cantidad, l.costo_unitario]) })).digest('hex');
+    const huella = createHash('sha1').update(JSON.stringify({ solicitud, lineas: lineas.map((l) => [l.producto_id, l.lote, l.vencimiento, l.cantidad, l.costo_unitario]) })).digest('hex');
     return { tipo, documentoNumero, documentoFecha, sucursal, proveedor, nota, lineas, totales, solicitud, huella, problemas: [...new Set(problemas)] };
   }
 
@@ -243,11 +277,19 @@ export class BsaleRecepcionesService {
       const r = ((data || []) as any[])[0];
       if (r) repetida = { id: Number(r.id), fecha: r.created_at };
     }
+    // (2026-11-09) Lotes: vencidos al recibirlos, o el mismo código ya registrado con otra fecha.
+    const hoy = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Santiago', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+    let otros: { producto_id: number; lote: string; vencimiento: string; existente: string }[] = [];
+    try {
+      otros = await this.lotes.otrosVencimientos(b.lineas.filter((l) => l.lote && l.vencimiento).map((l) => ({ producto_id: l.producto_id, lote: l.lote, vencimiento: l.vencimiento })));
+    } catch { /* solo es un aviso */ }
     return {
       simulacion: true,
       huella: b.huella,
       problemas: b.problemas,
       avisos: [
+        ...b.lineas.filter((l) => l.vencimiento && l.vencimiento < hoy).map((l) => `«${l.nombre}», lote ${l.lote}: la fecha de vencimiento (${fechaCorta(l.vencimiento)}) ya pasó.`),
+        ...otros.map((o) => `${b.lineas.find((l) => l.producto_id === o.producto_id)?.sku || 'Un producto'}: el lote ${o.lote} ya está registrado con vencimiento ${fechaCorta(o.existente)}; con ${fechaCorta(o.vencimiento)} quedará como otro lote. Revisa la fecha.`),
         ...(repetida ? [`Ya hay una recepción registrada con ${b.tipo.nombre.toLowerCase()} N° ${b.documentoNumero} (recepción #${repetida.id}): revisa que no sea la misma mercadería.`] : []),
         ...(!this.facturacion.emisionActiva ? ['Las escrituras en Bsale están apagadas en este servidor (BSALE_EMISION=off): solo se puede simular.'] : []),
         ...b.lineas.filter((l) => l.costo_unitario <= 0).map((l) => `«${l.nombre}» entra con costo $0.`),
@@ -257,7 +299,7 @@ export class BsaleRecepcionesService {
       proveedor: b.proveedor,
       totales: b.totales,
       lineas: b.lineas.map((l) => ({
-        producto_id: l.producto_id, sku: l.sku, nombre: l.nombre, cantidad: l.cantidad, costo_unitario: l.costo_unitario, costo_catalogo: l.costo_catalogo,
+        producto_id: l.producto_id, sku: l.sku, nombre: l.nombre, lote: l.lote, vencimiento: l.vencimiento, cantidad: l.cantidad, costo_unitario: l.costo_unitario, costo_catalogo: l.costo_catalogo,
         subtotal: Math.round(l.cantidad * l.costo_unitario), stock_antes: l.stock_sucursal, stock_despues: redondo(l.stock_sucursal + l.cantidad), en_bsale: !!l.variante_id,
       })),
       solicitud: b.solicitud,
@@ -284,9 +326,9 @@ export class BsaleRecepcionesService {
       .single();
     if (eCab) throw new BadRequestException(this.sinTabla(eCab) ? MIGRACION : eCab.message);
     const recepcionId = Number(cab.id);
-    const { error: eLin } = await this.db.from('recepcion_stock_lineas').insert(
-      b.lineas.map((l) => ({ recepcion_id: recepcionId, producto_id: l.producto_id, sku: l.sku, nombre: l.nombre, cantidad: l.cantidad, costo_unitario: l.costo_unitario, bsale_variant_id: l.variante_id })),
-    );
+    const { data: filasLin, error: eLin } = await this.db.from('recepcion_stock_lineas').insert(
+      b.lineas.map((l) => ({ recepcion_id: recepcionId, producto_id: l.producto_id, sku: l.sku, nombre: l.nombre, lote: l.lote, vencimiento: l.vencimiento, cantidad: l.cantidad, costo_unitario: l.costo_unitario, bsale_variant_id: l.variante_id })),
+    ).select('id, producto_id, sku, lote, vencimiento');
     if (eLin) {
       await this.db.from('recepciones_stock').delete().eq('id', recepcionId);
       throw new BadRequestException(this.sinTabla(eLin) ? MIGRACION : eLin.message);
@@ -308,15 +350,18 @@ export class BsaleRecepcionesService {
     }
     const bsaleId = Number(respuesta?.id) || null;
 
-    // 3. Inventario: una entrada por línea, en la sucursal, con su costo.
-    const etiqueta = b.documentoNumero ? `${b.tipo.nombre} N° ${b.documentoNumero}` : b.tipo.nombre;
+    // 3. Lotes (2026-11-09): Bsale la aceptó, así que cada línea crea o reutiliza su lote.
     const avisos: string[] = [];
+    avisos.push(...(await this.lotes.enlazarRecepcion(((filasLin || []) as any[]).map((f) => ({ id: Number(f.id), producto_id: Number(f.producto_id), sku: String(f.sku || ''), lote: f.lote || null, vencimiento: f.vencimiento ? String(f.vencimiento).slice(0, 10) : null })))));
+
+    // 4. Inventario: una entrada por línea, en la sucursal, con su costo.
+    const etiqueta = b.documentoNumero ? `${b.tipo.nombre} N° ${b.documentoNumero}` : b.tipo.nombre;
     for (const l of b.lineas) {
       try {
         await this.inventario.registrarMovimiento(
           {
             productoId: l.producto_id, tipo: 'entrada', cantidad: l.cantidad, costoUnitario: l.costo_unitario, sucursalId: sucursal.id,
-            motivo: `Recepción de stock${b.proveedor ? ` · ${b.proveedor.razon_social}` : ''}`,
+            motivo: `Recepción de stock${b.proveedor ? ` · ${b.proveedor.razon_social}` : ''}${l.lote ? ` · Lote ${l.lote} (venc. ${fechaCorta(l.vencimiento)})` : ''}`,
             referencia: `Recepción #${recepcionId} · ${etiqueta}${bsaleId ? ` · Bsale ${bsaleId}` : ''}`,
           },
           email,
@@ -355,7 +400,8 @@ export class BsaleRecepcionesService {
       usuario_email: r.usuario_email || '',
       created_at: r.created_at,
       lineas: lineas.map((l) => ({
-        producto_id: Number(l.producto_id), sku: l.sku || '', nombre: l.nombre || '', cantidad: Number(l.cantidad) || 0, costo_unitario: Number(l.costo_unitario) || 0,
+        producto_id: Number(l.producto_id), sku: l.sku || '', nombre: l.nombre || '', lote: l.lote || '', vencimiento: l.vencimiento ? String(l.vencimiento).slice(0, 10) : null,
+        cantidad: Number(l.cantidad) || 0, costo_unitario: Number(l.costo_unitario) || 0,
         subtotal: Math.round((Number(l.cantidad) || 0) * (Number(l.costo_unitario) || 0)),
       })),
     };
@@ -377,7 +423,7 @@ export class BsaleRecepcionesService {
     const ids = filas.map((r) => Number(r.id));
     const porRecepcion = new Map<number, any[]>();
     for (let i = 0; i < ids.length; i += 150) {
-      const { data: lin, error: e2 } = await this.db.from('recepcion_stock_lineas').select('recepcion_id, producto_id, sku, nombre, cantidad, costo_unitario').in('recepcion_id', ids.slice(i, i + 150)).order('id', { ascending: true }).range(0, 9999);
+      const { data: lin, error: e2 } = await this.db.from('recepcion_stock_lineas').select('*').in('recepcion_id', ids.slice(i, i + 150)).order('id', { ascending: true }).range(0, 9999);
       if (e2) throw new BadRequestException(e2.message);
       for (const l of (lin || []) as any[]) porRecepcion.set(Number(l.recepcion_id), [...(porRecepcion.get(Number(l.recepcion_id)) || []), l]);
     }
@@ -388,7 +434,7 @@ export class BsaleRecepcionesService {
     const { data, error } = await this.db.from('recepciones_stock').select('*').eq('id', id).maybeSingle();
     if (error) throw new BadRequestException(this.sinTabla(error) ? MIGRACION : error.message);
     if (!data) throw new NotFoundException('Esa recepción no existe.');
-    const { data: lin } = await this.db.from('recepcion_stock_lineas').select('producto_id, sku, nombre, cantidad, costo_unitario').eq('recepcion_id', id).order('id', { ascending: true });
+    const { data: lin } = await this.db.from('recepcion_stock_lineas').select('*').eq('recepcion_id', id).order('id', { ascending: true });
     return this.vista(data, (lin || []) as any[]);
   }
 }

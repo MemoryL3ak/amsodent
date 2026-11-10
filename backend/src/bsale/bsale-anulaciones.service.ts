@@ -1,10 +1,11 @@
-import { BadRequestException, ConflictException, Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, Logger, Optional } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
 import { LicitacionesService } from '../licitaciones/licitaciones.service';
 import { BsaleFacturacionService, EMISOR, epochAFecha, fechaAEpoch, normRut, soloDigitos, totalesDe } from './bsale-facturacion.service';
 import { BsaleDespachosService } from './bsale-despachos.service';
 import { BsaleEstadosService } from './bsale-estados.service';
 import { DevolucionesService, DineroNc } from '../licitaciones/devoluciones.service';
+import { LotesService } from '../inventario/lotes.service';
 
 /* ── Anular facturas y boletas en Bsale con nota de crédito (2026-10-03) ─────
    Pedido de Ariel: "implementa lo de anular documentos". En Chile una factura
@@ -114,6 +115,8 @@ export class BsaleAnulacionesService {
     private licitaciones: LicitacionesService,
     private estados: BsaleEstadosService,
     private devoluciones: DevolucionesService,
+    // (2026-11-09) Anular una guía devuelve sus unidades a los lotes de los que salieron.
+    @Optional() private lotes?: LotesService,
   ) {}
 
   // ── Encontrar el documento ────────────────────────────────────────────
@@ -535,6 +538,10 @@ export class BsaleAnulacionesService {
       await this.supabase.getClient().from('licitacion_documentos').update({ descripcion: previa ? `${previa} · ${nota}` : nota }).eq('id', b.registro.documento_id);
     }
     this.estados.anotarAnulado(b.guia.bsale_id);
+    if (anulada && this.lotes) {
+      const devueltas = await this.lotes.anularSalidasDeGuia(Number(b.guia.bsale_id));
+      if (devueltas) avisos.push(`Las unidades de la guía volvieron a ${devueltas === 1 ? 'su lote' : `sus ${devueltas} lotes`}.`);
+    }
     this.logger.log(`Guía ${b.guia.numero} anulada en Bsale (despacho ${b.despacho_id}${b.cotizacion ? `, cotización ${b.cotizacion.id}` : ''}) por ${usuario.email}${motivo ? ` · ${motivo}` : ''}`);
     return { anulada, numero: b.guia.numero, cotizacion: b.cotizacion, stock: stockLineas, avisos };
   }

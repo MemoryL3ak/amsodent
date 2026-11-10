@@ -27,6 +27,8 @@ const TABLAS_RECOMENDADAS: Record<string, string> = {
   inventario_stock_sucursales: 'Stock vigente por producto y sucursal (productos.stock es el total).',
   inventario_traslados: 'Traslados de stock entre sucursales: origen, destino, estado (en_transito / recibido / anulado), quién y cuándo.',
   inventario_traslado_lineas: 'Líneas de cada traslado: producto, cantidad enviada y recibida.',
+  inventario_lotes: 'Lotes de cada producto (código + fecha de vencimiento), creados al registrar recepciones de stock. Recibido = recepcion_stock_lineas con ese lote_id; despachado = inventario_lote_salidas sin anular.',
+  inventario_lote_salidas: 'Lo que cada guía de despacho emitida sacó de cada lote: cantidad, N° de guía, cotización y origen (guia_oc / guia_libre / guia_venta_directa); anulada_at si la guía se anuló en Bsale.',
   stock_solicitudes_cotizacion: 'Pedidos del portal del cliente: ítems, etapa del flujo (aprobación/validación/pago), SOS y datos de pago.',
   stock_productos_cliente: 'Stock declarado por cada cliente en su portal: producto, cantidades, mínimos y semáforo.',
   stock_clientes_portal: 'Accesos al portal por RUT: habilitación, vigencia y último acceso.',

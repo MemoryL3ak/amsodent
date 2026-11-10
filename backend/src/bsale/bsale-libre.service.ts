@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, Logger, Optional } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
 import { LicitacionesService } from '../licitaciones/licitaciones.service';
 import {
@@ -6,6 +6,7 @@ import {
 } from './bsale-facturacion.service';
 import { BsaleDespachosService, OBSERVACION_MAX, limpiarObservacion, observacionSugerida } from './bsale-despachos.service';
 import { BsaleClientesService, girosParaBsale } from './bsale-clientes.service';
+import { LotesService, notaConLotes } from '../inventario/lotes.service';
 
 /* ── Guías, facturas y boletas LIBRES en Bsale (2026-10-03) ──────────────────
    Pedido de Ariel: "necesito la opción de crear guías y facturas de manera
@@ -88,6 +89,8 @@ export class BsaleLibreService {
     private licitaciones: LicitacionesService,
     // Ficha y giros del cliente del sistema (2026-10-23).
     private bsaleClientes: BsaleClientesService,
+    // (2026-11-09) Lotes y vencimientos elegidos en la guía (libre o de la venta directa).
+    @Optional() private lotes?: LotesService,
   ) {}
 
   // ── Para armar el documento en pantalla ────────────────────────────────
@@ -403,6 +406,18 @@ export class BsaleLibreService {
     // Stock en Bsale de cada línea (2026-10-09): se avisa cuál no alcanza; Bsale igual deja emitir (stock negativo permitido).
     const sinStock = await this.despachos.anotarStock(lineas);
     if (sinStock) avisos.push({ codigo: 'sin_stock', mensaje: sinStock });
+    /* (2026-11-09) Lotes y vencimientos elegidos por producto (guía libre o la
+       guía de la venta directa): van escritos en la nota de la línea de la guía. */
+    const lotes = (tipo === 'guia' || conGuia) && this.lotes
+      ? await this.lotes.asignar(lineas.map((l) => ({ sku: l.sku, cantidad: l.cantidad })), body?.lotes)
+      : { porSku: new Map(), problemas: [] as string[], avisos: [] as string[] };
+    for (const p of lotes.problemas) problemas.push({ codigo: 'lotes', mensaje: p });
+    for (const a of lotes.avisos) avisos.push({ codigo: 'lotes', mensaje: a });
+    for (const l of lineas) {
+      const deLinea = lotes.porSku.get(l.sku);
+      l.lotes_texto = deLinea?.texto || '';
+      l.lotes = deLinea?.asignaciones || null;
+    }
     if (!lineas.length) problemas.push({ codigo: 'sin_lineas', mensaje: 'Agrega al menos un producto.' });
     if (lineas.length > 200) problemas.push({ codigo: 'muchas_lineas', mensaje: 'Máximo 200 líneas por documento.' });
     const totales = totalesDe(lineas);
@@ -539,6 +554,8 @@ export class BsaleLibreService {
     // producto (nota del detalle) y acá queda solo lo general. También para
     // la guía de la venta directa.
     const notasPorLinea = !!obsPorSku;
+    // Nota de la línea en la guía: sus lotes y, con observaciones por producto, la observación.
+    for (const l of lineas) l.nota_guia = tipo === 'guia' || conGuia ? notaConLotes(l.lotes_texto, notasPorLinea ? l.observacion : '') : '';
     const observacion = tipo === 'guia' || conGuia ? limpiarObservacion(body?.observacion) : '';
     if (observacion.length > OBSERVACION_MAX) problemas.push({ codigo: 'observacion_larga', mensaje: `La observación tiene ${observacion.length} caracteres; en Bsale caben hasta ${OBSERVACION_MAX}. Acórtala.` });
     // Correo de la guía de la venta directa (la boleta/factura siempre abre su
@@ -555,6 +572,7 @@ export class BsaleLibreService {
     const borrador = {
       observacion,
       notas_por_linea: notasPorLinea,
+      lotes_por_sku: lotes.porSku,
       comprobante,
       tipo, venta_directa: ventaDirecta, tipo_documento_id: tipoDocumentoId, cliente, lineas, totales, fecha_emision: fecha, referencias, despacho,
       con_guia: conGuia, guia: guiaVenta, guia_sin_correo: guiaSinCorreo,
@@ -566,7 +584,7 @@ export class BsaleLibreService {
     const huella = this.facturacion.huellaDe({
       cliente: { id: cliente?.id || cliente?.rut || 'consumidor-final' }, tipo_documento_id: tipoDocumentoId,
       lineas: lineas.map((l) => ({ detalle_id: l.variante_id, cantidad: l.cantidad, neto: l.neto_unitario })),
-      referencias: [...referencias.map((r) => ({ codigo_sii: r.codigo_sii, folio: r.folio, numero: r.numero })), { codigo_sii: 0, numero: `${tipo}|${ventaDirecta}|${fecha}|${JSON.stringify(despacho)}|${formaPago?.id}|${dias}|${descuentaStock}|${conGuia}|${conGuia ? JSON.stringify(guiaVenta?.despacho) : ''}|${cotizacion?.id || ''}|${cliente?.nuevo ? JSON.stringify(cliente) : ''}|${observacion}|${lineas.map((l) => l.observacion || '').join('|')}` }],
+      referencias: [...referencias.map((r) => ({ codigo_sii: r.codigo_sii, folio: r.folio, numero: r.numero })), { codigo_sii: 0, numero: `${tipo}|${ventaDirecta}|${fecha}|${JSON.stringify(despacho)}|${formaPago?.id}|${dias}|${descuentaStock}|${conGuia}|${conGuia ? JSON.stringify(guiaVenta?.despacho) : ''}|${cotizacion?.id || ''}|${cliente?.nuevo ? JSON.stringify(cliente) : ''}|${observacion}|${lineas.map((l) => `${l.observacion || ''}${l.lotes_texto ? `#${l.lotes_texto}` : ''}`).join('|')}` }],
       totales,
     });
     return { ...borrador, huella };
@@ -581,7 +599,7 @@ export class BsaleLibreService {
       descuenta_stock: b.descuenta_stock,
       emisor: EMISOR,
       cliente: c ? { razon_social: c.razon_social, rut: c.rut, giro: c.giro, direccion: c.direccion, comuna: c.comuna, nuevo: c.nuevo } : {},
-      lineas: b.lineas.map((l: any) => ({ sku: l.sku, producto: l.producto, cantidad: l.cantidad, neto_unitario: l.neto_unitario, neto: l.neto, observacion: b.tipo === 'guia' && b.notas_por_linea ? l.observacion || null : null, stock_bsale: l.stock_bsale ?? null })),
+      lineas: b.lineas.map((l: any) => ({ sku: l.sku, producto: l.producto, cantidad: l.cantidad, neto_unitario: l.neto_unitario, neto: l.neto, observacion: b.tipo === 'guia' ? l.nota_guia || null : null, stock_bsale: l.stock_bsale ?? null })),
       totales: b.totales,
       referencias: b.referencias.map(referenciaVista),
       forma_pago: b.forma_pago?.nombre || null,
@@ -601,6 +619,12 @@ export class BsaleLibreService {
         b.venta_directa && !b.cotizacion
           ? `Al emitir se crea en el sistema una cotización particular adjudicada a nombre de ${nombreCliente}, con estos ítems y el documento registrado${b.pagada_ahora ? ` y pagado (${b.forma_pago?.nombre}).` : ' con el pago pendiente (crédito): aparecerá en Seguimiento de Pagos.'}`
           : b.cotizacion ? `Quedará registrada en la cotización #${b.cotizacion.id}${b.cotizacion.codigo ? ` (${b.cotizacion.codigo})` : ''}.` : 'No se indicó cotización: quedará solo en Bsale y en el historial de Emitidas.',
+        // (2026-11-09) Lotes elegidos: en la guía van en la línea de cada producto.
+        ...(b.lotes_por_sku?.size
+          ? [b.tipo === 'guia'
+              ? 'El lote y el vencimiento de cada producto van escritos en su línea de la guía.'
+              : `La guía lleva escritos los lotes: ${b.lineas.filter((l: any) => l.lotes_texto).map((l: any) => `${l.sku}: ${l.lotes_texto}`).join(' · ')}.`]
+          : []),
       ],
     };
   }
@@ -645,8 +669,8 @@ export class BsaleLibreService {
     const salesId = `${clave}-${(previas || []).length}`;
     const details = b.lineas.map((l: any) => ({
       code: l.sku, quantity: l.cantidad, netUnitValue: l.neto_unitario, taxId: `[${IVA_ID}]`,
-      // Observación del producto → nota de su línea en la guía (2026-10-08).
-      ...(b.tipo === 'guia' && b.notas_por_linea && l.observacion ? { comment: l.observacion } : {}),
+      // Observación del producto → nota de su línea en la guía (2026-10-08); desde 2026-11-09 con sus lotes adelante.
+      ...(b.tipo === 'guia' && l.nota_guia ? { comment: l.nota_guia } : {}),
     }));
     const references = b.referencias.map((r: any) => referenciaParaBsale(r, emision));
     const solicitud: Record<string, any> =
@@ -683,7 +707,7 @@ export class BsaleLibreService {
     const r = await this.despachos.emitirReal({
       usuario, clave, salesId, tipo: b.tipo, ruta: esGuia ? '/shippings.json' : '/documents.json', solicitud, vista,
       licitacionId: b.cotizacion?.id || null, origenDocId: null,
-      lineas: b.lineas.map((l: any) => ({ sku: l.sku, cantidad: l.cantidad, neto_unitario: l.neto_unitario, ...(l.observacion ? { observacion: l.observacion } : {}) })),
+      lineas: b.lineas.map((l: any) => ({ sku: l.sku, cantidad: l.cantidad, neto_unitario: l.neto_unitario, ...(l.observacion ? { observacion: l.observacion } : {}), ...(esGuia && l.lotes ? { lotes: l.lotes } : {}) })),
       bucket: esGuia ? 'guia-despacho' : 'factura',
       ...(b.cotizacion || b.venta_directa ? { correo: { tipo: b.tipo, para: b.cliente?.email || null } } : {}),
       registrar: async (doc: any, pdf: any) => {
@@ -736,8 +760,8 @@ export class BsaleLibreService {
         const avisos: string[] = [];
         const sinObs = obs.atributo ? await this.despachos.avisoObservacion(Number(doc.id), doc.number, obs.texto) : null;
         if (sinObs) avisos.push(sinObs);
-        if (b.tipo === 'guia' && b.notas_por_linea) {
-          const sinNotas = await this.despachos.avisoNotasLineas(Number(doc.id), doc.number, b.lineas);
+        if (b.tipo === 'guia' && b.lineas.some((l: any) => l.nota_guia)) {
+          const sinNotas = await this.despachos.avisoNotasLineas(Number(doc.id), doc.number, b.lineas.map((l: any) => ({ ...l, observacion: l.nota_guia })));
           if (sinNotas) avisos.push(sinNotas);
         }
         if (!b.referencias.length) return avisos;
@@ -752,6 +776,11 @@ export class BsaleLibreService {
         return avisos;
       },
     });
+    // (2026-11-09) Guía libre con lotes: lo que sacó de cada lote (anularla en Bsale lo devuelve).
+    if (esGuia && r?.emitida && b.lotes_por_sku?.size && this.lotes) {
+      const aviso = await this.lotes.registrarSalidas(b.lotes_por_sku, { origen: 'guia_libre', bsale_document_id: r.bsale_id || null, guia_numero: r.numero || null, licitacion_id: b.cotizacion?.id || null, documento_id: r.documento_id || null, usuario_email: usuario.email || null });
+      if (aviso) r.avisos.push(aviso);
+    }
     // (2026-10-08) Venta directa con guía: se emite enseguida desde las líneas del documento.
     let guia: any = null;
     if (b.con_guia && r?.emitida && r?.bsale_id) guia = await this.emitirGuiaDeVenta(usuario, b, r, clave, creada, body);
@@ -775,10 +804,11 @@ export class BsaleLibreService {
       const g = b.guia;
       const lineasDoc: any[] = await this.facturacion.todos(`/documents/${Number(docEmitido.bsale_id)}/details.json`, '');
       // La observación de cada producto va en la línea de la guía (nota del detalle); se reconoce por la variante.
-      const obsPorVariante = new Map<number, string>(b.lineas.filter((l: any) => l.variante_id && l.observacion).map((l: any) => [Number(l.variante_id), String(l.observacion)]));
+      // (2026-11-09) La nota lleva adelante el lote y el vencimiento elegidos.
+      const obsPorVariante = new Map<number, string>(b.lineas.filter((l: any) => l.variante_id && l.nota_guia).map((l: any) => [Number(l.variante_id), String(l.nota_guia)]));
       const details = lineasDoc
         .map((d: any) => {
-          const nota = b.notas_por_linea ? obsPorVariante.get(Number(d?.variant?.id)) : null;
+          const nota = obsPorVariante.get(Number(d?.variant?.id)) || null;
           return { detailId: Number(d.id), quantity: Number(d.quantity) || 0, ...(nota ? { comment: nota } : {}) };
         })
         .filter((d) => d.detailId && d.quantity > 0);
@@ -803,7 +833,7 @@ export class BsaleLibreService {
       const r = await this.despachos.emitirReal({
         usuario, clave: claveG, salesId, tipo: 'guia', ruta: '/shippings.json', solicitud, vista,
         licitacionId: cotizacion?.id || null, origenDocId: docEmitido.documento_id || null,
-        lineas: b.lineas.map((l: any) => ({ sku: l.sku, cantidad: l.cantidad, neto_unitario: l.neto_unitario, ...(l.observacion ? { observacion: l.observacion } : {}) })),
+        lineas: b.lineas.map((l: any) => ({ sku: l.sku, cantidad: l.cantidad, neto_unitario: l.neto_unitario, ...(l.observacion ? { observacion: l.observacion } : {}), ...(l.lotes ? { lotes: l.lotes } : {}) })),
         bucket: 'guia-despacho',
         ...(sinCorreo ? {} : { correo: { tipo: 'guia' as const, para: b.cliente?.email || null } }),
         registrar: async (doc: any, pdf: any) => {
@@ -827,13 +857,18 @@ export class BsaleLibreService {
           const avisos: string[] = [];
           const sinObs = obs.atributo ? await this.despachos.avisoObservacion(Number(doc.id), doc.number, obs.texto) : null;
           if (sinObs) avisos.push(sinObs);
-          if (b.notas_por_linea) {
-            const sinNotas = await this.despachos.avisoNotasLineas(Number(doc.id), doc.number, b.lineas);
+          if (b.lineas.some((l: any) => l.nota_guia)) {
+            const sinNotas = await this.despachos.avisoNotasLineas(Number(doc.id), doc.number, b.lineas.map((l: any) => ({ ...l, observacion: l.nota_guia })));
             if (sinNotas) avisos.push(sinNotas);
           }
           return avisos;
         },
       });
+      // (2026-11-09) Lo que la guía sacó de cada lote.
+      if (r?.emitida && b.lotes_por_sku?.size && this.lotes) {
+        const aviso = await this.lotes.registrarSalidas(b.lotes_por_sku, { origen: 'guia_venta_directa', bsale_document_id: r.bsale_id || null, guia_numero: r.numero || null, licitacion_id: cotizacion?.id || null, documento_id: r.documento_id || null, usuario_email: usuario.email || null });
+        if (aviso) r.avisos.push(aviso);
+      }
       return { emitida: true, numero: r.numero, url_pdf: r.url_pdf, bsale_id: r.bsale_id || null, documento_id: r.documento_id, avisos: r.avisos || [], sin_correo: sinCorreo, motivo_sin_correo: motivoSinCorreo };
     } catch (e: any) {
       const error = String(e?.message || e).slice(0, 200);

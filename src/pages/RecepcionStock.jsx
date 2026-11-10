@@ -21,7 +21,12 @@ import Toast from "../components/Toast";
    solo se habilita con una simulación vigente y sin problemas.
 
    La bandeja es una tabla paginada con el detalle de cada recepción al
-   desplegarla. Entra el admin o quien tenga «Recepción de stock» en su perfil. */
+   desplegarla. Entra el admin o quien tenga «Recepción de stock» en su perfil.
+
+   (2026-11-09) Cada línea lleva LOTE y FECHA DE VENCIMIENTO, obligatorios
+   (van juntos). Un producto que llega en varios lotes va en varias líneas:
+   «Otro lote» en la fila, o agregarlo de nuevo desde el buscador. Las guías
+   de despacho ofrecen después esos lotes en un listbox por producto. */
 
 const POR_PAGINA = 12;
 const clp = (n) => `$${Math.round(Number(n) || 0).toLocaleString("es-CL")}`;
@@ -36,6 +41,9 @@ const quien = (email) => String(email || "").split("@")[0] || "—";
 const soloNumero = (v) => String(v ?? "").replace(/[^\d.,]/g, "");
 const aNumero = (v) => Number(String(v ?? "").replace(/\./g, "").replace(",", ".")) || 0;
 const mesDe = (iso) => String(iso || "").slice(0, 7);
+let ultimoUid = 0;
+const nuevoUid = () => `l${Date.now().toString(36)}${(ultimoUid += 1)}`;
+const hoyIso = () => new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
 
 /* Busca productos del catálogo con SKU (SKU o nombre), con un pequeño retardo. */
 function useBuscarProductos(q) {
@@ -80,7 +88,7 @@ function ModalRecepcion({ contexto, onCerrar, onRegistrada }) {
   const [fecha, setFecha] = useState("");
   const [proveedorId, setProveedorId] = useState("");
   const [nota, setNota] = useState("");
-  const [lineas, setLineas] = useState([]); // { producto_id, sku, nombre, stock, cantidad, costo }
+  const [lineas, setLineas] = useState([]); // { uid, producto_id, sku, nombre, stock, lote, vencimiento, cantidad, costo }
   const [q, setQ] = useState("");
   const { productos, buscando } = useBuscarProductos(q);
   const [enviando, setEnviando] = useState(""); // "" | "simular" | "registrar"
@@ -97,23 +105,37 @@ function ModalRecepcion({ contexto, onCerrar, onRegistrada }) {
     documento_fecha: fecha || null,
     proveedor_id: proveedorId ? Number(proveedorId) : null,
     nota: nota.trim(),
-    lineas: lineas.map((l) => ({ producto_id: l.producto_id, cantidad: aNumero(l.cantidad), costo_unitario: l.costo === "" ? null : aNumero(l.costo) })),
+    lineas: lineas.map((l) => ({ producto_id: l.producto_id, lote: l.lote.trim(), vencimiento: l.vencimiento || null, cantidad: aNumero(l.cantidad), costo_unitario: l.costo === "" ? null : aNumero(l.costo) })),
   }), [sucursalId, tipo, conNumero, numero, fecha, proveedorId, nota, lineas]);
   // La simulación vale para ESTOS datos: si cambia algo, caduca y hay que simular de nuevo.
   const firma = JSON.stringify(cuerpo);
   const simulacionVigente = !!simulacion && simuladoCon === firma;
-  const lineasValidas = lineas.length > 0 && lineas.every((l) => aNumero(l.cantidad) > 0);
+  // (2026-11-09) Lote y vencimiento obligatorios en cada línea.
+  const lineasValidas = lineas.length > 0 && lineas.every((l) => aNumero(l.cantidad) > 0 && l.lote.trim() && l.vencimiento);
+  const faltanLotes = lineas.some((l) => !l.lote.trim() || !l.vencimiento);
   const completo = !!sucursalId && lineasValidas && (!conNumero || numero.trim().length > 0) && !enviando;
   const puedeRegistrar = completo && simulacionVigente && simulacion.problemas.length === 0 && contexto.emision_activa !== false;
   const totalCosto = lineas.reduce((a, l) => a + aNumero(l.cantidad) * aNumero(l.costo), 0);
   const totalUnidades = lineas.reduce((a, l) => a + aNumero(l.cantidad), 0);
 
+  /* Agregar un producto que ya está suma OTRO lote de él (otra línea, con el mismo costo). */
   function agregar(p) {
-    setLineas((prev) => (prev.some((l) => l.producto_id === p.id) ? prev : [...prev, { producto_id: p.id, sku: p.sku, nombre: p.nombre, stock: p.stock, cantidad: "1", costo: p.costo ? String(Math.round(p.costo)) : "" }]));
+    setLineas((prev) => {
+      const previa = prev.find((l) => l.producto_id === p.id);
+      return [...prev, { uid: nuevoUid(), producto_id: p.id, sku: p.sku, nombre: p.nombre, stock: p.stock, lote: "", vencimiento: "", cantidad: "1", costo: previa ? previa.costo : p.costo ? String(Math.round(p.costo)) : "" }];
+    });
     setQ("");
   }
-  const cambiar = (id, campo, valor) => setLineas((prev) => prev.map((l) => (l.producto_id === id ? { ...l, [campo]: valor } : l)));
-  const quitar = (id) => setLineas((prev) => prev.filter((l) => l.producto_id !== id));
+  const cambiar = (uid, campo, valor) => setLineas((prev) => prev.map((l) => (l.uid === uid ? { ...l, [campo]: valor } : l)));
+  const quitar = (uid) => setLineas((prev) => prev.filter((l) => l.uid !== uid));
+  // «Otro lote»: una línea más del mismo producto, justo debajo.
+  const otroLote = (uid) => setLineas((prev) => {
+    const i = prev.findIndex((l) => l.uid === uid);
+    if (i < 0) return prev;
+    const copia = { ...prev[i], uid: nuevoUid(), lote: "", vencimiento: "", cantidad: "1" };
+    return [...prev.slice(0, i + 1), copia, ...prev.slice(i + 1)];
+  });
+  const lotesDelProducto = (id) => lineas.filter((l) => l.producto_id === id).length;
 
   async function simular() {
     if (!completo) return;
@@ -205,11 +227,11 @@ function ModalRecepcion({ contexto, onCerrar, onRegistrada }) {
                   {productos.map((p) => {
                     const ya = lineas.some((l) => l.producto_id === p.id);
                     return (
-                      <button key={p.id} type="button" disabled={ya} onClick={() => agregar(p)} style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", textAlign: "left", padding: "7px 10px", border: "none", borderRadius: 6, background: "transparent", cursor: ya ? "default" : "pointer", opacity: ya ? 0.5 : 1, fontSize: 13, color: "var(--text)" }}>
+                      <button key={p.id} type="button" onClick={() => agregar(p)} style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", textAlign: "left", padding: "7px 10px", border: "none", borderRadius: 6, background: "transparent", cursor: "pointer", fontSize: 13, color: "var(--text)" }}>
                         <Plus size={14} style={{ color: "var(--primary)", flexShrink: 0 }} />
                         <span style={{ flex: 1, minWidth: 0 }}>
                           <span style={{ display: "block", fontWeight: 600, overflowWrap: "anywhere" }}>{p.nombre}</span>
-                          <span style={{ display: "block", fontSize: 11.5, color: "var(--text-muted)" }}>{p.sku}{p.marca ? ` · ${p.marca}` : ""} · stock {num(p.stock)}{p.costo ? ` · costo ${clp(p.costo)}` : " · sin costo"}{p.en_bsale ? "" : " · se busca en Bsale por SKU"}{ya ? " · ya está en la recepción" : ""}</span>
+                          <span style={{ display: "block", fontSize: 11.5, color: "var(--text-muted)" }}>{p.sku}{p.marca ? ` · ${p.marca}` : ""} · stock {num(p.stock)}{p.costo ? ` · costo ${clp(p.costo)}` : " · sin costo"}{p.en_bsale ? "" : " · se busca en Bsale por SKU"}{ya ? " · ya está en la recepción: se agrega otro lote" : ""}</span>
                         </span>
                       </button>
                     );
@@ -218,43 +240,57 @@ function ModalRecepcion({ contexto, onCerrar, onRegistrada }) {
               )}
             </div>
             <div className="table-wrap" style={{ margin: "8px 0 0" }}>
-              <table className="data-table tabla-compacta tabla-texto tabla-lineas-recepcion" style={{ minWidth: 620 }}>
+              <table className="data-table tabla-compacta tabla-texto tabla-lineas-recepcion" style={{ minWidth: 760 }}>
                 <thead>
                   <tr>
                     <th>Producto</th>
-                    <th style={{ textAlign: "right" }}>Stock hoy</th>
-                    <th style={{ textAlign: "right", width: 110 }}>Cantidad</th>
-                    <th style={{ textAlign: "right", width: 140 }}>Costo neto unit.</th>
+                    <th style={{ width: 130 }} title="Obligatorio. El lote y su fecha de vencimiento van juntos">Lote *</th>
+                    <th style={{ width: 146 }} title="Obligatoria. El lote y su fecha de vencimiento van juntos">Vencimiento *</th>
+                    <th style={{ textAlign: "right", width: 96 }}>Cantidad</th>
+                    <th style={{ textAlign: "right", width: 124 }}>Costo neto unit.</th>
                     <th style={{ textAlign: "right" }}>Subtotal</th>
-                    <th style={{ width: 36 }} aria-label="Quitar" />
+                    <th style={{ width: 64 }} aria-label="Acciones" />
                   </tr>
                 </thead>
                 <tbody>
-                  {lineas.length === 0 && <tr><td colSpan={6} style={{ textAlign: "center", padding: "22px 12px", color: "var(--text-muted)" }}>Busca arriba los productos que llegaron y agrégalos.</td></tr>}
-                  {lineas.map((l) => (
-                    <tr key={l.producto_id}>
-                      <td style={{ minWidth: 200 }}>
-                        <div style={{ fontWeight: 600, overflowWrap: "anywhere" }}>{l.nombre}</div>
-                        <div style={{ fontSize: 11.5, color: "var(--text-muted)" }}>{l.sku}</div>
-                      </td>
-                      <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>{num(l.stock)}</td>
-                      <td style={{ textAlign: "right" }}>
-                        <input className="input campo-cantidad-recepcion" inputMode="decimal" value={l.cantidad} onChange={(e) => cambiar(l.producto_id, "cantidad", soloNumero(e.target.value))} disabled={!!enviando} style={{ width: 90, textAlign: "right", height: 32, borderColor: aNumero(l.cantidad) > 0 ? undefined : "#dc2626" }} />
-                      </td>
-                      <td style={{ textAlign: "right" }}>
-                        <input className="input" inputMode="numeric" value={l.costo} onChange={(e) => cambiar(l.producto_id, "costo", soloNumero(e.target.value))} disabled={!!enviando} placeholder="$0" style={{ width: 120, textAlign: "right", height: 32 }} />
-                      </td>
-                      <td style={{ textAlign: "right", fontWeight: 700, whiteSpace: "nowrap" }}>{clp(aNumero(l.cantidad) * aNumero(l.costo))}</td>
-                      <td style={{ textAlign: "right" }}>
-                        <button type="button" className="btn btn-ghost btn-sm" onClick={() => quitar(l.producto_id)} disabled={!!enviando} title="Quitar de la recepción" style={{ color: "#dc2626", padding: "2px 6px" }}><Trash2 size={13} /></button>
-                      </td>
-                    </tr>
-                  ))}
+                  {lineas.length === 0 && <tr><td colSpan={7} style={{ textAlign: "center", padding: "22px 12px", color: "var(--text-muted)" }}>Busca arriba los productos que llegaron y agrégalos.</td></tr>}
+                  {lineas.map((l) => {
+                    const varios = lotesDelProducto(l.producto_id) > 1;
+                    const vencido = l.vencimiento && l.vencimiento < hoyIso();
+                    return (
+                      <tr key={l.uid}>
+                        <td style={{ minWidth: 180 }}>
+                          <div style={{ fontWeight: 600, overflowWrap: "anywhere" }}>{l.nombre}</div>
+                          <div style={{ fontSize: 11.5, color: "var(--text-muted)" }}>{l.sku} · stock hoy {num(l.stock)}{varios ? " · otro lote" : ""}</div>
+                        </td>
+                        <td>
+                          <input className="input campo-lote-recepcion" value={l.lote} onChange={(e) => cambiar(l.uid, "lote", e.target.value.toUpperCase().slice(0, 40))} disabled={!!enviando} placeholder="Ej: L2311A" style={{ width: "100%", minWidth: 96, height: 32, borderColor: l.lote.trim() ? undefined : "#dc2626" }} />
+                        </td>
+                        <td>
+                          <input type="date" className="input campo-vencimiento-recepcion" value={l.vencimiento} onChange={(e) => cambiar(l.uid, "vencimiento", e.target.value)} disabled={!!enviando} title={vencido ? "Esta fecha ya pasó" : "Fecha de vencimiento del lote"} style={{ width: "100%", minWidth: 128, height: 32, borderColor: !l.vencimiento ? "#dc2626" : vencido ? "#d97706" : undefined }} />
+                        </td>
+                        <td style={{ textAlign: "right" }}>
+                          <input className="input campo-cantidad-recepcion" inputMode="decimal" value={l.cantidad} onChange={(e) => cambiar(l.uid, "cantidad", soloNumero(e.target.value))} disabled={!!enviando} style={{ width: 84, textAlign: "right", height: 32, borderColor: aNumero(l.cantidad) > 0 ? undefined : "#dc2626" }} />
+                        </td>
+                        <td style={{ textAlign: "right" }}>
+                          <input className="input" inputMode="numeric" value={l.costo} onChange={(e) => cambiar(l.uid, "costo", soloNumero(e.target.value))} disabled={!!enviando} placeholder="$0" style={{ width: 108, textAlign: "right", height: 32 }} />
+                        </td>
+                        <td style={{ textAlign: "right", fontWeight: 700, whiteSpace: "nowrap" }}>{clp(aNumero(l.cantidad) * aNumero(l.costo))}</td>
+                        <td style={{ textAlign: "right" }}>
+                          <span style={{ display: "inline-flex", gap: 2 }}>
+                            <button type="button" className="btn btn-ghost btn-sm" onClick={() => otroLote(l.uid)} disabled={!!enviando} title="Otro lote de este producto (agrega una línea debajo)" style={{ padding: "2px 6px" }}><Plus size={13} /></button>
+                            <button type="button" className="btn btn-ghost btn-sm" onClick={() => quitar(l.uid)} disabled={!!enviando} title="Quitar de la recepción" style={{ color: "#dc2626", padding: "2px 6px" }}><Trash2 size={13} /></button>
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
                 {lineas.length > 0 && (
                   <tfoot>
                     <tr>
-                      <td style={{ fontWeight: 700 }}>Total · {lineas.length} producto{lineas.length === 1 ? "" : "s"}</td>
+                      <td style={{ fontWeight: 700 }}>Total · {lineas.length} línea{lineas.length === 1 ? "" : "s"}</td>
+                      <td />
                       <td />
                       <td style={{ textAlign: "right", fontWeight: 700 }}>{num(totalUnidades)}</td>
                       <td />
@@ -284,6 +320,7 @@ function ModalRecepcion({ contexto, onCerrar, onRegistrada }) {
               )}
             </div>
           )}
+          {faltanLotes && <div style={{ fontSize: 12.5, color: "#b91c1c" }}>Cada producto necesita su lote y su fecha de vencimiento. Si llegó en varios lotes, usa «+» en la fila para agregar otro.</div>}
           {error && <div style={{ fontSize: 12.5, color: "#dc2626", fontWeight: 600 }}>{error}</div>}
         </div>
 
@@ -336,7 +373,7 @@ export default function RecepcionStock() {
 
   const texto = sinTildes(q.trim());
   const filtradas = useMemo(
-    () => (recepciones || []).filter((r) => (!tipo || r.tipo_documento === tipo) && (!texto || sinTildes(`#${r.id} ${r.tipo_nombre} ${r.documento_numero || ""} ${r.proveedor} ${r.sucursal} ${r.usuario_email} ${r.nota} ${r.lineas.map((l) => `${l.sku} ${l.nombre}`).join(" ")}`).includes(texto))),
+    () => (recepciones || []).filter((r) => (!tipo || r.tipo_documento === tipo) && (!texto || sinTildes(`#${r.id} ${r.tipo_nombre} ${r.documento_numero || ""} ${r.proveedor} ${r.sucursal} ${r.usuario_email} ${r.nota} ${r.lineas.map((l) => `${l.sku} ${l.nombre} ${l.lote || ""}`).join(" ")}`).includes(texto))),
     [recepciones, tipo, texto],
   );
   const paginaActual = Math.min(pagina, Math.max(1, Math.ceil(filtradas.length / POR_PAGINA)));
@@ -364,7 +401,7 @@ export default function RecepcionStock() {
         Proveedor: r.proveedor, Líneas: r.total_lineas, Unidades: r.total_unidades, "Costo total": r.total_costo, "Recepción Bsale": r.bsale_reception_id ?? "", Estado: r.estado === "registrada" ? "Registrada" : "Fallida", Usuario: r.usuario_email, Nota: r.nota,
       }))), "Recepciones");
       XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(filtradas.flatMap((r) => r.lineas.map((l) => ({
-        "Recepción N°": r.id, Fecha: fechaHora(r.created_at), Documento: `${r.tipo_nombre}${r.documento_numero ? ` ${r.documento_numero}` : ""}`, SKU: l.sku, Producto: l.nombre, Cantidad: l.cantidad, "Costo neto unitario": l.costo_unitario, Subtotal: l.subtotal,
+        "Recepción N°": r.id, Fecha: fechaHora(r.created_at), Documento: `${r.tipo_nombre}${r.documento_numero ? ` ${r.documento_numero}` : ""}`, SKU: l.sku, Producto: l.nombre, Lote: l.lote || "", Vencimiento: diaCorto(l.vencimiento), Cantidad: l.cantidad, "Costo neto unitario": l.costo_unitario, Subtotal: l.subtotal,
       })))), "Productos");
       XLSX.writeFile(wb, "recepciones-de-stock.xlsx");
     } catch (err) {
@@ -398,7 +435,7 @@ export default function RecepcionStock() {
       <div className="page-header">
         <div style={{ minWidth: 0 }}>
           <h1 className="page-title">Recepción de stock</h1>
-          <p className="page-subtitle">Carga el stock que llega con guía, factura, despacho interno o sin documento. La recepción se crea en Bsale y suma las unidades al inventario de la sucursal.</p>
+          <p className="page-subtitle">Carga el stock que llega con guía, factura, despacho interno o sin documento, con el lote y el vencimiento de cada producto. La recepción se crea en Bsale y suma las unidades al inventario de la sucursal.</p>
         </div>
         <div className="page-actions" style={{ flexWrap: "wrap" }}>
           <button type="button" className="btn btn-secondary" onClick={exportar} disabled={!filtradas.length} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Download size={14} /> Excel</button>
@@ -511,24 +548,28 @@ export default function RecepcionStock() {
                         {r.nota && <div style={{ fontSize: 12.5, color: "var(--text-soft)", marginBottom: 8 }}><strong>Nota:</strong> {r.nota}</div>}
                         {r.error && <div style={{ fontSize: 12.5, color: fallida ? "#991b1b" : "#92400e", background: fallida ? "#fef2f2" : "#fffbeb", border: `1px solid ${fallida ? "#fecaca" : "#fde68a"}`, borderRadius: 8, padding: "7px 10px", marginBottom: 8 }}>{r.error}</div>}
                         <div className="table-wrap" style={{ margin: 0 }}>
-                          <table className="data-table tabla-compacta tabla-texto" style={{ minWidth: 480 }}>
+                          <table className="data-table tabla-compacta tabla-texto" style={{ minWidth: 600 }}>
                             <thead>
                               <tr>
                                 <th>Producto</th>
+                                <th>Lote</th>
+                                <th>Vencimiento</th>
                                 <th style={{ textAlign: "right" }}>Cantidad</th>
                                 <th style={{ textAlign: "right" }}>Costo neto unit.</th>
                                 <th style={{ textAlign: "right" }}>Subtotal</th>
                               </tr>
                             </thead>
                             <tbody>
-                              {r.lineas.map((l) => (
-                                <tr key={l.producto_id}>
+                              {r.lineas.map((l, i) => (
+                                <tr key={`${l.producto_id}-${i}`}>
                                   <td style={{ minWidth: 200 }}>
                                     <div style={{ fontWeight: 600, overflowWrap: "anywhere" }}>
                                       <Link to={`/productos/editar/${l.producto_id}`} target="_blank" rel="noopener noreferrer" className="table-link" title="Abrir el producto en una pestaña nueva">{l.nombre}</Link>
                                     </div>
                                     <div style={{ fontSize: 11.5, color: "var(--text-muted)" }}>{l.sku}</div>
                                   </td>
+                                  <td style={{ whiteSpace: "nowrap", fontWeight: 600 }}>{l.lote || "—"}</td>
+                                  <td style={{ whiteSpace: "nowrap" }}>{l.vencimiento ? diaCorto(l.vencimiento) : "—"}</td>
                                   <td style={{ textAlign: "right", fontWeight: 700, whiteSpace: "nowrap" }}>{num(l.cantidad)}</td>
                                   <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>{clp(l.costo_unitario)}</td>
                                   <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>{clp(l.subtotal)}</td>
