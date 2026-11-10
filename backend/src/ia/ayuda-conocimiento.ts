@@ -1214,7 +1214,12 @@ girasol 🌻). Hoy ayuda en:
   pedir cambios) → Por pagar («Validar existencias y enviar link de pago»:
   precios NETOS sugeridos desde la cotización vinculada, la oferta o el precio
   de lista; el link cobra el total con IVA) →
-  Pagado (Webpay o crédito; 48-72 hrs para despachar). PAGO POR WEBPAY
+  Pagado (Webpay o crédito; 48-72 hrs para despachar). CAMPANA DEL PORTAL
+  (desde el 09-11-2026): el cliente ve una campana en la barra superior y,
+  arriba del Resumen, «Pendientes de tu parte» (pagar, responder observación,
+  revisar cotización, aprobar el pedido de un asistente, mensajes nuestros sin
+  leer; salen del estado de sus pedidos) y «Novedades» (lo que hizo Amsodent,
+  con leído / no leído); tocar un aviso lo lleva al pedido. PAGO POR WEBPAY
   (desde el 09-11-2026): el cliente paga en la página de pago de Amsodent en
   webpay.cl (link fijo, escribe él el monto) y presiona «Confirmar pago» en
   el portal; el pedido sigue «Por pagar» con la marca «Pago informado» y avisa al

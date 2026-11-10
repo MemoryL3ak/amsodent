@@ -1304,7 +1304,9 @@ export class ChoferesService {
       if (!rut) return;
 
       await this.client.from('portal_actividades').insert({
-        cliente_rut: rut,
+        // (2026-11-09) El portal busca por RUT normalizado (sin puntos ni
+        // guion); con el formateado de la cotización el aviso nunca aparecía.
+        cliente_rut: normalizarRut(rut),
         licitacion_id: lic?.id ?? null,
         tipo: 'despacho_en_curso',
         origen: 'amsodent',

@@ -225,6 +225,20 @@ export class StockClientesController {
     return await this.pedidosFlujo.marcarAvisosLeidos(req.stockPortal.rut);
   }
 
+  /* (2026-11-09) Campana del portal y bloque «Pendientes / Novedades» del
+     Resumen: lo que le toca hacer al cliente y lo que hizo Amsodent. */
+  @UseGuards(StockPortalGuard)
+  @Get('mis-notificaciones')
+  async misNotificaciones(@Req() req: any) {
+    return await this.pedidosFlujo.notificacionesCliente(req.stockPortal.rut, rolDeToken(req.stockPortal) === 'admin');
+  }
+
+  @UseGuards(StockPortalGuard)
+  @Post('mis-notificaciones/leidas')
+  async marcarNotificacionesLeidas(@Req() req: any, @Body() body: { ids?: number[] }) {
+    return await this.pedidosFlujo.marcarNotificacionesLeidas(req.stockPortal.rut, body?.ids);
+  }
+
   /** Lado Amsodent: historial de la cuenta de un cliente, por RUT. Exige
       sesion de la plataforma: sin guard, cualquiera podia leer la actividad
       de un cliente con solo saber su RUT. */

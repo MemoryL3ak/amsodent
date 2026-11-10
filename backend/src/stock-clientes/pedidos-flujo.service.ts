@@ -499,15 +499,129 @@ export class PedidosFlujoService {
 
   /** Avisos del portal que el cliente todavía no ha visto (la campana). */
   async avisosSinLeer(rut: string) {
+    // (2026-11-09) Solo lo que hizo Amsodent: lo que hizo el propio cliente
+    // (origen 'portal') no es un aviso para él.
     const { data, error } = await this.client
       .from('portal_actividades')
       .select('id, tipo, descripcion, solicitud_id, created_at')
       .eq('cliente_rut', rut)
+      .eq('origen', 'amsodent')
       .is('leido_at', null)
       .order('created_at', { ascending: false })
       .limit(20);
     if (error) return [];
     return data || [];
+  }
+
+  /* ── Campana y Resumen del portal (2026-11-09) ─────────────────────────
+     Dos listas para el cliente:
+     - pendientes: lo que le toca hacer a él. Se calculan del estado de sus
+       pedidos, así que están siempre al día y se van solos cuando los
+       resuelve. Las acciones las hace el administrador de la cuenta; a un
+       asistente solo le llegan los mensajes sin leer.
+     - avisos: lo que hizo Amsodent (portal_actividades de origen amsodent),
+       con leído / no leído. La lectura usa solo columnas ya migradas: si
+       faltara una, la consulta devolvería vacío y la campana quedaría muda. */
+  async notificacionesCliente(rut: string, esAdmin: boolean) {
+    const leer = async (q: any): Promise<any[]> => {
+      try {
+        const { data, error } = await q;
+        return error ? [] : data || [];
+      } catch {
+        return [];
+      }
+    };
+    const [pedidos, avisos] = await Promise.all([
+      leer(
+        this.client
+          .from(TABLA)
+          .select('id, flujo_estado, pago_estado, monto_total, licitacion_id, validado_cliente_at, created_at, updated_at')
+          .eq('rut', rut)
+          .order('id', { ascending: false })
+          .limit(60),
+      ),
+      leer(
+        this.client
+          .from('portal_actividades')
+          .select('id, tipo, descripcion, solicitud_id, licitacion_id, created_at, leido_at')
+          .eq('cliente_rut', rut)
+          .eq('origen', 'amsodent')
+          .order('created_at', { ascending: false })
+          .limit(30),
+      ),
+    ]);
+
+    const ids = pedidos.map((p) => Number(p.id)).filter((x) => x > 0);
+    const mensajes = ids.length
+      ? await leer(
+          this.client
+            .from('stock_cotizacion_mensajes')
+            .select('solicitud_id, created_at')
+            .in('solicitud_id', ids)
+            .eq('autor_tipo', 'equipo')
+            .eq('leido_cliente', false)
+            .limit(300),
+        )
+      : [];
+    const sinLeerPorPedido = new Map<number, { n: number; ultimo: string }>();
+    for (const m of mensajes) {
+      const k = Number(m.solicitud_id);
+      const prev = sinLeerPorPedido.get(k) || { n: 0, ultimo: '' };
+      sinLeerPorPedido.set(k, { n: prev.n + 1, ultimo: String(m.created_at) > prev.ultimo ? String(m.created_at) : prev.ultimo });
+    }
+
+    const $ = (n: any) => `$${Math.round(Number(n) || 0).toLocaleString('es-CL')}`;
+    const pendientes: Array<{ clave: string; tipo: string; solicitud_id: number; titulo: string; detalle: string; fecha: string | null }> = [];
+    for (const p of pedidos) {
+      const id = Number(p.id);
+      const etapa = String(p.flujo_estado || '');
+      const fecha = p.updated_at || p.created_at || null;
+      if (esAdmin) {
+        if (etapa === 'validado_plataforma' && p.pago_estado !== 'informado') {
+          pendientes.push({ clave: `pago-${id}`, tipo: 'pago', solicitud_id: id, fecha, titulo: `Paga el pedido N° ${id}`, detalle: `Listo para pagar: ${$(p.monto_total)} (IVA incluido).` });
+        } else if (etapa === 'observado') {
+          pendientes.push({ clave: `obs-${id}`, tipo: 'observacion', solicitud_id: id, fecha, titulo: `Responde la observación del pedido N° ${id}`, detalle: 'Amsodent necesita tu respuesta para seguir con el pedido.' });
+        } else if (p.licitacion_id && !p.validado_cliente_at && ['aprobado_cliente', 'en_revision', 'cotizacion_enviada'].includes(etapa)) {
+          // Con cotización vinculada el cliente ya la ve, aunque la etapa no
+          // se haya movido (p. ej. sin la migración de etapas intermedias).
+          pendientes.push({ clave: `cot-${id}`, tipo: 'cotizacion', solicitud_id: id, fecha, titulo: `Revisa la cotización del pedido N° ${id}`, detalle: 'Dala por buena o pídenos cambios.' });
+        } else if (etapa === 'pendiente_aprobacion') {
+          pendientes.push({ clave: `apr-${id}`, tipo: 'aprobar', solicitud_id: id, fecha, titulo: `Aprueba el pedido N° ${id}`, detalle: 'Lo armó un usuario de tu cuenta: al aprobarlo lo enviamos a Amsodent.' });
+        }
+      }
+      const msj = sinLeerPorPedido.get(id);
+      if (msj) {
+        pendientes.push({
+          clave: `msj-${id}`, tipo: 'mensaje', solicitud_id: id, fecha: msj.ultimo || fecha,
+          titulo: `Amsodent te escribió en el pedido N° ${id}`,
+          detalle: `${msj.n} mensaje${msj.n === 1 ? '' : 's'} sin leer.`,
+        });
+      }
+    }
+    const prioridad: Record<string, number> = { observacion: 0, pago: 1, cotizacion: 2, aprobar: 3, mensaje: 4 };
+    pendientes.sort((a, b) => (prioridad[a.tipo] ?? 9) - (prioridad[b.tipo] ?? 9) || String(b.fecha || '').localeCompare(String(a.fecha || '')));
+
+    return {
+      pendientes,
+      avisos: avisos.map((a) => ({ ...a, leido: Boolean(a.leido_at) })),
+      sin_leer: avisos.filter((a) => !a.leido_at).length,
+    };
+  }
+
+  /** Marca leídos los avisos de Amsodent: los indicados o, sin ids, todos. */
+  async marcarNotificacionesLeidas(rut: string, ids?: any[]) {
+    const lista = Array.isArray(ids) ? ids.map(Number).filter((x) => Number.isFinite(x) && x > 0).slice(0, 100) : [];
+    try {
+      let q = this.client
+        .from('portal_actividades')
+        .update({ leido_at: new Date().toISOString() })
+        .eq('cliente_rut', rut)
+        .eq('origen', 'amsodent')
+        .is('leido_at', null);
+      if (lista.length) q = q.in('id', lista);
+      await q;
+    } catch { /* tabla sin migrar */ }
+    return { ok: true };
   }
 
   async marcarAvisosLeidos(rut: string) {
@@ -1371,13 +1485,21 @@ export class PedidosFlujoService {
       // Crear la cotización ES revisar el pedido: si nadie lo había tomado,
       // queda tomado por quien la creó.
       if (!pedido.revision_iniciada_at) Object.assign(extra, { revision_iniciada_at: ahora, revision_por: actorEmail });
-      const data = await this.mover(id, ESTADOS_COTIZABLES, 'cotizacion_enviada', extra, {
-        tipo: 'cotizacion_enviada',
-        actorTipo: 'plataforma',
-        actorEmail,
-        detalle: `Cotización #${licitacionId} enviada al cliente.`,
-        datos: { licitacion_id: licitacionId },
-      });
+      // (2026-11-09) Si la etapa no se puede mover (falta la migración de
+      // etapas intermedias), el cliente igual ve la cotización en su portal:
+      // el aviso sale igual, en vez de perderse con el error.
+      let data = pedido;
+      try {
+        data = await this.mover(id, ESTADOS_COTIZABLES, 'cotizacion_enviada', extra, {
+          tipo: 'cotizacion_enviada',
+          actorTipo: 'plataforma',
+          actorEmail,
+          detalle: `Cotización #${licitacionId} enviada al cliente.`,
+          datos: { licitacion_id: licitacionId },
+        });
+      } catch (e: any) {
+        this.logger.warn(`Pedido ${id}: la etapa no pasó a «Cotización enviada» (${e?.message || e}); se avisa al cliente igual.`);
+      }
       await this.avisarCliente(data, {
         tipo: 'pedido_cotizacion_enviada',
         descripcion: `Te enviamos la cotización de tu pedido N° ${data.id}. Revísala en Mis cotizaciones.`,
@@ -1613,6 +1735,18 @@ export class PedidosFlujoService {
   }
 
   private async avisarClienteValidado(pedido: any) {
+    // (2026-11-09) Aviso en la campana del portal: antes «listo para pagar»
+    // llegaba solo por correo y por el hilo del pedido.
+    await this.anotarActividad({
+      rut: String(pedido.rut),
+      tipo: 'pedido_listo_para_pagar',
+      descripcion: `Tu pedido N° ${pedido.id} está listo para pagar: $${Number(pedido.monto_total || 0).toLocaleString('es-CL')} (IVA incluido).`,
+      actorEmail: pedido.validado_por || null,
+      actorNombre: nombreCorto(pedido.validado_por) || 'Amsodent',
+      origen: 'amsodent',
+      solicitudId: Number(pedido.id),
+      licitacionId: pedido.licitacion_id ?? null,
+    });
     const disponibilidad: any[] = Array.isArray(pedido?.disponibilidad) ? pedido.disponibilidad : [];
     const faltantes = disponibilidad.filter((d) => Number(d.cantidad_disponible) < Number(d.cantidad_solicitada));
     const detalle = disponibilidad

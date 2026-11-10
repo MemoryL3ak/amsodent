@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { esSanBernardo } from "../constants/regiones";
 import {
@@ -47,6 +47,8 @@ import {
   PackagePlus,
   ChevronDown,
   ChevronRight,
+  Bell,
+  CreditCard,
 } from "lucide-react";
 
 import DropdownSelect from "../components/ui/DropdownSelect";
@@ -252,6 +254,73 @@ const PEDIDO_ENVIADO = "portal-pedido-enviado";
 /* Lo dispara el botón Actualizar: cada panel que carga datos por su cuenta lo
    escucha y vuelve a pedirlos. */
 const PORTAL_REFRESCAR = "portal-refrescar";
+/* (2026-11-09) Campana del portal. NOTIF_REFRESCAR pide volver a leer las
+   notificaciones (tras una acción sobre un pedido o al marcar leídas, para
+   que la campana y el Resumen queden iguales); PORTAL_IR_A lleva a una
+   pestaña y, si se indica, despliega un pedido. La campana vive en la barra
+   superior, fuera de la pantalla que maneja las pestañas: por eso, evento. */
+const NOTIF_REFRESCAR = "portal-notificaciones-refrescar";
+const PORTAL_IR_A = "portal-ir-a";
+const irAPortal = (tab, pedido = null) =>
+  window.dispatchEvent(new CustomEvent(PORTAL_IR_A, { detail: { tab, pedido } }));
+
+/* Pendientes del cliente (calculados del estado de sus pedidos) y avisos de
+   Amsodent con leído / no leído. Cada componente que lo usa (campana y
+   Resumen) lee por su cuenta y se sincronizan por NOTIF_REFRESCAR. */
+function useNotificacionesPortal() {
+  const [datos, setDatos] = useState({ pendientes: [], avisos: [], sin_leer: 0 });
+  const [cargado, setCargado] = useState(false);
+  const cargar = useCallback(async () => {
+    try {
+      const r = await apiRequest("/stock-clientes/mis-notificaciones");
+      setDatos({
+        pendientes: Array.isArray(r?.pendientes) ? r.pendientes : [],
+        avisos: Array.isArray(r?.avisos) ? r.avisos : [],
+        sin_leer: Number(r?.sin_leer) || 0,
+      });
+    } catch {
+      /* sin conexión: se mantiene lo último que se leyó */
+    } finally {
+      setCargado(true);
+    }
+  }, []);
+  useEffect(() => {
+    cargar();
+    // Cada minuto, mientras la pestaña está a la vista.
+    const t = setInterval(() => { if (!document.hidden) cargar(); }, 60000);
+    window.addEventListener(NOTIF_REFRESCAR, cargar);
+    window.addEventListener(PORTAL_REFRESCAR, cargar);
+    return () => {
+      clearInterval(t);
+      window.removeEventListener(NOTIF_REFRESCAR, cargar);
+      window.removeEventListener(PORTAL_REFRESCAR, cargar);
+    };
+  }, [cargar]);
+  // Sin ids, marca todas. Se refleja al tiro y después avisa a la otra vista.
+  const marcarLeidas = useCallback(async (ids = null) => {
+    const marcar = ids ? new Set(ids.map(Number)) : null;
+    setDatos((d) => {
+      const avisos = d.avisos.map((a) => (!marcar || marcar.has(Number(a.id)) ? { ...a, leido: true } : a));
+      return { ...d, avisos, sin_leer: avisos.filter((a) => !a.leido).length };
+    });
+    try {
+      await apiRequest("/stock-clientes/mis-notificaciones/leidas", {
+        method: "POST",
+        body: JSON.stringify(ids ? { ids } : {}),
+      });
+    } catch { /* se reintenta la próxima vez */ }
+    window.dispatchEvent(new Event(NOTIF_REFRESCAR));
+  }, []);
+  return { ...datos, cargado, marcarLeidas };
+}
+
+const ICONO_PENDIENTE = {
+  pago: { icono: CreditCard, color: "#6d28d9", bg: "#ede9fe" },
+  observacion: { icono: AlertTriangle, color: "#c2410c", bg: "#ffedd5" },
+  cotizacion: { icono: FileSpreadsheet, color: "#4338ca", bg: "#e0e7ff" },
+  aprobar: { icono: ClipboardCheck, color: "#b45309", bg: "#fef3c7" },
+  mensaje: { icono: MessageCircle, color: "#0369a1", bg: "#e0f2fe" },
+};
 
 /* (2026-09-24) Modificar un pedido ya cotizado se hace con el MISMO carrito:
    se cargan en el los productos que el pedido ya tiene -- los transitorios se
@@ -485,9 +554,14 @@ export default function PortalStockCliente() {
             </div>
 
             {token && cliente && (
-              <button onClick={cerrarSesion} style={styles.btnGhost} title="Cerrar sesión">
-                <LogOut size={14} /> Cerrar sesión
-              </button>
+              // position: relative → la lista de la campana se alinea al
+              // borde derecho de la barra y no se sale en pantallas chicas.
+              <div style={{ position: "relative", display: "flex", alignItems: "center", gap: 10 }}>
+                <CampanaPortal />
+                <button onClick={cerrarSesion} style={styles.btnGhost} title="Cerrar sesión">
+                  <LogOut size={14} /> Cerrar sesión
+                </button>
+              </div>
             )}
           </header>
         )}
@@ -1310,6 +1384,18 @@ function PantallaDeclaracion({ cliente, setToast }) {
     // Solo al montar: el parámetro se consume una vez.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  /* (2026-11-09) La campana y el Resumen llevan a una pestaña y, si el aviso
+     es de un pedido, lo despliegan. Una pestaña no habilitada cae en Resumen
+     (tabActiva lo resuelve). */
+  useEffect(() => {
+    const ir = (e) => {
+      const { tab: destino, pedido } = e.detail || {};
+      if (destino) setTab(destino);
+      if (pedido) setPedidoDestacado(Number(pedido));
+    };
+    window.addEventListener(PORTAL_IR_A, ir);
+    return () => window.removeEventListener(PORTAL_IR_A, ir);
+  }, []);
   /* (2026-10-19) Inventario por lotes de costo: con las tablas listas, en
      Gestión de Stock el stock solo baja, el precio unitario no se edita (es el
      costo promedio de los lotes) y los productos nuevos entran por Inventario. */
@@ -1522,6 +1608,9 @@ function PantallaDeclaracion({ cliente, setToast }) {
       // silencioso — no rompe la UI
     } finally {
       setCargandoSolicitudes(false);
+      // Cambió algo en los pedidos (aprobó, pagó, respondió): la campana y el
+      // Resumen recalculan los pendientes.
+      window.dispatchEvent(new Event(NOTIF_REFRESCAR));
     }
   }
 
@@ -2009,9 +2098,9 @@ function PantallaDeclaracion({ cliente, setToast }) {
         conInventario={inventarioListo}
       />
 
-      {/* Avisos sin leer (despacho en curso). Van arriba de todo porque es lo
-          primero que el cliente tiene que ver al entrar. */}
-      <AvisosPortal onVerHistorial={habil("actividad") ? () => setTab("actividad") : null} />
+      {/* (2026-11-09) Los avisos sin leer ya no van como franja sobre las
+          pestañas: están en la campana de la barra superior y en el bloque
+          «Pendientes / Novedades» del Resumen. */}
 
       {/* (2026-10-01) Refrescar. El portal carga sus datos al entrar y despues
           se queda quieto: si Amsodent valida un pedido o despacha mientras el
@@ -2622,6 +2711,7 @@ const ICONO_ACTIVIDAD = {
   pago_rechazado: { icono: AlertTriangle, color: "#b91c1c", bg: "#fee2e2" },
   // (2026-11-09) Pago por el link fijo de Webpay: el cliente avisa y Amsodent lo registra.
   pago_informado: { icono: Activity, color: "#6d28d9", bg: "#ede9fe" },
+  pedido_listo_para_pagar: { icono: CreditCard, color: "#6d28d9", bg: "#ede9fe" },
   pagado: { icono: CheckCircle2, color: "#15803d", bg: "#dcfce7" },
   pedido_pagado: { icono: CheckCircle2, color: "#15803d", bg: "#dcfce7" },
   despacho: { icono: Truck, color: "#0369a1", bg: "#e0f2fe" },
@@ -2832,49 +2922,273 @@ function PanelHistorialPortal() {
 
 /* Aviso de despacho en curso (y cualquier otro aviso sin leer) arriba del
    portal: el cliente se entera al entrar, sin depender del correo. */
-function AvisosPortal({ onVerHistorial }) {
-  const [avisos, setAvisos] = useState([]);
+/* ── Notificaciones del portal (2026-11-09) ──────────────────────────────
+   Reemplazan a la franja de avisos que salía sobre las pestañas. Dos piezas
+   que leen lo mismo (useNotificacionesPortal):
+   - CampanaPortal, en la barra superior: el número suma lo que le toca hacer
+     al cliente y los avisos de Amsodent sin leer.
+   - BloqueNotificacionesResumen, arriba del Resumen: «Pendientes de tu
+     parte» y «Novedades», siempre a la vista aunque no haya nada.
+   Tocar un aviso lo marca leído y lleva al pedido. */
+
+/** A dónde lleva un aviso de Amsodent. */
+function destinoAviso(a) {
+  if (a?.solicitud_id) return ["solicitudes", a.solicitud_id];
+  if (a?.licitacion_id) return ["solicitudes", null];
+  return ["actividad", null];
+}
+
+function FilaPendiente({ p, onClick }) {
+  const m = ICONO_PENDIENTE[p.tipo] || ICONO_PENDIENTE.mensaje;
+  const Icono = m.icono;
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={!onClick}
+      style={{
+        display: "flex", alignItems: "flex-start", gap: 10, width: "100%", textAlign: "left",
+        background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: "9px 11px",
+        cursor: onClick ? "pointer" : "default", fontFamily: "inherit",
+      }}
+    >
+      <span style={{ flex: "0 0 auto", width: 30, height: 30, borderRadius: 999, background: m.bg, color: m.color, display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
+        <Icono size={15} />
+      </span>
+      <span style={{ minWidth: 0, flex: 1 }}>
+        <span style={{ display: "block", fontSize: 12.5, fontWeight: 700, color: "#0f172a" }}>{p.titulo}</span>
+        <span style={{ display: "block", fontSize: 11.5, color: "#64748b", marginTop: 1 }}>{p.detalle}</span>
+      </span>
+      {onClick && <ChevronRight size={15} style={{ flex: "0 0 auto", color: "#94a3b8", marginTop: 7 }} />}
+    </button>
+  );
+}
+
+function FilaAviso({ a, onClick }) {
+  const m = ICONO_ACTIVIDAD[a.tipo] || { icono: Activity, color: "#475569", bg: "#f1f5f9" };
+  const Icono = m.icono;
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        display: "flex", alignItems: "flex-start", gap: 10, width: "100%", textAlign: "left",
+        background: a.leido ? "#fff" : "#f0fdfa", border: `1px solid ${a.leido ? "#f1f5f9" : "#99f6e4"}`,
+        borderRadius: 10, padding: "9px 11px", cursor: "pointer", fontFamily: "inherit",
+      }}
+    >
+      <span style={{ flex: "0 0 auto", width: 30, height: 30, borderRadius: 999, background: m.bg, color: m.color, display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
+        <Icono size={15} />
+      </span>
+      <span style={{ minWidth: 0, flex: 1 }}>
+        <span style={{ display: "block", fontSize: 12.5, fontWeight: a.leido ? 500 : 700, color: "#0f172a", lineHeight: 1.4 }}>{a.descripcion}</span>
+        <span style={{ display: "block", fontSize: 11, color: "#94a3b8", marginTop: 2 }}>{fmtFechaHora(a.created_at)}</span>
+      </span>
+      {!a.leido && <span aria-label="Sin leer" style={{ flex: "0 0 auto", width: 8, height: 8, borderRadius: 999, background: TEAL, marginTop: 6 }} />}
+    </button>
+  );
+}
+
+const tituloSeccionNotif = { fontSize: 10.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".05em", color: "#94a3b8", margin: "4px 0 6px" };
+const botonEnlaceNotif = { background: "none", border: "none", padding: 0, color: TEAL, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" };
+
+function CampanaPortal() {
+  const { pendientes, avisos, sin_leer, cargado, marcarLeidas } = useNotificacionesPortal();
+  const [abierta, setAbierta] = useState(false);
+  const botonRef = useRef(null);
+  const panelRef = useRef(null);
 
   useEffect(() => {
-    let vivo = true;
-    apiRequest("/stock-clientes/mis-avisos")
-      .then((r) => { if (vivo) setAvisos(Array.isArray(r) ? r : []); })
-      .catch(() => {});
-    return () => { vivo = false; };
-  }, []);
+    if (!abierta) return;
+    const fuera = (e) => {
+      if (botonRef.current?.contains(e.target) || panelRef.current?.contains(e.target)) return;
+      setAbierta(false);
+    };
+    const esc = (e) => { if (e.key === "Escape") setAbierta(false); };
+    document.addEventListener("mousedown", fuera);
+    window.addEventListener("keydown", esc);
+    return () => {
+      document.removeEventListener("mousedown", fuera);
+      window.removeEventListener("keydown", esc);
+    };
+  }, [abierta]);
 
-  if (!avisos.length) return null;
-
-  async function descartar() {
-    setAvisos([]);
-    apiRequest("/stock-clientes/mis-avisos/leidos", { method: "POST" }).catch(() => {});
-  }
+  const total = sin_leer + pendientes.length;
+  const ir = (tab, pedido) => {
+    setAbierta(false);
+    irAPortal(tab, pedido);
+  };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 }}>
-      {avisos.map((a) => (
+    <>
+      <button
+        ref={botonRef}
+        type="button"
+        onClick={() => setAbierta((v) => !v)}
+        aria-expanded={abierta}
+        aria-label={total > 0 ? `Notificaciones: ${total} por revisar` : "Notificaciones"}
+        title="Notificaciones"
+        style={{
+          position: "relative", width: 40, height: 40, flex: "0 0 auto", borderRadius: 999,
+          border: "1px solid #cbd5e1", background: abierta ? "#f0fdfa" : "#fff", color: "#0f172a",
+          display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer",
+        }}
+      >
+        <Bell size={18} />
+        {total > 0 && (
+          <span
+            style={{
+              position: "absolute", top: -5, right: -5, minWidth: 19, height: 19, padding: "0 5px",
+              borderRadius: 999, background: "#dc2626", color: "#fff", fontSize: 10.5, fontWeight: 800,
+              display: "inline-flex", alignItems: "center", justifyContent: "center", border: "2px solid #fff",
+            }}
+          >
+            {total > 99 ? "99+" : total}
+          </span>
+        )}
+      </button>
+
+      {abierta && (
         <div
-          key={a.id}
+          ref={panelRef}
+          role="dialog"
+          aria-label="Notificaciones"
           style={{
-            display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
-            border: "1px solid #bae6fd", background: "#f0f9ff", borderRadius: 12, padding: "10px 14px",
+            position: "absolute", top: "calc(100% + 8px)", right: 0, zIndex: 13000, boxSizing: "border-box",
+            width: "min(380px, calc(100vw - 32px))", maxHeight: "min(70vh, 560px)", overflowY: "auto",
+            background: "#fff", border: "1px solid #e2e8f0", borderRadius: 14,
+            boxShadow: "0 24px 60px -12px rgba(15,23,42,.30)", padding: "12px 12px 10px",
           }}
         >
-          {a.tipo === "cotizacion_aprobada"
-            ? <CheckCircle2 size={16} style={{ color: "#15803d", flexShrink: 0 }} />
-            : <Truck size={16} style={{ color: "#0369a1", flexShrink: 0 }} />}
-          <span style={{ fontSize: 13.5, color: "#0c4a6e", flex: 1, minWidth: 180 }}>{a.descripcion}</span>
-          <span style={{ fontSize: 11.5, color: "#0369a1" }}>{fmtFechaHora(a.created_at)}</span>
-          {onVerHistorial && (
-            <button type="button" onClick={onVerHistorial} style={{ ...styles.btnSecundarioChico, whiteSpace: "nowrap" }}>
-              Ver actividad
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+            <strong style={{ fontSize: 14, color: "#0f172a", flex: 1 }}>Notificaciones</strong>
+            {sin_leer > 0 && (
+              <button type="button" onClick={() => marcarLeidas()} style={botonEnlaceNotif}>
+                Marcar todo como leído
+              </button>
+            )}
+          </div>
+
+          {!cargado ? (
+            <div style={{ fontSize: 12.5, color: "#94a3b8", padding: "10px 2px" }}>Cargando…</div>
+          ) : pendientes.length === 0 && avisos.length === 0 ? (
+            <div style={{ fontSize: 12.5, color: "#64748b", padding: "10px 2px" }}>No tienes notificaciones.</div>
+          ) : (
+            <>
+              {pendientes.length > 0 && (
+                <>
+                  <div style={tituloSeccionNotif}>Pendientes de tu parte</div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 10 }}>
+                    {pendientes.map((p) => (
+                      <FilaPendiente key={p.clave} p={p} onClick={() => ir("solicitudes", p.solicitud_id)} />
+                    ))}
+                  </div>
+                </>
+              )}
+              {avisos.length > 0 && (
+                <>
+                  <div style={tituloSeccionNotif}>Novedades</div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    {avisos.map((a) => (
+                      <FilaAviso
+                        key={a.id}
+                        a={a}
+                        onClick={() => {
+                          if (!a.leido) marcarLeidas([a.id]);
+                          const [tab, pedido] = destinoAviso(a);
+                          ir(tab, pedido);
+                        }}
+                      />
+                    ))}
+                  </div>
+                </>
+              )}
+            </>
+          )}
+
+          <div style={{ borderTop: "1px solid #f1f5f9", marginTop: 10, paddingTop: 8, textAlign: "center" }}>
+            <button type="button" onClick={() => ir("actividad")} style={botonEnlaceNotif}>
+              Ver toda la actividad
+            </button>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+function BloqueNotificacionesResumen({ puedeIr = () => true }) {
+  const { pendientes, avisos, sin_leer, cargado, marcarLeidas } = useNotificacionesPortal();
+  const recientes = avisos.slice(0, 6);
+  const tarjeta = { background: "#fff", border: "1px solid #e2e8f0", borderRadius: 14, padding: "14px 16px", minWidth: 0 };
+  const chip = (texto, color, bg) => (
+    <span style={{ fontSize: 11, fontWeight: 800, color, background: bg, borderRadius: 999, padding: "2px 9px" }}>{texto}</span>
+  );
+
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(320px, 100%), 1fr))", gap: 14 }}>
+      <div style={{ ...tarjeta, borderTop: `3px solid ${pendientes.length ? "#c2410c" : "#15803d"}` }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+          <span style={{ fontSize: 13, fontWeight: 800, color: "#0f172a" }}>Pendientes de tu parte</span>
+          {pendientes.length > 0 && chip(String(pendientes.length), "#9a3412", "#ffedd5")}
+        </div>
+        {!cargado ? (
+          <div style={{ fontSize: 12.5, color: "#94a3b8" }}>Cargando…</div>
+        ) : pendientes.length === 0 ? (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: "#15803d", fontWeight: 600 }}>
+            <CheckCircle2 size={16} /> Estás al día: no tienes nada pendiente con Amsodent.
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {pendientes.map((p) => (
+              <FilaPendiente
+                key={p.clave}
+                p={p}
+                onClick={puedeIr("solicitudes") ? () => irAPortal("solicitudes", p.solicitud_id) : null}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div style={{ ...tarjeta, borderTop: `3px solid ${TEAL}` }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+          <span style={{ fontSize: 13, fontWeight: 800, color: "#0f172a" }}>Novedades</span>
+          {sin_leer > 0 && chip(`${sin_leer} nueva${sin_leer === 1 ? "" : "s"}`, "#0f5f61", "#ccfbf1")}
+          <span style={{ flex: 1 }} />
+          {sin_leer > 0 && (
+            <button type="button" onClick={() => marcarLeidas()} style={botonEnlaceNotif}>
+              Marcar como leídas
             </button>
           )}
-          <button type="button" onClick={descartar} title="Descartar" style={{ background: "none", border: "none", cursor: "pointer", color: "#0369a1", padding: 2 }}>
-            <X size={16} />
-          </button>
         </div>
-      ))}
+        {!cargado ? (
+          <div style={{ fontSize: 12.5, color: "#94a3b8" }}>Cargando…</div>
+        ) : recientes.length === 0 ? (
+          <div style={{ fontSize: 12.5, color: "#94a3b8" }}>Aún no hay novedades de Amsodent.</div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {recientes.map((a) => (
+              <FilaAviso
+                key={a.id}
+                a={a}
+                onClick={() => {
+                  if (!a.leido) marcarLeidas([a.id]);
+                  const [tab, pedido] = destinoAviso(a);
+                  if (puedeIr(tab)) irAPortal(tab, pedido);
+                }}
+              />
+            ))}
+          </div>
+        )}
+        {puedeIr("actividad") && (
+          <div style={{ marginTop: 10 }}>
+            <button type="button" onClick={() => irAPortal("actividad")} style={botonEnlaceNotif}>
+              Ver toda la actividad →
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -6032,9 +6346,6 @@ function DashboardComercial({ items, solicitudes, cotizaciones, credito, onIrA, 
     const pedidosAbiertos = (solicitudes || []).filter(
       (s) => !["pagado", "cancelado", "rechazado"].includes(String(s.flujo_estado || "")),
     );
-    const porPagar = (solicitudes || []).filter((s) => String(s.flujo_estado || "") === "validado_plataforma");
-    // (2026-11-09) Pedidos con una observación de Amsodent que espera respuesta.
-    const observados = (solicitudes || []).filter((s) => String(s.flujo_estado || "") === "observado");
 
     return {
       productos: conNombre.length,
@@ -6047,8 +6358,6 @@ function DashboardComercial({ items, solicitudes, cotizaciones, credito, onIrA, 
       ultimas,
       serie: [...porMes.entries()],
       pedidosAbiertos: pedidosAbiertos.length,
-      porPagar,
-      observados,
     };
   }, [items, solicitudes, cotizaciones]);
 
@@ -6056,33 +6365,10 @@ function DashboardComercial({ items, solicitudes, cotizaciones, credito, onIrA, 
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14, marginBottom: 18 }}>
-      {/* Lo que requiere acción va primero, no escondido entre los números */}
-      {resumen.observados.length > 0 && (
-        <div style={{ border: "1px solid #fed7aa", background: "#fff7ed", borderRadius: 12, padding: "12px 16px", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-          <AlertTriangle size={16} color="#c2410c" />
-          <span style={{ fontSize: 13, color: "#9a3412", fontWeight: 700 }}>
-            Amsodent necesita tu respuesta en {resumen.observados.length} pedido{resumen.observados.length === 1 ? "" : "s"} para poder seguir.
-          </span>
-          {puedeIr("solicitudes") && (
-            <button type="button" onClick={() => onIrA?.("solicitudes")} style={styles.btnPrimarioChico}>
-              Ver y responder
-            </button>
-          )}
-        </div>
-      )}
-      {resumen.porPagar.length > 0 && (
-        <div style={{ border: "1px solid #ddd6fe", background: "#f5f3ff", borderRadius: 12, padding: "12px 16px", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-          <span style={{ fontSize: 13, color: "#4c1d95", fontWeight: 700 }}>
-            Tienes {resumen.porPagar.length} pedido{resumen.porPagar.length === 1 ? "" : "s"} listo{resumen.porPagar.length === 1 ? "" : "s"} para pagar
-            {" "}({fmtMoneda(resumen.porPagar.reduce((a, p) => a + (Number(p.monto_total) || 0), 0))}).
-          </span>
-          {puedeIr("solicitudes") && (
-            <button type="button" onClick={() => onIrA?.("solicitudes")} style={styles.btnPrimarioChico}>
-              Ver y pagar
-            </button>
-          )}
-        </div>
-      )}
+      {/* Lo que requiere acción va primero, no escondido entre los números.
+          (2026-11-09) Pendientes y novedades en un solo bloque, siempre a la
+          vista: reemplaza a las franjas sueltas de «observado» y «por pagar». */}
+      <BloqueNotificacionesResumen puedeIr={puedeIr} />
       {conStock && resumen.criticos > 0 && (
         <div style={{ border: "1px solid #fecaca", background: "#fef2f2", borderRadius: 12, padding: "12px 16px", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
           <AlertTriangle size={16} color="#b91c1c" />
