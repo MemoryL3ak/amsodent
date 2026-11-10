@@ -1896,13 +1896,13 @@ export class StockClientesService {
     const contactoTelefono = String(body?.contacto_telefono || '').trim() || null;
     const nota = String(body?.nota || '').trim().slice(0, 1000) || null;
 
-    /* (2026-09-16) Etapa inicial según quién envía: el asistente deja el
-       pedido esperando la aprobación del administrador de la cuenta; el
-       administrador no se aprueba a sí mismo, su pedido sale aprobado y la
-       plataforma se entera al tiro. */
+    /* (2026-11-09) Todo pedido nace esperando la aprobación del administrador
+       de la cuenta, también el que envía el propio administrador. Antes (desde
+       el 2026-09-16) el del administrador salía aprobado solo, con su correo
+       como aprobador y la misma hora del envío: la bandeja mostraba «Aprobado
+       por el cliente» sin que nadie hubiera aprobado nada (solicitud 28). La
+       plataforma se entera recién cuando se aprueba (aprobarComoCliente). */
     const rol = rolDeToken(payload);
-    const yaAprobado = rol === 'admin';
-    const ahoraIso = new Date().toISOString();
     const SECCIONES = ['stock', 'explorador', 'showroom', 'ofertas'];
     const origenSeccion = SECCIONES.includes(String(body?.origen_seccion || ''))
       ? String(body.origen_seccion)
@@ -1910,11 +1910,9 @@ export class StockClientesService {
 
     const camposFlujo = {
       origen_seccion: origenSeccion,
-      flujo_estado: yaAprobado ? 'aprobado_cliente' : 'pendiente_aprobacion',
+      flujo_estado: 'pendiente_aprobacion',
       creado_por_usuario_id: payload.usuario_id ?? null,
       creado_por_email: payload.usuario_email ?? null,
-      aprobado_cliente_at: yaAprobado ? ahoraIso : null,
-      aprobado_cliente_por: yaAprobado ? (payload.usuario_email || 'cuenta principal') : null,
     };
 
     const client = this.supabase.getClient();
@@ -1936,7 +1934,9 @@ export class StockClientesService {
     let { data: solicitud, error } = await insertar({ ...base, ...camposFlujo });
     // Si la migración del flujo aún no está aplicada, el pedido se crea igual
     // (y se comporta como antes: sin etapa de aprobación).
-    if (error && /flujo_estado|creado_por|aprobado_cliente|origen_seccion/.test(error.message)) {
+    let conFlujo = true;
+    if (error && /flujo_estado|creado_por|origen_seccion/.test(error.message)) {
+      conFlujo = false;
       ({ data: solicitud, error } = await insertar(base));
     }
     if (error) throw new BadRequestException(error.message);
@@ -1944,12 +1944,15 @@ export class StockClientesService {
     // Mientras espera la aprobación del cliente, la plataforma NO se entera:
     // avisar de un pedido que su propio administrador todavía no aprobó sería
     // ruido (punto 10 — la plataforma se entera cuando se aprueba).
-    if (!yaAprobado) {
+    if (conFlujo) {
       return {
         ok: true,
         solicitud: { id: solicitud?.id, items: items.length },
         flujo_estado: 'pendiente_aprobacion',
-        mensaje: 'Tu pedido quedó esperando la aprobación del administrador de la cuenta.',
+        mensaje:
+          rol === 'admin'
+            ? 'Tu pedido quedó esperando tu aprobación: apruébalo en «Mis cotizaciones» para enviarlo a Amsodent.'
+            : 'Tu pedido quedó esperando la aprobación del administrador de la cuenta.',
       };
     }
 
@@ -2611,7 +2614,8 @@ export class StockClientesService {
     if (licIds.length) {
       const { data: lics } = await client
         .from('licitaciones')
-        .select('id, id_licitacion, estado')
+        // total_con_iva: el modal de validación lo compara con el total que cobra.
+        .select('id, id_licitacion, estado, total_con_iva')
         .in('id', licIds);
       (lics || []).forEach((l: any) => { licMap[l.id] = l; });
     }
@@ -2634,7 +2638,12 @@ export class StockClientesService {
     return rows.map((r) => ({
       ...r,
       cotizacion: r.licitacion_id && licMap[r.licitacion_id]
-        ? { id: licMap[r.licitacion_id].id, id_licitacion: licMap[r.licitacion_id].id_licitacion, estado: licMap[r.licitacion_id].estado }
+        ? {
+            id: licMap[r.licitacion_id].id,
+            id_licitacion: licMap[r.licitacion_id].id_licitacion,
+            estado: licMap[r.licitacion_id].estado,
+            total_con_iva: licMap[r.licitacion_id].total_con_iva ?? null,
+          }
         : null,
       mensajes_no_leidos: noLeidos[r.id] || 0,
     }));

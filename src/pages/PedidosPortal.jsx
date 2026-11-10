@@ -51,7 +51,7 @@ const estadoMeta = (e) => ESTADOS.find((x) => x.value === e) || ESTADOS[0];
    cliente. Y la salida «rechazado» con motivo. Mismo orden que el backend
    (pedidos-flujo-etapas.ts). */
 const FLUJO = [
-  { value: "pendiente_aprobacion", label: "Espera al cliente", bg: "#fef3c7", fg: "#b45309", ayuda: "El pedido lo armó un asistente; falta que lo apruebe el administrador de la cuenta." },
+  { value: "pendiente_aprobacion", label: "Espera al cliente", bg: "#fef3c7", fg: "#b45309", ayuda: "Falta que lo apruebe el administrador de la cuenta del cliente (todo pedido lo espera, también el que él mismo envía)." },
   { value: "aprobado_cliente", label: "Por revisar", bg: "#e0f2fe", fg: "#0369a1", ayuda: "El cliente ya aprobó y nadie lo ha tomado: hay que revisarlo, cotizar y confirmar existencias." },
   { value: "en_revision", label: "En revisión", bg: "#ccfbf1", fg: "#0f766e", ayuda: "Alguien de Amsodent tomó el pedido y lo está revisando." },
   { value: "cotizacion_enviada", label: "Cotización enviada", bg: "#e0e7ff", fg: "#4338ca", ayuda: "El cliente tiene la cotización en su portal: puede darla por buena o pedir cambios." },
@@ -1416,56 +1416,159 @@ function PanelFlujoPedido({ pedido, ocupado = false, onValidar, onTomar, onObser
   );
 }
 
-/* ── Modal: confirmar existencias producto por producto y emitir el pago ── */
+/* ── Modal: confirmar existencias producto por producto y emitir el pago ──
+   (2026-11-09) El precio unitario salía en blanco: solo se llenaba con el
+   `precio_referencia` de la línea, que traen las del Explorador de precios y
+   las ofertas, pero no las de Gestión de Stock ni la mayoría del catálogo
+   (solicitud 28). Ahora se sugiere, en este orden:
+     1. lo que se puso en la validación anterior (al revalidar);
+     2. la cotización vinculada al pedido (mismo SKU, o mismo nombre);
+     3. el precio de la oferta, si la línea viene de una;
+     4. el precio de lista que ve el cliente en el portal (lista 2, si no 1);
+     5. la referencia de tienda que trajo la línea.
+   Los precios son NETOS, como en la cotización y el catálogo, y el link de
+   pago cobra el total con IVA: antes el total era la suma simple y, con
+   precios netos, el cliente habría pagado sin IVA. */
+const IVA_PEDIDO = 0.19;
+const claveTexto = (v) => String(v || "").trim().toLowerCase();
+const ORIGEN_PRECIO = {
+  validacion: "validación anterior",
+  cotizacion: "de la cotización",
+  oferta: "precio de oferta",
+  lista: "precio de lista",
+  referencia: "referencia de tienda",
+};
+
 function ModalValidarPedido({ pedido, guardando, onCerrar, onConfirmar }) {
   const itemsPedido = Array.isArray(pedido.items) ? pedido.items : [];
   const previos = Array.isArray(pedido.disponibilidad) ? pedido.disponibilidad : [];
+  const licId = Number(pedido.cotizacion?.id || pedido.licitacion_id) || null;
   const [filas, setFilas] = useState(() =>
     itemsPedido.map((it) => {
       const previo = previos.find((p) => p.nombre === it.nombre);
+      const precioPrevio = previo ? Number(previo.precio_unitario) || 0 : 0;
       return {
         nombre: it?.nombre || "",
         cantidad_solicitada: Number(it?.cantidad) || 0,
         cantidad_disponible: previo ? Number(previo.cantidad_disponible) : Number(it?.cantidad) || 0,
-        precio_unitario: previo ? Number(previo.precio_unitario) : Number(it?.precio_referencia) || 0,
+        precio_unitario: precioPrevio > 0 ? precioPrevio : "",
+        origen: precioPrevio > 0 ? "validacion" : "",
         nota: previo?.nota || "",
       };
     }),
   );
+  // Precio sugerido por fila ({ precio, origen } o null), ya sin contar la validación anterior.
+  const [sugeridos, setSugeridos] = useState([]);
+  const [cargandoPrecios, setCargandoPrecios] = useState(true);
   const [nota, setNota] = useState("");
 
+  useEffect(() => {
+    let vivo = true;
+    (async () => {
+      const porSku = new Map();
+      const porNombre = new Map();
+      if (licId) {
+        try {
+          const items = await api.get(`/licitaciones/${licId}/items`);
+          for (const it of Array.isArray(items) ? items : []) {
+            const precio = Number(it?.valor_unitario) || 0;
+            if (precio <= 0) continue;
+            if (it?.sku && !porSku.has(claveTexto(it.sku))) porSku.set(claveTexto(it.sku), precio);
+            if (it?.producto && !porNombre.has(claveTexto(it.producto))) porNombre.set(claveTexto(it.producto), precio);
+          }
+        } catch { /* sin la cotización se sigue con el catálogo */ }
+      }
+      const deCotizacion = (it) => porSku.get(claveTexto(it?.sku)) || porNombre.get(claveTexto(it?.nombre)) || 0;
+      // El catálogo completo solo se pide si alguna línea con SKU no quedó con precio.
+      const lista = new Map();
+      if (itemsPedido.some((it) => it?.sku && !deCotizacion(it))) {
+        try {
+          const productos = await api.get("/productos/list");
+          for (const p of Array.isArray(productos) ? productos : []) {
+            const precio = Number(p?.lista2) || Number(p?.lista1) || 0;
+            if (p?.sku && precio > 0) lista.set(claveTexto(p.sku), precio);
+          }
+        } catch { /* sin catálogo quedan la oferta y la referencia */ }
+      }
+      const resultado = itemsPedido.map((it) => {
+        const cot = deCotizacion(it);
+        if (cot) return { precio: cot, origen: "cotizacion" };
+        const ref = Number(it?.precio_referencia) || 0;
+        if (it?.oferta && ref > 0) return { precio: ref, origen: "oferta" };
+        const lis = lista.get(claveTexto(it?.sku));
+        if (lis) return { precio: lis, origen: "lista" };
+        return ref > 0 ? { precio: ref, origen: "referencia" } : null;
+      });
+      if (!vivo) return;
+      setSugeridos(resultado);
+      setFilas((prev) =>
+        prev.map((f, i) =>
+          f.precio_unitario === "" && resultado[i] ? { ...f, precio_unitario: resultado[i].precio, origen: resultado[i].origen } : f,
+        ),
+      );
+      setCargandoPrecios(false);
+    })();
+    return () => { vivo = false; };
+    // Solo al abrir: el pedido no cambia mientras el modal está abierto.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const set = (i, patch) => setFilas((prev) => prev.map((f, k) => (k === i ? { ...f, ...patch } : f)));
-  const total = filas.reduce((acc, f) => acc + Number(f.cantidad_disponible || 0) * Number(f.precio_unitario || 0), 0);
+  const neto = filas.reduce((acc, f) => acc + Number(f.cantidad_disponible || 0) * Number(f.precio_unitario || 0), 0);
+  const iva = Math.round(neto * IVA_PEDIDO);
+  const total = Math.round(neto) + iva;
   const faltantes = filas.filter((f) => Number(f.cantidad_disponible) < Number(f.cantidad_solicitada));
+  const sinPrecio = filas.filter((f) => !(Number(f.precio_unitario) > 0)).length;
+  // Al revalidar, la validación anterior manda; si sus precios difieren de los sugeridos se ofrece reemplazarlos.
+  const distintos = filas.filter((f, i) => sugeridos[i] && Number(f.precio_unitario) !== sugeridos[i].precio).length;
+  const usarSugeridos = () =>
+    setFilas((prev) => prev.map((f, i) => (sugeridos[i] ? { ...f, precio_unitario: sugeridos[i].precio, origen: sugeridos[i].origen } : f)));
+  const totalCotizacion = Number(pedido.cotizacion?.total_con_iva) || 0;
 
   return (
     <div
       onMouseDown={(e) => { if (e.target === e.currentTarget) onCerrar(); }}
       style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,.55)", zIndex: 12000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
     >
-      <div style={{ width: 760, maxWidth: "100%", maxHeight: "88vh", overflow: "auto", background: "var(--surface)", borderRadius: 14, padding: 20, border: "1px solid var(--border)" }}>
+      <div style={{ width: 800, maxWidth: "100%", minWidth: 0, boxSizing: "border-box", maxHeight: "88vh", overflow: "auto", background: "var(--surface)", borderRadius: 14, padding: 20, border: "1px solid var(--border)" }}>
         <h3 style={{ margin: "0 0 4px", fontSize: 16, fontWeight: 800, color: "var(--text)" }}>
           Validar el pedido N° {pedido.id}
         </h3>
         <p style={{ margin: "0 0 14px", fontSize: 12.5, color: "var(--text-muted)" }}>
-          Confirma cuánto hay de cada producto y a qué precio. Con eso se calcula el monto y se le
-          envía al cliente el link de pago, al portal y por correo.
+          Confirma cuánto hay de cada producto y su precio neto
+          {licId ? <> (sugerido desde la cotización #{licId} o el precio de lista)</> : <> (sugerido desde el precio de lista)</>}.
+          El link de pago cobra el total con IVA y le llega al cliente al portal y por correo.
         </p>
 
+        {!cargandoPrecios && distintos > 0 && (
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 10, fontSize: 12.5, color: "#0369a1", background: "#f0f9ff", border: "1px solid #bae6fd", borderRadius: 9, padding: "8px 12px" }}>
+            <span style={{ flex: "1 1 240px" }}>
+              {distintos} precio{distintos === 1 ? "" : "s"} de la validación anterior no coincide{distintos === 1 ? "" : "n"} con
+              {licId ? " la cotización o el precio de lista" : " el precio de lista"}.
+            </span>
+            <button type="button" className="btn btn-secondary btn-sm" onClick={usarSugeridos}>
+              Usar precios sugeridos
+            </button>
+          </div>
+        )}
+
         <div className="table-wrap">
-          <table className="data-table">
+          {/* tabla-texto: los nombres largos parten línea en vez de empujar
+              las columnas de precio fuera del modal. */}
+          <table className="data-table tabla-compacta tabla-texto">
             <thead>
               <tr>
-                <th style={{ textAlign: "left" }}>Producto</th>
-                <th style={{ textAlign: "right", width: 90 }}>Pedido</th>
-                <th style={{ textAlign: "right", width: 110 }}>Disponible</th>
-                <th style={{ textAlign: "right", width: 130 }}>Precio unit.</th>
-                <th style={{ textAlign: "right", width: 120 }}>Subtotal</th>
+                <th style={{ textAlign: "left", minWidth: 180 }}>Producto</th>
+                <th style={{ textAlign: "right", width: 80 }}>Pedido</th>
+                <th style={{ textAlign: "right", width: 100 }}>Disponible</th>
+                <th style={{ textAlign: "right", width: 140 }} title="Sin IVA, como en la cotización">Precio unit. neto</th>
+                <th style={{ textAlign: "right", width: 110 }}>Subtotal neto</th>
               </tr>
             </thead>
             <tbody>
               {filas.map((f, i) => {
                 const falta = Number(f.cantidad_disponible) < Number(f.cantidad_solicitada);
+                const sinValor = !(Number(f.precio_unitario) > 0);
                 return (
                   <tr key={i} style={{ background: falta ? "#fff7ed" : undefined }}>
                     <td>
@@ -1486,7 +1589,7 @@ function ModalValidarPedido({ pedido, guardando, onCerrar, onConfirmar }) {
                         min={0}
                         value={f.cantidad_disponible}
                         onChange={(e) => set(i, { cantidad_disponible: e.target.value })}
-                        style={{ height: 30, width: 90, textAlign: "right" }}
+                        style={{ height: 30, width: 80, textAlign: "right" }}
                       />
                     </td>
                     <td style={{ textAlign: "right" }}>
@@ -1495,9 +1598,19 @@ function ModalValidarPedido({ pedido, guardando, onCerrar, onConfirmar }) {
                         type="number"
                         min={0}
                         value={f.precio_unitario}
-                        onChange={(e) => set(i, { precio_unitario: e.target.value })}
-                        style={{ height: 30, width: 110, textAlign: "right" }}
+                        placeholder={cargandoPrecios && f.precio_unitario === "" ? "Buscando…" : "0"}
+                        onChange={(e) => set(i, { precio_unitario: e.target.value, origen: "" })}
+                        style={{ height: 30, width: 110, textAlign: "right", borderColor: !cargandoPrecios && sinValor ? "#f59e0b" : undefined }}
                       />
+                      <div style={{ fontSize: 10.5, marginTop: 2, color: !cargandoPrecios && sinValor ? "#b45309" : "var(--text-muted)" }}>
+                        {cargandoPrecios && f.precio_unitario === ""
+                          ? "buscando precio…"
+                          : sinValor
+                            ? "sin precio: ingrésalo"
+                            : f.origen === "cotizacion" && licId
+                              ? `de la cotización #${licId}`
+                              : ORIGEN_PRECIO[f.origen] || "ingresado a mano"}
+                      </div>
                     </td>
                     <td style={{ textAlign: "right", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
                       {fmtCLP(Number(f.cantidad_disponible || 0) * Number(f.precio_unitario || 0))}
@@ -1516,7 +1629,7 @@ function ModalValidarPedido({ pedido, guardando, onCerrar, onConfirmar }) {
           </div>
         )}
 
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 14, gap: 12, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginTop: 14, gap: 12, flexWrap: "wrap" }}>
           <input
             className="input"
             value={nota}
@@ -1524,21 +1637,51 @@ function ModalValidarPedido({ pedido, guardando, onCerrar, onConfirmar }) {
             placeholder="Nota general del pedido (opcional)"
             style={{ flex: "1 1 260px" }}
           />
-          <div style={{ fontSize: 15, fontWeight: 800, color: "var(--text)" }}>
-            Total a pagar: {fmtCLP(total)}
+          <div style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", lineHeight: 1.5 }}>
+            <div style={{ fontSize: 12.5, color: "var(--text-muted)" }}>
+              Neto {fmtCLP(neto)} · IVA 19% {fmtCLP(iva)}
+            </div>
+            <div style={{ fontSize: 15, fontWeight: 800, color: "var(--text)" }}>
+              Total a pagar: {fmtCLP(total)}
+            </div>
+            {totalCotizacion > 0 && Math.abs(totalCotizacion - total) > 1 && (
+              <div style={{ fontSize: 11.5, color: "#b45309" }}>
+                La cotización #{licId} suma {fmtCLP(totalCotizacion)} con IVA.
+              </div>
+            )}
           </div>
         </div>
 
-        <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 16 }}>
+        <div style={{ display: "flex", justifyContent: "flex-end", flexWrap: "wrap", gap: 10, marginTop: 16 }}>
           <button type="button" className="btn btn-secondary" onClick={onCerrar}>Cancelar</button>
           <button
             type="button"
             className="btn btn-primary"
-            disabled={guardando || total <= 0}
-            onClick={() => onConfirmar({ disponibilidad: filas, monto_total: total, nota })}
-            title={total <= 0 ? "El monto debe ser mayor a cero" : "Confirma y envía el link de pago"}
+            disabled={guardando || cargandoPrecios || total <= 0}
+            onClick={() =>
+              onConfirmar({
+                disponibilidad: filas.map(({ nombre, cantidad_solicitada, cantidad_disponible, precio_unitario, nota: n }) => ({
+                  nombre,
+                  cantidad_solicitada,
+                  cantidad_disponible,
+                  precio_unitario,
+                  nota: n,
+                })),
+                monto_total: total,
+                nota,
+              })
+            }
+            title={
+              cargandoPrecios
+                ? "Buscando los precios…"
+                : total <= 0
+                  ? "El monto debe ser mayor a cero"
+                  : sinPrecio
+                    ? `${sinPrecio} producto${sinPrecio === 1 ? "" : "s"} sin precio: quedarán en $0`
+                    : "Confirma y envía el link de pago"
+            }
           >
-            {guardando ? "Guardando…" : "Confirmar y enviar link de pago"}
+            {guardando ? "Guardando…" : `Confirmar y enviar link de pago (${fmtCLP(total)})`}
           </button>
         </div>
       </div>

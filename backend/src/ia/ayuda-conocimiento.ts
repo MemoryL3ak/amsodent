@@ -988,8 +988,9 @@ vendedor (vendedor_correo o, si no hay, creado_por) recibe el aviso
 plataforma («Ver cotización» abre el detalle; «Entendido» la marca leída) y
 un correo con el detalle (quién la cargó, N° de OC, monto neto, cliente). Si la
 carga el mismo vendedor, no se avisa.
-Desde nov 2026 además: PEDIDO DEL PORTAL — cuando llega un pedido del portal
-del cliente (o el administrador de la cuenta aprueba el de un asistente) lo
+Desde nov 2026 además: PEDIDO DEL PORTAL — cuando el administrador de la
+cuenta del cliente aprueba un pedido del portal (desde el 09-11-2026 todo
+pedido espera esa aprobación, también el que envía el propio administrador) lo
 reciben en la campana y en una ventana flotante los destinatarios configurados,
 TODOS los administradores y el vendedor dueño de la cartera del cliente; «Ver
 pedido» abre la bandeja con ese pedido desplegado. PRECIO ACTUALIZADO — aviso a
@@ -1204,11 +1205,14 @@ girasol 🌻). Hoy ayuda en:
   vendedor dueño de la cartera también entra (lo lleva el aviso del pedido) y
   ve solo los pedidos de los clientes de su cartera.
 - FLUJO DEL PEDIDO DEL PORTAL (etapas, desde el 09-11-2026): Espera al cliente
-  (lo armó un asistente; aprueba el administrador de la cuenta) → Por revisar
+  (todo pedido nace aquí, también el que envía el administrador de la cuenta;
+  avanza cuando ese administrador lo aprueba) → Por revisar
   (nadie de Amsodent lo tomó) → En revisión («Tomar el pedido»: queda a nombre
   de quien lo toma y el cliente lo ve) → Cotización enviada (crear la cotización
   desde el pedido la vincula y avisa al cliente, que puede darla por buena o
-  pedir cambios) → Por pagar («Validar existencias y enviar link de pago») →
+  pedir cambios) → Por pagar («Validar existencias y enviar link de pago»:
+  precios NETOS sugeridos desde la cotización vinculada, la oferta o el precio
+  de lista; el link cobra el total con IVA) →
   Pagado (Webpay o crédito; 48-72 hrs para despachar). Paradas y salidas:
   «Observado» («Observar al cliente»: el texto llega al portal, al hilo y por
   correo; el cliente responde «Continuar con el pedido» o lo modifica);

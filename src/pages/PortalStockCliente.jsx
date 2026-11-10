@@ -2588,7 +2588,11 @@ function PantallaDeclaracion({ cliente, setToast }) {
             setToast({
               type: "success",
               titulo: "Solicitud enviada",
-              mensaje: `Recibimos su solicitud por ${resumen.items} producto${resumen.items === 1 ? "" : "s"}. Nuestro equipo se contactará a la brevedad.`,
+              // (2026-11-09) Todo pedido nace esperando la aprobación del
+              // administrador: el servidor dice a quién le toca aprobarlo.
+              mensaje: resumen.mensaje
+                ? `Recibimos su solicitud por ${resumen.items} producto${resumen.items === 1 ? "" : "s"}. ${resumen.mensaje}`
+                : `Recibimos su solicitud por ${resumen.items} producto${resumen.items === 1 ? "" : "s"}. Nuestro equipo se contactará a la brevedad.`,
             });
             cargarSolicitudes();
             setTab("solicitudes");
@@ -5148,7 +5152,7 @@ function PanelExploradorPrecios({ soloCarrito = false }) {
           contacto_telefono: contactoPedido.telefono.trim() || undefined,
         }),
       });
-      setPedidoEnviado({ id: resp?.solicitud?.id });
+      setPedidoEnviado({ id: resp?.solicitud?.id, mensaje: resp?.mensaje });
       // Que la lista de cotizaciones se refresque sola, sin recargar la página.
       window.dispatchEvent(new CustomEvent(PEDIDO_ENVIADO, { detail: { id: resp?.solicitud?.id } }));
       setCarrito([]);
@@ -5478,9 +5482,21 @@ function PanelExploradorPrecios({ soloCarrito = false }) {
         <div style={{ marginTop: 16, padding: "12px 16px", borderRadius: 12, background: "#f0fdf4", border: "1px solid #bbf7d0", display: "flex", alignItems: "center", gap: 10 }}>
           <CheckCircle2 size={18} style={{ color: "#15803d", flexShrink: 0 }} />
           <div style={{ fontSize: 13, color: "#166534" }}>
-            <strong>¡Pedido enviado!</strong> Tu solicitud {pedidoEnviado.id ? `N° ${pedidoEnviado.id} ` : ""}
-            llegó al equipo de Amsodent, que la revisará y te contactará con la cotización formal.
-            Puedes seguirla en la pestaña «Mis cotizaciones».
+            {/* (2026-11-09) Con mensaje del servidor (espera aprobación,
+                cambios recibidos) se muestra ese: el texto fijo decía que el
+                pedido ya había llegado a Amsodent aunque esperara aprobación. */}
+            {pedidoEnviado.mensaje ? (
+              <>
+                <strong>{pedidoEnviado.modificado ? "¡Cambios enviados!" : "¡Pedido enviado!"}</strong>{" "}
+                {pedidoEnviado.id ? `Solicitud N° ${pedidoEnviado.id}. ` : ""}{pedidoEnviado.mensaje}
+              </>
+            ) : (
+              <>
+                <strong>¡Pedido enviado!</strong> Tu solicitud {pedidoEnviado.id ? `N° ${pedidoEnviado.id} ` : ""}
+                llegó al equipo de Amsodent, que la revisará y te contactará con la cotización formal.
+                Puedes seguirla en la pestaña «Mis cotizaciones».
+              </>
+            )}
           </div>
         </div>
       )}
@@ -6276,8 +6292,9 @@ function PanelMisSolicitudes({ solicitudes, cotizacionesHist = [], cargando, onS
     });
   }
 
-  /* Punto 9: el administrador de la cuenta aprueba el pedido que armó un
-     asistente. Punto 15: recién ahí le prometemos 24-48 hrs. */
+  /* Punto 9: el administrador de la cuenta aprueba el pedido (desde el
+     2026-11-09 todos, también los que él mismo envía). Punto 15: recién ahí
+     le prometemos 24-48 hrs. */
   async function aprobar(s) {
     setTrabajando(s.id);
     try {
@@ -6851,14 +6868,15 @@ function BloqueFlujoPedido({ pedido, esAdminPortal, trabajando, credito, onAprob
         <div style={{ margin: "8px 0 0" }}>
           <p style={{ fontSize: 12.5, color: "#475569", margin: 0, lineHeight: 1.5 }}>
             Confirmamos las existencias de tu pedido. Total a pagar:{" "}
-            <strong style={{ color: "#0f172a" }}>{fmtMoneda(pedido.monto_total)}</strong>.
+            <strong style={{ color: "#0f172a" }}>{fmtMoneda(pedido.monto_total)}</strong> (IVA incluido).
           </p>
           {disponibilidad.length > 0 && (
             <ul style={{ margin: "8px 0 0", paddingLeft: 18, fontSize: 12, color: "#475569", lineHeight: 1.6 }}>
               {disponibilidad.map((d, i) => (
                 <li key={i} style={{ color: Number(d.cantidad_disponible) < Number(d.cantidad_solicitada) ? "#b45309" : undefined }}>
                   {d.nombre}: {d.cantidad_disponible} de {d.cantidad_solicitada}
-                  {d.precio_unitario ? ` · ${fmtMoneda(d.precio_unitario)} c/u` : ""}
+                  {/* (2026-11-09) Desde la validación con precios sugeridos, el unitario es neto. */}
+                  {d.precio_unitario ? ` · ${fmtMoneda(d.precio_unitario)} c/u + IVA` : ""}
                   {d.nota ? ` — ${d.nota}` : ""}
                 </li>
               ))}
@@ -7615,7 +7633,7 @@ function ModalSolicitudCotizacion({
           sucursal_id: sucursalId ?? undefined,
         }),
       });
-      onEnviado?.({ items: itemsListos.length, id: res?.solicitud?.id });
+      onEnviado?.({ items: itemsListos.length, id: res?.solicitud?.id, mensaje: res?.mensaje });
     } catch (e) {
       setToast({
         type: "error",
