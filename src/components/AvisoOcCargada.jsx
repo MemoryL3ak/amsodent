@@ -70,6 +70,9 @@ const TIPOS = {
   },
   stock_solicitud_cotizacion: pedidoPortal("Nuevo pedido del portal"),
   pedido_portal_aprobado: pedidoPortal("Pedido del portal aprobado"),
+  // (2026-11-09) El cliente respondió y el pedido vuelve a nuestras manos.
+  pedido_portal_conforme: pedidoPortal("El cliente aceptó la cotización"),
+  pedido_portal_observacion_respondida: pedidoPortal("El cliente respondió la observación"),
 };
 
 const clp = (n) => `$${Math.round(Number(n) || 0).toLocaleString("es-CL")}`;

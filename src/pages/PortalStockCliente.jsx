@@ -1296,6 +1296,20 @@ function FeatureItem({ icono: Icono, titulo, texto, delay = 0 }) {
    ────────────────────────────────────────────────────────────────────── */
 function PantallaDeclaracion({ cliente, setToast }) {
   const [tab, setTab] = useState("resumen"); // resumen | declaracion | recepcion | inventario | solicitudes | explorador | usuarios
+  /* (2026-11-09) El link de pago del correo (?pagar=ID) y los avisos del
+     portal (?pedido=ID) abren «Mis cotizaciones» con ese pedido desplegado.
+     Antes el parámetro se ignoraba y el cliente caía en el Resumen. */
+  const [pedidoDestacado, setPedidoDestacado] = useState(() => {
+    const p = new URLSearchParams(window.location.search);
+    return Number(p.get("pagar") || p.get("pedido")) || null;
+  });
+  useEffect(() => {
+    if (!pedidoDestacado) return;
+    setTab("solicitudes");
+    window.history.replaceState({}, "", window.location.pathname);
+    // Solo al montar: el parámetro se consume una vez.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   /* (2026-10-19) Inventario por lotes de costo: con las tablas listas, en
      Gestión de Stock el stock solo baja, el precio unitario no se edita (es el
      costo promedio de los lotes) y los productos nuevos entran por Inventario. */
@@ -2085,6 +2099,8 @@ function PantallaDeclaracion({ cliente, setToast }) {
           onRecargar={cargarSolicitudes}
           setToast={setToast}
           onIrAExplorador={() => setTab("explorador")}
+          abrirPedidoId={pedidoDestacado}
+          onPedidoAbierto={() => setPedidoDestacado(null)}
         />
       ) : (
       /* Listado de productos */
@@ -2606,6 +2622,19 @@ const ICONO_ACTIVIDAD = {
   factura: { icono: FileText, color: "#475569", bg: "#f1f5f9" },
   sos: { icono: Zap, color: "#b91c1c", bg: "#fee2e2" },
   reversa: { icono: RefreshCw, color: "#b45309", bg: "#fef3c7" },
+  // (2026-11-09) Etapas intermedias de la validación y sus avisos.
+  revision_iniciada: { icono: Search, color: "#0f766e", bg: "#ccfbf1" },
+  pedido_en_revision: { icono: Search, color: "#0f766e", bg: "#ccfbf1" },
+  cotizacion_enviada: { icono: FileSpreadsheet, color: "#4338ca", bg: "#e0e7ff" },
+  pedido_cotizacion_enviada: { icono: FileSpreadsheet, color: "#4338ca", bg: "#e0e7ff" },
+  observado: { icono: AlertTriangle, color: "#c2410c", bg: "#ffedd5" },
+  pedido_observado: { icono: AlertTriangle, color: "#c2410c", bg: "#ffedd5" },
+  observacion_respondida: { icono: CheckCircle2, color: "#15803d", bg: "#dcfce7" },
+  rechazado: { icono: AlertCircle, color: "#b91c1c", bg: "#fee2e2" },
+  pedido_rechazado: { icono: AlertCircle, color: "#b91c1c", bg: "#fee2e2" },
+  cancelado: { icono: AlertCircle, color: "#475569", bg: "#f1f5f9" },
+  pedido_cancelado: { icono: AlertCircle, color: "#475569", bg: "#f1f5f9" },
+  reabierto: { icono: RefreshCw, color: "#0369a1", bg: "#e0f2fe" },
 };
 
 const CAMBIO_PEDIDO = {
@@ -5985,6 +6014,8 @@ function DashboardComercial({ items, solicitudes, cotizaciones, credito, onIrA, 
       (s) => !["pagado", "cancelado", "rechazado"].includes(String(s.flujo_estado || "")),
     );
     const porPagar = (solicitudes || []).filter((s) => String(s.flujo_estado || "") === "validado_plataforma");
+    // (2026-11-09) Pedidos con una observación de Amsodent que espera respuesta.
+    const observados = (solicitudes || []).filter((s) => String(s.flujo_estado || "") === "observado");
 
     return {
       productos: conNombre.length,
@@ -5998,6 +6029,7 @@ function DashboardComercial({ items, solicitudes, cotizaciones, credito, onIrA, 
       serie: [...porMes.entries()],
       pedidosAbiertos: pedidosAbiertos.length,
       porPagar,
+      observados,
     };
   }, [items, solicitudes, cotizaciones]);
 
@@ -6006,6 +6038,19 @@ function DashboardComercial({ items, solicitudes, cotizaciones, credito, onIrA, 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14, marginBottom: 18 }}>
       {/* Lo que requiere acción va primero, no escondido entre los números */}
+      {resumen.observados.length > 0 && (
+        <div style={{ border: "1px solid #fed7aa", background: "#fff7ed", borderRadius: 12, padding: "12px 16px", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <AlertTriangle size={16} color="#c2410c" />
+          <span style={{ fontSize: 13, color: "#9a3412", fontWeight: 700 }}>
+            Amsodent necesita tu respuesta en {resumen.observados.length} pedido{resumen.observados.length === 1 ? "" : "s"} para poder seguir.
+          </span>
+          {puedeIr("solicitudes") && (
+            <button type="button" onClick={() => onIrA?.("solicitudes")} style={styles.btnPrimarioChico}>
+              Ver y responder
+            </button>
+          )}
+        </div>
+      )}
       {resumen.porPagar.length > 0 && (
         <div style={{ border: "1px solid #ddd6fe", background: "#f5f3ff", borderRadius: 12, padding: "12px 16px", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
           <span style={{ fontSize: 13, color: "#4c1d95", fontWeight: 700 }}>
@@ -6115,17 +6160,34 @@ function TarjetaResumen({ etiqueta, valor, detalle, color }) {
 }
 
 /* Etapas del pedido tal como las ve el cliente (2026-09-16). */
+/* (2026-11-09) Con las etapas intermedias el cliente sabe si alguien ya está
+   en su pedido, si tiene una cotización que revisar o si Amsodent le hizo
+   una pregunta que espera respuesta. */
 const FLUJO_CLIENTE = {
   pendiente_aprobacion: { label: "Espera tu aprobación", color: "#b45309", bg: "#fef3c7" },
-  aprobado_cliente: { label: "En revisión de Amsodent", color: "#0369a1", bg: "#e0f2fe" },
+  aprobado_cliente: { label: "Recibido por Amsodent", color: "#0369a1", bg: "#e0f2fe" },
+  en_revision: { label: "En revisión", color: "#0f766e", bg: "#ccfbf1" },
+  cotizacion_enviada: { label: "Cotización enviada", color: "#4338ca", bg: "#e0e7ff" },
+  observado: { label: "Requiere tu respuesta", color: "#c2410c", bg: "#ffedd5" },
   validado_plataforma: { label: "Listo para pagar", color: "#6d28d9", bg: "#ede9fe" },
   pagado: { label: "Pagado", color: "#15803d", bg: "#dcfce7" },
   rechazado: { label: "Rechazado", color: "#b91c1c", bg: "#fee2e2" },
   cancelado: { label: "Cancelado", color: "#475569", bg: "#f1f5f9" },
 };
 
-function PanelMisSolicitudes({ solicitudes, cotizacionesHist = [], cargando, onSolicitarNueva, esAdminPortal = true, onRecargar, setToast, onIrAExplorador }) {
-  const [expandidaId, setExpandidaId] = useState(null);
+function PanelMisSolicitudes({ solicitudes, cotizacionesHist = [], cargando, onSolicitarNueva, esAdminPortal = true, onRecargar, setToast, onIrAExplorador, abrirPedidoId = null, onPedidoAbierto }) {
+  const [expandidaId, setExpandidaId] = useState(abrirPedidoId ?? null);
+  /* (2026-11-09) Llegó por el link de pago del correo o por un aviso: se
+     despliega ese pedido y se baja hasta él, una sola vez. */
+  useEffect(() => {
+    if (!abrirPedidoId || cargando) return;
+    if (!(solicitudes || []).some((s) => Number(s.id) === Number(abrirPedidoId))) return;
+    setExpandidaId(Number(abrirPedidoId));
+    setTimeout(() => document.getElementById(`pedido-cliente-${abrirPedidoId}`)?.scrollIntoView({ behavior: "smooth", block: "start" }), 120);
+    onPedidoAbierto?.();
+    // Solo cuando cambia el pedido pedido o termina de cargar la lista.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [abrirPedidoId, cargando, solicitudes]);
   // Mismo carrito que el Explorador: modificar un pedido lo carga ahi.
   const [, escribirCarrito] = useCarritoPortal();
   /* (2026-10-01) Ejecutivo asignado al cliente. Se pide una vez: es el mismo
@@ -6141,6 +6203,27 @@ function PanelMisSolicitudes({ solicitudes, cotizacionesHist = [], cargando, onS
   useEffect(() => {
     apiRequest("/stock-clientes/mi-credito").then(setCredito).catch(() => setCredito(null));
   }, []);
+
+  /* (2026-11-09) Amsodent dejó una observación (sin stock, reemplazo, dato que
+     falta) y el administrador acepta seguir con el pedido tal como está, con
+     un comentario opcional. Si prefiere cambiar productos, usa «Modificar». */
+  const [porAceptarObs, setPorAceptarObs] = useState(null); // { pedido, comentario }
+  async function aceptarObservacion(s, comentario) {
+    setPorAceptarObs(null);
+    setTrabajando(s.id);
+    try {
+      const r = await apiRequest(`/stock-clientes/mis-solicitudes/${s.id}/aceptar-observacion`, {
+        method: "POST",
+        body: JSON.stringify({ respuesta: String(comentario || "").trim() }),
+      });
+      setToast?.({ type: "success", titulo: "Seguimos con tu pedido", mensaje: r?.mensaje || "Amsodent retoma la revisión." });
+      onRecargar?.();
+    } catch (e) {
+      setToast?.({ type: "error", titulo: "No se pudo responder", mensaje: e?.message || "Intenta nuevamente." });
+    } finally {
+      setTrabajando(null);
+    }
+  }
 
   // (2026-11-05) Se confirma con la ventana del portal, no con el diálogo del navegador.
   const [porPagarCredito, setPorPagarCredito] = useState(null);
@@ -6307,7 +6390,7 @@ function PanelMisSolicitudes({ solicitudes, cotizacionesHist = [], cargando, onS
         const items = Array.isArray(s.items) ? s.items : [];
         const estado = ESTADOS_SOLICITUD[s.estado] || ESTADOS_SOLICITUD.pendiente;
         return (
-          <div key={s.id} style={solStyles.card}>
+          <div key={s.id} id={`pedido-cliente-${s.id}`} style={solStyles.card}>
             <button
               type="button"
               onClick={() => setExpandidaId(expandida ? null : s.id)}
@@ -6356,6 +6439,7 @@ function PanelMisSolicitudes({ solicitudes, cotizacionesHist = [], cargando, onS
                   onPagar={() => pagar(s)}
                   onPagarCredito={() => setPorPagarCredito(s)}
                   onSos={() => pedirSos(s)}
+                  onAceptarObservacion={(comentario) => setPorAceptarObs({ pedido: s, comentario })}
                 />
                 {items.length > 0 && (
                   <div style={solStyles.tablaWrap}>
@@ -6446,6 +6530,19 @@ function PanelMisSolicitudes({ solicitudes, cotizacionesHist = [], cargando, onS
           textoConfirmar="Cerrar con crédito"
           onConfirmar={() => pagarConCredito(porPagarCredito)}
           onCancelar={() => setPorPagarCredito(null)}
+        />
+      )}
+      {porAceptarObs && (
+        <ConfirmarPortal
+          tono="ok"
+          titulo="Continuar con el pedido"
+          mensaje={<>¿Seguimos con el pedido N° <strong>{porAceptarObs.pedido.id}</strong> tal como está?</>}
+          detalle={porAceptarObs.comentario ? `Tu comentario para Amsodent: «${porAceptarObs.comentario}»` : "Amsodent retoma la revisión y te avisa cuando quede listo para pagar."}
+          textoConfirmar="Sí, continuar"
+          textoOcupado="Enviando…"
+          ocupado={trabajando === porAceptarObs.pedido.id}
+          onConfirmar={() => aceptarObservacion(porAceptarObs.pedido, porAceptarObs.comentario)}
+          onCancelar={() => setPorAceptarObs(null)}
         />
       )}
     </div>
@@ -6668,13 +6765,16 @@ function ContactoEjecutivo({ ejecutivo, pedidoId }) {
   );
 }
 
-function BloqueFlujoPedido({ pedido, esAdminPortal, trabajando, credito, onAprobar, onModificar, onPagar, onPagarCredito, onSos }) {
+function BloqueFlujoPedido({ pedido, esAdminPortal, trabajando, credito, onAprobar, onModificar, onPagar, onPagarCredito, onSos, onAceptarObservacion }) {
   const estado = String(pedido?.flujo_estado || "");
+  // Comentario opcional al responder una observación (2026-11-09).
+  const [comentario, setComentario] = useState("");
   // Sin flujo (migración pendiente o pedido antiguo) no se muestra nada.
   if (!estado || !FLUJO_CLIENTE[estado]) return null;
   const m = FLUJO_CLIENTE[estado];
   const disponibilidad = Array.isArray(pedido.disponibilidad) ? pedido.disponibilidad : [];
   const faltantes = disponibilidad.filter((d) => Number(d.cantidad_disponible) < Number(d.cantidad_solicitada));
+  const quienRevisa = pedido.revision_por ? String(pedido.revision_por).split("@")[0] : "";
 
   return (
     <div style={{ border: "1px solid #e2e8f0", borderRadius: 12, padding: "12px 14px", marginBottom: 12, background: "#f8fafc" }}>
@@ -6696,8 +6796,56 @@ function BloqueFlujoPedido({ pedido, esAdminPortal, trabajando, credito, onAprob
       )}
       {estado === "aprobado_cliente" && (
         <p style={{ fontSize: 12.5, color: "#475569", margin: "8px 0 0", lineHeight: 1.5 }}>
-          Se revisará tu solicitud, en un plazo de 24-48 hrs.
+          Recibimos tu pedido. Se revisará tu solicitud, en un plazo de 24-48 hrs.
         </p>
+      )}
+      {estado === "en_revision" && (
+        <p style={{ fontSize: 12.5, color: "#475569", margin: "8px 0 0", lineHeight: 1.5 }}>
+          {quienRevisa ? `${quienRevisa} de Amsodent` : "Amsodent"} está revisando tu pedido
+          {pedido.revision_iniciada_at ? ` desde el ${fmtFechaHora(pedido.revision_iniciada_at)}` : ""}.
+          {pedido.observacion_respondida_at ? " Gracias por tu respuesta: seguimos con la revisión." : " Te respondemos dentro de 24-48 hrs."}
+        </p>
+      )}
+      {estado === "cotizacion_enviada" && (
+        <p style={{ fontSize: 12.5, color: "#475569", margin: "8px 0 0", lineHeight: 1.5 }}>
+          {pedido.validado_cliente_at
+            ? "Ya diste por buena la cotización. Estamos confirmando existencias para habilitarte el pago."
+            : "Te enviamos la cotización de tu pedido: revísala más abajo y dala por buena, o pídenos cambios."}
+        </p>
+      )}
+      {estado === "observado" && (
+        <div style={{ margin: "8px 0 0", border: "1px solid #fed7aa", background: "#fff7ed", borderRadius: 10, padding: "10px 12px" }}>
+          <div style={{ fontSize: 12.5, fontWeight: 800, color: "#9a3412" }}>Amsodent necesita tu respuesta para seguir</div>
+          <div style={{ fontSize: 12.5, color: "#475569", marginTop: 4, whiteSpace: "pre-wrap", lineHeight: 1.5 }}>
+            {pedido.observacion_texto || "Revisa el hilo de mensajes del pedido."}
+          </div>
+          {esAdminPortal ? (
+            <>
+              <textarea
+                value={comentario}
+                onChange={(e) => setComentario(e.target.value)}
+                placeholder="Comentario para Amsodent (opcional)"
+                rows={2}
+                style={{ width: "100%", marginTop: 8, padding: "8px 10px", border: "1px solid #fed7aa", borderRadius: 8, fontSize: 12.5, fontFamily: "inherit", resize: "vertical", background: "#fff" }}
+              />
+              <p style={{ fontSize: 11.5, color: "#9a3412", margin: "6px 0 0" }}>
+                Puedes continuar con el pedido tal como está o modificar los productos desde el carrito.
+              </p>
+            </>
+          ) : (
+            <p style={{ fontSize: 11.5, color: "#9a3412", margin: "6px 0 0" }}>La responde el administrador de la cuenta.</p>
+          )}
+        </div>
+      )}
+      {estado === "rechazado" && (
+        <div style={{ margin: "8px 0 0", fontSize: 12.5, color: "#991b1b", lineHeight: 1.5 }}>
+          No pudimos seguir con este pedido{pedido.rechazado_at ? ` (${fmtFechaHora(pedido.rechazado_at)})` : ""}.
+          {pedido.rechazo_motivo && <div style={{ color: "#475569", marginTop: 4, whiteSpace: "pre-wrap" }}>{pedido.rechazo_motivo}</div>}
+          <div style={{ marginTop: 4 }}>Si quieres, arma un pedido nuevo o escríbenos en el hilo del pedido.</div>
+        </div>
+      )}
+      {estado === "cancelado" && (
+        <p style={{ fontSize: 12.5, color: "#475569", margin: "8px 0 0", lineHeight: 1.5 }}>Este pedido fue cancelado.</p>
       )}
       {estado === "validado_plataforma" && (
         <div style={{ margin: "8px 0 0" }}>
@@ -6741,6 +6889,12 @@ function BloqueFlujoPedido({ pedido, esAdminPortal, trabajando, credito, onAprob
             {trabajando ? "Abriendo el pago…" : `Pagar ${fmtMoneda(pedido.monto_total)} con Webpay`}
           </button>
         )}
+        {/* (2026-11-09) Responder la observación: seguir tal como está. */}
+        {estado === "observado" && esAdminPortal && (
+          <button type="button" onClick={() => onAceptarObservacion?.(comentario)} disabled={trabajando} style={{ ...styles.btnPrimarioChico, opacity: trabajando ? 0.6 : 1 }}>
+            {trabajando ? "Enviando…" : "Continuar con el pedido"}
+          </button>
+        )}
         {/* Validar y modificar viven en el bloque de la cotizacion generada,
             que es donde el cliente la recibe. Aca solo se refleja el estado. */}
         {pedido.validado_cliente_at && (
@@ -6749,7 +6903,7 @@ function BloqueFlujoPedido({ pedido, esAdminPortal, trabajando, credito, onAprob
             {pedido.validado_cliente_por ? ` por ${String(pedido.validado_cliente_por).split("@")[0]}` : ""}
           </span>
         )}
-        {["validado_plataforma", "aprobado_cliente", "pendiente_aprobacion"].includes(estado) && esAdminPortal && (
+        {["validado_plataforma", "cotizacion_enviada", "observado", "en_revision", "aprobado_cliente", "pendiente_aprobacion"].includes(estado) && esAdminPortal && (
           <button type="button" onClick={onModificar} disabled={trabajando} style={styles.btnSecundarioChico} title="Cambiar los productos de este pedido desde el carrito">
             Modificar pedido
           </button>
@@ -6779,7 +6933,7 @@ function BloqueFlujoPedido({ pedido, esAdminPortal, trabajando, credito, onAprob
             El pago lo realiza el administrador de la cuenta.
           </span>
         )}
-        {estado !== "pagado" && estado !== "cancelado" && !pedido.sos && (
+        {estado !== "pagado" && estado !== "cancelado" && estado !== "rechazado" && !pedido.sos && (
           <button type="button" onClick={onSos} disabled={trabajando} style={styles.btnSecundarioChico} title="Pedir despacho dentro de 24 hrs">
             Necesito SOS (24 h)
           </button>

@@ -4,34 +4,49 @@ import { MailingsService } from '../mailings/mailings.service';
 import { OfertasPortalService } from './ofertas-portal.service';
 import { PortalModulosService } from './portal-modulos.service';
 import { destinatariosCampanaPedido } from './destinatarios-pedido';
+import {
+  ESTADOS_COTIZABLES,
+  ESTADOS_OBSERVABLES,
+  ESTADOS_TOMABLES,
+  ESTADOS_VALIDABLES,
+  FlujoEstado,
+  LIMPIEZA_MODIFICACION,
+  TODOS,
+  columnaFaltante,
+  esCerrado,
+  estadoAlReabrir,
+  etapaAnterior,
+  etiquetaEstado,
+} from './pedidos-flujo-etapas';
+
+export { etiquetaEstado } from './pedidos-flujo-etapas';
+export type { FlujoEstado } from './pedidos-flujo-etapas';
 
 /* ── Flujo de aprobación y pago de los pedidos del portal (2026-09-16) ────
    Un pedido recorre estas etapas, cada una con responsable y hora:
 
-     pendiente_aprobacion → aprobado_cliente → validado_plataforma → pagado
+     pendiente_aprobacion → aprobado_cliente → en_revision → cotizacion_enviada
+                          → validado_plataforma → pagado
 
    · pendiente_aprobacion  el asistente armó el pedido y espera al
                            administrador de la cuenta del cliente.
    · aprobado_cliente      lo aprobó ese administrador. Amsodent se entera y
                            al cliente se le promete respuesta en 24-48 hrs.
+   · en_revision           (2026-11-09) alguien de Amsodent tomó el pedido.
+   · cotizacion_enviada    (2026-11-09) se vinculó una cotización; el cliente
+                           la revisa y la da por buena o pide cambios.
+   · observado             (2026-11-09) parada lateral: Amsodent necesita una
+                           respuesta del cliente antes de seguir.
    · validado_plataforma   Amsodent confirmó existencias producto por producto
                            y emitió el link de pago.
    · pagado                Webpay confirmó el pago: 48-72 hrs para despachar.
+   · rechazado             (2026-11-09) Amsodent lo rechazó con motivo.
 
    La REVERSA es válida en cualquier etapa mientras el pedido no esté pagado
    (cambió un producto, no había stock, el cliente se arrepintió). Una vez
-   pagado el pedido se cierra: los productos nuevos van en un pedido nuevo. */
-
-export type FlujoEstado =
-  | 'pendiente_aprobacion'
-  | 'aprobado_cliente'
-  | 'validado_plataforma'
-  | 'pagado'
-  | 'rechazado'
-  | 'cancelado';
-
-// Orden de las etapas, para saber qué significa "un paso atrás".
-const ORDEN: FlujoEstado[] = ['pendiente_aprobacion', 'aprobado_cliente', 'validado_plataforma', 'pagado'];
+   pagado el pedido se cierra: los productos nuevos van en un pedido nuevo.
+   Las etapas, su orden y qué limpia cada reversa viven en
+   pedidos-flujo-etapas.ts, que se prueba solo. */
 
 export const MENSAJE_APROBADO_CLIENTE =
   'Se revisará tu solicitud, en un plazo de 24-48 hrs.';
@@ -62,12 +77,39 @@ export class PedidosFlujoService {
      Postgres que nadie entiende. */
   private traducirError(error: any): never {
     const msg = String(error?.message || error);
+    // (2026-11-09) Las etapas nuevas las rechaza la restricción de la columna
+    // hasta que corra su migración; y sus columnas no existen.
+    if (
+      /stock_solicitudes_flujo_chk/.test(msg) ||
+      (/revision_|cotizacion_enviada|observacion_|rechaz(o|ado)_/.test(msg) && /column|does not exist|schema cache/i.test(msg))
+    ) {
+      throw new BadRequestException(
+        'Falta aplicar la migración 20261109_pedidos_estados_intermedios.sql en Supabase (etapas nuevas del pedido).',
+      );
+    }
     if (/flujo_estado|stock_solicitud_eventos|disponibilidad|pago_estado/.test(msg) && /column|does not exist|schema cache/i.test(msg)) {
       throw new BadRequestException(
         'Falta aplicar la migración 20260916_pedidos_flujo_aprobacion.sql en Supabase.',
       );
     }
     throw new BadRequestException(msg);
+  }
+
+  /* UPDATE que tolera columnas de migraciones sin aplicar: si Supabase dice
+     que una columna no existe, se quita del parche y se reintenta, para que
+     lo esencial (la etapa, los productos) se guarde igual. La etapa misma no
+     se negocia: sin ella el flujo no existe. */
+  private async actualizarTolerante(id: number, parche: Record<string, any>) {
+    const pendiente: Record<string, any> = { ...parche };
+    for (let intento = 0; intento < 8; intento++) {
+      const { data, error } = await this.client.from(TABLA).update(pendiente).eq('id', Number(id)).select().single();
+      if (!error) return data;
+      const col = columnaFaltante(error.message);
+      if (!col || !(col in pendiente) || col === 'flujo_estado') this.traducirError(error);
+      this.logger.warn(`Columna «${col}» sin migrar en ${TABLA}: el pedido ${id} se guarda sin ella.`);
+      delete pendiente[col];
+    }
+    throw new BadRequestException('No se pudo guardar el pedido.');
   }
 
   async obtener(id: number) {
@@ -320,6 +362,21 @@ export class PedidosFlujoService {
           return { ...base, titulo: 'Pedido devuelto a la etapa anterior', detalle: e.detalle || null };
         case 'sos':
           return { ...base, titulo: /retirado/i.test(String(e.detalle || '')) ? 'Despacho urgente retirado' : 'Despacho urgente solicitado (SOS)', detalle: e.detalle || null };
+        // (2026-11-09) Etapas intermedias de la validación.
+        case 'revision_iniciada':
+          return { ...base, titulo: 'Amsodent tomó el pedido', detalle: base.actor ? `${base.actor} está revisando el pedido.` : 'El pedido está en revisión.' };
+        case 'cotizacion_enviada':
+          return { ...base, titulo: 'Cotización enviada', detalle: d.licitacion_id ? `Cotización #${d.licitacion_id} lista para revisar en Mis cotizaciones.` : 'La cotización quedó disponible en Mis cotizaciones.' };
+        case 'observado':
+          return { ...base, titulo: 'Observación de Amsodent', detalle: e.detalle || 'Amsodent necesita una respuesta para seguir con el pedido.' };
+        case 'observacion_respondida':
+          return { ...base, titulo: 'Observación respondida', detalle: e.detalle || 'Se aceptó seguir con el pedido.' };
+        case 'rechazado':
+          return { ...base, titulo: 'Pedido rechazado por Amsodent', detalle: e.detalle || null };
+        case 'cancelado':
+          return { ...base, titulo: 'Pedido cancelado', detalle: e.detalle || null };
+        case 'reabierto':
+          return { ...base, titulo: 'Pedido reabierto', detalle: e.detalle || null };
         default:
           return { ...base, titulo: 'Actualización del pedido', detalle: e.detalle || null };
       }
@@ -475,13 +532,7 @@ export class PedidosFlujoService {
         `El pedido está en "${etiquetaEstado(actual)}" y esta acción requiere que esté en ${desde.map(etiquetaEstado).join(' o ')}.`,
       );
     }
-    const { data, error } = await this.client
-      .from(TABLA)
-      .update({ ...extra, flujo_estado: hasta, updated_at: new Date().toISOString() })
-      .eq('id', Number(id))
-      .select()
-      .single();
-    if (error) this.traducirError(error);
+    const data = await this.actualizarTolerante(id, { ...extra, flujo_estado: hasta, updated_at: new Date().toISOString() });
     await this.registrarEvento({
       solicitudId: Number(id),
       tipo: evento.tipo,
@@ -565,6 +616,13 @@ export class PedidosFlujoService {
       actorEmail,
       detalle: 'El cliente revisó la cotización y la dio por buena.',
     });
+    // (2026-11-09) Antes nadie de Amsodent se enteraba de la conformidad: el
+    // pedido quedaba esperando que alguien lo mirara de nuevo.
+    await this.notificarEquipo(
+      data,
+      'pedido_portal_conforme',
+      `${data.razon_social || data.rut} dio por buena la cotización del pedido N° ${data.id}: falta confirmar existencias y emitir el pago.`,
+    );
     return { ok: true, pedido: data, mensaje: 'Gracias, registramos tu conformidad con la cotización.' };
   }
 
@@ -667,8 +725,11 @@ export class PedidosFlujoService {
       // anterior se limpia como en una reversa (el paso ya no vale).
       aprobado_cliente_at: ahora,
       aprobado_cliente_por: actorEmail,
-      validado_at: null,
-      validado_por: null,
+      // (2026-11-09) Lo que Amsodent había avanzado (tomar el pedido, enviar
+      // la cotización, observar, validar) deja de valer: el pedido vuelve a
+      // «aprobado_cliente» como recién aprobado. La cotización vinculada se
+      // conserva, porque se corrige, no se rehace.
+      ...LIMPIEZA_MODIFICACION,
       pago_estado: null,
       pago_monto: null,
       updated_at: ahora,
@@ -678,34 +739,10 @@ export class PedidosFlujoService {
       parche.nota = `${previa}Modificación pedida por el cliente: ${String(body.nota).trim().slice(0, 500)}`;
     }
 
-    let { data, error } = await this.client
-      .from(TABLA)
-      .update({ ...parche, flujo_estado: 'aprobado_cliente' })
-      .eq('id', Number(id))
-      .select()
-      .single();
-    // Migración 20260924 sin aplicar: se guarda igual lo esencial (los
-    // productos nuevos) en vez de dejar al cliente sin poder modificar.
-    if (error && /modificacion_pedida|modificacion_detalle|validado_cliente/.test(error.message)) {
-      ({ data, error } = await this.client
-        .from(TABLA)
-        .update({
-          items: nuevos,
-          disponibilidad: null,
-          monto_total: null,
-          pago_link: null,
-          aprobado_cliente_at: ahora,
-          aprobado_cliente_por: actorEmail,
-          validado_at: null,
-          validado_por: null,
-          updated_at: ahora,
-          flujo_estado: 'aprobado_cliente',
-        })
-        .eq('id', Number(id))
-        .select()
-        .single());
-    }
-    if (error) this.traducirError(error);
+    // Migraciones sin aplicar (20260924, 20261109): se guarda igual lo
+    // esencial (los productos nuevos y la etapa) en vez de dejar al cliente
+    // sin poder modificar.
+    const data = await this.actualizarTolerante(id, { ...parche, flujo_estado: 'aprobado_cliente' });
 
     const cuenta = (a: string) => detalle.filter((d) => d.accion === a).length;
     await this.registrarEvento({
@@ -756,21 +793,36 @@ export class PedidosFlujoService {
       );
     }
 
+    const previo = await this.obtener(id);
+    const ahora = new Date().toISOString();
+    const extra: Record<string, any> = {
+      validado_at: ahora,
+      validado_por: actorEmail,
+      disponibilidad,
+      monto_total: monto,
+      pago_monto: monto,
+      pago_estado: 'pendiente',
+      pago_medio: String(body?.medio_pago || 'webpay'),
+      pago_link: linkDePago(Number(id)),
+    };
+    // (2026-11-09) Validar ES revisar: si nadie había tomado el pedido, queda
+    // tomado por quien valida, para que la línea de tiempo no tenga huecos.
+    if (!previo.revision_iniciada_at) Object.assign(extra, { revision_iniciada_at: ahora, revision_por: actorEmail });
+    // Una observación abierta se da por resuelta: se habló por otro canal.
+    if (this.estadoDe(previo) === 'observado' && !previo.observacion_respondida_at) {
+      Object.assign(extra, {
+        observacion_respondida_at: ahora,
+        observacion_respondida_por: actorEmail,
+        observacion_respuesta: 'Resuelta por Amsodent al validar el pedido.',
+      });
+    }
+
     const data = await this.mover(
       id,
-      // Se puede revalidar un pedido ya validado (cambió una cantidad).
-      ['aprobado_cliente', 'validado_plataforma'],
+      // Desde cualquier etapa de Amsodent; también revalidar (cambió una cantidad).
+      ESTADOS_VALIDABLES,
       'validado_plataforma',
-      {
-        validado_at: new Date().toISOString(),
-        validado_por: actorEmail,
-        disponibilidad,
-        monto_total: monto,
-        pago_monto: monto,
-        pago_estado: 'pendiente',
-        pago_medio: String(body?.medio_pago || 'webpay'),
-        pago_link: linkDePago(Number(id)),
-      },
+      extra,
       {
         tipo: 'validado',
         actorTipo: 'plataforma',
@@ -1008,31 +1060,18 @@ export class PedidosFlujoService {
         'El pedido ya está pagado: no se puede revertir. Si el cliente quiere otros productos, hay que crear un pedido nuevo.',
       );
     }
-    const idx = ORDEN.indexOf(actual);
-    if (idx <= 0) {
+    if (esCerrado(actual)) {
+      throw new BadRequestException('El pedido está cerrado: no se puede revertir.');
+    }
+    // (2026-11-09) A dónde vuelve y qué se borra lo decide pedidos-flujo-etapas:
+    // al retroceder se limpia lo que produjo la etapa que se deshace, para que
+    // no queden datos de una validación o una observación que ya no valen.
+    const paso = etapaAnterior(pedido);
+    if (!paso) {
       throw new BadRequestException('El pedido ya está en la primera etapa.');
     }
-    const destino = ORDEN[idx - 1];
-    const limpieza: Record<string, any> = {};
-    // Al retroceder se borra lo que produjo la etapa que se deshace, para que
-    // no queden datos de una validación que ya no vale.
-    if (actual === 'validado_plataforma') {
-      Object.assign(limpieza, {
-        validado_at: null, validado_por: null, disponibilidad: null,
-        pago_link: null, pago_estado: null, pago_monto: null, monto_total: null,
-      });
-    }
-    if (actual === 'aprobado_cliente') {
-      Object.assign(limpieza, { aprobado_cliente_at: null, aprobado_cliente_por: null });
-    }
-
-    const { data, error } = await this.client
-      .from(TABLA)
-      .update({ ...limpieza, flujo_estado: destino, updated_at: new Date().toISOString() })
-      .eq('id', Number(id))
-      .select()
-      .single();
-    if (error) this.traducirError(error);
+    const destino = paso.destino;
+    const data = await this.actualizarTolerante(id, { ...paso.limpieza, flujo_estado: destino, updated_at: new Date().toISOString() });
 
     await this.registrarEvento({
       solicitudId: Number(id),
@@ -1092,15 +1131,20 @@ export class PedidosFlujoService {
   /* ── KPI de tiempos de respuesta (punto 18) ──────────────────────────── */
   // `soloRuts`: los clientes de la cartera de quien consulta (null = todos).
   async kpis(desde?: string, hasta?: string, soloRuts: string[] | null = null) {
-    let q = this.client
-      .from(TABLA)
-      .select('id, created_at, aprobado_cliente_at, validado_at, pago_at, flujo_estado, sos, monto_total');
-    if (soloRuts) q = q.in('rut', soloRuts.length ? soloRuts.slice(0, 400) : ['—']);
-    if (desde) q = q.gte('created_at', desde);
-    if (hasta) q = q.lte('created_at', `${hasta}T23:59:59`);
-    const { data, error } = await q;
+    const COLS_BASE = 'id, created_at, aprobado_cliente_at, validado_at, pago_at, flujo_estado, sos, monto_total';
+    const leer = (cols: string) => {
+      let q = this.client.from(TABLA).select(cols);
+      if (soloRuts) q = q.in('rut', soloRuts.length ? soloRuts.slice(0, 400) : ['—']);
+      if (desde) q = q.gte('created_at', desde);
+      if (hasta) q = q.lte('created_at', `${hasta}T23:59:59`);
+      return q;
+    };
+    // (2026-11-09) Cuándo se tomó el pedido. Si la migración no corrió, los
+    // KPI salen igual sin ese tramo.
+    let { data, error } = await leer(`${COLS_BASE}, revision_iniciada_at`);
+    if (error && columnaFaltante(error.message)) ({ data, error } = await leer(COLS_BASE));
     if (error) this.traducirError(error);
-    const filas = data || [];
+    const filas: any[] = (data as any[]) || [];
 
     const horas = (a?: string | null, b?: string | null) => {
       if (!a || !b) return null;
@@ -1114,7 +1158,7 @@ export class PedidosFlujoService {
 
     return {
       total: filas.length,
-      por_estado: ORDEN.concat(['rechazado', 'cancelado'] as any).reduce((acc: Record<string, number>, e) => {
+      por_estado: TODOS.reduce((acc: Record<string, number>, e) => {
         acc[e] = filas.filter((f: any) => (f.flujo_estado || 'pendiente_aprobacion') === e).length;
         return acc;
       }, {}),
@@ -1124,33 +1168,312 @@ export class PedidosFlujoService {
         .reduce((acc: number, f: any) => acc + (Number(f.monto_total) || 0), 0),
       // Horas promedio de cada tramo. Son los tiempos de respuesta que pidió
       // el punto 18: cuánto demora el cliente en aprobar, cuánto demoramos
-      // nosotros en validar, y cuánto tarda el pago.
+      // nosotros en tomar el pedido y en validar, y cuánto tarda el pago.
       horas_a_aprobacion: prom(filas.map((f: any) => horas(f.created_at, f.aprobado_cliente_at))),
+      horas_a_revision: prom(filas.map((f: any) => horas(f.aprobado_cliente_at, f.revision_iniciada_at))),
       horas_a_validacion: prom(filas.map((f: any) => horas(f.aprobado_cliente_at, f.validado_at))),
       horas_a_pago: prom(filas.map((f: any) => horas(f.validado_at, f.pago_at))),
       horas_total: prom(filas.map((f: any) => horas(f.created_at, f.pago_at))),
     };
   }
 
+  /* ── Etapas intermedias de la validación (2026-11-09) ────────────────────
+     Entre «el cliente aprobó» y «validado y por pagar» ahora hay paradas con
+     responsable y hora: tomar el pedido, enviar la cotización, observar algo
+     al cliente; y la salida «rechazado». Qué etapas permiten cada acción está
+     en pedidos-flujo-etapas.ts. */
+
+  /** Alguien de Amsodent toma el pedido para revisarlo, o lo reasigna. */
+  async tomarRevision(id: number, actorEmail: string) {
+    const pedido = await this.obtener(id);
+    const actual = this.estadoDe(pedido);
+    const quienLoTenia = String(pedido.revision_por || '').toLowerCase();
+    if (actual === 'en_revision' && quienLoTenia === String(actorEmail).toLowerCase()) {
+      return { ok: true, pedido, mensaje: 'Este pedido ya lo tienes tú.' };
+    }
+    const reasigna = actual === 'en_revision' && !!quienLoTenia;
+    const ahora = new Date().toISOString();
+    const data = await this.mover(
+      id,
+      ESTADOS_TOMABLES,
+      'en_revision',
+      { revision_iniciada_at: reasigna ? pedido.revision_iniciada_at || ahora : ahora, revision_por: actorEmail },
+      {
+        tipo: 'revision_iniciada',
+        actorTipo: 'plataforma',
+        actorEmail,
+        detalle: reasigna
+          ? `Revisión reasignada de ${nombreCorto(quienLoTenia)} a ${nombreCorto(actorEmail)}.`
+          : `${nombreCorto(actorEmail)} tomó el pedido para revisarlo.`,
+      },
+    );
+    if (!reasigna) {
+      // El cliente ve en su campana que alguien ya está en su pedido.
+      await this.avisarCliente(data, {
+        tipo: 'pedido_en_revision',
+        descripcion: `Amsodent comenzó a revisar tu pedido N° ${data.id}.`,
+        actorEmail,
+      });
+    }
+    return { ok: true, pedido: data };
+  }
+
+  /** Se vinculó una cotización al pedido: el cliente la recibe en su portal.
+      Lo llama el controlador después de vincular y es best-effort: nunca
+      debe hacer fallar el guardado de la cotización. */
+  async marcarCotizacionEnviada(id: number, licitacionId: number, actorEmail: string) {
+    try {
+      const pedido = await this.obtener(id);
+      const actual = this.estadoDe(pedido);
+      const ahora = new Date().toISOString();
+      if (!ESTADOS_COTIZABLES.includes(actual)) {
+        // En otra etapa (espera al cliente, observado, ya validado, cerrado) la
+        // cotización queda en la bitácora pero la etapa no se mueve.
+        await this.registrarEvento({
+          solicitudId: Number(id), tipo: 'cotizacion_enviada', estadoDesde: actual, estadoHasta: actual,
+          actorTipo: 'plataforma', actorEmail, detalle: `Cotización #${licitacionId} vinculada al pedido.`,
+          datos: { licitacion_id: licitacionId },
+        });
+        return pedido;
+      }
+      const extra: Record<string, any> = { cotizacion_enviada_at: ahora, cotizacion_enviada_por: actorEmail };
+      // Crear la cotización ES revisar el pedido: si nadie lo había tomado,
+      // queda tomado por quien la creó.
+      if (!pedido.revision_iniciada_at) Object.assign(extra, { revision_iniciada_at: ahora, revision_por: actorEmail });
+      const data = await this.mover(id, ESTADOS_COTIZABLES, 'cotizacion_enviada', extra, {
+        tipo: 'cotizacion_enviada',
+        actorTipo: 'plataforma',
+        actorEmail,
+        detalle: `Cotización #${licitacionId} enviada al cliente.`,
+        datos: { licitacion_id: licitacionId },
+      });
+      await this.avisarCliente(data, {
+        tipo: 'pedido_cotizacion_enviada',
+        descripcion: `Te enviamos la cotización de tu pedido N° ${data.id}. Revísala en Mis cotizaciones.`,
+        actorEmail,
+        licitacionId,
+      });
+      return data;
+    } catch (e: any) {
+      this.logger.warn(`No se pudo marcar la cotización enviada del pedido ${id}: ${e?.message || e}`);
+      return null;
+    }
+  }
+
+  /** Amsodent necesita algo del cliente antes de seguir (un producto sin
+      stock, un reemplazo, un dato que falta). El pedido queda «observado»
+      hasta que el cliente acepte seguir o lo modifique. */
+  async observar(id: number, texto: string, actorEmail: string) {
+    const limpio = String(texto || '').trim().slice(0, 1000);
+    if (!limpio) throw new BadRequestException('Escribe qué necesitas que el cliente responda: él lo va a leer.');
+    const pedido = await this.obtener(id);
+    const ahora = new Date().toISOString();
+    const extra: Record<string, any> = {
+      observacion_at: ahora,
+      observacion_por: actorEmail,
+      observacion_texto: limpio,
+      observacion_respondida_at: null,
+      observacion_respondida_por: null,
+      observacion_respuesta: null,
+    };
+    if (!pedido.revision_iniciada_at) Object.assign(extra, { revision_iniciada_at: ahora, revision_por: actorEmail });
+    const data = await this.mover(id, ESTADOS_OBSERVABLES, 'observado', extra, {
+      tipo: 'observado',
+      actorTipo: 'plataforma',
+      actorEmail,
+      detalle: limpio.slice(0, 300),
+    });
+    await this.avisarCliente(data, {
+      tipo: 'pedido_observado',
+      descripcion: `Amsodent tiene una observación sobre tu pedido N° ${data.id} y necesita tu respuesta.`,
+      actorEmail,
+      hilo: `Tenemos una observación sobre tu pedido:\n\n${limpio}\n\nPuedes continuar con el pedido tal como está o modificarlo desde el portal.`,
+      correo: {
+        asunto: `Tu pedido N° ${data.id} tiene una observación de Amsodent`,
+        html: `
+          <p>Hola${data.contacto_nombre ? ` ${esc(data.contacto_nombre)}` : ''},</p>
+          <p>Revisamos tu pedido N° ${data.id} y necesitamos tu respuesta:</p>
+          <blockquote style="border-left:3px solid #f59e0b;margin:0;padding:6px 12px;color:#334155;white-space:pre-wrap">${esc(limpio)}</blockquote>
+          <p>Ingresa al portal, en <strong>Mis cotizaciones</strong>, para continuar con el pedido tal como está o modificarlo.</p>
+          <p>Amsodent Medical Spa</p>`,
+      },
+    });
+    return { ok: true, pedido: data };
+  }
+
+  /** El cliente responde la observación aceptando seguir con el pedido, con
+      un comentario opcional. Si prefiere cambiar productos, modifica el
+      pedido y eso vuelve a «aprobado_cliente» por su propio camino. */
+  async responderObservacion(id: number, respuesta: string, actorEmail: string, rut: string) {
+    const pedido = await this.obtener(id);
+    if (String(pedido.rut) !== String(rut)) {
+      throw new ForbiddenException('Este pedido pertenece a otra cuenta.');
+    }
+    const texto = String(respuesta || '').trim().slice(0, 1000);
+    const ahora = new Date().toISOString();
+    const data = await this.mover(
+      id,
+      ['observado'],
+      'en_revision',
+      { observacion_respondida_at: ahora, observacion_respondida_por: actorEmail, observacion_respuesta: texto || null },
+      {
+        tipo: 'observacion_respondida',
+        actorTipo: 'cliente',
+        actorEmail,
+        detalle: texto ? `El cliente aceptó seguir con el pedido: ${texto.slice(0, 250)}` : 'El cliente aceptó seguir con el pedido tal como está.',
+      },
+    );
+    if (texto) {
+      // Su comentario también va al hilo, donde el equipo lo lee junto al pedido.
+      try {
+        await this.client.from('stock_cotizacion_mensajes').insert({
+          solicitud_id: Number(id), autor_tipo: 'cliente', autor_nombre: nombreCorto(actorEmail),
+          mensaje: texto, leido_cliente: true, leido_equipo: false,
+        });
+      } catch (e: any) {
+        this.logger.warn(`No se pudo dejar la respuesta del cliente en el hilo del pedido ${id}: ${e?.message || e}`);
+      }
+    }
+    await this.notificarEquipo(
+      data,
+      'pedido_portal_observacion_respondida',
+      `${data.razon_social || data.rut} respondió la observación del pedido N° ${data.id}: se puede seguir con la validación.`,
+    );
+    return { ok: true, pedido: data, mensaje: 'Gracias, seguimos con tu pedido.' };
+  }
+
+  /** Amsodent rechaza el pedido: cierra el flujo con motivo y deja el estado
+      comercial en «cancelada». El cliente lo lee en el portal y por correo. */
+  async rechazar(id: number, motivo: string, actorEmail: string) {
+    const texto = String(motivo || '').trim().slice(0, 1000);
+    if (!texto) throw new BadRequestException('Indica el motivo del rechazo: el cliente lo va a leer.');
+    const pedido = await this.obtener(id);
+    const actual = this.estadoDe(pedido);
+    if (actual === 'pagado') {
+      throw new BadRequestException('El pedido ya está pagado: no se puede rechazar. Si corresponde devolver el dinero, va por fuera del flujo.');
+    }
+    if (esCerrado(actual)) throw new BadRequestException('Este pedido ya está cerrado.');
+    const ahora = new Date().toISOString();
+    const data = await this.mover(
+      id,
+      TODOS.filter((e) => !esCerrado(e)),
+      'rechazado',
+      { rechazado_at: ahora, rechazado_por: actorEmail, rechazo_motivo: texto, estado: 'cancelada' },
+      { tipo: 'rechazado', actorTipo: 'plataforma', actorEmail, detalle: texto.slice(0, 300) },
+    );
+    await this.avisarCliente(data, {
+      tipo: 'pedido_rechazado',
+      descripcion: `Amsodent no pudo seguir con tu pedido N° ${data.id}.`,
+      actorEmail,
+      hilo: `No podremos seguir con este pedido:\n\n${texto}\n\nSi quieres, arma un pedido nuevo desde el portal o escríbenos por aquí.`,
+      correo: {
+        asunto: `Tu pedido N° ${data.id} no pudo continuar`,
+        html: `
+          <p>Hola${data.contacto_nombre ? ` ${esc(data.contacto_nombre)}` : ''},</p>
+          <p>Lamentamos informarte que no podremos seguir con tu pedido N° ${data.id}:</p>
+          <blockquote style="border-left:3px solid #dc2626;margin:0;padding:6px 12px;color:#334155;white-space:pre-wrap">${esc(texto)}</blockquote>
+          <p>Si quieres, arma un pedido nuevo desde el portal o respóndenos desde el hilo del pedido.</p>
+          <p>Amsodent Medical Spa</p>`,
+      },
+    });
+    return { ok: true, pedido: data };
+  }
+
+  /** El estado comercial (pendiente / respondida / cancelada) se cambia a mano
+      en la bandeja y antes no tocaba la etapa: quedaban pedidos «cancelados»
+      que el flujo seguía mostrando por revisar. Cancelar cierra la etapa;
+      sacar de cancelada la reabre en la última que había alcanzado.
+      Best-effort: el cambio de estado ya se guardó. */
+  async alCambiarEstadoComercial(id: number, estado: string, actorEmail: string) {
+    try {
+      const pedido = await this.obtener(id);
+      const actual = this.estadoDe(pedido);
+      if (estado === 'cancelada') {
+        if (esCerrado(actual)) return pedido;
+        const data = await this.mover(id, [actual], 'cancelado', {}, {
+          tipo: 'cancelado', actorTipo: 'plataforma', actorEmail, detalle: 'Pedido cancelado desde la bandeja de Amsodent.',
+        });
+        await this.avisarCliente(data, { tipo: 'pedido_cancelado', descripcion: `Tu pedido N° ${data.id} fue cancelado.`, actorEmail });
+        return data;
+      }
+      if (actual === 'cancelado') {
+        const destino = estadoAlReabrir(pedido);
+        return await this.mover(id, ['cancelado'], destino, {}, {
+          tipo: 'reabierto', actorTipo: 'plataforma', actorEmail, detalle: `Pedido reabierto en «${etiquetaEstado(destino)}».`,
+        });
+      }
+      return pedido;
+    } catch (e: any) {
+      this.logger.warn(`No se pudo sincronizar la etapa del pedido ${id} con el estado «${estado}»: ${e?.message || e}`);
+      return null;
+    }
+  }
+
   /* ── Avisos ─────────────────────────────────────────────────────────── */
 
-  private async notificarPlataforma(pedido: any) {
+  /** Aviso en la campana de la plataforma a quienes atienden los pedidos del
+      portal: destinatarios configurados + administradores + dueño de la
+      cartera (destinatarios-pedido.ts). Best-effort. */
+  private async notificarEquipo(pedido: any, tipo: string, mensaje: string, metadata: Record<string, any> = {}) {
     try {
-      // (2026-11-05) Además de los destinatarios configurados, les llega a los
-      // administradores y al dueño de la cartera (destinatarios-pedido.ts).
       const destinatarios = await destinatariosCampanaPedido(this.client, pedido.rut);
-      const rows = destinatarios
-        .map((email) => ({
-          user_email: email,
-          tipo: 'pedido_portal_aprobado',
-          mensaje: `${pedido.razon_social || pedido.rut} aprobó el pedido N° ${pedido.id}: hay que validar existencias.`,
-          link: `/pedidos-portal?pedido=${pedido.id}`,
-          metadata: { solicitud_id: pedido.id, rut: pedido.rut, razon_social: pedido.razon_social || null },
-        }));
+      const rows = destinatarios.map((email) => ({
+        user_email: email,
+        tipo,
+        mensaje,
+        link: `/pedidos-portal?pedido=${pedido.id}`,
+        metadata: { solicitud_id: pedido.id, rut: pedido.rut, razon_social: pedido.razon_social || null, ...metadata },
+      }));
       if (rows.length) await this.client.from('notificaciones').insert(rows);
     } catch (e: any) {
-      this.logger.warn(`No se pudo notificar la aprobación del pedido ${pedido?.id}: ${e?.message || e}`);
+      this.logger.warn(`No se pudo avisar «${tipo}» del pedido ${pedido?.id}: ${e?.message || e}`);
     }
+  }
+
+  /** Aviso al cliente: campana del portal (portal_actividades) y, si se
+      pide, mensaje en el hilo del pedido y correo al contacto. Best-effort. */
+  private async avisarCliente(
+    pedido: any,
+    aviso: { tipo: string; descripcion: string; actorEmail?: string | null; licitacionId?: number | null; hilo?: string; correo?: { asunto: string; html: string } },
+  ) {
+    await this.anotarActividad({
+      rut: String(pedido.rut),
+      tipo: aviso.tipo,
+      descripcion: aviso.descripcion,
+      actorEmail: aviso.actorEmail ?? null,
+      actorNombre: nombreCorto(aviso.actorEmail) || 'Amsodent',
+      origen: 'amsodent',
+      solicitudId: Number(pedido.id),
+      licitacionId: aviso.licitacionId ?? pedido.licitacion_id ?? null,
+    });
+    if (aviso.hilo) {
+      try {
+        await this.client.from('stock_cotizacion_mensajes').insert({
+          solicitud_id: Number(pedido.id), autor_tipo: 'equipo', autor_nombre: 'Amsodent',
+          mensaje: aviso.hilo, leido_equipo: true, leido_cliente: false,
+        });
+      } catch (e: any) {
+        this.logger.warn(`No se pudo dejar el mensaje «${aviso.tipo}» en el hilo del pedido ${pedido?.id}: ${e?.message || e}`);
+      }
+    }
+    const para = String(pedido?.contacto_email || '').trim();
+    if (aviso.correo && para) {
+      try {
+        await this.mailings.enviarUno({ para, asunto: aviso.correo.asunto, cuerpoHtml: aviso.correo.html });
+      } catch (e: any) {
+        this.logger.warn(`No se pudo enviar el correo «${aviso.tipo}» del pedido ${pedido?.id}: ${e?.message || e}`);
+      }
+    }
+  }
+
+  private async notificarPlataforma(pedido: any) {
+    // (2026-11-05) Además de los destinatarios configurados, les llega a los
+    // administradores y al dueño de la cartera (destinatarios-pedido.ts).
+    await this.notificarEquipo(
+      pedido,
+      'pedido_portal_aprobado',
+      `${pedido.razon_social || pedido.rut} aprobó el pedido N° ${pedido.id}: hay que validar existencias.`,
+    );
   }
 
   private async avisarClienteValidado(pedido: any) {
@@ -1223,17 +1546,18 @@ export class PedidosFlujoService {
   }
 }
 
-export function etiquetaEstado(e: string): string {
-  return (
-    {
-      pendiente_aprobacion: 'Pendiente de aprobación',
-      aprobado_cliente: 'Aprobado por el cliente',
-      validado_plataforma: 'Validado y por pagar',
-      pagado: 'Pagado',
-      rechazado: 'Rechazado',
-      cancelado: 'Cancelado',
-    } as Record<string, string>
-  )[e] || e;
+/** Nombre corto de un correo (lo de antes de la arroba), para los textos. */
+function nombreCorto(correo: any): string {
+  return String(correo || '').split('@')[0] || '';
+}
+
+/** Escapa texto que va dentro de un correo HTML. */
+function esc(texto: any): string {
+  return String(texto ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
 }
 
 function linkDePago(id: number): string {

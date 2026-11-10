@@ -2314,16 +2314,36 @@ export class StockClientesService {
     ', flujo_estado, disponibilidad, monto_total, sos, sos_motivo, sos_solicitado_at' +
     ', pago_estado, pago_medio, pago_monto, pago_at' +
     ', aprobado_cliente_at, aprobado_cliente_por, validado_at, validado_por, creado_por_email';
+  /* (2026-11-09) Faltaban en la bandeja: sin `origen_seccion` el origen se
+     deducía (Showroom y Ofertas salían como Explorador o Stock y el KPI de
+     Showroom no sumaba), y sin `modificacion_*` / `validado_cliente_*` el
+     panel nunca mostraba «el cliente modificó este pedido» ni su conformidad. */
+  private static readonly COLS_PORTAL_20260924 =
+    ', origen_seccion, validado_cliente_at, validado_cliente_por' +
+    ', modificacion_pedida_at, modificacion_pedida_por, modificacion_detalle';
+  /* Etapas intermedias de la validación (migración 20261109). */
+  private static readonly COLS_ETAPAS_20261109 =
+    ', revision_iniciada_at, revision_por, cotizacion_enviada_at, cotizacion_enviada_por' +
+    ', observacion_at, observacion_por, observacion_texto' +
+    ', observacion_respondida_at, observacion_respondida_por, observacion_respuesta' +
+    ', rechazado_at, rechazado_por, rechazo_motivo';
 
+  /* Se intenta con todas las columnas y, si alguna migración no corrió, se
+     van soltando los grupos de la más nueva a la más vieja: así una migración
+     pendiente quita solo lo suyo y no todo el flujo. */
   private async seleccionarSolicitudes(
     base: string,
     armar: (cols: string) => any,
   ): Promise<{ data: any; error: any }> {
-    let res: { data: any; error: any } = await armar(
-      base + StockClientesService.COLS_FLUJO_PEDIDO,
-    );
-    if (res.error && /column|does not exist|schema cache/i.test(res.error.message)) {
-      res = await armar(base);
+    const grupos = [
+      StockClientesService.COLS_FLUJO_PEDIDO,
+      StockClientesService.COLS_PORTAL_20260924,
+      StockClientesService.COLS_ETAPAS_20261109,
+    ];
+    let res: { data: any; error: any } = { data: null, error: null };
+    for (let n = grupos.length; n >= 0; n--) {
+      res = await armar(base + grupos.slice(0, n).join(''));
+      if (!res.error || !/column|does not exist|schema cache/i.test(res.error.message)) break;
     }
     return res;
   }
@@ -2422,6 +2442,10 @@ export class StockClientesService {
       // (2026-10-01) Faltaban: sin ellas el portal no sabia que la cotizacion
       // ya estaba validada por el cliente y el boton seguia ofreciendose.
       ', validado_cliente_at, validado_cliente_por, modificacion_pedida_at, origen_seccion';
+    // (2026-11-09) Etapas intermedias: quién revisa, cotización enviada,
+    // observación abierta y su respuesta, rechazo. Sin la migración se cae
+    // al flujo de siempre, no a la lista básica.
+    const COLS_ETAPAS = COLS_FLUJO + StockClientesService.COLS_ETAPAS_20261109;
     const pedir = (cols: string) =>
       this.supabase
         .getClient()
@@ -2430,10 +2454,10 @@ export class StockClientesService {
         .eq('rut', rutN)
         .order('created_at', { ascending: false })
         .limit(limit);
-    let res: { data: any; error: any } = await pedir(COLS_FLUJO);
-    if (res.error && /column|does not exist|schema cache/i.test(res.error.message)) {
-      res = await pedir(COLS_BASE);
-    }
+    const faltaColumna = (r: { error: any }) => r.error && /column|does not exist|schema cache/i.test(r.error.message);
+    let res: { data: any; error: any } = await pedir(COLS_ETAPAS);
+    if (faltaColumna(res)) res = await pedir(COLS_FLUJO);
+    if (faltaColumna(res)) res = await pedir(COLS_BASE);
     if (res.error) throw new BadRequestException(res.error.message);
     return await this.enriquecerSolicitudes(res.data || [], 'cliente');
   }

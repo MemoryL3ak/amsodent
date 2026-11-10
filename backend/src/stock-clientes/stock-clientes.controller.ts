@@ -177,6 +177,22 @@ export class StockClientesController {
     );
   }
 
+  /* (2026-11-09) Amsodent dejó una observación sobre el pedido (sin stock,
+     reemplazo, dato que falta) y el administrador de la cuenta acepta seguir
+     con el pedido tal como está, con un comentario opcional. Si prefiere
+     cambiar productos, usa «modificar». */
+  @UseGuards(StockPortalGuard)
+  @Post('mis-solicitudes/:id/aceptar-observacion')
+  async aceptarObservacionCliente(@Req() req: any, @Param('id', ParseIntPipe) id: number, @Body() body: { respuesta?: string }) {
+    this.exigirAdminPortal(req, 'Solo el administrador de la cuenta puede responder la observación.');
+    return await this.pedidosFlujo.responderObservacion(
+      id,
+      String(body?.respuesta || ''),
+      req.stockPortal.usuario_email || 'cuenta principal',
+      req.stockPortal.rut,
+    );
+  }
+
   /* ── Actividad por pedido (2026-10-02): una línea de tiempo por cada
      pedido de la cuenta, con el detalle de cada paso. */
   @UseGuards(StockPortalGuard)
@@ -743,10 +759,19 @@ export class StockClientesController {
   @UseGuards(AuthGuard)
   @Put('solicitudes/:id/estado')
   async actualizarEstadoSolicitud(
+    @Req() req: any,
     @Param('id', ParseIntPipe) id: number,
     @Body() body: { estado: string },
   ) {
-    return await this.stockClientes.actualizarEstadoSolicitud(id, body?.estado);
+    const data = await this.stockClientes.actualizarEstadoSolicitud(id, body?.estado);
+    // (2026-11-09) Cancelar cierra la etapa del flujo; sacar de cancelada la
+    // reabre. Antes las dos dimensiones quedaban desincronizadas.
+    const sincronizado = await this.pedidosFlujo.alCambiarEstadoComercial(
+      id,
+      String(body?.estado || '').toLowerCase().trim(),
+      (req?.user?.email || '').toLowerCase(),
+    );
+    return sincronizado || data;
   }
 
   /* ── Flujo del pedido: lado de la plataforma (2026-09-16) ────────────── */
@@ -771,6 +796,26 @@ export class StockClientesController {
       tipo: 'plataforma',
       email: (req?.user?.email || '').toLowerCase(),
     });
+  }
+
+  /* (2026-11-09) Etapas intermedias de la validación: tomar el pedido,
+     dejarle una observación al cliente y rechazarlo con motivo. */
+  @UseGuards(AuthGuard)
+  @Post('solicitudes/:id/tomar')
+  async tomarPedido(@Req() req: any, @Param('id', ParseIntPipe) id: number) {
+    return await this.pedidosFlujo.tomarRevision(id, (req?.user?.email || '').toLowerCase());
+  }
+
+  @UseGuards(AuthGuard)
+  @Post('solicitudes/:id/observar')
+  async observarPedido(@Req() req: any, @Param('id', ParseIntPipe) id: number, @Body() body: { texto?: string }) {
+    return await this.pedidosFlujo.observar(id, String(body?.texto || ''), (req?.user?.email || '').toLowerCase());
+  }
+
+  @UseGuards(AuthGuard)
+  @Post('solicitudes/:id/rechazar')
+  async rechazarPedido(@Req() req: any, @Param('id', ParseIntPipe) id: number, @Body() body: { motivo?: string }) {
+    return await this.pedidosFlujo.rechazar(id, String(body?.motivo || ''), (req?.user?.email || '').toLowerCase());
   }
 
   @UseGuards(AuthGuard)
@@ -801,10 +846,20 @@ export class StockClientesController {
   @UseGuards(AuthGuard)
   @Put('solicitudes/:id/vincular')
   async vincularSolicitud(
+    @Req() req: any,
     @Param('id', ParseIntPipe) id: number,
     @Body() body: { licitacion_id: number },
   ) {
-    return await this.stockClientes.vincularLicitacion(id, Number(body?.licitacion_id));
+    const data = await this.stockClientes.vincularLicitacion(id, Number(body?.licitacion_id));
+    // (2026-11-09) Con la cotización vinculada el pedido pasa a «Cotización
+    // enviada» y el cliente recibe el aviso en su portal. Best-effort: el
+    // guardado de la cotización ya ocurrió.
+    const movido = await this.pedidosFlujo.marcarCotizacionEnviada(
+      id,
+      Number(body?.licitacion_id),
+      (req?.user?.email || '').toLowerCase(),
+    );
+    return movido || data;
   }
 
   // Hilo de mensajes (equipo).

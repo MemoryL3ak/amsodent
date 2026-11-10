@@ -6,6 +6,7 @@ import { descargarReportePDF } from "../lib/reporteStock";
 import { fmtFechaHoraChile } from "../lib/fechaChile";
 import BotonLimpiarFiltros from "../components/BotonLimpiarFiltros";
 import DropdownSelect from "../components/ui/DropdownSelect";
+import ConfirmModal from "../components/ConfirmModal";
 import {
   Inbox,
   ShoppingCart,
@@ -21,6 +22,7 @@ import {
   ChevronDown,
   ChevronRight,
   ChevronLeft,
+  X,
 } from "lucide-react";
 
 /* ============================================================
@@ -44,16 +46,28 @@ const estadoMeta = (e) => ESTADOS.find((x) => x.value === e) || ESTADOS[0];
 /* Etapas del flujo de aprobación y pago (2026-09-16). Es una dimensión
    distinta del estado comercial de arriba: describe en qué punto del
    camino va el pedido, de quién depende avanzar y cuánto se demoró. */
+/* (2026-11-09) Entre «aprobado» y «por pagar» hay paradas intermedias, con
+   quién y cuándo: tomar el pedido, enviar la cotización y observar algo al
+   cliente. Y la salida «rechazado» con motivo. Mismo orden que el backend
+   (pedidos-flujo-etapas.ts). */
 const FLUJO = [
   { value: "pendiente_aprobacion", label: "Espera al cliente", bg: "#fef3c7", fg: "#b45309", ayuda: "El pedido lo armó un asistente; falta que lo apruebe el administrador de la cuenta." },
-  { value: "aprobado_cliente", label: "Por validar", bg: "#e0f2fe", fg: "#0369a1", ayuda: "El cliente ya aprobó: nos toca confirmar existencias y emitir el link de pago." },
+  { value: "aprobado_cliente", label: "Por revisar", bg: "#e0f2fe", fg: "#0369a1", ayuda: "El cliente ya aprobó y nadie lo ha tomado: hay que revisarlo, cotizar y confirmar existencias." },
+  { value: "en_revision", label: "En revisión", bg: "#ccfbf1", fg: "#0f766e", ayuda: "Alguien de Amsodent tomó el pedido y lo está revisando." },
+  { value: "cotizacion_enviada", label: "Cotización enviada", bg: "#e0e7ff", fg: "#4338ca", ayuda: "El cliente tiene la cotización en su portal: puede darla por buena o pedir cambios." },
+  { value: "observado", label: "Observado", bg: "#ffedd5", fg: "#c2410c", ayuda: "Le dejamos una observación al cliente y esperamos su respuesta antes de seguir." },
   { value: "validado_plataforma", label: "Por pagar", bg: "#ede9fe", fg: "#6d28d9", ayuda: "Existencias confirmadas y link de pago enviado; esperamos el pago." },
   { value: "pagado", label: "Pagado", bg: "#dcfce7", fg: "#15803d", ayuda: "Pagado. Plazo de despacho: 48 a 72 hrs." },
-  { value: "rechazado", label: "Rechazado", bg: "#fee2e2", fg: "#b91c1c", ayuda: "El pedido fue rechazado." },
+  { value: "rechazado", label: "Rechazado", bg: "#fee2e2", fg: "#b91c1c", ayuda: "Amsodent rechazó el pedido; el cliente leyó el motivo." },
   { value: "cancelado", label: "Cancelado", bg: "#f1f5f9", fg: "#475569", ayuda: "El pedido fue cancelado." },
 ];
 const flujoDe = (s) => String(s?.flujo_estado || "pendiente_aprobacion");
 const flujoMeta = (v) => FLUJO.find((f) => f.value === v) || FLUJO[0];
+// Desde qué etapas se puede validar / observar / cerrar (igual que el backend).
+const VALIDABLES = ["aprobado_cliente", "en_revision", "cotizacion_enviada", "observado", "validado_plataforma"];
+const OBSERVABLES = ["aprobado_cliente", "en_revision", "cotizacion_enviada"];
+const CERRADOS = ["pagado", "rechazado", "cancelado"];
+const quienDe = (correo) => (correo ? String(correo).split("@")[0] : null);
 
 function BadgeFlujo({ valor }) {
   const m = flujoMeta(valor);
@@ -157,6 +171,7 @@ export default function PedidosPortal() {
   const [fTexto, setFTexto] = useState("");
   const [fEstado, setFEstado] = useState("");
   const [fOrigen, setFOrigen] = useState("");
+  const [fEtapa, setFEtapa] = useState("");
   const [pagina, setPagina] = useState(1);
   const [expandidoId, setExpandidoId] = useState(null);
 
@@ -215,7 +230,7 @@ export default function PedidosPortal() {
   useEffect(() => {
     setPagina(1);
     setExpandidoId(null);
-  }, [fTexto, fEstado, fOrigen]);
+  }, [fTexto, fEstado, fOrigen, fEtapa]);
 
   const filtrados = useMemo(() => {
     const q = fTexto.trim().toLowerCase();
@@ -223,6 +238,7 @@ export default function PedidosPortal() {
     return pedidos.filter((s) => {
       if (fEstado && (s.estado || "pendiente") !== fEstado) return false;
       if (fOrigen && origenDe(s) !== fOrigen) return false;
+      if (fEtapa && flujoDe(s) !== fEtapa) return false;
       if (!q) return true;
       const items = Array.isArray(s.items) ? s.items : [];
       return (
@@ -234,7 +250,7 @@ export default function PedidosPortal() {
         items.some((i) => String(i?.nombre || "").toLowerCase().includes(q))
       );
     });
-  }, [pedidos, fTexto, fEstado, fOrigen]);
+  }, [pedidos, fTexto, fEstado, fOrigen, fEtapa]);
 
   /* (2026-11-05) El aviso de un pedido nuevo (campana o ventana flotante) llega
      con ?pedido=ID: se abre ese pedido en su página, una sola vez por cada id.
@@ -250,7 +266,7 @@ export default function PedidosPortal() {
       const idx = filtrados.findIndex((s) => Number(s.id) === pedidoPedido);
       if (idx < 0) {
         // Con los filtros puestos no se ve: se limpian y este efecto vuelve a correr.
-        setFTexto(""); setFEstado(""); setFOrigen("");
+        setFTexto(""); setFEstado(""); setFOrigen(""); setFEtapa("");
         return;
       }
       setPagina(Math.floor(idx / POR_PAGINA) + 1);
@@ -326,47 +342,103 @@ export default function PedidosPortal() {
     }
   }
 
-  async function revertirPedido(pedido) {
-    const motivo = window.prompt(
-      "¿Por qué se devuelve el pedido a la etapa anterior?\n(Queda registrado en la bitácora del pedido.)",
-      "",
-    );
-    if (motivo === null) return;
+  /* (2026-11-09) Las acciones que llevan un texto (observar, rechazar, volver
+     atrás, SOS) pasan por una ventana propia, no por el window.prompt del
+     navegador. `modalMotivo` describe la ventana abierta y qué hacer con el
+     texto; `confirmar` es la confirmación simple (quitar el SOS). */
+  const [modalMotivo, setModalMotivo] = useState(null);
+  const [confirmar, setConfirmar] = useState(null);
+
+  async function accionFlujo(pedido, ruta, body, exito, fallo) {
+    setAccionando(true);
     try {
-      const r = await api.post(`/stock-clientes/solicitudes/${pedido.id}/revertir`, { motivo });
-      reemplazar(r.pedido);
-      setToast({ type: "success", message: "El pedido volvió a la etapa anterior." });
+      const r = await api.post(`/stock-clientes/solicitudes/${pedido.id}/${ruta}`, body);
+      if (r?.pedido) reemplazar(r.pedido);
+      setModalMotivo(null);
+      setToast({ type: "success", message: typeof exito === "function" ? exito(r) : exito });
       cargarKpis();
+      return true;
     } catch (e) {
-      setToast({ type: "error", message: e?.message || "No se pudo revertir el pedido." });
+      setToast({ type: "error", message: e?.message || fallo });
+      return false;
+    } finally {
+      setAccionando(false);
     }
   }
 
-  async function alternarSos(pedido) {
-    const activo = Boolean(pedido.sos);
-    let motivo = "";
-    if (!activo) {
-      motivo = window.prompt("SOS: el pedido se despacha dentro de 24 hrs.\n¿Motivo?", "") ?? null;
-      if (motivo === null) return;
-    } else if (!window.confirm("¿Quitar el SOS de este pedido?")) {
+  // Alguien del equipo toma el pedido: queda «En revisión» a su nombre y el
+  // cliente ve en su portal que ya lo están mirando.
+  function tomarPedido(pedido) {
+    accionFlujo(pedido, "tomar", {}, (r) => r?.mensaje || "Pedido tomado: quedó en revisión a tu nombre.", "No se pudo tomar el pedido.");
+  }
+
+  function observarPedido(pedido) {
+    setModalMotivo({
+      titulo: `Observar el pedido N° ${pedido.id}`,
+      descripcion: "Escribe qué necesitas que el cliente responda: un producto sin stock, un reemplazo, un dato que falta. Lo ve en su portal, en el hilo del pedido y por correo. El pedido queda «Observado» hasta que acepte seguir o lo modifique.",
+      placeholder: "Ej: El producto X no tiene stock hasta el 20-11. ¿Esperas o lo reemplazamos por Y?",
+      textoConfirmar: "Enviar observación",
+      tono: "warning",
+      obligatorio: true,
+      accion: (texto) => accionFlujo(pedido, "observar", { texto }, "Observación enviada al cliente.", "No se pudo enviar la observación."),
+    });
+  }
+
+  function rechazarPedido(pedido) {
+    setModalMotivo({
+      titulo: `Rechazar el pedido N° ${pedido.id}`,
+      descripcion: "El pedido se cierra y el cliente lee el motivo en su portal y por correo. El estado comercial pasa a Cancelada.",
+      placeholder: "Motivo del rechazo…",
+      textoConfirmar: "Rechazar pedido",
+      tono: "danger",
+      obligatorio: true,
+      accion: (motivo) => accionFlujo(pedido, "rechazar", { motivo }, "Pedido rechazado; el cliente fue avisado.", "No se pudo rechazar el pedido."),
+    });
+  }
+
+  function revertirPedido(pedido) {
+    setModalMotivo({
+      titulo: `Devolver el pedido N° ${pedido.id} a la etapa anterior`,
+      descripcion: "Se deshace lo que produjo la etapa actual (una validación, una observación, la cotización enviada) y el motivo queda en la bitácora del pedido.",
+      placeholder: "¿Por qué se devuelve? (opcional)",
+      textoConfirmar: "Volver atrás",
+      tono: "warning",
+      accion: (motivo) => accionFlujo(pedido, "revertir", { motivo }, "El pedido volvió a la etapa anterior.", "No se pudo revertir el pedido."),
+    });
+  }
+
+  function alternarSos(pedido) {
+    if (pedido.sos) {
+      setConfirmar({
+        titulo: "Quitar el SOS",
+        mensaje: `El pedido N° ${pedido.id} deja de estar comprometido a despacho en 24 hrs.`,
+        onConfirm: async () => {
+          setConfirmar(null);
+          await accionFlujo(pedido, "sos", { quitar: true }, "SOS retirado.", "No se pudo quitar el SOS.");
+        },
+      });
       return;
     }
-    try {
-      const r = await api.post(`/stock-clientes/solicitudes/${pedido.id}/sos`, { motivo, quitar: activo });
-      reemplazar(r.pedido);
-      setToast({ type: "success", message: activo ? "SOS retirado." : "Pedido marcado como SOS: despacho en 24 hrs." });
-      cargarKpis();
-    } catch (e) {
-      setToast({ type: "error", message: e?.message || "No se pudo cambiar el SOS." });
-    }
+    setModalMotivo({
+      titulo: `SOS para el pedido N° ${pedido.id}`,
+      descripcion: "El despacho queda comprometido dentro de 24 hrs y se avisa al equipo.",
+      placeholder: "Motivo (opcional)",
+      textoConfirmar: "Marcar SOS",
+      tono: "danger",
+      accion: (motivo) => accionFlujo(pedido, "sos", { motivo }, "Pedido marcado como SOS: despacho en 24 hrs.", "No se pudo marcar el SOS."),
+    });
   }
 
   async function cambiarEstado(s, estado) {
     const anterior = s.estado;
     setPedidos((prev) => prev.map((p) => (p.id === s.id ? { ...p, estado } : p)));
     try {
-      await api.put(`/stock-clientes/solicitudes/${s.id}/estado`, { estado });
-    } catch (e) {
+      // (2026-11-09) El servidor devuelve el pedido con la etapa ya
+      // sincronizada: cancelar cierra el flujo y sacar de cancelada lo reabre.
+      const r = await api.put(`/stock-clientes/solicitudes/${s.id}/estado`, { estado });
+      if (r?.id) reemplazar(r);
+      cargarKpis();
+    } catch {
       setPedidos((prev) => prev.map((p) => (p.id === s.id ? { ...p, estado: anterior } : p)));
       setToast({ type: "error", message: "No se pudo cambiar el estado." });
     }
@@ -510,11 +582,12 @@ export default function PedidosPortal() {
 
 
   /* (2026-09-24) Volver a ver todo sin ir borrando filtro por filtro. */
-  const hayFiltros = fTexto !== "" || fEstado !== "" || fOrigen !== "";
+  const hayFiltros = fTexto !== "" || fEstado !== "" || fOrigen !== "" || fEtapa !== "";
   function limpiarFiltros() {
     setFTexto("");
     setFEstado("");
     setFOrigen("");
+    setFEtapa("");
     setPagina(1);
   }
 
@@ -594,6 +667,8 @@ export default function PedidosPortal() {
           </div>
           <div className="kpi-grid">
             <KpiTiempo label="Cliente aprueba" horas={kpis.horas_a_aprobacion} detalle="desde que se envía el pedido" />
+            {/* (2026-11-09) Cuánto tarda alguien en tomar el pedido: la mitad del plazo de 48 h. */}
+            <KpiTiempo label="Tomamos" horas={kpis.horas_a_revision} detalle="desde que el cliente aprueba" objetivo={24} />
             <KpiTiempo label="Validamos" horas={kpis.horas_a_validacion} detalle="desde que el cliente aprueba" objetivo={48} />
             <KpiTiempo label="Paga" horas={kpis.horas_a_pago} detalle="desde que enviamos el link" />
             <KpiTiempo label="Ciclo completo" horas={kpis.horas_total} detalle="del envío al pago" />
@@ -628,6 +703,15 @@ export default function PedidosPortal() {
             onChange={setFEstado}
             minWidth={190}
             options={[{ value: "", label: "Todos" }, ...ESTADOS.map((e) => ({ value: e.value, label: e.label }))]}
+          />
+        </div>
+        <div className="filter-field">
+          <label className="filter-label">Etapa</label>
+          <DropdownSelect
+            value={fEtapa}
+            onChange={setFEtapa}
+            minWidth={190}
+            options={[{ value: "", label: "Todas" }, ...FLUJO.map((f) => ({ value: f.value, label: f.label, color: f.fg }))]}
           />
         </div>
         <div className="filter-field">
@@ -752,15 +836,15 @@ export default function PedidosPortal() {
                           )}
                         </td>
                         <td onClick={(e) => e.stopPropagation()}>
-                          <select
-                            className="input"
+                          {/* (2026-11-09) Listbox de la plataforma en vez del <select> nativo. */}
+                          <DropdownSelect
                             value={s.estado || "pendiente"}
-                            onChange={(e) => cambiarEstado(s, e.target.value)}
-                            style={{ width: "auto", maxWidth: "100%", height: 28, fontSize: 12, fontWeight: 700, background: em.bg, color: em.fg, border: "none", borderRadius: 999, padding: "0 10px" }}
+                            onChange={(v) => cambiarEstado(s, v)}
+                            minWidth={150}
+                            options={ESTADOS.map((e) => ({ value: e.value, label: e.label, color: e.fg }))}
                             title="Cambiar el estado del pedido"
-                          >
-                            {ESTADOS.map((e) => <option key={e.value} value={e.value}>{e.label}</option>)}
-                          </select>
+                            style={{ width: "100%", maxWidth: 132, height: 28, fontSize: 12, fontWeight: 700, background: em.bg, border: "none", borderRadius: 999, padding: "0 10px" }}
+                          />
                         </td>
                         <td onClick={(e) => e.stopPropagation()} style={{ whiteSpace: "nowrap" }}>
                           <div style={{ display: "flex", alignItems: "center", gap: 2, minWidth: 0 }}>
@@ -865,7 +949,11 @@ export default function PedidosPortal() {
                               {/* Flujo de aprobación y pago (2026-09-16) */}
                               <PanelFlujoPedido
                                 pedido={s}
+                                ocupado={accionando}
                                 onValidar={() => setModalValidar(s)}
+                                onTomar={() => tomarPedido(s)}
+                                onObservar={() => observarPedido(s)}
+                                onRechazar={() => rechazarPedido(s)}
                                 onRevertir={() => revertirPedido(s)}
                                 onSos={() => alternarSos(s)}
                                 onVerHistorial={() => setHistorialCliente({ rut: s.rut, razon: s.razon_social })}
@@ -949,6 +1037,83 @@ export default function PedidosPortal() {
           onCerrar={() => setHistorialCliente(null)}
         />
       )}
+
+      {modalMotivo && (
+        <ModalMotivo
+          titulo={modalMotivo.titulo}
+          descripcion={modalMotivo.descripcion}
+          placeholder={modalMotivo.placeholder}
+          textoConfirmar={modalMotivo.textoConfirmar}
+          tono={modalMotivo.tono}
+          obligatorio={modalMotivo.obligatorio}
+          guardando={accionando}
+          onCerrar={() => { if (!accionando) setModalMotivo(null); }}
+          onConfirmar={modalMotivo.accion}
+        />
+      )}
+
+      <ConfirmModal
+        open={Boolean(confirmar)}
+        title={confirmar?.titulo}
+        message={confirmar?.mensaje}
+        confirmText="Quitar SOS"
+        confirmTone="warning"
+        onConfirm={confirmar?.onConfirm}
+        onCancel={() => setConfirmar(null)}
+      />
+    </div>
+  );
+}
+
+/* ── Ventana para una acción que lleva un texto (2026-11-09) ───────────────
+   Observar al cliente, rechazar, volver atrás y marcar SOS. Reemplaza al
+   window.prompt del navegador; el texto queda en la bitácora del pedido. */
+function ModalMotivo({ titulo, descripcion, placeholder, textoConfirmar, tono = "primary", obligatorio = false, guardando = false, onCerrar, onConfirmar }) {
+  const [texto, setTexto] = useState("");
+  const puede = !guardando && (!obligatorio || texto.trim().length > 0);
+  useEffect(() => {
+    const alTeclear = (e) => { if (e.key === "Escape") onCerrar(); };
+    window.addEventListener("keydown", alTeclear);
+    return () => window.removeEventListener("keydown", alTeclear);
+  }, [onCerrar]);
+  const colorBoton = tono === "danger" ? "#dc2626" : tono === "warning" ? "#b45309" : null;
+  return (
+    <div
+      onMouseDown={(e) => { if (e.target === e.currentTarget) onCerrar(); }}
+      style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,.55)", zIndex: 12000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+    >
+      <div style={{ width: 540, maxWidth: "100%", background: "var(--surface)", borderRadius: 14, padding: 20, border: "1px solid var(--border)" }}>
+        <h3 style={{ margin: "0 0 4px", fontSize: 16, fontWeight: 800, color: "var(--text)" }}>{titulo}</h3>
+        {descripcion && (
+          <p style={{ margin: "0 0 12px", fontSize: 12.5, color: "var(--text-muted)", lineHeight: 1.5 }}>{descripcion}</p>
+        )}
+        <textarea
+          className="input"
+          autoFocus
+          rows={4}
+          value={texto}
+          onChange={(e) => setTexto(e.target.value)}
+          placeholder={placeholder}
+          style={{ width: "100%", resize: "vertical", minHeight: 90, height: "auto", padding: 10, fontSize: 13, lineHeight: 1.45 }}
+        />
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginTop: 14, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 11.5, color: "var(--text-muted)" }}>
+            {obligatorio ? "Obligatorio: el cliente lo lee y queda en la bitácora." : "Opcional: queda en la bitácora del pedido."}
+          </span>
+          <div style={{ display: "flex", gap: 10 }}>
+            <button type="button" className="btn btn-secondary" onClick={onCerrar} disabled={guardando}>Cancelar</button>
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={!puede}
+              onClick={() => onConfirmar(texto.trim())}
+              style={colorBoton ? { background: colorBoton, borderColor: colorBoton } : undefined}
+            >
+              {guardando ? "Guardando…" : textoConfirmar}
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1033,13 +1198,28 @@ function KpiTiempo({ label, horas, detalle, objetivo }) {
 }
 
 /* ── Panel del flujo dentro del detalle del pedido ─────────────────────── */
-function PanelFlujoPedido({ pedido, onValidar, onRevertir, onSos, onVerHistorial }) {
+function PanelFlujoPedido({ pedido, ocupado = false, onValidar, onTomar, onObservar, onRechazar, onRevertir, onSos, onVerHistorial }) {
   const estado = flujoDe(pedido);
   const m = flujoMeta(estado);
+  const cerrado = CERRADOS.includes(estado);
+  const conCotizacion = Boolean(pedido.licitacion_id || pedido.cotizacion || pedido.cotizacion_enviada_at);
+  /* (2026-11-09) Pasos intermedios con quién y cuándo. «Cotización enviada»
+     aparece solo si hay cotización (en pedidos anteriores a la migración la
+     fecha es la de la respuesta). */
   const pasos = [
-    { key: "pendiente_aprobacion", label: "Enviado", fecha: pedido.created_at },
-    { key: "aprobado_cliente", label: "Aprobado por el cliente", fecha: pedido.aprobado_cliente_at, quien: pedido.aprobado_cliente_por },
-    { key: "validado_plataforma", label: "Validado por Amsodent", fecha: pedido.validado_at, quien: pedido.validado_por },
+    { key: "enviado", label: "Enviado", fecha: pedido.created_at, quien: quienDe(pedido.creado_por_email) },
+    { key: "aprobado", label: "Aprobado por el cliente", fecha: pedido.aprobado_cliente_at, quien: quienDe(pedido.aprobado_cliente_por) },
+    { key: "revision", label: "En revisión", fecha: pedido.revision_iniciada_at, quien: quienDe(pedido.revision_por) },
+    ...(conCotizacion
+      ? [{
+          key: "cotizacion",
+          label: "Cotización enviada",
+          fecha: pedido.cotizacion_enviada_at || pedido.respondida_at,
+          quien: quienDe(pedido.cotizacion_enviada_por),
+          extra: pedido.validado_cliente_at ? `✓ conforme${quienDe(pedido.validado_cliente_por) ? ` · ${quienDe(pedido.validado_cliente_por)}` : ""}` : null,
+        }]
+      : []),
+    { key: "validado", label: "Validado por Amsodent", fecha: pedido.validado_at, quien: quienDe(pedido.validado_por) },
     { key: "pagado", label: "Pagado", fecha: pedido.pago_at, quien: pedido.pago_medio },
   ];
 
@@ -1051,11 +1231,13 @@ function PanelFlujoPedido({ pedido, onValidar, onRevertir, onSos, onVerHistorial
         <span style={{ fontSize: 11.5, color: "var(--text-muted)" }}>{m.ayuda}</span>
       </div>
 
-      {/* Línea de tiempo con los tiempos de respuesta de cada tramo */}
+      {/* Línea de tiempo con los tiempos de respuesta de cada tramo. La demora
+          se mide contra el último paso que sí tiene fecha (un pedido puede
+          saltarse «En revisión» si se validó de una). */}
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
         {pasos.map((p, i) => {
           const hecho = Boolean(p.fecha);
-          const previo = i > 0 ? pasos[i - 1].fecha : null;
+          const previo = pasos.slice(0, i).reverse().find((x) => x.fecha)?.fecha || null;
           const demora = i > 0 ? lapso(previo, p.fecha) : null;
           return (
             <div
@@ -1075,11 +1257,44 @@ function PanelFlujoPedido({ pedido, onValidar, onRevertir, onSos, onVerHistorial
               {p.quien && hecho && (
                 <div style={{ fontSize: 10.5, color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis" }}>{p.quien}</div>
               )}
+              {p.extra && hecho && (
+                <div style={{ fontSize: 10.5, color: "#15803d", fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis" }}>{p.extra}</div>
+              )}
               {demora && <div style={{ fontSize: 10.5, color: "#0369a1", fontWeight: 700 }}>+{demora}</div>}
             </div>
           );
         })}
       </div>
+
+      {/* (2026-11-09) Observación abierta o ya respondida, y rechazo. */}
+      {pedido.observacion_at && (
+        <div style={{ border: "1px solid #fed7aa", background: estado === "observado" ? "#fff7ed" : "#fff", borderRadius: 10, padding: "10px 12px" }}>
+          <div style={{ fontSize: 12.5, fontWeight: 800, color: "#9a3412" }}>
+            {estado === "observado" ? "Observación enviada al cliente · esperando su respuesta" : "Observación respondida"}
+            <span style={{ fontWeight: 500 }}>
+              {" · "}{fmtFechaHora(pedido.observacion_at)}
+              {quienDe(pedido.observacion_por) ? ` · ${quienDe(pedido.observacion_por)}` : ""}
+            </span>
+          </div>
+          <div style={{ fontSize: 12.5, color: "#475569", marginTop: 4, whiteSpace: "pre-wrap" }}>{pedido.observacion_texto}</div>
+          {pedido.observacion_respondida_at && (
+            <div style={{ fontSize: 12, color: "#166534", marginTop: 6 }}>
+              <strong>Respuesta del cliente</strong>
+              {" · "}{fmtFechaHora(pedido.observacion_respondida_at)}
+              {quienDe(pedido.observacion_respondida_por) ? ` · ${quienDe(pedido.observacion_respondida_por)}` : ""}
+              {": "}{pedido.observacion_respuesta || "acepta seguir con el pedido tal como está."}
+            </div>
+          )}
+        </div>
+      )}
+      {estado === "rechazado" && (
+        <div style={{ border: "1px solid #fecaca", background: "#fef2f2", borderRadius: 10, padding: "10px 12px", fontSize: 12.5, color: "#991b1b" }}>
+          <strong>Rechazado por Amsodent</strong>
+          {pedido.rechazado_at ? ` · ${fmtFechaHora(pedido.rechazado_at)}` : ""}
+          {quienDe(pedido.rechazado_por) ? ` · ${quienDe(pedido.rechazado_por)}` : ""}
+          {pedido.rechazo_motivo && <div style={{ color: "#475569", marginTop: 4, whiteSpace: "pre-wrap" }}>{pedido.rechazo_motivo}</div>}
+        </div>
+      )}
 
       {/* (2026-09-24) El cliente pidio cambios desde su carrito. Los productos
           del pedido YA estan reemplazados por los nuevos; esto muestra que
@@ -1130,31 +1345,67 @@ function PanelFlujoPedido({ pedido, onValidar, onRevertir, onSos, onVerHistorial
         </div>
       )}
 
+      {/* Qué toca ahora, en una línea; abajo los botones de la etapa. */}
+      {estado === "pendiente_aprobacion" && (
+        <span style={{ fontSize: 12, color: "#b45309" }}>Esperando que el administrador de la cuenta del cliente apruebe el pedido.</span>
+      )}
+      {estado === "en_revision" && pedido.revision_por && (
+        <span style={{ fontSize: 12, color: "#0f766e" }}>Lo está revisando <strong>{quienDe(pedido.revision_por)}</strong>.</span>
+      )}
+      {estado === "cotizacion_enviada" && (
+        <span style={{ fontSize: 12, color: pedido.validado_cliente_at ? "#15803d" : "#4338ca" }}>
+          {pedido.validado_cliente_at
+            ? "El cliente dio por buena la cotización: falta confirmar existencias y enviar el link de pago."
+            : "El cliente tiene la cotización en su portal; puede darla por buena o pedir cambios."}
+        </span>
+      )}
+      {estado === "observado" && (
+        <span style={{ fontSize: 12, color: "#c2410c" }}>Esperando la respuesta del cliente. Si ya se resolvió por otro canal, se puede validar igual.</span>
+      )}
+
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-        {estado === "aprobado_cliente" || estado === "validado_plataforma" ? (
-          <button type="button" className="btn btn-primary btn-sm" onClick={onValidar}>
+        {estado === "aprobado_cliente" && (
+          <button type="button" className="btn btn-primary btn-sm" onClick={onTomar} disabled={ocupado} title="Queda en revisión a tu nombre y el cliente lo ve">
+            Tomar el pedido
+          </button>
+        )}
+        {VALIDABLES.includes(estado) && (
+          <button
+            type="button"
+            className={estado === "aprobado_cliente" || estado === "observado" ? "btn btn-secondary btn-sm" : "btn btn-primary btn-sm"}
+            onClick={onValidar}
+            disabled={ocupado}
+          >
             {estado === "validado_plataforma" ? "Revalidar existencias" : "Validar existencias y enviar link de pago"}
           </button>
-        ) : null}
-        {estado === "pendiente_aprobacion" && (
-          <span style={{ fontSize: 12, color: "#b45309" }}>
-            Esperando que el administrador de la cuenta del cliente apruebe el pedido.
-          </span>
         )}
-        {estado !== "pagado" && estado !== "pendiente_aprobacion" && (
-          <button type="button" className="btn btn-secondary btn-sm" onClick={onRevertir} title="Devuelve el pedido a la etapa anterior">
+        {OBSERVABLES.includes(estado) && (
+          <button type="button" className="btn btn-secondary btn-sm" onClick={onObservar} disabled={ocupado} title="Dejarle una observación al cliente y esperar su respuesta">
+            Observar al cliente
+          </button>
+        )}
+        {!cerrado && estado !== "pendiente_aprobacion" && (
+          <button type="button" className="btn btn-secondary btn-sm" onClick={onRevertir} disabled={ocupado} title="Devuelve el pedido a la etapa anterior">
             Volver atrás
           </button>
         )}
-        <button
-          type="button"
-          className="btn btn-secondary btn-sm"
-          onClick={onSos}
-          style={{ color: pedido.sos ? "#b91c1c" : undefined }}
-          title="SOS: despacho comprometido en 24 hrs"
-        >
-          {pedido.sos ? "Quitar SOS" : "Marcar SOS (24 h)"}
-        </button>
+        {!cerrado && (
+          <button type="button" className="btn btn-secondary btn-sm" onClick={onRechazar} disabled={ocupado} style={{ color: "#b91c1c" }} title="Cierra el pedido con un motivo que el cliente lee">
+            Rechazar
+          </button>
+        )}
+        {estado !== "rechazado" && estado !== "cancelado" && (
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm"
+            onClick={onSos}
+            disabled={ocupado}
+            style={{ color: pedido.sos ? "#b91c1c" : undefined }}
+            title="SOS: despacho comprometido en 24 hrs"
+          >
+            {pedido.sos ? "Quitar SOS" : "Marcar SOS (24 h)"}
+          </button>
+        )}
         {/* (2026-09-24) Mismo historial que ve el cliente en su portal: sirve
             para entender el pedido sin tener que preguntarle que hizo. */}
         <button type="button" className="btn btn-secondary btn-sm" onClick={onVerHistorial} title="Actividad de la cuenta en el portal">

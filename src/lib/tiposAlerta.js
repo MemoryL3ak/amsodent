@@ -29,6 +29,8 @@ export const TIPOS_ALERTA = {
   stock_critico: "Stock crítico de cliente",
   stock_bajo: "Stock bajo de cliente",
   pedido_portal_aprobado: "Pedido del portal aprobado",
+  pedido_portal_conforme: "Cotización aceptada por el cliente (portal)",
+  pedido_portal_observacion_respondida: "Observación respondida por el cliente (portal)",
   pedido_portal_pagado: "Pedido del portal pagado",
   pedido_portal_sos: "SOS del portal",
   chat_invitacion: "Invitación a sala de chat",

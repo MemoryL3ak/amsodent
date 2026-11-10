@@ -1203,6 +1203,23 @@ girasol 🌻). Hoy ayuda en:
   Acceso: quien tiene Monitoreo Stock ve todos los pedidos. Desde nov 2026 el
   vendedor dueño de la cartera también entra (lo lleva el aviso del pedido) y
   ve solo los pedidos de los clientes de su cartera.
+- FLUJO DEL PEDIDO DEL PORTAL (etapas, desde el 09-11-2026): Espera al cliente
+  (lo armó un asistente; aprueba el administrador de la cuenta) → Por revisar
+  (nadie de Amsodent lo tomó) → En revisión («Tomar el pedido»: queda a nombre
+  de quien lo toma y el cliente lo ve) → Cotización enviada (crear la cotización
+  desde el pedido la vincula y avisa al cliente, que puede darla por buena o
+  pedir cambios) → Por pagar («Validar existencias y enviar link de pago») →
+  Pagado (Webpay o crédito; 48-72 hrs para despachar). Paradas y salidas:
+  «Observado» («Observar al cliente»: el texto llega al portal, al hilo y por
+  correo; el cliente responde «Continuar con el pedido» o lo modifica);
+  «Rechazado» («Rechazar», con motivo que el cliente lee; el estado comercial
+  pasa a Cancelada); «Volver atrás» deshace la etapa actual. Cancelar el
+  estado comercial cierra la etapa y volver a Pendiente la reabre. Avisos al
+  equipo (campana + ventana flotante): pedido aprobado, cotización aceptada por
+  el cliente, observación respondida, pago, SOS. En el portal el cliente ve la
+  etapa con quién revisa, la observación pendiente arriba del Resumen, y el
+  link de pago del correo (?pagar=ID) abre Mis cotizaciones en ese pedido.
+  KPI «Tomamos» (meta 24 h) y filtro por etapa en la bandeja.
 - CORREO ALTERNO: en Usuarios, cada persona puede tener una segunda casilla
   asociada (profiles.email_alterno); la plataforma reconoce ambos correos
   como el mismo usuario (ej: Jeremías con jer.consorcio@gmail.com y
