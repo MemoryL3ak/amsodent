@@ -73,6 +73,8 @@ const TIPOS = {
   // (2026-11-09) El cliente respondió y el pedido vuelve a nuestras manos.
   pedido_portal_conforme: pedidoPortal("El cliente aceptó la cotización"),
   pedido_portal_observacion_respondida: pedidoPortal("El cliente respondió la observación"),
+  // (2026-11-09) Pago por el link fijo de Webpay: hay que verificarlo y registrarlo.
+  pedido_portal_pago_informado: pedidoPortal("El cliente informó su pago"),
 };
 
 const clp = (n) => `$${Math.round(Number(n) || 0).toLocaleString("es-CL")}`;

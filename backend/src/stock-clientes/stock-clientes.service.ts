@@ -2315,7 +2315,7 @@ export class StockClientesService {
      tienen de dónde salir. */
   private static readonly COLS_FLUJO_PEDIDO =
     ', flujo_estado, disponibilidad, monto_total, sos, sos_motivo, sos_solicitado_at' +
-    ', pago_estado, pago_medio, pago_monto, pago_at' +
+    ', pago_estado, pago_medio, pago_monto, pago_at, pago_detalle' +
     ', aprobado_cliente_at, aprobado_cliente_por, validado_at, validado_por, creado_por_email';
   /* (2026-11-09) Faltaban en la bandeja: sin `origen_seccion` el origen se
      deducía (Showroom y Ofertas salían como Explorador o Stock y el KPI de
@@ -2441,7 +2441,7 @@ export class StockClientesService {
     // corre, se cae a la lista básica de siempre.
     const COLS_FLUJO =
       COLS_BASE +
-      ', flujo_estado, disponibilidad, monto_total, sos, pago_estado, pago_medio, pago_at, aprobado_cliente_at, validado_at' +
+      ', flujo_estado, disponibilidad, monto_total, sos, pago_estado, pago_medio, pago_at, pago_detalle, aprobado_cliente_at, validado_at' +
       // (2026-10-01) Faltaban: sin ellas el portal no sabia que la cotizacion
       // ya estaba validada por el cliente y el boton seguia ofreciendose.
       ', validado_cliente_at, validado_cliente_por, modificacion_pedida_at, origen_seccion';

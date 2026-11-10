@@ -31,6 +31,7 @@ export const TIPOS_ALERTA = {
   pedido_portal_aprobado: "Pedido del portal aprobado",
   pedido_portal_conforme: "Cotización aceptada por el cliente (portal)",
   pedido_portal_observacion_respondida: "Observación respondida por el cliente (portal)",
+  pedido_portal_pago_informado: "Pago informado por el cliente (portal)",
   pedido_portal_pagado: "Pedido del portal pagado",
   pedido_portal_sos: "SOS del portal",
   chat_invitacion: "Invitación a sala de chat",

@@ -999,6 +999,131 @@ export class PedidosFlujoService {
     return { ok: true, pedido: actualizado, mensaje: MENSAJE_PAGADO };
   }
 
+  /* ── Pago por el link fijo de Webpay (2026-11-09) ──────────────────────
+     Mientras no llegue la llave de producción de Transbank, el cliente paga
+     en la página de pago de la empresa en webpay.cl, donde escribe él mismo
+     el monto. Transbank no avisa de vuelta, así que el pago tiene dos pasos:
+     el cliente informa que pagó y Amsodent, tras verlo en el portal de
+     Transbank, lo registra. Recién ahí el pedido queda pagado. */
+
+  /** El cliente avisa que ya pagó. No cierra el pedido: deja constancia y
+      avisa al equipo para que lo verifique. */
+  async informarPago(id: number, rut: string, actorEmail: string, nota: string) {
+    const pedido = await this.obtener(id);
+    if (String(pedido.rut) !== String(rut)) {
+      throw new ForbiddenException('Este pedido pertenece a otra cuenta.');
+    }
+    const estado = this.estadoDe(pedido);
+    if (estado === 'pagado') throw new BadRequestException('Este pedido ya está pagado.');
+    if (estado !== 'validado_plataforma') {
+      throw new BadRequestException('El pedido todavía no está validado por Amsodent, así que aún no se puede pagar.');
+    }
+    if (pedido.pago_estado === 'informado') {
+      return { ok: true, pedido, mensaje: 'Ya nos habías avisado de este pago: lo estamos verificando.' };
+    }
+
+    const ahora = new Date().toISOString();
+    const texto = String(nota || '').trim().slice(0, 300);
+    const detalle = {
+      ...(pedido.pago_detalle && typeof pedido.pago_detalle === 'object' ? pedido.pago_detalle : {}),
+      informado_at: ahora,
+      informado_por: actorEmail,
+      ...(texto ? { informado_nota: texto } : {}),
+    };
+    const { data, error } = await this.client
+      .from(TABLA)
+      .update({ pago_estado: 'informado', pago_medio: 'webpay_link', pago_detalle: detalle, updated_at: ahora })
+      .eq('id', Number(id))
+      .select()
+      .single();
+    if (error) this.traducirError(error);
+
+    await this.registrarEvento({
+      solicitudId: Number(id), tipo: 'pago_informado', estadoDesde: estado, estadoHasta: estado,
+      actorTipo: 'cliente', actorEmail,
+      detalle: `El cliente informó el pago por Webpay${texto ? `: ${texto}` : '.'}`.slice(0, 300),
+      datos: { monto: Math.round(Number(pedido.monto_total) || 0) },
+    });
+    await this.notificarEquipo(
+      data,
+      'pedido_portal_pago_informado',
+      `${data.razon_social || data.rut} informó que pagó el pedido N° ${data.id} ($${Number(data.monto_total || 0).toLocaleString('es-CL')}) por Webpay: verifícalo en Transbank y registra el pago.`,
+    );
+    return {
+      ok: true,
+      pedido: data,
+      mensaje: 'Gracias. Amsodent verifica el pago en Webpay y te avisa en cuanto quede confirmado.',
+    };
+  }
+
+  /** Amsodent registra el pago recibido por el link de Webpay y cierra el
+      pedido. El monto lo pone quien registra (el cliente lo escribió a mano
+      en Webpay, así que puede no calzar con el total: se acepta y queda la
+      diferencia a la vista en la bitácora). */
+  async registrarPagoManual(
+    id: number,
+    body: { monto?: number | string; autorizacion?: string; nota?: string },
+    actorEmail: string,
+  ) {
+    const pedido = await this.obtener(id);
+    const estado = this.estadoDe(pedido);
+    if (estado === 'pagado') throw new BadRequestException('Este pedido ya está pagado.');
+    if (estado !== 'validado_plataforma') {
+      throw new BadRequestException('Solo se registra el pago de un pedido «Por pagar» (validado por Amsodent).');
+    }
+    const monto = Math.round(Number(body?.monto) || 0);
+    if (monto <= 0) throw new BadRequestException('Indica el monto que se recibió.');
+    const autorizacion = String(body?.autorizacion || '').trim().slice(0, 40);
+    const nota = String(body?.nota || '').trim().slice(0, 300);
+    const total = Math.round(Number(pedido.monto_total) || 0);
+    const ahora = new Date().toISOString();
+
+    const actualizado = await this.mover(
+      id,
+      ['validado_plataforma'],
+      'pagado',
+      {
+        pago_estado: 'pagado',
+        pago_medio: 'webpay_link',
+        pago_at: ahora,
+        pago_monto: monto,
+        pago_detalle: {
+          ...(pedido.pago_detalle && typeof pedido.pago_detalle === 'object' ? pedido.pago_detalle : {}),
+          registrado_at: ahora,
+          registrado_por: actorEmail,
+          ...(autorizacion ? { autorizacion } : {}),
+          ...(nota ? { nota } : {}),
+        },
+      },
+      {
+        tipo: 'pagado', actorTipo: 'plataforma', actorEmail,
+        detalle: [
+          `Pago por Webpay registrado por Amsodent: $${monto.toLocaleString('es-CL')}`,
+          autorizacion ? ` (autorización ${autorizacion})` : '',
+          monto !== total ? `. Ojo: el total del pedido es $${total.toLocaleString('es-CL')}` : '',
+          nota ? `. ${nota}` : '',
+        ].join('').slice(0, 300),
+        datos: { monto, total, medio: 'webpay_link', autorizacion: autorizacion || null },
+      },
+    );
+    await this.notificarPagoPlataforma(actualizado);
+    await this.avisarCliente(actualizado, {
+      tipo: 'pedido_pagado',
+      descripcion: `Recibimos el pago de tu pedido N° ${actualizado.id}.`,
+      actorEmail,
+      hilo: `Recibimos tu pago de $${monto.toLocaleString('es-CL')}. ${MENSAJE_PAGADO}`,
+      correo: {
+        asunto: `Recibimos el pago de tu pedido N° ${actualizado.id}`,
+        html: `
+          <p>Hola${actualizado.contacto_nombre ? ` ${esc(actualizado.contacto_nombre)}` : ''},</p>
+          <p>Confirmamos el pago de <strong>$${monto.toLocaleString('es-CL')}</strong> de tu pedido N° ${actualizado.id}.</p>
+          <p>${MENSAJE_PAGADO}</p>
+          <p>Amsodent Medical Spa</p>`,
+      },
+    });
+    return { ok: true, pedido: actualizado, mensaje: 'Pago registrado: el pedido quedó pagado y el cliente fue avisado.' };
+  }
+
   /* Cupo de crédito del cliente: lo que tiene autorizado menos lo que ya
      comprometió en pedidos cerrados con crédito y aún no facturados/pagados.
      Si las columnas no están migradas, se responde "sin crédito". */

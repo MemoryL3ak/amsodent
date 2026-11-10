@@ -407,6 +407,20 @@ export default function PedidosPortal() {
     });
   }
 
+  /* (2026-11-09) El cliente paga por el link fijo de Webpay y Transbank no
+     avisa de vuelta: quien lo ve en el portal de Transbank lo registra aquí. */
+  const [modalPago, setModalPago] = useState(null);
+  async function registrarPago(pedido, payload) {
+    const ok = await accionFlujo(
+      pedido,
+      "registrar-pago",
+      payload,
+      (r) => r?.mensaje || "Pago registrado: el pedido quedó pagado.",
+      "No se pudo registrar el pago.",
+    );
+    if (ok) setModalPago(null);
+  }
+
   function alternarSos(pedido) {
     if (pedido.sos) {
       setConfirmar({
@@ -829,6 +843,12 @@ export default function PedidosPortal() {
                         </td>
                         <td>
                           <BadgeFlujo valor={flujoDe(s)} />
+                          {/* (2026-11-09) El cliente avisó que pagó por el link de Webpay. */}
+                          {flujoDe(s) === "validado_plataforma" && s.pago_estado === "informado" && (
+                            <div style={{ fontSize: 10, fontWeight: 800, color: "#6d28d9", marginTop: 3 }} title="Verifícalo en Transbank y registra el pago">
+                              Pago informado
+                            </div>
+                          )}
                           {s.sos && (
                             <div style={{ fontSize: 10, fontWeight: 800, color: "#b91c1c", marginTop: 3 }} title={s.sos_motivo || "Despacho comprometido en 24 hrs"}>
                               ⚡ SOS 24 h
@@ -956,6 +976,7 @@ export default function PedidosPortal() {
                                 onRechazar={() => rechazarPedido(s)}
                                 onRevertir={() => revertirPedido(s)}
                                 onSos={() => alternarSos(s)}
+                                onRegistrarPago={() => setModalPago(s)}
                                 onVerHistorial={() => setHistorialCliente({ rut: s.rut, razon: s.razon_social })}
                               />
 
@@ -1038,6 +1059,15 @@ export default function PedidosPortal() {
         />
       )}
 
+      {modalPago && (
+        <ModalRegistrarPago
+          pedido={modalPago}
+          guardando={accionando}
+          onCerrar={() => { if (!accionando) setModalPago(null); }}
+          onConfirmar={(payload) => registrarPago(modalPago, payload)}
+        />
+      )}
+
       {modalMotivo && (
         <ModalMotivo
           titulo={modalMotivo.titulo}
@@ -1112,6 +1142,88 @@ function ModalMotivo({ titulo, descripcion, placeholder, textoConfirmar, tono = 
               {guardando ? "Guardando…" : textoConfirmar}
             </button>
           </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── Ventana: registrar el pago recibido por el link de Webpay (2026-11-09) ──
+   El cliente escribe el monto a mano en la página de Webpay, así que el monto
+   recibido se anota tal cual sale en Transbank; si no calza con el total del
+   pedido, se avisa pero se deja registrar (queda en la bitácora). */
+function ModalRegistrarPago({ pedido, guardando = false, onCerrar, onConfirmar }) {
+  const total = Math.round(Number(pedido?.monto_total) || 0);
+  const [monto, setMonto] = useState(total > 0 ? String(total) : "");
+  const [autorizacion, setAutorizacion] = useState("");
+  const [nota, setNota] = useState("");
+  useEffect(() => {
+    const alTeclear = (e) => { if (e.key === "Escape") onCerrar(); };
+    window.addEventListener("keydown", alTeclear);
+    return () => window.removeEventListener("keydown", alTeclear);
+  }, [onCerrar]);
+  const montoNum = Math.round(Number(String(monto).replace(/[^\d]/g, "")) || 0);
+  const distinto = montoNum > 0 && total > 0 && montoNum !== total;
+  const informado = pedido?.pago_estado === "informado";
+  const det = pedido?.pago_detalle || {};
+  return (
+    <div
+      onMouseDown={(e) => { if (e.target === e.currentTarget) onCerrar(); }}
+      style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,.55)", zIndex: 12000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+    >
+      <div style={{ width: 500, maxWidth: "100%", background: "var(--surface)", borderRadius: 14, padding: 20, border: "1px solid var(--border)" }}>
+        <h3 style={{ margin: "0 0 4px", fontSize: 16, fontWeight: 800, color: "var(--text)" }}>Registrar el pago del pedido N° {pedido.id}</h3>
+        <p style={{ margin: "0 0 12px", fontSize: 12.5, color: "var(--text-muted)", lineHeight: 1.5 }}>
+          Revisa en el portal de Transbank que el pago haya entrado. Al registrarlo, el pedido queda <strong>Pagado</strong> y
+          el cliente recibe el aviso en su portal y por correo.
+        </p>
+        {informado && (
+          <div style={{ fontSize: 12.5, color: "#5b21b6", background: "#f5f3ff", border: "1px solid #ddd6fe", borderRadius: 9, padding: "8px 10px", marginBottom: 12 }}>
+            El cliente informó el pago{det.informado_at ? ` el ${fmtFechaHora(det.informado_at)}` : ""}
+            {quienDe(det.informado_por) ? ` · ${quienDe(det.informado_por)}` : ""}
+            {det.informado_nota ? <>: «{det.informado_nota}»</> : "."}
+          </div>
+        )}
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+          <label style={{ flex: "1 1 180px", display: "flex", flexDirection: "column", gap: 4, fontSize: 12, fontWeight: 700, color: "var(--text)" }}>
+            Monto recibido (CLP)
+            <input
+              className="input"
+              autoFocus
+              inputMode="numeric"
+              value={monto}
+              onChange={(e) => setMonto(e.target.value)}
+              placeholder={String(total)}
+            />
+          </label>
+          <label style={{ flex: "1 1 180px", display: "flex", flexDirection: "column", gap: 4, fontSize: 12, fontWeight: 700, color: "var(--text)" }}>
+            Código de autorización (opcional)
+            <input className="input" value={autorizacion} onChange={(e) => setAutorizacion(e.target.value)} maxLength={40} placeholder="Ej: 123456" />
+          </label>
+        </div>
+        <div style={{ fontSize: 11.5, marginTop: 6, color: distinto ? "#b45309" : "var(--text-muted)" }}>
+          Total del pedido: {fmtCLP(total)}
+          {distinto ? ` · el monto recibido no coincide (diferencia ${fmtCLP(montoNum - total)}); queda anotado en la bitácora.` : ""}
+        </div>
+        <textarea
+          className="input"
+          rows={2}
+          value={nota}
+          onChange={(e) => setNota(e.target.value)}
+          placeholder="Nota (opcional)"
+          maxLength={300}
+          style={{ width: "100%", resize: "vertical", height: "auto", minHeight: 56, padding: 10, fontSize: 13, lineHeight: 1.45, marginTop: 12 }}
+        />
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 14, flexWrap: "wrap" }}>
+          <button type="button" className="btn btn-secondary" onClick={onCerrar} disabled={guardando}>Cancelar</button>
+          <button
+            type="button"
+            className="btn btn-primary"
+            disabled={guardando || montoNum <= 0}
+            onClick={() => onConfirmar({ monto: montoNum, autorizacion: autorizacion.trim(), nota: nota.trim() })}
+          >
+            {guardando ? "Guardando…" : `Registrar pago de ${fmtCLP(montoNum)}`}
+          </button>
         </div>
       </div>
     </div>
@@ -1198,10 +1310,16 @@ function KpiTiempo({ label, horas, detalle, objetivo }) {
 }
 
 /* ── Panel del flujo dentro del detalle del pedido ─────────────────────── */
-function PanelFlujoPedido({ pedido, ocupado = false, onValidar, onTomar, onObservar, onRechazar, onRevertir, onSos, onVerHistorial }) {
+/* Cómo se pagó, para la línea de tiempo. */
+const MEDIOS_PAGO = { webpay: "Webpay", webpay_link: "Webpay (link)", credito: "Crédito", transferencia: "Transferencia" };
+
+function PanelFlujoPedido({ pedido, ocupado = false, onValidar, onTomar, onObservar, onRechazar, onRevertir, onSos, onRegistrarPago, onVerHistorial }) {
   const estado = flujoDe(pedido);
   const m = flujoMeta(estado);
   const cerrado = CERRADOS.includes(estado);
+  // (2026-11-09) Pago por el link fijo de Webpay: el cliente avisa que pagó.
+  const detPago = pedido.pago_detalle || {};
+  const pagoInformado = estado === "validado_plataforma" && pedido.pago_estado === "informado";
   const conCotizacion = Boolean(pedido.licitacion_id || pedido.cotizacion || pedido.cotizacion_enviada_at);
   /* (2026-11-09) Pasos intermedios con quién y cuándo. «Cotización enviada»
      aparece solo si hay cotización (en pedidos anteriores a la migración la
@@ -1220,7 +1338,12 @@ function PanelFlujoPedido({ pedido, ocupado = false, onValidar, onTomar, onObser
         }]
       : []),
     { key: "validado", label: "Validado por Amsodent", fecha: pedido.validado_at, quien: quienDe(pedido.validado_por) },
-    { key: "pagado", label: "Pagado", fecha: pedido.pago_at, quien: pedido.pago_medio },
+    {
+      key: "pagado",
+      label: "Pagado",
+      fecha: pedido.pago_at,
+      quien: [MEDIOS_PAGO[pedido.pago_medio] || pedido.pago_medio, quienDe(detPago.registrado_por)].filter(Boolean).join(" · "),
+    },
   ];
 
   return (
@@ -1362,6 +1485,21 @@ function PanelFlujoPedido({ pedido, ocupado = false, onValidar, onTomar, onObser
       {estado === "observado" && (
         <span style={{ fontSize: 12, color: "#c2410c" }}>Esperando la respuesta del cliente. Si ya se resolvió por otro canal, se puede validar igual.</span>
       )}
+      {estado === "validado_plataforma" && (
+        pagoInformado ? (
+          <div style={{ border: "1px solid #ddd6fe", background: "#f5f3ff", borderRadius: 10, padding: "9px 12px", fontSize: 12.5, color: "#5b21b6" }}>
+            <strong>El cliente informó que pagó por Webpay</strong>
+            {detPago.informado_at ? ` · ${fmtFechaHora(detPago.informado_at)}` : ""}
+            {quienDe(detPago.informado_por) ? ` · ${quienDe(detPago.informado_por)}` : ""}
+            {detPago.informado_nota && <div style={{ color: "#475569", marginTop: 3 }}>«{detPago.informado_nota}»</div>}
+            <div style={{ color: "#475569", marginTop: 3 }}>Revísalo en el portal de Transbank y registra el pago para cerrar el pedido.</div>
+          </div>
+        ) : (
+          <span style={{ fontSize: 12, color: "#6d28d9" }}>
+            El cliente paga por el link de Webpay de Amsodent. Cuando el pago aparezca en Transbank, regístralo aquí.
+          </span>
+        )
+      )}
 
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
         {estado === "aprobado_cliente" && (
@@ -1369,10 +1507,15 @@ function PanelFlujoPedido({ pedido, ocupado = false, onValidar, onTomar, onObser
             Tomar el pedido
           </button>
         )}
+        {estado === "validado_plataforma" && (
+          <button type="button" className="btn btn-primary btn-sm" onClick={onRegistrarPago} disabled={ocupado} title="Cierra el pedido como pagado y avisa al cliente">
+            Registrar pago recibido
+          </button>
+        )}
         {VALIDABLES.includes(estado) && (
           <button
             type="button"
-            className={estado === "aprobado_cliente" || estado === "observado" ? "btn btn-secondary btn-sm" : "btn btn-primary btn-sm"}
+            className={estado === "aprobado_cliente" || estado === "observado" || estado === "validado_plataforma" ? "btn btn-secondary btn-sm" : "btn btn-primary btn-sm"}
             onClick={onValidar}
             disabled={ocupado}
           >

@@ -265,6 +265,20 @@ export class StockClientesController {
     );
   }
 
+  /* (2026-11-09) Pago por el link fijo de Webpay: el cliente avisa que ya
+     pagó. No cierra el pedido; lo cierra Amsodent al registrar el pago. */
+  @UseGuards(StockPortalGuard)
+  @Post('mis-solicitudes/:id/informar-pago')
+  async informarPago(@Req() req: any, @Param('id', ParseIntPipe) id: number, @Body() body: { nota?: string }) {
+    this.exigirAdminPortal(req, 'Solo el administrador de la cuenta puede pagar el pedido.');
+    return await this.pedidosFlujo.informarPago(
+      id,
+      req.stockPortal.rut,
+      req.stockPortal.usuario_email || 'cuenta principal',
+      String(body?.nota || ''),
+    );
+  }
+
   // Cupo de crédito del cliente, para mostrarlo en el portal.
   @UseGuards(StockPortalGuard)
   @Get('mi-credito')
@@ -816,6 +830,18 @@ export class StockClientesController {
   @Post('solicitudes/:id/rechazar')
   async rechazarPedido(@Req() req: any, @Param('id', ParseIntPipe) id: number, @Body() body: { motivo?: string }) {
     return await this.pedidosFlujo.rechazar(id, String(body?.motivo || ''), (req?.user?.email || '').toLowerCase());
+  }
+
+  /* (2026-11-09) Amsodent registra el pago recibido por el link fijo de
+     Webpay (verificado en el portal de Transbank) y el pedido queda pagado. */
+  @UseGuards(AuthGuard)
+  @Post('solicitudes/:id/registrar-pago')
+  async registrarPagoPedido(
+    @Req() req: any,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { monto?: number | string; autorizacion?: string; nota?: string },
+  ) {
+    return await this.pedidosFlujo.registrarPagoManual(id, body, (req?.user?.email || '').toLowerCase());
   }
 
   @UseGuards(AuthGuard)

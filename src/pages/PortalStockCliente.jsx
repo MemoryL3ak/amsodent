@@ -2620,7 +2620,10 @@ const ICONO_ACTIVIDAD = {
   validado_plataforma: { icono: Database, color: "#7c3aed", bg: "#f3e8ff" },
   pago_iniciado: { icono: Activity, color: "#475569", bg: "#f1f5f9" },
   pago_rechazado: { icono: AlertTriangle, color: "#b91c1c", bg: "#fee2e2" },
+  // (2026-11-09) Pago por el link fijo de Webpay: el cliente avisa y Amsodent lo registra.
+  pago_informado: { icono: Activity, color: "#6d28d9", bg: "#ede9fe" },
   pagado: { icono: CheckCircle2, color: "#15803d", bg: "#dcfce7" },
+  pedido_pagado: { icono: CheckCircle2, color: "#15803d", bg: "#dcfce7" },
   despacho: { icono: Truck, color: "#0369a1", bg: "#e0f2fe" },
   despacho_en_curso: { icono: Truck, color: "#0369a1", bg: "#e0f2fe" },
   factura: { icono: FileText, color: "#475569", bg: "#f1f5f9" },
@@ -6312,28 +6315,30 @@ function PanelMisSolicitudes({ solicitudes, cotizacionesHist = [], cargando, onS
     }
   }
 
-  /* Punto 13: el pago va por Webpay. Se pide el token al backend y se manda
-     al formulario de Transbank por POST, que es como lo exige. */
-  async function pagar(s) {
+  /* Punto 13, desde el 2026-11-09: el pago va por el link fijo de Webpay de
+     Amsodent (LINK_PAGO_WEBPAY), que se abre en otra pestaña desde el botón
+     del pedido. Transbank no avisa de vuelta, así que el cliente informa que
+     pagó y Amsodent lo registra al verlo en Transbank. La integración por API
+     (token + retorno) sigue en el backend para cuando llegue la llave de
+     producción. */
+  const [porInformarPago, setPorInformarPago] = useState(null); // { pedido, nota }
+  async function informarPago(s, nota) {
     setTrabajando(s.id);
     try {
-      const r = await apiRequest(`/stock-clientes/mis-solicitudes/${s.id}/pagar`, {
+      const r = await apiRequest(`/stock-clientes/mis-solicitudes/${s.id}/informar-pago`, {
         method: "POST",
-        body: JSON.stringify({ return_url: `${window.location.origin}/portal-cliente?pago=retorno` }),
+        body: JSON.stringify({ nota: String(nota || "").trim() }),
       });
-      if (!r?.url || !r?.token) throw new Error("No recibimos el formulario de pago.");
-      const form = document.createElement("form");
-      form.method = "POST";
-      form.action = r.url;
-      const input = document.createElement("input");
-      input.type = "hidden";
-      input.name = "token_ws";
-      input.value = r.token;
-      form.appendChild(input);
-      document.body.appendChild(form);
-      form.submit();
+      setPorInformarPago(null);
+      setToast?.({
+        type: "success",
+        titulo: "Pago informado",
+        mensaje: r?.mensaje || "Amsodent verifica el pago y te avisa en cuanto quede confirmado.",
+      });
+      onRecargar?.();
     } catch (e) {
-      setToast?.({ type: "error", titulo: "No se pudo iniciar el pago", mensaje: e?.message || "Intenta nuevamente." });
+      setToast?.({ type: "error", titulo: "No pudimos registrar tu aviso", mensaje: e?.message || "Intenta nuevamente." });
+    } finally {
       setTrabajando(null);
     }
   }
@@ -6453,7 +6458,7 @@ function PanelMisSolicitudes({ solicitudes, cotizacionesHist = [], cargando, onS
                   credito={credito}
                   onAprobar={() => aprobar(s)}
                   onModificar={() => modificarCotizacion(s)}
-                  onPagar={() => pagar(s)}
+                  onInformarPago={() => setPorInformarPago({ pedido: s, nota: "" })}
                   onPagarCredito={() => setPorPagarCredito(s)}
                   onSos={() => pedirSos(s)}
                   onAceptarObservacion={(comentario) => setPorAceptarObs({ pedido: s, comentario })}
@@ -6547,6 +6552,32 @@ function PanelMisSolicitudes({ solicitudes, cotizacionesHist = [], cargando, onS
           textoConfirmar="Cerrar con crédito"
           onConfirmar={() => pagarConCredito(porPagarCredito)}
           onCancelar={() => setPorPagarCredito(null)}
+        />
+      )}
+      {porInformarPago && (
+        <ConfirmarPortal
+          tono="ok"
+          titulo="Avisar que ya pagaste"
+          mensaje={
+            <>
+              ¿Ya pagaste <strong>{fmtMoneda(porInformarPago.pedido.monto_total)}</strong> del pedido N°{" "}
+              <strong>{porInformarPago.pedido.id}</strong> en Webpay?
+              <input
+                type="text"
+                value={porInformarPago.nota}
+                onChange={(e) => setPorInformarPago((prev) => (prev ? { ...prev, nota: e.target.value } : prev))}
+                placeholder="Código de autorización o comentario (opcional)"
+                maxLength={300}
+                style={{ display: "block", width: "100%", marginTop: 10, padding: "8px 10px", border: "1px solid #cbd5e1", borderRadius: 8, fontSize: 13, fontFamily: "inherit" }}
+              />
+            </>
+          }
+          detalle="Amsodent revisa el pago en Webpay y te avisa en cuanto quede confirmado."
+          textoConfirmar="Sí, ya pagué"
+          textoOcupado="Enviando…"
+          ocupado={trabajando === porInformarPago.pedido.id}
+          onConfirmar={() => informarPago(porInformarPago.pedido, porInformarPago.nota)}
+          onCancelar={() => setPorInformarPago(null)}
         />
       )}
       {porAceptarObs && (
@@ -6782,8 +6813,16 @@ function ContactoEjecutivo({ ejecutivo, pedidoId }) {
   );
 }
 
-function BloqueFlujoPedido({ pedido, esAdminPortal, trabajando, credito, onAprobar, onModificar, onPagar, onPagarCredito, onSos, onAceptarObservacion }) {
+/* (2026-11-09) Página de pago de Amsodent en Webpay. El cliente escribe ahí
+   el monto; mientras Transbank no entregue la llave de producción de la API,
+   todos los pedidos se pagan por este link. */
+const LINK_PAGO_WEBPAY = "https://www.webpay.cl/company/166477?utm_source=transbank&utm_medium=portal3.0&utm_campaign=link_portal";
+
+function BloqueFlujoPedido({ pedido, esAdminPortal, trabajando, credito, onAprobar, onModificar, onInformarPago, onPagarCredito, onSos, onAceptarObservacion }) {
   const estado = String(pedido?.flujo_estado || "");
+  // El cliente ya avisó que pagó por Webpay: falta que Amsodent lo registre.
+  const pagoInformado = estado === "validado_plataforma" && pedido?.pago_estado === "informado";
+  const informadoAt = pedido?.pago_detalle?.informado_at || null;
   // Comentario opcional al responder una observación (2026-11-09).
   const [comentario, setComentario] = useState("");
   // Sin flujo (migración pendiente o pedido antiguo) no se muestra nada.
@@ -6888,6 +6927,21 @@ function BloqueFlujoPedido({ pedido, esAdminPortal, trabajando, credito, onAprob
               considera solo lo disponible.
             </p>
           )}
+          {pagoInformado ? (
+            <div style={{ margin: "8px 0 0", border: "1px solid #ddd6fe", background: "#f5f3ff", borderRadius: 10, padding: "9px 12px", fontSize: 12.5, color: "#5b21b6", lineHeight: 1.5 }}>
+              <strong>Nos avisaste que pagaste{informadoAt ? ` el ${fmtFechaHora(informadoAt)}` : ""}.</strong>{" "}
+              Amsodent está verificando el pago en Webpay y te avisa en cuanto quede confirmado.
+            </div>
+          ) : esAdminPortal && (
+            <ol style={{ margin: "8px 0 0", paddingLeft: 18, fontSize: 12, color: "#475569", lineHeight: 1.6 }}>
+              <li>Presiona <strong>Pagar con Webpay</strong>: la página de pago de Amsodent se abre en otra pestaña.</li>
+              <li>
+                Escribe el monto exacto: <strong style={{ color: "#0f172a" }}>{fmtMoneda(pedido.monto_total)}</strong>. Si
+                te pide una descripción, pon <strong>Pedido N° {pedido.id}</strong>.
+              </li>
+              <li>Al terminar, vuelve aquí y presiona <strong>Ya pagué</strong> para que lo confirmemos.</li>
+            </ol>
+          )}
         </div>
       )}
       {estado === "pagado" && (
@@ -6902,10 +6956,20 @@ function BloqueFlujoPedido({ pedido, esAdminPortal, trabajando, credito, onAprob
             {trabajando ? "Aprobando…" : "Aprobar pedido"}
           </button>
         )}
-        {estado === "validado_plataforma" && esAdminPortal && (
-          <button type="button" onClick={onPagar} disabled={trabajando} style={{ ...styles.btnPrimarioChico, opacity: trabajando ? 0.6 : 1 }}>
-            {trabajando ? "Abriendo el pago…" : `Pagar ${fmtMoneda(pedido.monto_total)} con Webpay`}
-          </button>
+        {estado === "validado_plataforma" && esAdminPortal && !pagoInformado && (
+          <>
+            <a
+              href={LINK_PAGO_WEBPAY}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ ...styles.btnPrimarioChico, textDecoration: "none" }}
+            >
+              Pagar {fmtMoneda(pedido.monto_total)} con Webpay ↗
+            </a>
+            <button type="button" onClick={onInformarPago} disabled={trabajando} style={{ ...styles.btnSecundarioChico, opacity: trabajando ? 0.6 : 1 }}>
+              {trabajando ? "Enviando…" : "Ya pagué"}
+            </button>
+          </>
         )}
         {/* (2026-11-09) Responder la observación: seguir tal como está. */}
         {estado === "observado" && esAdminPortal && (
@@ -6928,7 +6992,7 @@ function BloqueFlujoPedido({ pedido, esAdminPortal, trabajando, credito, onAprob
         )}
         {/* Crédito (punto 29): solo si el cliente lo tiene habilitado y el
             cupo disponible alcanza para este pedido. */}
-        {estado === "validado_plataforma" && esAdminPortal && credito?.habilitado && (
+        {estado === "validado_plataforma" && esAdminPortal && credito?.habilitado && !pagoInformado && (
           <button
             type="button"
             onClick={onPagarCredito}
