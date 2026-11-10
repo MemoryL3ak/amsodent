@@ -150,20 +150,10 @@ export class StockClientesController {
     );
   }
 
-  /* (2026-09-24) El cliente, sobre la cotizacion que ya recibio: darla por
-     buena o pedir cambios. Las dos son del administrador de la cuenta, igual
-     que aprobar y pagar. */
-
-  @UseGuards(StockPortalGuard)
-  @Post('mis-solicitudes/:id/validar-cotizacion')
-  async validarCotizacionCliente(@Req() req: any, @Param('id', ParseIntPipe) id: number) {
-    this.exigirAdminPortal(req, 'Solo el administrador de la cuenta puede validar la cotizacion.');
-    return await this.pedidosFlujo.validarComoCliente(
-      id,
-      req.stockPortal.usuario_email || 'cuenta principal',
-      req.stockPortal.rut,
-    );
-  }
+  /* (2026-09-24) El cliente, sobre la cotizacion que ya recibio: pedir
+     cambios. Es del administrador de la cuenta, igual que aprobar y pagar.
+     (2026-11-09) «Darla por buena» (POST validar-cotizacion) se retiró: no
+     movía el pedido; aceptar la cotización es pagarla. */
 
   @UseGuards(StockPortalGuard)
   @Post('mis-solicitudes/:id/modificar')
@@ -891,9 +881,9 @@ export class StockClientesController {
     @Body() body: { licitacion_id: number },
   ) {
     const data = await this.stockClientes.vincularLicitacion(id, Number(body?.licitacion_id));
-    // (2026-11-09) Con la cotización vinculada el pedido pasa a «Cotización
-    // enviada» y el cliente recibe el aviso en su portal. Best-effort: el
-    // guardado de la cotización ya ocurrió.
+    // (2026-11-09) Con la cotización vinculada el pedido queda «En revisión»
+    // y el cliente recibe el aviso en su portal. Best-effort: el guardado de
+    // la cotización ya ocurrió.
     const movido = await this.pedidosFlujo.marcarCotizacionEnviada(
       id,
       Number(body?.licitacion_id),

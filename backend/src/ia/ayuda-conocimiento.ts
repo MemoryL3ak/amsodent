@@ -1209,15 +1209,17 @@ girasol 🌻). Hoy ayuda en:
   administrador llega directo a Por revisar; mientras espera, Amsodent no
   puede rechazarlo ni marcarlo SOS) → Por revisar
   (nadie de Amsodent lo tomó) → En revisión («Tomar el pedido»: queda a nombre
-  de quien lo toma y el cliente lo ve) → Cotización enviada (crear la cotización
-  desde el pedido la vincula y avisa al cliente, que puede darla por buena o
-  pedir cambios) → Por pagar («Validar existencias y enviar link de pago»:
+  de quien lo toma y el cliente lo ve; crear la cotización desde el pedido la
+  vincula, deja el pedido En revisión a nombre de quien la creó si nadie lo
+  había tomado y avisa al cliente. Desde el 09-11-2026 no existe la etapa
+  «Cotización enviada» ni el botón «Validar cotización» del cliente: la
+  acepta pagando, o la cambia con «Modificar pedido») → Por pagar («Validar existencias y enviar link de pago»:
   precios NETOS sugeridos desde la cotización vinculada, la oferta o el precio
   de lista; el link cobra el total con IVA) →
   Pagado (Webpay o crédito; 48-72 hrs para despachar). CAMPANA DEL PORTAL
   (desde el 09-11-2026): el cliente ve una campana en la barra superior y,
   arriba del Resumen, «Pendientes de tu parte» (pagar, responder observación,
-  revisar cotización, aprobar el pedido de un asistente, mensajes nuestros sin
+  aprobar el pedido de un asistente, mensajes nuestros sin
   leer; salen del estado de sus pedidos) y «Novedades» (lo que hizo Amsodent,
   con leído / no leído); tocar un aviso lo lleva al pedido. PAGO POR WEBPAY
   (desde el 09-11-2026): el cliente paga en la página de pago de Amsodent en

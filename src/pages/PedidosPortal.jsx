@@ -50,22 +50,30 @@ const estadoMeta = (e) => ESTADOS.find((x) => x.value === e) || ESTADOS[0];
    quién y cuándo: tomar el pedido, enviar la cotización y observar algo al
    cliente. Y la salida «rechazado» con motivo. Mismo orden que el backend
    (pedidos-flujo-etapas.ts). */
+/* (2026-11-09, tarde) Se retiró «Cotización enviada»: repetía el «Enviado» y
+   la cotización vinculada, y el «Validar cotización» del cliente no movía el
+   pedido. Con la cotización creada el pedido queda «En revisión». */
 const FLUJO = [
-  { value: "pendiente_aprobacion", label: "Espera al cliente", bg: "#fef3c7", fg: "#b45309", ayuda: "Falta que lo apruebe el administrador de la cuenta del cliente (todo pedido lo espera, también el que él mismo envía)." },
+  { value: "pendiente_aprobacion", label: "Espera al cliente", bg: "#fef3c7", fg: "#b45309", ayuda: "Lo armó un usuario de la cuenta del cliente y falta que lo apruebe su administrador." },
   { value: "aprobado_cliente", label: "Por revisar", bg: "#e0f2fe", fg: "#0369a1", ayuda: "El cliente ya aprobó y nadie lo ha tomado: hay que revisarlo, cotizar y confirmar existencias." },
-  { value: "en_revision", label: "En revisión", bg: "#ccfbf1", fg: "#0f766e", ayuda: "Alguien de Amsodent tomó el pedido y lo está revisando." },
-  { value: "cotizacion_enviada", label: "Cotización enviada", bg: "#e0e7ff", fg: "#4338ca", ayuda: "El cliente tiene la cotización en su portal: puede darla por buena o pedir cambios." },
+  { value: "en_revision", label: "En revisión", bg: "#ccfbf1", fg: "#0f766e", ayuda: "Alguien de Amsodent tomó el pedido y lo está revisando o ya le creó la cotización." },
   { value: "observado", label: "Observado", bg: "#ffedd5", fg: "#c2410c", ayuda: "Le dejamos una observación al cliente y esperamos su respuesta antes de seguir." },
   { value: "validado_plataforma", label: "Por pagar", bg: "#ede9fe", fg: "#6d28d9", ayuda: "Existencias confirmadas y link de pago enviado; esperamos el pago." },
   { value: "pagado", label: "Pagado", bg: "#dcfce7", fg: "#15803d", ayuda: "Pagado. Plazo de despacho: 48 a 72 hrs." },
   { value: "rechazado", label: "Rechazado", bg: "#fee2e2", fg: "#b91c1c", ayuda: "Amsodent rechazó el pedido; el cliente leyó el motivo." },
   { value: "cancelado", label: "Cancelado", bg: "#f1f5f9", fg: "#475569", ayuda: "El pedido fue cancelado." },
 ];
-const flujoDe = (s) => String(s?.flujo_estado || "pendiente_aprobacion");
-const flujoMeta = (v) => FLUJO.find((f) => f.value === v) || FLUJO[0];
+// Etapa retirada → la que la reemplaza (igual que ETAPAS_RETIRADAS del backend).
+const ETAPAS_RETIRADAS = { cotizacion_enviada: "en_revision" };
+const normalizarEtapa = (e) => {
+  const s = String(e || "pendiente_aprobacion");
+  return ETAPAS_RETIRADAS[s] || s;
+};
+const flujoDe = (s) => normalizarEtapa(s?.flujo_estado);
+const flujoMeta = (v) => FLUJO.find((f) => f.value === normalizarEtapa(v)) || FLUJO[0];
 // Desde qué etapas se puede validar / observar / cerrar (igual que el backend).
-const VALIDABLES = ["aprobado_cliente", "en_revision", "cotizacion_enviada", "observado", "validado_plataforma"];
-const OBSERVABLES = ["aprobado_cliente", "en_revision", "cotizacion_enviada"];
+const VALIDABLES = ["aprobado_cliente", "en_revision", "observado", "validado_plataforma"];
+const OBSERVABLES = ["aprobado_cliente", "en_revision"];
 const CERRADOS = ["pagado", "rechazado", "cancelado"];
 const quienDe = (correo) => (correo ? String(correo).split("@")[0] : null);
 
@@ -1323,10 +1331,9 @@ function PanelFlujoPedido({ pedido, ocupado = false, onValidar, onTomar, onObser
   // (2026-11-09) Pago por el link fijo de Webpay: el cliente avisa que pagó.
   const detPago = pedido.pago_detalle || {};
   const pagoInformado = estado === "validado_plataforma" && pedido.pago_estado === "informado";
-  const conCotizacion = Boolean(pedido.licitacion_id || pedido.cotizacion || pedido.cotizacion_enviada_at);
-  /* (2026-11-09) Pasos intermedios con quién y cuándo. «Cotización enviada»
-     aparece solo si hay cotización (en pedidos anteriores a la migración la
-     fecha es la de la respuesta). */
+  const conCotizacion = Boolean(pedido.licitacion_id || pedido.cotizacion);
+  /* (2026-11-09) Pasos intermedios con quién y cuándo. El paso «Cotización
+     enviada» se retiró con la etapa: repetía el «Enviado». */
   /* El pedido que envía el administrador de la cuenta llega directo, sin paso
      de aprobación: su `aprobado_cliente_at` es la hora del envío (sirve a los
      KPI), y mostrarlo como «Aprobado por el cliente» decía que alguien aprobó
@@ -1342,15 +1349,6 @@ function PanelFlujoPedido({ pedido, ocupado = false, onValidar, onTomar, onObser
       ? []
       : [{ key: "aprobado", label: "Aprobado por el cliente", fecha: pedido.aprobado_cliente_at, quien: quienDe(pedido.aprobado_cliente_por) }]),
     { key: "revision", label: "En revisión", fecha: pedido.revision_iniciada_at, quien: quienDe(pedido.revision_por) },
-    ...(conCotizacion
-      ? [{
-          key: "cotizacion",
-          label: "Cotización enviada",
-          fecha: pedido.cotizacion_enviada_at || pedido.respondida_at,
-          quien: quienDe(pedido.cotizacion_enviada_por),
-          extra: pedido.validado_cliente_at ? `✓ conforme${quienDe(pedido.validado_cliente_por) ? ` · ${quienDe(pedido.validado_cliente_por)}` : ""}` : null,
-        }]
-      : []),
     { key: "validado", label: "Validado por Amsodent", fecha: pedido.validado_at, quien: quienDe(pedido.validado_por) },
     {
       key: "pagado",
@@ -1486,14 +1484,10 @@ function PanelFlujoPedido({ pedido, ocupado = false, onValidar, onTomar, onObser
       {estado === "pendiente_aprobacion" && (
         <span style={{ fontSize: 12, color: "#b45309" }}>Esperando que el administrador de la cuenta del cliente apruebe el pedido.</span>
       )}
-      {estado === "en_revision" && pedido.revision_por && (
-        <span style={{ fontSize: 12, color: "#0f766e" }}>Lo está revisando <strong>{quienDe(pedido.revision_por)}</strong>.</span>
-      )}
-      {estado === "cotizacion_enviada" && (
-        <span style={{ fontSize: 12, color: pedido.validado_cliente_at ? "#15803d" : "#4338ca" }}>
-          {pedido.validado_cliente_at
-            ? "El cliente dio por buena la cotización: falta confirmar existencias y enviar el link de pago."
-            : "El cliente tiene la cotización en su portal; puede darla por buena o pedir cambios."}
+      {estado === "en_revision" && (pedido.revision_por || conCotizacion) && (
+        <span style={{ fontSize: 12, color: "#0f766e" }}>
+          {pedido.revision_por && <>Lo está revisando <strong>{quienDe(pedido.revision_por)}</strong>. </>}
+          {conCotizacion && "El cliente ya tiene la cotización en su portal: falta validar existencias y enviar el link de pago."}
         </span>
       )}
       {estado === "observado" && (

@@ -10,22 +10,30 @@ import {
   estadoAlReabrir,
   etapaAnterior,
   etiquetaEstado,
+  normalizarEtapa,
 } from './pedidos-flujo-etapas';
 
 /* Etapas del pedido del portal (2026-11-09): el camino feliz con sus paradas
    intermedias, la reversa y la reapertura. */
 
 describe('etapas', () => {
-  it('el camino feliz va del envío al pago pasando por revisión y cotización', () => {
+  it('el camino feliz va del envío al pago pasando por revisión', () => {
     expect(CAMINO).toEqual([
       'pendiente_aprobacion',
       'aprobado_cliente',
       'en_revision',
-      'cotizacion_enviada',
       'validado_plataforma',
       'pagado',
     ]);
-    expect(TODOS).toHaveLength(9);
+    expect(TODOS).toHaveLength(8);
+  });
+
+  it('(2026-11-09) «cotización enviada» ya no es una etapa: el pedido que la tenga se lee en revisión', () => {
+    expect(TODOS).not.toContain('cotizacion_enviada');
+    expect(normalizarEtapa('cotizacion_enviada')).toBe('en_revision');
+    expect(normalizarEtapa('observado')).toBe('observado');
+    expect(normalizarEtapa(null)).toBe('pendiente_aprobacion');
+    expect(etapaAnterior({ flujo_estado: 'cotizacion_enviada' })?.destino).toBe('aprobado_cliente');
   });
 
   it('solo pagado, rechazado y cancelado cierran el pedido', () => {
@@ -36,7 +44,7 @@ describe('etapas', () => {
   });
 
   it('se puede validar desde cualquier etapa de Amsodent, incluso con una observación abierta', () => {
-    for (const e of ['aprobado_cliente', 'en_revision', 'cotizacion_enviada', 'observado', 'validado_plataforma']) {
+    for (const e of ['aprobado_cliente', 'en_revision', 'observado', 'validado_plataforma']) {
       expect(ESTADOS_VALIDABLES).toContain(e);
     }
     expect(ESTADOS_VALIDABLES).not.toContain('pendiente_aprobacion');
@@ -46,7 +54,7 @@ describe('etapas', () => {
   it('una observación no se abre sobre un pedido ya validado ni cerrado', () => {
     expect(ESTADOS_OBSERVABLES).not.toContain('validado_plataforma');
     expect(ESTADOS_OBSERVABLES).not.toContain('pagado');
-    expect(ESTADOS_OBSERVABLES).toContain('cotizacion_enviada');
+    expect(ESTADOS_OBSERVABLES).toContain('en_revision');
   });
 
   it('toda etapa tiene etiqueta y las desconocidas vuelven tal cual', () => {
@@ -56,20 +64,13 @@ describe('etapas', () => {
 });
 
 describe('etapaAnterior', () => {
-  it('desde validado vuelve a la cotización si la hay, o a revisión, y limpia la validación', () => {
-    const conCot = etapaAnterior({ flujo_estado: 'validado_plataforma', licitacion_id: 55 });
-    expect(conCot?.destino).toBe('cotizacion_enviada');
-    expect(conCot?.limpieza).toMatchObject({ validado_at: null, monto_total: null, pago_link: null, disponibilidad: null });
-
-    const sinCot = etapaAnterior({ flujo_estado: 'validado_plataforma', licitacion_id: null });
-    expect(sinCot?.destino).toBe('en_revision');
+  it('desde validado vuelve a revisión y limpia la validación', () => {
+    const atras = etapaAnterior({ flujo_estado: 'validado_plataforma' });
+    expect(atras?.destino).toBe('en_revision');
+    expect(atras?.limpieza).toMatchObject({ validado_at: null, monto_total: null, pago_link: null, disponibilidad: null });
   });
 
   it('cada etapa intermedia retrocede una y borra solo lo suyo', () => {
-    expect(etapaAnterior({ flujo_estado: 'cotizacion_enviada' })).toEqual({
-      destino: 'en_revision',
-      limpieza: { cotizacion_enviada_at: null, cotizacion_enviada_por: null },
-    });
     const obs = etapaAnterior({ flujo_estado: 'observado' });
     expect(obs?.destino).toBe('en_revision');
     expect(Object.keys(obs!.limpieza)).toEqual(
@@ -96,7 +97,6 @@ describe('modificación del cliente', () => {
   it('borra lo que Amsodent había avanzado pero no la aprobación', () => {
     expect(LIMPIEZA_MODIFICACION).toMatchObject({
       revision_iniciada_at: null,
-      cotizacion_enviada_at: null,
       observacion_texto: null,
       validado_at: null,
       monto_total: null,
@@ -111,7 +111,7 @@ describe('estadoAlReabrir', () => {
     expect(estadoAlReabrir({})).toBe('pendiente_aprobacion');
     expect(estadoAlReabrir({ aprobado_cliente_at: 'x' })).toBe('aprobado_cliente');
     expect(estadoAlReabrir({ aprobado_cliente_at: 'x', revision_iniciada_at: 'x' })).toBe('en_revision');
-    expect(estadoAlReabrir({ aprobado_cliente_at: 'x', licitacion_id: 9 })).toBe('cotizacion_enviada');
+    expect(estadoAlReabrir({ aprobado_cliente_at: 'x', licitacion_id: 9 })).toBe('en_revision');
     expect(estadoAlReabrir({ aprobado_cliente_at: 'x', licitacion_id: 9, validado_at: 'x' })).toBe('validado_plataforma');
   });
 });

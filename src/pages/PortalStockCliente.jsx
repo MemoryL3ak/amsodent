@@ -317,7 +317,6 @@ function useNotificacionesPortal() {
 const ICONO_PENDIENTE = {
   pago: { icono: CreditCard, color: "#6d28d9", bg: "#ede9fe" },
   observacion: { icono: AlertTriangle, color: "#c2410c", bg: "#ffedd5" },
-  cotizacion: { icono: FileSpreadsheet, color: "#4338ca", bg: "#e0e7ff" },
   aprobar: { icono: ClipboardCheck, color: "#b45309", bg: "#fef3c7" },
   mensaje: { icono: MessageCircle, color: "#0369a1", bg: "#e0f2fe" },
 };
@@ -6466,13 +6465,14 @@ function TarjetaResumen({ etiqueta, valor, detalle, color }) {
 
 /* Etapas del pedido tal como las ve el cliente (2026-09-16). */
 /* (2026-11-09) Con las etapas intermedias el cliente sabe si alguien ya está
-   en su pedido, si tiene una cotización que revisar o si Amsodent le hizo
-   una pregunta que espera respuesta. */
+   en su pedido o si Amsodent le hizo una pregunta que espera respuesta.
+   «Cotización enviada» se retiró esa misma noche: el cliente no valida la
+   cotización (la acepta pagando), así que con ella el pedido sigue «En
+   revisión». Un pedido que aún la tenga guardada se muestra en revisión. */
 const FLUJO_CLIENTE = {
   pendiente_aprobacion: { label: "Espera tu aprobación", color: "#b45309", bg: "#fef3c7" },
   aprobado_cliente: { label: "Recibido por Amsodent", color: "#0369a1", bg: "#e0f2fe" },
   en_revision: { label: "En revisión", color: "#0f766e", bg: "#ccfbf1" },
-  cotizacion_enviada: { label: "Cotización enviada", color: "#4338ca", bg: "#e0e7ff" },
   observado: { label: "Requiere tu respuesta", color: "#c2410c", bg: "#ffedd5" },
   validado_plataforma: { label: "Listo para pagar", color: "#6d28d9", bg: "#ede9fe" },
   pagado: { label: "Pagado", color: "#15803d", bg: "#dcfce7" },
@@ -6551,26 +6551,10 @@ function PanelMisSolicitudes({ solicitudes, cotizacionesHist = [], cargando, onS
     }
   }
 
-  /* (2026-09-24) Sobre la cotizacion recibida: darla por buena, o pedir
-     cambios. Lo segundo pasa por el carrito, cargado con los productos que el
-     pedido ya tiene, para que el cliente agregue o saque como en una compra. */
-  async function validarCotizacion(s) {
-    setTrabajando(s.id);
-    try {
-      const r = await apiRequest(`/stock-clientes/mis-solicitudes/${s.id}/validar-cotizacion`, { method: "POST" });
-      setToast?.({
-        type: "success",
-        titulo: "Cotizacion validada",
-        mensaje: r?.mensaje || "Registramos tu conformidad con la cotizacion.",
-      });
-      onRecargar?.();
-    } catch (e) {
-      setToast?.({ type: "error", titulo: "No se pudo validar", mensaje: e?.message || "Intenta nuevamente." });
-    } finally {
-      setTrabajando(null);
-    }
-  }
-
+  /* (2026-09-24) Sobre la cotizacion recibida: pedir cambios. Pasa por el
+     carrito, cargado con los productos que el pedido ya tiene, para que el
+     cliente agregue o saque como en una compra. (2026-11-09) «Darla por
+     buena» se retiró: no movía el pedido; la acepta pagando. */
   function modificarCotizacion(s) {
     cargarPedidoEnCarrito(s, escribirCarrito);
     onIrAExplorador?.();
@@ -6816,10 +6800,6 @@ function PanelMisSolicitudes({ solicitudes, cotizacionesHist = [], cargando, onS
                 {s.cotizacion && (
                   <CotizacionGenerada
                     solicitud={s}
-                    esAdminPortal={esAdminPortal}
-                    trabajando={trabajando === s.id}
-                    onValidar={() => validarCotizacion(s)}
-                    onModificar={() => modificarCotizacion(s)}
                   />
                 )}
 
@@ -6884,12 +6864,12 @@ function PanelMisSolicitudes({ solicitudes, cotizacionesHist = [], cargando, onS
 }
 
 /* Bloque "cotización generada" + descarga de PDF en el portal del cliente.
-   (2026-09-24, corregido) Acá también van "Validar" y "Modificar": este es el
-   momento en que el cliente RECIBE la cotización — la ve con su número y se
-   baja el PDF —, y pasa mientras el pedido sigue "en revisión de Amsodent".
-   Antes esos botones colgaban de la etapa del pago, así que no aparecían justo
-   cuando tenían sentido. */
-function CotizacionGenerada({ solicitud, esAdminPortal = true, trabajando = false, onValidar, onModificar }) {
+   (2026-11-09) Aquí estaban «Validar cotización» y «Necesito modificarla».
+   Validar no movía el pedido (el cliente creía haber avanzado y el pedido
+   seguía igual), así que se retiró: la cotización se acepta pagándola cuando
+   Amsodent confirma existencias. Modificar sigue en el bloque del flujo
+   («Modificar pedido»), que estaba repetido aquí. */
+function CotizacionGenerada({ solicitud }) {
   const [descargando, setDescargando] = useState(false);
   const [error, setError] = useState("");
   const cot = solicitud.cotizacion || {};
@@ -6905,9 +6885,6 @@ function CotizacionGenerada({ solicitud, esAdminPortal = true, trabajando = fals
     Cancelada: "Cancelada",
   };
   const estadoTxt = ESTADO_LABEL[cot.estado] || cot.estado || "En proceso";
-  /* "Aprobada" = ya salio de los estados de revision interna. Mientras siga
-     ahí, el precio puede cambiar de nuestro lado. */
-  const aprobada = !String(cot.estado || "").startsWith("Pendiente Aprobación");
 
   async function descargar() {
     setDescargando(true);
@@ -6943,50 +6920,6 @@ function CotizacionGenerada({ solicitud, esAdminPortal = true, trabajando = fals
           <FileDown size={14} /> {descargando ? "Generando…" : "Descargar PDF"}
         </button>
       </div>
-
-      {/* (2026-10-01) Validar y modificar aparecen cuando la cotización ya
-          está APROBADA internamente. Mientras sigue "Pendiente Aprobación" el
-          precio todavía puede cambiar de nuestro lado, así que pedirle al
-          cliente que la valide sería pedirle que apruebe algo que no está
-          firme. Se le dice en qué va, eso sí. */}
-      {esAdminPortal && !aprobada && (
-        <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid #a7f3d0", fontSize: 12, color: "#047857" }}>
-          Estamos revisándola internamente. Apenas quede lista vas a poder validarla
-          o pedirnos cambios desde acá.
-        </div>
-      )}
-      {esAdminPortal && aprobada && (
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginTop: 10, paddingTop: 10, borderTop: "1px solid #a7f3d0" }}>
-          {solicitud.validado_cliente_at ? (
-            <span style={{ fontSize: 12, fontWeight: 700, color: "#065f46" }}>
-              ✓ Cotización validada
-              {solicitud.validado_cliente_por ? ` por ${String(solicitud.validado_cliente_por).split("@")[0]}` : ""}
-            </span>
-          ) : (
-            <>
-              <span style={{ fontSize: 12, color: "#047857" }}>¿Está todo correcto?</span>
-              <button
-                type="button"
-                onClick={onValidar}
-                disabled={trabajando}
-                title="Confirmar que la cotización está correcta"
-                style={{ padding: "6px 13px", background: "#047857", color: "#fff", border: "none", borderRadius: 999, fontSize: 12, fontWeight: 700, cursor: trabajando ? "wait" : "pointer", opacity: trabajando ? 0.6 : 1 }}
-              >
-                Validar cotización
-              </button>
-              <button
-                type="button"
-                onClick={onModificar}
-                disabled={trabajando}
-                title="Cambiar los productos de este pedido desde el carrito"
-                style={{ padding: "6px 13px", background: "#fff", color: "#047857", border: "1px solid #a7f3d0", borderRadius: 999, fontSize: 12, fontWeight: 700, cursor: trabajando ? "wait" : "pointer" }}
-              >
-                Necesito modificarla
-              </button>
-            </>
-          )}
-        </div>
-      )}
 
       {error && <div style={{ fontSize: 11.5, color: "#b91c1c", marginTop: 6 }}>{error}</div>}
     </div>
@@ -7105,7 +7038,9 @@ function ContactoEjecutivo({ ejecutivo, pedidoId }) {
 const LINK_PAGO_WEBPAY = "https://www.webpay.cl/company/166477?utm_source=transbank&utm_medium=portal3.0&utm_campaign=link_portal";
 
 function BloqueFlujoPedido({ pedido, esAdminPortal, trabajando, credito, onAprobar, onModificar, onInformarPago, onPagarCredito, onSos, onAceptarObservacion }) {
-  const estado = String(pedido?.flujo_estado || "");
+  // (2026-11-09) «cotizacion_enviada» se retiró: el pedido que la tenga va en revisión.
+  const crudo = String(pedido?.flujo_estado || "");
+  const estado = crudo === "cotizacion_enviada" ? "en_revision" : crudo;
   // El cliente ya avisó que pagó por Webpay: falta que Amsodent lo registre.
   const pagoInformado = estado === "validado_plataforma" && pedido?.pago_estado === "informado";
   const informadoAt = pedido?.pago_detalle?.informado_at || null;
@@ -7144,20 +7079,20 @@ function BloqueFlujoPedido({ pedido, esAdminPortal, trabajando, credito, onAprob
           Recibimos tu pedido. Se revisará tu solicitud, en un plazo de 24-48 hrs.
         </p>
       )}
-      {estado === "en_revision" && (
+      {estado === "en_revision" && (pedido.cotizacion || pedido.licitacion_id ? (
+        /* (2026-11-09) Con la cotización ya enviada no se le pide nada: la
+           acepta pagando cuando Amsodent confirma existencias. */
+        <p style={{ fontSize: 12.5, color: "#475569", margin: "8px 0 0", lineHeight: 1.5 }}>
+          Te enviamos la cotización de tu pedido (más abajo). Estamos confirmando existencias para
+          habilitarte el pago{esAdminPortal ? "; si necesitas cambiar algo, usa «Modificar pedido»." : "."}
+        </p>
+      ) : (
         <p style={{ fontSize: 12.5, color: "#475569", margin: "8px 0 0", lineHeight: 1.5 }}>
           {quienRevisa ? `${quienRevisa} de Amsodent` : "Amsodent"} está revisando tu pedido
           {pedido.revision_iniciada_at ? ` desde el ${fmtFechaHora(pedido.revision_iniciada_at)}` : ""}.
           {pedido.observacion_respondida_at ? " Gracias por tu respuesta: seguimos con la revisión." : " Te respondemos dentro de 24-48 hrs."}
         </p>
-      )}
-      {estado === "cotizacion_enviada" && (
-        <p style={{ fontSize: 12.5, color: "#475569", margin: "8px 0 0", lineHeight: 1.5 }}>
-          {pedido.validado_cliente_at
-            ? "Ya diste por buena la cotización. Estamos confirmando existencias para habilitarte el pago."
-            : "Te enviamos la cotización de tu pedido: revísala más abajo y dala por buena, o pídenos cambios."}
-        </p>
-      )}
+      ))}
       {estado === "observado" && (
         <div style={{ margin: "8px 0 0", border: "1px solid #fed7aa", background: "#fff7ed", borderRadius: 10, padding: "10px 12px" }}>
           <div style={{ fontSize: 12.5, fontWeight: 800, color: "#9a3412" }}>Amsodent necesita tu respuesta para seguir</div>
@@ -7266,15 +7201,7 @@ function BloqueFlujoPedido({ pedido, esAdminPortal, trabajando, credito, onAprob
             {trabajando ? "Enviando…" : "Continuar con el pedido"}
           </button>
         )}
-        {/* Validar y modificar viven en el bloque de la cotizacion generada,
-            que es donde el cliente la recibe. Aca solo se refleja el estado. */}
-        {pedido.validado_cliente_at && (
-          <span style={{ fontSize: 12, fontWeight: 700, color: "#15803d" }}>
-            ✓ Cotizacion validada
-            {pedido.validado_cliente_por ? ` por ${String(pedido.validado_cliente_por).split("@")[0]}` : ""}
-          </span>
-        )}
-        {["validado_plataforma", "cotizacion_enviada", "observado", "en_revision", "aprobado_cliente", "pendiente_aprobacion"].includes(estado) && esAdminPortal && (
+        {["validado_plataforma", "observado", "en_revision", "aprobado_cliente", "pendiente_aprobacion"].includes(estado) && esAdminPortal && (
           <button type="button" onClick={onModificar} disabled={trabajando} style={styles.btnSecundarioChico} title="Cambiar los productos de este pedido desde el carrito">
             Modificar pedido
           </button>

@@ -2293,7 +2293,8 @@ export class LicitacionesService {
          aprobado él mismo (o que sea Jeremías, que ya tiene el suyo);
        · al CLIENTE, solo si la cotización nació de un pedido de su portal:
          aviso en el portal + correo al contacto del pedido, porque desde ese
-         momento puede validarla o pedir una modificación.
+         momento puede revisarla o pedir una modificación (desde el
+         2026-11-09 no la «valida»: la acepta pagando).
      Se apagan por separado con APROBACION_CORREO_VENDEDOR=off y
      APROBACION_CORREO_CLIENTE=off. */
   async avisarCotizacionAprobada(lic: any, aprobadorEmail?: string) {
@@ -2387,7 +2388,7 @@ export class LicitacionesService {
 
     const texto =
       `Tu cotización del pedido N° ${sol.id} ya está aprobada. ` +
-      `Revísala en "Mis cotizaciones" y valídala, o pide una modificación.`;
+      `Revísala en "Mis cotizaciones"; si necesitas cambiar algo, pide una modificación.`;
     try {
       await client.from('portal_actividades').insert({
         cliente_rut: sol.rut,
@@ -2415,8 +2416,9 @@ export class LicitacionesService {
             `<p>Hola${sol.contacto_nombre ? ` ${sol.contacto_nombre}` : ''},</p>` +
             `<p>La cotización de tu pedido <strong>N° ${sol.id}</strong> ya está aprobada` +
             `${monto > 0 ? ` por un total de <strong>${montoTxt}</strong> (IVA incluido)` : ''}.</p>` +
-            `<p>Entra a tu portal, revísala en <strong>Mis cotizaciones</strong> y valídala para que ` +
-            `sigamos con tu pedido. Si necesitas cambiar algo, desde ahí mismo puedes pedir una modificación.</p>` +
+            `<p>Puedes revisarla en tu portal, en <strong>Mis cotizaciones</strong>. Estamos confirmando ` +
+            `las existencias y te avisaremos cuando quede lista para pagar. Si necesitas cambiar algo, ` +
+            `desde ahí mismo puedes pedir una modificación.</p>` +
             `<p><a href="${sitio}/portal-cliente">Ir a mi portal</a></p>` +
             `<p>Amsodent Medical Spa</p>`,
         });

@@ -17,6 +17,7 @@ import {
   estadoAlReabrir,
   etapaAnterior,
   etiquetaEstado,
+  normalizarEtapa,
 } from './pedidos-flujo-etapas';
 
 export { etiquetaEstado } from './pedidos-flujo-etapas';
@@ -121,8 +122,10 @@ export class PedidosFlujoService {
     return data;
   }
 
+  /* Una etapa retirada (cotizacion_enviada) se lee como la que la reemplaza,
+     para que el pedido siga pudiendo avanzar antes de correr su migración. */
   private estadoDe(pedido: any): FlujoEstado {
-    return (pedido?.flujo_estado || 'pendiente_aprobacion') as FlujoEstado;
+    return normalizarEtapa(pedido?.flujo_estado);
   }
 
   /* Bitácora: nunca debe tumbar la operación principal, pero sí quedar
@@ -535,7 +538,7 @@ export class PedidosFlujoService {
       leer(
         this.client
           .from(TABLA)
-          .select('id, flujo_estado, pago_estado, monto_total, licitacion_id, validado_cliente_at, created_at, updated_at')
+          .select('id, flujo_estado, pago_estado, monto_total, licitacion_id, created_at, updated_at')
           .eq('rut', rut)
           .order('id', { ascending: false })
           .limit(60),
@@ -581,11 +584,10 @@ export class PedidosFlujoService {
           pendientes.push({ clave: `pago-${id}`, tipo: 'pago', solicitud_id: id, fecha, titulo: `Paga el pedido N° ${id}`, detalle: `Listo para pagar: ${$(p.monto_total)} (IVA incluido).` });
         } else if (etapa === 'observado') {
           pendientes.push({ clave: `obs-${id}`, tipo: 'observacion', solicitud_id: id, fecha, titulo: `Responde la observación del pedido N° ${id}`, detalle: 'Amsodent necesita tu respuesta para seguir con el pedido.' });
-        } else if (p.licitacion_id && !p.validado_cliente_at && ['aprobado_cliente', 'en_revision', 'cotizacion_enviada'].includes(etapa)) {
-          // Con cotización vinculada el cliente ya la ve, aunque la etapa no
-          // se haya movido (p. ej. sin la migración de etapas intermedias).
-          pendientes.push({ clave: `cot-${id}`, tipo: 'cotizacion', solicitud_id: id, fecha, titulo: `Revisa la cotización del pedido N° ${id}`, detalle: 'Dala por buena o pídenos cambios.' });
         } else if (etapa === 'pendiente_aprobacion') {
+          // (2026-11-09, tarde) Ya no hay pendiente «Revisa la cotización»: el
+          // cliente no la valida; la acepta pagando cuando Amsodent confirma
+          // existencias. Que llegó la cotización se lo dice el aviso.
           pendientes.push({ clave: `apr-${id}`, tipo: 'aprobar', solicitud_id: id, fecha, titulo: `Aprueba el pedido N° ${id}`, detalle: 'Lo armó un usuario de tu cuenta: al aprobarlo lo enviamos a Amsodent.' });
         }
       }
@@ -598,7 +600,7 @@ export class PedidosFlujoService {
         });
       }
     }
-    const prioridad: Record<string, number> = { observacion: 0, pago: 1, cotizacion: 2, aprobar: 3, mensaje: 4 };
+    const prioridad: Record<string, number> = { observacion: 0, pago: 1, aprobar: 2, mensaje: 3 };
     pendientes.sort((a, b) => (prioridad[a.tipo] ?? 9) - (prioridad[b.tipo] ?? 9) || String(b.fecha || '').localeCompare(String(a.fecha || '')));
 
     return {
@@ -685,62 +687,10 @@ export class PedidosFlujoService {
      el cliente solo podía pagar: no tenía forma de decir "está bien" sin pagar
      todavía, ni de pedir cambios sin llamar por teléfono. */
 
-  /** Da por buena la cotización recibida. No cobra ni mueve la etapa: deja
-      constancia de que el cliente la revisó y la acepta. */
-  async validarComoCliente(id: number, actorEmail: string, rut: string) {
-    const pedido = await this.obtener(id);
-    if (String(pedido.rut) !== String(rut)) {
-      throw new ForbiddenException('Este pedido pertenece a otra cuenta.');
-    }
-    /* (2026-09-24, corregido) Lo que habilita validar es TENER la cotizacion,
-       no la etapa del pago. El cliente la recibe en cuanto se le vincula una
-       (la ve con su numero y su PDF en el portal), y eso pasa mientras el
-       pedido sigue "en revision de Amsodent": exigir `validado_plataforma`
-       dejaba el boton invisible justo cuando tenia sentido apretarlo. */
-    if (!pedido.licitacion_id) {
-      throw new BadRequestException('Todavia no hay una cotizacion que validar para este pedido.');
-    }
-    const etapa = this.estadoDe(pedido);
-    if (['pagado', 'cancelado', 'rechazado'].includes(etapa)) {
-      throw new BadRequestException('Este pedido ya esta cerrado.');
-    }
-    if (pedido.validado_cliente_at) {
-      return { ok: true, pedido, mensaje: 'Esta cotización ya estaba validada.' };
-    }
-
-    const ahora = new Date().toISOString();
-    const { data, error } = await this.client
-      .from(TABLA)
-      .update({ validado_cliente_at: ahora, validado_cliente_por: actorEmail, updated_at: ahora })
-      .eq('id', Number(id))
-      .select()
-      .single();
-    // La migracion 20260924 puede no estar aplicada todavia: sin esas columnas
-    // no hay donde dejar constancia, y decirlo es mejor que mostrar el error
-    // crudo de Postgres o fingir que se guardo.
-    if (error && /validado_cliente/.test(error.message)) {
-      throw new BadRequestException(
-        'Falta aplicar la migracion 20260924_lote_portal_showroom.sql en Supabase para poder validar la cotizacion.',
-      );
-    }
-    if (error) this.traducirError(error);
-
-    await this.registrarEvento({
-      solicitudId: Number(id),
-      tipo: 'cotizacion_validada_cliente',
-      actorTipo: 'cliente',
-      actorEmail,
-      detalle: 'El cliente revisó la cotización y la dio por buena.',
-    });
-    // (2026-11-09) Antes nadie de Amsodent se enteraba de la conformidad: el
-    // pedido quedaba esperando que alguien lo mirara de nuevo.
-    await this.notificarEquipo(
-      data,
-      'pedido_portal_conforme',
-      `${data.razon_social || data.rut} dio por buena la cotización del pedido N° ${data.id}: falta confirmar existencias y emitir el pago.`,
-    );
-    return { ok: true, pedido: data, mensaje: 'Gracias, registramos tu conformidad con la cotización.' };
-  }
+  /* (2026-11-09, tarde) Se retiró «Validar cotización» (validarComoCliente):
+     dejaba constancia de la conformidad del cliente sin mover el pedido, y
+     el cliente creía haberlo hecho avanzar. Aceptar la cotización es pagarla
+     cuando Amsodent confirma existencias; si no le sirve, la modifica. */
 
   /** El cliente pide cambios sobre la cotización recibida. Llega la lista
       completa desde su carrito — los productos que mantiene MÁS los nuevos —
@@ -1404,7 +1354,7 @@ export class PedidosFlujoService {
     return {
       total: filas.length,
       por_estado: TODOS.reduce((acc: Record<string, number>, e) => {
-        acc[e] = filas.filter((f: any) => (f.flujo_estado || 'pendiente_aprobacion') === e).length;
+        acc[e] = filas.filter((f: any) => normalizarEtapa(f.flujo_estado) === e).length;
         return acc;
       }, {}),
       sos: filas.filter((f: any) => f.sos).length,
@@ -1464,8 +1414,10 @@ export class PedidosFlujoService {
   }
 
   /** Se vinculó una cotización al pedido: el cliente la recibe en su portal.
-      Lo llama el controlador después de vincular y es best-effort: nunca
-      debe hacer fallar el guardado de la cotización. */
+      (2026-11-09, tarde) Ya no es una etapa: el pedido queda «en revisión»
+      y el cliente acepta pagando (o pide cambios). Lo llama el controlador
+      después de vincular y es best-effort: nunca debe hacer fallar el
+      guardado de la cotización. */
   async marcarCotizacionEnviada(id: number, licitacionId: number, actorEmail: string) {
     try {
       const pedido = await this.obtener(id);
@@ -1481,16 +1433,17 @@ export class PedidosFlujoService {
         });
         return pedido;
       }
+      // Cuándo y quién la envió: queda como registro, no como etapa.
       const extra: Record<string, any> = { cotizacion_enviada_at: ahora, cotizacion_enviada_por: actorEmail };
       // Crear la cotización ES revisar el pedido: si nadie lo había tomado,
       // queda tomado por quien la creó.
       if (!pedido.revision_iniciada_at) Object.assign(extra, { revision_iniciada_at: ahora, revision_por: actorEmail });
-      // (2026-11-09) Si la etapa no se puede mover (falta la migración de
-      // etapas intermedias), el cliente igual ve la cotización en su portal:
-      // el aviso sale igual, en vez de perderse con el error.
+      // (2026-11-09) Si el pedido no se puede mover, el cliente igual ve la
+      // cotización en su portal: el aviso sale igual, en vez de perderse con
+      // el error.
       let data = pedido;
       try {
-        data = await this.mover(id, ESTADOS_COTIZABLES, 'cotizacion_enviada', extra, {
+        data = await this.mover(id, ESTADOS_COTIZABLES, 'en_revision', extra, {
           tipo: 'cotizacion_enviada',
           actorTipo: 'plataforma',
           actorEmail,
@@ -1498,7 +1451,7 @@ export class PedidosFlujoService {
           datos: { licitacion_id: licitacionId },
         });
       } catch (e: any) {
-        this.logger.warn(`Pedido ${id}: la etapa no pasó a «Cotización enviada» (${e?.message || e}); se avisa al cliente igual.`);
+        this.logger.warn(`Pedido ${id}: no se registró la cotización enviada (${e?.message || e}); se avisa al cliente igual.`);
       }
       await this.avisarCliente(data, {
         tipo: 'pedido_cotizacion_enviada',
