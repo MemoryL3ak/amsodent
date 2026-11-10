@@ -1208,12 +1208,12 @@ girasol 🌻). Hoy ayuda en:
   administrador lo aprueba con «Aprobar y enviar a Amsodent»; el que envía el
   administrador llega directo a Por revisar; mientras espera, Amsodent no
   puede rechazarlo ni marcarlo SOS) → Por revisar
-  (nadie de Amsodent lo tomó) → En revisión («Tomar el pedido»: queda a nombre
-  de quien lo toma y el cliente lo ve; crear la cotización desde el pedido la
-  vincula, deja el pedido En revisión a nombre de quien la creó si nadie lo
-  había tomado y avisa al cliente. Desde el 09-11-2026 no existe la etapa
-  «Cotización enviada» ni el botón «Validar cotización» del cliente: la
-  acepta pagando, o la cambia con «Modificar pedido») → Por pagar («Validar existencias y enviar link de pago»:
+  (nadie de Amsodent ha actuado) → En revisión (no hay botón «Tomar el
+  pedido»: queda a nombre de quien hace la primera acción; crear la cotización
+  desde el pedido la vincula, deja el pedido En revisión y avisa al cliente.
+  Desde el 09-11-2026 no existe la etapa «Cotización enviada» ni el botón
+  «Validar cotización» del cliente: la acepta pagando, o la cambia con
+  «Modificar pedido») → Por pagar («Validar existencias y enviar link de pago»:
   precios NETOS sugeridos desde la cotización vinculada, la oferta o el precio
   de lista; el link cobra el total con IVA) →
   Pagado (Webpay o crédito; 48-72 hrs para despachar). CAMPANA DEL PORTAL
@@ -1237,7 +1237,8 @@ girasol 🌻). Hoy ayuda en:
   el cliente, observación respondida, pago, SOS. En el portal el cliente ve la
   etapa con quién revisa, la observación pendiente arriba del Resumen, y el
   link de pago del correo (?pagar=ID) abre Mis cotizaciones en ese pedido.
-  KPI «Tomamos» (meta 24 h) y filtro por etapa en la bandeja.
+  KPI «Primera respuesta» (primera acción de Amsodent: cotizar, observar o
+  validar; meta 24 h) y filtro por etapa en la bandeja.
 - CORREO ALTERNO: en Usuarios, cada persona puede tener una segunda casilla
   asociada (profiles.email_alterno); la plataforma reconoce ambos correos
   como el mismo usuario (ej: Jeremías con jer.consorcio@gmail.com y

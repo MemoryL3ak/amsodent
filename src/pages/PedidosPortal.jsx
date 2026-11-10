@@ -47,16 +47,16 @@ const estadoMeta = (e) => ESTADOS.find((x) => x.value === e) || ESTADOS[0];
    distinta del estado comercial de arriba: describe en qué punto del
    camino va el pedido, de quién depende avanzar y cuánto se demoró. */
 /* (2026-11-09) Entre «aprobado» y «por pagar» hay paradas intermedias, con
-   quién y cuándo: tomar el pedido, enviar la cotización y observar algo al
-   cliente. Y la salida «rechazado» con motivo. Mismo orden que el backend
-   (pedidos-flujo-etapas.ts). */
+   quién y cuándo: la revisión (a nombre de quien hace la primera acción) y
+   las observaciones al cliente. Y la salida «rechazado» con motivo. Mismo
+   orden que el backend (pedidos-flujo-etapas.ts). */
 /* (2026-11-09, tarde) Se retiró «Cotización enviada»: repetía el «Enviado» y
    la cotización vinculada, y el «Validar cotización» del cliente no movía el
    pedido. Con la cotización creada el pedido queda «En revisión». */
 const FLUJO = [
   { value: "pendiente_aprobacion", label: "Espera al cliente", bg: "#fef3c7", fg: "#b45309", ayuda: "Lo armó un usuario de la cuenta del cliente y falta que lo apruebe su administrador." },
-  { value: "aprobado_cliente", label: "Por revisar", bg: "#e0f2fe", fg: "#0369a1", ayuda: "El cliente ya aprobó y nadie lo ha tomado: hay que revisarlo, cotizar y confirmar existencias." },
-  { value: "en_revision", label: "En revisión", bg: "#ccfbf1", fg: "#0f766e", ayuda: "Alguien de Amsodent tomó el pedido y lo está revisando o ya le creó la cotización." },
+  { value: "aprobado_cliente", label: "Por revisar", bg: "#e0f2fe", fg: "#0369a1", ayuda: "Llegó y nadie de Amsodent ha actuado: hay que cotizarlo y confirmar existencias." },
+  { value: "en_revision", label: "En revisión", bg: "#ccfbf1", fg: "#0f766e", ayuda: "Amsodent ya lo está trabajando: creó la cotización o lo retomó tras una observación." },
   { value: "observado", label: "Observado", bg: "#ffedd5", fg: "#c2410c", ayuda: "Le dejamos una observación al cliente y esperamos su respuesta antes de seguir." },
   { value: "validado_plataforma", label: "Por pagar", bg: "#ede9fe", fg: "#6d28d9", ayuda: "Existencias confirmadas y link de pago enviado; esperamos el pago." },
   { value: "pagado", label: "Pagado", bg: "#dcfce7", fg: "#15803d", ayuda: "Pagado. Plazo de despacho: 48 a 72 hrs." },
@@ -374,11 +374,8 @@ export default function PedidosPortal() {
     }
   }
 
-  // Alguien del equipo toma el pedido: queda «En revisión» a su nombre y el
-  // cliente ve en su portal que ya lo están mirando.
-  function tomarPedido(pedido) {
-    accionFlujo(pedido, "tomar", {}, (r) => r?.mensaje || "Pedido tomado: quedó en revisión a tu nombre.", "No se pudo tomar el pedido.");
-  }
+  // (2026-11-09) «Tomar el pedido» se retiró: la revisión queda a nombre de
+  // quien hace la primera acción (crear la cotización, observar o validar).
 
   function observarPedido(pedido) {
     setModalMotivo({
@@ -692,8 +689,9 @@ export default function PedidosPortal() {
           </div>
           <div className="kpi-grid">
             <KpiTiempo label="Cliente aprueba" horas={kpis.horas_a_aprobacion} detalle="desde que se envía el pedido" />
-            {/* (2026-11-09) Cuánto tarda alguien en tomar el pedido: la mitad del plazo de 48 h. */}
-            <KpiTiempo label="Tomamos" horas={kpis.horas_a_revision} detalle="desde que el cliente aprueba" objetivo={24} />
+            {/* (2026-11-09) Cuánto tardamos en la primera acción (cotizar, observar o
+                validar; ya no hay «Tomar el pedido»): la mitad del plazo de 48 h. */}
+            <KpiTiempo label="Primera respuesta" horas={kpis.horas_a_revision} detalle="desde que el cliente aprueba" objetivo={24} />
             <KpiTiempo label="Validamos" horas={kpis.horas_a_validacion} detalle="desde que el cliente aprueba" objetivo={48} />
             <KpiTiempo label="Paga" horas={kpis.horas_a_pago} detalle="desde que enviamos el link" />
             <KpiTiempo label="Ciclo completo" horas={kpis.horas_total} detalle="del envío al pago" />
@@ -982,7 +980,6 @@ export default function PedidosPortal() {
                                 pedido={s}
                                 ocupado={accionando}
                                 onValidar={() => setModalValidar(s)}
-                                onTomar={() => tomarPedido(s)}
                                 onObservar={() => observarPedido(s)}
                                 onRechazar={() => rechazarPedido(s)}
                                 onRevertir={() => revertirPedido(s)}
@@ -1324,7 +1321,7 @@ function KpiTiempo({ label, horas, detalle, objetivo }) {
 /* Cómo se pagó, para la línea de tiempo. */
 const MEDIOS_PAGO = { webpay: "Webpay", webpay_link: "Webpay (link)", credito: "Crédito", transferencia: "Transferencia" };
 
-function PanelFlujoPedido({ pedido, ocupado = false, onValidar, onTomar, onObservar, onRechazar, onRevertir, onSos, onRegistrarPago, onVerHistorial }) {
+function PanelFlujoPedido({ pedido, ocupado = false, onValidar, onObservar, onRechazar, onRevertir, onSos, onRegistrarPago, onVerHistorial }) {
   const estado = flujoDe(pedido);
   const m = flujoMeta(estado);
   const cerrado = CERRADOS.includes(estado);
@@ -1510,11 +1507,6 @@ function PanelFlujoPedido({ pedido, ocupado = false, onValidar, onTomar, onObser
       )}
 
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-        {estado === "aprobado_cliente" && (
-          <button type="button" className="btn btn-primary btn-sm" onClick={onTomar} disabled={ocupado} title="Queda en revisión a tu nombre y el cliente lo ve">
-            Tomar el pedido
-          </button>
-        )}
         {estado === "validado_plataforma" && (
           <button type="button" className="btn btn-primary btn-sm" onClick={onRegistrarPago} disabled={ocupado} title="Cierra el pedido como pagado y avisa al cliente">
             Registrar pago recibido
@@ -1523,7 +1515,7 @@ function PanelFlujoPedido({ pedido, ocupado = false, onValidar, onTomar, onObser
         {VALIDABLES.includes(estado) && (
           <button
             type="button"
-            className={estado === "aprobado_cliente" || estado === "observado" || estado === "validado_plataforma" ? "btn btn-secondary btn-sm" : "btn btn-primary btn-sm"}
+            className={estado === "observado" || estado === "validado_plataforma" ? "btn btn-secondary btn-sm" : "btn btn-primary btn-sm"}
             onClick={onValidar}
             disabled={ocupado}
           >

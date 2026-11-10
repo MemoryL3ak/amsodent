@@ -9,9 +9,11 @@
    · pendiente_aprobacion  lo armó un asistente; espera al administrador de la
                            cuenta del cliente.
    · aprobado_cliente      el cliente aprobó; nadie de Amsodent lo tomó aún.
-   · en_revision           alguien de Amsodent lo tomó (quién y cuándo). Aquí
-                           se crea la cotización: el cliente la ve en su portal
-                           y su aceptación es pagar (o pedir cambios).
+   · en_revision           Amsodent ya actuó sobre el pedido (quién y cuándo:
+                           la primera acción, crear la cotización u observar;
+                           no hay botón «Tomar»). El cliente ve la cotización
+                           en su portal y su aceptación es pagar (o pedir
+                           cambios).
    · observado             parada lateral: Amsodent necesita una respuesta del
                            cliente antes de seguir (sin stock, reemplazo, dato
                            que falta). El cliente acepta → en_revision, o
@@ -72,9 +74,6 @@ export const ESTADOS_VALIDABLES: FlujoEstado[] = [
   'observado',
   'validado_plataforma', // revalidar: cambió una cantidad o un precio
 ];
-
-/** Desde dónde se puede «tomar» el pedido (empezar o reasignar la revisión). */
-export const ESTADOS_TOMABLES: FlujoEstado[] = ['aprobado_cliente', 'en_revision'];
 
 /** Desde dónde Amsodent puede dejarle una observación al cliente. */
 export const ESTADOS_OBSERVABLES: FlujoEstado[] = ['aprobado_cliente', 'en_revision'];

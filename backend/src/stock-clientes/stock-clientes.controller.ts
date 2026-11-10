@@ -816,13 +816,10 @@ export class StockClientesController {
     });
   }
 
-  /* (2026-11-09) Etapas intermedias de la validación: tomar el pedido,
-     dejarle una observación al cliente y rechazarlo con motivo. */
-  @UseGuards(AuthGuard)
-  @Post('solicitudes/:id/tomar')
-  async tomarPedido(@Req() req: any, @Param('id', ParseIntPipe) id: number) {
-    return await this.pedidosFlujo.tomarRevision(id, (req?.user?.email || '').toLowerCase());
-  }
+  /* (2026-11-09) Etapas intermedias de la validación: dejarle una
+     observación al cliente y rechazarlo con motivo. «Tomar el pedido» (POST
+     solicitudes/:id/tomar) se retiró esa noche: la revisión queda a nombre
+     de quien hace la primera acción (cotizar, observar o validar). */
 
   @UseGuards(AuthGuard)
   @Post('solicitudes/:id/observar')

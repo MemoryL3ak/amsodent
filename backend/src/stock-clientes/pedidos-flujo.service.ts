@@ -7,7 +7,6 @@ import { destinatariosCampanaPedido } from './destinatarios-pedido';
 import {
   ESTADOS_COTIZABLES,
   ESTADOS_OBSERVABLES,
-  ESTADOS_TOMABLES,
   ESTADOS_VALIDABLES,
   FlujoEstado,
   LIMPIEZA_MODIFICACION,
@@ -791,8 +790,8 @@ export class PedidosFlujoService {
       // anterior se limpia como en una reversa (el paso ya no vale).
       aprobado_cliente_at: ahora,
       aprobado_cliente_por: actorEmail,
-      // (2026-11-09) Lo que Amsodent había avanzado (tomar el pedido, enviar
-      // la cotización, observar, validar) deja de valer: el pedido vuelve a
+      // (2026-11-09) Lo que Amsodent había avanzado (revisión, observación,
+      // validación) deja de valer: el pedido vuelve a
       // «aprobado_cliente» como recién aprobado. La cotización vinculada se
       // conserva, porque se corrige, no se rehace.
       ...LIMPIEZA_MODIFICACION,
@@ -1363,7 +1362,7 @@ export class PedidosFlujoService {
         .reduce((acc: number, f: any) => acc + (Number(f.monto_total) || 0), 0),
       // Horas promedio de cada tramo. Son los tiempos de respuesta que pidió
       // el punto 18: cuánto demora el cliente en aprobar, cuánto demoramos
-      // nosotros en tomar el pedido y en validar, y cuánto tarda el pago.
+      // nosotros en dar la primera respuesta y en validar, y cuánto tarda el pago.
       horas_a_aprobacion: prom(filas.map((f: any) => horas(f.created_at, f.aprobado_cliente_at))),
       horas_a_revision: prom(filas.map((f: any) => horas(f.aprobado_cliente_at, f.revision_iniciada_at))),
       horas_a_validacion: prom(filas.map((f: any) => horas(f.aprobado_cliente_at, f.validado_at))),
@@ -1374,44 +1373,13 @@ export class PedidosFlujoService {
 
   /* ── Etapas intermedias de la validación (2026-11-09) ────────────────────
      Entre «el cliente aprobó» y «validado y por pagar» ahora hay paradas con
-     responsable y hora: tomar el pedido, enviar la cotización, observar algo
-     al cliente; y la salida «rechazado». Qué etapas permiten cada acción está
+     responsable y hora: quién lo revisa (la primera acción de Amsodent) y
+     las observaciones al cliente; y la salida «rechazado». Qué etapas permiten cada acción está
      en pedidos-flujo-etapas.ts. */
 
-  /** Alguien de Amsodent toma el pedido para revisarlo, o lo reasigna. */
-  async tomarRevision(id: number, actorEmail: string) {
-    const pedido = await this.obtener(id);
-    const actual = this.estadoDe(pedido);
-    const quienLoTenia = String(pedido.revision_por || '').toLowerCase();
-    if (actual === 'en_revision' && quienLoTenia === String(actorEmail).toLowerCase()) {
-      return { ok: true, pedido, mensaje: 'Este pedido ya lo tienes tú.' };
-    }
-    const reasigna = actual === 'en_revision' && !!quienLoTenia;
-    const ahora = new Date().toISOString();
-    const data = await this.mover(
-      id,
-      ESTADOS_TOMABLES,
-      'en_revision',
-      { revision_iniciada_at: reasigna ? pedido.revision_iniciada_at || ahora : ahora, revision_por: actorEmail },
-      {
-        tipo: 'revision_iniciada',
-        actorTipo: 'plataforma',
-        actorEmail,
-        detalle: reasigna
-          ? `Revisión reasignada de ${nombreCorto(quienLoTenia)} a ${nombreCorto(actorEmail)}.`
-          : `${nombreCorto(actorEmail)} tomó el pedido para revisarlo.`,
-      },
-    );
-    if (!reasigna) {
-      // El cliente ve en su campana que alguien ya está en su pedido.
-      await this.avisarCliente(data, {
-        tipo: 'pedido_en_revision',
-        descripcion: `Amsodent comenzó a revisar tu pedido N° ${data.id}.`,
-        actorEmail,
-      });
-    }
-    return { ok: true, pedido: data };
-  }
+  /* (2026-11-09, tarde) Se retiró «Tomar el pedido» (tomarRevision): era un
+     clic extra antes de trabajar el pedido. La revisión queda a nombre de
+     quien hace la primera acción: crear la cotización, observar o validar. */
 
   /** Se vinculó una cotización al pedido: el cliente la recibe en su portal.
       (2026-11-09, tarde) Ya no es una etapa: el pedido queda «en revisión»
