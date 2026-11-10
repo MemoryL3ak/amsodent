@@ -127,6 +127,7 @@ const modulosCompletos = (m) => {
   if (MODULOS_PORTAL.some((x) => x.pide && r[x.clave])) r.solicitudes = true;
   return r;
 };
+  { clave: "facturas", nombre: "Facturas", detalle: "Facturas emitidas con su condición de pago, vencimiento, estado y PDF.", pide: false },
 const modulosApagados = (m) => MODULOS_PORTAL.filter((x) => modulosCompletos(m)[x.clave] === false).map((x) => x.nombre);
 
 export default function AccesoPortalClientes() {

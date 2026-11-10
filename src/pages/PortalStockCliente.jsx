@@ -49,11 +49,13 @@ import {
   ChevronRight,
   Bell,
   CreditCard,
+  Receipt,
 } from "lucide-react";
 
 import DropdownSelect from "../components/ui/DropdownSelect";
 import { descargarCSV, descargarReportePDF } from "../lib/reporteStock";
 import { generarPDFcotizacion } from "../utils/generarPDFcotizacion";
+import { CUENTA_VACIA, calcularCuentas, dedupFacturas, estadoDeFactura, plazoDias } from "../lib/cuentasFacturas";
 
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3001/api";
 const TOKEN_KEY = "portal_stock_token";
@@ -2157,6 +2159,8 @@ function PantallaDeclaracion({ cliente, setToast }) {
         <PanelShowroom />
       ) : tabActiva === "actividad" ? (
         <PanelHistorialPortal />
+      ) : tabActiva === "facturas" ? (
+        <PanelFacturas />
       ) : tabActiva === "explorador" ? (
         // Sin Explorador habilitado, la pestaña muestra solo el carrito ("Mi pedido").
         <PanelExploradorPrecios soloCarrito={!habil("explorador")} />
@@ -3793,6 +3797,8 @@ function TabNavigator({ tab, onChange, contadorSolicitudes, contadorOfertas = 0,
     habil("declaracion") && conInventario && { id: "recepcion", label: "Recepción", icono: Truck },
     habil("declaracion") && conInventario && { id: "inventario", label: "Inventario", icono: Boxes },
     habil("solicitudes") && { id: "solicitudes", label: "Mis cotizaciones", icono: FileSpreadsheet },
+    // (2026-11-09) Facturas emitidas con su condición de pago y estado.
+    habil("facturas") && { id: "facturas", label: "Facturas", icono: Receipt },
     habil("ofertas") && { id: "ofertas", label: "Ofertas", icono: Tag },
     habil("showroom") && { id: "showroom", label: "Showroom", icono: ShoppingCart },
     habil("explorador")
@@ -5147,6 +5153,468 @@ function PanelUsuariosPortal({ setToast, usuarioActual = null }) {
           onCancelar={() => setPorEliminar(null)}
         />
       )}
+    </div>
+  );
+}
+
+/* ── Facturas (2026-11-09) ──────────────────────────────────────────────────
+   Pedido de Ariel: «una sección de facturas: todas las facturas que se emiten
+   asociadas a las cotizaciones, con la condición de pago declarada e info
+   relevante». El servidor (facturas-portal.service.ts) entrega las facturas y
+   los documentos de su cuenta; el vencimiento, el saldo y el estado salen de
+   lib/cuentasFacturas.js, la misma lógica de Seguimiento de Pagos, para que el
+   cliente vea las mismas cifras que el equipo de Amsodent. */
+const FACTURAS_POR_PAGINA = 10;
+const ESTILO_ESTADO_FACTURA = {
+  pagada: { color: "#15803d", bg: "#dcfce7" },
+  anulada: { color: "#475569", bg: "#f1f5f9" },
+  en_cuotas: { color: "#1d4ed8", bg: "#dbeafe" },
+  pendiente: { color: "#b45309", bg: "#fef3c7" },
+  vencida: { color: "#b91c1c", bg: "#fee2e2" },
+  por_vencer: { color: "#b45309", bg: "#fef3c7" },
+  en_plazo: { color: "#0369a1", bg: "#e0f2fe" },
+  sin_fecha: { color: "#475569", bg: "#f1f5f9" },
+};
+// Estados que todavía tienen algo por pagar.
+const FACTURA_POR_PAGAR = new Set(["en_plazo", "por_vencer", "vencida", "en_cuotas", "pendiente", "sin_fecha"]);
+const FILTROS_ESTADO_FACTURA = [
+  { value: "", label: "Todos los estados" },
+  { value: "por_pagar", label: "Por pagar", detalle: "En plazo, por vencer, vencidas o en cuotas" },
+  { value: "vencida", label: "Vencidas", color: "#b91c1c" },
+  { value: "pagada", label: "Pagadas", color: "#15803d" },
+  { value: "anulada", label: "Anuladas con nota de crédito" },
+];
+const MEDIOS_PAGO_FACTURA = {
+  transferencia: "Transferencia",
+  cheque: "Cheque",
+  vale_vista: "Vale vista",
+  efectivo: "Efectivo",
+  factoring: "Factoring",
+  transbank: "Tarjeta (Transbank)",
+  getnet: "Tarjeta (Getnet)",
+  webpay: "Webpay",
+  webpay_link: "Webpay",
+  credito: "Crédito",
+};
+const TIPOS_PAGO_FACTURA = ["comprobante_pago", "webpay", "efectivo", "devolucion"];
+const brutoDeNeto = (n) => Math.round((Number(n) || 0) * 1.19);
+const medioDePago = (d) =>
+  d?.tipo === "devolucion" ? "Devolución"
+  : MEDIOS_PAGO_FACTURA[d?.forma_pago] || (d?.tipo === "webpay" ? "Webpay" : d?.tipo === "efectivo" ? "Efectivo" : d?.forma_pago || "Transferencia");
+const plural = (n, uno, varios) => `${n} ${n === 1 ? uno : varios}`;
+
+/* Filas de la sección: cada factura con su cotización, su cuenta (base, notas,
+   pagos, saldo) y su estado, más los documentos que la acompañan. */
+function armarFacturasCliente(datos, hoyIso) {
+  const lics = datos?.cotizaciones || [];
+  const docs = datos?.documentos || [];
+  const pedidos = datos?.pedidos || {};
+  const licMap = Object.fromEntries(lics.map((l) => [l.id, l]));
+  const porTipo = (tipos) => {
+    const m = {};
+    for (const d of docs) if (tipos.includes(d.tipo)) (m[d.licitacion_id] = m[d.licitacion_id] || []).push(d);
+    return m;
+  };
+  const facturas = dedupFacturas(docs.filter((d) => d.tipo === "factura" || d.tipo === "factura_boleta"));
+  const montoOcMap = {};
+  for (const d of docs) if (d.tipo === "orden_compra") montoOcMap[d.licitacion_id] = (montoOcMap[d.licitacion_id] || 0) + (Number(d.monto) || 0);
+  // Pagos: comprobantes, webpay y efectivo; una devolución es un pago con signo contrario.
+  const pagosMap = {};
+  for (const d of docs) {
+    if (!TIPOS_PAGO_FACTURA.includes(d.tipo)) continue;
+    const fila = d.tipo === "devolucion" ? { ...d, monto: -(Number(d.monto) || 0), devolucion: true } : d;
+    (pagosMap[d.licitacion_id] = pagosMap[d.licitacion_id] || []).push(fila);
+  }
+  const ncMap = porTipo(["nota_credito"]);
+  const ndMap = porTipo(["nota_debito"]);
+  const multasMap = porTipo(["multa"]);
+  const guiasMap = porTipo(["guia_despacho"]);
+  const ocMap = porTipo(["orden_compra"]);
+  const cuentas = calcularCuentas({ facturas, licMap, montoOcMap, pagosMap, notasCreditoMap: ncMap, notasDebitoMap: ndMap, multasMap, guiasMap });
+
+  const facturasDeLic = {};
+  for (const f of facturas) (facturasDeLic[f.licitacion_id] = facturasDeLic[f.licitacion_id] || new Set()).add(f.id);
+
+  return facturas
+    .map((f) => {
+      const lic = licMap[f.licitacion_id] || {};
+      const cuenta = cuentas.porFactura[f.id] || CUENTA_VACIA;
+      // Las facturas cargadas a mano en Trazabilidad guardan su fecha en
+      // `fecha_oc` (el campo de fecha del documento), no en `fecha_factura`.
+      const emision = f.fecha_factura || f.fecha_oc || null;
+      const estado = estadoDeFactura({ ...f, fecha_factura: emision }, cuenta, lic, hoyIso);
+      const propias = facturasDeLic[f.licitacion_id] || new Set();
+      const variasFacturas = propias.size > 1;
+      // Pagos de esta factura, y los de la cotización sin factura asignada (se
+      // reparten de la factura más antigua a la más nueva).
+      const pagos = (pagosMap[f.licitacion_id] || [])
+        .filter((d) => d.deriva_de_id === f.id || d.deriva_de_id == null || !propias.has(d.deriva_de_id))
+        .map((d) => ({ ...d, de_la_cotizacion: variasFacturas && d.deriva_de_id !== f.id }))
+        .sort((a, b) => String(b.fecha_oc || b.created_at || "").localeCompare(String(a.fecha_oc || a.created_at || "")));
+      const notas = [...(ncMap[f.licitacion_id] || []), ...(ndMap[f.licitacion_id] || [])]
+        .filter((d) => d.deriva_de_id === f.id || (!variasFacturas && d.deriva_de_id == null && d.bsale_id == null));
+      const guiasLic = guiasMap[f.licitacion_id] || [];
+      const idsGuia = new Set([...(f.guias_ids || []), f.deriva_de_id].filter((x) => x != null).map(Number));
+      const guiasPropias = guiasLic.filter((g) => idsGuia.has(Number(g.id)));
+      return {
+        factura: f,
+        emision,
+        lic,
+        cuenta,
+        estado,
+        pagos,
+        notas,
+        guias: guiasPropias.length ? guiasPropias : variasFacturas ? [] : guiasLic,
+        ocs: [...new Set((ocMap[f.licitacion_id] || []).map((o) => String(o.numero || "").trim()).filter(Boolean))],
+        pedido: pedidos[f.licitacion_id] || null,
+        multas: (multasMap[f.licitacion_id] || []).filter((d) => d.deriva_de_id === f.id),
+      };
+    })
+    .sort((a, b) => String(b.emision || "").localeCompare(String(a.emision || "")) || b.factura.id - a.factura.id);
+}
+
+function PanelFacturas() {
+  const [datos, setDatos] = useState(null);
+  const [cargando, setCargando] = useState(true);
+  const [error, setError] = useState("");
+  const [busqueda, setBusqueda] = useState("");
+  const [filtro, setFiltro] = useState("");
+  const [pagina, setPagina] = useState(1);
+  const [abierta, setAbierta] = useState(null);
+  const [abriendoPdf, setAbriendoPdf] = useState(null);
+  const [errorPdf, setErrorPdf] = useState("");
+
+  const cargar = useCallback(async () => {
+    setCargando(true);
+    setError("");
+    try {
+      setDatos(await apiRequest("/stock-clientes/mis-facturas"));
+    } catch (e) {
+      setError(e?.message || "No se pudieron cargar las facturas.");
+    } finally {
+      setCargando(false);
+    }
+  }, []);
+  useEffect(() => {
+    cargar();
+    window.addEventListener(PORTAL_REFRESCAR, cargar);
+    return () => window.removeEventListener(PORTAL_REFRESCAR, cargar);
+  }, [cargar]);
+  useEffect(() => { setPagina(1); setAbierta(null); }, [busqueda, filtro]);
+
+  const hoy = hoyChile();
+  const filas = useMemo(() => armarFacturasCliente(datos, hoy), [datos, hoy]);
+  const resumen = useMemo(() => {
+    const r = { facturado: 0, nFacturas: 0, porPagar: 0, nPorPagar: 0, vencido: 0, nVencidas: 0 };
+    for (const x of filas) {
+      if (x.estado.clave === "anulada") continue;
+      r.facturado += x.cuenta.base;
+      r.nFacturas += 1;
+      if (FACTURA_POR_PAGAR.has(x.estado.clave)) { r.porPagar += x.estado.saldo; r.nPorPagar += 1; }
+      if (x.estado.clave === "vencida") { r.vencido += x.estado.saldo; r.nVencidas += 1; }
+    }
+    return r;
+  }, [filas]);
+
+  const filtradas = useMemo(() => {
+    const q = sinTildesInv(busqueda.trim());
+    return filas.filter((x) => {
+      if (filtro === "por_pagar" ? !FACTURA_POR_PAGAR.has(x.estado.clave) : filtro && x.estado.clave !== filtro) return false;
+      if (!q) return true;
+      const texto = [x.factura.numero, x.lic.id_licitacion, x.lic.id, x.pedido, ...x.ocs].map(sinTildesInv).join(" ");
+      return texto.includes(q);
+    });
+  }, [filas, filtro, busqueda]);
+  const paginas = Math.max(1, Math.ceil(filtradas.length / FACTURAS_POR_PAGINA));
+  const paginaActual = Math.min(pagina, paginas);
+  const visibles = filtradas.slice((paginaActual - 1) * FACTURAS_POR_PAGINA, paginaActual * FACTURAS_POR_PAGINA);
+
+  async function abrirPdf(docId) {
+    setErrorPdf("");
+    setAbriendoPdf(docId);
+    // La pestaña se abre ya, dentro del clic: si se abre después de la
+    // respuesta, el navegador la bloquea como ventana emergente.
+    const ventana = window.open("", "_blank");
+    try {
+      const r = await apiRequest(`/stock-clientes/mis-facturas/${docId}/pdf`);
+      if (!r?.url) throw new Error("No se encontró el PDF.");
+      if (ventana) {
+        ventana.opener = null;
+        ventana.location.href = r.url;
+      } else {
+        window.location.assign(r.url);
+      }
+    } catch (e) {
+      ventana?.close();
+      setErrorPdf(e?.message || "No se pudo abrir el PDF.");
+    } finally {
+      setAbriendoPdf(null);
+    }
+  }
+
+  const botonPdf = (doc, texto = "PDF") =>
+    doc?.tiene_pdf ? (
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); abrirPdf(doc.id); }}
+        disabled={abriendoPdf === doc.id}
+        title="Abrir el PDF en otra pestaña"
+        style={{ ...styles.btnSecundarioChico, display: "inline-flex", alignItems: "center", gap: 5, whiteSpace: "nowrap", opacity: abriendoPdf === doc.id ? 0.6 : 1 }}
+      >
+        <FileDown size={13} /> {abriendoPdf === doc.id ? "Abriendo…" : texto}
+      </button>
+    ) : null;
+
+  const textoPlazo = (lic) => {
+    if (!lic?.condicion_venta) return null;
+    const dias = plazoDias(lic.condicion_venta);
+    return dias === 0 ? "Pago al contado" : `Plazo de ${dias} días`;
+  };
+  const textoVencimiento = (est) => {
+    if (est.clave === "pagada" || est.clave === "anulada" || est.dias_restantes == null) return null;
+    if (est.dias_restantes < 0) return `Venció hace ${plural(-est.dias_restantes, "día", "días")}`;
+    if (est.dias_restantes === 0) return "Vence hoy";
+    return `Vence en ${plural(est.dias_restantes, "día", "días")}`;
+  };
+  // «factura_boleta» no dice cuál es; si Amsodent la emitió en Bsale desde la plataforma, sí se sabe.
+  const etiquetaDoc = (f) => (f.clase === "boleta" ? "Boleta" : f.clase === "factura" || f.tipo === "factura" ? "Factura" : "Factura o boleta");
+
+  const kpiCard = (etiqueta, valor, detalle, color) => (
+    <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderTop: `3px solid ${color}`, borderRadius: 12, padding: "12px 14px", minWidth: 0 }}>
+      <div style={{ fontSize: 10.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".04em", color: "#94a3b8" }}>{etiqueta}</div>
+      <div style={{ fontSize: "clamp(18px, 4.5vw, 22px)", fontWeight: 800, color: "#0f172a", lineHeight: 1.15, overflowWrap: "anywhere" }}>{valor}</div>
+      <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>{detalle}</div>
+    </div>
+  );
+  const linea = (etiqueta, valor, opciones = {}) => (
+    <div style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 12.5, padding: "3px 0", color: opciones.color || "#334155", fontWeight: opciones.fuerte ? 800 : 400, borderTop: opciones.separado ? "1px solid #e2e8f0" : undefined, marginTop: opciones.separado ? 4 : 0, paddingTop: opciones.separado ? 6 : 3 }}>
+      <span style={{ color: opciones.fuerte ? undefined : "#64748b" }}>{etiqueta}</span>
+      <span style={{ textAlign: "right", overflowWrap: "anywhere" }}>{valor}</span>
+    </div>
+  );
+  const bloque = (titulo, contenido) => (
+    <div style={{ background: "#fff", border: "1px solid #eef2f7", borderRadius: 10, padding: "10px 12px", minWidth: 0 }}>
+      <div style={{ fontSize: 10.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".04em", color: "#94a3b8", marginBottom: 6 }}>{titulo}</div>
+      {contenido}
+    </div>
+  );
+
+  return (
+    <div style={styles.declCard} className="panel-facturas">
+      <style>{`
+        .facturas-kpis { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+        @media (max-width: 640px) { .facturas-kpis { grid-template-columns: 1fr; } }
+        .facturas-detalle { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr)); gap: 12px; }
+      `}</style>
+      <div style={styles.declCardHeader}>
+        <div>
+          <div style={styles.declTitulo}>Facturas</div>
+          <div style={styles.declSub}>
+            Las facturas que Amsodent emitió de sus cotizaciones, con su condición de pago, vencimiento y estado de pago.
+            Despliegue una factura para ver sus pagos, notas de crédito y documentos.
+          </div>
+        </div>
+      </div>
+
+      <div style={{ padding: "16px 22px 20px", display: "flex", flexDirection: "column", gap: 14 }}>
+        {cargando && !datos ? (
+          <div style={{ padding: 12, color: "#64748b", fontSize: 13 }}>Cargando facturas…</div>
+        ) : error ? (
+          <div style={{ padding: 12, color: "#b91c1c", fontSize: 13 }}>{error}</div>
+        ) : !filas.length ? (
+          <div style={{ padding: 12, color: "#64748b", fontSize: 13 }}>
+            Todavía no hay facturas emitidas a su nombre. Aparecerán aquí apenas Amsodent facture una de sus cotizaciones.
+          </div>
+        ) : (
+          <>
+            <div className="facturas-kpis">
+              {kpiCard("Facturado", fmtPesos(resumen.facturado), plural(resumen.nFacturas, "factura", "facturas"), TEAL)}
+              {kpiCard("Por pagar", fmtPesos(resumen.porPagar), resumen.nPorPagar ? plural(resumen.nPorPagar, "factura pendiente", "facturas pendientes") : "Todo al día", "#b45309")}
+              {kpiCard("Vencido", fmtPesos(resumen.vencido), resumen.nVencidas ? plural(resumen.nVencidas, "factura vencida", "facturas vencidas") : "Nada vencido", "#b91c1c")}
+            </div>
+
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+              <div style={{ position: "relative", flex: "1 1 260px", minWidth: 0 }}>
+                <Search size={14} style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", color: "#94a3b8" }} />
+                <input
+                  value={busqueda}
+                  onChange={(e) => setBusqueda(e.target.value)}
+                  placeholder="Buscar por N° de factura, cotización, orden de compra o pedido"
+                  style={{ ...styles.input, marginTop: 0, height: 38, padding: "0 12px 0 32px", fontSize: 13 }}
+                />
+              </div>
+              <DropdownSelect
+                value={filtro}
+                onChange={setFiltro}
+                options={FILTROS_ESTADO_FACTURA}
+                minWidth={230}
+                className=""
+                style={{ ...styles.input, marginTop: 0, width: 230, flex: "0 1 230px", minWidth: 170, maxWidth: "100%", height: 38, padding: "0 12px", fontSize: 13 }}
+              />
+            </div>
+            {errorPdf && <div style={{ fontSize: 12.5, color: "#b91c1c" }}>{errorPdf}</div>}
+
+            {!filtradas.length ? (
+              <div style={{ padding: 12, color: "#64748b", fontSize: 13 }}>Ninguna factura coincide con la búsqueda.</div>
+            ) : (
+              <>
+                {/* containerType: el detalle mide 100cqw = lo visible de esta caja. */}
+                <div style={{ overflowX: "auto", containerType: "inline-size" }}>
+                  <table className="tabla-facturas-portal" style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 760 }}>
+                    <thead>
+                      <tr style={{ background: "#f8fafc" }}>
+                        <th style={{ ...thPortal, width: 26 }} aria-label="Detalle" />
+                        <th style={thPortal}>Factura</th>
+                        <th style={thPortal}>Cotización</th>
+                        <th style={thPortal}>Condición de pago</th>
+                        <th style={{ ...thPortal, textAlign: "right" }}>Total</th>
+                        <th style={{ ...thPortal, textAlign: "right" }}>Saldo</th>
+                        <th style={thPortal}>Estado</th>
+                        <th style={{ ...thPortal, width: 80 }} aria-label="PDF" />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {visibles.map((x) => {
+                        const f = x.factura;
+                        const ab = abierta === f.id;
+                        const est = x.estado;
+                        const tono = ESTILO_ESTADO_FACTURA[est.clave] || ESTILO_ESTADO_FACTURA.sin_fecha;
+                        const venceTxt = textoVencimiento(est);
+                        const ncTotal = x.cuenta.nc;
+                        return (
+                          <Fragment key={f.id}>
+                            <tr style={{ borderTop: "1px solid #f1f5f9", cursor: "pointer" }} onClick={() => setAbierta(ab ? null : f.id)} title={ab ? "Ocultar el detalle" : "Ver el detalle de la factura"}>
+                              <td style={tdPortal}>{ab ? <ChevronDown size={15} /> : <ChevronRight size={15} />}</td>
+                              <td style={{ ...tdPortal, whiteSpace: "nowrap" }}>
+                                <div style={{ fontWeight: 800, color: "#0f172a" }}>N° {f.numero || "s/n"}</div>
+                                <div style={{ fontSize: 11.5, color: "#94a3b8" }}>{etiquetaDoc(f)} · {x.emision ? fmtFechaCL(x.emision) : "sin fecha"}</div>
+                              </td>
+                              <td style={{ ...tdPortal, minWidth: 130 }}>
+                                <div style={{ fontWeight: 600, color: "#0f172a", overflowWrap: "anywhere" }}>{x.lic.id_licitacion || `#${f.licitacion_id}`}</div>
+                                {(x.pedido || x.ocs.length > 0) && (
+                                  <div style={{ fontSize: 11.5, color: "#64748b", overflowWrap: "anywhere" }}>
+                                    {[x.pedido ? `Pedido N° ${x.pedido}` : null, x.ocs.length ? `OC ${x.ocs.join(", ")}` : null].filter(Boolean).join(" · ")}
+                                  </div>
+                                )}
+                              </td>
+                              <td style={{ ...tdPortal, minWidth: 130 }}>
+                                <div style={{ fontWeight: 600, color: "#0f172a" }}>{x.lic.condicion_venta || "No informada"}</div>
+                                <div style={{ fontSize: 11.5, color: "#64748b" }}>{est.vencimiento ? `Vence ${fmtFechaCL(est.vencimiento)}` : "Sin vencimiento"}</div>
+                              </td>
+                              <td style={{ ...tdPortal, textAlign: "right", whiteSpace: "nowrap" }}>
+                                <div style={{ fontWeight: 700, color: "#0f172a" }}>{fmtPesos(x.cuenta.base)}</div>
+                                {ncTotal > 0 && <div style={{ fontSize: 11.5, color: "#64748b" }}>NC −{fmtPesos(ncTotal)}</div>}
+                              </td>
+                              <td style={{ ...tdPortal, textAlign: "right", whiteSpace: "nowrap", fontWeight: 700, color: est.saldo > 0 ? (est.clave === "vencida" ? "#b91c1c" : "#0f172a") : "#94a3b8" }}>
+                                {est.saldo > 0 ? fmtPesos(est.saldo) : "—"}
+                              </td>
+                              <td style={tdPortal}>
+                                <span style={{ display: "inline-block", fontSize: 11, fontWeight: 800, padding: "3px 9px", borderRadius: 999, background: tono.bg, color: tono.color, whiteSpace: "nowrap" }}>{est.etiqueta}</span>
+                                {venceTxt && <div style={{ fontSize: 11, color: est.clave === "vencida" ? "#b91c1c" : "#64748b", marginTop: 3, whiteSpace: "nowrap" }}>{venceTxt}</div>}
+                              </td>
+                              <td style={{ ...tdPortal, textAlign: "right" }}>{botonPdf(f)}</td>
+                            </tr>
+                            {ab && (
+                              <tr className="detalle-factura">
+                                <td colSpan={8} style={{ background: "#f8fafc", padding: 0 }}>
+                                  {/* En pantallas angostas la tabla se desplaza de lado: el detalle
+                                      queda fijo a la izquierda y del ancho visible, para leerse entero. */}
+                                  <div className="facturas-detalle" style={{ position: "sticky", left: 0, width: "100cqw", boxSizing: "border-box", padding: "12px 14px" }}>
+                                    {bloque("Montos", (
+                                      <>
+                                        {Number(f.monto) > 0 && linea("Neto", fmtPesos(f.monto))}
+                                        {Number(f.monto) > 0 && linea("IVA (19 %)", fmtPesos(brutoDeNeto(f.monto) - Math.round(Number(f.monto))))}
+                                        {linea("Total", fmtPesos(x.cuenta.base), { fuerte: true })}
+                                        {x.cuenta.nc > 0 && linea("Notas de crédito", `−${fmtPesos(x.cuenta.nc)}`)}
+                                        {x.cuenta.nd > 0 && linea("Notas de débito", `+${fmtPesos(x.cuenta.nd)}`)}
+                                        {x.cuenta.multas > 0 && linea("Multas", `−${fmtPesos(x.cuenta.multas)}`)}
+                                        {x.cuenta.pagado !== 0 && linea("Pagado", fmtPesos(x.cuenta.pagado))}
+                                        {linea("Saldo por pagar", est.saldo > 0 ? fmtPesos(est.saldo) : "$0", { fuerte: true, separado: true, color: est.clave === "vencida" ? "#b91c1c" : undefined })}
+                                      </>
+                                    ))}
+                                    {bloque("Condición de pago", (
+                                      <>
+                                        {linea("Condición", x.lic.condicion_venta || "No informada")}
+                                        {textoPlazo(x.lic) && linea("Plazo", textoPlazo(x.lic))}
+                                        {linea("Emisión", x.emision ? fmtFechaCL(x.emision) : "—")}
+                                        {linea("Vencimiento", est.vencimiento ? fmtFechaCL(est.vencimiento) : "—")}
+                                        {linea("Estado", est.etiqueta + (venceTxt ? ` · ${venceTxt.toLowerCase()}` : ""), { color: tono.color })}
+                                        {f.forma_pago && f.forma_pago !== "factoring" && linea("Forma de pago", MEDIOS_PAGO_FACTURA[f.forma_pago] || f.forma_pago)}
+                                        {Number(f.cuotas_total) > 1 && linea("Cuotas", `${f.cuotas_total}${Number(f.valor_cuota) > 0 ? ` de ${fmtPesos(f.valor_cuota)}` : ""}`)}
+                                        {f.pagada && f.fecha_pago && linea("Pagada el", fmtFechaCL(f.fecha_pago))}
+                                        {f.forma_pago === "factoring" && (
+                                          <div style={{ marginTop: 6, fontSize: 12, color: "#92400e", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "6px 9px" }}>
+                                            Factura cedida a factoring{f.factoring_empresa ? ` (${f.factoring_empresa})` : ""}: el pago se hace a esa empresa.
+                                          </div>
+                                        )}
+                                      </>
+                                    ))}
+                                    {bloque("Pagos registrados", x.pagos.length ? (
+                                      x.pagos.map((p) => (
+                                        <div key={p.id} style={{ fontSize: 12.5, padding: "3px 0", display: "flex", justifyContent: "space-between", gap: 10 }}>
+                                          <span style={{ color: "#475569", minWidth: 0, overflowWrap: "anywhere" }}>
+                                            {fmtFechaCL(p.fecha_oc || p.created_at)} · {medioDePago(p)}
+                                            {p.numero ? ` · N° ${p.numero}` : ""}
+                                            {p.de_la_cotizacion ? " · de la cotización" : ""}
+                                          </span>
+                                          <strong style={{ whiteSpace: "nowrap", color: p.devolucion ? "#b91c1c" : "#0f172a" }}>
+                                            {p.devolucion ? "−" : ""}{fmtPesos(Math.abs(brutoDeNeto(p.monto)) + (Number(p.comision_pago) || 0))}
+                                          </strong>
+                                        </div>
+                                      ))
+                                    ) : (
+                                      <div style={{ fontSize: 12.5, color: "#64748b" }}>
+                                        {f.pagada ? `Marcada como pagada${f.fecha_pago ? ` el ${fmtFechaCL(f.fecha_pago)}` : ""}.` : "Aún no hay pagos registrados para esta factura."}
+                                      </div>
+                                    ))}
+                                    {bloque("Documentos relacionados", (
+                                      <div style={{ display: "flex", flexDirection: "column", gap: 5, fontSize: 12.5, color: "#475569" }}>
+                                        {x.pedido && <div>Pedido del portal N° {x.pedido}</div>}
+                                        {x.ocs.length > 0 && <div>Orden de compra {x.ocs.join(", ")}</div>}
+                                        {x.guias.map((g) => (
+                                          <div key={g.id} style={{ overflowWrap: "anywhere" }}>
+                                            Guía de despacho N° {g.numero || "s/n"}
+                                            {g.empresa_despacho ? ` · ${g.empresa_despacho}` : ""}
+                                            {g.n_seguimiento ? ` · seguimiento ${g.n_seguimiento}` : ""}
+                                          </div>
+                                        ))}
+                                        {x.notas.map((n) => (
+                                          <div key={n.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                                            <span>
+                                              {n.tipo === "nota_debito" ? "Nota de débito" : "Nota de crédito"} N° {n.numero || "s/n"}
+                                              {Number(n.monto) > 0 ? ` · ${n.tipo === "nota_debito" ? "+" : "−"}${fmtPesos(n.monto)}` : ""}
+                                            </span>
+                                            {botonPdf(n)}
+                                          </div>
+                                        ))}
+                                        {!x.pedido && !x.ocs.length && !x.guias.length && !x.notas.length && <div style={{ color: "#94a3b8" }}>Sin otros documentos.</div>}
+                                      </div>
+                                    ))}
+                                  </div>
+                                </td>
+                              </tr>
+                            )}
+                          </Fragment>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                {filtradas.length > FACTURAS_POR_PAGINA && (
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap", fontSize: 12.5, color: "#64748b" }}>
+                    <span>{(paginaActual - 1) * FACTURAS_POR_PAGINA + 1}–{Math.min(paginaActual * FACTURAS_POR_PAGINA, filtradas.length)} de {filtradas.length} facturas</span>
+                    <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+                      <button type="button" style={styles.btnSecundarioChico} disabled={paginaActual <= 1} onClick={() => { setPagina(paginaActual - 1); setAbierta(null); }}>Anterior</button>
+                      <span>Página {paginaActual} de {paginas}</span>
+                      <button type="button" style={styles.btnSecundarioChico} disabled={paginaActual >= paginas} onClick={() => { setPagina(paginaActual + 1); setAbierta(null); }}>Siguiente</button>
+                    </span>
+                  </div>
+                )}
+              </>
+            )}
+          </>
+        )}
+      </div>
     </div>
   );
 }

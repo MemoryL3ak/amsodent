@@ -836,7 +836,7 @@ Bitácora con la reunión prellenada.
 ### Acceso Portal Clientes (/portal-accesos)
 MÓDULOS POR CLIENTE: el botón "Módulos" de cada cliente enciende o apaga las
 secciones de su portal (Gestión de Stock, Mis cotizaciones, Ofertas, Showroom,
-Explorador de precios, Actividad), p. ej. Showroom sí y Ofertas no. Resumen
+Explorador de precios, Actividad, Facturas), p. ej. Showroom sí y Ofertas no. Resumen
 siempre está; Usuarios depende del rol. Mis cotizaciones queda encendida
 mientras el cliente pueda pedir desde otra sección. Sin Explorador, el carrito
 sigue como "Mi pedido". El servidor lo exige: una sección apagada no entrega
@@ -885,6 +885,14 @@ campo no acepta un número mayor al guardado): lo que entra se registra en
 Recepción o en Inventario. Eliminar un usuario de la cuenta pide confirmación en una ventana
 propia del portal (ya no el diálogo del navegador).
 
+- FACTURAS del portal (/portal-cliente, pestaña «Facturas», nov 2026): todas
+  las facturas y boletas emitidas de las cotizaciones del cliente con su
+  condición de pago (la de la cotización), emisión, vencimiento, total, saldo y
+  estado (en plazo, por vencer, vencida, en cuotas, pagada, anulada con nota de
+  crédito); KPIs Facturado / Por pagar / Vencido, buscador y filtro por estado;
+  el detalle muestra neto/IVA/total, notas de crédito y débito, pagos, factoring,
+  OC, guías y PDF. Mismo cálculo que Seguimiento de Pagos (src/lib/cuentasFacturas.js).
+  La ven admin y asistente de la cuenta; módulo «Facturas» en Módulos por cliente.
 ## MÓDULOS — GRUPO REPORTES
 
 ### Panel de Indicadores (/panel-indicadores, /panel-publica, /panel-particular)

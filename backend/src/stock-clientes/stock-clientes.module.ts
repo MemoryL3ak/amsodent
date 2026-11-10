@@ -9,6 +9,7 @@ import { PortalModulosService } from './portal-modulos.service';
 import { ExploradorProductosService } from './explorador-productos.service';
 import { InventarioPortalService } from './inventario-portal.service';
 import { RecepcionPortalService } from './recepcion-portal.service';
+import { FacturasPortalService } from './facturas-portal.service';
 import { MailingsModule } from '../mailings/mailings.module';
 import { CorreosModule } from '../correos/correos.module';
 import { LicitacionesModule } from '../licitaciones/licitaciones.module';
@@ -22,7 +23,7 @@ import { AdminGuard } from '../auth/admin.guard';
   // CampanasModule: las ofertas del portal son campañas de margen de canal «portal» (2026-11-05).
   imports: [MailingsModule, CorreosModule, LicitacionesModule, ProductosModule, CampanasModule],
   controllers: [StockClientesController],
-  providers: [StockClientesService, ExploradorService, PedidosFlujoService, WebpayService, OfertasPortalService, PortalModulosService, ExploradorProductosService, InventarioPortalService, RecepcionPortalService, AuthGuard, AdminGuard],
+  providers: [StockClientesService, ExploradorService, PedidosFlujoService, WebpayService, OfertasPortalService, PortalModulosService, ExploradorProductosService, InventarioPortalService, RecepcionPortalService, FacturasPortalService, AuthGuard, AdminGuard],
   exports: [StockClientesService, PedidosFlujoService],
 })
 export class StockClientesModule {}

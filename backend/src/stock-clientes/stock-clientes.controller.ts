@@ -18,6 +18,7 @@ import { ExploradorService } from './explorador.service';
 import { ExploradorProductosService } from './explorador-productos.service';
 import { InventarioPortalService } from './inventario-portal.service';
 import { RecepcionPortalService } from './recepcion-portal.service';
+import { FacturasPortalService } from './facturas-portal.service';
 import { PedidosFlujoService } from './pedidos-flujo.service';
 import { WebpayService } from './webpay.service';
 import { OfertasPortalService } from './ofertas-portal.service';
@@ -38,6 +39,7 @@ export class StockClientesController {
     private exploradorProductos: ExploradorProductosService,
     private inventario: InventarioPortalService,
     private recepcion: RecepcionPortalService,
+    private facturas: FacturasPortalService,
   ) {}
 
   /* ── Módulos del portal (2026-10-05) ── Qué secciones ve la cuenta. */
@@ -45,6 +47,23 @@ export class StockClientesController {
   @Get('mis-modulos')
   async misModulos(@Req() req: any) {
     return { modulos: await this.modulos.de(req.stockPortal.rut), catalogo: MODULOS_PORTAL };
+  }
+
+  /* ── Facturas (2026-11-09) ── Las facturas emitidas de las cotizaciones del
+     RUT con lo que hace su cuenta (notas, pagos, OC, guías). La ven el
+     administrador y el asistente de la cuenta; va con el módulo `facturas`. */
+  @UseGuards(StockPortalGuard)
+  @Get('mis-facturas')
+  async misFacturas(@Req() req: any) {
+    await this.modulos.exigir(req.stockPortal.rut, 'facturas');
+    return await this.facturas.listar(req.stockPortal.rut);
+  }
+
+  @UseGuards(StockPortalGuard)
+  @Get('mis-facturas/:id/pdf')
+  async pdfFactura(@Req() req: any, @Param('id', ParseIntPipe) id: number) {
+    await this.modulos.exigir(req.stockPortal.rut, 'facturas');
+    return await this.facturas.pdf(req.stockPortal.rut, id);
   }
 
   // ============================================================

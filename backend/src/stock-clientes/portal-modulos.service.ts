@@ -21,6 +21,8 @@ export const MODULOS_PORTAL: { clave: string; nombre: string; detalle: string; p
   { clave: 'showroom', nombre: 'Showroom', detalle: 'Catálogo de venta al público con precio sugerido.', pide: true },
   { clave: 'explorador', nombre: 'Explorador de precios', detalle: 'Comparador de precios de otras tiendas dentales.', pide: true },
   { clave: 'actividad', nombre: 'Actividad', detalle: 'Línea de tiempo de los pedidos de la cuenta.', pide: false },
+  // (2026-11-09) Encendida por defecto, como todas: sin dato = habilitada.
+  { clave: 'facturas', nombre: 'Facturas', detalle: 'Facturas emitidas con su condición de pago, vencimiento, estado y PDF.', pide: false },
 ];
 const CLAVES = MODULOS_PORTAL.map((m) => m.clave);
 export type ModulosPortal = Record<string, boolean>;
