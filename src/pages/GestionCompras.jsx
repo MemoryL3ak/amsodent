@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
 import {
   AlertTriangle, Boxes, Building2, CalendarDays, ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown,
-  ClipboardList, Download, ExternalLink, PackageCheck, PackageX, Paperclip, Plus, RefreshCw, Search, ShoppingCart, Trash2, Wallet, X,
+  ClipboardList, Download, ExternalLink, Eye, PackageCheck, PackageX, Paperclip, Plus, RefreshCw, Search, ShoppingCart, Trash2, Wallet, X,
 } from "lucide-react";
 import { api } from "../lib/api";
 import { useStickyState } from "../lib/useStickyState";
@@ -13,6 +13,7 @@ import MultiSelect from "../components/ui/MultiSelect";
 import BotonLimpiarFiltros from "../components/BotonLimpiarFiltros";
 import ConfirmModal from "../components/ConfirmModal";
 import Toast from "../components/Toast";
+import VistaRapidaCotizacion, { abrirArchivoDocumento } from "../components/VistaRapidaCotizacion";
 
 /* ── Gestión de compras (2026-10-16 · rediseño 2026-10-22) ──────────────────
    Pedido de Ariel: las cotizaciones adjudicadas desde ahora en adelante, con
@@ -378,6 +379,8 @@ export default function GestionCompras() {
   const [orden, setOrden] = useStickyState("gestionCompras.orden", "antigua");
   const [desde, setDesde] = useStickyState("gestionCompras.desde", "");
   const [abiertas, setAbiertas] = useState([]);
+  // (2026-11-09) Ojo de la cotización: vista rápida sin salir de la pantalla.
+  const [vistaCot, setVistaCot] = useState(null);
   const [pagina, setPagina] = useState(1);
   const [modalQuiebre, setModalQuiebre] = useState(false);
   const [quiebreAQuitar, setQuiebreAQuitar] = useState(null);
@@ -595,6 +598,7 @@ export default function GestionCompras() {
   return (
     <div className="page gestion-compras">
       {toast && <Toast type={toast.type} message={toast.message} onClose={() => setToast(null)} />}
+      {vistaCot && <VistaRapidaCotizacion id={vistaCot} onCerrar={() => setVistaCot(null)} />}
       <ConfirmModal
         open={quiebreAQuitar !== null}
         title="¿Quitar este quiebre de stock?"
@@ -1033,6 +1037,7 @@ export default function GestionCompras() {
                         <td className="gc-col-cot">
                           <div className="gc-cot-linea">
                             <Link to={`/detalle/${c.id}`} target="_blank" rel="noopener noreferrer" className="gc-cot-id" onClick={(e) => e.stopPropagation()} title="Abrir la cotización en una pestaña nueva">#{c.id}</Link>
+                            <button type="button" className="gc-ojo" onClick={(e) => { e.stopPropagation(); setVistaCot(c.id); }} title="Ver la cotización (vista rápida)" aria-label={`Ver la cotización #${c.id}`}><Eye size={14} /></button>
                             {c.codigo && c.codigo !== String(c.id) && <span className="gc-cot-codigo">{c.codigo}</span>}
                             <span className={`gc-etiqueta ${c.particular ? "gc-etiqueta-particular" : "gc-etiqueta-publica"}`}>{c.particular ? "Particular" : "Pública"}</span>
                             {c.productos.some((p) => p.quiebre && p.por_despachar > 0) && <span className="gc-etiqueta gc-etiqueta-quiebre" title="Tiene productos por despachar con quiebre de stock declarado">Quiebre</span>}
@@ -1044,7 +1049,33 @@ export default function GestionCompras() {
                             {cerrada && <span className="gc-meta-cerrada">Cierre forzado{c.monto_forzado ? ` · se cerró con ${clp(c.monto_forzado)} neto` : ""}</span>}
                           </div>
                         </td>
-                        <td className="gc-col-oc">{c.oc || <span className="gc-sin-dato" title="La cotización no tiene una orden de compra cargada">—</span>}</td>
+                        <td className="gc-col-oc">
+                          {(c.ocs || []).length > 0 ? (
+                            <span className="gc-ocs">
+                              {c.ocs.map((o) => (
+                                <span key={o.id} className="gc-oc-item">
+                                  {o.numero || "S/N"}
+                                  {o.bucket && o.path ? (
+                                    <button
+                                      type="button"
+                                      className="gc-ojo"
+                                      onClick={async (e) => {
+                                        e.stopPropagation();
+                                        if (!(await abrirArchivoDocumento(o.bucket, o.path))) setToast({ type: "error", message: `No se pudo abrir la orden de compra ${o.numero || ""}.` });
+                                      }}
+                                      title="Ver la orden de compra"
+                                      aria-label={`Ver la orden de compra ${o.numero || ""}`}
+                                    >
+                                      <Eye size={13} />
+                                    </button>
+                                  ) : (
+                                    <span className="gc-sin-dato" title="La orden de compra no tiene archivo cargado"> · sin archivo</span>
+                                  )}
+                                </span>
+                              ))}
+                            </span>
+                          ) : c.oc || <span className="gc-sin-dato" title="La cotización no tiene una orden de compra cargada">—</span>}
+                        </td>
                         <td className="gc-col-fecha">
                           <div className="gc-nowrap">{fechaCL(c.fecha_adjudicada)}</div>
                           {dias != null && <div className="gc-sub">{haceDias(dias)}</div>}

@@ -97,13 +97,18 @@ export class GestionComprasService {
     if (!cotizaciones.length) return this.conExtras(this.vacio(desde, avisos), desde);
 
     // 1b. N° de orden de compra de cada cotización (puede haber más de una).
+    // (2026-11-09) Con su archivo: el ojo de la columna OC lo abre.
     const ocPorLic = new Map<number, string[]>();
+    const ocDocsPorLic = new Map<number, { id: number; numero: string; bucket: string | null; path: string | null }[]>();
     const idsLic = cotizaciones.map((c) => Number(c.id));
     for (let i = 0; i < idsLic.length; i += 150) {
-      const { data: ocs, error: eOc } = await db.from('licitacion_documentos').select('licitacion_id, numero').eq('tipo', 'orden_compra').in('licitacion_id', idsLic.slice(i, i + 150)).order('id', { ascending: true }).range(0, 9999);
+      const { data: ocs, error: eOc } = await db.from('licitacion_documentos').select('id, licitacion_id, numero, bucket, storage_path').eq('tipo', 'orden_compra').in('licitacion_id', idsLic.slice(i, i + 150)).order('id', { ascending: true }).range(0, 9999);
       if (eOc) { this.logger.warn(`Gestión de compras: no se pudieron leer las órdenes de compra: ${eOc.message}`); break; }
       for (const d of (ocs || []) as any[]) {
         const n = String(d.numero || '').trim();
+        const docs = ocDocsPorLic.get(Number(d.licitacion_id)) || [];
+        docs.push({ id: Number(d.id), numero: n, bucket: d.bucket || null, path: d.storage_path || null });
+        ocDocsPorLic.set(Number(d.licitacion_id), docs);
         if (!n) continue;
         const l = ocPorLic.get(Number(d.licitacion_id)) || [];
         if (!l.includes(n)) l.push(n);
@@ -235,6 +240,7 @@ export class GestionComprasService {
         id: Number(c.id),
         codigo: c.id_licitacion || null,
         oc: (ocPorLic.get(Number(c.id)) || []).join(', '),
+        ocs: ocDocsPorLic.get(Number(c.id)) || [],
         cliente: c.nombre_entidad || '',
         rut: c.rut_entidad || '',
         particular: /particular/i.test(String(c.tipo_cliente || '')),
