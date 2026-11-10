@@ -47,7 +47,9 @@ import Toast from "../components/Toast";
    · Botón «Declarar quiebre de stock»: se elige el producto, opcionalmente se
      adjunta un respaldo, y el vendedor de cada cotización afectada recibe el
      aviso (campana + ventana flotante). Los quiebres quedan en la pestaña
-     «Quiebres de stock» y salen solos cuando el producto se despacha. */
+     «Quiebres de stock» y salen solos cuando el producto se despacha.
+     (2026-11-09) El aviso va también por correo (uno por vendedor, con el
+     respaldo adjunto) y la campana / ventana flotante permiten bajarlo. */
 
 const POR_PAGINA = 20;
 const clp = (n) => `$${Math.round(Number(n) || 0).toLocaleString("es-CL")}`;
@@ -316,7 +318,7 @@ function ModalQuiebre({ productos, onCerrar, onDeclarado }) {
           </div>
           {elegido && (
             <div className="quiebre-afectadas" style={{ fontSize: 12.5, color: "#7f1d1d", background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 10, padding: "9px 12px", lineHeight: 1.5 }}>
-              Al declarar se avisa (campana y ventana flotante) al vendedor de cada cotización afectada:{" "}
+              Al declarar se avisa por correo y en la plataforma (campana y ventana flotante), con el respaldo para descargar, al vendedor de cada cotización afectada:{" "}
               <strong>{vendedores.map(([v, n]) => `${v} (${n})`).join(", ")}</strong>.
               <div style={{ marginTop: 4, display: "flex", gap: 5, flexWrap: "wrap" }}>
                 {elegido.cotizaciones.map((c) => <span key={c.id} style={{ background: "#fff", border: "1px solid #fecaca", borderRadius: 999, padding: "1px 8px", fontWeight: 600, whiteSpace: "nowrap" }}>#{c.id} · {num(c.pendiente)} u.</span>)}
@@ -608,7 +610,16 @@ export default function GestionCompras() {
           onCerrar={() => setModalQuiebre(false)}
           onDeclarado={(r, p) => {
             setModalQuiebre(false);
-            setToast({ type: "success", message: `Quiebre de stock declarado para «${p.producto}». ${r?.avisados ? `Se avisó a ${r.avisados === 1 ? "1 vendedor" : `los vendedores de ${r.avisados} cotizaciones`}.` : "No había vendedores a quienes avisar."}` });
+            // (2026-11-09) El aviso va por campana y por correo (con el respaldo adjunto).
+            const correos = Number(r?.correos) || 0;
+            const fallidos = Number(r?.correos_fallidos) || 0;
+            const detalleCorreo = correos || fallidos
+              ? ` ${correos ? `Salió${correos === 1 ? "" : "eron"} ${correos} correo${correos === 1 ? "" : "s"}` : "No salió ningún correo"}${fallidos ? ` (${fallidos} con error: revisa Monitoreo del sistema)` : ""}.`
+              : "";
+            setToast({
+              type: fallidos ? "warning" : "success",
+              message: `Quiebre de stock declarado para «${p.producto}». ${r?.avisados ? `Se avisó en la campana a ${r.avisados === 1 ? "1 vendedor" : `los vendedores de ${r.avisados} cotizaciones`}.${detalleCorreo}` : "No había vendedores a quienes avisar."}`,
+            });
             setQ("");
             setPestana("quiebres");
             cargar();

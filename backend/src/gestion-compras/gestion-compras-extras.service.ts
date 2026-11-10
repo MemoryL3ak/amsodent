@@ -1,5 +1,8 @@
-import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
+import { MailingsService } from '../mailings/mailings.service';
+import { plantillaQuiebreStock } from '../correos/correos.templates';
+import { esRolAdmin, permisosEfectivos } from '../auth/permisos';
 
 /* ============================================================================
    Gestión de compras: proveedores por producto y quiebres de stock (2026-11-06)
@@ -31,6 +34,14 @@ import { SupabaseService } from '../supabase/supabase.service';
    El respaldo (opcional) va al bucket PRIVADO `quiebres-stock` y se entrega
    con URL firmada. Tablas y bucket: migración
    20261106_gestion_compras_proveedores_quiebres.
+
+   (2026-11-09) Pedido de Ariel: «que le llegue por correo y notificación y en
+   ambas que le permita descargar el archivo de respaldo». Además de la
+   campana, cada vendedor avisado recibe UN correo con todas sus cotizaciones
+   afectadas y el respaldo adjunto; el aviso de la campana lleva
+   `tiene_respaldo`/`file_name` y el vendedor lo baja por
+   GET /quiebres-stock/:id/respaldo (sin el módulo Gestión de compras: basta
+   ser vendedor o dueño de una cotización afectada).
 ============================================================================ */
 
 const MIGRACION = 'Falta aplicar la migración 20261106_gestion_compras_proveedores_quiebres.sql en Supabase.';
@@ -72,7 +83,10 @@ export type CotizacionAfectada = {
 export class GestionComprasExtrasService {
   private readonly logger = new Logger(GestionComprasExtrasService.name);
 
-  constructor(private supabase: SupabaseService) {}
+  constructor(
+    private supabase: SupabaseService,
+    private mailings: MailingsService,
+  ) {}
 
   private get db() {
     return this.supabase.getClient();
@@ -226,16 +240,91 @@ export class GestionComprasExtrasService {
       if (respaldo.storage_path) await this.db.storage.from(BUCKET).remove([respaldo.storage_path]).then(() => undefined, () => undefined);
       this.fallo(error);
     }
-    const avisados = await this.avisar(this.vistaQuiebre(data), email);
-    this.logger.log(`Quiebre de stock declarado por ${email}: ${producto.sku || producto.producto} · ${afectadas.length} cotización(es) · ${avisados} aviso(s)`);
-    return { quiebre: this.vistaQuiebre(data), avisados };
+    const vista = this.vistaQuiebre(data);
+    const avisados = await this.avisar(vista, email);
+    const adjunto = respaldo.storage_path && file?.buffer?.length
+      ? { filename: String(respaldo.file_name), content: file.buffer, contentType: file.mimetype || undefined }
+      : null;
+    const correos = await this.avisarPorCorreo(vista, email, adjunto);
+    this.logger.log(
+      `Quiebre de stock declarado por ${email}: ${producto.sku || producto.producto} · ${afectadas.length} cotización(es) · ` +
+        `${avisados} aviso(s) · ${correos.enviados} correo(s)${correos.fallidos ? ` (${correos.fallidos} no salieron)` : ''}`,
+    );
+    return { quiebre: vista, avisados, correos: correos.enviados, correos_fallidos: correos.fallidos };
+  }
+
+  /* Vendedores a avisar: correo válido y distinto de quien declara (no se avisa a sí mismo). */
+  private destinatarios(q: ReturnType<GestionComprasExtrasService['vistaQuiebre']>, declaradoPor: string) {
+    return q.cotizaciones.filter((c) => RE_EMAIL.test(correo(c.vendedor_correo)) && correo(c.vendedor_correo) !== correo(declaradoPor));
+  }
+
+  /* (2026-11-09) UN correo por vendedor con todas sus cotizaciones afectadas y
+     el respaldo adjunto. Se envían en paralelo (cada uno con su propio tope de
+     tiempo en el SMTP). Nunca lanza: si un correo no sale, la campana ya quedó. */
+  private async avisarPorCorreo(
+    q: ReturnType<GestionComprasExtrasService['vistaQuiebre']>,
+    declaradoPor: string,
+    adjunto: { filename: string; content: Buffer; contentType?: string } | null,
+  ): Promise<{ enviados: number; fallidos: number }> {
+    const porVendedor = new Map<string, { nombre: string; cotizaciones: CotizacionAfectada[] }>();
+    for (const c of this.destinatarios(q, declaradoPor)) {
+      const para = correo(c.vendedor_correo);
+      const e = porVendedor.get(para) || { nombre: '', cotizaciones: [] };
+      // `vendedor` cae al correo cuando no hay nombre: en ese caso el saludo va sin nombre.
+      if (!e.nombre && c.vendedor && !RE_EMAIL.test(c.vendedor)) e.nombre = String(c.vendedor).trim();
+      e.cotizaciones.push(c);
+      porVendedor.set(para, e);
+    }
+    if (!porVendedor.size) return { enviados: 0, fallidos: 0 };
+
+    const quien = correo(declaradoPor);
+    let quienNombre = '';
+    if (quien) {
+      try {
+        const { data: p } = await this.db.from('profiles').select('nombre').ilike('email', quien).maybeSingle();
+        quienNombre = String((p as any)?.nombre || '').trim();
+      } catch { /* sin nombre: va el correo */ }
+    }
+    const base = String(process.env.APP_PUBLIC_URL || process.env.PUBLIC_APP_URL || process.env.FRONTEND_URL || '')
+      .trim()
+      .replace(/\/+$/, '');
+
+    const resultados = await Promise.allSettled(
+      [...porVendedor.entries()].map(([para, v]) => {
+        const plantilla = plantillaQuiebreStock({
+          vendedorNombre: v.nombre || null,
+          producto: q.producto,
+          sku: q.sku || null,
+          motivo: q.motivo || null,
+          fechaEstimada: q.fecha_estimada ? fechaCorta(q.fecha_estimada) : null,
+          declaradoPorNombre: quienNombre || quien || 'Compras',
+          declaradoPorCorreo: quienNombre && quien ? quien : null,
+          cotizaciones: v.cotizaciones.map((c) => ({ id: c.id, codigo: c.codigo, cliente: c.cliente, pendiente: c.pendiente, enlace: base ? `${base}/detalle/${c.id}` : null })),
+          respaldoNombre: adjunto?.filename || null,
+        });
+        return this.mailings
+          .enviarUno({
+            para,
+            asunto: plantilla.asunto,
+            cuerpoHtml: plantilla.html,
+            // Si el vendedor responde, le llega a quien declaró el quiebre.
+            replyTo: RE_EMAIL.test(quien) ? quien : undefined,
+            attachments: adjunto ? [adjunto] : undefined,
+          })
+          .catch((e: any) => {
+            this.logger.warn(`Quiebre de stock ${q.id}: el correo a ${para} no salió (la campana sí quedó): ${e?.message || e}`);
+            throw e;
+          });
+      }),
+    );
+    const enviados = resultados.filter((r) => r.status === 'fulfilled').length;
+    return { enviados, fallidos: resultados.length - enviados };
   }
 
   /* Un aviso por (vendedor, cotización). Quien declara no se avisa a sí mismo. Nunca lanza. */
   private async avisar(q: ReturnType<GestionComprasExtrasService['vistaQuiebre']>, declaradoPor: string): Promise<number> {
     try {
-      const filas = q.cotizaciones
-        .filter((c) => RE_EMAIL.test(correo(c.vendedor_correo)) && correo(c.vendedor_correo) !== correo(declaradoPor))
+      const filas = this.destinatarios(q, declaradoPor)
         .map((c) => ({
           user_email: correo(c.vendedor_correo),
           tipo: TIPO_QUIEBRE,
@@ -248,6 +337,8 @@ export class GestionComprasExtrasService {
           metadata: {
             licitacion_id: c.id, id_licitacion: c.codigo, quiebre_id: q.id, sku: q.sku || null, producto: q.producto, pendiente: c.pendiente,
             fecha_estimada: q.fecha_estimada, cliente: c.cliente, declarado_por: declaradoPor,
+            // (2026-11-09) La campana y la ventana flotante muestran «Descargar respaldo».
+            tiene_respaldo: q.tiene_respaldo, file_name: q.file_name,
           },
         }));
       if (!filas.length) return 0;
@@ -268,6 +359,43 @@ export class GestionComprasExtrasService {
     const firmada = await this.db.storage.from(data.bucket || BUCKET).createSignedUrl(String(data.storage_path), 600, { download: data.file_name || true });
     if (firmada.error || !firmada.data?.signedUrl) throw new BadRequestException('No se pudo generar el enlace del respaldo.');
     return { url: firmada.data.signedUrl, file_name: data.file_name || null };
+  }
+
+  /* (2026-11-09) El mismo respaldo, para quien recibió el aviso (campana o
+     ventana flotante) sin tener el módulo Gestión de compras. Puede bajarlo:
+     el vendedor avisado de una cotización afectada, el dueño ACTUAL de alguna
+     de ellas (si se reasignó después), un admin o quien tenga `gestion_compras`. */
+  async urlRespaldoAvisado(id: number, user: { id?: string; email?: string } | null | undefined) {
+    const { data, error } = await this.db.from('quiebres_stock').select('id, cotizaciones').eq('id', id).maybeSingle();
+    if (error) this.fallo(error);
+    if (!data) throw new NotFoundException('Ese quiebre de stock ya no existe.');
+    const yo = correo(user?.email);
+    const cots = (Array.isArray(data.cotizaciones) ? data.cotizaciones : []) as CotizacionAfectada[];
+    let puede = !!yo && cots.some((c) => correo(c?.vendedor_correo) === yo);
+    if (!puede && yo) {
+      const ids = cots.map((c) => Number(c?.id)).filter((n) => Number.isInteger(n) && n > 0);
+      if (ids.length) {
+        const { data: lics } = await this.db.from('licitaciones').select('vendedor_correo, creado_por').in('id', ids);
+        puede = ((lics || []) as any[]).some((l) => (correo(l.vendedor_correo) || correo(l.creado_por)) === yo);
+      }
+    }
+    if (!puede) puede = await this.tieneGestionCompras(user?.id);
+    if (!puede) throw new ForbiddenException('El respaldo de este quiebre de stock es para los vendedores de las cotizaciones afectadas.');
+    return this.urlRespaldo(id);
+  }
+
+  /* Mismo cálculo que GestionComprasGuard: admin o módulo `gestion_compras` en los permisos efectivos. */
+  private async tieneGestionCompras(userId?: string): Promise<boolean> {
+    if (!userId) return false;
+    const { data: perfil } = await this.db.from('profiles').select('rol, permission_profile_id').eq('id', userId).maybeSingle();
+    const rol = String(perfil?.rol || '').trim().toLowerCase();
+    if (esRolAdmin(rol)) return true;
+    let permisosPerfil: any = null;
+    if (perfil?.permission_profile_id) {
+      const { data: asignado } = await this.db.from('permission_profiles').select('permisos').eq('id', perfil.permission_profile_id).maybeSingle();
+      permisosPerfil = asignado?.permisos ?? null;
+    }
+    return permisosEfectivos(rol, permisosPerfil).includes('gestion_compras');
   }
 
   /* Saca el quiebre de la pestaña. `resolucion`: 'despachado' (automático) o 'manual'. */

@@ -1003,3 +1003,86 @@ export function plantillaOcCargada(datos: DatosOcCargada): PlantillaResultado {
     }),
   };
 }
+
+/* (2026-11-09) Aviso al vendedor cuando en Gestión de compras se declara el
+   quiebre de stock de un producto que tiene por despachar. Un correo por
+   vendedor con TODAS sus cotizaciones afectadas; el documento de respaldo, si
+   lo hay, va adjunto (lo agrega quien envía). Sale junto con los avisos de la
+   campana, que también permiten descargar el respaldo. */
+export type DatosQuiebreStock = {
+  vendedorNombre?: string | null;
+  producto: string;
+  sku?: string | null;
+  motivo?: string | null;
+  fechaEstimada?: string | null; // dd-mm-aaaa
+  declaradoPorNombre: string;
+  declaradoPorCorreo?: string | null;
+  cotizaciones: Array<{ id: number; codigo?: string | null; cliente?: string | null; pendiente: number; enlace?: string | null }>;
+  respaldoNombre?: string | null; // nombre del adjunto, si va
+};
+
+export function plantillaQuiebreStock(datos: DatosQuiebreStock): PlantillaResultado {
+  const producto = String(datos.producto || '').trim() || 'Producto sin nombre';
+  const quien = String(datos.declaradoPorNombre || '').trim() || 'Compras';
+  const cots = datos.cotizaciones || [];
+  const n = cots.length;
+  const unidades = (u: number) => `${Number(u || 0).toLocaleString('es-CL')} por despachar`;
+
+  const filasProducto = [
+    filaDato('📦', 'Producto', producto),
+    datos.sku ? filaDato('🏷️', 'SKU', datos.sku) : '',
+    datos.fechaEstimada ? filaDato('📅', 'Reposición estimada', datos.fechaEstimada) : '',
+    datos.motivo ? filaDato('📝', 'Motivo', datos.motivo) : '',
+    filaDato('🙋', 'Declarado por', `${quien}${datos.declaradoPorCorreo ? ` (${datos.declaradoPorCorreo})` : ''}`, true),
+  ]
+    .filter(Boolean)
+    .join('');
+
+  // Una fila por cotización: número (enlace a la plataforma), código y cliente, y lo que falta despachar.
+  const filasCotizaciones = cots
+    .map((c, i) => {
+      const borde = i === n - 1 ? '' : `border-bottom:1px solid ${C.bordeTenue};`;
+      const ref = `Cotización #${c.id}`;
+      const refHtml = c.enlace
+        ? `<a href="${escapeHtml(c.enlace)}" target="_blank" rel="noopener" style="color:${C.acentoOsc};font-weight:700;text-decoration:underline;">${escapeHtml(ref)}</a>`
+        : escapeHtml(ref);
+      const detalle = [c.codigo, c.cliente].map((v) => String(v || '').trim()).filter(Boolean).join(' · ');
+      return `<tr>
+    <td style="padding:12px 0;${borde}width:28px;font-size:16px;vertical-align:middle;">🧾</td>
+    <td style="padding:12px 8px 12px 0;${borde}vertical-align:middle;">
+      <div style="color:${C.titulo};font-size:14px;font-weight:700;">${refHtml}</div>
+      ${detalle ? `<div style="color:${C.suave};font-size:12.5px;margin-top:2px;">${escapeHtml(detalle)}</div>` : ''}
+    </td>
+    <td style="padding:12px 0;${borde}color:${C.titulo};font-size:14px;font-weight:700;text-align:right;vertical-align:middle;white-space:nowrap;">${escapeHtml(unidades(c.pendiente))}</td>
+  </tr>`;
+    })
+    .join('');
+
+  const saludo = datos.vendedorNombre ? `Hola ${escapeHtml(datos.vendedorNombre)},` : 'Hola,';
+  const unaSola = n === 1 ? cots[0] : null;
+  const contenido = `
+    ${insignia('📦')}
+    ${titulo('Quiebre de stock', `«${producto}» no está disponible por ahora.`)}
+    <p style="margin:0 0 14px;">${saludo}</p>
+    <p style="margin:0 0 20px;color:${C.suave};">
+      Compras declaró un quiebre de stock en un producto que tienes por despachar en
+      ${n === 1 ? 'una de tus cotizaciones' : `${n} de tus cotizaciones`}. Revisa la entrega con el cliente
+      ${datos.fechaEstimada ? 'según la fecha estimada de reposición' : 'mientras se repone el producto'}.
+    </p>
+    ${tarjetaDatos('Producto en quiebre', filasProducto)}
+    ${tarjetaDatos(n === 1 ? 'Tu cotización afectada' : 'Tus cotizaciones afectadas', filasCotizaciones)}
+    ${unaSola?.enlace ? botonCta('Ver la cotización', unaSola.enlace) : ''}
+    ${
+      datos.respaldoNombre
+        ? nota(`📎&nbsp;&nbsp;El documento de respaldo va adjunto a este correo: <strong style="color:${C.texto};">${escapeHtml(datos.respaldoNombre)}</strong>. También puedes descargarlo desde el aviso en la campana de la plataforma.`)
+        : nota('🔔&nbsp;&nbsp;Este aviso también quedó en tu campana de notificaciones de la plataforma.')
+    }`;
+  const productoCorto = producto.length > 70 ? `${producto.slice(0, 67)}…` : producto;
+  return {
+    asunto: `Quiebre de stock: ${productoCorto}${datos.sku ? ` (${datos.sku})` : ''} · ${unaSola ? `cotización #${unaSola.id}` : `${n} cotizaciones`}`,
+    html: envolver({
+      preheader: `${quien} declaró quiebre de stock de «${productoCorto}». Afecta ${unaSola ? `tu cotización #${unaSola.id}` : `${n} de tus cotizaciones`}.`,
+      contenido,
+    }),
+  };
+}

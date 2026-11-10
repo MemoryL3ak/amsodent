@@ -443,7 +443,11 @@ NOVEDADES nov 2026:
 - «DECLARAR QUIEBRE DE STOCK» (botón arriba): se elige un producto con despacho
   pendiente y, opcionalmente, motivo, fecha estimada de reposición y un
   documento de respaldo. Al declarar, el vendedor de cada cotización afectada
-  recibe el aviso «quiebre_stock» en la campana y una ventana flotante. Queda
+  recibe el aviso «quiebre_stock» en la campana, una ventana flotante y un
+  correo (uno por vendedor con todas sus cotizaciones afectadas). El respaldo
+  va adjunto al correo y se descarga también desde la campana («Respaldo») y
+  la ventana flotante («Descargar»), aunque el vendedor no tenga acceso a
+  Gestión de compras. Queda
   en la pestaña «QUIEBRES DE STOCK» (con el respaldo y las cotizaciones
   afectadas) y el producto lleva la etiqueta «Quiebre de stock». Sale solo de
   la lista cuando esas cotizaciones quedan despachadas; también se quita a mano.
@@ -997,8 +1001,9 @@ todo el equipo cuando cambia una lista de precios de un producto. DOCUMENTO POR
 VENCER — aviso a los administradores a 30, 15 y 7 días del vencimiento y el
 día que vence. QUIEBRE DE STOCK — cuando en Gestión de compras se declara el
 quiebre de un producto, el vendedor de cada cotización que lo tiene por
-despachar recibe el aviso en la campana y una ventana flotante («Ver
-cotización»).
+despachar recibe el aviso en la campana, una ventana flotante («Ver
+cotización») y un correo; si hay documento de respaldo, va adjunto al correo
+y se descarga desde la campana o la ventana flotante.
 
 ## MÓDULOS — GRUPO HERRAMIENTAS
 

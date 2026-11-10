@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ClipboardCheck, X, ExternalLink, Check, ShoppingCart, PackageX } from "lucide-react";
+import { ClipboardCheck, X, ExternalLink, Check, ShoppingCart, PackageX, Paperclip, Download } from "lucide-react";
 import { api } from "../lib/api";
+import { avisoConRespaldo, descargarRespaldoQuiebre } from "../lib/respaldoQuiebre";
 import { supabase } from "../lib/supabase";
 import { useUnsavedChanges } from "../context/UnsavedChangesContext";
 
@@ -97,6 +98,8 @@ function haceCuanto(iso) {
 
 export default function AvisoOcCargada() {
   const [pendientes, setPendientes] = useState([]);
+  // (2026-11-09) Descarga del respaldo de un quiebre de stock: { id del aviso, bajando, error }.
+  const [respaldo, setRespaldo] = useState({ id: null, bajando: false, error: "" });
   const atendidasRef = useRef(new Set());
   const { requestNavigation } = useUnsavedChanges();
 
@@ -168,6 +171,19 @@ export default function AvisoOcCargada() {
     marcarLeida(actual.id);
     requestNavigation(destino);
   }
+
+  // No marca leído: el aviso sigue a la vista hasta «Entendido» o «Ver cotización».
+  async function bajarRespaldo() {
+    const id = actual.id;
+    setRespaldo({ id, bajando: true, error: "" });
+    try {
+      await descargarRespaldoQuiebre(m.quiebre_id);
+      setRespaldo({ id, bajando: false, error: "" });
+    } catch (e) {
+      setRespaldo({ id, bajando: false, error: e?.message || "No se pudo descargar el respaldo." });
+    }
+  }
+  const estadoRespaldo = respaldo.id === actual.id ? respaldo : { bajando: false, error: "" };
 
   const ventana = (
     <div
@@ -284,6 +300,57 @@ export default function AvisoOcCargada() {
                 {k}: {v}
               </span>
             ))}
+          </div>
+        )}
+        {avisoConRespaldo(actual) && (
+          <div
+            className="aviso-respaldo"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              marginTop: 10,
+              padding: "6px 6px 6px 10px",
+              border: "1px solid var(--border, #e2e8f0)",
+              borderRadius: 10,
+              background: "var(--bg, #f8fafc)",
+            }}
+          >
+            <Paperclip size={14} style={{ color: "var(--text-muted, #64748b)", flexShrink: 0 }} aria-hidden />
+            <span
+              title={m.file_name || "Documento de respaldo"}
+              style={{ flex: 1, minWidth: 0, fontSize: 12.5, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+            >
+              {m.file_name || "Documento de respaldo"}
+            </span>
+            <button
+              type="button"
+              className="aviso-oc-btn"
+              onClick={bajarRespaldo}
+              disabled={estadoRespaldo.bajando}
+              title="Descargar el documento de respaldo del quiebre"
+              style={{
+                padding: "5px 10px",
+                borderRadius: 7,
+                border: "1px solid var(--border-strong, #cbd5e1)",
+                background: "var(--surface, #fff)",
+                color: "var(--primary-dark, #178a8f)",
+                fontWeight: 700,
+                fontSize: 12,
+                cursor: estadoRespaldo.bajando ? "wait" : "pointer",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 5,
+                flexShrink: 0,
+              }}
+            >
+              <Download size={13} /> {estadoRespaldo.bajando ? "Descargando…" : "Descargar"}
+            </button>
+          </div>
+        )}
+        {estadoRespaldo.error && (
+          <div role="alert" style={{ marginTop: 6, fontSize: 12, color: "var(--danger, #dc2626)" }}>
+            {estadoRespaldo.error}
           </div>
         )}
       </div>

@@ -16,9 +16,11 @@ import {
   Tag,
   FolderOpen,
   PackageX,
+  Download,
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { api } from "../lib/api";
+import { avisoConRespaldo, descargarRespaldoQuiebre } from "../lib/respaldoQuiebre";
 import { supabase } from "../lib/supabase";
 
 // Campana de notificaciones in-app: count de no leídas + dropdown con lista.
@@ -495,6 +497,19 @@ function NotifItem({ notif, onMarcarLeida, onClickLink }) {
   const isLeida = Boolean(notif.leida_at);
   const v = getNotifVisuales(notif);
   const Icono = v.icono;
+  // (2026-11-09) Quiebre de stock: el vendedor baja el documento de respaldo desde el aviso.
+  const conRespaldo = avisoConRespaldo(notif);
+  const [respaldo, setRespaldo] = useState({ bajando: false, error: "" });
+
+  async function bajarRespaldo() {
+    setRespaldo({ bajando: true, error: "" });
+    try {
+      await descargarRespaldoQuiebre(notif.metadata.quiebre_id);
+      setRespaldo({ bajando: false, error: "" });
+    } catch (e) {
+      setRespaldo({ bajando: false, error: e?.message || "No se pudo descargar el respaldo." });
+    }
+  }
 
   return (
     <div
@@ -584,6 +599,7 @@ function NotifItem({ notif, onMarcarLeida, onClickLink }) {
           style={{
             display: "flex",
             alignItems: "center",
+            flexWrap: "wrap",
             gap: 10,
             marginTop: 8,
           }}
@@ -612,6 +628,30 @@ function NotifItem({ notif, onMarcarLeida, onClickLink }) {
               Ver detalle <ExternalLink size={11} />
             </Link>
           )}
+          {conRespaldo && (
+            <button
+              type="button"
+              className="notif-respaldo"
+              onClick={bajarRespaldo}
+              disabled={respaldo.bajando}
+              title={`Descargar el documento de respaldo${notif.metadata?.file_name ? ` (${notif.metadata.file_name})` : ""}`}
+              style={{
+                fontSize: 12,
+                color: v.color,
+                fontWeight: 700,
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 4,
+                padding: "3px 9px",
+                background: "#fff",
+                border: `1px solid ${v.bg}`,
+                borderRadius: 6,
+                cursor: respaldo.bajando ? "wait" : "pointer",
+              }}
+            >
+              <Download size={11} /> {respaldo.bajando ? "Descargando…" : "Respaldo"}
+            </button>
+          )}
           {!isLeida && (
             <button
               type="button"
@@ -630,6 +670,11 @@ function NotifItem({ notif, onMarcarLeida, onClickLink }) {
             </button>
           )}
         </div>
+        {respaldo.error && (
+          <div role="alert" style={{ marginTop: 6, fontSize: 11.5, color: "#b91c1c" }}>
+            {respaldo.error}
+          </div>
+        )}
       </div>
     </div>
   );
