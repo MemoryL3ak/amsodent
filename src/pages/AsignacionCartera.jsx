@@ -5,6 +5,7 @@ import Toast from "../components/Toast";
 import ConfirmModal from "../components/ConfirmModal";
 import BotonLimpiarFiltros from "../components/BotonLimpiarFiltros";
 import DropdownSelect from "../components/ui/DropdownSelect";
+import { cargarCanalVendedores, detalleVendedor, vendedoresCartera } from "../lib/vendedoresCartera";
 import { ChevronLeft, ChevronRight, UserCheck, UserX, Users } from "lucide-react";
 
 /* ── Asignación de cartera (2026-10-01) ────────────────────────────────────
@@ -35,6 +36,8 @@ const sinTildes = (v) =>
 export default function AsignacionCartera() {
   const [clientes, setClientes] = useState(null);
   const [perfiles, setPerfiles] = useState([]);
+  // correo → canal según Metas (null = no se pudo consultar).
+  const [canalVendedores, setCanalVendedores] = useState(null);
   const [error, setError] = useState("");
   const [toast, setToast] = useState(null);
 
@@ -53,12 +56,14 @@ export default function AsignacionCartera() {
   async function cargar() {
     setError("");
     try {
-      const [lista, perf] = await Promise.all([
+      const [lista, perf, canales] = await Promise.all([
         api.get("/clientes/cartera"),
         api.get("/usuarios/profiles").catch(() => []),
+        cargarCanalVendedores(),
       ]);
       setClientes(Array.isArray(lista) ? lista : []);
       setPerfiles(Array.isArray(perf) ? perf : []);
+      setCanalVendedores(canales);
     } catch (e) {
       console.error(e);
       setError(e?.message || "No se pudo cargar la cartera.");
@@ -85,16 +90,18 @@ export default function AsignacionCartera() {
     return String(perfilPorCorreo[e]?.nombre || "").trim() || e;
   };
 
-  // A quién se le puede asignar: usuarios vigentes; los de venta primero.
+  // A quién se le puede asignar (2026-11-09): administradores y vendedores
+  // cuyo canal en Metas vende a particulares (lib/vendedoresCartera); los que
+  // solo venden a Mercado Público ya no aparecen. Los de venta primero, con su
+  // canal como segunda línea.
   const opcionesDestino = useMemo(() => {
-    const lista = perfiles
-      .filter((p) => p?.email && p?.bloqueado !== true)
+    const lista = vendedoresCartera(perfiles, canalVendedores)
       .map((p) => {
         const rol = String(p.rol || "").trim().toLowerCase();
         return {
           value: String(p.email).trim().toLowerCase(),
           label: String(p.nombre || p.email).trim(),
-          detalle: ETIQUETA_ROL[rol] || rol || "",
+          detalle: detalleVendedor(p, canalVendedores) || ETIQUETA_ROL[rol] || rol || "",
           venta: ROLES_VENTA.includes(rol),
         };
       })
@@ -104,7 +111,7 @@ export default function AsignacionCartera() {
       ...lista,
       { value: QUITAR, label: "Sin asignar", detalle: "Quita el vendedor que tengan" },
     ];
-  }, [perfiles]);
+  }, [perfiles, canalVendedores]);
 
   const lista = useMemo(() => clientes || [], [clientes]);
 

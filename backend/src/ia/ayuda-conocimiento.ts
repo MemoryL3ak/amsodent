@@ -222,7 +222,12 @@ MASA. Se filtra por nombre/RUT, tipo, región, vendedor asignado y "le cotiza"
 (el vendedor que más cotizaciones le ha hecho a ese cliente), se marcan filas
 sueltas, la página o todos los del filtro, se elige el vendedor y se asignan
 de una vez (o se les quita el vendedor). Arriba se ve cuántos clientes tiene
-cada vendedor. No se puede asignar a un usuario bloqueado.
+cada vendedor. No se puede asignar a un usuario bloqueado. El listado
+«Vendedor asignado» (aquí, al crear y al editar un cliente; nov 2026) muestra
+SOLO administradores y vendedores cuyo canal en Metas vende a particulares
+(vendedor_terreno, tienda, página web, freelance o mixto terreno/mercado); un
+vendedor solo de Mercado Público o sin canal asignado no aparece (se arregla
+asignándole canal en Metas).
 
 ### Bitácora actividades (/bitacora-actividades)
 Agenda comercial: visitas, llamadas, reuniones (con enlace de Google Meet

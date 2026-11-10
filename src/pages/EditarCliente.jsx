@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
 import Toast from "../components/Toast";
 import DropdownSelect from "../components/ui/DropdownSelect";
+import { cargarCanalVendedores, detalleVendedor, vendedoresCartera } from "../lib/vendedoresCartera";
 import CondicionesVentaSelector from "../components/CondicionesVentaSelector";
 import GirosEditor from "../components/GirosEditor";
 import { tieneCredito30 } from "../lib/condicionesVenta";
@@ -40,6 +41,8 @@ export default function EditarCliente() {
   const [esAdmin, setEsAdmin] = useState(false);
   const [esJefeVentasEspecial, setEsJefeVentasEspecial] = useState(false);
   const [vendedores, setVendedores] = useState([]);
+  // correo → canal según Metas (null = no se pudo consultar).
+  const [canalVendedores, setCanalVendedores] = useState(null);
 
   const esParticular = tipoCliente === "Cliente Particular";
   // (2026-10-16) Crédito "30 días": solo el rol admin lo habilita, en cualquier tipo de cliente.
@@ -63,6 +66,7 @@ export default function EditarCliente() {
         const perfiles = await api.get("/usuarios/profiles");
         setVendedores(perfiles || []);
       } catch { /* */ }
+      setCanalVendedores(await cargarCanalVendedores());
     })();
   }, []);
 
@@ -81,19 +85,23 @@ export default function EditarCliente() {
     return vendedoresMap[e] || vendedorAsignado;
   }, [vendedorAsignado, vendedoresMap]);
 
+  // (2026-11-09) Solo administradores y vendedores cuyo canal en Metas vende a
+  // particulares (lib/vendedoresCartera); antes salía todo el equipo de venta.
   const opcionesVendedores = useMemo(() => {
-    const roles = ["ventas", "ventas_especial", "jefe_ventas", "jefe_ventas_especial"];
-    const lista = (vendedores || [])
-      .filter((p) => roles.includes((p?.rol || "").toString().trim().toLowerCase()))
-      .map((p) => ({ value: (p?.email || "").trim().toLowerCase(), label: (p?.nombre || p?.email || "").trim() }))
+    const lista = vendedoresCartera(vendedores, canalVendedores)
+      .map((p) => ({
+        value: (p?.email || "").trim().toLowerCase(),
+        label: (p?.nombre || p?.email || "").trim(),
+        detalle: detalleVendedor(p, canalVendedores),
+      }))
       .filter((o) => o.value);
-    // Asegura que el vendedor actual aparezca aunque su rol haya cambiado.
+    // Asegura que el vendedor actual aparezca aunque ya no esté en el listado.
     const actual = (vendedorAsignado || "").trim().toLowerCase();
     if (actual && !lista.some((o) => o.value === actual)) {
       lista.push({ value: actual, label: vendedoresMap[actual] || vendedorAsignado });
     }
-    return lista.sort((a, b) => a.label.localeCompare(b.label));
-  }, [vendedores, vendedorAsignado, vendedoresMap]);
+    return lista.sort((a, b) => a.label.localeCompare(b.label, "es"));
+  }, [vendedores, canalVendedores, vendedorAsignado, vendedoresMap]);
 
   /* ============================================================
      CARGAR CLIENTE
@@ -410,16 +418,12 @@ export default function EditarCliente() {
             <div className="field">
               <label className="field-label">Vendedor Asignado</label>
               {esAdmin ? (
-                <select
-                  className="input"
+                <DropdownSelect
                   value={(vendedorAsignado || "").trim().toLowerCase()}
-                  onChange={(e) => setVendedorAsignado(e.target.value)}
-                >
-                  <option value="">Sin asignar</option>
-                  {opcionesVendedores.map((o) => (
-                    <option key={o.value} value={o.value}>{o.label}</option>
-                  ))}
-                </select>
+                  onChange={setVendedorAsignado}
+                  options={[{ value: "", label: "Sin asignar" }, ...opcionesVendedores]}
+                  style={{ width: "100%" }}
+                />
               ) : (
                 <input
                   className="input"
@@ -430,7 +434,7 @@ export default function EditarCliente() {
               )}
               <p style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>
                 {esAdmin
-                  ? "Solo el administrador puede reasignar el vendedor."
+                  ? "Solo el administrador puede reasignar el vendedor. Se listan administradores y vendedores del canal particular (según Metas)."
                   : "Asignado automáticamente al crear el cliente. Solo el administrador puede cambiarlo."}
               </p>
             </div>

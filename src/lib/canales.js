@@ -25,3 +25,21 @@ export function normalizeCanal(value) {
 export function canalLabel(value) {
   return CANAL_LABELS[normalizeCanal(value)] || "";
 }
+
+// (2026-11-09) Canales que venden a CLIENTES PARTICULARES: el consumo de tipo
+// «Cliente particular» cae en vendedor_terreno (Metas y Cotizaciones por
+// vendedor), y tienda, página web y freelance también son venta a
+// particulares; los canales mixtos incluyen terreno. El único canal público
+// puro es vendedor_mercado_publico. Lo usa el listado «Vendedor asignado».
+export const CANALES_PARTICULAR = [
+  "vendedor_terreno",
+  "vendedor_tienda_terreno",
+  "vendedor_terreno_mercado_publico",
+  "pagina_web",
+  "vendedor_tienda",
+  "vendedor_freelance",
+];
+
+export function esCanalParticular(value) {
+  return CANALES_PARTICULAR.includes(normalizeCanal(value));
+}
