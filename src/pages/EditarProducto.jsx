@@ -11,6 +11,7 @@ import { FACTOR_LISTA_3, calcularLista3 } from "../lib/listas";
 import EquivalentesProducto from "../components/EquivalentesProducto";
 import { mensajeBsale, tipoAvisoBsale } from "../lib/bsaleProducto";
 import { avisarProductoActualizado } from "../lib/productosCanal";
+import CampoCodigoBarra, { limpiarCodigoBarra } from "../components/CampoCodigoBarra";
 
 /* ============================================================
    BUSCADOR MEJORADO (igual que licitaciones)
@@ -194,6 +195,7 @@ export default function EditarProducto() {
     nombre: "",
     marca: "",
     sku_marca: "",
+    codigo_barra: "",
     equivalente_1: "",
     equivalente_2: "",
     equivalente_3: "",
@@ -411,6 +413,7 @@ export default function EditarProducto() {
         nombre: data.nombre ?? "",
         marca: data.marca ?? "",
         sku_marca: data.sku_marca ?? "",
+        codigo_barra: data.codigo_barra ?? "",
         equivalente_1: data.equivalente_1 ?? "",
         equivalente_2: data.equivalente_2 ?? "",
         equivalente_3: data.equivalente_3 ?? "",
@@ -682,6 +685,8 @@ export default function EditarProducto() {
       nombre: producto.nombre,
       marca: producto.marca,
       sku_marca: (producto.sku_marca || "").trim() || null,
+      // (2026-11-09) Código de barras (pistola); el servidor avisa si otro producto ya lo tiene.
+      codigo_barra: limpiarCodigoBarra(producto.codigo_barra) || null,
       categoria: producto.categoria,
       formato: producto.formato,
       imagen_url: imagenUrl || null,
@@ -823,6 +828,7 @@ export default function EditarProducto() {
       nombre: data.nombre ?? "",
       marca: data.marca ?? "",
       sku_marca: data.sku_marca ?? "",
+      codigo_barra: data.codigo_barra ?? "",
       categoria: data.categoria ?? "",
       formato: data.formato ?? "",
       imagen_url: data.imagen_url ?? "",
@@ -1059,6 +1065,17 @@ try {
                     disabled={esVentasNoTransitorio}
                     placeholder="Código del fabricante (opcional)"
                     onChange={(e) => setProducto((prev) => ({ ...prev, sku_marca: e.target.value }))} />
+                </div>
+
+                {/* (2026-11-09) Código de barras: se escribe o se lee con la pistola («Pistolear»). */}
+                <div>
+                  <label className="label">Código de barras</label>
+                  <CampoCodigoBarra
+                    value={producto.codigo_barra}
+                    onChange={(v) => setProducto((prev) => ({ ...prev, codigo_barra: v }))}
+                    disabled={esVentasNoTransitorio}
+                  />
+                  <p style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4 }}>Con él se agrega el producto a una cotización pistoleándolo. Dos productos no pueden compartir código.</p>
                 </div>
 
                 <div className="md:col-span-2">

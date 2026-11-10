@@ -83,6 +83,45 @@ export class ProductosService {
   // Campos de precio: cualquier cambio en ellos estampa precio_actualizado_at.
   private static readonly CAMPOS_PRECIO = ['costo', 'lista1', 'lista2', 'lista3'];
 
+  /* (2026-11-09) Código de barras: lo que entrega la pistola, sin espacios.
+     Vacío → null (la columna no guarda cadenas vacías). */
+  static normalizarCodigoBarra(v: any): string | null {
+    const s = String(v ?? '').replace(/\s+/g, '').trim();
+    return s ? s.slice(0, 64) : null;
+  }
+
+  /* Producto por su código de barras (lo pide la cotización al pistolear). Si
+     ningún producto lo tiene, se prueba como SKU (hay etiquetas con el SKU en
+     barras). Devuelve null si no calza con nada. */
+  async porCodigoBarra(codigoCrudo: any) {
+    const codigo = ProductosService.normalizarCodigoBarra(codigoCrudo);
+    if (!codigo) throw new BadRequestException('Indica el código de barras.');
+    const db = this.supabase.getClient();
+    const { data, error } = await db.from('productos').select('*').eq('codigo_barra', codigo).order('id', { ascending: true }).limit(2);
+    if (error) {
+      if (/codigo_barra/.test(String(error.message)) && /column|schema cache/i.test(String(error.message))) {
+        throw new BadRequestException('Falta aplicar la migración 20261109_productos_codigo_barra.sql en Supabase (código de barras).');
+      }
+      throw new BadRequestException(error.message);
+    }
+    const filas = (data || []) as any[];
+    if (filas.length) return { producto: filas[0], por: 'codigo_barra', repetido: filas.length > 1 };
+    const { data: porSku } = await db.from('productos').select('*').ilike('sku', codigo).limit(1);
+    const p = ((porSku || []) as any[])[0];
+    return p ? { producto: p, por: 'sku', repetido: false } : { producto: null, por: null, repetido: false };
+  }
+
+  /* Al guardar: el mismo código no puede quedar en dos productos. */
+  private async exigirCodigoBarraLibre(codigo: string | null, idPropio: number | null) {
+    if (!codigo) return;
+    let q = this.supabase.getClient().from('productos').select('id, sku, nombre').eq('codigo_barra', codigo).limit(1);
+    if (idPropio) q = q.neq('id', idPropio);
+    const { data, error } = await q;
+    if (error) return; // si la columna no existe, el insert/update lo dirá
+    const otro = ((data || []) as any[])[0];
+    if (otro) throw new BadRequestException(`El código de barras ${codigo} ya lo tiene «${otro.nombre}» (${otro.sku ? `SKU ${otro.sku}` : 'sin SKU'}, ID ${otro.id}).`);
+  }
+
   // ¿El body trae algún precio distinto al actual? (compara numéricamente;
   // los campos ausentes en el body no cuentan como cambio).
   private static cambioDePrecio(body: Record<string, any>, actual: Record<string, any> | null): boolean {
@@ -116,6 +155,8 @@ export class ProductosService {
       'id',
       'sku',
       'sku_marca',
+      // (2026-11-09) Código de barras: Nueva Cotización lo usa para agregar productos pistoleando.
+      'codigo_barra',
       'nombre',
       'marca',
       'categoria',
@@ -155,6 +196,7 @@ export class ProductosService {
       id: p.id,
       sku: p.sku,
       sku_marca: p.sku_marca,
+      codigo_barra: p.codigo_barra ?? null,
       // `descripcion` sirve de respaldo cuando no hay nombre (igual que el front).
       nombre: (p.nombre?.trim() || p.descripcion?.trim() || ''),
       marca: p.marca,
@@ -269,6 +311,10 @@ export class ProductosService {
     }
     if (body && body.marca != null) {
       body = { ...body, marca: await this.marcaCanonica(body.marca) };
+    }
+    if (body && 'codigo_barra' in body) {
+      body = { ...body, codigo_barra: ProductosService.normalizarCodigoBarra(body.codigo_barra) };
+      await this.exigirCodigoBarraLibre(body.codigo_barra, null);
     }
     // Freno anti-duplicados (2026-08-28): había 64 grupos repetidos por
     // nombre+marca+formato generados por dobles clics y recreaciones sin
@@ -793,6 +839,10 @@ export class ProductosService {
 
     if (body && body.marca != null) {
       body = { ...body, marca: await this.marcaCanonica(body.marca) };
+    }
+    if (body && 'codigo_barra' in body) {
+      body = { ...body, codigo_barra: ProductosService.normalizarCodigoBarra(body.codigo_barra) };
+      await this.exigirCodigoBarraLibre(body.codigo_barra, id);
     }
     // Estampar la fecha de actualización de precio SOLO si algún precio cambió
     // de verdad (editar otros campos del producto no la mueve).

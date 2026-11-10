@@ -118,7 +118,12 @@ Detalle (/detalle/:id).
 
 ### Nueva Cotización (/crear)
 Formulario de creación: cliente, tipo de compra, condición de venta, lista de
-precios, ítems (buscador por SKU con modal de productos; botón "Ficha" en cada
+precios, ítems (buscador por SKU con modal de productos —también por código
+de barras—; botón «Pistolear código» (nov 2026): ventana flotante que espera
+la lectura de la pistola, busca el producto por su código de barras (o SKU) y
+lo agrega con cantidad 1, o le suma una unidad si ya está; queda abierta para
+varios productos, Esc la cierra; si nadie tiene el código, avisa que se asigna
+en Productos → Editar; botón "Ficha" en cada
 línea para abrir la ficha técnica en PDF del producto: VERDE = ficha completa,
 ROJO = incompleta; arriba de los ítems un chip rojo cuenta los productos sin
 ficha completa), flete estimado con calculadora por courier, margen por línea
@@ -257,7 +262,11 @@ ya llenado; eliminarlo borra solo la definición.
 ### Productos (/productos)
 Catálogo maestro: SKU, marca, categoría, formato, 3 listas de precios (Lista 3
 = Lista 2 × 1,08, solo lectura), precios de campaña, imagen, peso y medidas
-(cm³ para el cálculo de flete), ficha técnica en PDF. Estados: Activo (con
+(cm³ para el cálculo de flete), ficha técnica en PDF. CÓDIGO DE BARRAS (nov
+2026): campo al crear y editar con botón «Pistolear» (deja el campo esperando
+la lectura de la pistola; también se tipea); dos productos no pueden compartir
+código (al guardar avisa cuál lo tiene); el filtro de SKU del catálogo también
+busca por código de barras; migración 20261109_productos_codigo_barra. Estados: Activo (con
 SKU), Transitorio (sin SKU), Pendiente Aprobación (margen 0-20%), Inactivo.
 En los productos de la categoría Prevención e Higiene (los del Showroom del
 portal) hay un campo VENTA SHOWROOM al crear y en la ficha: el precio sugerido
@@ -465,7 +474,11 @@ Admin y quien tenga «Recepción de stock» (recepcion_stock) en su perfil. Es l
 STOCK. Se elige la sucursal que recibe, con qué documento llegó la mercadería
 —GUÍA de despacho, FACTURA, DESPACHO INTERNO o SIN DOCUMENTO— y su número, la
 fecha del documento, proveedor y nota opcionales, y los productos (se buscan
-por SKU o nombre) con su cantidad y costo neto unitario. Dos pasos: «Simular»
+por SKU o nombre) con su LOTE y FECHA DE VENCIMIENTO (obligatorios y van
+juntos; un producto que llega en varios lotes va en varias líneas, botón «+»
+de la fila), cantidad y costo neto unitario. Bsale no recibe lotes por API:
+quedan en la plataforma (tablas inventario_lotes e inventario_lote_salidas,
+migración 20261109_lotes_vencimiento) y las guías los ofrecen. Dos pasos: «Simular»
 (muestra lo que se enviará a Bsale y cómo queda el stock; no escribe; avisa si
 la sucursal no está asociada a Bsale, si un SKU no está en Bsale o si ya hay
 una recepción con ese documento) y «Registrar recepción» (solo con una
@@ -568,6 +581,13 @@ FACTURAR (guías sin factura, las más antiguas primero) y EMITIDAS (historial d
 facturas, guías y órdenes). Arriba, "Nueva guía" y "Nueva factura" arman un
 documento LIBRE, sin orden de compra: cliente por RUT (si no está en Bsale se
 crea; giro obligatorio), productos del catálogo con cantidad y precio neto,
+(LOTES, nov 2026: en la guía desde la OC, la guía libre y la de la venta
+directa, cada producto con lotes registrados en Recepción de stock muestra el
+listbox «Lote» —sus lotes con unidades disponibles, del que vence primero—
+para elegir uno o más; con varios, las unidades se reparten por vencimiento y
+se pueden corregir. El lote y el vencimiento salen escritos en la línea del
+producto en la guía de Bsale. Es opcional; anular la guía devuelve las
+unidades a sus lotes.)
 despacho (guía) o forma de pago (factura), referencia opcional a OC o guía, y
 la cotización donde debe quedar registrado (si no se indica, queda solo en
 Bsale y en Emitidas). Referencias a la orden de compra: en GUÍAS el N° de OC
@@ -865,6 +885,14 @@ acceso) usan la ventana de confirmación del sistema.
   primera y destacada, más Orbis, Gexa, SP Dental, Clandent, J-Dent, Techdent y
   Denteeth), guardando un histórico por producto (mínimo registrado
   y variación contra la captura anterior), estilo Knasta/SoloTodo.
+- FACTURAS del portal (/portal-cliente, pestaña «Facturas», nov 2026): todas
+  las facturas y boletas emitidas de las cotizaciones del cliente con su
+  condición de pago (la de la cotización), emisión, vencimiento, total, saldo y
+  estado (en plazo, por vencer, vencida, en cuotas, pagada, anulada con nota de
+  crédito); KPIs Facturado / Por pagar / Vencido, buscador y filtro por estado;
+  el detalle muestra neto/IVA/total, notas de crédito y débito, pagos, factoring,
+  OC, guías y PDF. Mismo cálculo que Seguimiento de Pagos (src/lib/cuentasFacturas.js).
+  La ven admin y asistente de la cuenta; módulo «Facturas» en Módulos por cliente.
 - /despachos — Portal de Despachos internos: estado, evidencia (fotos/PDF
   hasta 20 MB), firma de recepción dibujada y bitácora.
 - /portal-chofer — Portal del Chofer: sus viajes, cambio de estado, foto de
@@ -885,14 +913,6 @@ campo no acepta un número mayor al guardado): lo que entra se registra en
 Recepción o en Inventario. Eliminar un usuario de la cuenta pide confirmación en una ventana
 propia del portal (ya no el diálogo del navegador).
 
-- FACTURAS del portal (/portal-cliente, pestaña «Facturas», nov 2026): todas
-  las facturas y boletas emitidas de las cotizaciones del cliente con su
-  condición de pago (la de la cotización), emisión, vencimiento, total, saldo y
-  estado (en plazo, por vencer, vencida, en cuotas, pagada, anulada con nota de
-  crédito); KPIs Facturado / Por pagar / Vencido, buscador y filtro por estado;
-  el detalle muestra neto/IVA/total, notas de crédito y débito, pagos, factoring,
-  OC, guías y PDF. Mismo cálculo que Seguimiento de Pagos (src/lib/cuentasFacturas.js).
-  La ven admin y asistente de la cuenta; módulo «Facturas» en Módulos por cliente.
 ## MÓDULOS — GRUPO REPORTES
 
 ### Panel de Indicadores (/panel-indicadores, /panel-publica, /panel-particular)

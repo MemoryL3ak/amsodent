@@ -84,7 +84,8 @@ export default function ProductoPickerModal({
       if (p.marca) mar.add(p.marca);
       return {
         p,
-        texto: normalizar(`${p.sku || ""} ${p.nombre || ""} ${p.marca || ""}`),
+        // (2026-11-09) También por código de barras (se puede pistolear en el buscador).
+        texto: normalizar(`${p.sku || ""} ${p.nombre || ""} ${p.marca || ""} ${p.codigo_barra || ""}`),
       };
     });
     return {
@@ -266,7 +267,7 @@ export default function ProductoPickerModal({
               type="text"
               value={busquedaInput}
               onChange={(e) => setBusquedaInput(e.target.value)}
-              placeholder="Buscar por SKU, nombre o marca…"
+              placeholder="Buscar por SKU, nombre, marca o código de barras…"
               className="ppm-input"
               style={{
                 width: "100%",

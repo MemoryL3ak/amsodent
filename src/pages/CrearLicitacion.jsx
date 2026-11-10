@@ -10,6 +10,7 @@ import { generarPDFcotizacion } from "../utils/generarPDFcotizacion";
 import { calcularLista3 } from "../lib/listas";
 import { precioCampanaMargen, campanaDeLinea } from "../lib/campanasMargen";
 import ProductoPickerModal from "../components/ProductoPickerModal";
+import { EscanerCodigoBarra, limpiarCodigoBarra } from "../components/CampoCodigoBarra";
 import ModalValidarTransitorio from "../components/ModalValidarTransitorio";
 import CalculadoraFlete from "../components/CalculadoraFlete";
 import BotonFichaTecnica from "../components/BotonFichaTecnica";
@@ -35,7 +36,7 @@ import {
   useSortable,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { GripVertical, Plus, Minus, Trash2, ChevronUp, ChevronDown, MessageSquare, AlertTriangle } from "lucide-react";
+import { GripVertical, Plus, Minus, Trash2, ChevronUp, ChevronDown, MessageSquare, AlertTriangle, ScanBarcode } from "lucide-react";
 import { condicionParaCotizacion } from "../lib/condicionesVenta";
 import { leerGiros, tieneGiro } from "../lib/giros";
 import { GirosRapidos } from "../components/GirosEditor";
@@ -502,6 +503,10 @@ export default function CrearLicitacion() {
   }, [fleteSanBernardo, fleteEstimado, fleteCalculado]);
 
   const [productos, setProductos] = useState([]);
+  // (2026-11-09) Pistola de código de barras: ventana flotante y último resultado.
+  const [escanerAbierto, setEscanerAbierto] = useState(false);
+  const [escanerUltimo, setEscanerUltimo] = useState(null); // { texto, error }
+  const [escanerOcupado, setEscanerOcupado] = useState(false);
   const [toast, setToast] = useState(null);
   const [campaignPrices, setCampaignPrices] = useState({});
   // Campañas de margen vigentes hoy (marca/categoría → margen sobre una lista).
@@ -1454,6 +1459,62 @@ export default function CrearLicitacion() {
       copia[idx] = item;
       return copia;
     });
+  }
+
+  /* (2026-11-09) Pedido de Ariel: «al crear una cotización, agregar productos
+     leyendo el código de barra». El producto se busca en el catálogo cargado
+     por su código de barras (o por SKU, si la etiqueta trae el SKU) y, si no
+     está, se le pregunta al servidor (el catálogo local puede estar viejo).
+     Si ya está en la cotización se le suma una unidad; si no, ocupa la
+     primera línea vacía o se agrega al final con cantidad 1. */
+  async function agregarPorCodigoBarra(codigoCrudo) {
+    const codigo = limpiarCodigoBarra(codigoCrudo);
+    if (!codigo || escanerOcupado) return;
+    setEscanerOcupado(true);
+    try {
+      const codigoUp = codigo.toUpperCase();
+      let prod =
+        productos.find((p) => limpiarCodigoBarra(p.codigo_barra) === codigo) ||
+        productos.find((p) => String(p.sku || "").replace(/\s+/g, "").toUpperCase() === codigoUp) ||
+        null;
+      if (!prod) {
+        const r = await api.get(`/productos/codigo-barra/${encodeURIComponent(codigo)}`).catch(() => null);
+        if (r?.producto) {
+          prod = r.producto;
+          setProductos((prev) => (prev.some((p) => p.id === prod.id) ? prev : [...prev, prod]));
+        }
+      }
+      if (!prod) {
+        setEscanerUltimo({ error: true, texto: `Ningún producto tiene el código ${codigo}. Asígnaselo en Productos → Editar (campo «Código de barras»).` });
+        return;
+      }
+      const estado = String(prod.estado || "").trim().toLowerCase();
+      if (estado === "pendiente aprobación" || estado === "pendiente aprobacion") {
+        setEscanerUltimo({ error: true, texto: `«${prod.nombre}» está Pendiente de Aprobación: no se puede cotizar todavía.` });
+        return;
+      }
+      const skuProd = String(prod.sku || "").trim();
+      const yaIdx = items.findIndex((it) => (prod.id != null && it.producto_id === prod.id) || (skuProd && String(it.sku || "").trim() === skuProd) || (!skuProd && it.producto && it.producto === prod.nombre));
+      if (yaIdx >= 0) {
+        const nueva = Math.max(1, Number(items[yaIdx].cantidad || 0)) + 1;
+        actualizarItem(yaIdx, "cantidad", String(nueva));
+        setEscanerUltimo({ texto: `${prod.nombre}${skuProd ? ` (${skuProd})` : ""}: ahora ${nueva} unidades.` });
+        return;
+      }
+      const vacioIdx = items.findIndex((it) => !String(it.sku || "").trim() && !String(it.producto || "").trim());
+      const idx = vacioIdx >= 0 ? vacioIdx : items.length;
+      if (vacioIdx < 0) setItems((prev) => [...prev, crearItemVacio()]);
+      if (transitorioViejo(prod)) {
+        setValidarCosto({ prod, idx });
+        setEscanerUltimo({ texto: `«${prod.nombre}» es un transitorio con más de 30 días: valida su costo en la ventana.` });
+        return;
+      }
+      aplicarProductoEnItem(idx, prod);
+      setItems((prev) => prev.map((it, i) => (i === idx && !(Number(it.cantidad) > 0) ? { ...it, cantidad: "1", total: redondear(1 * (Number(it.precio || 0) + Number(fletePorUnidad || 0))) } : it)));
+      setEscanerUltimo({ texto: `Agregado: ${prod.nombre}${skuProd ? ` (${skuProd})` : ""} × 1.` });
+    } finally {
+      setEscanerOcupado(false);
+    }
   }
 
   function actualizarItem(index, campo, valor) {
@@ -2726,6 +2787,16 @@ export default function CrearLicitacion() {
         </div>
       )}
 
+      {/* (2026-11-09) Pistola: cada lectura agrega el producto por su código de barras. */}
+      {escanerAbierto && (
+        <EscanerCodigoBarra
+          onLeer={agregarPorCodigoBarra}
+          onCerrar={() => setEscanerAbierto(false)}
+          ultimo={escanerUltimo}
+          ocupado={escanerOcupado}
+        />
+      )}
+
       {pickerIndex !== null && (
         <ProductoPickerModal
           productos={productos}
@@ -3936,6 +4007,16 @@ export default function CrearLicitacion() {
           type="button"
         >
           + Agregar Ítem
+        </button>
+
+        <button
+          type="button"
+          onClick={() => { setEscanerUltimo(null); setEscanerAbierto(true); }}
+          className={`btn ${escanerAbierto ? "btn-primary" : "btn-secondary"}`}
+          title="Agregar productos leyendo su código de barras con la pistola"
+          style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
+        >
+          <ScanBarcode size={15} /> Pistolear código
         </button>
 
         <button

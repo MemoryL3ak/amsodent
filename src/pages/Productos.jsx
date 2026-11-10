@@ -475,7 +475,8 @@ export default function Productos() {
   ============================================================ */
   const productosFiltrados = productos
     .filter((p) => {
-      const matchSKU = p.sku.toLowerCase().includes(filtroSKU.toLowerCase());
+      // (2026-11-09) El filtro de SKU también calza con el código de barras (se puede pistolear).
+      const matchSKU = p.sku.toLowerCase().includes(filtroSKU.toLowerCase()) || (!!filtroSKU.trim() && String(p.codigo_barra || "").includes(filtroSKU.trim()));
       const matchProducto = contieneTodosLosTokens(p.nombre, filtroProducto);
       const matchCategoria = filtroCategoria ? p.categoria === filtroCategoria : true;
 
@@ -654,6 +655,7 @@ export default function Productos() {
         const fila = {
           SKU: p.sku || "",
           "SKU Marca": p.sku_marca || "",
+          "Código de barras": p.codigo_barra || "",
           Producto: p.nombre || "",
           Marca: p.marca || "",
           Categoría: p.categoria || "",
@@ -846,7 +848,7 @@ export default function Productos() {
           <label className="filter-label">SKU</label>
           <input
             className="input"
-            placeholder="Filtrar por SKU…"
+            placeholder="SKU o código de barras…"
             value={filtroSKU}
             onChange={(e) => setFiltroSKU(e.target.value)}
           />

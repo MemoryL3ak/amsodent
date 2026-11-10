@@ -11,6 +11,7 @@ import ConfirmModal from "../components/ConfirmModal";
 import { abrirFichaTecnica, descargarFichaTecnica } from "../utils/generarFichaTecnica";
 import { mensajeBsale, tipoAvisoBsale } from "../lib/bsaleProducto";
 import ProductoCreadoAviso from "../components/ProductoCreadoAviso";
+import CampoCodigoBarra, { limpiarCodigoBarra } from "../components/CampoCodigoBarra";
 
 /* ============================================================
    BUSCADOR MEJORADO (igual que CrearLicitacion)
@@ -186,6 +187,8 @@ export default function CrearProducto() {
   const [nombre, setNombre] = useState("");
   const [marca, setMarca] = useState("");
   const [skuMarca, setSkuMarca] = useState("");
+  // (2026-11-09) Código de barras (pistola), opcional.
+  const [codigoBarra, setCodigoBarra] = useState("");
   const [categoria, setCategoria] = useState(""); // ✅ ahora viene del Select
   const [formato, setFormato] = useState("");
   const [costo, setCosto] = useState("");
@@ -468,6 +471,7 @@ export default function CrearProducto() {
       nombre,
       marca,
       sku_marca: (skuMarca || "").trim() || null,
+      codigo_barra: limpiarCodigoBarra(codigoBarra) || null,
       categoria,
       formato,
       imagen_url: imagenUrl || null,
@@ -705,6 +709,18 @@ export default function CrearProducto() {
                       value={skuMarca}
                       onChange={(e) => setSkuMarca(e.target.value)}
                       placeholder="Código del fabricante"
+                    />
+                  </div>
+
+                  {/* (2026-11-09) Código de barras: se escribe o se lee con la pistola. */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Código de barras
+                    </label>
+                    <CampoCodigoBarra
+                      value={codigoBarra}
+                      onChange={setCodigoBarra}
+                      className="w-full rounded-md border border-gray-300 bg-gray-50 px-3 py-2"
                     />
                   </div>
 

@@ -32,6 +32,13 @@ export class ProductosController {
     return this.productosService.getCampaignPrices();
   }
 
+  // (2026-11-09) Producto por código de barras (pistola): lo usa Nueva
+  // Cotización al escanear. Si nadie tiene ese código se prueba como SKU.
+  @Get('codigo-barra/:codigo')
+  porCodigoBarra(@Param('codigo') codigo: string) {
+    return this.productosService.porCodigoBarra(codigo);
+  }
+
   /* (2026-11-05) Cambios de precio recientes (alerta de actualización de
      precio): Productos los usa para mostrar el «antes → después». El costo
      solo viaja a quien puede verlo (admin o permiso ver_costos). */
