@@ -2092,8 +2092,29 @@ export class StockClientesService {
 
   // Vincula una solicitud con la cotización (licitación) creada a partir de ella.
   async vincularLicitacion(solicitudId: number, licitacionId: number) {
-    const { data, error } = await this.supabase
-      .getClient()
+    const client = this.supabase.getClient();
+    /* (2026-11-12) La cotización tiene que ser del mismo cliente que el pedido.
+       El vínculo viaja en el borrador de /crear y sobrevivía a «Limpiar Datos»:
+       una cotización de Red Odontológica (#6790), hecha sobre un borrador que
+       venía del pedido N° 30 de otra clínica, quedó asociada a ese pedido y el
+       cliente recibió «te enviamos la cotización» con la de otro. El portal
+       muestra la cotización vinculada a quien hizo el pedido, así que esto no
+       puede depender solo de la pantalla. */
+    if (!Number.isFinite(licitacionId) || licitacionId <= 0) {
+      throw new BadRequestException('Falta la cotización a vincular.');
+    }
+    const [{ data: sol }, { data: lic }] = await Promise.all([
+      client.from('stock_solicitudes_cotizacion').select('id, rut, razon_social').eq('id', solicitudId).maybeSingle(),
+      client.from('licitaciones').select('id, rut_entidad, nombre_entidad').eq('id', licitacionId).maybeSingle(),
+    ]);
+    if (!sol) throw new NotFoundException('Pedido no encontrado.');
+    if (!lic) throw new NotFoundException('Cotización no encontrada.');
+    if (normalizarRut(sol.rut) !== normalizarRut(lic.rut_entidad)) {
+      throw new BadRequestException(
+        `la cotización #${lic.id} es de ${lic.nombre_entidad || 'otro cliente'} (${lic.rut_entidad || 'sin RUT'}) y el pedido N° ${sol.id} es de ${sol.razon_social || 'otro cliente'} (${formatearRut(normalizarRut(sol.rut))})`,
+      );
+    }
+    const { data, error } = await client
       .from('stock_solicitudes_cotizacion')
       .update({ licitacion_id: licitacionId, estado: 'respondida', respondida_at: new Date().toISOString() })
       .eq('id', solicitudId)

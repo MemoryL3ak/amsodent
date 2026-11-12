@@ -577,6 +577,10 @@ export default function PedidosPortal() {
       email: s.contacto_email || "",
       telefono: s.contacto_telefono || "",
       solicitud_stock_id: s.id,
+      // (2026-11-12) De quién es el pedido: /crear lo muestra arriba y no
+      // asocia la cotización si termina siendo para otro cliente.
+      solicitud_stock_rut: s.rut || "",
+      solicitud_stock_cliente: s.razon_social || "",
       itemsPorSku,
       itemsSinSku: sinSku,
     };

@@ -873,6 +873,8 @@ function DetalleDeclaracion({ declaracion, onCerrar, setToast }) {
       telefono: solicitud?.contacto_telefono || "",
       observaciones: armarObservacionesSolicitud(declaracion, solicitud),
       solicitud_stock_id: solicitud?.id ?? null,
+      solicitud_stock_rut: declaracion.rut || "",
+      solicitud_stock_cliente: declaracion.razon_social || "",
     };
 
     // Marcar como respondida en segundo plano (no bloqueamos la navegación).

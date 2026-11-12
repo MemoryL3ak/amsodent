@@ -727,6 +727,22 @@ export default function CrearLicitacion() {
   // Si esta cotización se crea a partir de una solicitud del portal del cliente,
   // guardamos el id para vincularlas al guardar.
   const [solicitudStockId, setSolicitudStockId] = useState(null);
+  /* (2026-11-12) De quién es ese pedido. El vínculo era invisible: viajaba en
+     el borrador y nada en la pantalla lo decía, así que una cotización de otro
+     cliente hecha sobre ese borrador quedó asociada al pedido (#6790 → pedido
+     N° 30). Ahora se muestra arriba, se puede quitar, y no se asocia si el
+     cliente de la cotización no es el del pedido. */
+  const [solicitudStockCliente, setSolicitudStockCliente] = useState({ rut: "", nombre: "" });
+  const soloRut = (r) => String(r || "").toLowerCase().replace(/[^0-9k]/g, "");
+  // Borradores anteriores al cambio no traen el RUT del pedido: ahí decide el servidor.
+  const pedidoEsDeOtroCliente =
+    !!solicitudStockId &&
+    !!soloRut(solicitudStockCliente.rut) &&
+    soloRut(rutEntidad) !== soloRut(solicitudStockCliente.rut);
+  function desvincularPedido() {
+    setSolicitudStockId(null);
+    setSolicitudStockCliente({ rut: "", nombre: "" });
+  }
   // Id de la fila del listado "Licitaciones disponibles" (si la cotización se
   // originó desde ahí): al guardar, esa fila se marca como "cargada".
   const [disponibleId, setDisponibleId] = useState(null);
@@ -806,7 +822,13 @@ export default function CrearLicitacion() {
     try {
       const data = JSON.parse(guardado);
 
-      if (data.solicitud_stock_id != null) setSolicitudStockId(data.solicitud_stock_id);
+      if (data.solicitud_stock_id != null) {
+        setSolicitudStockId(data.solicitud_stock_id);
+        setSolicitudStockCliente({
+          rut: data.solicitud_stock_rut || "",
+          nombre: data.solicitud_stock_cliente || "",
+        });
+      }
       if (data.disponible_id != null) setDisponibleId(data.disponible_id);
       if (data.madre_id != null) setMadreId(data.madre_id);
       setIdLicitacionInput(data.idLicitacionInput || "");
@@ -1070,6 +1092,8 @@ export default function CrearLicitacion() {
       // se marca como cargada al guardar y queda eternamente "Tomada".
       disponible_id: disponibleId,
       solicitud_stock_id: solicitudStockId,
+      solicitud_stock_rut: solicitudStockId ? solicitudStockCliente.rut : "",
+      solicitud_stock_cliente: solicitudStockId ? solicitudStockCliente.nombre : "",
     };
 
     const t = setTimeout(() => {
@@ -1114,6 +1138,7 @@ export default function CrearLicitacion() {
     madreId,
     disponibleId,
     solicitudStockId,
+    solicitudStockCliente,
   ]);
 
   /* CARGA DE PRODUCTOS */
@@ -1868,6 +1893,13 @@ export default function CrearLicitacion() {
     setObservaciones("");
     setTiempoEntrega("");
     setMadreId(null);
+    /* (2026-11-12) Limpiar también suelta el origen. Antes el pedido del portal
+       y la postulación seguían prendidos, sin verse, después de «Limpiar
+       Datos»: lo que se cotizara a continuación —para cualquier cliente—
+       quedaba asociado a ese pedido o marcaba esa postulación como cargada. */
+    setSolicitudStockId(null);
+    setSolicitudStockCliente({ rut: "", nombre: "" });
+    setDisponibleId(null);
 
     if (showToast) {
       setToast({
@@ -2390,15 +2422,29 @@ export default function CrearLicitacion() {
       }
 
       // Vincular con la solicitud del portal del cliente (si aplica).
+      // (2026-11-12) Solo si la cotización es del cliente del pedido (el
+      // servidor lo vuelve a comprobar), y el resultado se dice en el aviso
+      // final: antes pasaba —o fallaba— sin que nadie lo viera.
+      let notaPedido = "";
+      let pedidoSinAsociar = false;
       if (solicitudStockId) {
-        try {
-          await api.put(`/stock-clientes/solicitudes/${solicitudStockId}/vincular`, {
-            licitacion_id: idLicitacion,
-          });
-        } catch (errVinc) {
-          console.warn("No se pudo vincular la solicitud del cliente:", errVinc?.message);
+        if (pedidoEsDeOtroCliente) {
+          pedidoSinAsociar = true;
+          notaPedido = ` OJO: NO quedó asociada al pedido del portal N° ${solicitudStockId}, porque el cliente de la cotización no es el del pedido.`;
+        } else {
+          try {
+            await api.put(`/stock-clientes/solicitudes/${solicitudStockId}/vincular`, {
+              licitacion_id: idLicitacion,
+            });
+            notaPedido = ` Quedó asociada al pedido del portal N° ${solicitudStockId}.`;
+          } catch (errVinc) {
+            console.warn("No se pudo vincular la solicitud del cliente:", errVinc?.message);
+            pedidoSinAsociar = true;
+            notaPedido = ` OJO: NO quedó asociada al pedido del portal N° ${solicitudStockId}: ${errVinc?.message || "no se pudo vincular"}.`;
+          }
         }
         setSolicitudStockId(null);
+        setSolicitudStockCliente({ rut: "", nombre: "" });
       }
 
       // Marcar la fila del listado "Licitaciones disponibles" como cargada
@@ -2430,7 +2476,8 @@ export default function CrearLicitacion() {
           message:
             `Cotización enviada a APROBACIÓN POR PESO: ${productosSinPeso.length} producto(s) sin peso registrado` +
             (detalleProds ? ` (${detalleProds}${productosSinPeso.length > 4 ? "…" : ""})` : "") +
-            `. Un administrador debe completar el peso, recalcular el flete y aprobarla.`,
+            `. Un administrador debe completar el peso, recalcular el flete y aprobarla.` +
+            notaPedido,
         });
         localStorage.removeItem(STORAGE_KEY);
         const sugerenciaPeso = !madreId ? construirSugerenciaHija(idLicitacion, itemsParaGuardar) : null;
@@ -2444,8 +2491,8 @@ export default function CrearLicitacion() {
           ? ` Las líneas ${lineasBajoMargen.join(", ")} tienen un % de margen menor al 20%.`
           : "";
         setToast({
-          type: "success",
-          message: `Licitación pendiente de aprobación porque el margen general es inferior al 20%.${detalleLineas}`,
+          type: pedidoSinAsociar ? "warning" : "success",
+          message: `Licitación pendiente de aprobación porque el margen general es inferior al 20%.${detalleLineas}${notaPedido}`,
         });
         localStorage.removeItem(STORAGE_KEY);
         // Solo las cotizaciones MADRE analizan equivalencias (las hijas no).
@@ -2462,7 +2509,8 @@ export default function CrearLicitacion() {
           type: "warning",
           message:
             `La cotización "${nombreFinal}" (N° ${idLicitacion}) quedó guardada SIN PDF: ${resumenSinFicha(sinFicha)}. ` +
-            "Completa las fichas en Productos → Editar y genera el PDF desde el detalle de la cotización («PDF Carta»).",
+            "Completa las fichas en Productos → Editar y genera el PDF desde el detalle de la cotización («PDF Carta»)." +
+            notaPedido,
         });
         localStorage.removeItem(STORAGE_KEY);
         const sugerenciaFicha = !madreId ? construirSugerenciaHija(idLicitacion, itemsParaGuardar) : null;
@@ -2586,12 +2634,12 @@ export default function CrearLicitacion() {
         // Solo llega aquí el administrador: PDF generado pese a las fichas pendientes.
         setToast({
           type: "warning",
-          message: `La cotización "${nombreFinal}" fue creada y su PDF se generó como administrador con ${resumenSinFicha(sinFicha)}. El resto del equipo no puede generarlo hasta completarlas en Productos → Editar.`,
+          message: `La cotización "${nombreFinal}" fue creada y su PDF se generó como administrador con ${resumenSinFicha(sinFicha)}. El resto del equipo no puede generarlo hasta completarlas en Productos → Editar.${notaPedido}`,
         });
       } else {
         setToast({
-          type: "success",
-          message: `La cotización "${nombreFinal}" fue creada correctamente.`,
+          type: pedidoSinAsociar ? "warning" : "success",
+          message: `La cotización "${nombreFinal}" fue creada correctamente.${notaPedido}`,
         });
       }
 
@@ -2841,6 +2889,36 @@ export default function CrearLicitacion() {
                 type="button"
                 onClick={() => setMadreId(null)}
                 title="Desvincular de la cotización madre"
+                style={{ fontSize: 11, color: "var(--text-muted)", background: "none", border: "none", cursor: "pointer", textDecoration: "underline" }}
+              >
+                Desvincular
+              </button>
+            </p>
+          )}
+          {/* (2026-11-12) Cotización que nace de un pedido del portal: se dice
+              a la vista, porque al guardar el cliente la recibe en su portal. */}
+          {solicitudStockId && (
+            <p className="page-subtitle" style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 6, marginTop: 4 }}>
+              <span
+                style={{
+                  fontSize: 12, fontWeight: 700, padding: "3px 10px", borderRadius: 999,
+                  background: pedidoEsDeOtroCliente ? "#fee2e2" : "#ccfbf1",
+                  color: pedidoEsDeOtroCliente ? "#b91c1c" : "#0f766e",
+                  border: `1px solid ${pedidoEsDeOtroCliente ? "#fecaca" : "#99f6e4"}`,
+                }}
+              >
+                Pedido del portal N° {solicitudStockId}
+                {solicitudStockCliente.nombre ? ` · ${solicitudStockCliente.nombre}` : ""}
+              </span>
+              <span style={{ fontSize: 12, color: pedidoEsDeOtroCliente ? "#b91c1c" : "var(--text-muted)" }}>
+                {pedidoEsDeOtroCliente
+                  ? "El cliente de esta cotización no es el del pedido: al guardar NO quedará asociada."
+                  : "Al guardar, esta cotización queda asociada a ese pedido y el cliente la ve en su portal."}
+              </span>
+              <button
+                type="button"
+                onClick={desvincularPedido}
+                title="Esta cotización no es para ese pedido: guardarla sin asociarla"
                 style={{ fontSize: 11, color: "var(--text-muted)", background: "none", border: "none", cursor: "pointer", textDecoration: "underline" }}
               >
                 Desvincular
