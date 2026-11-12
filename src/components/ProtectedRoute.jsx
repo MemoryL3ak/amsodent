@@ -17,7 +17,16 @@ export default function ProtectedRoute({ children }) {
 
   if (loading) return <div className="mt-10 text-center">Cargando...</div>;
 
-  if (!sesion) return <Navigate to="/login" />;
+  if (!sesion) {
+    /* (2026-11-12) Si el ingreso con Google falló y Supabase devolvió a la
+       persona a esta ruta (y no a /login), el motivo viene en la URL: se lleva
+       al login para que lo explique, en vez de perderlo en la redirección. */
+    const { search, hash } = window.location;
+    if (/[?#&]error(_code|_description)?=/.test(search + hash)) {
+      return <Navigate to={`/login${search}${hash}`} replace />;
+    }
+    return <Navigate to="/login" />;
+  }
 
   return children;
 }

@@ -71,7 +71,7 @@ export const FLUJO_NEGOCIO = [
 ];
 
 export const CHECKLIST_INICIO = [
-  { t: "Entra con tu correo y contraseña", d: "Si no tienes cuenta, un administrador te la crea en el módulo Usuarios (recibirás una contraseña temporal)." },
+  { t: "Entra con tu correo y contraseña, o con Google", d: "En el login puedes escribir tu correo (o usuario) y contraseña, o usar «Continuar con Google» con la cuenta de Google de ese mismo correo: las dos formas llegan a tu mismo usuario. Google no crea cuentas: si no tienes usuario, un administrador te lo crea en el módulo Usuarios (recibirás una contraseña temporal)." },
   { t: "Reconoce tu menú lateral", d: "Los módulos que ves dependen de tu rol. Esta guía te muestra solo lo que puedes usar." },
   { t: "Revisa la campana de notificaciones", d: "Ahí llegan avisos de stock de clientes, documentos del portal, equivalencias y facturas vencidas." },
   { t: "Abre el Chat Grupal", d: "La sala General publica las tomas de Mercado Público del equipo y se replica al grupo de WhatsApp." },
@@ -1052,6 +1052,7 @@ export const GRUPOS_MANUAL = [
           "Correo alterno: cada usuario puede tener una segunda casilla asociada (ej: personal + corporativa) y la plataforma reconoce ambas como la misma persona — nombres en paneles, resolución de vendedor y envío de correos.",
           "Perfiles de permisos: eligen módulo por módulo qué ve un usuario, por sobre el fallback de su rol.",
           "También existen cuentas internas sin correo real (username + dominio interno) creadas por el admin.",
+          "Ingreso con Google (noviembre 2026): cada persona puede entrar con su contraseña o con «Continuar con Google», siempre que su correo de acceso sea una cuenta de Google (Gmail o Google Workspace). No hay que configurar nada por usuario: Google reconoce el correo de acceso y entra a esa misma cuenta, con sus mismos permisos. Solo entra el equipo: una cuenta de Google cuyo correo no tenga usuario creado aquí es rechazada con el aviso «no está registrada en la plataforma». El correo alterno no sirve para entrar; si alguien quiere usar otra cuenta de Google, cámbiale el correo de acceso.",
         ],
       },
       {
@@ -1129,6 +1130,10 @@ export const FAQ = [
   {
     q: "¿Cómo cambio mi contraseña?",
     a: "Desde el login: \"¿Olvidaste tu contraseña?\" te envía el enlace al correo. Si tu cuenta es interna (sin correo real), pide a un admin que te la restablezca en Usuarios.",
+  },
+  {
+    q: "¿Puedo entrar con mi cuenta de Google?",
+    a: "Sí, si el correo con el que tienes tu usuario es una cuenta de Google (Gmail o Google Workspace): en el login pulsa «Continuar con Google» y elige esa cuenta. Entras a tu mismo usuario y tu contraseña sigue funcionando. Si aparece «no está registrada en la plataforma», elegiste una cuenta de Google con otro correo: vuelve a intentarlo con la correcta o pide a administración que revise tu correo de acceso en Usuarios. Es solo para el equipo interno; el Portal del cliente y los portales de choferes y despachos tienen su propio ingreso.",
   },
   {
     q: "Un módulo me dice \"Falta aplicar la migración…\"",

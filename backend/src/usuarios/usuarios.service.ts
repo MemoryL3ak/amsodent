@@ -1,6 +1,7 @@
 import { Injectable, BadRequestException, Logger } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
 import { olvidarBloqueados } from '../auth/bloqueados';
+import { olvidarPerfil } from '../auth/perfil-requerido';
 
 @Injectable()
 export class UsuariosService {
@@ -213,6 +214,8 @@ export class UsuariosService {
       .delete()
       .eq('id', id);
     if (error) throw new BadRequestException(error.message);
+    // Sin perfil ya no es del equipo: que el AuthGuard no lo recuerde como válido.
+    olvidarPerfil(id);
     return { deleted: true };
   }
 

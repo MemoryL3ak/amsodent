@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
 import { esRolAdmin, permisosEfectivos } from '../auth/permisos';
+import { errorSinPerfil } from '../auth/perfil-requerido';
 
 /* Reportería (2026-09-24): deja de ser solo admin. Entra quien tenga el
    módulo `reporteria` en su perfil de permisos (o sea admin). El guard deja
@@ -43,6 +44,7 @@ export class ReporteriaGuard implements CanActivate {
       .eq('id', user.id)
       .maybeSingle();
     if (errPerfil) throw new UnauthorizedException('No se pudo verificar el perfil del usuario');
+    if (!perfil) throw errorSinPerfil(); // (2026-11-12) solo el equipo interno
 
     const rol = String(perfil?.rol || '').trim().toLowerCase();
 

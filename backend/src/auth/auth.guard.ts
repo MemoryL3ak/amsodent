@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
 import { estaBloqueado } from './bloqueados';
+import { errorSinPerfil, tienePerfil } from './perfil-requerido';
 
 @Injectable()
 export class AuthGuard implements CanActivate {
@@ -56,6 +57,13 @@ export class AuthGuard implements CanActivate {
        impide entrar de nuevo, no expulsa al que ya esta dentro. */
     if (await estaBloqueado(this.supabase.getClient(), user.id)) {
       throw new ForbiddenException('Tu cuenta esta bloqueada. Contacta a administracion.');
+    }
+
+    /* (2026-11-12) Solo el equipo interno: una cuenta sin perfil (p. ej. una
+       cuenta de Google cualquiera que Supabase dejó entrar) no pasa. */
+    if (!(await tienePerfil(this.supabase.getClient(), user.id))) {
+      this.logger.warn(`Cuenta sin perfil rechazada: ${user.email || user.id}`);
+      throw errorSinPerfil();
     }
 
     request.user = user;

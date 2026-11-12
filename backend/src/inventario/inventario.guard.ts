@@ -1,6 +1,7 @@
 import { CanActivate, ExecutionContext, ForbiddenException, Injectable, UnauthorizedException } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
 import { esRolAdmin, permisosEfectivos } from '../auth/permisos';
+import { errorSinPerfil } from '../auth/perfil-requerido';
 
 /* Inventario (2026-10-14): LEE quien tenga el módulo `inventario` en sus
    permisos efectivos (perfil asignado o rol) o sea admin. Antes el módulo
@@ -27,6 +28,9 @@ export class InventarioGuard implements CanActivate {
 
     const { data: perfil, error: errPerfil } = await client.from('profiles').select('rol, permission_profile_id').eq('id', user.id).maybeSingle();
     if (errPerfil) throw new UnauthorizedException('No se pudo verificar el perfil del usuario');
+    // (2026-11-12) Solo el equipo interno: «todos ven el inventario» es todos
+    // los del equipo, no cualquier cuenta que Supabase haya dejado entrar.
+    if (!perfil) throw errorSinPerfil();
     const rol = String(perfil?.rol || '').trim().toLowerCase();
     let permisosPerfil: any = null;
     if (perfil?.permission_profile_id) {

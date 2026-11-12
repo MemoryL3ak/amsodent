@@ -1,6 +1,7 @@
 import { CanActivate, ExecutionContext, ForbiddenException, Injectable, UnauthorizedException } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
 import { esRolAdmin, permisosEfectivos } from '../auth/permisos';
+import { errorSinPerfil } from '../auth/perfil-requerido';
 
 /* Gestión de compras (2026-10-16): entra quien tenga el módulo
    `gestion_compras` en sus permisos efectivos (perfil asignado o rol) o sea
@@ -20,6 +21,7 @@ export class GestionComprasGuard implements CanActivate {
 
     const { data: perfil, error: errPerfil } = await client.from('profiles').select('rol, permission_profile_id').eq('id', user.id).maybeSingle();
     if (errPerfil) throw new UnauthorizedException('No se pudo verificar el perfil del usuario');
+    if (!perfil) throw errorSinPerfil(); // (2026-11-12) solo el equipo interno
     const rol = String(perfil?.rol || '').trim().toLowerCase();
     let permisosPerfil: any = null;
     if (perfil?.permission_profile_id) {

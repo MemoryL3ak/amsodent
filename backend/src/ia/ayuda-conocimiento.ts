@@ -1165,6 +1165,19 @@ Cuentas y roles: crear usuario (genera contraseña temporal), editar, reset de
 clave, eliminar. Perfiles de permisos configurables por módulo. También existen
 cuentas internas sin correo real (username + dominio interno) que puede crear
 el admin.
+Ingreso a la plataforma (/login) — nov 2026: el equipo interno entra de dos
+formas, a la misma cuenta: (1) correo o usuario + contraseña, como siempre;
+(2) «Continuar con Google», con la cuenta de Google del MISMO correo de acceso
+(Gmail o Google Workspace). No se configura nada por usuario: Google reconoce el
+correo y entra a ese usuario con sus mismos permisos; la contraseña sigue
+sirviendo. Google NO crea usuarios: solo entra quien ya tiene usuario creado en
+Usuarios. Si alguien elige una cuenta de Google cuyo correo no tiene usuario, ve
+«La cuenta … no está registrada en la plataforma de Amsodent» y queda fuera:
+debe elegir la cuenta correcta o pedir a administración que le cree el usuario
+o le corrija el correo de acceso (el correo alterno no sirve para entrar). El
+ingreso con Google solo identifica a la persona; el buzón de Gmail se conecta
+aparte, en Mi Correo. Esto es solo para el equipo interno: el Portal del
+cliente, el de choferes y el de despachos tienen su propio ingreso.
 
 ### Monitoreo de Usuarios (/monitoreo)
 Presencia en tiempo real: en línea, inactivo, conectado en horario (09-19),

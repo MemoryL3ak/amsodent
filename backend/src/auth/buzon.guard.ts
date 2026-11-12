@@ -5,6 +5,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
+import { errorSinPerfil } from './perfil-requerido';
 
 // Valida token de "Mi Correo" (el buzón). El buzón está habilitado para TODOS
 // los roles: cada usuario conecta y ve su propia casilla. Solo se exige estar
@@ -42,6 +43,10 @@ export class BuzonGuard implements CanActivate {
     if (errPerfil) {
       throw new UnauthorizedException('No se pudo verificar el rol del usuario');
     }
+
+    // (2026-11-12) Solo el equipo interno: una cuenta sin perfil (p. ej. una
+    // cuenta de Google que no es del equipo) no entra al buzón.
+    if (!perfil) throw errorSinPerfil();
 
     const rol = String(perfil?.rol || '').trim().toLowerCase();
 

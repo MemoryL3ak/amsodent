@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
 import { esRolAdmin, permisosEfectivos } from './permisos';
+import { errorSinPerfil } from './perfil-requerido';
 
 /* Guard por módulo (2026-11-03): deja pasar al admin y a quien tenga `modulo`
    entre sus permisos efectivos (perfil de permisos asignado o, si no tiene,
@@ -43,6 +44,8 @@ export function ModuloGuard(modulo: string, nombre: string = modulo) {
         .eq('id', user.id)
         .maybeSingle();
       if (errPerfil) throw new UnauthorizedException('No se pudo verificar el perfil del usuario');
+      // (2026-11-12) Solo el equipo interno: sin perfil no hay permisos base.
+      if (!perfil) throw errorSinPerfil();
       const rol = String(perfil?.rol || '').trim().toLowerCase();
       let permisosPerfil: any = null;
       if (perfil?.permission_profile_id) {

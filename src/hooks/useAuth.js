@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "../lib/supabase";
 import { api } from "../lib/api";
 import { permisosFallback } from "../constants/modulos";
+import { esCuentaNoRegistrada } from "../lib/ingresoEquipo";
 
 /* (2026-10-16) Francisco (rol ventas con perfil «Vendedor con campañas,
    trazabilidad e inventario») a veces no podía entrar a Trazabilidad. Cada
@@ -38,6 +39,23 @@ function borrarCache(uid) {
   } catch { /* */ }
 }
 
+/* (2026-11-12) Solo el equipo interno. Si el servidor dice que la cuenta no
+   tiene usuario (una cuenta de Google que no es del equipo, o un usuario que
+   administración eliminó), se cierra la sesión y se vuelve al login con el
+   aviso. El login ya lo revisa al volver de Google; esto cubre cualquier otra
+   entrada (sesión guardada, enlace directo). */
+let expulsando = false;
+async function expulsarCuentaNoRegistrada() {
+  if (expulsando) return;
+  expulsando = true;
+  compartida = null;
+  borrarCache();
+  try { await supabase.auth.signOut(); } catch { /* ya sin sesión */ }
+  // En el login la propia página muestra el motivo: no se recarga.
+  if (window.location.pathname === "/login") { expulsando = false; return; }
+  window.location.replace("/login?aviso=cuenta_no_registrada");
+}
+
 function cargarPerfil(uid) {
   if (compartida && compartida.userId === uid && Date.now() - compartida.ts < VIGENCIA_MS) return compartida.promesa;
   const promesa = (async () => {
@@ -49,6 +67,7 @@ function cargarPerfil(uid) {
           return p;
         }
       } catch (e) {
+        if (esCuentaNoRegistrada(e)) { expulsarCuentaNoRegistrada(); break; }
         if (e?.status === 401 || e?.status === 403) break; // sesión inválida: reintentar no sirve
       }
       if (intento < 2) await new Promise((r) => setTimeout(r, 500 * (intento + 1)));
@@ -89,6 +108,7 @@ export default function useAuth() {
       // Perfil + permisos efectivos. El backend (/auth/profile) calcula los
       // permisos (perfil asignado o, en su defecto, por rol).
       let perfilDB = await cargarPerfil(uid);
+      if (expulsando) return; // cuenta sin usuario: va de vuelta al login
       if (!perfilDB) perfilDB = leerCache(uid);
       if (!perfilDB) {
         const { data } = await supabase.from("profiles").select("*").eq("id", uid).single();
