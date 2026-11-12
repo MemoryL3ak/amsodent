@@ -15,6 +15,7 @@ import ModalValidarTransitorio from "../components/ModalValidarTransitorio";
 import CalculadoraFlete from "../components/CalculadoraFlete";
 import BotonFichaTecnica from "../components/BotonFichaTecnica";
 import BotonEditarProducto from "../components/BotonEditarProducto";
+import BotonPreciosAdjudicados from "../components/PreciosAdjudicadosMP";
 import BotonDescargarFichas from "../components/BotonDescargarFichas";
 import ChipSinFicha from "../components/ChipSinFicha";
 import ConfirmModal from "../components/ConfirmModal";
@@ -3711,6 +3712,14 @@ export default function CrearLicitacion() {
                       >
                         <Plus size={14} />
                       </button>
+
+                      {/* (2026-11-12) Con qué precios se ha adjudicado este producto en
+                          Mercado Público, para validar el precio antes de ofertarlo. */}
+                      <BotonPreciosAdjudicados
+                        sku={it.sku}
+                        producto={it.producto}
+                        precioActual={Number(it.precio || 0) + Number(fletePorUnidad || 0)}
+                      />
 
                     </div>
 

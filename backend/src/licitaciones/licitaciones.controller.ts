@@ -190,6 +190,15 @@ export class LicitacionesController {
     return this.licitacionesService.historialPreciosProducto(q, { sku });
   }
 
+  /* (2026-11-12) Con qué precio se ha adjudicado un producto en Mercado
+     Público (por nuestras cotizaciones públicas y sus fichas guardadas). Lo
+     abre cada línea de Crear/Detalle de cotización: para todo el que cotiza,
+     sin costos. */
+  @Get('productos/precios-adjudicados')
+  preciosAdjudicadosProducto(@Query('sku') sku?: string, @Query('producto') producto?: string) {
+    return this.licitacionesService.preciosAdjudicadosProducto({ sku, producto });
+  }
+
   /* (2026-11-05) Análisis histórico: todos los productos cotizados, uno por
      fila, con sus veces, unidades y precios (lo agrega la base). */
   @Get('productos/cotizados')

@@ -4117,3 +4117,39 @@ a.ayuda-ruta-chip:hover { background: var(--primary-mid); }
   .cab-sku-editar--largo .bep-texto { display: none; }
   .cab-sku-editar--largo .boton-editar-producto { padding: 0 6px !important; }
 }
+
+/* (2026-11-12) «Precios adjudicados en Mercado Público» de cada línea de la
+   cotización (PreciosAdjudicadosMP.jsx). El botón va en la fila de acciones de
+   la línea (arrastrar / agregar), del mismo alto que esos botones; en pantallas
+   angostas queda con el nombre corto. Los cuatro datos del resumen van 4, 2+2
+   o en una columna: nunca tres arriba y uno solo abajo. */
+.boton-precios-adjudicados {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 8px;
+  border: 1px solid var(--primary-mid);
+  background: var(--primary-light);
+  color: var(--primary-dark);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  min-width: 0;
+  transition: background .15s, border-color .15s;
+}
+.boton-precios-adjudicados:hover { background: var(--primary-mid); border-color: var(--primary); }
+.boton-precios-adjudicados .bpa-corto { display: none; }
+@media (max-width: 520px) {
+  .boton-precios-adjudicados .bpa-largo { display: none; }
+  .boton-precios-adjudicados .bpa-corto { display: inline; }
+}
+.ventana-precios-adjudicados .pa-datos { grid-template-columns: repeat(4, minmax(0, 1fr)) !important; }
+@media (max-width: 860px) {
+  .ventana-precios-adjudicados .pa-datos { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+}
+@media (max-width: 460px) {
+  .ventana-precios-adjudicados .pa-datos { grid-template-columns: minmax(0, 1fr) !important; }
+}

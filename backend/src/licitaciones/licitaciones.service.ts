@@ -9,6 +9,15 @@ import { mpLimitador } from '../mercadopublico/mp-limitador';
 import { plantillaOcCargada } from '../correos/correos.templates';
 import { TIPO_OC_CARGADA, avisoOcCargada, clp as clpAviso, fechaCorta } from './oc-cargada-aviso';
 import {
+  CotizacionInterna,
+  FichaMp,
+  FilaAdjudicacion,
+  LineaCotizada,
+  adjudicacionDeLinea,
+  esParticular as esCotizacionParticular,
+  sinRepetidas,
+} from './precios-adjudicados';
+import {
   Accion,
   ProductoCotizacion,
   ResumenAcciones,
@@ -3680,6 +3689,118 @@ export class LicitacionesService {
             ultima_fecha: serie[serie.length - 1]?.fecha ?? null,
           }
         : null,
+    };
+  }
+
+  /* ── Precios adjudicados en Mercado Público de UN producto (2026-11-12) ────
+     Pedido de Ariel: ver, al armar la cotización, con qué precio se ha
+     adjudicado históricamente cada producto en Mercado Público. Parte de
+     nuestras cotizaciones públicas con ese producto (por SKU, o por nombre si
+     la línea no tiene SKU), las cruza con su ficha guardada (mp_resultados) y
+     devuelve una fila por proceso con desenlace: nuestro precio, el precio al
+     que se adjudicó, quién ganó y qué tan seguro es el calce. La regla de
+     cruce está en precios-adjudicados.ts. No consulta la API de Mercado
+     Público ni devuelve costos: es para todo el que cotiza. */
+  async preciosAdjudicadosProducto(opts: { sku?: string; producto?: string }) {
+    const sku = String(opts?.sku || '').replace(/\s+/g, '').trim();
+    const nombre = String(opts?.producto || '').trim();
+    if (!sku && nombre.length < 3) {
+      throw new BadRequestException('Elige un producto para ver sus precios adjudicados.');
+    }
+    const client = this.supabase.getClient();
+    // Las líneas más recientes del producto (ilike sin comodines = igualdad sin
+    // distinguir mayúsculas; los comodines del texto se escapan).
+    const TOPE = 400;
+    const literal = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
+    let consulta = client.from('items_licitacion').select('id, licitacion_id, producto, sku, cantidad, valor_unitario');
+    consulta = sku ? consulta.ilike('sku', literal(sku)) : consulta.ilike('producto', literal(nombre));
+    const { data: itemsData, error: errItems } = await consulta.order('id', { ascending: false }).limit(TOPE);
+    if (errItems) throw new BadRequestException(errItems.message);
+    const lineas = (itemsData || []).filter((i: any) => Number(i?.valor_unitario) > 0 && i?.licitacion_id);
+    const vacio = {
+      sku: sku || null,
+      producto: (lineas[0] as any)?.producto || nombre || null,
+      filas: [] as FilaAdjudicacion[],
+      cotizaciones_publicas: 0,
+      sin_resultado: 0,
+      truncado: (itemsData || []).length >= TOPE,
+    };
+    if (!lineas.length) return vacio;
+
+    const TANDA = 200;
+    const tandas = <T,>(xs: T[]) => Array.from({ length: Math.ceil(xs.length / TANDA) }, (_, i) => xs.slice(i * TANDA, (i + 1) * TANDA));
+    const licIds = [...new Set(lineas.map((i: any) => Number(i.licitacion_id)))];
+
+    // Las cotizaciones de esas líneas; solo interesan las públicas.
+    const cots = new Map<number, CotizacionInterna>();
+    for (const ids of tandas(licIds)) {
+      const { data, error } = await client
+        .from('licitaciones')
+        .select('id, id_licitacion, nombre_entidad, estado, fecha, fecha_adjudicada, tipo_cliente, tipo_compra')
+        .in('id', ids);
+      if (error) throw new BadRequestException(error.message);
+      for (const l of data || []) cots.set(Number((l as any).id), l as any);
+    }
+    const publicas = licIds.filter((id) => cots.has(id) && !esCotizacionParticular(cots.get(id)));
+    if (!publicas.length) return vacio;
+
+    // Sus fichas de Mercado Público (solo los ítems comparados, no el detalle entero).
+    const fichas = new Map<number, FichaMp>();
+    for (const ids of tandas(publicas)) {
+      const { data, error } = await client
+        .from('mp_resultados')
+        .select('licitacion_id, codigo_mp, tipo, estado_mp, ganamos, participamos, ganador_nombre, fecha_adjudicacion, fecha_cierre, organismo, comparacion_items:detalle->comparacion_items')
+        .in('licitacion_id', ids);
+      if (error) {
+        // Sin la tabla (o sin alguna columna) se sigue con el estado de las cotizaciones.
+        if (!/does not exist|schema cache/i.test(error.message)) throw new BadRequestException(error.message);
+        break;
+      }
+      for (const f of data || []) fichas.set(Number((f as any).licitacion_id), f as any);
+    }
+
+    const deLasPublicas = lineas.filter((i: any) => publicas.includes(Number(i.licitacion_id))) as any[];
+    const calcular = (contexto: Map<number, LineaCotizada[]> | null) =>
+      deLasPublicas.map((it) => {
+        const id = Number(it.licitacion_id);
+        return { id, r: adjudicacionDeLinea(it, cots.get(id), fichas.get(id), contexto ? contexto.get(id) || [it] : null) };
+      });
+
+    // Primera pasada; las que no se deciden sin el resto de la cotización
+    // (procesos cotizados por el total) piden sus demás líneas y se repiten.
+    let resultados = calcular(null);
+    const faltan = [...new Set(resultados.filter((x) => x.r.faltaContexto).map((x) => x.id))];
+    if (faltan.length) {
+      const contexto = new Map<number, LineaCotizada[]>();
+      const PAGINA = 1000;
+      let leidas = 0;
+      for (const ids of tandas(faltan)) {
+        for (let desde = 0; leidas < 8000; desde += PAGINA) {
+          const { data, error } = await client
+            .from('items_licitacion')
+            .select('id, licitacion_id, cantidad, valor_unitario')
+            .in('licitacion_id', ids)
+            .order('id', { ascending: true })
+            .range(desde, desde + PAGINA - 1);
+          if (error) throw new BadRequestException(error.message);
+          for (const l of data || []) {
+            const id = Number((l as any).licitacion_id);
+            if (!contexto.has(id)) contexto.set(id, []);
+            contexto.get(id)!.push(l as any);
+          }
+          leidas += (data || []).length;
+          if ((data || []).length < PAGINA) break;
+        }
+      }
+      resultados = calcular(contexto);
+    }
+
+    const filas = sinRepetidas(resultados.map((x) => x.r.fila).filter((f): f is FilaAdjudicacion => !!f));
+    return {
+      ...vacio,
+      filas,
+      cotizaciones_publicas: deLasPublicas.length,
+      sin_resultado: resultados.filter((x) => !x.r.fila).length,
     };
   }
 

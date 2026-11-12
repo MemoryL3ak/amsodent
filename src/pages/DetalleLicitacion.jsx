@@ -23,6 +23,7 @@ import ProductoPickerModal from "../components/ProductoPickerModal";
 import CalculadoraFlete from "../components/CalculadoraFlete";
 import BotonFichaTecnica from "../components/BotonFichaTecnica";
 import BotonEditarProducto from "../components/BotonEditarProducto";
+import BotonPreciosAdjudicados from "../components/PreciosAdjudicadosMP";
 import BotonDescargarFichas from "../components/BotonDescargarFichas";
 import ChipSinFicha from "../components/ChipSinFicha";
 import { fichaTecnicaCompleta, productoDeItem, productosSinFichaDeItems, resumenSinFicha } from "../utils/fichaTecnicaCompleta";
@@ -4619,6 +4620,14 @@ export default function EditarLicitacion() {
                       >
                         <Plus size={14}/>
                       </button>
+
+                      {/* (2026-11-12) Con qué precios se ha adjudicado este producto en
+                          Mercado Público (misma ventana que en Crear Cotización). */}
+                      <BotonPreciosAdjudicados
+                        sku={it.sku}
+                        producto={it.producto}
+                        precioActual={Number(it.precio || 0) + Number(fletePorUnidad || 0)}
+                      />
 
                     </div>
 

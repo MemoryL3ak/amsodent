@@ -130,6 +130,34 @@ ficha completa), flete estimado con calculadora por courier, margen por línea
 visible para todos. Si hay productos equivalentes se ofrece crear una
 cotización hija (jerarquía madre/hija). Puede nacer vinculada a una postulación
 de Mercado Público o a una solicitud del portal de stock de clientes.
+PRECIOS ADJUDICADOS EN MERCADO PÚBLICO (nov 2026): bajo cada línea con
+producto (junto a los botones de arrastrar y agregar ítem), en Nueva Cotización
+y en el Detalle, el botón «Precios adjudicados en Mercado Público» abre una
+ventana con los procesos de Mercado Público en que hemos cotizado ese producto
+y a qué precio se adjudicó cada uno, a nosotros o a otro proveedor. Muestra el
+precio típico adjudicado (la mediana) con su rango, la última adjudicación, el
+precio con que ganamos, cuánto más abajo quedó el ganador cuando perdimos, y
+compara el precio que se está poniendo en la cotización con el típico. Trae un
+gráfico en el tiempo (círculo verde = adjudicado a Amsodent, rombo naranjo =
+adjudicado a otro, línea punteada = el precio actual) y la tabla de procesos
+con fecha, código del proceso (abre nuestra cotización en otra pestaña),
+organismo, cantidad, nuestro precio, precio adjudicado, diferencia y ganador.
+Filtro: últimos 12 meses, 24 meses o todo. Lo ve todo el que cotiza; no
+muestra costos. De dónde sale: de nuestras cotizaciones públicas con ese
+producto (por SKU) y de la ficha que Mercado Público entrega de cada proceso
+(la misma del panel Análisis Mercado Público). Si ganamos, el precio adjudicado
+es el nuestro; si perdimos una Compra Ágil, es el del proveedor seleccionado
+para ese ítem. Marcas: «aprox.» = la línea se reconoció por cantidad u orden
+(Mercado Público no identifica nuestro producto, o al postular se ofertó otro
+precio que el de la cotización: vale el ofertado allá); «estimado» = el proceso
+se cotizó por el total y se aplica a la línea la proporción entre el total
+ganador y el nuestro; «atípico» = precio de otro orden que el nuestro (otra
+unidad o dato mal ingresado), se muestra pero no entra en las cifras. Los
+procesos perdidos sin precio del ganador se pueden mostrar con una casilla. Si
+dice que no hay precios, es que nunca cotizamos ese producto en Mercado Público
+o que sus procesos aún no tienen resultado. Para el historial de TODO lo
+cotizado (también particulares) está el Análisis histórico de productos del
+panel Análisis Mercado Público (solo administradores).
 FICHAS TÉCNICAS (nov 2026): si algún producto del catálogo tiene la ficha
 técnica incompleta, al guardar se avisa y la cotización queda guardada SIN PDF;
 se completan las fichas en Productos → Editar y el PDF se genera desde el
