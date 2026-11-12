@@ -7,8 +7,10 @@ import { fmtFechaHoraChile } from "../lib/fechaChile";
 import BotonLimpiarFiltros from "../components/BotonLimpiarFiltros";
 import DropdownSelect from "../components/ui/DropdownSelect";
 import ConfirmModal from "../components/ConfirmModal";
+import ModalAsociarCotizacion from "../components/ModalAsociarCotizacion";
 import {
   Inbox,
+  Link2,
   ShoppingCart,
   Package,
   ExternalLink,
@@ -424,6 +426,38 @@ export default function PedidosPortal() {
       "No se pudo registrar el pago.",
     );
     if (ok) setModalPago(null);
+  }
+
+  /* (2026-11-12) Asociar al pedido una cotización que ya existe (hecha por el
+     listado, o para reemplazar una equivocada). El servidor solo acepta las
+     del mismo RUT y las que no están en otro pedido. */
+  const [modalAsociar, setModalAsociar] = useState(null);
+  async function asociarCotizacion(pedido, cot) {
+    const cambia = Boolean(pedido.cotizacion);
+    setAccionando(true);
+    try {
+      const r = await api.put(`/stock-clientes/solicitudes/${pedido.id}/vincular`, {
+        licitacion_id: cot.id,
+        reemplazar: cambia,
+      });
+      reemplazar({
+        ...(r?.id ? r : { id: pedido.id }),
+        licitacion_id: cot.id,
+        cotizacion: { id: cot.id, id_licitacion: cot.id_licitacion, estado: cot.estado, total_con_iva: cot.total_con_iva ?? null },
+      });
+      setModalAsociar(null);
+      setToast({
+        type: "success",
+        message: cambia
+          ? `El pedido N° ${pedido.id} ahora tiene la cotización #${cot.id} (antes la #${pedido.cotizacion.id}).`
+          : `Cotización #${cot.id} asociada al pedido N° ${pedido.id}. El cliente la ve en su portal.`,
+      });
+      cargarKpis();
+    } catch (e) {
+      setToast({ type: "error", message: `No se pudo asociar: ${e?.message || "error al guardar"}.` });
+    } finally {
+      setAccionando(false);
+    }
   }
 
   function alternarSos(pedido) {
@@ -1002,6 +1036,16 @@ export default function PedidosPortal() {
                                     <FilePlus size={13} style={{ marginRight: 5 }} /> Crear cotización desde el pedido
                                   </button>
                                 )}
+                                {/* (2026-11-12) La cotización ya existe (se hizo por el listado) o hay que cambiar la que quedó. */}
+                                <button
+                                  type="button"
+                                  className="btn btn-secondary btn-sm"
+                                  onClick={() => setModalAsociar(s)}
+                                  disabled={accionando}
+                                  title={s.cotizacion ? "Reemplazarla por otra cotización ya creada de este cliente" : "Elegir una cotización ya creada de este cliente"}
+                                >
+                                  <Link2 size={13} style={{ marginRight: 5 }} /> {s.cotizacion ? "Cambiar cotización" : "Asociar una cotización ya creada"}
+                                </button>
                                 <button type="button" className="btn btn-secondary btn-sm" onClick={() => descargarPdfPedido(s)}>
                                   <FileDown size={13} style={{ marginRight: 5 }} /> Descargar PDF
                                 </button>
@@ -1077,6 +1121,15 @@ export default function PedidosPortal() {
           guardando={accionando}
           onCerrar={() => { if (!accionando) setModalPago(null); }}
           onConfirmar={(payload) => registrarPago(modalPago, payload)}
+        />
+      )}
+
+      {modalAsociar && (
+        <ModalAsociarCotizacion
+          pedido={modalAsociar}
+          guardando={accionando}
+          onCerrar={() => { if (!accionando) setModalAsociar(null); }}
+          onConfirmar={(cot) => asociarCotizacion(modalAsociar, cot)}
         />
       )}
 

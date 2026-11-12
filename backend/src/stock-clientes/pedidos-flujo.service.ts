@@ -1386,18 +1386,21 @@ export class PedidosFlujoService {
       y el cliente acepta pagando (o pide cambios). Lo llama el controlador
       después de vincular y es best-effort: nunca debe hacer fallar el
       guardado de la cotización. */
-  async marcarCotizacionEnviada(id: number, licitacionId: number, actorEmail: string) {
+  async marcarCotizacionEnviada(id: number, licitacionId: number, actorEmail: string, reemplazada: number | null = null) {
     try {
       const pedido = await this.obtener(id);
       const actual = this.estadoDe(pedido);
       const ahora = new Date().toISOString();
+      // (2026-11-12) «Cambiar cotización» de la bandeja: la bitácora dice cuál salió.
+      const cambio = reemplazada ? ` Reemplaza a la #${reemplazada}.` : '';
+      const datos = reemplazada ? { licitacion_id: licitacionId, licitacion_id_reemplazada: reemplazada } : { licitacion_id: licitacionId };
       if (!ESTADOS_COTIZABLES.includes(actual)) {
         // En otra etapa (espera al cliente, observado, ya validado, cerrado) la
         // cotización queda en la bitácora pero la etapa no se mueve.
         await this.registrarEvento({
           solicitudId: Number(id), tipo: 'cotizacion_enviada', estadoDesde: actual, estadoHasta: actual,
-          actorTipo: 'plataforma', actorEmail, detalle: `Cotización #${licitacionId} vinculada al pedido.`,
-          datos: { licitacion_id: licitacionId },
+          actorTipo: 'plataforma', actorEmail, detalle: `Cotización #${licitacionId} vinculada al pedido.${cambio}`,
+          datos,
         });
         return pedido;
       }
@@ -1415,8 +1418,8 @@ export class PedidosFlujoService {
           tipo: 'cotizacion_enviada',
           actorTipo: 'plataforma',
           actorEmail,
-          detalle: `Cotización #${licitacionId} enviada al cliente.`,
-          datos: { licitacion_id: licitacionId },
+          detalle: `Cotización #${licitacionId} enviada al cliente.${cambio}`,
+          datos,
         });
       } catch (e: any) {
         this.logger.warn(`Pedido ${id}: no se registró la cotización enviada (${e?.message || e}); se avisa al cliente igual.`);

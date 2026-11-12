@@ -1327,6 +1327,18 @@ girasol 🌻). Hoy ayuda en:
   Explorador de Precios o Gestión de Stock). Muestra cliente, contacto,
   sucursal, ítems con referencias, nota y mensajes; permite cambiar estado,
   abrir la cotización vinculada o crear una nueva precargada desde el pedido.
+  ASOCIAR UNA COTIZACIÓN YA CREADA (desde el 12-11-2026): si la cotización se
+  hizo por el listado y no desde el pedido, en el detalle del pedido el botón
+  «Asociar una cotización ya creada» lista las cotizaciones de ESE cliente
+  (mismo RUT) con número, fecha, estado, líneas, vendedor y total; se elige
+  una y queda asociada como si se hubiera creado desde el pedido (el cliente
+  la ve en su portal). Si el pedido ya tiene cotización el botón dice «Cambiar
+  cotización»: reemplaza la que tiene sin borrarla y queda en la bitácora. No
+  se puede asociar la cotización de otro cliente (otro RUT) ni una que ya está
+  en otro pedido; tampoco hay botón para dejar el pedido sin cotización. En
+  Crear Cotización, si el borrador viene de un pedido, arriba aparece «Pedido
+  del portal N° X» con «Desvincular»; «Limpiar Datos» también suelta el
+  pedido, y el aviso al guardar dice si quedó asociada o no.
   Acceso: quien tiene Monitoreo Stock ve todos los pedidos. Desde nov 2026 el
   vendedor dueño de la cartera también entra (lo lleva el aviso del pedido) y
   ve solo los pedidos de los clientes de su cartera.
