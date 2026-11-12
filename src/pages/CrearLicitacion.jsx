@@ -209,7 +209,15 @@ function filtrarPorTerminos(option, inputValue) {
 
   const label = normalizarTexto(option.label);
   const terms = q.split(" ").filter(Boolean);
-  return terms.every((t) => label.includes(t));
+  if (terms.every((t) => label.includes(t))) return true;
+
+  // (2026-11-12) Pistolear dentro de la línea: los selectores de SKU y de
+  // Producto también encuentran por código de barras (la pistola escribe el
+  // código y manda Enter, que elige la opción encontrada).
+  const barra = option.data?.barra;
+  if (!barra) return false;
+  const leido = limpiarCodigoBarra(inputValue).toLowerCase();
+  return leido.length >= 4 && barra.includes(leido);
 }
 
 /* ============================================================
@@ -2613,6 +2621,7 @@ export default function CrearLicitacion() {
         .map((p) => ({
           value: String(p.sku).trim(),
           label: String(p.sku).trim(),
+          barra: limpiarCodigoBarra(p.codigo_barra).toLowerCase(),
         })),
     [productos]
   );
@@ -2622,6 +2631,7 @@ export default function CrearLicitacion() {
       productos.map((p) => ({
         value: p.nombre,
         label: p.nombre,
+        barra: limpiarCodigoBarra(p.codigo_barra).toLowerCase(),
       })),
     [productos]
   );
@@ -3336,6 +3346,17 @@ export default function CrearLicitacion() {
         <div className="surface-header" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
           <h3 className="surface-title">Ítems</h3>
           <div style={{ display: "inline-flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          {/* (2026-11-12) Pedido de Ariel: el pistoleo va en la sección Ítems
+              (antes estaba abajo, junto a «+ Agregar Ítem», y no se veía). */}
+          <button
+            type="button"
+            onClick={() => { setEscanerUltimo(null); setEscanerAbierto(true); }}
+            className={`btn btn-sm btn-pistolear-codigo ${escanerAbierto ? "btn-primary" : "btn-secondary"}`}
+            title="Agregar productos leyendo su código de barras con la pistola: busca el código en los productos registrados y trae sus datos"
+            style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
+          >
+            <ScanBarcode size={14} /> Pistolear código
+          </button>
           {/* (2026-11-03) Productos con la ficha técnica incompleta: mientras
               haya alguno, la cotización se guarda sin PDF. */}
           <ChipSinFicha productos={productosSinFicha} admin={esAdmin} />
@@ -4016,16 +4037,6 @@ export default function CrearLicitacion() {
           type="button"
         >
           + Agregar Ítem
-        </button>
-
-        <button
-          type="button"
-          onClick={() => { setEscanerUltimo(null); setEscanerAbierto(true); }}
-          className={`btn ${escanerAbierto ? "btn-primary" : "btn-secondary"}`}
-          title="Agregar productos leyendo su código de barras con la pistola"
-          style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
-        >
-          <ScanBarcode size={15} /> Pistolear código
         </button>
 
         <button

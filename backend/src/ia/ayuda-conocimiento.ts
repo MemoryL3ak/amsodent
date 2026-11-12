@@ -119,11 +119,14 @@ Detalle (/detalle/:id).
 ### Nueva Cotización (/crear)
 Formulario de creación: cliente, tipo de compra, condición de venta, lista de
 precios, ítems (buscador por SKU con modal de productos —también por código
-de barras—; botón «Pistolear código» (nov 2026): ventana flotante que espera
+de barras—; botón «Pistolear código» (nov 2026), en el encabezado de la
+sección «Ítems»: ventana flotante que espera
 la lectura de la pistola, busca el producto por su código de barras (o SKU) y
 lo agrega con cantidad 1, o le suma una unidad si ya está; queda abierta para
 varios productos, Esc la cierra; si nadie tiene el código, avisa que se asigna
-en Productos → Editar; botón "Ficha" en cada
+en Productos → Editar; también se puede pistolear dentro de una línea, con el
+cursor en el selector de SKU o de Producto: encuentra el producto por su código
+de barras y lo deja en esa línea con formato, precio y costo; botón "Ficha" en cada
 línea para abrir la ficha técnica en PDF del producto: VERDE = ficha completa,
 ROJO = incompleta; arriba de los ítems un chip rojo cuenta los productos sin
 ficha completa), flete estimado con calculadora por courier, margen por línea
