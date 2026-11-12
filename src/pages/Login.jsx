@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { supabase } from "../lib/supabase";
 import { api } from "../lib/api";
 import {
+  PERMISOS_GOOGLE,
+  conectarCorreoDeGoogle,
   esCuentaNoRegistrada,
   leerErrorDeUrl,
   marcarIdaAGoogle,
@@ -52,6 +54,12 @@ function revisarCuentaDeGoogle() {
         // El servidor no respondió claro (red, límite de pedidos): se entra igual;
         // cada pantalla vuelve a validar la cuenta contra el servidor.
       }
+      // El correo queda conectado con esta misma cuenta de Google. Se espera un
+      // momento a que el servidor lo guarde, pero entrar no depende de eso.
+      await Promise.race([
+        conectarCorreoDeGoogle(sesion),
+        new Promise((listo) => setTimeout(listo, 6000)),
+      ]);
       return { entra: true, mensaje: "" };
     })();
   }
@@ -191,9 +199,11 @@ export default function Login() {
     };
   }, [llegada]);
 
-  /* Solo identifica a la persona (correo y nombre): no pide permisos de Gmail.
-     El buzón se conecta aparte, desde Mi Correo. `select_account` deja elegir la
-     cuenta cuando el navegador tiene varias de Google abiertas. */
+  /* Además de identificar a la persona, pide los permisos de Gmail y Calendar
+     para que su correo quede conectado al entrar (ver ingresoEquipo.js).
+     `select_account` deja elegir la cuenta cuando el navegador tiene varias de
+     Google abiertas; no se fuerza `consent`, así Google pregunta solo la
+     primera vez y no en cada ingreso. */
   async function handleGoogleLogin() {
     if (ocupado) return;
     setError("");
@@ -205,7 +215,10 @@ export default function Login() {
         provider: "google",
         options: {
           redirectTo: `${window.location.origin}/login`,
-          queryParams: { prompt: "select_account" },
+          // Permisos de Gmail y Calendar + acceso sin conexión: con esto Google
+          // entrega el token con el que el correo queda conectado al entrar.
+          scopes: PERMISOS_GOOGLE,
+          queryParams: { prompt: "select_account", access_type: "offline" },
         },
       });
       err = res?.error || null;
@@ -426,7 +439,7 @@ export default function Login() {
               className="login-google-btn"
               onClick={handleGoogleLogin}
               disabled={ocupado}
-              title="Entra con la cuenta de Google de tu correo de trabajo: llega al mismo usuario que con tu contraseña"
+              title="Entra con la cuenta de Google de tu correo de trabajo: llega al mismo usuario que con tu contraseña y deja tu correo conectado"
             >
               {loadingGoogle || verificando ? (
                 <svg className="login-spinner" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">

@@ -71,7 +71,7 @@ export const FLUJO_NEGOCIO = [
 ];
 
 export const CHECKLIST_INICIO = [
-  { t: "Entra con tu correo y contraseña, o con Google", d: "En el login puedes escribir tu correo (o usuario) y contraseña, o usar «Continuar con Google» con la cuenta de Google de ese mismo correo: las dos formas llegan a tu mismo usuario. Google no crea cuentas: si no tienes usuario, un administrador te lo crea en el módulo Usuarios (recibirás una contraseña temporal)." },
+  { t: "Entra con tu correo y contraseña, o con Google", d: "En el login puedes escribir tu correo (o usuario) y contraseña, o usar «Continuar con Google» con la cuenta de Google de ese mismo correo: las dos formas llegan a tu mismo usuario. Si entras con Google y aceptas los permisos que pide, tu correo queda conectado solo (Mi Correo, envío de correos y calendario). Google no crea cuentas: si no tienes usuario, un administrador te lo crea en el módulo Usuarios (recibirás una contraseña temporal)." },
   { t: "Reconoce tu menú lateral", d: "Los módulos que ves dependen de tu rol. Esta guía te muestra solo lo que puedes usar." },
   { t: "Revisa la campana de notificaciones", d: "Ahí llegan avisos de stock de clientes, documentos del portal, equivalencias y facturas vencidas." },
   { t: "Abre el Chat Grupal", d: "La sala General publica las tomas de Mercado Público del equipo y se replica al grupo de WhatsApp." },
@@ -912,6 +912,7 @@ export const GRUPOS_MANUAL = [
         resumen: "Tu correo de Google integrado en la plataforma.",
         funciones: [
           "Conectar con OAuth de Google (botón Conectar correo); carpetas del sistema y etiquetas propias.",
+          "Si entras a la plataforma con «Continuar con Google» y aceptas los permisos de Gmail y Calendar, el correo queda conectado solo con esa cuenta, sin pulsar Conectar correo. Si ya habías conectado a mano otra cuenta para enviar, se mantiene esa.",
           "Búsqueda, solo no leídos, adjuntos y redacción con el compositor integrado.",
         ],
       },
@@ -1133,7 +1134,7 @@ export const FAQ = [
   },
   {
     q: "¿Puedo entrar con mi cuenta de Google?",
-    a: "Sí, si el correo con el que tienes tu usuario es una cuenta de Google (Gmail o Google Workspace): en el login pulsa «Continuar con Google» y elige esa cuenta. Entras a tu mismo usuario y tu contraseña sigue funcionando. Si aparece «no está registrada en la plataforma», elegiste una cuenta de Google con otro correo: vuelve a intentarlo con la correcta o pide a administración que revise tu correo de acceso en Usuarios. Es solo para el equipo interno; el Portal del cliente y los portales de choferes y despachos tienen su propio ingreso.",
+    a: "Sí, si el correo con el que tienes tu usuario es una cuenta de Google (Gmail o Google Workspace): en el login pulsa «Continuar con Google» y elige esa cuenta. Entras a tu mismo usuario y tu contraseña sigue funcionando. La primera vez Google te pide permiso para Gmail y Calendar: al aceptarlo, tu correo queda conectado solo y ya no necesitas «Conectar correo» en Mi Correo. Si aparece «no está registrada en la plataforma», elegiste una cuenta de Google con otro correo: vuelve a intentarlo con la correcta o pide a administración que revise tu correo de acceso en Usuarios. Es solo para el equipo interno; el Portal del cliente y los portales de choferes y despachos tienen su propio ingreso.",
   },
   {
     q: "Un módulo me dice \"Falta aplicar la migración…\"",

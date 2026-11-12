@@ -123,6 +123,25 @@ export class GmailApiService {
     };
   }
 
+  // Revisa un refresh_token que llega desde fuera (el del ingreso con Google
+  // del login, vía Supabase Auth) ANTES de guardarlo: lo canjea con el cliente
+  // OAuth de este servidor y devuelve a qué cuenta pertenece y qué permisos
+  // trae. Si el token lo emitió otro cliente de Google, o la persona no dio los
+  // permisos, aquí falla o se nota, y no se pisa una conexión que sí funciona.
+  async revisarRefreshToken(
+    refreshToken: string,
+  ): Promise<{ email: string; scopes: string[] }> {
+    const cliente = this.oauth2Client();
+    cliente.setCredentials({ refresh_token: String(refreshToken || '').trim() });
+    const { token } = await cliente.getAccessToken();
+    if (!token) throw new Error('Google no entregó un token de acceso.');
+    const info = await cliente.getTokenInfo(token);
+    return {
+      email: String(info?.email || '').trim().toLowerCase(),
+      scopes: Array.isArray(info?.scopes) ? info.scopes.map((s) => String(s)) : [],
+    };
+  }
+
   // Cliente Gmail autenticado según el modo (OAuth por usuario o DWD).
   private clienteGmail(creds: GmailCreds | string) {
     // Compatibilidad: si recibimos un string, asumimos OAuth refreshToken.

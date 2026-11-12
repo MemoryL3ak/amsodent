@@ -1174,10 +1174,17 @@ sirviendo. Google NO crea usuarios: solo entra quien ya tiene usuario creado en
 Usuarios. Si alguien elige una cuenta de Google cuyo correo no tiene usuario, ve
 «La cuenta … no está registrada en la plataforma de Amsodent» y queda fuera:
 debe elegir la cuenta correcta o pedir a administración que le cree el usuario
-o le corrija el correo de acceso (el correo alterno no sirve para entrar). El
-ingreso con Google solo identifica a la persona; el buzón de Gmail se conecta
-aparte, en Mi Correo. Esto es solo para el equipo interno: el Portal del
-cliente, el de choferes y el de despachos tienen su propio ingreso.
+o le corrija el correo de acceso (el correo alterno no sirve para entrar).
+Al entrar con Google el CORREO QUEDA CONECTADO solo: Google pide de una vez los
+permisos de Gmail y de Calendar y, al aceptarlos, Mi Correo, el envío de
+correos desde la plataforma y la sincronización con Google Calendar quedan
+funcionando con esa cuenta, sin pasar por «Conectar cuenta». Google pregunta
+solo la primera vez. No se conecta en tres casos: si la persona desmarca los
+permisos de Gmail en la pantalla de Google; si ya había conectado a mano OTRA
+cuenta para enviar (se respeta esa); o si entra con contraseña (ahí se usa
+«Conectar cuenta» en Mi Correo, como siempre). Esto es solo para el equipo
+interno: el Portal del cliente, el de choferes y el de despachos tienen su
+propio ingreso.
 
 ### Monitoreo de Usuarios (/monitoreo)
 Presencia en tiempo real: en línea, inactivo, conectado en horario (09-19),

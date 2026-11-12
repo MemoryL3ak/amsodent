@@ -734,20 +734,66 @@ export class CorreosService {
     return { email: cuenta.email };
   }
 
-  // Guarda directamente la cuenta de Google que viene del sign-in con
-  // Supabase Auth. Usa el refresh_token que Supabase nos entrega tras el
-  // OAuth con Google (configurado con access_type=offline + prompt=consent).
+  // Conecta el correo con la cuenta de Google con la que la persona acaba de
+  // entrar al login («Continuar con Google»): Supabase entrega el refresh_token
+  // de Google y aquí se guarda en correo_cuentas, igual que «Conectar cuenta».
+  //
+  // No se guarda a ciegas (2026-11-12). Antes de escribir se revisa que:
+  //  · este servidor pueda usar el token (si el ingreso de Supabase usa otro
+  //    cliente de Google que GOOGLE_CLIENT_ID, el token no sirve aquí);
+  //  · la persona haya dado los permisos de Gmail (en la pantalla de Google se
+  //    pueden desmarcar);
+  //  · no haya conectado a mano OTRA cuenta para enviar (p. ej. entra con su
+  //    Gmail personal pero envía con la de la empresa): esa elección se respeta.
+  // Cuando algo de eso falla no se toca lo que había y se responde el motivo,
+  // sin error: entrar a la plataforma nunca depende de esto.
   async sincronizarDesdeSupabase(
     userId: string,
     payload: { email: string; refreshToken: string },
-  ): Promise<{ email: string }> {
+  ): Promise<{ conectado: boolean; email: string; motivo?: string; calendario?: boolean }> {
     const id = String(userId || '').trim();
     if (!id) throw new BadRequestException('Usuario no válido.');
-    const email = String(payload?.email || '').trim().toLowerCase();
     const refresh = String(payload?.refreshToken || '').trim();
-    if (!email || !refresh) {
+    if (!refresh) {
       throw new BadRequestException('Faltan datos de la cuenta de Google.');
     }
+    if (!this.gmailApi.configurado()) {
+      return { conectado: false, email: '', motivo: 'sin_configurar' };
+    }
+
+    let revisado: { email: string; scopes: string[] };
+    try {
+      revisado = await this.gmailApi.revisarRefreshToken(refresh);
+    } catch (e: any) {
+      this.logger.warn(
+        `Ingreso con Google: el token de ${payload?.email || id} no sirve en este servidor (${e?.message || e}). ` +
+          'Revisar que el ingreso con Google de Supabase use el mismo cliente OAuth que GOOGLE_CLIENT_ID.',
+      );
+      return { conectado: false, email: '', motivo: 'token_no_valido' };
+    }
+
+    const email = revisado.email || String(payload?.email || '').trim().toLowerCase();
+    const tiene = (scope: string) => revisado.scopes.includes(scope);
+    if (
+      !email ||
+      !tiene('https://www.googleapis.com/auth/gmail.send') ||
+      !tiene('https://www.googleapis.com/auth/gmail.modify')
+    ) {
+      this.logger.warn(`Ingreso con Google: ${email || id} entró sin dar los permisos de Gmail; el correo no se conectó.`);
+      return { conectado: false, email, motivo: 'sin_permiso_correo' };
+    }
+
+    const { data: previa } = await this.supabase
+      .getClient()
+      .from('correo_cuentas')
+      .select('email')
+      .eq('user_id', id)
+      .maybeSingle();
+    const emailPrevio = String((previa as any)?.email || '').trim().toLowerCase();
+    if (emailPrevio && emailPrevio !== email) {
+      return { conectado: false, email: emailPrevio, motivo: 'otra_cuenta' };
+    }
+
     const { error } = await this.supabase
       .getClient()
       .from('correo_cuentas')
@@ -756,15 +802,18 @@ export class CorreosService {
           user_id: id,
           email,
           refresh_token: refresh,
-          scopes:
-            'openid email profile https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/gmail.modify',
+          scopes: revisado.scopes.join(' '),
           actualizado_at: new Date().toISOString(),
         },
         { onConflict: 'user_id' },
       );
     if (error) throw new BadRequestException(error.message);
-    this.logger.log(`Cuenta de correo sincronizada vía Supabase OAuth: ${email}`);
-    return { email };
+    this.logger.log(`Cuenta de correo conectada al entrar con Google: ${email}`);
+    return {
+      conectado: true,
+      email,
+      calendario: tiene('https://www.googleapis.com/auth/calendar.events'),
+    };
   }
 
   async desconectar(userId: string): Promise<{ desconectado: boolean }> {
