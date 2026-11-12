@@ -872,15 +872,26 @@ export class StockClientesController {
     return await this.pedidosFlujo.kpis(desde, hasta, alcance.todos ? null : alcance.ruts);
   }
 
-  // Vincula la solicitud con la cotización creada a partir de ella.
+  // (2026-11-12) Cotizaciones ya creadas del cliente del pedido, para
+  // «Asociar una cotización ya creada» de la bandeja.
+  @UseGuards(AuthGuard)
+  @Get('solicitudes/:id/cotizaciones-asociables')
+  async cotizacionesAsociables(@Param('id', ParseIntPipe) id: number) {
+    return await this.stockClientes.cotizacionesAsociables(id);
+  }
+
+  // Vincula la solicitud con la cotización creada a partir de ella, o con una
+  // ya creada que se elige en la bandeja (`reemplazar` = cambiar la que tiene).
   @UseGuards(AuthGuard)
   @Put('solicitudes/:id/vincular')
   async vincularSolicitud(
     @Req() req: any,
     @Param('id', ParseIntPipe) id: number,
-    @Body() body: { licitacion_id: number },
+    @Body() body: { licitacion_id: number; reemplazar?: boolean },
   ) {
-    const data = await this.stockClientes.vincularLicitacion(id, Number(body?.licitacion_id));
+    const { pedido, reemplazada } = await this.stockClientes.vincularLicitacion(id, Number(body?.licitacion_id), {
+      reemplazar: body?.reemplazar === true,
+    });
     // (2026-11-09) Con la cotización vinculada el pedido queda «En revisión»
     // y el cliente recibe el aviso en su portal. Best-effort: el guardado de
     // la cotización ya ocurrió.
@@ -888,8 +899,9 @@ export class StockClientesController {
       id,
       Number(body?.licitacion_id),
       (req?.user?.email || '').toLowerCase(),
+      reemplazada,
     );
-    return movido || data;
+    return movido || pedido;
   }
 
   // Hilo de mensajes (equipo).

@@ -2090,8 +2090,74 @@ export class StockClientesService {
     return data;
   }
 
-  // Vincula una solicitud con la cotización (licitación) creada a partir de ella.
-  async vincularLicitacion(solicitudId: number, licitacionId: number) {
+  /* (2026-11-12) Cotizaciones ya creadas que se pueden asociar a un pedido
+     desde la bandeja: las del mismo cliente (mismo RUT, escrito como sea), de
+     la más nueva a la más antigua. Cada una dice si ya está en otro pedido —
+     una cotización va en un solo pedido— y cuántas líneas tiene, para
+     reconocerla sin abrirla. */
+  async cotizacionesAsociables(solicitudId: number) {
+    const client = this.supabase.getClient();
+    const { data: sol } = await client
+      .from('stock_solicitudes_cotizacion')
+      .select('id, rut, razon_social, licitacion_id')
+      .eq('id', solicitudId)
+      .maybeSingle();
+    if (!sol) throw new NotFoundException('Pedido no encontrado.');
+    const pedido = {
+      id: sol.id,
+      rut: formatearRut(normalizarRut(sol.rut)),
+      razon_social: sol.razon_social || '',
+      licitacion_id: sol.licitacion_id ?? null,
+    };
+    const rutN = normalizarRut(sol.rut);
+    if (rutN.length < 2) return { pedido, cotizaciones: [] };
+    // En `licitaciones` el RUT va con o sin puntos y a veces con espacios
+    // («76.228.875- 3»): se busca por el cuerpo y se compara normalizado.
+    const cuerpo = rutN.slice(0, -1);
+    const conPuntos = cuerpo.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+    const { data, error } = await client
+      .from('licitaciones')
+      .select('id, id_licitacion, nombre, rut_entidad, estado, created_at, total_con_iva, creado_por, vendedor_nombre')
+      .or(`rut_entidad.ilike.*${conPuntos}*,rut_entidad.ilike.*${cuerpo}*`)
+      .order('id', { ascending: false })
+      .limit(300);
+    if (error) throw new BadRequestException(error.message);
+    const propias = ((data || []) as any[]).filter((l) => normalizarRut(l.rut_entidad) === rutN).slice(0, 80);
+    const ids = propias.map((l) => Number(l.id));
+    const enPedido = new Map<number, number>();
+    const lineas = new Map<number, number>();
+    if (ids.length) {
+      const [{ data: usados }, { data: items }] = await Promise.all([
+        client.from('stock_solicitudes_cotizacion').select('id, licitacion_id').in('licitacion_id', ids),
+        client.from('items_licitacion').select('licitacion_id').in('licitacion_id', ids).limit(8000),
+      ]);
+      for (const u of (usados || []) as any[]) enPedido.set(Number(u.licitacion_id), Number(u.id));
+      for (const it of (items || []) as any[]) {
+        const k = Number(it.licitacion_id);
+        lineas.set(k, (lineas.get(k) || 0) + 1);
+      }
+    }
+    return {
+      pedido,
+      cotizaciones: propias.map((l) => ({
+        id: Number(l.id),
+        id_licitacion: l.id_licitacion || '',
+        nombre: l.nombre || '',
+        estado: l.estado || '',
+        created_at: l.created_at,
+        total_con_iva: l.total_con_iva ?? null,
+        vendedor: l.vendedor_nombre || String(l.creado_por || '').split('@')[0] || '',
+        lineas: lineas.get(Number(l.id)) || 0,
+        // Pedido que ya la tiene (este mismo u otro); null si está libre.
+        pedido_id: enPedido.get(Number(l.id)) ?? null,
+      })),
+    };
+  }
+
+  // Vincula una solicitud con la cotización (licitación) creada a partir de
+  // ella, o con una ya creada que se asocia desde la bandeja. `reemplazar`
+  // solo lo manda la bandeja, cuando alguien elige cambiar la que tiene.
+  async vincularLicitacion(solicitudId: number, licitacionId: number, opciones: { reemplazar?: boolean } = {}) {
     const client = this.supabase.getClient();
     /* (2026-11-12) La cotización tiene que ser del mismo cliente que el pedido.
        El vínculo viaja en el borrador de /crear y sobrevivía a «Limpiar Datos»:
@@ -2119,13 +2185,28 @@ export class StockClientesService {
        pisó el vínculo con la #6728 y el cliente pasó a ver la guía y la
        factura de otro. La bandeja solo ofrece «Crear cotización» cuando el
        pedido no tiene una viva, así que esto solo frena vínculos que llegan
-       de un borrador viejo. Si la anterior fue eliminada, sí se reemplaza. */
+       de un borrador viejo. Si la anterior fue eliminada, sí se reemplaza.
+       La excepción es «Cambiar cotización» de la bandeja: ahí alguien elige
+       la nueva a la vista y confirma el cambio (`reemplazar`). */
     const anteriorId = Number(sol.licitacion_id) || 0;
+    let reemplazada: number | null = null;
     if (anteriorId && anteriorId !== Number(lic.id)) {
       const { data: anterior } = await client.from('licitaciones').select('id').eq('id', anteriorId).maybeSingle();
-      if (anterior) {
+      if (anterior && !opciones.reemplazar) {
         throw new BadRequestException(`el pedido N° ${sol.id} ya tiene la cotización #${anteriorId}`);
       }
+      reemplazada = anteriorId;
+    }
+    // Una cotización va en un solo pedido: el aviso de «cotización
+    // actualizada» y los documentos del cliente salen de ese vínculo.
+    const { data: otros } = await client
+      .from('stock_solicitudes_cotizacion')
+      .select('id')
+      .eq('licitacion_id', licitacionId)
+      .neq('id', solicitudId)
+      .limit(1);
+    if (otros && otros.length) {
+      throw new BadRequestException(`la cotización #${lic.id} ya está asociada al pedido N° ${(otros[0] as any).id}`);
     }
     const { data, error } = await client
       .from('stock_solicitudes_cotizacion')
@@ -2134,7 +2215,7 @@ export class StockClientesService {
       .select()
       .single();
     if (error) throw new BadRequestException(error.message);
-    return data;
+    return { pedido: data, reemplazada };
   }
 
   // Datos de la cotización vinculada a una solicitud, listos para el PDF del
