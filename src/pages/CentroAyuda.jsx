@@ -12,7 +12,7 @@ import {
   KeyRound, Globe, LayoutDashboard, Scale, Target, SlidersHorizontal, Percent,
   Mail, MessagesSquare, Bell, CalendarCheck, Clock, UserCircle2, UserCog,
   Activity, Search, Send, Sparkles, BookOpen, Rocket, GraduationCap,
-  ChevronRight, LifeBuoy, Download,
+  ChevronRight, LifeBuoy, Download, Tags,
 } from "lucide-react";
 import { api } from "../lib/api";
 import { supabase } from "../lib/supabase";
@@ -30,7 +30,7 @@ const ICONOS = {
   Package, Boxes, Megaphone, CreditCard, Wallet, Landmark, MapPin, Banknote,
   KeyRound, Globe, LayoutDashboard, Scale, Target, SlidersHorizontal, Percent,
   Mail, MessagesSquare, Bell, CalendarCheck, Clock, UserCircle2, UserCog,
-  Activity,
+  Activity, Tags,
 };
 
 const ROLE_LABELS = {

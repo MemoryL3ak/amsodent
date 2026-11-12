@@ -58,7 +58,15 @@ export function mensajeDeCambios(productos: { sku: string | null; nombre: string
 export class PreciosCambiosService {
   private readonly logger = new Logger(PreciosCambiosService.name);
 
+  /* (2026-11-12) Quien quiera enterarse de que hay cambios nuevos en el
+     historial (el envío al Google Sheet de precios) se anota aquí. */
+  private readonly oyentes: (() => void)[] = [];
+
   constructor(private supabase: SupabaseService) {}
+
+  alRegistrar(fn: () => void) {
+    this.oyentes.push(fn);
+  }
 
   private get db() {
     return this.supabase.getClient();
@@ -94,6 +102,14 @@ export class PreciosCambiosService {
       }
     } catch (e: any) {
       this.logger.warn(`Historial de precios: ${e?.message || e}`);
+    }
+    // Cada fila del historial nace pendiente de enviar al Google Sheet de precios.
+    for (const fn of this.oyentes) {
+      try {
+        fn();
+      } catch {
+        /* el envío al Sheet nunca frena el guardado */
+      }
     }
     try {
       await this.avisar(cambios, usuario, meta.origen);

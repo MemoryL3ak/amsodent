@@ -13,6 +13,8 @@ export const MODULOS = [
   { key: "crear_productos", label: "Crear productos con SKU (formulario completo)", grupo: "Comercial" },
   // (2026-10-27) Editar productos del catálogo como un admin (menos aprobar pendientes).
   { key: "editar_productos", label: "Editar productos (formulario completo)", grupo: "Comercial" },
+  // (2026-11-12) Pantalla «Actualización de precios» y envío al Google Sheet «Lista de Precios».
+  { key: "actualizar_precios", label: "Actualización de precios (y envío al Google Sheet)", grupo: "Comercial" },
   // (2026-10-14) Campañas: solo admin y quien lo tenga en su perfil.
   // (2026-11-05) Un solo módulo: Campañas de margen (plataforma y portal del cliente).
   { key: "campanas", label: "Campañas de margen (plataforma y portal)", grupo: "Comercial" },

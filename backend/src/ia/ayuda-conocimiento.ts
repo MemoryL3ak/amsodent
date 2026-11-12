@@ -518,6 +518,49 @@ propias se sigue usando Inventario → Traslados. Requiere la migración
 20261106_recepciones_stock. (Es distinto de la pestaña «Recepción» del portal
 del cliente, que carga el inventario propio de la clínica.)
 
+### Actualización de precios (/actualizacion-precios) — nov 2026
+Admin y quien tenga «Actualización de precios» (actualizar_precios) en su
+perfil; la columna de costo solo con admin o «Ver el costo de los productos»
+(ver_costos). Desde nov 2026 los precios se mantienen EN LA PLATAFORMA y la
+plataforma los escribe en el GOOGLE SHEET «Lista de Precios», que queda solo
+para consultar (ya no se edita a mano). Cada cambio de costo o de lista —desde
+esta pantalla, al editar un producto, en una carga masiva o al deshacer una
+carga— se envía solo al Sheet a los pocos segundos: a la fila del producto
+(por SKU) en la pestaña de su categoría y a «Consolidado_auto». La plataforma
+guarda NETO; en el Sheet las listas van CON IVA (neto × 1,19) y el costo en
+neto. Solo se escriben las celdas de costo y de las listas: fórmulas de margen,
+stock y medidas no se tocan. Cada envío queda anotado en la pestaña «Cambios de
+precio» del Sheet. LISTA 3: en la plataforma casi siempre se calcula (lista 2 ×
+1,08); al cambiar la lista 2, la lista 3 del Sheet la sigue si esa fila ya
+tenía lista 3.
+Pestaña «Precios»: grilla de productos con SKU; se escribe el precio nuevo
+(neto) en costo, lista 1 o lista 2 (la celda cambiada queda en ámbar con el
+valor anterior debajo); filtros por texto, categoría y «Mostrar». Con cambios,
+una barra fija abajo ofrece Descartar, «Simular» (muestra antes → después y en
+qué pestaña y fila del Sheet queda; no guarda) y «Guardar y enviar al Sheet»
+(solo con la simulación de esos mismos cambios; hasta 80 productos por vez).
+Guardar equivale a editar el producto: actualiza Bsale, queda en el historial
+del producto y avisa en la campana.
+Pestaña «Google Sheet»: estado de la conexión y la cuenta de servicio con la
+que escribe la plataforma (debe estar como EDITOR en el Sheet; el resto de las
+personas conviene dejarlas como lectoras, eso se maneja en «Compartir» del
+Sheet), cambios por enviar o con error y «Enviar la cola ahora». Si Google
+falla se reintenta solo cada 5 minutos, hasta 8 veces. «NIVELAR»: compara todos
+los productos con SKU contra el Sheet y escribe en el Sheet los precios
+distintos; sirve la primera vez y cuando alguien escribió a mano en el Sheet.
+Se eligen los precios (lista 3 viene desmarcada) y si se agregan al Sheet los
+productos activos que no están; «Simular» muestra las diferencias (Excel) y
+«Enviar al Sheet» solo se habilita con esa simulación. Nivelar no cambia nada
+en la plataforma, no borra precios del Sheet ni toca fórmulas.
+Pestaña «Historial»: últimos 300 cambios de precio con su estado en el Sheet:
+En el Sheet, Por enviar, Enviando, Con error (motivo e intento), No corresponde
+(el SKU no está en el Sheet y el producto está inactivo, o su pestaña cambió de
+estructura) y Anterior al envío. Un producto nuevo llega al Sheet con su primer
+cambio de precio o con Nivelar. Si una pestaña del Sheet cambió sus encabezados
+(ej.: la columna H ya no dice «Costo») no se escribe y la pantalla lo avisa.
+Requiere la migración 20261112_precios_sheet, la variable
+GOOGLE_SERVICE_ACCOUNT_JSON y la API de Google Sheets habilitada.
+
 ### Movimiento diario de productos (/movimiento-productos) — nov 2026
 Admin y quien tenga «Gestión de compras». Qué productos SALIERON cada día y
 cuántas unidades, según la creación de las guías de despacho: lee de Bsale las

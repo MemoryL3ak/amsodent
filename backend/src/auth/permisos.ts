@@ -59,6 +59,10 @@ export const MODULOS: string[] = [
   // (precios, costo, medidas, SKU), como un admin, salvo aprobar los
   // pendientes. Pedido de Ariel para Francisco. Asignable por perfil.
   'editar_productos',
+  // (2026-11-12) Actualización de precios: cambiar costo y listas de precios
+  // desde su pantalla y manejar el envío al Google Sheet «Lista de Precios»
+  // (nivelar, reintentar). Asignable por perfil; el costo exige además 'ver_costos'.
+  'actualizar_precios',
   // (2026-10-16) Gestión de compras: adjudicadas vs. stock; asignable por perfil.
   'gestion_compras',
   // (2026-11-03) Proveedores y Órdenes de Compra a proveedores por perfil

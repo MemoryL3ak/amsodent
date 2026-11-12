@@ -291,6 +291,32 @@ export const GRUPOS_MANUAL = [
         },
       },
       {
+        id: "actualizacion-precios",
+        titulo: "Actualización de precios",
+        icono: "Tags",
+        ruta: "/actualizacion-precios",
+        acceso: { tipo: "modulo", key: "actualizar_precios" },
+        quien: "Administradores y quien tenga «Actualización de precios» en su perfil de permisos (el costo, solo con «Ver el costo de los productos»)",
+        resumen: "Los precios se cambian en la plataforma y la plataforma los escribe en el Google Sheet «Lista de Precios», que queda solo para consultar.",
+        queEs: [
+          "Desde noviembre de 2026 la lista de precios se mantiene en la plataforma. Cada cambio de costo o de lista —desde esta pantalla, al editar un producto, en una carga masiva o al deshacer una carga— se envía solo al Google Sheet a los pocos segundos: a la fila del producto en la pestaña de su categoría y a «Consolidado_auto». El Sheet deja de editarse a mano.",
+          "La plataforma guarda los precios netos; en el Sheet las listas van con IVA (neto × 1,19) y el costo en neto. Solo se escriben las celdas de costo y de las listas: las fórmulas de margen, el stock y las medidas del Sheet no se tocan. Cada envío queda anotado en la pestaña «Cambios de precio» del propio Sheet.",
+        ],
+        funciones: [
+          "Pestaña «Precios»: una grilla con los productos con SKU. Se escribe el precio nuevo (neto) en la celda de costo, lista 1 o lista 2; la celda cambiada queda en ámbar con el valor anterior debajo. Filtros por texto, categoría y «Mostrar» (con cambios sin guardar, sin precio en lista 1, sin costo, inactivos). Mientras hay cambios, una barra queda fija abajo con Descartar, Simular y Guardar.",
+          "Dos pasos: «Simular» muestra, sin guardar nada, el antes → después de cada precio y en qué pestaña y fila del Sheet queda (o por qué no se escribirá). «Guardar y enviar al Sheet» solo se habilita con la simulación de esos mismos cambios a la vista; si se cambia algo hay que simular de nuevo. Guardar aquí es lo mismo que editar el producto: el precio también se actualiza en Bsale, queda en el historial del producto y avisa al equipo en la campana.",
+          "Lista 3: en la plataforma casi siempre se calcula sola (lista 2 × 1,08). Cuando cambia la lista 2, la lista 3 del Sheet la sigue si esa fila ya tenía lista 3.",
+          "Pestaña «Google Sheet»: el estado de la conexión (y la cuenta con la que la plataforma escribe, que debe estar como Editor en el Sheet), cuántos cambios están por enviar o con error y «Enviar la cola ahora». Si Google falla, el envío se reintenta solo cada 5 minutos, hasta 8 veces.",
+          "«Nivelar»: compara todos los productos con SKU contra el Sheet y escribe en el Sheet los precios que estén distintos. Sirve la primera vez (el Sheet y la plataforma no dicen lo mismo) y cada vez que alguien haya escrito a mano en el Sheet. Se eligen los precios a nivelar (la lista 3 viene desmarcada) y si se agregan al Sheet los productos activos que no están. «Simular» muestra las diferencias —se descargan en Excel— y «Enviar al Sheet» solo se habilita con esa simulación; si algo cambió entretanto, pide simular de nuevo. No cambia nada en la plataforma, no borra precios del Sheet y no toca fórmulas.",
+          "Pestaña «Historial»: los últimos 300 cambios de precio, vengan de donde vengan, con quién lo hizo y su estado en el Sheet: En el Sheet, Por enviar, Enviando, Con error (con el motivo y el número de intento), No corresponde (el producto no está en el Sheet y está inactivo, o su pestaña cambió de estructura) o Anterior al envío (cambios de antes de que existiera este envío).",
+        ],
+        tips: [
+          "Un producto nuevo de la plataforma llega al Sheet con su primer cambio de precio o con «Nivelar» (queda al final de la pestaña de su categoría, con el formato y las fórmulas de la fila anterior).",
+          "Si una pestaña del Sheet cambió sus encabezados (por ejemplo, la columna H ya no dice «Costo»), la plataforma no la escribe y lo avisa en la pestaña «Google Sheet»: hay que corregir el encabezado en el Sheet.",
+          "Quién puede ver o editar el Sheet se maneja en «Compartir» del propio Sheet; quién puede cambiar precios en la plataforma, en Usuarios → Perfiles de permisos.",
+        ],
+      },
+      {
         id: "inventario",
         titulo: "Inventario",
         icono: "Boxes",

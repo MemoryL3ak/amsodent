@@ -62,6 +62,7 @@ import {
   Store,
   HandCoins,
   BellRing,
+  Tags,
 } from "lucide-react";
 import NotificacionesMenu from "./NotificacionesMenu";
 import RecordatoriosCorreo from "./RecordatoriosCorreo";
@@ -228,6 +229,8 @@ export default function SidebarLayout() {
     esAdmin && { to: "/asignacion-cartera", icon: Briefcase, label: "Asignación de cartera" },
     puede("bitacora") && { to: "/bitacora-actividades", icon: CalendarDays, label: "Bitácora actividades" },
     puede("productos") && { to: "/productos",   icon: Package,       label: "Productos" },
+    // (2026-11-12) Precios → Google Sheet: por permiso de perfil (el admin siempre).
+    puede("actualizar_precios") && { to: "/actualizacion-precios", icon: Tags, label: "Actualización de precios" },
     // (2026-10-09) Explorador de productos: en Comercial y para todos los roles (antes «Explorador de Precios», solo admin, en Reportes).
     { to: "/explorador-precios", icon: Store, label: "Explorador de Productos" },
     // (2026-10-01) Margen por marca / categoría sobre una lista, con vigencia.

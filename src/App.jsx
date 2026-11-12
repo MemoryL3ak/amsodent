@@ -24,6 +24,7 @@ import Inventario from "./pages/Inventario";
 import GestionCompras from "./pages/GestionCompras";
 import MovimientoProductos from "./pages/MovimientoProductos";
 import RecepcionStock from "./pages/RecepcionStock";
+import ActualizacionPrecios from "./pages/ActualizacionPrecios";
 
 // CLIENTES
 import Clientes from "./pages/Clientes";
@@ -197,6 +198,15 @@ export default function App() {
             element={
               <RequireModulo modulo="recepcion_stock">
                 <RecepcionStock />
+              </RequireModulo>
+            }
+          />
+          {/* ACTUALIZACIÓN DE PRECIOS (2026-11-12): precios → Google Sheet, por permiso. */}
+          <Route
+            path="actualizacion-precios"
+            element={
+              <RequireModulo modulo="actualizar_precios">
+                <ActualizacionPrecios />
               </RequireModulo>
             }
           />
