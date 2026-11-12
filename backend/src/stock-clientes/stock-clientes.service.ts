@@ -2104,15 +2104,28 @@ export class StockClientesService {
       throw new BadRequestException('Falta la cotización a vincular.');
     }
     const [{ data: sol }, { data: lic }] = await Promise.all([
-      client.from('stock_solicitudes_cotizacion').select('id, rut, razon_social').eq('id', solicitudId).maybeSingle(),
+      client.from('stock_solicitudes_cotizacion').select('id, rut, razon_social, licitacion_id').eq('id', solicitudId).maybeSingle(),
       client.from('licitaciones').select('id, rut_entidad, nombre_entidad').eq('id', licitacionId).maybeSingle(),
     ]);
     if (!sol) throw new NotFoundException('Pedido no encontrado.');
     if (!lic) throw new NotFoundException('Cotización no encontrada.');
     if (normalizarRut(sol.rut) !== normalizarRut(lic.rut_entidad)) {
       throw new BadRequestException(
-        `la cotización #${lic.id} es de ${lic.nombre_entidad || 'otro cliente'} (${lic.rut_entidad || 'sin RUT'}) y el pedido N° ${sol.id} es de ${sol.razon_social || 'otro cliente'} (${formatearRut(normalizarRut(sol.rut))})`,
+        `la cotización #${lic.id} es de ${String(lic.nombre_entidad || 'otro cliente').trim()} (${lic.rut_entidad || 'sin RUT'}) y el pedido N° ${sol.id} es de ${sol.razon_social || 'otro cliente'} (${formatearRut(normalizarRut(sol.rut))})`,
       );
+    }
+    /* Un pedido que ya tiene su cotización no la cambia por otra: se corrige
+       la que tiene. Al pedido N° 27 (ya validado, cotización #6701) se le
+       pisó el vínculo con la #6728 y el cliente pasó a ver la guía y la
+       factura de otro. La bandeja solo ofrece «Crear cotización» cuando el
+       pedido no tiene una viva, así que esto solo frena vínculos que llegan
+       de un borrador viejo. Si la anterior fue eliminada, sí se reemplaza. */
+    const anteriorId = Number(sol.licitacion_id) || 0;
+    if (anteriorId && anteriorId !== Number(lic.id)) {
+      const { data: anterior } = await client.from('licitaciones').select('id').eq('id', anteriorId).maybeSingle();
+      if (anterior) {
+        throw new BadRequestException(`el pedido N° ${sol.id} ya tiene la cotización #${anteriorId}`);
+      }
     }
     const { data, error } = await client
       .from('stock_solicitudes_cotizacion')
