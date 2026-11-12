@@ -922,9 +922,17 @@ export default function PedidosPortal() {
                               #{s.cotizacion.id}{s.cotizacion.id_licitacion && s.cotizacion.id_licitacion !== String(s.cotizacion.id) ? ` · ${s.cotizacion.id_licitacion}` : ""}
                             </Link>
                           ) : (
-                            <button type="button" className="btn btn-primary btn-sm" onClick={() => crearCotizacion(s)} title="Crear cotización desde el pedido (se abre en una pestaña nueva)">
-                              <FilePlus size={12} style={{ marginRight: 4 }} /> Crear
-                            </button>
+                            /* (2026-11-12) «Asociar» a la vista, bajo «Crear»: la fila ya es
+                               alta por la columna Pedido, así que apilados no la agrandan ni
+                               ensanchan la columna. */
+                            <div style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }}>
+                              <button type="button" className="btn btn-primary btn-sm" onClick={() => crearCotizacion(s)} title="Crear cotización desde el pedido (se abre en una pestaña nueva)">
+                                <FilePlus size={12} style={{ marginRight: 4 }} /> Crear
+                              </button>
+                              <button type="button" className="btn btn-secondary btn-sm" onClick={() => setModalAsociar(s)} disabled={accionando} title="Asociar una cotización ya creada de este cliente">
+                                <Link2 size={12} style={{ marginRight: 4 }} /> Asociar
+                              </button>
+                            </div>
                           )}
                           <button
                             type="button"
