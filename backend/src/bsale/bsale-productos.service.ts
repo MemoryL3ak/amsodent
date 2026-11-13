@@ -12,9 +12,10 @@ import { BsaleFacturacionService } from './bsale-facturacion.service';
      2. Si no, se crea el PRODUCTO (nombre, tipo de producto = la categoría del
         sistema, que coincide con los tipos de la cuenta) y su VARIANTE con el
         SKU como código.
-     3. Se ponen los precios NETOS en las listas de Bsale: WEB-PARTICULAR (2)
+     3. Se ponen los precios en las listas de Bsale: WEB-PARTICULAR (2)
         recibe la lista 1 del sistema y PRECIO MP (3) la lista 2 (así están los
         productos actuales, p. ej. IME00053: 25.126 / 22.269 en ambos lados).
+        Desde el 2026-11-12 lo que se hace calzar es el BRUTO (ver IVA abajo).
         Bsale no permite crear la fila de precio: ya existe para toda variante
         y solo se edita (PUT).
    El IVA (impuesto 1) está marcado "para todos los productos" en la cuenta,
@@ -43,6 +44,28 @@ const LISTAS: { lista: number; nombre: string; campo: string }[] = [
 ];
 const TIPO_SIN_TIPO = 1;
 
+/* (2026-11-12) Lo que manda es el precio BRUTO (aclaración de Ariel: «Lista
+   precio 1 bruto → WEB-PARTICULAR, Lista precio 2 bruto → PRECIO MP»).
+   La plataforma guarda el neto en pesos enteros y muestra «Precio Bruto» =
+   neto × 1,19 redondeado; ese bruto es el que tiene que verse en Bsale. Como
+   la API de Bsale solo recibe el neto (`variantValue`), se le manda
+   bruto ÷ 1,19 con sus decimales: mandar el neto entero (1.008) dejaba el
+   bruto de Bsale en 1.199,52 en vez de 1.200. */
+const IVA = 1.19;
+const brutoDeNeto = (neto: number) => Math.round(neto * IVA);
+/* Bruto que tiene (o devolvió) Bsale en un detalle de lista; null si no viene. */
+const brutoDeBsale = (d: any): number | null => {
+  const conIva = Number(d?.variantValueWithTaxes);
+  if (Number.isFinite(conIva) && conIva > 0) return Math.round(conIva);
+  const neto = Number(d?.variantValue);
+  return Number.isFinite(neto) && d?.variantValue != null ? Math.round(neto * IVA) : null;
+};
+/* ¿Bsale ya tiene este precio? Sí cuando su bruto es el de la plataforma, o
+   cuando su neto está a menos de un peso del neto entero de la plataforma (el
+   mismo bruto escrito allá a mano: 37.500 → 31.512,6 contra 31.512 acá). */
+const precioAlDia = (d: any, neto: number): boolean =>
+  brutoDeBsale(d) === brutoDeNeto(neto) || Math.abs((Number(d?.variantValue) || 0) - neto) < 1;
+
 export type ResultadoBsale = {
   estado: 'creado' | 'ya_existia' | 'enlazado' | 'sku_asignado' | 'actualizado' | 'sin_sku' | 'apagada' | 'error';
   mensaje?: string;
@@ -50,7 +73,7 @@ export type ResultadoBsale = {
   producto_id?: number | null;
   nombre_bsale?: string;
   tipo_producto?: string;
-  precios?: { lista: number; nombre: string; neto: number }[];
+  precios?: { lista: number; nombre: string; neto: number; bruto?: number }[];
   avisos?: string[];
   /* Listas cuyo precio no quedó en Bsale (también va a productos.bsale_sync_error). */
   error_precios?: string;
@@ -156,8 +179,8 @@ export class BsaleProductosService {
             avisos.push(`La lista ${l.nombre} no tiene fila para la variante nueva: pon el precio a mano en Bsale.`);
             continue;
           }
-          await this.ponerPrecio(l.lista, Number(d.id), neto);
-          precios.push({ lista: l.lista, nombre: l.nombre, neto });
+          await this.ponerPrecio(l.lista, Number(d.id), brutoDeNeto(neto));
+          precios.push({ lista: l.lista, nombre: l.nombre, neto, bruto: brutoDeNeto(neto) });
         } catch (e: any) {
           avisos.push(`No se pudo poner el precio en la lista ${l.nombre}: ${String(e?.message || e).slice(0, 120)}`);
         }
@@ -272,13 +295,13 @@ export class BsaleProductosService {
             fallos.push(`${l.nombre}: sin fila para la variante`);
             continue;
           }
-          if (Math.round(Number(d.variantValue) || 0) === neto) { alDia++; continue; }
-          await this.ponerPrecio(l.lista, Number(d.id), neto);
-          precios.push({ lista: l.lista, nombre: l.nombre, neto });
+          if (precioAlDia(d, neto)) { alDia++; continue; }
+          await this.ponerPrecio(l.lista, Number(d.id), brutoDeNeto(neto));
+          precios.push({ lista: l.lista, nombre: l.nombre, neto, bruto: brutoDeNeto(neto) });
         } catch (e: any) {
           const motivo = String(e?.message || e).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120);
           avisos.push(`No se pudo poner el precio en la lista ${l.nombre}: ${motivo}`);
-          fallos.push(`${l.nombre} (${neto}): ${motivo}`);
+          fallos.push(`${l.nombre} (${brutoDeNeto(neto)} con IVA): ${motivo}`);
         }
       }
       const errorPrecios = fallos.length ? `Precios sin actualizar en Bsale · ${fallos.join(' · ')}`.slice(0, 500) : null;
@@ -305,11 +328,11 @@ export class BsaleProductosService {
      con el SKU FP00048): ningún precio cambiado desde la plataforma llegaba a
      Bsale, y el fallo se iba en un aviso sin quedar anotado.
      Si la respuesta trae el valor y no es el enviado, se da por no hecho. */
-  private async ponerPrecio(lista: number, detalleId: number, neto: number) {
-    const r = await this.facturacion.apiEnviar('PUT', `/price_lists/${lista}/details/${detalleId}.json`, { variantValue: neto, id: detalleId });
-    const quedo = Number(r?.variantValue);
-    if (Number.isFinite(quedo) && Math.round(quedo) !== neto) {
-      throw new Error(`Bsale no tomó el precio (quedó en ${Math.round(quedo)})`);
+  private async ponerPrecio(lista: number, detalleId: number, bruto: number) {
+    const r = await this.facturacion.apiEnviar('PUT', `/price_lists/${lista}/details/${detalleId}.json`, { variantValue: bruto / IVA, id: detalleId });
+    const quedo = brutoDeBsale(r);
+    if (quedo !== null && quedo !== bruto) {
+      throw new Error(`Bsale no tomó el precio (quedó en ${quedo} con IVA)`);
     }
   }
 

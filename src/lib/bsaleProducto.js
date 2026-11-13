@@ -4,12 +4,14 @@
    (2026-10-07) Los transitorios sin SKU también van a Bsale (variante sin código). */
 
 const clp = (n) => `$${Math.round(Number(n) || 0).toLocaleString("es-CL")}`;
+// (2026-11-12) A Bsale va el precio bruto de cada lista: se muestra ese.
+const precioLista = (p) => (p.bruto > 0 ? `${p.nombre} ${clp(p.bruto)} con IVA` : `${p.nombre} ${clp(p.neto)}`);
 
 export function mensajeBsale(b) {
   if (!b || typeof b !== "object") return "";
   switch (b.estado) {
     case "creado": {
-      const precios = (b.precios || []).map((p) => `${p.nombre} ${clp(p.neto)}`).join(", ");
+      const precios = (b.precios || []).map(precioLista).join(", ");
       const avisos = (b.avisos || []).length ? ` Ojo: ${b.avisos.join(" ")}` : "";
       return `Creado en Bsale (variante ${b.variante_id}${b.tipo_producto ? `, tipo ${b.tipo_producto}` : ""}${precios ? `; precios: ${precios}` : "; sin precios: ponlos en Bsale"}).${avisos}`;
     }
@@ -24,7 +26,7 @@ export function mensajeBsale(b) {
     case "sku_asignado":
       return b.mensaje || `Se le puso el SKU a la variante ${b.variante_id} que ya estaba en Bsale.`;
     case "actualizado": {
-      const precios = (b.precios || []).map((p) => `${p.nombre} ${clp(p.neto)}`).join(", ");
+      const precios = (b.precios || []).map(precioLista).join(", ");
       const avisos = (b.avisos || []).length ? ` Ojo: ${b.avisos.join(" ")}` : "";
       // `mensaje`: el repaso de precios no encontró nada que cambiar.
       if (b.mensaje && !precios && !avisos) return b.mensaje;
