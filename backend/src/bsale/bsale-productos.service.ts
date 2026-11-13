@@ -52,6 +52,8 @@ export type ResultadoBsale = {
   tipo_producto?: string;
   precios?: { lista: number; nombre: string; neto: number }[];
   avisos?: string[];
+  /* Listas cuyo precio no quedó en Bsale (también va a productos.bsale_sync_error). */
+  error_precios?: string;
 };
 
 const normSku = (v: any) => String(v ?? '').replace(/\s+/g, '').toUpperCase();
@@ -154,7 +156,7 @@ export class BsaleProductosService {
             avisos.push(`La lista ${l.nombre} no tiene fila para la variante nueva: pon el precio a mano en Bsale.`);
             continue;
           }
-          await this.facturacion.apiEnviar('PUT', `/price_lists/${l.lista}/details/${Number(d.id)}.json`, { variantValue: neto });
+          await this.ponerPrecio(l.lista, Number(d.id), neto);
           precios.push({ lista: l.lista, nombre: l.nombre, neto });
         } catch (e: any) {
           avisos.push(`No se pudo poner el precio en la lista ${l.nombre}: ${String(e?.message || e).slice(0, 120)}`);
@@ -212,7 +214,7 @@ export class BsaleProductosService {
      los cambios de precio de una carga masiva. */
   async enviarCambiosVarios(productos: Record<string, any>[], opts: { motivo?: string; soloPrecios?: boolean; tope?: number } = {}) {
     const tope = Math.max(1, Math.min(Number(opts.tope) || 300, 2000));
-    const resumen = { total: 0, actualizados: 0, creados: 0, con_precios: 0, errores: 0, omitidos: 0 };
+    const resumen = { total: 0, actualizados: 0, creados: 0, con_precios: 0, precios_fallidos: 0, errores: 0, omitidos: 0 };
     for (const p of productos.slice(0, tope)) {
       resumen.total++;
       const r = await this.enviarCambios(p, opts);
@@ -221,6 +223,7 @@ export class BsaleProductosService {
       else if (r.estado === 'error') resumen.errores++;
       else resumen.omitidos++;
       if ((r.precios || []).length) resumen.con_precios++;
+      if (r.error_precios) resumen.precios_fallidos++;
     }
     if (productos.length > tope) resumen.omitidos += productos.length - tope;
     return resumen;
@@ -254,28 +257,59 @@ export class BsaleProductosService {
         });
       }
       const precios: ResultadoBsale['precios'] = [];
+      // Listas cuyo precio NO quedó en Bsale: se anotan en el producto para que
+      // la ficha lo muestre (antes solo viajaban en el aviso del momento).
+      const fallos: string[] = [];
+      let alDia = 0;
       for (const l of LISTAS) {
         const neto = Math.round(Number(producto[l.campo]) || 0);
         if (!(neto > 0)) continue;
         try {
           const det = await this.facturacion.apiGet(`/price_lists/${l.lista}/details.json?variantid=${varianteId}`);
           const d = det?.items?.[0];
-          if (!d?.id) { avisos.push(`La lista ${l.nombre} no tiene fila para esta variante: pon el precio a mano en Bsale.`); continue; }
-          if (Math.round(Number(d.variantValue) || 0) === neto) continue;
-          await this.facturacion.apiEnviar('PUT', `/price_lists/${l.lista}/details/${Number(d.id)}.json`, { variantValue: neto });
+          if (!d?.id) {
+            avisos.push(`La lista ${l.nombre} no tiene fila para esta variante: pon el precio a mano en Bsale.`);
+            fallos.push(`${l.nombre}: sin fila para la variante`);
+            continue;
+          }
+          if (Math.round(Number(d.variantValue) || 0) === neto) { alDia++; continue; }
+          await this.ponerPrecio(l.lista, Number(d.id), neto);
           precios.push({ lista: l.lista, nombre: l.nombre, neto });
         } catch (e: any) {
-          avisos.push(`No se pudo poner el precio en la lista ${l.nombre}: ${String(e?.message || e).slice(0, 120)}`);
+          const motivo = String(e?.message || e).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120);
+          avisos.push(`No se pudo poner el precio en la lista ${l.nombre}: ${motivo}`);
+          fallos.push(`${l.nombre} (${neto}): ${motivo}`);
         }
       }
-      await this.anotar(id, { ...(productoId && !productoBsaleId ? { bsale_product_id: productoId } : {}), bsale_sync_at: ahora, bsale_sync_error: null });
+      const errorPrecios = fallos.length ? `Precios sin actualizar en Bsale · ${fallos.join(' · ')}`.slice(0, 500) : null;
+      await this.anotar(id, { ...(productoId && !productoBsaleId ? { bsale_product_id: productoId } : {}), bsale_sync_at: ahora, bsale_sync_error: errorPrecios });
+      if (errorPrecios) this.logger.warn(`Producto ${sku || `#${id}`} (variante ${varianteId}): ${errorPrecios}${opts.motivo ? ` · ${opts.motivo}` : ''}`);
       this.logger.log(`Producto ${sku || `#${id}`} actualizado en Bsale (variante ${varianteId}${precios.length ? `, precios en ${precios.map((p) => p.nombre).join(', ')}` : ''})${opts.motivo ? ` · ${opts.motivo}` : ''}`);
-      return { estado: 'actualizado', variante_id: varianteId, producto_id: productoId, precios, avisos };
+      return {
+        estado: 'actualizado', variante_id: varianteId, producto_id: productoId, precios, avisos,
+        ...(errorPrecios ? { error_precios: errorPrecios } : {}),
+        ...(opts.soloPrecios && !precios.length && !fallos.length && alDia ? { mensaje: 'Los precios ya estaban al día en Bsale.' } : {}),
+      };
     } catch (e: any) {
       const mensaje = String(e?.message || e).slice(0, 300);
       await this.anotar(id, { bsale_sync_error: mensaje.slice(0, 500), bsale_sync_at: ahora });
       this.logger.warn(`Producto ${sku || `#${id}`} no se pudo actualizar en Bsale: ${mensaje}`);
       return { estado: 'error', mensaje };
+    }
+  }
+
+  /* (2026-11-12) Precio neto de una variante en una lista de Bsale.
+     El id del detalle va en la URL Y en el cuerpo: así lo documenta Bsale
+     (docs.bsale.dev/listas-de-precio → { "variantValue": 2000, "id": 1412 }).
+     Hasta hoy se mandaba solo `variantValue` y Bsale respondía 502 (comprobado
+     con el SKU FP00048): ningún precio cambiado desde la plataforma llegaba a
+     Bsale, y el fallo se iba en un aviso sin quedar anotado.
+     Si la respuesta trae el valor y no es el enviado, se da por no hecho. */
+  private async ponerPrecio(lista: number, detalleId: number, neto: number) {
+    const r = await this.facturacion.apiEnviar('PUT', `/price_lists/${lista}/details/${detalleId}.json`, { variantValue: neto, id: detalleId });
+    const quedo = Number(r?.variantValue);
+    if (Number.isFinite(quedo) && Math.round(quedo) !== neto) {
+      throw new Error(`Bsale no tomó el precio (quedó en ${Math.round(quedo)})`);
     }
   }
 

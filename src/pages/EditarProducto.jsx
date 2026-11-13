@@ -773,7 +773,7 @@ export default function EditarProducto() {
     setProducto((prev) => ({
       ...prev,
       bsale_variant_id: r?.variante_id ?? (r?.estado === "error" ? prev.bsale_variant_id : prev.bsale_variant_id),
-      bsale_sync_error: r?.estado === "error" ? r.mensaje || "error" : r?.variante_id ? null : prev.bsale_sync_error,
+      bsale_sync_error: r?.estado === "error" ? r.mensaje || "error" : r?.error_precios ? r.error_precios : r?.variante_id ? null : prev.bsale_sync_error,
     }));
   }
   async function enviarABsale() {
@@ -1024,7 +1024,13 @@ try {
                   {id && (
                     <div style={{ fontSize: 12, marginTop: 6, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                       {producto.bsale_variant_id ? (
-                        <span style={{ color: "#15803d", fontWeight: 600 }}>En Bsale · variante {producto.bsale_variant_id}{skuOriginal ? "" : " (sin SKU)"}</span>
+                        <>
+                          <span style={{ color: "#15803d", fontWeight: 600 }}>En Bsale · variante {producto.bsale_variant_id}{skuOriginal ? "" : " (sin SKU)"}</span>
+                          {/* (2026-11-12) Enlazado, pero el último envío dejó algo sin llegar (p. ej. un precio). */}
+                          {producto.bsale_sync_error && (
+                            <span style={{ color: "#b91c1c", overflowWrap: "anywhere" }}>{producto.bsale_sync_error}</span>
+                          )}
+                        </>
                       ) : producto.bsale_sync_error ? (
                         <span style={{ color: "#b91c1c", overflowWrap: "anywhere" }}>No se pudo enviar a Bsale: {producto.bsale_sync_error}</span>
                       ) : (

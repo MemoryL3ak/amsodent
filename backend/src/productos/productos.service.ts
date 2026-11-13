@@ -54,7 +54,17 @@ export class ProductosService {
     if (error) throw new BadRequestException(error.message);
     if (!data) throw new NotFoundException('Producto no encontrado');
     if (!this.bsaleProductos) throw new BadRequestException('La integración con Bsale no está disponible.');
-    return this.bsaleProductos.sincronizar(data as any, { motivo: 'reenvío desde la ficha' });
+    const motivo = 'reenvío desde la ficha';
+    const r = await this.bsaleProductos.sincronizar(data as any, { motivo });
+    // (2026-11-12) Si ya estaba en Bsale, el botón además repasa los precios de
+    // las listas (solo precios: no pisa el nombre que tiene allá). Es la forma
+    // de reenviar un precio que no llegó.
+    if (r.estado !== 'ya_existia' || !r.variante_id) return r;
+    const act = await this.bsaleProductos.actualizar(
+      { ...(data as any), bsale_variant_id: r.variante_id, bsale_product_id: r.producto_id ?? (data as any).bsale_product_id },
+      { motivo, soloPrecios: true },
+    );
+    return { ...act, avisos: [...(r.avisos || []), ...(act.avisos || [])] };
   }
 
   /* Productos que aún no están en Bsale (2026-10-07): simular cuenta cuántos;
