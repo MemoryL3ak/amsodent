@@ -26,6 +26,8 @@ export function mensajeBsale(b) {
     case "actualizado": {
       const precios = (b.precios || []).map((p) => `${p.nombre} ${clp(p.neto)}`).join(", ");
       const avisos = (b.avisos || []).length ? ` Ojo: ${b.avisos.join(" ")}` : "";
+      // `mensaje`: el repaso de precios no encontró nada que cambiar.
+      if (b.mensaje && !precios && !avisos) return b.mensaje;
       return `Actualizado en Bsale (variante ${b.variante_id}${precios ? `; precios: ${precios}` : ""}).${avisos}`;
     }
     case "error":
