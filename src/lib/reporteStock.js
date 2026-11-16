@@ -1,6 +1,8 @@
 // Utilidades compartidas para exportar reportes de stock desde el portal del
 // cliente y el portal de gestión:
 //   - descargarCSV: archivo .csv compatible con Excel chileno (separador ";" + BOM)
+//   - descargarExcel: libro .xlsx de verdad (una o varias hojas, números como
+//     números, filtros y anchos de columna)
 //   - descargarReportePDF: genera y descarga un PDF VECTORIAL (texto seleccionable,
 //     ajustado a la página) con la identidad de Amsodent, directamente como archivo.
 
@@ -66,6 +68,61 @@ export function descargarCSV(filename, headers, rows) {
   URL.revokeObjectURL(url);
 }
 
+/* Celda de fecha para descargarExcel a partir de "AAAA-MM-DD…". El número de
+   serie se calcula a mano (días desde el 30-12-1899) en vez de pasar un Date:
+   la conversión de la librería depende de la zona horaria del equipo y en
+   Chile corre la fecha unos minutos, o un día entero. Sin fecha → celda vacía. */
+export function celdaFecha(iso) {
+  const m = String(iso || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return "";
+  const serie = (Date.UTC(+m[1], +m[2] - 1, +m[3]) - Date.UTC(1899, 11, 30)) / 86400000;
+  return { t: "n", v: serie, z: "dd-mm-yyyy" };
+}
+
+// Celda suelta con formato de pesos (para una tabla de resumen, donde el
+// formato no es de la columna entera).
+export const celdaMonto = (n) => ({ t: "n", v: Math.round(Number(n) || 0), z: "$#,##0" });
+
+/* Libro Excel (.xlsx). `hojas` = [{ nombre, headers, rows, formatos }]:
+     · rows: filas de valores; los números van como número (Excel los suma) y
+       una celda puede venir ya armada (celdaFecha);
+     · formatos: { índiceDeColumna: "$#,##0" } para las columnas numéricas.
+   Devuelve true/false, igual que descargarReportePDF. */
+export async function descargarExcel(filename, hojas = []) {
+  try {
+    const XLSX = await import("xlsx");
+    const wb = XLSX.utils.book_new();
+    const largoDe = (v) => {
+      if (v && typeof v === "object") return v.z === "dd-mm-yyyy" ? 10 : Math.round(Number(v.v) || 0).toLocaleString("es-CL").length + 3;
+      if (typeof v === "number") return Math.round(v).toLocaleString("es-CL").length + 2;
+      return String(v ?? "").length;
+    };
+    hojas.filter(Boolean).forEach((h) => {
+      const headers = h.headers || [];
+      const rows = h.rows || [];
+      const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+      ws["!cols"] = headers.map((enc, i) => ({
+        wch: Math.min(60, Math.max(8, String(enc).length, ...rows.map((f) => largoDe(f[i]))) + 2),
+      }));
+      Object.entries(h.formatos || {}).forEach(([col, formato]) => {
+        rows.forEach((_, r) => {
+          const celda = ws[XLSX.utils.encode_cell({ r: r + 1, c: Number(col) })];
+          if (celda && celda.t === "n") celda.z = formato;
+        });
+      });
+      if (rows.length && headers.length > 2) {
+        ws["!autofilter"] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: rows.length, c: headers.length - 1 } }) };
+      }
+      // Excel no acepta nombres de hoja de más de 31 caracteres ni con \ / ? * [ ] :
+      XLSX.utils.book_append_sheet(wb, ws, String(h.nombre || "Hoja").replace(/[\\/?*[\]:]/g, " ").slice(0, 31));
+    });
+    XLSX.writeFile(wb, filename);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function cargarLogo() {
   return new Promise((resolve) => {
     try {
@@ -103,6 +160,10 @@ export async function descargarReportePDF({
   headers = [],
   rows = [],
   aligns = [],
+  // Anchos relativos por columna (opcional). Sin ellos se reparten según la
+  // alineación; con muchas columnas conviene darlos para que quepan los montos.
+  pesos = null,
+  compacto = false,
   orientation = "landscape",
 }) {
   try {
@@ -248,9 +309,12 @@ export async function descargarReportePDF({
         // Barra de acento a la izquierda.
         setFill(t.color);
         doc.roundedRect(cx + 14, y + 14, 5, cardH - 28, 2.5, 2.5, "F");
-        // Valor grande.
+        // Valor grande (se achica si no cabe en la tarjeta: montos largos).
         doc.setFont(FONT, "bold");
         doc.setFontSize(23);
+        const anchoValor = doc.getTextWidth(String(k.valor));
+        const cabeValor = cardW - 30 - 12;
+        if (anchoValor > cabeValor) doc.setFontSize(Math.max(12, (23 * cabeValor) / anchoValor));
         setColor(t.color);
         doc.text(String(k.valor), cx + 30, y + 15, { baseline: "top" });
         // Etiqueta.
@@ -265,13 +329,17 @@ export async function descargarReportePDF({
     }
 
     // ── Tabla ───────────────────────────────────────────────────────────
-    const weights = headers.map((h, i) => {
-      const a = aligns[i] || "left";
-      if (i === 0) return 2.4;
-      if (a === "right") return 1;
-      if (a === "center") return 1.15;
-      return 1.35;
-    });
+    const pesosValidos =
+      Array.isArray(pesos) && pesos.length === headers.length && pesos.every((p) => Number(p) > 0);
+    const weights = pesosValidos
+      ? pesos.map(Number)
+      : headers.map((h, i) => {
+          const a = aligns[i] || "left";
+          if (i === 0) return 2.4;
+          if (a === "right") return 1;
+          if (a === "center") return 1.15;
+          return 1.35;
+        });
     const sumW = weights.reduce((a, b) => a + b, 0) || 1;
     const colW = weights.map((w) => (w / sumW) * contentW);
     const colX = [];
@@ -282,9 +350,13 @@ export async function descargarReportePDF({
     });
 
     const padX = 10;
-    const padY = 8;
+    // `compacto`: filas más bajas y letra un punto menor, para listados largos
+    // (un inventario completo): caben cerca del doble de filas por página.
+    const padY = compacto ? 5.5 : 8;
     const headerH = 26;
-    const lineH = 11;
+    const lineH = compacto ? 9.5 : 11;
+    const fuenteFila = compacto ? 8 : 9;
+    const altoMinFila = compacto ? 20 : 26;
     const footerReserva = 44;
     let regionTop = 0;
 
@@ -311,7 +383,13 @@ export async function descargarReportePDF({
             : a === "center"
               ? colX[i] + colW[i] / 2
               : colX[i] + padX;
-        doc.text(String(h).toUpperCase(), tx, y + headerH / 2 + 0.5, {
+        // Un encabezado más ancho que su columna se achica en vez de pisar al vecino.
+        const rotulo = String(h).toUpperCase();
+        doc.setFontSize(8);
+        const anchoRotulo = doc.getTextWidth(rotulo);
+        const cabeRotulo = colW[i] - padX - 4;
+        if (anchoRotulo > cabeRotulo) doc.setFontSize(Math.max(6, (8 * cabeRotulo) / anchoRotulo));
+        doc.text(rotulo, tx, y + headerH / 2 + 0.5, {
           align: a === "left" ? "left" : a,
           baseline: "middle",
         });
@@ -321,7 +399,7 @@ export async function descargarReportePDF({
 
     dibujarEncabezadoTabla();
     doc.setFont(FONT, "normal");
-    doc.setFontSize(9);
+    doc.setFontSize(fuenteFila);
 
     rows.forEach((fila, ri) => {
       const celdas = fila.map((c, i) => {
@@ -330,11 +408,22 @@ export async function descargarReportePDF({
         if (a === "center" && tonoDeEstado(texto)) {
           return { tipo: "pill", texto };
         }
-        const lineas = doc.splitTextToSize(texto, colW[i] - padX * 2);
+        const cabe = colW[i] - padX * 2;
+        // Un monto o una cantidad (a la derecha, sin espacios) nunca se parte en
+        // dos líneas —"$187.500.00 / 0" se lee mal—: si no cabe, se achica.
+        if (a === "right" && !/\s/.test(texto)) {
+          const ancho = doc.getTextWidth(texto);
+          return { tipo: "texto", lineas: [texto], align: a, tam: ancho > cabe ? Math.max(5.5, (fuenteFila * cabe) / ancho) : null };
+        }
+        // La primera columna se dibuja en negrita: se mide en negrita para que
+        // el corte de línea calce con lo que se imprime.
+        if (i === 0) doc.setFont(FONT, "bold");
+        const lineas = doc.splitTextToSize(texto, cabe);
+        if (i === 0) doc.setFont(FONT, "normal");
         return { tipo: "texto", lineas, align: a };
       });
       const maxLineas = Math.max(1, ...celdas.map((c) => c.lineas?.length || 1));
-      const rowH = Math.max(26, maxLineas * lineH + padY * 2);
+      const rowH = Math.max(altoMinFila, maxLineas * lineH + padY * 2);
 
       if (y + rowH > pageH - margin - footerReserva) {
         cerrarMarco(y);
@@ -342,7 +431,7 @@ export async function descargarReportePDF({
         y = margin + 6;
         dibujarEncabezadoTabla();
         doc.setFont(FONT, "normal");
-        doc.setFontSize(9);
+        doc.setFontSize(fuenteFila);
       }
 
       if (ri % 2 === 1) {
@@ -371,7 +460,7 @@ export async function descargarReportePDF({
             baseline: "middle",
           });
           doc.setFont(FONT, "normal");
-          doc.setFontSize(9);
+          doc.setFontSize(fuenteFila);
         } else {
           const a = celda.align;
           doc.setFont(FONT, i === 0 ? "bold" : "normal");
@@ -382,12 +471,14 @@ export async function descargarReportePDF({
               : a === "center"
                 ? colX[i] + colW[i] / 2
                 : colX[i] + padX;
+          if (celda.tam) doc.setFontSize(celda.tam);
           celda.lineas.forEach((ln, li) => {
             doc.text(ln, tx, y + padY + li * lineH, {
               align: a === "left" ? "left" : a,
               baseline: "top",
             });
           });
+          if (celda.tam) doc.setFontSize(fuenteFila);
           doc.setFont(FONT, "normal");
         }
       });

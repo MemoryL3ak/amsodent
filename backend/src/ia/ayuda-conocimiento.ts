@@ -953,7 +953,14 @@ acceso) usan la ventana de confirmación del sistema.
   o ubicación; «Guardar stock» muestra antes un resumen de cambios (nuevos,
   modificados con antes → después, quitados) para confirmar; el administrador
   de la cuenta ve en cada producto los últimos 5 movimientos de stock (quién y
-  cuándo; el «quién» se registra desde octubre 2026). Incluye el Explorador de precios: el cliente busca un
+  cuándo; el «quién» se registra desde octubre 2026). DESCARGAR EL INVENTARIO
+  (nov 2026): el botón «Descargar» de Gestión de Stock y el de la pestaña
+  Inventario bajan el inventario COMPLETO de la sucursal elegida en Excel
+  (.xlsx) o en PDF, sin importar lo escrito en el buscador. En Gestión de Stock
+  sale con ubicación, stock, umbrales bajo y crítico, precio, total y estado, y
+  el mismo botón ofrece además el reporte de «Solo stock bajo y crítico». En
+  Inventario sale con costo promedio y valorización, y el Excel trae la hoja
+  «Lotes» (cada ingreso con stock y su costo). Incluye el Explorador de precios: el cliente busca un
   insumo por palabra clave y el portal compara en vivo los precios de las
   tiendas dentales chilenas online (la tienda propia amsodentmedical.cl SIEMPRE
   primera y destacada, más Orbis, Gexa, SP Dental, Clandent, J-Dent, Techdent y

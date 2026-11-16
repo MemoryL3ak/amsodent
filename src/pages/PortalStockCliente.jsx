@@ -53,7 +53,7 @@ import {
 } from "lucide-react";
 
 import DropdownSelect from "../components/ui/DropdownSelect";
-import { descargarCSV, descargarReportePDF } from "../lib/reporteStock";
+import { celdaFecha, celdaMonto, descargarExcel, descargarReportePDF } from "../lib/reporteStock";
 import { generarPDFcotizacion } from "../utils/generarPDFcotizacion";
 import { CUENTA_VACIA, calcularCuentas, dedupFacturas, estadoDeFactura, plazoDias } from "../lib/cuentasFacturas";
 
@@ -1889,7 +1889,8 @@ function PantallaDeclaracion({ cliente, setToast }) {
       .filter((r) => r.sem === "rojo" || r.sem === "amarillo");
   }
 
-  function exportarCSV() {
+  // (2026-11-16) Sale como .xlsx de verdad (antes era un CSV), igual que el inventario completo.
+  async function exportarAlertasExcel() {
     const filas = filasReporte();
     if (filas.length === 0) {
       setToast({
@@ -1915,14 +1916,133 @@ function PantallaDeclaracion({ cliente, setToast }) {
       r.marca || "",
       r.unidad || "",
       Number(r.stock_actual) || 0,
-      r.stock_bajo || "",
-      r.stock_minimo || "",
+      numeroOVacio(r.stock_bajo),
+      numeroOVacio(r.stock_minimo),
       parsePrecio(r.precio_unitario),
       (Number(r.stock_actual) || 0) * parsePrecio(r.precio_unitario),
       r.sem === "rojo" ? "Crítico" : "Bajo",
     ]);
-    const fecha = new Date().toISOString().slice(0, 10);
-    descargarCSV(`reporte-stock-${fecha}.csv`, headers, rows);
+    const ok = await descargarExcel(`reporte-stock-${hoyChile()}.xlsx`, [
+      { nombre: "Stock bajo y crítico", headers, rows, formatos: { 6: "$#,##0", 7: "$#,##0" } },
+    ]);
+    if (!ok) setToast({ type: "error", mensaje: "No pudimos generar el Excel. Intente nuevamente." });
+  }
+
+  /* (2026-11-16) Pedido de Ariel: descargar el inventario COMPLETO en Excel y
+     en PDF (hasta ahora solo salía el reporte de productos en alerta). Va todo
+     lo de la sucursal elegida, tal como está en pantalla —incluidos los
+     cambios sin guardar— y sin importar lo escrito en el buscador. */
+  function filasInventario() {
+    const ubic = new Map(ubicaciones.map((u) => [String(u.id), u.nombre]));
+    return items
+      .filter((it) => String(it.nombre || "").trim())
+      .map((it) => {
+        const stock = Number(it.stock_actual) || 0;
+        const precio = parsePrecio(it.precio_unitario);
+        const sem = semaforoColor(it.stock_actual, it.stock_minimo, it.stock_bajo);
+        return { ...it, stock, precio, total: stock * precio, sem, estado: SEMAFORO_BADGES[sem].label, ubicacion: ubic.get(String(it.ubicacion_id)) || "" };
+      });
+  }
+
+  function sinProductosParaDescargar(filas) {
+    if (filas.length > 0) return false;
+    setToast({ type: "warning", mensaje: "Todavía no hay productos en el inventario para descargar." });
+    return true;
+  }
+
+  async function descargarInventarioExcel() {
+    const filas = filasInventario();
+    if (sinProductosParaDescargar(filas)) return;
+    const ok = await descargarExcel(`inventario-${slugArchivo(sucursalActual?.nombre)}${hoyChile()}.xlsx`, [
+      {
+        nombre: "Inventario",
+        headers: [
+          "SKU",
+          "Producto",
+          "Marca",
+          "Formato",
+          "Ubicación",
+          "Stock actual",
+          "Stock bajo",
+          "Stock crítico",
+          inventarioListo ? "Precio unitario promedio" : "Precio unitario",
+          "Total",
+          "Estado",
+        ],
+        rows: filas.map((r) => [
+          r.sku || "",
+          r.nombre,
+          r.marca || "",
+          r.unidad || "",
+          r.ubicacion,
+          r.stock,
+          numeroOVacio(r.stock_bajo),
+          numeroOVacio(r.stock_minimo),
+          r.precio,
+          r.total,
+          r.estado,
+        ]),
+        formatos: { 8: "$#,##0", 9: "$#,##0" },
+      },
+      {
+        nombre: "Resumen",
+        headers: ["Dato", "Valor"],
+        rows: [
+          ["Cliente", cliente.razon_social || ""],
+          ["RUT", cliente.rut_formateado || ""],
+          ["Sucursal", sucursalActual?.nombre || ""],
+          ["Fecha", celdaFecha(hoyChile())],
+          ["Productos", filas.length],
+          ["Unidades", filas.reduce((a, r) => a + r.stock, 0)],
+          ["Productos en stock crítico", filas.filter((r) => r.sem === "rojo").length],
+          ["Productos en stock bajo", filas.filter((r) => r.sem === "amarillo").length],
+          ["Valor del inventario", celdaMonto(filas.reduce((a, r) => a + r.total, 0))],
+        ],
+      },
+    ]);
+    if (!ok) setToast({ type: "error", mensaje: "No pudimos generar el Excel. Intente nuevamente." });
+  }
+
+  async function descargarInventarioPDF() {
+    const filas = filasInventario();
+    if (sinProductosParaDescargar(filas)) return;
+    // La columna Ubicación solo se imprime si algún producto tiene una.
+    const columnas = [
+      { titulo: "Producto", peso: 2.9, valor: (r) => r.nombre },
+      { titulo: "SKU", peso: 1, valor: (r) => r.sku || "—" },
+      { titulo: "Marca", peso: 1.05, valor: (r) => r.marca || "—" },
+      { titulo: "Formato", peso: 0.95, valor: (r) => r.unidad || "—" },
+      filas.some((r) => r.ubicacion) && { titulo: "Ubicación", peso: 1.35, valor: (r) => r.ubicacion || "—" },
+      { titulo: "Stock", peso: 0.7, alinear: "right", valor: (r) => fmtCant(r.stock) },
+      { titulo: "Bajo", peso: 0.6, alinear: "right", valor: (r) => (Number(r.stock_bajo) ? fmtCant(r.stock_bajo) : "—") },
+      { titulo: "Crítico", peso: 0.7, alinear: "right", valor: (r) => (Number(r.stock_minimo) ? fmtCant(r.stock_minimo) : "—") },
+      { titulo: inventarioListo ? "Precio prom." : "Precio unit.", peso: 1.05, alinear: "right", valor: (r) => fmtMoneda(r.precio) },
+      { titulo: "Total", peso: 1.25, alinear: "right", valor: (r) => fmtMoneda(r.total) },
+      { titulo: "Estado", peso: 0.9, alinear: "center", valor: (r) => r.estado },
+    ].filter(Boolean);
+    const ok = await descargarReportePDF({
+      filename: `inventario-${slugArchivo(sucursalActual?.nombre)}${hoyChile()}.pdf`,
+      titulo: "Inventario",
+      subtitulo: inventarioListo ? "Stock de la clínica, valorizado a costo promedio" : "Stock declarado de la clínica",
+      meta: [
+        { label: "Cliente", valor: cliente.razon_social || "" },
+        { label: "RUT", valor: cliente.rut_formateado || "" },
+        { label: "Sucursal", valor: sucursalActual?.nombre || "" },
+        { label: "Productos", valor: String(filas.length) },
+      ],
+      resumen: [
+        { label: "Unidades", valor: fmtCant(filas.reduce((a, r) => a + r.stock, 0)), tono: "neutro" },
+        { label: "Crítico", valor: filas.filter((r) => r.sem === "rojo").length, tono: "rojo" },
+        { label: "Bajo", valor: filas.filter((r) => r.sem === "amarillo").length, tono: "amarillo" },
+        { label: "Valor del inventario", valor: fmtMoneda(filas.reduce((a, r) => a + r.total, 0)), tono: "neutro" },
+      ],
+      headers: columnas.map((c) => c.titulo),
+      aligns: columnas.map((c) => c.alinear || "left"),
+      pesos: columnas.map((c) => c.peso),
+      compacto: true,
+      rows: filas.map((r) => columnas.map((c) => c.valor(r))),
+    });
+    if (!ok) setToast({ type: "error", mensaje: "No pudimos generar el PDF. Intente nuevamente." });
   }
 
   async function imprimirReporte() {
@@ -2174,6 +2294,7 @@ function PantallaDeclaracion({ cliente, setToast }) {
         />
       ) : tabActiva === "inventario" ? (
         <PanelInventario
+          cliente={cliente}
           sucursalId={sucursalId}
           sucursales={sucursales}
           onCambiarSucursal={(v) => setSucursalId(v || null)}
@@ -2208,11 +2329,33 @@ function PantallaDeclaracion({ cliente, setToast }) {
             </div>
           </div>
           <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-            <ExportarControl
-              onCSV={exportarCSV}
-              onImprimir={imprimirReporte}
-              disabled={itemsCriticos.length + itemsBajos.length === 0}
-            />
+            {(() => {
+              const sinProductos = !items.some((it) => String(it.nombre || "").trim());
+              const sinAlertas = itemsCriticos.length + itemsBajos.length === 0;
+              const motivoAlertas = sinAlertas ? "No hay productos en estado bajo o crítico." : undefined;
+              return (
+                <ExportarControl
+                  disabled={sinProductos}
+                  titulo={sinProductos ? "Todavía no hay productos en el inventario para descargar." : "Descargar el inventario en Excel o en PDF"}
+                  grupos={[
+                    {
+                      titulo: "Inventario completo",
+                      opciones: [
+                        { id: "inventario-excel", icono: FileSpreadsheet, texto: "Excel", onClick: descargarInventarioExcel },
+                        { id: "inventario-pdf", icono: FileText, texto: "PDF", onClick: descargarInventarioPDF },
+                      ],
+                    },
+                    {
+                      titulo: "Solo stock bajo y crítico",
+                      opciones: [
+                        { id: "alertas-excel", icono: FileSpreadsheet, texto: "Excel", onClick: exportarAlertasExcel, disabled: sinAlertas, motivo: motivoAlertas },
+                        { id: "alertas-pdf", icono: FileText, texto: "PDF", onClick: imprimirReporte, disabled: sinAlertas, motivo: motivoAlertas },
+                      ],
+                    },
+                  ]}
+                />
+              );
+            })()}
             {inventarioListo ? (
               <button onClick={() => setTab("recepcion")} style={styles.btnSecundarioOutline} className="btn-hover ir-recepcion" title="Registrar la mercadería que llegó: con su guía, factura o despacho interno, o sin documento">
                 <Truck size={15} /> Recibir mercadería
@@ -4015,7 +4158,7 @@ const hoyChile = () => new Intl.DateTimeFormat("en-CA", { timeZone: "America/San
 const sinTildesInv = (s) => String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
 const TIPOS_MOV = { inicial: { texto: "Stock inicial", color: "#475569" }, ingreso: { texto: "Ingreso", color: "#15803d" }, salida: { texto: "Salida", color: "#b45309" } };
 
-function PanelInventario({ sucursalId, sucursales = [], onCambiarSucursal, setToast, esAdminPortal, onCambio }) {
+function PanelInventario({ cliente, sucursalId, sucursales = [], onCambiarSucursal, setToast, esAdminPortal, onCambio }) {
   const [datos, setDatos] = useState(null);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState("");
@@ -4070,6 +4213,83 @@ function PanelInventario({ sucursalId, sucursales = [], onCambiarSucursal, setTo
   const productos = (datos?.productos || []).filter((p) => !q.trim() || sinTildesInv(`${p.nombre} ${p.sku} ${p.marca}`).includes(sinTildesInv(q.trim())));
   const valor = (datos?.productos || []).reduce((a, p) => a + (Number(p.stock_actual) || 0) * (Number(p.costo_promedio) || 0), 0);
 
+  /* (2026-11-16) Pedido de Ariel: descargar el inventario en Excel y en PDF.
+     Sale completo (todos los productos de la sucursal, sin importar el
+     buscador). El Excel trae además la hoja «Lotes», con cada ingreso que
+     todavía tiene stock y su costo; el PDF es el resumen por producto. */
+  const sucursalNombre = sucursales.find((s) => String(s.id) === String(sucursalId))?.nombre || "";
+  const todos = datos?.productos || [];
+  const valorDe = (p) => (Number(p.stock_actual) || 0) * (Number(p.costo_promedio) || 0);
+  const unidades = todos.reduce((a, p) => a + (Number(p.stock_actual) || 0), 0);
+  const lotesConStock = todos.reduce((a, p) => a + p.lotes.length, 0);
+
+  async function descargarExcelInventario() {
+    const ok = await descargarExcel(`inventario-lotes-${slugArchivo(sucursalNombre)}${hoyChile()}.xlsx`, [
+      {
+        nombre: "Inventario",
+        headers: ["SKU", "Producto", "Marca", "Formato", "Stock", "Costo promedio", "Valorización", "Lotes con stock", "Unidades sin lote"],
+        rows: todos.map((p) => [p.sku || "", p.nombre, p.marca || "", p.unidad || "", Number(p.stock_actual) || 0, Math.round(Number(p.costo_promedio) || 0), Math.round(valorDe(p)), p.lotes.length, p.sin_lote > 0 ? p.sin_lote : ""]),
+        formatos: { 5: "$#,##0", 6: "$#,##0" },
+      },
+      {
+        nombre: "Lotes",
+        headers: ["SKU", "Producto", "Fecha de ingreso", "Ingresó", "Queda", "Costo unitario", "Valor de lo que queda", "Nota", "Ingresado por"],
+        rows: todos.flatMap((p) => p.lotes.map((l) => [p.sku || "", p.nombre, celdaFecha(l.fecha), l.cantidad_inicial, l.cantidad_restante, l.costo_unitario, Math.round((Number(l.cantidad_restante) || 0) * (Number(l.costo_unitario) || 0)), l.nota || "", l.usuario || ""])),
+        formatos: { 5: "$#,##0", 6: "$#,##0" },
+      },
+      {
+        nombre: "Resumen",
+        headers: ["Dato", "Valor"],
+        rows: [
+          ["Cliente", cliente?.razon_social || ""],
+          ["RUT", cliente?.rut_formateado || ""],
+          ["Sucursal", sucursalNombre],
+          ["Fecha", celdaFecha(hoyChile())],
+          ["Productos", todos.length],
+          ["Unidades", unidades],
+          ["Lotes con stock", lotesConStock],
+          ["Valor del inventario (a costo)", celdaMonto(valor)],
+        ],
+      },
+    ]);
+    if (!ok) setToast({ type: "error", mensaje: "No pudimos generar el Excel. Intente nuevamente." });
+  }
+
+  async function descargarPDFInventario() {
+    const columnas = [
+      { titulo: "Producto", peso: 2.8, valor: (p) => p.nombre },
+      { titulo: "SKU", peso: 1.1, valor: (p) => p.sku || "—" },
+      { titulo: "Marca", peso: 1.2, valor: (p) => p.marca || "—" },
+      { titulo: "Formato", peso: 1, valor: (p) => p.unidad || "—" },
+      { titulo: "Stock", peso: 0.8, alinear: "right", valor: (p) => fmtCant(p.stock_actual) },
+      { titulo: "Costo promedio", peso: 1.2, alinear: "right", valor: (p) => fmtPesos(p.costo_promedio) },
+      { titulo: "Valorización", peso: 1.25, alinear: "right", valor: (p) => fmtPesos(valorDe(p)) },
+      { titulo: "Lotes", peso: 0.65, alinear: "right", valor: (p) => String(p.lotes.length) },
+    ];
+    const ok = await descargarReportePDF({
+      filename: `inventario-lotes-${slugArchivo(sucursalNombre)}${hoyChile()}.pdf`,
+      titulo: "Inventario",
+      subtitulo: "Stock por producto, valorizado a costo promedio",
+      meta: [
+        { label: "Cliente", valor: cliente?.razon_social || "" },
+        { label: "RUT", valor: cliente?.rut_formateado || "" },
+        { label: "Sucursal", valor: sucursalNombre },
+      ],
+      resumen: [
+        { label: "Productos", valor: todos.length, tono: "neutro" },
+        { label: "Unidades", valor: fmtCant(unidades), tono: "neutro" },
+        { label: "Lotes con stock", valor: lotesConStock, tono: "neutro" },
+        { label: "Valor a costo", valor: fmtPesos(valor), tono: "neutro" },
+      ],
+      headers: columnas.map((c) => c.titulo),
+      aligns: columnas.map((c) => c.alinear || "left"),
+      pesos: columnas.map((c) => c.peso),
+      compacto: true,
+      rows: todos.map((p) => columnas.map((c) => c.valor(p))),
+    });
+    if (!ok) setToast({ type: "error", mensaje: "No pudimos generar el PDF. Intente nuevamente." });
+  }
+
   return (
     <div style={styles.declCard} className="panel-inventario">
       <div style={styles.declCardHeader}>
@@ -4081,6 +4301,19 @@ function PanelInventario({ sucursalId, sucursales = [], onCambiarSucursal, setTo
           </div>
         </div>
         <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          <ExportarControl
+            disabled={!todos.length}
+            titulo={todos.length ? "Descargar el inventario en Excel o en PDF" : "Todavía no hay productos en el inventario para descargar."}
+            grupos={[
+              {
+                titulo: "Inventario completo",
+                opciones: [
+                  { id: "inventario-excel", icono: FileSpreadsheet, texto: "Excel (con sus lotes)", onClick: descargarExcelInventario },
+                  { id: "inventario-pdf", icono: FileText, texto: "PDF", onClick: descargarPDFInventario },
+                ],
+              },
+            ]}
+          />
           <button onClick={() => setCarga(true)} style={styles.btnSecundarioOutline} className="btn-hover" title="Ingresar varios productos desde un archivo Excel o CSV, con su costo">
             <Upload size={15} /> Carga masiva
           </button>
@@ -9369,57 +9602,87 @@ const modalStyles = {
 
 // Control de exportación del reporte de productos en estado bajo/crítico.
 // Menú compacto con dos opciones: descargar CSV o imprimir/PDF.
-function ExportarControl({ onCSV, onImprimir, disabled }) {
+// "Casa Matriz / Ñuñoa" → "casa-matriz-nunoa-" (con su guion final; vacío si no hay nombre).
+const slugArchivo = (texto) => {
+  const s = sinTildesStock(texto).replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  return s ? `${s}-` : "";
+};
+// Umbral sin declarar (vacío o 0) → celda vacía en el Excel; si no, el número.
+const numeroOVacio = (v) => (Number(v) ? Number(v) : "");
+
+/* Botón «Descargar» con su menú. (2026-11-16) Es genérico: recibe `grupos`
+   = [{ titulo, opciones: [{ id, icono, texto, onClick, disabled, motivo }] }]
+   y lo usan Gestión de Stock (inventario completo + solo alertas) e
+   Inventario. El menú se abre hacia el lado donde cabe: en el teléfono el
+   botón queda pegado a la izquierda y abierto hacia allá se salía de la pantalla. */
+const ANCHO_MENU_DESCARGA = 232;
+function ExportarControl({ grupos = [], disabled, titulo, etiqueta = "Descargar" }) {
   const [abierto, setAbierto] = useState(false);
+  const [lado, setLado] = useState("right");
+  const ref = useRef(null);
 
   useEffect(() => {
     if (!abierto) return;
     const cerrar = () => setAbierto(false);
+    const porTecla = (e) => { if (e.key === "Escape") setAbierto(false); };
     window.addEventListener("click", cerrar);
-    return () => window.removeEventListener("click", cerrar);
+    window.addEventListener("keydown", porTecla);
+    return () => {
+      window.removeEventListener("click", cerrar);
+      window.removeEventListener("keydown", porTecla);
+    };
   }, [abierto]);
 
+  function alternar() {
+    const r = ref.current?.getBoundingClientRect();
+    if (r) setLado(r.right - ANCHO_MENU_DESCARGA < 8 ? "left" : "right");
+    setAbierto((v) => !v);
+  }
+
   return (
-    <div style={{ position: "relative" }} onClick={(e) => e.stopPropagation()}>
+    <div ref={ref} className="control-descargar" style={{ position: "relative" }} onClick={(e) => e.stopPropagation()}>
       <button
         type="button"
-        onClick={() => setAbierto((v) => !v)}
+        onClick={alternar}
         disabled={disabled}
+        aria-haspopup="menu"
+        aria-expanded={abierto}
         style={{
           ...exportStyles.boton,
           opacity: disabled ? 0.5 : 1,
           cursor: disabled ? "not-allowed" : "pointer",
         }}
-        title={
-          disabled
-            ? "No hay productos en estado bajo o crítico para exportar."
-            : "Exportar reporte de productos en alerta"
-        }
+        title={titulo}
       >
-        <FileDown size={14} /> Exportar
+        <FileDown size={14} /> {etiqueta} <ChevronDown size={13} style={{ marginLeft: -2 }} />
       </button>
       {abierto && !disabled && (
-        <div style={exportStyles.menu}>
-          <button
-            type="button"
-            style={exportStyles.opcion}
-            onClick={() => {
-              setAbierto(false);
-              onImprimir();
-            }}
-          >
-            <Printer size={14} /> Descargar PDF
-          </button>
-          <button
-            type="button"
-            style={exportStyles.opcion}
-            onClick={() => {
-              setAbierto(false);
-              onCSV();
-            }}
-          >
-            <FileSpreadsheet size={14} /> Descargar Excel (CSV)
-          </button>
+        <div role="menu" className="menu-descargar" style={{ ...exportStyles.menu, right: lado === "right" ? 0 : "auto", left: lado === "left" ? 0 : "auto" }}>
+          {grupos.filter(Boolean).map((g, gi) => (
+            <div key={g.titulo || gi} style={gi > 0 ? { borderTop: "1px solid #eef2f7", marginTop: 4, paddingTop: 4 } : undefined}>
+              {g.titulo && <div style={exportStyles.grupo}>{g.titulo}</div>}
+              {g.opciones.map((o) => {
+                const Icono = o.icono;
+                return (
+                  <button
+                    key={o.id}
+                    type="button"
+                    role="menuitem"
+                    className={`opcion-descargar opcion-${o.id}`}
+                    disabled={o.disabled}
+                    title={o.disabled ? o.motivo : undefined}
+                    style={{ ...exportStyles.opcion, opacity: o.disabled ? 0.45 : 1, cursor: o.disabled ? "not-allowed" : "pointer" }}
+                    onClick={() => {
+                      setAbierto(false);
+                      o.onClick();
+                    }}
+                  >
+                    {Icono && <Icono size={14} />} {o.texto}
+                  </button>
+                );
+              })}
+            </div>
+          ))}
         </div>
       )}
     </div>
@@ -9449,7 +9712,17 @@ const exportStyles = {
     boxShadow: "0 12px 28px rgba(15,23,42,0.14)",
     padding: 6,
     zIndex: 60,
-    minWidth: 210,
+    width: ANCHO_MENU_DESCARGA,
+    maxWidth: "calc(100vw - 24px)",
+    boxSizing: "border-box",
+  },
+  grupo: {
+    padding: "6px 12px 3px",
+    fontSize: 11,
+    fontWeight: 800,
+    color: "#64748b",
+    textTransform: "uppercase",
+    letterSpacing: ".04em",
   },
   opcion: {
     display: "flex",
