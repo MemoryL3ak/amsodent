@@ -2381,6 +2381,7 @@ const sinTildesHist = (s) => String(s ?? "").normalize("NFD").replace(/[̀-ͯ]/g
 const POR_PAGINA_RANKING = 12;
 const POR_PAGINA_SERIE = 25;
 const PERIODOS_HIST = [
+  { value: "6", label: "Últimos 6 meses" },
   { value: "12", label: "Últimos 12 meses" },
   { value: "24", label: "Últimos 24 meses" },
   { value: "todo", label: "Todo el historial" },

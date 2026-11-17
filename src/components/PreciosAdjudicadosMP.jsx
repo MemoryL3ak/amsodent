@@ -4,6 +4,7 @@ import { ExternalLink, LineChart, Loader2, X } from "lucide-react";
 import { api } from "../lib/api";
 import DropdownSelect from "./ui/DropdownSelect";
 import {
+  PERIODO_ADJ_INICIAL,
   PERIODOS_ADJ,
   diferenciaPct,
   filasDeReferencia,
@@ -177,7 +178,7 @@ function Dato({ etiqueta, valor, detalle, destacado = false }) {
 
 function VentanaPreciosAdjudicados({ sku, producto, precioActual, onCerrar }) {
   const [leido, setLeido] = useState(null); // { datos } | { error }
-  const [periodo, setPeriodo] = useState("24");
+  const [periodo, setPeriodo] = useState(PERIODO_ADJ_INICIAL);
   const [verSinPrecio, setVerSinPrecio] = useState(false);
   const [pagina, setPagina] = useState(1);
 
@@ -255,7 +256,11 @@ function VentanaPreciosAdjudicados({ sku, producto, precioActual, onCerrar }) {
 
               {filas.length === 0 ? (
                 <div style={{ border: "1px dashed var(--border-strong)", borderRadius: 10, padding: "16px 14px", fontSize: 13, color: "var(--text-soft)", textAlign: "center" }}>
-                  No hay procesos con resultado en este período. Prueba con «Todo el historial».
+                  No hay procesos con resultado en este período.{" "}
+                  {/* El historial completo ya está cargado: se ofrece a un clic lo que hay fuera del período. */}
+                  <button type="button" className="btn btn-secondary btn-sm" onClick={() => { setPeriodo("todo"); setPagina(1); }} style={{ fontSize: 12, marginLeft: 4 }}>
+                    Ver todo el historial ({todas.length} proceso{todas.length === 1 ? "" : "s"})
+                  </button>
                 </div>
               ) : (
                 <>

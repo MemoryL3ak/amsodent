@@ -1,6 +1,7 @@
 import { pdf } from "@react-pdf/renderer";
 import { FichaTecnicaDocument } from "../components/FichaTecnica";
 import { api } from "../lib/api";
+import { nombreArchivoFicha } from "./nombreArchivoFicha";
 
 /* ============================================================
    Helpers internos
@@ -102,6 +103,47 @@ function estaticoDataUrl(url) {
 /* Abre la ficha en una pestaña nueva (2026-10-03: botón "Abrir ficha técnica"
    al crear un producto). La pestaña se abre ANTES de generar el PDF, todavía
    dentro del clic, para que el navegador no la bloquee como ventana emergente. */
+/* (2026-11-17) La ficha abierta en una pestaña es una dirección interna del
+   navegador (blob:…): si se guardaba desde el visor, el archivo salía con un
+   nombre al azar. Ahora la pestaña trae una barra con el nombre y un botón
+   «Descargar» que la baja como «Nombre del producto - SKU.pdf»; debajo va el
+   mismo visor de PDF. La dirección se crea en la pestaña nueva, así vive
+   mientras esté abierta. Devuelve false si no se pudo armar (se abre como antes). */
+function mostrarFichaEnPestana(ventana, blob, nombre) {
+  try {
+    const doc = ventana.document;
+    const url = ventana.URL.createObjectURL(blob);
+    doc.title = nombre;
+    doc.body.innerHTML = "";
+    doc.body.style.cssText = "margin:0;height:100vh;display:flex;flex-direction:column;background:#525659;font-family:system-ui,-apple-system,'Segoe UI',sans-serif";
+
+    const barra = doc.createElement("div");
+    barra.style.cssText = "display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:8px 14px;background:#0f172a;color:#fff;font-size:13px";
+    const titulo = doc.createElement("span");
+    titulo.textContent = nombre;
+    titulo.style.cssText = "flex:1 1 200px;min-width:0;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap";
+    const bajar = doc.createElement("a");
+    bajar.href = url;
+    bajar.download = `${nombre}.pdf`;
+    bajar.textContent = "Descargar";
+    bajar.title = `Descargar como «${nombre}.pdf»`;
+    bajar.style.cssText = "flex-shrink:0;background:#25b3b3;color:#fff;text-decoration:none;font-weight:700;padding:6px 14px;border-radius:8px";
+    barra.appendChild(titulo);
+    barra.appendChild(bajar);
+
+    const marco = doc.createElement("iframe");
+    marco.src = url;
+    marco.title = nombre;
+    marco.style.cssText = "flex:1 1 auto;min-height:0;width:100%;border:0;background:#525659";
+
+    doc.body.appendChild(barra);
+    doc.body.appendChild(marco);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function abrirFichaTecnica(producto, opciones = {}) {
   const ventana = window.open("", "_blank");
   if (ventana) {
@@ -111,6 +153,8 @@ export async function abrirFichaTecnica(producto, opciones = {}) {
     // `cargar`: trae el producto completo (con los textos de la ficha) ya con la pestaña abierta.
     const completo = opciones.cargar ? await opciones.cargar() : producto;
     const blob = await descargarFichaTecnica(completo || producto, { soloBlob: true });
+    const nombre = nombreArchivoFicha(completo || producto);
+    if (ventana && !ventana.closed && mostrarFichaEnPestana(ventana, blob, nombre)) return;
     const url = URL.createObjectURL(blob);
     if (ventana && !ventana.closed) ventana.location.href = url;
     else window.open(url, "_blank");
@@ -145,12 +189,8 @@ export async function descargarFichaTecnica(producto, opciones) {
   ).toBlob();
   if (opciones?.soloBlob) return pdfBlob;
 
-  const sku = (producto.sku || "").toString().trim();
-  const safeSku = (sku || "producto")
-    .replace(/[\\/]+/g, "-")
-    .replace(/\s+/g, " ")
-    .trim();
-  const downloadName = `${safeSku}.pdf`;
+  // (2026-11-17) «Nombre del producto - SKU.pdf» (antes solo el SKU).
+  const downloadName = `${nombreArchivoFicha(producto)}.pdf`;
 
   const blobUrl = URL.createObjectURL(pdfBlob);
   const link = document.createElement("a");

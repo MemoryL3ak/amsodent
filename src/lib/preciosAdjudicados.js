@@ -12,7 +12,11 @@
    El precio «típico» es la MEDIANA: un ganador que ofertó a la mitad no la
    mueve como movería a un promedio. */
 
+/* (2026-11-17) Pedido de Ariel: «que me traiga el histórico de los últimos 6
+   meses». La ventana abre con ese período; los demás siguen a un clic. */
+export const PERIODO_ADJ_INICIAL = "6";
 export const PERIODOS_ADJ = [
+  { value: "6", label: "Últimos 6 meses" },
   { value: "12", label: "Últimos 12 meses" },
   { value: "24", label: "Últimos 24 meses" },
   { value: "todo", label: "Todo el historial" },
@@ -23,7 +27,7 @@ const isoHoy = (hoy) => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 };
 
-/** Filas cuya fecha cae en los últimos `meses` ("12", "24" o "todo"). */
+/** Filas cuya fecha cae en los últimos `meses` ("6", "12", "24" o "todo"). */
 export function filtrarPeriodo(filas, meses, hoy = new Date()) {
   const lista = Array.isArray(filas) ? filas : [];
   const n = Number(meses);

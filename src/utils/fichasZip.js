@@ -1,6 +1,7 @@
 import { Zip, ZipPassThrough } from "fflate";
 import { api } from "../lib/api";
 import { descargarFichaTecnica } from "./generarFichaTecnica";
+import { nombreArchivoFicha } from "./nombreArchivoFicha";
 import { bytesDocumentoRepositorio } from "../lib/repositorio";
 
 /* ── Varias fichas técnicas en un ZIP (2026-10-07) ───────────────────────────
@@ -39,13 +40,9 @@ async function pedirCompleto(p, intentos = 3) {
 
 const TROZO = 24 * 1024 * 1024;
 
-const nombreArchivo = (p, i) =>
-  String(`${p?.sku || "SIN-SKU"} - ${p?.nombre || `producto ${i + 1}`}`)
-    .split("").filter((ch) => ch.charCodeAt(0) >= 32).join("")
-    .replace(/[\\/:*?"<>|]+/g, "-")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 90);
+// (2026-11-17) Dentro del ZIP las fichas se llaman igual que la descarga suelta:
+// «Nombre del producto - SKU» (antes «SKU - Nombre»).
+const nombreArchivo = (p, i) => nombreArchivoFicha(p, `producto ${i + 1}`);
 
 /**
  * @param {object[]} productos  productos del catálogo (al menos `id`; el resto se pide)
@@ -133,7 +130,7 @@ export async function descargarFichasZip(productos, op = {}) {
     try {
       const { bytes, nombre: original } = await bytesDocumentoRepositorio(doc.id);
       const ext = (String(original || doc.archivo || "").match(/\.([a-z0-9]{2,5})$/i) || [])[1] || "pdf";
-      let nombre = nombreArchivo({ sku: "", nombre: doc.nombre }, 0).replace(/^SIN-SKU - /, "") || `documento-${doc.id}`;
+      let nombre = nombreArchivoFicha({ nombre: doc.nombre }, `documento-${doc.id}`);
       while (usados.has(`documentos/${nombre}`.toLowerCase())) nombre = `${nombre} (${doc.id})`;
       usados.add(`documentos/${nombre}`.toLowerCase());
       const archivo = new ZipPassThrough(`Documentos/${nombre}.${ext.toLowerCase()}`);

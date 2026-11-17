@@ -1,5 +1,6 @@
 import { Document, Page, View, Text, Image, StyleSheet } from "@react-pdf/renderer";
 import { CONTACTO_FICHA } from "../constants/contactoFichas";
+import { nombreArchivoFicha } from "../utils/nombreArchivoFicha";
 
 const TEAL    = "#25b3b3";
 const DARK    = "#1a1a1a";
@@ -213,7 +214,9 @@ export function FichaTecnicaDocument({ producto, logoSrc, marcaAguaSrc, producto
   });
 
   return (
-    <Document>
+    // (2026-11-17) El título del PDF es el nombre del archivo: «Nombre - SKU»
+    // (es lo que muestra la pestaña cuando la ficha se abre desde la cotización).
+    <Document title={nombreArchivoFicha(producto)}>
       <Page size="A4" style={s.page}>
         {/* Marca de agua */}
         {marcaAguaSrc && <Image src={marcaAguaSrc} style={s.watermark} />}
