@@ -46,8 +46,9 @@ import { LotesService } from '../inventario/lotes.service';
    marcando líneas en la pantalla (marcarlas todas completas = anular
    completa). El cuarto modo, «Corregir texto», copia las 9 NC de texto que la
    cuenta tiene hechas a mano en Bsale (devoluciones 69, 94, 101, 114…):
-   editTexts 1, type -3, monto 0, todas las líneas con cantidad 0 y la
-   corrección escrita en el motivo («DICE … DEBE DECIR …»). No toca la ficha
+   editTexts 1, monto 0, todas las líneas con cantidad 0 y la corrección
+   escrita en el motivo («DICE … DEBE DECIR …»). Esas guardan type -3, pero
+   por API Bsale lo rechaza: se manda 3 (ver `solicitud`). No toca la ficha
    del cliente. Se registra con clave AMS-NCT-<id> para que Facturación no la
    confunda con una anulación (allí una NC AMS-NC- sin total anula completo). */
 
@@ -797,8 +798,11 @@ export class BsaleAnulacionesService {
       declareSii: 1,
       priceAdjustment: modo === 'ajuste' ? 1 : 0,
       editTexts: esTexto ? 1 : 0,
-      // -3 es lo que guardan las NC de texto hechas a mano en Bsale.
-      type: esTexto ? -3 : tipoDev!.bsale,
+      // (2026-11-17) La de texto va con 3 («otra devolución», sin movimiento de
+      // dinero). Las hechas a mano en Bsale guardan -3, pero la API solo acepta
+      // 0-3: con -3 respondía «the json does not have a valid return type»
+      // (factura 987). Lo que la hace de texto es editTexts, no el type.
+      type: tipoDev!.bsale,
       ...(o.cliente?.rut
         ? { client: { code: o.cliente.rut, company: o.cliente.razon_social, activity: o.cliente.giro || undefined, address: o.cliente.direccion || undefined, municipality: o.cliente.comuna || undefined, city: o.cliente.ciudad || undefined } }
         : {}),
