@@ -824,6 +824,39 @@ export class ProductosService {
     return resultado;
   }
 
+  /* (2026-11-17) Pedido de Ariel: «en el módulo de productos no se modifica el
+     precio y costo; ahora se hace desde el nuevo módulo de actualización de
+     precio». El guardado de la ficha del producto (PUT /productos/:id) ya no
+     cambia costo ni listas de un producto del catálogo: esos campos se
+     descartan aquí, venga lo que venga de la pantalla. Se cambian en Productos →
+     Actualización de precios (que llama a `update` directamente).
+     Excepción: un producto que todavía se está definiendo —Transitorio o
+     Pendiente de aprobación— conserva sus precios editables en la ficha: es
+     donde quien lo creó (o quien lo valida al cotizar) le pone costo y precio
+     por primera vez. */
+  static readonly CAMPOS_SOLO_ACTUALIZACION = ['costo', 'lista1', 'lista2', 'lista3'] as const;
+
+  static enDefinicion(p: { estado?: any; sku?: any } | null | undefined): boolean {
+    const estado = String(p?.estado ?? '').trim().toLowerCase();
+    if (estado) return estado === 'transitorio' || estado === 'transsitorio' || estado === 'pendiente aprobación' || estado === 'pendiente aprobacion';
+    return !String(p?.sku ?? '').trim(); // sin estado: transitorio si no tiene SKU (misma lectura que la ficha)
+  }
+
+  async updateDesdeFicha(id: number, body: Record<string, any>, usuario?: string | null) {
+    let cuerpo = body;
+    let preciosDescartados = false;
+    if (cuerpo && ProductosService.CAMPOS_SOLO_ACTUALIZACION.some((k) => k in cuerpo)) {
+      const { data } = await this.supabase.getClient().from('productos').select('estado, sku').eq('id', id).maybeSingle();
+      if (data && !ProductosService.enDefinicion(data as any)) {
+        cuerpo = { ...cuerpo };
+        for (const k of ProductosService.CAMPOS_SOLO_ACTUALIZACION) delete cuerpo[k];
+        preciosDescartados = true;
+      }
+    }
+    const guardado = await this.update(id, cuerpo, usuario);
+    return preciosDescartados && guardado && typeof guardado === 'object' ? { ...guardado, precios_sin_cambio: true } : guardado;
+  }
+
   async update(id: number, body: Record<string, any>, usuario?: string | null) {
     // `propagar` es una instrucción del cliente, no una columna del producto.
     const propagar = body?.propagar !== false;

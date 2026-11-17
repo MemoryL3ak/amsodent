@@ -201,15 +201,17 @@ export default function App() {
               </RequireModulo>
             }
           />
-          {/* ACTUALIZACIÓN DE PRECIOS (2026-11-12): precios → Google Sheet, por permiso. */}
+          {/* ACTUALIZACIÓN DE PRECIOS (2026-11-12): precios → Google Sheet, por permiso.
+              (2026-11-17) Pasó a ser una sección de Productos; la dirección antigua redirige. */}
           <Route
-            path="actualizacion-precios"
+            path="productos/actualizacion-precios"
             element={
               <RequireModulo modulo="actualizar_precios">
                 <ActualizacionPrecios />
               </RequireModulo>
             }
           />
+          <Route path="actualizacion-precios" element={<Navigate to={`/productos/actualizacion-precios${window.location.search || ""}`} replace />} />
 
           {/* CLIENTES */}
           <Route path="clientes" element={<Clientes />} />

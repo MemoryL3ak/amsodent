@@ -426,7 +426,15 @@ export default function RecepcionStock() {
           onCerrar={() => setNueva(false)}
           onRegistrada={(r) => {
             setNueva(false);
-            setToast({ type: r?.avisos?.length ? "warning" : "success", message: r?.avisos?.length ? `Recepción #${r.recepcion?.id} registrada en Bsale, con avisos: ${r.avisos[0]}` : `Recepción #${r.recepcion?.id} registrada: el stock ya está en el inventario${r.bsale_reception_id ? ` (recepción ${r.bsale_reception_id} de Bsale)` : ""}.` });
+            // (2026-11-17) Costo recibido mayor que el del producto: no cambia solo, queda por confirmar.
+            const porConfirmar = Number(r?.costos_por_confirmar) || 0;
+            const costo = porConfirmar
+              ? ` ${porConfirmar} producto${porConfirmar === 1 ? " llegó" : "s llegaron"} con un costo mayor al del catálogo: el costo no cambió y quedó por confirmar en Productos → Actualización de precios (definitivo o momentáneo).`
+              : "";
+            setToast({
+              type: r?.avisos?.length ? "warning" : porConfirmar ? "info" : "success",
+              message: `${r?.avisos?.length ? `Recepción #${r.recepcion?.id} registrada en Bsale, con avisos: ${r.avisos[0]}` : `Recepción #${r.recepcion?.id} registrada: el stock ya está en el inventario${r.bsale_reception_id ? ` (recepción ${r.bsale_reception_id} de Bsale)` : ""}.`}${costo}`,
+            });
             cargar();
           }}
         />

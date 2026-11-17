@@ -7,6 +7,7 @@ import Toast from "../components/Toast";
 import Select from "react-select";
 import { pdf } from "@react-pdf/renderer";
 import { FichaTecnicaDocument } from "../components/FichaTecnica";
+import { nombreArchivoFicha } from "../utils/nombreArchivoFicha";
 import { FACTOR_LISTA_3, calcularLista3 } from "../lib/listas";
 import EquivalentesProducto from "../components/EquivalentesProducto";
 import { mensajeBsale, tipoAvisoBsale } from "../lib/bsaleProducto";
@@ -188,6 +189,21 @@ export default function EditarProducto() {
 
   // ✅ guardamos el SKU original para evitar "borrados" accidentales
   const [skuOriginal, setSkuOriginal] = useState("");
+  /* (2026-11-17) Pedido de Ariel: «en el módulo de productos no se modifica el
+     precio y costo; ahora se hace desde el nuevo módulo de actualización de
+     precio». En un producto del catálogo el costo y las listas quedan de solo
+     lectura aquí y se cambian en Productos → Actualización de precios (el
+     servidor tampoco los acepta desde esta ficha). Un producto que todavía se
+     está definiendo —Transitorio o Pendiente de aprobación, según como está
+     GUARDADO, no según lo que se elija en el formulario— los conserva
+     editables: es donde se le pone costo y precio por primera vez. */
+  const [estadoGuardado, setEstadoGuardado] = useState("");
+  const [lista3Guardada, setLista3Guardada] = useState(0);
+  const [puedeActualizarPrecios, setPuedeActualizarPrecios] = useState(false);
+  const preciosBloqueados = useMemo(() => {
+    const e = String(estadoGuardado || "").trim().toLowerCase();
+    return !!e && !["transitorio", "transsitorio", "pendiente aprobación", "pendiente aprobacion"].includes(e);
+  }, [estadoGuardado]);
 
   const [producto, setProducto] = useState({
     sku: "",
@@ -291,9 +307,12 @@ export default function EditarProducto() {
   }, [producto.lista2, producto.costo]);
 
   // Lista 3 siempre calculada (Lista 2 × factor), no editable.
+  // (2026-11-17) En un producto del catálogo se muestra la Lista 3 que de verdad rige:
+  // la fijada en Actualización de precios o, si no hay, la calculada.
+  const lista3Fija = preciosBloqueados && lista3Guardada > 0;
   const lista3Calculada = useMemo(() => {
-    return calcularLista3(numFromCL(producto.lista2));
-  }, [producto.lista2]);
+    return lista3Fija ? lista3Guardada : calcularLista3(numFromCL(producto.lista2));
+  }, [producto.lista2, lista3Fija, lista3Guardada]);
 
   /* Venta showroom: precio al que le sugerimos al cliente del portal revender
      el producto a su paciente. Solo aplica a lo que entra al Showroom — la
@@ -376,6 +395,7 @@ export default function EditarProducto() {
         setRol(perfil?.rol ?? null);
         setVerCostos(Array.isArray(perfil?.permisos) && perfil.permisos.includes("ver_costos"));
         setEditaCatalogo(Array.isArray(perfil?.permisos) && perfil.permisos.includes("editar_productos"));
+        setPuedeActualizarPrecios(["admin", "administrador"].includes(String(perfil?.rol || "").trim().toLowerCase()) || (Array.isArray(perfil?.permisos) && perfil.permisos.includes("actualizar_precios")));
       } catch {
         setRol(null);
       }
@@ -406,6 +426,8 @@ export default function EditarProducto() {
         .trim();
 
       setSkuOriginal(skuDb);
+      setEstadoGuardado(estadoDb);
+      setLista3Guardada(Number(data.lista3) || 0);
 
       setProducto({
         sku: skuDb,
@@ -703,17 +725,23 @@ export default function EditarProducto() {
       largo: Number(producto.largo) || 0,
       ancho: Number(producto.ancho) || 0,
       metro_cubico: Number(metroCubico) || 0,
-      lista1: numFromCL(producto.lista1),
-      lista2: numFromCL(producto.lista2),
-      // Lista 3 siempre derivada (Lista 2 × 1.08); guardamos 0 y el frontend
-      // hace fallback al leer.
-      lista3: 0,
+      // (2026-11-17) Los precios de un producto del catálogo no se envían desde la ficha:
+      // se cambian en Actualización de precios. Solo viajan mientras el producto se define.
+      ...(preciosBloqueados
+        ? {}
+        : {
+            lista1: numFromCL(producto.lista1),
+            lista2: numFromCL(producto.lista2),
+            // Lista 3 siempre derivada (Lista 2 × 1.08); guardamos 0 y el frontend
+            // hace fallback al leer.
+            lista3: 0,
+          }),
       equivalente_1: (producto.equivalente_1 || "").trim() || null,
       equivalente_2: (producto.equivalente_2 || "").trim() || null,
       equivalente_3: (producto.equivalente_3 || "").trim() || null,
     };
 
-    if (editaComoAdmin || (esVentasOJefe && (esProductoTransitorio || esPendienteAprobacion))) {
+    if (!preciosBloqueados && (editaComoAdmin || (esVentasOJefe && (esProductoTransitorio || esPendienteAprobacion)))) {
       payload.costo = numFromCL(producto.costo);
     }
 
@@ -748,6 +776,8 @@ export default function EditarProducto() {
     setTimeout(cargarHistorialPrecios, 1500);
 
     setSkuOriginal(skuFinal ?? "");
+    // Con el estado ya guardado se decide si los precios siguen editables en la ficha.
+    setEstadoGuardado(String(estadoFinal || "").trim());
     setProducto((prev) => ({
       ...prev,
       sku: skuFinal ?? "",
@@ -809,6 +839,7 @@ export default function EditarProducto() {
       avisarProductoActualizado(id);
 
       setProducto((prev) => ({ ...prev, estado: "Transitorio" }));
+      setEstadoGuardado("Transitorio");
       setToast({ type: "success", message: "Producto aprobado." });
     } catch (e) {
       console.error(e);
@@ -884,12 +915,15 @@ try {
         .replace(/[\\/]+/g, "-")
         .replace(/\s+/g, " ")
         .trim();
+      // El respaldo en el almacenamiento sigue guardándose por SKU (una ficha por
+      // producto, que se pisa al regenerar aunque cambie el nombre).
       const downloadName = `${safeSku}.pdf`;
 
       const blobUrl = URL.createObjectURL(pdfBlob);
       const link = document.createElement("a");
       link.href = blobUrl;
-      link.download = downloadName;
+      // (2026-11-17) El archivo que baja el usuario: «Nombre del producto - SKU.pdf».
+      link.download = `${nombreArchivoFicha(productoFicha)}.pdf`;
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -926,7 +960,8 @@ try {
         message: "No se pudo generar la ficha tecnica.",
       });
     } finally {
-      if (container) document.body.removeChild(container);
+      // (2026-11-17) Aquí quedaba un `if (container) …` de una versión anterior: la variable ya no
+      // existía, el `finally` fallaba y el botón se quedaba en «Generando…» tras bajar la ficha.
       setGenerandoFicha(false);
     }
   }
@@ -1300,12 +1335,33 @@ try {
             )}
           </div>
           <div className="surface-body">
+            {/* (2026-11-17) En un producto del catálogo el costo y los precios ya no se cambian aquí. */}
+            {preciosBloqueados && (
+              <div className="aviso-precios-bloqueados" style={{ display: "flex", gap: "8px 12px", alignItems: "center", flexWrap: "wrap", fontSize: 13, color: "#1e40af", background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 10, padding: "9px 12px", marginBottom: 14, lineHeight: 1.45 }}>
+                <span style={{ flex: "1 1 280px", minWidth: 0 }}>
+                  El costo y los precios de este producto se ven aquí, pero se cambian en <b>Productos → Actualización de precios</b>.
+                  {!puedeActualizarPrecios && " Pídeselo a quien actualiza los precios."}
+                </span>
+                {puedeActualizarPrecios && (
+                  <a
+                    href={`/productos/actualizacion-precios?q=${encodeURIComponent(producto.sku || producto.nombre || "")}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="btn btn-secondary btn-sm"
+                    style={{ textDecoration: "none", whiteSpace: "nowrap" }}
+                    title="Abre Actualización de precios en otra pestaña, con este producto buscado"
+                  >
+                    Cambiar en Actualización de precios
+                  </a>
+                )}
+              </div>
+            )}
             <div className={`grid grid-cols-1 ${mostrarMargen ? "md:grid-cols-3" : "md:grid-cols-2"} gap-4`}>
               {(editaComoAdmin || (esVentasOJefe && (esProductoTransitorio || esPendienteAprobacion)) || verCostos) && (
                 <>
                   <div>
                     <label className="label">Costo</label>
-                    {editaComoAdmin || (esVentasOJefe && (esProductoTransitorio || esPendienteAprobacion)) ? (
+                    {!preciosBloqueados && (editaComoAdmin || (esVentasOJefe && (esProductoTransitorio || esPendienteAprobacion))) ? (
                       <MoneyInput
                         value={producto.costo}
                         onChange={(v) => setProducto((prev) => ({ ...prev, costo: formatearCLDesdeString(v) }))}
@@ -1326,6 +1382,7 @@ try {
                 </label>
                 <MoneyInput
                   value={producto.lista1}
+                  readOnly={preciosBloqueados}
                   onChange={(v) => setProducto((prev) => ({ ...prev, lista1: formatearCLDesdeString(v) }))}
                 />
               </div>
@@ -1351,6 +1408,7 @@ try {
                 </label>
                 <MoneyInput
                   value={producto.lista2}
+                  readOnly={preciosBloqueados}
                   onChange={(v) => setProducto((prev) => ({ ...prev, lista2: formatearCLDesdeString(v) }))}
                 />
               </div>
@@ -1376,7 +1434,9 @@ try {
                 </label>
                 <MoneyInput value={lista3Display} readOnly />
                 <p style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>
-                  Calculado automáticamente (Lista 2 × {FACTOR_LISTA_3}). Usado en Licitación 9 a 24 meses.
+                  {lista3Fija
+                    ? "Precio fijado en Actualización de precios. Usado en Licitación 9 a 24 meses."
+                    : `Calculado automáticamente (Lista 2 × ${FACTOR_LISTA_3}). Usado en Licitación 9 a 24 meses.`}
                 </p>
               </div>
               <div>

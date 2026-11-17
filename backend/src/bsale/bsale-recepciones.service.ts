@@ -5,6 +5,9 @@ import { InventarioService, Sucursal } from '../inventario/inventario.service';
 import { BsaleFacturacionService } from './bsale-facturacion.service';
 import { BsaleDespachosService } from './bsale-despachos.service';
 import { LotesService, MIGRACION_LOTES, fechaCorta, fechaValida, normLote } from '../inventario/lotes.service';
+import { esRolAdmin, permisosEfectivos } from '../auth/permisos';
+// Solo la regla (sin dependencias): ProductosModule ya importa a BsaleModule, no al revés.
+import { costoMayor, mensajeCostoMayor } from '../productos/costos-recepcion';
 
 /* ============================================================================
    Recepción de stock (la de Bsale) — 2026-11-06
@@ -293,6 +296,8 @@ export class BsaleRecepcionesService {
         ...(repetida ? [`Ya hay una recepción registrada con ${b.tipo.nombre.toLowerCase()} N° ${b.documentoNumero} (recepción #${repetida.id}): revisa que no sea la misma mercadería.`] : []),
         ...(!this.facturacion.emisionActiva ? ['Las escrituras en Bsale están apagadas en este servidor (BSALE_EMISION=off): solo se puede simular.'] : []),
         ...b.lineas.filter((l) => l.costo_unitario <= 0).map((l) => `«${l.nombre}» entra con costo $0.`),
+        // (2026-11-17) Costo recibido mayor que el del producto: queda por confirmar en Actualización de precios.
+        ...this.avisosCostoMayor(b.lineas),
       ],
       documento: { tipo: b.tipo.clave, nombre: b.tipo.nombre, numero: b.documentoNumero || null, fecha: b.documentoFecha },
       sucursal: b.sucursal ? { id: b.sucursal.id, nombre: b.sucursal.nombre, bsale_office_id: b.sucursal.bsale_office_id } : null,
@@ -326,9 +331,13 @@ export class BsaleRecepcionesService {
       .single();
     if (eCab) throw new BadRequestException(this.sinTabla(eCab) ? MIGRACION : eCab.message);
     const recepcionId = Number(cab.id);
-    const { data: filasLin, error: eLin } = await this.db.from('recepcion_stock_lineas').insert(
-      b.lineas.map((l) => ({ recepcion_id: recepcionId, producto_id: l.producto_id, sku: l.sku, nombre: l.nombre, lote: l.lote, vencimiento: l.vencimiento, cantidad: l.cantidad, costo_unitario: l.costo_unitario, bsale_variant_id: l.variante_id })),
-    ).select('id, producto_id, sku, lote, vencimiento');
+    const filasNuevas = b.lineas.map((l) => ({ recepcion_id: recepcionId, producto_id: l.producto_id, sku: l.sku, nombre: l.nombre, lote: l.lote, vencimiento: l.vencimiento, cantidad: l.cantidad, costo_unitario: l.costo_unitario, bsale_variant_id: l.variante_id }));
+    // (2026-11-17) Se guarda también el costo que tenía el producto al recibir (si la columna ya existe).
+    let insercion: any = await this.db.from('recepcion_stock_lineas').insert(b.lineas.map((l, i) => ({ ...filasNuevas[i], costo_catalogo: l.costo_catalogo }))).select('id, producto_id, sku, lote, vencimiento');
+    if (insercion.error && /costo_catalogo/i.test(String(insercion.error.message))) {
+      insercion = await this.db.from('recepcion_stock_lineas').insert(filasNuevas).select('id, producto_id, sku, lote, vencimiento');
+    }
+    const { data: filasLin, error: eLin } = insercion;
     if (eLin) {
       await this.db.from('recepciones_stock').delete().eq('id', recepcionId);
       throw new BadRequestException(this.sinTabla(eLin) ? MIGRACION : eLin.message);
@@ -377,7 +386,67 @@ export class BsaleRecepcionesService {
       .select('*')
       .single();
     this.logger.log(`Recepción ${recepcionId} registrada por ${email}: ${etiqueta}, ${b.totales.lineas} línea(s), ${b.totales.unidades} unidades, Bsale ${bsaleId ?? 's/id'}`);
-    return { ok: true, recepcion: this.vista(final || cab, b.lineas), bsale_reception_id: bsaleId, avisos };
+    // (2026-11-17) Costo recibido mayor que el del producto: aviso a quien actualiza precios.
+    const costoMayorDe = this.lineasConCostoMayor(b.lineas);
+    if (costoMayorDe.length) {
+      void this.notificarCostoMayor(recepcionId, costoMayorDe, email).catch((e) => this.logger.warn(`Recepción ${recepcionId}: no se pudo avisar el costo mayor: ${e?.message || e}`));
+    }
+    // Los avisos de costo van aparte: no son un problema de la recepción.
+    return { ok: true, recepcion: this.vista(final || cab, b.lineas), bsale_reception_id: bsaleId, avisos, costos_por_confirmar: costoMayorDe.length, avisos_costo: this.avisosCostoMayor(b.lineas, true) };
+  }
+
+  /* ── Costo recibido mayor que el del producto (2026-11-17) ─────────────────
+     Pedido de Ariel: «si se reconoce que en recepción de stock el último costo
+     es superior, levantar alerta para confirmar si es modificación de costo
+     definitiva o momentánea». La recepción NO cambia el costo del producto: lo
+     deja por confirmar en Productos → Actualización de precios → «Costos por
+     confirmar» (ver productos/costos-recepcion.ts) y avisa en la campana. */
+  private lineasConCostoMayor(lineas: LineaLista[]): LineaLista[] {
+    // Un producto puede venir en varias líneas (lotes): cuenta una vez, con su costo más alto.
+    const porProducto = new Map<number, LineaLista>();
+    for (const l of lineas) {
+      if (!costoMayor(l.costo_unitario, l.costo_catalogo)) continue;
+      const previa = porProducto.get(l.producto_id);
+      if (!previa || l.costo_unitario > previa.costo_unitario) porProducto.set(l.producto_id, l);
+    }
+    return [...porProducto.values()];
+  }
+
+  private avisosCostoMayor(lineas: LineaLista[], registrada = false): string[] {
+    const clp = (n: number) => `$${Math.round(n).toLocaleString('es-CL')}`;
+    return this.lineasConCostoMayor(lineas).map((l) => {
+      const alza = l.costo_catalogo > 0 ? ` (+${(Math.round(((l.costo_unitario - l.costo_catalogo) / l.costo_catalogo) * 1000) / 10).toLocaleString('es-CL')} %)` : '';
+      const base = `${l.sku || `«${l.nombre}»`}: el costo de esta recepción (${clp(l.costo_unitario)}) es mayor que el del producto (${l.costo_catalogo > 0 ? clp(l.costo_catalogo) : 'sin costo'})${alza}.`;
+      return registrada
+        ? `${base} El costo del producto no cambió: quedó por confirmar en Productos → Actualización de precios si el alza es definitiva o momentánea.`
+        : `${base} Al registrar, el costo del producto no cambia: queda por confirmar en Productos → Actualización de precios si el alza es definitiva o momentánea.`;
+    });
+  }
+
+  /* Campana para quienes pueden cambiar costos: administradores y perfiles con
+     «Actualización de precios» + «Ver el costo de los productos». Sin montos. */
+  private async notificarCostoMayor(recepcionId: number, lineas: LineaLista[], autor: string) {
+    const [{ data: perfiles }, { data: permisos }] = await Promise.all([
+      this.db.from('profiles').select('email, rol, permission_profile_id'),
+      this.db.from('permission_profiles').select('id, permisos'),
+    ]);
+    const porPerfil = new Map<any, any>(((permisos || []) as any[]).map((p) => [p.id, p.permisos]));
+    const destinatarios = [...new Set(
+      ((perfiles || []) as any[])
+        .filter((p) => {
+          const rol = String(p?.rol || '').trim().toLowerCase();
+          if (esRolAdmin(rol)) return true;
+          const efectivos = permisosEfectivos(rol, p?.permission_profile_id ? porPerfil.get(p.permission_profile_id) ?? null : null);
+          return efectivos.includes('actualizar_precios') && efectivos.includes('ver_costos');
+        })
+        .map((p) => String(p?.email || '').trim().toLowerCase())
+        .filter((e) => /^[^@\s]+@[^@\s]+$/.test(e)),
+    )];
+    if (!destinatarios.length) return;
+    const mensaje = mensajeCostoMayor(recepcionId, lineas.map((l) => ({ sku: l.sku, nombre: l.nombre })));
+    const metadata = { recepcion_id: recepcionId, por: autor || null, productos: lineas.slice(0, 40).map((l) => ({ id: l.producto_id, sku: l.sku, nombre: l.nombre })) };
+    const { error } = await this.db.from('notificaciones').insert(destinatarios.map((user_email) => ({ user_email, tipo: 'costo_recepcion_mayor', mensaje, link: '/productos/actualizacion-precios?vista=costos', metadata })));
+    if (error) throw new Error(error.message);
   }
 
   private vista(r: any, lineas: any[] = []) {

@@ -1,4 +1,5 @@
-import { Body, Controller, Get, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, ForbiddenException, Get, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { CostosRecepcionService } from './costos-recepcion.service';
 import { AuthGuard } from '../auth/auth.guard';
 import { ModuloGuard } from '../auth/modulo.guard';
 import { PreciosSheetService } from './precios-sheet.service';
@@ -14,6 +15,7 @@ export class PreciosSheetController {
   constructor(
     private precios: PreciosSheetService,
     private preciosCambios: PreciosCambiosService,
+    private costos: CostosRecepcionService,
   ) {}
 
   private verCostos(req: any) {
@@ -67,5 +69,20 @@ export class PreciosSheetController {
   @Post('reintentar')
   reintentar() {
     return this.precios.reintentar();
+  }
+
+  /* (2026-11-17) Costos por confirmar: productos cuya última recepción de stock
+     llegó con un costo mayor al que tienen. Solo para quien puede ver costos. */
+  @Get('costos-recepcion')
+  async costosRecepcion(@Req() req: any) {
+    if (!(await this.verCostos(req))) return { listo: true, con_decision: true, mensaje: null, alertas: [], sin_permiso: true };
+    return this.costos.pendientes();
+  }
+
+  // Decide una alerta: «definitiva» cambia el costo del producto; «momentanea» lo mantiene.
+  @Post('costos-recepcion/resolver')
+  async resolverCostoRecepcion(@Body() body: any, @Req() req: any) {
+    if (!(await this.verCostos(req))) throw new ForbiddenException('Tu perfil no permite cambiar el costo (falta «Ver el costo de los productos»).');
+    return this.costos.resolver(body, this.usuario(req));
   }
 }

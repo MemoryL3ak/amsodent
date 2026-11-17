@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
-import { AlertTriangle, CheckCircle2, CloudUpload, Copy, Download, ExternalLink, FileSpreadsheet, History, Loader2, RefreshCw, Scale, Search, Tags, Undo2, X } from "lucide-react";
+import { AlertTriangle, ArrowLeft, CheckCircle2, CloudUpload, Copy, Download, ExternalLink, FileSpreadsheet, History, Loader2, PackagePlus, Percent, RefreshCw, Scale, Search, Tags, Undo2, X } from "lucide-react";
+import ConfirmModal from "../components/ConfirmModal";
 import { api } from "../lib/api";
 import { useStickyState } from "../lib/useStickyState";
 import { useUnsavedChanges } from "../context/UnsavedChangesContext";
@@ -27,7 +28,9 @@ import Toast from "../components/Toast";
    ve y se cambia solo con «ver_costos» (el servidor lo vuelve a exigir). */
 
 const POR_PAGINA = 20;
-const MAX_POR_GUARDADO = 80;
+const MAX_POR_GUARDADO = 80; // productos por llamada al servidor (cada guardado también actualiza Bsale)
+const MAX_CAMBIOS = 1500; // productos con cambios que se simulan y guardan de una vez, por tandas
+const SIN_MARCA = "__sin_marca";
 const IVA = 1.19;
 const FACTOR_LISTA_3 = 1.08;
 const CAMPOS = ["costo", "lista1", "lista2", "lista3"];
@@ -151,9 +154,108 @@ function CeldaPrecio({ original, texto, onCambiar, onSalir, conDecimales, placeh
         style={{ width: 104, height: 32, textAlign: "right", padding: "0 8px", fontVariantNumeric: "tabular-nums", borderColor: invalido ? "#dc2626" : cambia ? "#d97706" : undefined, background: invalido ? "#fef2f2" : cambia ? "#fffbeb" : undefined, fontWeight: cambia ? 700 : 500 }}
       />
       <div style={{ fontSize: 11, color: invalido ? "#b91c1c" : "var(--text-muted)", marginTop: 2, minHeight: 14 }}>
-        {invalido ? "No es un número" : cambia ? <>antes {original == null || Number(original) === 0 ? "vacío" : clp(original)}{pie ? <> · {pie}</> : null}</> : pie}
+        {/* (2026-11-17) «antes …» va en su propia línea: en una sola, con un ajuste masivo todas las celdas
+            se ensanchaban y la tabla dejaba de caber en un notebook de 13". */}
+        {invalido ? "No es un número" : cambia ? <><span style={{ color: "#b45309", fontWeight: 600 }}>antes {original == null || Number(original) === 0 ? "vacío" : clp(original)}</span>{pie ? <><br />{pie}</> : null}</> : pie}
       </div>
     </td>
+  );
+}
+
+/* ── Ajuste masivo (2026-11-17) ──────────────────────────────────────────────
+   Qué campos, cuánto y cómo redondear. Al aplicar solo se ESCRIBE en la grilla
+   (nada se guarda): el cambio se revisa, se simula y se guarda como siempre. */
+const CAMPOS_MASIVO = [
+  { value: "costo", label: "Costo" },
+  { value: "lista1", label: "Lista 1" },
+  { value: "lista2", label: "Lista 2" },
+  { value: "lista3", label: "Lista 3", detalle: "Solo las que tienen precio fijo" },
+];
+function ModalAjusteMasivo({ total, filtro, verCostos, onCerrar, onAplicar }) {
+  const [campos, setCampos] = useState(["lista1"]);
+  const [modo, setModo] = useState("porcentaje"); // 'porcentaje' | 'margen'
+  const [sentido, setSentido] = useState("subir");
+  const [valor, setValor] = useState("");
+  const [redondeo, setRedondeo] = useState("1");
+  const opciones = CAMPOS_MASIVO.filter((c) => (c.value === "costo" ? verCostos && modo === "porcentaje" : true));
+  const elegidos = campos.filter((c) => opciones.some((o) => o.value === c));
+  const n = Number(String(valor).replace(",", "."));
+  const valido = Number.isFinite(n) && n > 0 && (modo === "margen" ? n < 95 : sentido === "bajar" ? n < 100 : n <= 500);
+  const demasiados = total > MAX_CAMBIOS;
+  const puede = valido && elegidos.length > 0 && !demasiados && total > 0;
+  const alternar = (c) => setCampos((prev) => (prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c]));
+  const etiqueta = { fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px", color: "var(--text-muted)", display: "block", marginBottom: 5 };
+  const nombres = elegidos.map((c) => NOMBRE_CAMPO[c]).join(", ");
+
+  return createPortal(
+    <div onClick={onCerrar} style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,.5)", zIndex: 11050, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+      <div className="modal-ajuste-masivo" role="dialog" aria-modal="true" aria-label="Ajuste masivo de precios" onClick={(e) => e.stopPropagation()} style={{ width: 560, maxWidth: "100%", maxHeight: "92vh", overflow: "auto", background: "var(--surface)", borderRadius: "var(--radius-lg)", border: "1px solid var(--border)", boxShadow: "var(--shadow-lg)" }}>
+        <div style={{ padding: "14px 18px", borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
+          <div style={{ minWidth: 0 }}>
+            <strong style={{ fontSize: 15, display: "inline-flex", alignItems: "center", gap: 7 }}><Percent size={16} style={{ color: "var(--primary)" }} /> Ajuste masivo</strong>
+            <div style={textoSuave}>
+              Se aplica a <b>{total.toLocaleString("es-CL")} producto{total === 1 ? "" : "s"}</b>: {filtro ? `los del filtro actual (${filtro})` : "todo el catálogo, porque no hay filtros puestos"}.
+            </div>
+          </div>
+          <button type="button" className="btn btn-ghost" onClick={onCerrar} style={{ padding: 6, flexShrink: 0 }} title="Cerrar"><X size={16} /></button>
+        </div>
+        <div style={{ padding: "14px 18px", display: "flex", flexDirection: "column", gap: 14, fontSize: 13 }}>
+          {demasiados && <Aviso>Son más de {MAX_CAMBIOS.toLocaleString("es-CL")} productos: acota el filtro (por marca o categoría) y aplica el ajuste por partes.</Aviso>}
+          <div>
+            <span style={etiqueta}>Qué se ajusta</span>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {[{ value: "porcentaje", label: "Subir o bajar un porcentaje" }, ...(verCostos ? [{ value: "margen", label: "Fijar el margen sobre el costo" }] : [])].map((o) => (
+                <label key={o.value} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 10px", borderRadius: 8, border: `1px solid ${modo === o.value ? "var(--primary)" : "var(--border)"}`, background: modo === o.value ? "var(--primary-light)" : "transparent", cursor: "pointer" }}>
+                  <input type="radio" name="modo-masivo" checked={modo === o.value} onChange={() => setModo(o.value)} /> {o.label}
+                </label>
+              ))}
+            </div>
+          </div>
+          <div>
+            <span style={etiqueta}>En qué listas</span>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {opciones.map((c) => (
+                <label key={c.value} title={c.detalle || ""} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 10px", borderRadius: 8, border: `1px solid ${elegidos.includes(c.value) ? "var(--primary)" : "var(--border)"}`, background: elegidos.includes(c.value) ? "var(--primary-light)" : "transparent", cursor: "pointer" }}>
+                  <input type="checkbox" checked={elegidos.includes(c.value)} onChange={() => alternar(c.value)} /> {c.label}
+                </label>
+              ))}
+            </div>
+            {modo === "porcentaje" && <div style={{ ...textoSuave, marginTop: 5 }}>La lista 3 solo se ajusta en los productos que la tienen con precio fijo; en el resto sigue calculándose sola desde la lista 2.</div>}
+          </div>
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end" }}>
+            {modo === "porcentaje" && (
+              <div style={{ flex: "1 1 150px", minWidth: 0 }}>
+                <span style={etiqueta}>Sentido</span>
+                <DropdownSelect value={sentido} onChange={setSentido} minWidth={160} style={{ width: "100%" }} options={[{ value: "subir", label: "Subir" }, { value: "bajar", label: "Bajar" }]} />
+              </div>
+            )}
+            <label style={{ flex: "1 1 130px", minWidth: 0 }}>
+              <span style={etiqueta}>{modo === "margen" ? "Margen (%)" : "Porcentaje (%)"}</span>
+              <input className="input campo-porcentaje-masivo" inputMode="decimal" value={valor} onChange={(e) => setValor(e.target.value.replace(/[^\d.,]/g, ""))} placeholder={modo === "margen" ? "35" : "5"} style={{ width: "100%" }} autoFocus />
+            </label>
+            <div style={{ flex: "1 1 170px", minWidth: 0 }}>
+              <span style={etiqueta}>Redondear los precios a</span>
+              <DropdownSelect value={redondeo} onChange={setRedondeo} minWidth={180} style={{ width: "100%" }} options={[{ value: "1", label: "$1 (sin redondear)" }, { value: "10", label: "$10" }, { value: "50", label: "$50" }, { value: "100", label: "$100" }]} />
+            </div>
+          </div>
+          <div style={{ ...textoSuave, border: "1px solid var(--border)", borderRadius: 10, padding: "9px 12px", background: "var(--bg)" }}>
+            {puede
+              ? modo === "margen"
+                ? <>Cada precio de <b>{nombres}</b> quedará en <b>costo ÷ (1 − {String(n).replace(".", ",")} %)</b>: un margen de {String(n).replace(".", ",")} % sobre el precio. Los productos sin costo se saltan.</>
+                : <><b>{nombres}</b> {sentido === "subir" ? "sube" : "baja"} un <b>{String(n).replace(".", ",")} %</b> en los productos que ya tienen ese valor.</>
+              : "Elige al menos una lista y escribe el porcentaje."}
+            {" "}El resultado queda <b>escrito en la grilla, sin guardar</b>: después se revisa, se simula y se guarda.
+          </div>
+        </div>
+        <div style={{ padding: "12px 18px", borderTop: "1px solid var(--border)", display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}>
+          <button type="button" className="btn btn-ghost" onClick={onCerrar}>Cancelar</button>
+          <button type="button" className="btn btn-primary" disabled={!puede} onClick={() => onAplicar({ campos: elegidos, modo, valor: modo === "porcentaje" && sentido === "bajar" ? -n : n, redondeo: Number(redondeo) || 1 })}>
+            Escribir el ajuste en la grilla
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -161,15 +263,33 @@ function CeldaPrecio({ original, texto, onCambiar, onSalir, conDecimales, placeh
 function PestanaPrecios({ productos, cargando, verCostos, estado, ediciones, setEdiciones, onGuardado, setToast }) {
   const [q, setQ] = useStickyState("actualizacionPrecios.q", "");
   const [categoria, setCategoria] = useStickyState("actualizacionPrecios.categoria", "");
+  // (2026-11-17) Filtro por marca (pedido de Ariel): junto con el ajuste masivo permite subir o bajar una marca entera.
+  const [marca, setMarca] = useStickyState("actualizacionPrecios.marca", "");
   const [mostrar, setMostrar] = useState("");
   const [pagina, setPagina] = useState(1);
   const [sim, setSim] = useState(null); // { clave, datos }
   const [verSim, setVerSim] = useState(false);
   const [ocupado, setOcupado] = useState("");
+  const [avance, setAvance] = useState(null); // { hechos, total } mientras se simula o guarda por tandas
   const [resultado, setResultado] = useState(null);
+  const [masivoAbierto, setMasivoAbierto] = useState(false);
+
+  // La ficha de un producto enlaza aquí con ?q=<SKU>: llega con ese producto buscado.
+  useEffect(() => {
+    const qUrl = new URLSearchParams(window.location.search).get("q");
+    if (qUrl) { setQ(qUrl); setCategoria(""); setMarca(""); }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const porId = useMemo(() => new Map((productos || []).map((p) => [String(p.id), p])), [productos]);
   const categorias = useMemo(() => [...new Set((productos || []).map((p) => String(p.categoria || "").trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, "es")), [productos]);
+  const marcas = useMemo(() => {
+    const cuenta = new Map();
+    for (const p of productos || []) {
+      const m = String(p.marca || "").trim();
+      if (m) cuenta.set(m, (cuenta.get(m) || 0) + 1);
+    }
+    return [...cuenta.entries()].sort((a, b) => a[0].localeCompare(b[0], "es", { sensitivity: "base" }));
+  }, [productos]);
 
   // Productos con algo escrito que de verdad cambia (o que no se entiende).
   const pendientes = useMemo(() => {
@@ -187,7 +307,8 @@ function PestanaPrecios({ productos, cargando, verCostos, estado, ediciones, set
   const cuerpo = useMemo(() => conCambios.map((x) => ({ id: x.p.id, ...Object.fromEntries(x.lista.map((c) => [c.campo, c.ahora])) })), [conCambios]);
   const clave = JSON.stringify(cuerpo);
   const simVigente = !!sim && sim.clave === clave;
-  const demasiados = conCambios.length > MAX_POR_GUARDADO;
+  // (2026-11-17) Ya no hay tope de 80 por guardado: con más, se simula y se guarda por tandas, con el avance a la vista.
+  const demasiados = conCambios.length > MAX_CAMBIOS;
 
   // La barra se fija abajo mientras hay cambios sin guardar. Con position:sticky no
   // sirve: `.content` recorta en horizontal y eso la deja como caja de desplazamiento
@@ -217,13 +338,15 @@ function PestanaPrecios({ productos, cargando, verCostos, estado, ediciones, set
   const texto = sinTildes(q.trim());
   const filtrados = useMemo(() => (productos || []).filter((p) => {
     if (categoria && String(p.categoria || "").trim() !== categoria) return false;
+    if (marca === SIN_MARCA ? String(p.marca || "").trim() : marca && String(p.marca || "").trim() !== marca) return false;
     if (mostrar === "cambios" && !idsPendientes.has(String(p.id))) return false;
     if (mostrar === "sin_lista1" && Number(p.lista1) > 0) return false;
     if (mostrar === "sin_costo" && Number(p.costo) > 0) return false;
     if (mostrar === "inactivos" && String(p.estado || "").toLowerCase() !== "inactivo") return false;
-    return !texto || sinTildes(`${p.sku} ${p.nombre} ${p.marca}`).includes(texto);
-  }), [productos, categoria, mostrar, texto, idsPendientes]);
-  useEffect(() => { setPagina(1); }, [q, categoria, mostrar]);
+    if (mostrar === "sin_sku" && p.con_sku !== false) return false;
+    return !texto || sinTildes(`${p.sku || ""} ${p.nombre} ${p.marca || ""}`).includes(texto);
+  }), [productos, categoria, marca, mostrar, texto, idsPendientes]);
+  useEffect(() => { setPagina(1); }, [q, categoria, marca, mostrar]);
   const paginaActual = Math.min(pagina, Math.max(1, Math.ceil(filtrados.length / POR_PAGINA)));
   const visibles = filtrados.slice((paginaActual - 1) * POR_PAGINA, paginaActual * POR_PAGINA);
 
@@ -241,37 +364,124 @@ function PestanaPrecios({ productos, cargando, verCostos, estado, ediciones, set
     return siguiente;
   });
 
+  /* El servidor recibe hasta 80 productos por llamada (cada guardado también
+     actualiza Bsale): con más cambios se va por tandas y se junta el resultado. */
+  const tandas = () => {
+    const out = [];
+    for (let i = 0; i < cuerpo.length; i += MAX_POR_GUARDADO) out.push(cuerpo.slice(i, i + MAX_POR_GUARDADO));
+    return out;
+  };
+
   async function simular() {
     setOcupado("simular");
     setResultado(null);
+    const partes = tandas();
+    setAvance(partes.length > 1 ? { hechos: 0, total: cuerpo.length } : null);
     try {
-      const datos = await api.post("/precios-sheet/precios/simular", { cambios: cuerpo });
+      const datos = { simulacion: true, recibidos: 0, con_cambios: 0, sheet: null, productos: [] };
+      let hechos = 0;
+      for (const parte of partes) {
+        const r = await api.post("/precios-sheet/precios/simular", { cambios: parte });
+        datos.recibidos += r?.recibidos || 0;
+        datos.con_cambios += r?.con_cambios || 0;
+        datos.productos.push(...(r?.productos || []));
+        // Si alguna tanda no pudo revisar el Sheet, se dice (con el motivo de esa tanda).
+        if (!datos.sheet || r?.sheet?.disponible === false) datos.sheet = r?.sheet || datos.sheet;
+        hechos += parte.length;
+        if (partes.length > 1) setAvance({ hechos, total: cuerpo.length });
+      }
       setSim({ clave, datos });
       setVerSim(true);
     } catch (e) {
       setToast({ type: "error", message: e?.message || "No se pudo simular." });
     } finally {
       setOcupado("");
+      setAvance(null);
     }
   }
 
   async function guardar() {
     if (!simVigente) return;
     setOcupado("guardar");
+    const partes = tandas();
+    setAvance(partes.length > 1 ? { hechos: 0, total: cuerpo.length } : null);
+    const total = { guardados: 0, errores: [], sheet: null, mensaje: "" };
+    let fallo = null;
+    let hechos = 0;
     try {
-      const r = await api.post("/precios-sheet/precios/guardar", { cambios: cuerpo });
-      const conError = new Set((r?.errores || []).map((e) => String(e.id)));
-      setEdiciones((prev) => Object.fromEntries(Object.entries(prev).filter(([id]) => conError.has(id))));
-      setSim(null);
-      setVerSim(false);
-      setResultado(r);
-      setToast({ type: r?.errores?.length ? "warning" : "success", message: r?.mensaje || "Precios guardados." });
-      await onGuardado();
+      for (const parte of partes) {
+        const r = await api.post("/precios-sheet/precios/guardar", { cambios: parte });
+        total.guardados += r?.guardados || 0;
+        total.errores.push(...(r?.errores || []));
+        if (r?.sheet) total.sheet = r.sheet;
+        hechos += parte.length;
+        if (partes.length > 1) setAvance({ hechos, total: cuerpo.length });
+      }
     } catch (e) {
-      setToast({ type: "error", message: e?.message || "No se pudieron guardar los precios." });
-    } finally {
-      setOcupado("");
+      fallo = e?.message || "No se pudieron guardar los precios.";
     }
+    // Lo que alcanzó a guardarse sale de la grilla; queda marcado lo que falló o no se alcanzó a enviar.
+    const enviados = new Set(cuerpo.slice(0, hechos).map((c) => String(c.id)));
+    const conError = new Set(total.errores.map((e) => String(e.id)));
+    setEdiciones((prev) => Object.fromEntries(Object.entries(prev).filter(([id]) => !enviados.has(id) || conError.has(id))));
+    setSim(null);
+    setVerSim(false);
+    setOcupado("");
+    setAvance(null);
+    if (hechos > 0) {
+      total.mensaje = `${total.guardados} producto(s) actualizados${total.errores.length ? `, ${total.errores.length} con error` : ""}${fallo ? `; quedaron ${cuerpo.length - hechos} sin guardar` : ""}.`;
+      setResultado(total);
+      await onGuardado();
+    }
+    setToast(fallo
+      ? { type: "error", message: hechos > 0 ? `Se guardó una parte y luego falló: ${fallo} Lo que falta sigue marcado en la grilla.` : fallo }
+      : { type: total.errores.length ? "warning" : "success", message: total.mensaje || "Precios guardados." });
+  }
+
+  /* (2026-11-17) Ajuste masivo: «en esta sección se actualizan masivamente los
+     costos y precios de distintos listados». Aplica un porcentaje (o fija el
+     margen sobre el costo) a TODOS los productos del filtro actual —una marca,
+     una categoría, una búsqueda— y lo deja escrito en la grilla, sin guardar:
+     después se revisa, se simula y se guarda como cualquier otro cambio. */
+  function aplicarMasivo({ campos, modo, valor, redondeo }) {
+    const redondear = (n) => Math.max(0, Math.round(n / redondeo) * redondeo);
+    let tocados = 0;
+    let sinBase = 0;
+    const siguiente = { ...ediciones };
+    for (const p of filtrados) {
+      const ed = { ...(siguiente[p.id] || {}) };
+      let cambio = false;
+      // El costo que rige para calcular el margen: el escrito en la grilla o el guardado.
+      const escrito = ed.costo !== undefined && String(ed.costo).trim() !== "" ? leerNumero(ed.costo, true) : null;
+      const costoVigente = escrito != null && !Number.isNaN(escrito) ? escrito : Number(p.costo) || 0;
+      for (const campo of campos) {
+        let nuevo = null;
+        if (modo === "margen") {
+          // Precio para que el margen (sobre el precio) sea el pedido: costo / (1 − margen).
+          if (!(costoVigente > 0)) { sinBase++; continue; }
+          nuevo = redondear(costoVigente / (1 - valor / 100));
+        } else {
+          const base = Number(p[campo]) || 0;
+          // Una lista 3 vacía se calcula sola desde la lista 2: no se toca.
+          if (!(base > 0)) { if (campo !== "lista3") sinBase++; continue; }
+          nuevo = campo === "costo" ? Math.max(0, Math.round(base * (1 + valor / 100) * 100) / 100) : redondear(base * (1 + valor / 100));
+        }
+        if (nuevo === (Number(p[campo]) || 0)) continue;
+        ed[campo] = String(nuevo).replace(".", ",");
+        cambio = true;
+      }
+      if (cambio) { siguiente[p.id] = ed; tocados++; }
+    }
+    setEdiciones(siguiente);
+    setSim(null);
+    setMasivoAbierto(false);
+    setMostrar("cambios");
+    setToast({
+      type: tocados ? "info" : "warning",
+      message: tocados
+        ? `Ajuste escrito en ${tocados} producto${tocados === 1 ? "" : "s"}: revísalo, simula y guarda. Nada se ha guardado todavía.${sinBase ? ` ${sinBase} valor(es) se saltaron por no tener precio o costo de base.` : ""}`
+        : "El ajuste no cambia ningún producto del filtro (sin precio o costo de base, o ya estaban así).",
+    });
   }
 
   const columnas = verCostos ? 5 : 4;
@@ -299,7 +509,21 @@ function PestanaPrecios({ productos, cargando, verCostos, estado, ediciones, set
           <label className="filter-label">Categoría</label>
           <DropdownSelect value={categoria} onChange={setCategoria} minWidth={220} style={{ width: "100%" }} options={[{ value: "", label: "Todas" }, ...categorias.map((c) => ({ value: c, label: c }))]} />
         </div>
-        <div className="filter-field" style={{ flex: "1 1 190px", minWidth: 0, maxWidth: 260 }}>
+        <div className="filter-field" style={{ flex: "1 1 180px", minWidth: 0, maxWidth: 260 }}>
+          <label className="filter-label">Marca</label>
+          <DropdownSelect
+            value={marca}
+            onChange={setMarca}
+            minWidth={240}
+            style={{ width: "100%" }}
+            options={[
+              { value: "", label: "Todas" },
+              ...marcas.map(([m, n]) => ({ value: m, label: m, detalle: `${n.toLocaleString("es-CL")} producto${n === 1 ? "" : "s"}` })),
+              { value: SIN_MARCA, label: "Sin marca" },
+            ]}
+          />
+        </div>
+        <div className="filter-field" style={{ flex: "1 1 180px", minWidth: 0, maxWidth: 260 }}>
           <label className="filter-label">Mostrar</label>
           <DropdownSelect
             value={mostrar}
@@ -311,17 +535,37 @@ function PestanaPrecios({ productos, cargando, verCostos, estado, ediciones, set
               { value: "cambios", label: "Con cambios sin guardar" },
               { value: "sin_lista1", label: "Sin precio en lista 1" },
               ...(verCostos ? [{ value: "sin_costo", label: "Sin costo" }] : []),
+              { value: "sin_sku", label: "Sin SKU", detalle: "Transitorios: no van al Sheet" },
               { value: "inactivos", label: "Inactivos" },
             ]}
           />
         </div>
-        <div style={{ display: "flex", gap: 8, alignItems: "center", marginLeft: "auto" }}>
-          <BotonLimpiarFiltros hay={!!q.trim() || !!categoria || !!mostrar} onLimpiar={() => { setQ(""); setCategoria(""); setMostrar(""); }} />
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginLeft: "auto" }}>
+          <BotonLimpiarFiltros hay={!!q.trim() || !!categoria || !!marca || !!mostrar} onLimpiar={() => { setQ(""); setCategoria(""); setMarca(""); setMostrar(""); }} />
+          <button
+            type="button"
+            className="btn btn-secondary btn-ajuste-masivo"
+            onClick={() => setMasivoAbierto(true)}
+            disabled={!filtrados.length || !!ocupado}
+            title="Subir o bajar en un porcentaje (o fijar un margen) el costo o las listas de todos los productos del filtro"
+            style={{ display: "inline-flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" }}
+          >
+            <Percent size={14} /> Ajuste masivo
+          </button>
         </div>
       </div>
       <div style={{ ...textoSuave, margin: "8px 2px 10px" }}>
-        Los precios se escriben en <b>neto</b>, como los guarda la plataforma; al Sheet llegan con IVA (neto × 1,19). La lista 3 vacía se calcula sola (lista 2 × 1,08); escribir 0 la devuelve a ese cálculo. Productos sin SKU (transitorios) no figuran: no van al Sheet.
+        Los precios se escriben en <b>neto</b>, como los guarda la plataforma; al Sheet llegan con IVA (neto × 1,19). La lista 3 vacía se calcula sola (lista 2 × 1,08); escribir 0 la devuelve a ese cálculo. Los productos sin SKU (transitorios) también se cambian aquí, pero no van al Sheet.
       </div>
+      {masivoAbierto && (
+        <ModalAjusteMasivo
+          total={filtrados.length}
+          filtro={[marca === SIN_MARCA ? "sin marca" : marca ? `marca ${marca}` : "", categoria ? `categoría ${categoria}` : "", q.trim() ? `búsqueda «${q.trim()}»` : "", mostrar ? "filtro «Mostrar»" : ""].filter(Boolean).join(" · ")}
+          verCostos={verCostos}
+          onCerrar={() => setMasivoAbierto(false)}
+          onAplicar={aplicarMasivo}
+        />
+      )}
 
       <div className="table-wrap">
         <table className="data-table tabla-compacta tabla-texto tabla-actualizacion-precios" style={{ minWidth: verCostos ? 800 : 680 }}>
@@ -357,7 +601,7 @@ function PestanaPrecios({ productos, cargando, verCostos, estado, ediciones, set
                       <Link to={`/productos/editar/${p.id}`} target="_blank" rel="noopener noreferrer" className="table-link" title="Abrir el producto en una pestaña nueva">{p.nombre || "(sin nombre)"}</Link>
                     </div>
                     <div style={{ fontSize: 11.5, color: "var(--text-muted)", overflowWrap: "anywhere" }}>
-                      <span style={{ fontFamily: 'Consolas, "SFMono-Regular", monospace' }}>{p.sku}</span>
+                      {p.sku ? <span style={{ fontFamily: 'Consolas, "SFMono-Regular", monospace' }}>{p.sku}</span> : <span title="Los productos sin SKU no van al Google Sheet">sin SKU{p.estado ? ` (${String(p.estado).toLowerCase()})` : ""}</span>}
                       {p.marca ? ` · ${p.marca}` : ""}{p.categoria ? ` · ${p.categoria}` : ""}{inactivo ? " · inactivo" : ""}
                       {p.precio_actualizado_at ? ` · precio del ${fechaCorta(p.precio_actualizado_at)}` : ""}
                     </div>
@@ -392,9 +636,15 @@ function PestanaPrecios({ productos, cargando, verCostos, estado, ediciones, set
             : <>
                 <b>{conCambios.length} producto{conCambios.length === 1 ? "" : "s"} con cambios sin guardar</b>
                 {invalidos > 0 && <span style={{ color: "#b91c1c" }}> · {invalidos} con un valor que no es un número</span>}
-                {demasiados && <span style={{ color: "#b91c1c" }}> · se guardan hasta {MAX_POR_GUARDADO} por vez (para más, la carga masiva de Productos también llega al Sheet)</span>}
-                {!demasiados && !invalidos && <span style={{ color: "var(--text-muted)" }}> · {simVigente ? "simulación vigente: ya se puede guardar" : "simula para ver qué cambia y dónde queda en el Sheet"}</span>}
+                {demasiados && <span style={{ color: "#b91c1c" }}> · son demasiados para una sola vez: guarda hasta {MAX_CAMBIOS.toLocaleString("es-CL")} y sigue con el resto</span>}
+                {avance && <span style={{ color: "var(--primary-dark)" }}> · {ocupado === "guardar" ? "guardando" : "simulando"} {avance.hechos.toLocaleString("es-CL")} de {avance.total.toLocaleString("es-CL")}…</span>}
+                {!avance && !demasiados && !invalidos && <span style={{ color: "var(--text-muted)" }}> · {simVigente ? "simulación vigente: ya se puede guardar" : conCambios.length > MAX_POR_GUARDADO ? `simula para ver qué cambia (se hace en tandas de ${MAX_POR_GUARDADO})` : "simula para ver qué cambia y dónde queda en el Sheet"}</span>}
               </>}
+          {avance && (
+            <div style={{ height: 5, borderRadius: 999, background: "var(--border)", overflow: "hidden", marginTop: 6, maxWidth: 420 }} role="progressbar" aria-valuemin={0} aria-valuemax={avance.total} aria-valuenow={avance.hechos}>
+              <div style={{ height: "100%", width: `${avance.total ? (avance.hechos / avance.total) * 100 : 0}%`, background: "var(--primary)", transition: "width .3s" }} />
+            </div>
+          )}
         </div>
         <div className="btn-row" style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <button type="button" className="btn btn-ghost" onClick={() => { setEdiciones({}); setSim(null); }} disabled={!pendientes.length || !!ocupado} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Undo2 size={14} /> Descartar</button>
@@ -815,6 +1065,136 @@ function PestanaHistorial({ cambios }) {
   );
 }
 
+/* ── Pestaña «Costos por confirmar» (2026-11-17) ─────────────────────────────
+   Pedido de Ariel: «si se reconoce que en recepción de stock el último costo
+   es superior, levantar alerta para confirmar si es modificación de costo
+   definitiva o momentánea».
+   Una fila por producto cuya ÚLTIMA recepción de stock llegó con un costo
+   mayor al que tiene. Dos salidas, cada una con su confirmación:
+     · Definitiva → el costo del producto pasa a ser el de la recepción (queda
+       en el historial y sigue a Bsale y al Sheet como cualquier cambio).
+     · Momentánea → el costo se mantiene y la alerta se cierra.
+   La ventana de confirmación muestra antes cómo queda el margen de cada lista. */
+const NOMBRE_LISTA = { lista1: "Lista 1", lista2: "Lista 2", lista3: "Lista 3" };
+const pct = (m) => (m == null ? "—" : `${Number(m).toLocaleString("es-CL", { maximumFractionDigits: 1 })} %`);
+function PestanaCostos({ costos, onResuelto, setToast }) {
+  const [pagina, setPagina] = useState(1);
+  const [decidir, setDecidir] = useState(null); // { alerta, decision }
+  const [ocupado, setOcupado] = useState(null); // linea_id
+  const POR = 12;
+  const alertas = costos?.alertas || [];
+  const paginaActual = Math.min(pagina, Math.max(1, Math.ceil(alertas.length / POR)));
+  const visibles = alertas.slice((paginaActual - 1) * POR, paginaActual * POR);
+
+  async function resolver() {
+    const { alerta, decision } = decidir || {};
+    setDecidir(null);
+    if (!alerta) return;
+    setOcupado(alerta.linea_id);
+    try {
+      const r = await api.post("/precios-sheet/costos-recepcion/resolver", { linea_id: alerta.linea_id, decision });
+      setToast({ type: r?.aviso ? "warning" : "success", message: [r?.mensaje, r?.aviso].filter(Boolean).join(" ") || "Listo." });
+      await onResuelto(decision);
+    } catch (e) {
+      setToast({ type: "error", message: e?.message || "No se pudo resolver la alerta." });
+      await onResuelto(null);
+    } finally {
+      setOcupado(null);
+    }
+  }
+
+  if (!costos) return <div style={{ padding: "40px 0", textAlign: "center", color: "var(--text-muted)" }}>Cargando…</div>;
+  if (costos.sin_permiso) return <Aviso>Para ver y resolver los costos por confirmar tu perfil necesita «Ver el costo de los productos».</Aviso>;
+
+  const a = decidir?.alerta;
+  return (
+    <>
+      {costos.mensaje && <Aviso>{costos.mensaje} «Definitiva» funciona igual.</Aviso>}
+      <div style={{ ...textoSuave, margin: "2px 2px 10px" }}>
+        Productos cuya <b>última recepción de stock</b> llegó con un costo mayor al que tienen. La recepción no cambia el costo sola: aquí se decide si el alza es
+        <b> definitiva</b> (el costo del producto pasa a ser el de la recepción) o <b>momentánea</b> (el costo se mantiene).
+      </div>
+      <div className="table-wrap">
+        <table className="data-table tabla-compacta tabla-texto tabla-costos-confirmar" style={{ minWidth: 820 }}>
+          <thead>
+            <tr>
+              <th>Producto</th>
+              <th style={{ textAlign: "right", width: 108 }}>Costo actual</th>
+              <th style={{ textAlign: "right", width: 126 }}>Costo recibido</th>
+              <th style={{ width: "24%" }}>Recepción</th>
+              <th style={{ width: 236, textAlign: "left" }}>¿El alza es…?</th>
+            </tr>
+          </thead>
+          <tbody>
+            {alertas.length === 0 && (
+              <tr><td colSpan={5} style={{ textAlign: "center", padding: "40px 16px", color: "var(--text-muted)" }}>
+                {costos.listo === false ? "Todavía no hay recepciones de stock registradas." : "No hay costos por confirmar: ninguna recepción llegó con un costo mayor al del producto."}
+              </td></tr>
+            )}
+            {visibles.map((x) => (
+              <tr key={x.linea_id}>
+                <td style={{ minWidth: 200, verticalAlign: "top" }}>
+                  <div style={{ fontWeight: 600, overflowWrap: "anywhere" }}>
+                    <Link to={`/productos/editar/${x.producto_id}`} target="_blank" rel="noopener noreferrer" className="table-link" title="Abrir el producto en una pestaña nueva">{x.nombre || "(sin nombre)"}</Link>
+                  </div>
+                  <div style={{ fontSize: 11.5, color: "var(--text-muted)", overflowWrap: "anywhere" }}>
+                    <span style={{ fontFamily: 'Consolas, "SFMono-Regular", monospace' }}>{x.sku || "sin SKU"}</span>{x.marca ? ` · ${x.marca}` : ""}
+                  </div>
+                </td>
+                <td style={{ textAlign: "right", verticalAlign: "top", whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>{x.costo_actual > 0 ? clp(x.costo_actual) : <span style={{ color: "var(--text-muted)" }}>sin costo</span>}</td>
+                <td style={{ textAlign: "right", verticalAlign: "top", whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>
+                  <b>{clp(x.costo_recepcion)}</b>
+                  <div style={{ fontSize: 11.5, color: "#b45309", fontWeight: 700 }}>{x.alza_pct != null ? `+${num(x.alza_pct)} %` : "primer costo"} · +{clp(x.diferencia)}</div>
+                </td>
+                <td style={{ verticalAlign: "top", fontSize: 12.5 }}>
+                  <div>{x.documento || `Recepción #${x.recepcion_id}`}</div>
+                  <div style={{ color: "var(--text-muted)", overflowWrap: "anywhere" }}>
+                    {[fechaCorta(x.fecha), x.proveedor, `${num(x.cantidad)} unid.`, x.usuario ? quien(x.usuario) : ""].filter(Boolean).join(" · ")}
+                  </div>
+                </td>
+                <td style={{ verticalAlign: "top" }}>
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    <button type="button" className="btn btn-primary btn-sm" disabled={ocupado != null} onClick={() => setDecidir({ alerta: x, decision: "definitiva" })} title="El costo del producto pasa a ser el de la recepción">
+                      {ocupado === x.linea_id ? <Loader2 size={13} className="spin" /> : null} Definitiva
+                    </button>
+                    <button type="button" className="btn btn-secondary btn-sm" disabled={ocupado != null || costos.con_decision === false} onClick={() => setDecidir({ alerta: x, decision: "momentanea" })} title={costos.con_decision === false ? "Falta aplicar la migración para poder anotar que es momentánea" : "El costo del producto se mantiene y la alerta se cierra"}>
+                      Momentánea
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <Paginador pagina={paginaActual} total={alertas.length} onCambiar={setPagina} etiqueta="productos" porPagina={POR} />
+
+      <ConfirmModal
+        open={!!decidir}
+        title={decidir?.decision === "definitiva" ? "Alza definitiva: actualizar el costo" : "Alza momentánea: mantener el costo"}
+        confirmTone={decidir?.decision === "definitiva" ? "primary" : "warning"}
+        confirmText={decidir?.decision === "definitiva" ? "Actualizar el costo" : "Mantener el costo"}
+        onConfirm={resolver}
+        onCancel={() => setDecidir(null)}
+        message={a ? (
+          <span style={{ display: "block" }}>
+            <b>{a.sku || a.nombre}</b>{a.sku ? ` · ${a.nombre}` : ""}<br />
+            {decidir.decision === "definitiva"
+              ? <>El costo pasa de <b>{a.costo_actual > 0 ? clp(a.costo_actual) : "sin costo"}</b> a <b>{clp(a.costo_recepcion)}</b>. Queda en el historial de precios y se envía al Sheet. Los precios de las listas no cambian.</>
+              : <>El costo se mantiene en <b>{a.costo_actual > 0 ? clp(a.costo_actual) : "sin costo"}</b> aunque la recepción llegó a {clp(a.costo_recepcion)}. La alerta se cierra; si otra recepción vuelve a llegar más cara, aparecerá de nuevo.</>}
+            {(a.margenes || []).length > 0 && (
+              <span style={{ display: "block", marginTop: 8, fontSize: 12.5 }}>
+                {decidir.decision === "definitiva" ? "Margen con el costo nuevo: " : "Margen real de lo recibido: "}
+                {a.margenes.map((m) => `${NOMBRE_LISTA[m.lista]} ${pct(m.actual)} → ${pct(m.nuevo)}`).join(" · ")}
+              </span>
+            )}
+          </span>
+        ) : null}
+      />
+    </>
+  );
+}
+
 export default function ActualizacionPrecios() {
   const [vista, setVista] = useStickyState("actualizacionPrecios.vista", "precios");
   const [estado, setEstado] = useState(null);
@@ -825,7 +1205,7 @@ export default function ActualizacionPrecios() {
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState("");
   const [toast, setToast] = useState(null);
-  const { setIsDirty, registerDiscardHandler, clearDiscardHandler, registerSaveHandler, clearSaveHandler } = useUnsavedChanges();
+  const { setIsDirty, registerDiscardHandler, clearDiscardHandler, registerSaveHandler, clearSaveHandler, requestNavigation } = useUnsavedChanges();
 
   const cargarEstado = useCallback(async (forzar = false) => {
     try {
@@ -849,13 +1229,24 @@ export default function ActualizacionPrecios() {
     setCambios(c);
     setEnvios(e);
   }, []);
+  // (2026-11-17) Costos por confirmar: recepciones de stock que llegaron con un costo mayor.
+  const [costos, setCostos] = useState(null);
+  const cargarCostos = useCallback(async () => {
+    setCostos(await api.get("/precios-sheet/costos-recepcion").catch((e) => ({ listo: true, con_decision: true, mensaje: e?.message || "No se pudieron leer los costos por confirmar.", alertas: [] })));
+  }, []);
   const cargarTodo = useCallback(async () => {
     setCargando(true);
     setError("");
-    await Promise.all([cargarEstado(), cargarProductos(), cargarHistorial()]);
+    await Promise.all([cargarEstado(), cargarProductos(), cargarHistorial(), cargarCostos()]);
     setCargando(false);
-  }, [cargarEstado, cargarProductos, cargarHistorial]);
+  }, [cargarEstado, cargarProductos, cargarHistorial, cargarCostos]);
   useEffect(() => { cargarTodo(); }, [cargarTodo]);
+  // El aviso de la campana abre ?vista=costos; la ficha de un producto, ?q=<SKU> (pestaña Precios).
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("vista") === "costos") setVista("costos");
+    else if (params.get("q")) setVista("precios");
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Cambios escritos sin guardar: el menú pregunta antes de salir de la pantalla.
   const hayEdiciones = Object.keys(ediciones).length > 0;
@@ -875,6 +1266,9 @@ export default function ActualizacionPrecios() {
   useEffect(() => () => setIsDirty(false), [setIsDirty]);
 
   const verCostos = !!estado?.ver_costos;
+  const costosPendientes = verCostos ? (costos?.alertas || []).length : 0;
+  // La pestaña de costos es solo para quien puede ver costos.
+  useEffect(() => { if (estado && !estado.ver_costos && vista === "costos") setVista("precios"); }, [estado, vista, setVista]);
   const conectado = !!estado?.configurado && !!estado?.acceso?.ok;
   const ultimo = estado?.ultimo_envio;
   const cerrarToast = useCallback(() => setToast(null), []);
@@ -884,8 +1278,13 @@ export default function ActualizacionPrecios() {
       {toast && <Toast type={toast.type} message={toast.message} onClose={cerrarToast} />}
       <div className="page-header">
         <div style={{ minWidth: 0 }}>
+          {/* (2026-11-17) Es una sección de Productos: se vuelve al catálogo desde aquí
+              (por el menú o por este enlace, que avisa si hay cambios sin guardar). */}
+          <button type="button" onClick={() => requestNavigation("/productos")} className="table-link" style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12.5, marginBottom: 4, background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: "inherit" }}>
+            <ArrowLeft size={13} /> Productos
+          </button>
           <h1 className="page-title">Actualización de precios</h1>
-          <p className="page-subtitle">Los precios se cambian aquí y la plataforma los envía al Google Sheet «Lista de Precios», que queda solo para consultar.</p>
+          <p className="page-subtitle">El costo y los precios de los productos se cambian aquí —uno a uno o en masa— y la plataforma los envía a Bsale y al Google Sheet «Lista de Precios».</p>
         </div>
         <div className="page-actions" style={{ flexWrap: "wrap" }}>
           {estado?.sheet_url && (
@@ -908,11 +1307,18 @@ export default function ActualizacionPrecios() {
         </Aviso>
       )}
 
+      {costosPendientes > 0 && vista !== "costos" && (
+        <Aviso>
+          <b>{costosPendientes} producto{costosPendientes === 1 ? "" : "s"}</b> {costosPendientes === 1 ? "llegó" : "llegaron"} en recepción de stock con un costo mayor al que {costosPendientes === 1 ? "tiene" : "tienen"}: falta confirmar si el alza es definitiva o momentánea.{" "}
+          <button type="button" onClick={() => setVista("costos")} style={{ background: "none", border: "none", padding: 0, color: "inherit", textDecoration: "underline", cursor: "pointer", fontSize: 13, fontFamily: "inherit", fontWeight: 700 }}>Revisar</button>
+        </Aviso>
+      )}
+
       <div className="stats-row">
         <div className="stat-card">
-          <div className="stat-label" style={{ display: "flex", alignItems: "center", gap: 6 }}><Tags size={14} /> Productos con SKU</div>
+          <div className="stat-label" style={{ display: "flex", alignItems: "center", gap: 6 }}><Tags size={14} /> Productos</div>
           <div className="stat-value">{num(productos?.length ?? 0)}</div>
-          <div style={{ fontSize: 11.5, color: "var(--text-muted)", marginTop: 2 }}>los que van al Sheet</div>
+          <div style={{ fontSize: 11.5, color: "var(--text-muted)", marginTop: 2 }}>{num((productos || []).filter((p) => p.con_sku !== false).length)} con SKU van al Sheet</div>
         </div>
         <div className="stat-card">
           <div className="stat-label" style={{ display: "flex", alignItems: "center", gap: 6 }}><FileSpreadsheet size={14} /> Google Sheet</div>
@@ -934,6 +1340,7 @@ export default function ActualizacionPrecios() {
       <div className="pagos-tabs" role="tablist" aria-label="Secciones de la actualización de precios">
         {[
           { value: "precios", label: "Precios", Icono: Tags, n: Object.keys(ediciones).length || null },
+          ...(verCostos ? [{ value: "costos", label: "Costos por confirmar", Icono: PackagePlus, n: costosPendientes || null }] : []),
           { value: "sheet", label: "Google Sheet", Icono: FileSpreadsheet, n: (estado?.pendientes || 0) + (estado?.errores || 0) || null },
           { value: "historial", label: "Historial", Icono: History, n: null },
         ].map((p) => (
@@ -943,7 +1350,9 @@ export default function ActualizacionPrecios() {
         ))}
       </div>
 
-      {vista === "sheet"
+      {vista === "costos" && verCostos
+        ? <PestanaCostos costos={costos} setToast={setToast} onResuelto={(decision) => Promise.all([cargarCostos(), ...(decision === "definitiva" ? [cargarProductos(), cargarEstado(), cargarHistorial()] : [])])} />
+        : vista === "sheet"
         ? <PestanaSheet estado={estado} verCostos={verCostos} envios={envios} onProbar={() => cargarEstado(true)} onCambio={() => Promise.all([cargarEstado(), cargarHistorial()])} setToast={setToast} />
         : vista === "historial"
           ? <PestanaHistorial cambios={cambios} />

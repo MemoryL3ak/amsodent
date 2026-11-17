@@ -21,6 +21,7 @@ import {
   CloudUpload,
   FileWarning,
 } from "lucide-react";
+import SeccionesProductos from "../components/SeccionesProductos";
 import Toast from "../components/Toast";
 import BotonDescargarFichas from "../components/BotonDescargarFichas";
 import EnviarPendientesBsale from "../components/EnviarPendientesBsale";
@@ -348,6 +349,7 @@ export default function Productos() {
   // ✅ PERFIL / ROL
   const [perfilLoading, setPerfilLoading] = useState(true);
   const [rol, setRol] = useState(null);
+  const [puedeActualizarPrecios, setPuedeActualizarPrecios] = useState(false);
   const rolNorm = useMemo(() => {
     const r = (rol ?? "").toString().trim().toLowerCase();
     if (!r) return "";
@@ -372,6 +374,8 @@ export default function Productos() {
       try {
         const perfil = await api.get("/auth/profile");
         setRol(perfil?.rol ?? null);
+        // (2026-11-17) Quién ve el acceso a la sección «Actualización de precios».
+        setPuedeActualizarPrecios(["admin", "administrador"].includes(String(perfil?.rol || "").trim().toLowerCase()) || (Array.isArray(perfil?.permisos) && perfil.permisos.includes("actualizar_precios")));
       } catch {
         setRol(null);
       }
@@ -841,6 +845,10 @@ export default function Productos() {
         </div>
       </div>
       {pendientesBsaleOpen && <EnviarPendientesBsale onCerrar={() => setPendientesBsaleOpen(false)} />}
+
+      {/* (2026-11-17) Secciones de Productos: el catálogo y «Actualización de precios» (el costo y
+          los precios ya no se cambian en la ficha del producto). */}
+      <SeccionesProductos activa="catalogo" conPrecios={puedeActualizarPrecios} />
 
       {/* FILTROS */}
       <div className="filter-bar" style={{zIndex: 20, position: "relative"}}>

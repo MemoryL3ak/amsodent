@@ -125,10 +125,20 @@ export class PreciosSheetService implements OnModuleInit {
     return todos;
   }
 
-  /* Lista liviana para la pantalla de actualización de precios. */
+  /* Lista liviana para la pantalla de actualización de precios.
+     (2026-11-17) Trae TODO el catálogo, también los productos sin SKU: desde que
+     el costo y los precios ya no se cambian en la ficha del producto, esta es la
+     única pantalla donde se modifican. Los sin SKU no van al Sheet (`con_sku`). */
   async productosParaEditar(verCostos: boolean) {
-    const filas = await this.productosConSku('id, sku, nombre, categoria, marca, estado, costo, lista1, lista2, lista3, precio_actualizado_at');
-    return filas.map((p) => ({ ...p, costo: verCostos ? p.costo : undefined, lista3_calculada: lista3Efectiva(p) }));
+    const columnas = 'id, sku, nombre, categoria, marca, estado, costo, lista1, lista2, lista3, precio_actualizado_at';
+    const filas: any[] = [];
+    for (let desde = 0; desde < 40000; desde += 1000) {
+      const { data, error } = await this.db.from('productos').select(columnas).order('id', { ascending: true }).range(desde, desde + 999);
+      if (error) throw new BadRequestException(error.message);
+      filas.push(...((data || []) as any[]));
+      if ((data || []).length < 1000) break;
+    }
+    return filas.map((p) => ({ ...p, con_sku: !!String(p.sku || '').trim(), costo: verCostos ? p.costo : undefined, lista3_calculada: lista3Efectiva(p) }));
   }
 
   /* ── Estado (para la pantalla) ─────────────────────────────────────────── */

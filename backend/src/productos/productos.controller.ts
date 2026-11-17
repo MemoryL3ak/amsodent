@@ -113,9 +113,11 @@ export class ProductosController {
     return this.productosService.reenviarABsale(id);
   }
 
+  // (2026-11-17) La ficha del producto ya no cambia costo ni listas de un producto
+  // del catálogo (ver updateDesdeFicha): eso va por Actualización de precios.
   @Put(':id')
   update(@Param('id', ParseIntPipe) id: number, @Body() body: any, @Req() req: any) {
-    return this.productosService.update(id, body, (req?.user?.email || '').toLowerCase());
+    return this.productosService.updateDesdeFicha(id, body, (req?.user?.email || '').toLowerCase());
   }
 
   @Delete(':id')

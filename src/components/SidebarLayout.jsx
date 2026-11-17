@@ -228,9 +228,14 @@ export default function SidebarLayout() {
     // igual que reasignar el vendedor desde la ficha.
     esAdmin && { to: "/asignacion-cartera", icon: Briefcase, label: "Asignación de cartera" },
     puede("bitacora") && { to: "/bitacora-actividades", icon: CalendarDays, label: "Bitácora actividades" },
-    puede("productos") && { to: "/productos",   icon: Package,       label: "Productos" },
-    // (2026-11-12) Precios → Google Sheet: por permiso de perfil (el admin siempre).
-    puede("actualizar_precios") && { to: "/actualizacion-precios", icon: Tags, label: "Actualización de precios" },
+    // (2026-11-17) «Actualización de precios» pasó a ser una sección de Productos: cuelga de
+    // ese ítem del menú. Sigue yendo por permiso de perfil (el admin siempre).
+    puede("productos") && {
+      to: "/productos", icon: Package, label: "Productos",
+      ...(puede("actualizar_precios") ? { children: [{ to: "/productos/actualizacion-precios", icon: Tags, label: "Actualización de precios" }] } : {}),
+    },
+    // Quien actualiza precios sin tener el módulo Productos la ve suelta.
+    !puede("productos") && puede("actualizar_precios") && { to: "/productos/actualizacion-precios", icon: Tags, label: "Actualización de precios" },
     // (2026-10-09) Explorador de productos: en Comercial y para todos los roles (antes «Explorador de Precios», solo admin, en Reportes).
     { to: "/explorador-precios", icon: Store, label: "Explorador de Productos" },
     // (2026-10-01) Margen por marca / categoría sobre una lista, con vigencia.
@@ -348,8 +353,10 @@ export default function SidebarLayout() {
   // Ítem padre con submódulos anidados (ej. Panel de Indicadores → sub-paneles).
   function NavParent({ item }) {
     const { to, icon: Icon, label: itemLabel, children } = item;
-    const selfActive = isActive(to);
     const childActive = children.some((c) => isActive(c.to));
+    // (2026-11-17) Un hijo puede vivir bajo la ruta del padre (/productos/actualizacion-precios):
+    // con el hijo abierto, el resaltado es del hijo, no de los dos.
+    const selfActive = isActive(to) && !childActive;
     const [open, setOpen] = useState(() => {
       try {
         const s = localStorage.getItem(`subnav_${to}`);
