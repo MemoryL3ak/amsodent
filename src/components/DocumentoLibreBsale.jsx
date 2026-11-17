@@ -14,6 +14,7 @@ import CampoObservacionGuia, { OBSERVACION_GUIA_MAX } from "./CampoObservacionGu
 import CrearClienteBsale from "./CrearClienteBsale";
 import RegistrarComprobanteRapido from "./RegistrarComprobanteRapido";
 import SelectorLotes, { cuerpoLotes, problemaLotes, useLotesPorSku } from "./SelectorLotes";
+import SelectorGirosDocumento, { textoGirosDocumento } from "./SelectorGirosDocumento";
 
 /* ── Guía o factura LIBRE en Bsale (2026-10-03) ──────────────────────────────
    Sin orden de compra ni cotización de por medio: se elige el cliente por RUT
@@ -218,8 +219,25 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
     return { neto, iva, total: neto + iva };
   }, [lineas]);
 
+  /* (2026-11-17) Giro del documento: cuando la ficha del cliente tiene más de
+     uno se elige con cuál sale la guía o la factura (la boleta no lleva giro),
+     y ese es el que queda en Bsale. Cliente nuevo: lo marcado se escribe en su
+     campo Giro, que sigue siendo editable. */
+  const [girosSel, setGirosSel] = useState([]);
+  useEffect(() => { setGirosSel(cliente?.giros_elegidos || []); }, [cliente?.rut, cliente?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  const eligeGiro = !esBoleta && (cliente?.giros || []).length > 1;
+  const giroMax = cliente?.giro_max || 80;
+  const giroExcede = eligeGiro && textoGirosDocumento(girosSel).length > giroMax;
+  // Si lo marcado no cabe, no se escribe a medias en el campo Giro: se pide desmarcar y no se puede simular.
+  function cambiarGiros(sel) {
+    setGirosSel(sel);
+    const texto = textoGirosDocumento(sel);
+    if (cliente?.nuevo && texto.length <= giroMax) setCliente((p) => ({ ...p, giro: texto }));
+  }
+
   const cuerpo = () => ({
     tipo: tipoDoc,
+    ...(eligeGiro && !cliente?.nuevo && girosSel.length ? { giros: girosSel } : {}),
     ...(ventaDirecta ? { venta_directa: true, ...(cotLigada ? { cotizacion_id: Number(cotLigada) } : {}), con_guia: conGuia && guiaPosible, ...(conGuia && guiaPosible ? { despacho: { destinatario: despacho.destinatario, direccion: despacho.direccion, comuna: despacho.comuna, ciudad: despacho.ciudad, tipo_traslado_id: 1 }, observacion, observaciones: obsPorSku() } : {}) } : {}),
     cliente: cliente ? { rut: cliente.rut, razon_social: cliente.razon_social, giro: cliente.giro, direccion: cliente.direccion, comuna: cliente.comuna, ciudad: cliente.ciudad, email: cliente.email } : { rut: esBoleta ? "" : rut },
     lineas: lineas.map((l) => ({ sku: l.sku, producto: l.producto, cantidad: Number(l.cantidad), neto_unitario: Number(l.neto_unitario) })),
@@ -264,7 +282,7 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
   // (2026-10-08) Emitido el documento, al cerrar se abre la ventana de correo para enviárselo al cliente.
   const cerrar = () => { if (enviando) return; if (resultado?.emitida) window.dispatchEvent(new Event("correos:check")); onCerrar?.(); };
   const obsMax = desde?.observacion_max || OBSERVACION_GUIA_MAX;
-  const listoParaSimular = !!opciones && !enviando && (!!cliente || esBoleta) && lineas.length > 0 && !!fecha && (!conObsGuia || observacion.trim().length <= obsMax) && !lotesConProblema && (!comprobanteObligatorio || !!comprobante.trim());
+  const listoParaSimular = !!opciones && !enviando && (!!cliente || esBoleta) && lineas.length > 0 && !!fecha && (!conObsGuia || observacion.trim().length <= obsMax) && !lotesConProblema && !giroExcede && (!comprobanteObligatorio || !!comprobante.trim());
   const puedeEmitir = listoParaSimular && !apagada && simulacionVigente && confirmo;
   const nombreDoc = esGuia ? "guía" : esBoleta ? "boleta" : "factura";
   const titulo = ventaDirecta
@@ -499,10 +517,23 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
                       <div style={{ fontSize: 13, lineHeight: 1.45, overflowWrap: "anywhere" }}>
                         <div style={{ fontWeight: 600 }}>{cliente.razon_social || "—"} <span style={{ fontSize: 11, fontWeight: 700, color: "#15803d", background: "#dcfce7", borderRadius: 999, padding: "1px 8px", marginLeft: 6 }}>En Bsale</span></div>
                         <div>RUT {cliente.rut}</div>
-                        <div style={{ color: "var(--text-muted)", fontSize: 12 }}>{[cliente.giro, cliente.direccion, cliente.comuna].filter(Boolean).join(" · ") || "Sin giro ni dirección"}</div>
+                        <div style={{ color: "var(--text-muted)", fontSize: 12 }}>{[eligeGiro ? "" : cliente.giro, cliente.direccion, cliente.comuna].filter(Boolean).join(" · ") || (eligeGiro ? "Sin dirección" : "Sin giro ni dirección")}</div>
                         {/* (2026-10-23) La ficha del sistema dice otro giro: el documento sale con el de Bsale. */}
                         {cliente.aviso_giro && <div style={{ color: "#92400e", fontSize: 12, marginTop: 4 }}>{cliente.aviso_giro}</div>}
                       </div>
+                    )}
+                    {/* (2026-11-17) Con qué giro sale el documento: el marcado es el que queda en Bsale. */}
+                    {eligeGiro && (
+                      <SelectorGirosDocumento
+                        giros={cliente.giros}
+                        seleccion={girosSel}
+                        onChange={cambiarGiros}
+                        giroBsale={cliente.nuevo ? "" : cliente.giro}
+                        clienteNuevo={!!cliente.nuevo}
+                        max={giroMax}
+                        documento={esGuia ? { articulo: "La", nombre: "guía" } : { articulo: "La", nombre: "factura" }}
+                        disabled={!!enviando}
+                      />
                     )}
                     {esBoleta && (
                       <button type="button" className="btn btn-ghost btn-sm" onClick={() => { setCliente(null); setRut(""); }} disabled={!!enviando} style={{ marginTop: 6, fontSize: 12 }}>

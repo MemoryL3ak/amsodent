@@ -1480,7 +1480,7 @@ export class BsaleFacturacionService {
 
   /* (2026-11-05) Giros de la ficha del cliente en el sistema (clientes.giros).
      [] si no hay ficha, si el RUT no calza o si la columna no está migrada. */
-  private async girosDeFicha(rut: any): Promise<string[]> {
+  async girosDeFicha(rut: any): Promise<string[]> {
     const variantes = variantesRutFicha(rut);
     if (!variantes.length) return [];
     const { data, error } = await this.supabase.getClient().from('clientes').select('id, giros').in('rut', variantes).order('id', { ascending: true }).limit(1);
@@ -1491,7 +1491,9 @@ export class BsaleFacturacionService {
   /* Deja en Bsale el giro elegido para la factura. Se repiten los datos que
      Bsale ya tiene para que el PUT no los borre (igual que al guardar la
      ficha, BsaleClientesService.sincronizarGiros). Si falla, no se emite. */
-  private async ponerGiroCliente(clienteId: number, giro: string) {
+  /* (2026-11-17) También lo usa la guía de despacho (bsale-despachos): `documento`
+     es de qué documento se habla en el mensaje si Bsale no toma el giro. */
+  async ponerGiroCliente(clienteId: number, giro: string, documento: { nombre: string; noEmitido: string } = { nombre: 'la factura', noEmitido: 'La factura no se emitió' }) {
     try {
       const c = await this.apiGet(`/clients/${clienteId}.json`);
       const solicitud: Record<string, any> = { id: clienteId, activity: giro.slice(0, ACTIVITY_MAX) };
@@ -1501,9 +1503,9 @@ export class BsaleFacturacionService {
       const r = await this.apiEnviar('PUT', `/clients/${clienteId}.json`, solicitud);
       const quedo = String(r?.activity ?? '').replace(/\s+/g, ' ').trim();
       if (quedo && !mismoGiro(quedo, solicitud.activity)) throw new Error(`Bsale guardó «${quedo}»`);
-      this.logger.log(`Giro del cliente ${clienteId} en Bsale: «${solicitud.activity}» (elegido para la factura)`);
+      this.logger.log(`Giro del cliente ${clienteId} en Bsale: «${solicitud.activity}» (elegido para ${documento.nombre})`);
     } catch (e: any) {
-      throw new BadRequestException(`No se pudo dejar en Bsale el giro elegido («${giro}»): ${String(e?.message || e).slice(0, 200)}. La factura no se emitió.`);
+      throw new BadRequestException(`No se pudo dejar en Bsale el giro elegido («${giro}»): ${String(e?.message || e).slice(0, 200)}. ${documento.noEmitido}.`);
     }
   }
 

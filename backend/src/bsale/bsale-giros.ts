@@ -65,6 +65,29 @@ export function girosEnActividad(girosFicha: string[], actividad: any): string[]
   return (girosFicha || []).filter((g) => mismoGiro(g, texto) || partes.some((p) => mismoGiro(p, g)));
 }
 
+/* (2026-11-17) Giros que se ofrecen al emitir una guía y cuáles vienen
+   marcados. `girosFicha` son los de la ficha (ya filtrados: solo se ofrece
+   elegir cuando tiene más de uno); `giroBsale`, el texto que el cliente tiene
+   hoy en Bsale (o, si es un cliente nuevo, la propuesta para crearlo).
+
+   Regla: nada cambia en Bsale si la persona no lo decide. Por eso, cuando el
+   giro que Bsale tiene hoy NO corresponde a los de la ficha, ese giro entra
+   como una opción más y es el que viene marcado; cambiarlo a uno de la ficha
+   es un clic consciente. Si Bsale ya tiene giros de la ficha, vienen marcados
+   esos. (Hay fichas con giros mal escritos —«W»—: marcarlos por defecto habría
+   cambiado el giro bueno de Bsale sin que nadie lo pidiera.) */
+export function opcionesDeGiro(girosFicha: string[], giroBsale: any, clienteNuevo = false): { giros: string[]; elegidos: string[] } {
+  const ficha = normalizarGiros(girosFicha);
+  if (ficha.length < 2) return { giros: [], elegidos: [] };
+  const actual = String(giroBsale ?? '').replace(/\s+/g, ' ').trim();
+  const enBsale = girosEnActividad(ficha, actual);
+  if (clienteNuevo || !actual) return { giros: ficha, elegidos: enBsale.length ? enBsale : ficha.slice(0, 1) };
+  // Lo que Bsale tiene hoy es exactamente uno o más giros de la ficha: se ofrecen solo los de la ficha.
+  if (enBsale.length && mismoGiro(textoDeGiros(enBsale), actual)) return { giros: ficha, elegidos: enBsale };
+  // Bsale tiene otro giro (o uno de la ficha junto a otro que no está): se ofrece tal cual, marcado.
+  return { giros: [actual, ...ficha.filter((g) => !mismoGiro(g, actual))], elegidos: [actual] };
+}
+
 /* El RUT se guarda en la ficha en varios formatos (con puntos, con guion,
    plano, con k minúscula): todas las formas de escribir el mismo RUT. */
 export function variantesRutFicha(rut: any): string[] {

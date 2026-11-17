@@ -9,6 +9,7 @@ import AvisoCorreoDocumento from "./AvisoCorreoDocumento";
 import BotonImprimirCarta from "./BotonImprimirCarta";
 import BotonImprimirTermica from "./BotonImprimirTermica";
 import RegistrarComprobanteRapido from "./RegistrarComprobanteRapido";
+import SelectorGirosDocumento, { textoGirosDocumento } from "./SelectorGirosDocumento";
 
 /* ── Emitir factura en Bsale (2026-10-02) ────────────────────────────────────
    Ventana que se abre desde Trazabilidad sobre una guía sin factura. El
@@ -243,10 +244,9 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
   // (2026-11-05) Solo se elige giro cuando la ficha del cliente tiene más de uno.
   const eligeGiro = (borrador?.giros || []).length > 1;
   // Texto que recibe Bsale: los giros marcados, en el orden de la ficha, unidos con « / ».
-  const giroTexto = girosSel.join(" / ");
+  const giroTexto = textoGirosDocumento(girosSel);
   const giroMax = borrador?.giro_max || 80;
   const giroExcede = giroTexto.length > giroMax;
-  const alternarGiro = (g) => setGirosSel((v) => (borrador?.giros || []).filter((x) => (x === g ? !v.includes(g) : v.includes(x))));
   const opcionesForma = useMemo(
     () => (borrador?.formas_pago || []).map((f) => ({ value: String(f.id), label: f.nombre })),
     [borrador],
@@ -428,28 +428,7 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
                             {[eligeGiro ? "" : borrador.cliente.giro, borrador.cliente.direccion, borrador.cliente.comuna].filter(Boolean).join(" · ") || (eligeGiro ? "Sin dirección" : "Sin giro ni dirección")}
                           </div>
                           {eligeGiro && (
-                            <div className="factura-giro" style={{ marginTop: 8 }}>
-                              <span style={etiqueta}>Giros de esta factura (uno o más)</span>
-                              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                                {(borrador.giros || []).map((g) => {
-                                  const marcado = girosSel.includes(g);
-                                  const unico = marcado && girosSel.length === 1;
-                                  return (
-                                    <label key={g} className="factura-giro-opcion" title={unico ? "La factura necesita al menos un giro" : undefined} style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "5px 8px", borderRadius: 8, border: `1px solid ${marcado ? "var(--primary, #2563eb)" : "var(--border)"}`, background: marcado ? "rgba(37, 99, 235, 0.06)" : "transparent", cursor: enviando || unico ? "default" : "pointer", fontSize: 12.5 }}>
-                                      <input type="checkbox" checked={marcado} disabled={!!enviando || unico} onChange={() => alternarGiro(g)} style={{ marginTop: 2 }} />
-                                      <span style={{ overflowWrap: "anywhere" }}>{g}</span>
-                                    </label>
-                                  );
-                                })}
-                              </div>
-                              <div className="factura-giro-texto" style={{ color: giroExcede ? "#b91c1c" : "var(--text-muted)", fontSize: 11.5, marginTop: 4 }}>
-                                {giroExcede
-                                  ? `Los giros marcados suman ${giroTexto.length} caracteres y Bsale admite ${giroMax}: desmarca alguno.`
-                                  : giroTexto.trim().toLowerCase() === String(borrador.cliente.giro || "").trim().toLowerCase()
-                                    ? `Es el giro que el cliente tiene hoy en Bsale (${giroTexto.length}/${giroMax}).`
-                                    : `La factura saldrá con «${giroTexto}» (${giroTexto.length}/${giroMax}). En Bsale hoy tiene «${borrador.cliente.giro || "—"}»: al emitir quedará con lo marcado.`}
-                              </div>
-                            </div>
+                            <SelectorGirosDocumento giros={borrador.giros} seleccion={girosSel} onChange={setGirosSel} giroBsale={borrador.cliente.giro} max={giroMax} disabled={!!enviando} />
                           )}
                         </div>
                       ) : (

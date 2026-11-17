@@ -11,6 +11,7 @@ import BotonImprimirTermica from "./BotonImprimirTermica";
 import CamposSeguimientoGuia from "./CamposSeguimientoGuia";
 import CampoObservacionGuia, { OBSERVACION_GUIA_MAX } from "./CampoObservacionGuia";
 import SelectorLotes, { cuerpoLotes, problemaLotes } from "./SelectorLotes";
+import SelectorGirosDocumento, { textoGirosDocumento } from "./SelectorGirosDocumento";
 
 /* ── Emitir guía de despacho / registrar orden en Bsale (2026-10-02) ─────────
    Ventana del módulo Facturación para una orden de compra:
@@ -47,11 +48,13 @@ export default function EmitirDespachoBsale({ tipo = "guia", licitacionId, ocDoc
   // (2026-11-09) Lotes y vencimientos elegidos por SKU (salen escritos en la línea de la guía).
   const [lotesSel, setLotesSel] = useState({});
   const [cliente, setCliente] = useState(null);
+  // (2026-11-17) Giros con los que sale la guía, cuando la ficha del cliente tiene más de uno.
+  const [girosSel, setGirosSel] = useState([]);
   const [fecha, setFecha] = useState("");
   const [enviando, setEnviando] = useState("");
   const [resultado, setResultado] = useState(null);
   // La simulación y la confirmación valen para estos datos; si cambian, caducan.
-  const firma = JSON.stringify({ cantidades, despacho, cliente, fecha, observacion, obsLineas, lotesSel });
+  const firma = JSON.stringify({ cantidades, despacho, cliente, fecha, observacion, obsLineas, lotesSel, girosSel });
   const [simuladoCon, setSimuladoCon] = useState(null);
   const [confirmadoCon, setConfirmadoCon] = useState(null);
   const simulacionVigente = !!resultado?.simulacion && simuladoCon === firma;
@@ -71,6 +74,7 @@ export default function EmitirDespachoBsale({ tipo = "guia", licitacionId, ocDoc
         setCantidades(Object.fromEntries((b.lineas || []).map((l) => [l.sku, l.en_bsale ? String(esGuia ? l.pendiente : l.cantidad) : "0"])));
         setDespacho(b.despacho ? { ...b.despacho } : null);
         setCliente(b.cliente ? { ...b.cliente } : null);
+        setGirosSel(b.giros_elegidos || []);
         setObservacion("");
         const porSku = {};
         for (const l of b.lineas || []) {
@@ -107,6 +111,18 @@ export default function EmitirDespachoBsale({ tipo = "guia", licitacionId, ocDoc
   }, [borrador]);
   const lotesConProblema = esGuia && lineasElegidas.some((l) => problemaLotes(lotesSel[l.sku], lotesPorSku[l.sku], l.cantidad));
 
+  // (2026-11-17) Solo se elige giro en la guía y cuando la ficha del cliente tiene más de uno.
+  const eligeGiro = esGuia && (borrador?.giros || []).length > 1;
+  const giroMax = borrador?.giro_max || 80;
+  const giroExcede = eligeGiro && textoGirosDocumento(girosSel).length > giroMax;
+  // Cliente nuevo en Bsale: lo marcado se escribe en su campo Giro (que sigue siendo editable).
+  // Si lo marcado no cabe, no se escribe a medias: se pide desmarcar y no se puede simular.
+  function cambiarGiros(sel) {
+    setGirosSel(sel);
+    const texto = textoGirosDocumento(sel);
+    if (cliente?.nuevo && texto.length <= giroMax) setCliente((p) => ({ ...p, giro: texto }));
+  }
+
   const opcionesTraslado = useMemo(() => (borrador?.tipos_traslado || []).map((t) => ({ value: String(t.id), label: t.nombre })), [borrador]);
 
   function cambiarCantidad(sku, v) {
@@ -130,6 +146,8 @@ export default function EmitirDespachoBsale({ tipo = "guia", licitacionId, ocDoc
         ...(esGuia && accion !== "simular" ? { seguimiento } : {}),
         ...(esGuia ? { observacion, observaciones: Object.fromEntries(lineasElegidas.map((l) => [l.sku, obsLineas[l.sku] ?? l.observacion ?? ""])), lotes: cuerpoLotes(lineasElegidas, lotesSel, lotesPorSku) } : {}),
         ...(esGuia ? { lineas: lineasElegidas.map((l) => ({ sku: l.sku, cantidad: l.cantidad })), despacho: { ...despacho, tipo_traslado_id: Number(despacho?.tipo_traslado_id) } } : {}),
+        // Con cliente nuevo manda el campo Giro (lo marcado ya está escrito ahí y se pudo corregir a mano).
+        ...(eligeGiro && girosSel.length && !cliente?.nuevo ? { giros: girosSel } : {}),
         ...(cliente?.nuevo ? { cliente } : {}),
       });
       setResultado(r);
@@ -147,7 +165,7 @@ export default function EmitirDespachoBsale({ tipo = "guia", licitacionId, ocDoc
   const faltaDespacho = esGuia && despacho && (!despacho.direccion?.trim() || !despacho.comuna?.trim() || !despacho.ciudad?.trim() || !despacho.destinatario?.trim() || !despacho.tipo_traslado_id);
   const faltaCliente = cliente?.nuevo && (!cliente.rut?.trim() || !cliente.razon_social?.trim() || !cliente.giro?.trim() || !cliente.direccion?.trim() || !cliente.comuna?.trim());
   const obsMax = borrador?.observacion_max || OBSERVACION_GUIA_MAX;
-  const completo = !cargando && !enviando && borrador && !bloqueada && fecha && !excesos.length && !faltaDespacho && !faltaCliente && !lotesConProblema && (esGuia ? lineasElegidas.length > 0 && observacion.trim().length <= obsMax : true);
+  const completo = !cargando && !enviando && borrador && !bloqueada && fecha && !excesos.length && !faltaDespacho && !faltaCliente && !lotesConProblema && !giroExcede && (esGuia ? lineasElegidas.length > 0 && observacion.trim().length <= obsMax : true);
   const puedeEmitir = completo && !apagada && simulacionVigente && confirmo;
   const titulo = esGuia ? "Emitir guía de despacho en Bsale" : "Registrar la orden en Bsale";
   const verbo = esGuia ? "Emitir guía" : "Registrar orden";
@@ -252,8 +270,21 @@ export default function EmitirDespachoBsale({ tipo = "guia", licitacionId, ocDoc
                       <div style={{ fontSize: 13, lineHeight: 1.45, overflowWrap: "anywhere" }}>
                         <div style={{ fontWeight: 600 }}>{cliente?.razon_social || "—"}</div>
                         <div>RUT {cliente?.rut || "—"}</div>
-                        <div style={{ color: "var(--text-muted)", fontSize: 12 }}>{[cliente?.giro, cliente?.direccion, cliente?.comuna].filter(Boolean).join(" · ") || "Sin giro ni dirección"}</div>
+                        <div style={{ color: "var(--text-muted)", fontSize: 12 }}>{[eligeGiro ? "" : cliente?.giro, cliente?.direccion, cliente?.comuna].filter(Boolean).join(" · ") || (eligeGiro ? "Sin dirección" : "Sin giro ni dirección")}</div>
                       </div>
+                    )}
+                    {/* (2026-11-17) Con qué giro sale la guía: el marcado es el que queda en Bsale. */}
+                    {eligeGiro && (
+                      <SelectorGirosDocumento
+                        giros={borrador.giros}
+                        seleccion={girosSel}
+                        onChange={cambiarGiros}
+                        giroBsale={borrador.cliente?.giro}
+                        clienteNuevo={!!cliente?.nuevo}
+                        max={giroMax}
+                        documento={{ articulo: "La", nombre: "guía" }}
+                        disabled={!!enviando}
+                      />
                     )}
                   </div>
 

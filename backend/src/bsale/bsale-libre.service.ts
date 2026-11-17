@@ -7,6 +7,7 @@ import {
 import { BsaleDespachosService, OBSERVACION_MAX, limpiarObservacion, observacionSugerida } from './bsale-despachos.service';
 import { BsaleClientesService, girosParaBsale } from './bsale-clientes.service';
 import { LotesService, notaConLotes } from '../inventario/lotes.service';
+import { ACTIVITY_MAX, girosEnActividad, mismoGiro, opcionesDeGiro, textoDeGiros } from './bsale-giros';
 
 /* ── Guías, facturas y boletas LIBRES en Bsale (2026-10-03) ──────────────────
    Pedido de Ariel: "necesito la opción de crear guías y facturas de manera
@@ -142,9 +143,16 @@ export class BsaleLibreService {
     const credito = await this.creditoCliente(rut);
     const enBsale = await this.despachos.clientePorRut(rut);
     if (enBsale) {
-      // (2026-10-23) Si la ficha dice otro giro se avisa: el documento sale con el de Bsale.
-      const aviso_giro = await this.bsaleClientes.avisoGiroDistinto(rut, enBsale.activity);
-      return { ...this.clienteDeBsale(enBsale), ...credito, aviso_giro };
+      /* (2026-11-17) Con más de un giro en la ficha, la guía (y la factura) dejan
+         elegir con cuál sale el documento; el elegido queda en Bsale. Por
+         defecto, los que Bsale ya tiene si son de la ficha; si no, el principal. */
+      const ficha = await this.facturacion.girosDeFicha(enBsale.code || rut);
+      // Si Bsale tiene un giro que no es de la ficha, se ofrece también y viene marcado: nada cambia sin que se elija.
+      const { giros, elegidos } = opcionesDeGiro(ficha, enBsale.activity);
+      // (2026-10-23) Si la ficha dice otro giro se avisa: el documento sale con el de Bsale
+      // (sin selector; con él, sale con lo que se marque).
+      const aviso_giro = giros.length ? null : await this.bsaleClientes.avisoGiroDistinto(rut, enBsale.activity);
+      return { ...this.clienteDeBsale(enBsale), ...credito, aviso_giro, giros, giros_elegidos: elegidos, giro_max: ACTIVITY_MAX };
     }
     // (2026-10-23) La ficha del sistema por RUT (antes se leían solo 200 filas y
     // el cliente podía no aparecer), con sus giros: es lo que Bsale recibirá
@@ -153,6 +161,8 @@ export class BsaleLibreService {
     return {
       id: null, nuevo: true, rut: rutBsale(rut),
       razon_social: String(propio?.nombre || '').trim(), giro: girosParaBsale(propio?.giros || []), giros: propio?.giros || [],
+      // (2026-11-17) Cliente nuevo con varios giros en la ficha: los que caben unidos vienen marcados.
+      giros_elegidos: girosEnActividad(propio?.giros || [], girosParaBsale(propio?.giros || [])), giro_max: ACTIVITY_MAX,
       direccion: String(propio?.direccion || '').trim(),
       comuna: String(propio?.comuna || '').trim(), ciudad: String(propio?.comuna || '').trim(), email: '',
       ...credito,
@@ -370,6 +380,27 @@ export class BsaleLibreService {
             razon_social: texto(body?.cliente?.razon_social, 120), giro: texto(body?.cliente?.giro, 80), direccion: texto(body?.cliente?.direccion, 120),
             comuna: texto(body?.cliente?.comuna, 60), ciudad: texto(body?.cliente?.ciudad, 60), email: texto(body?.cliente?.email, 120),
           };
+    /* (2026-11-17) Giros elegidos para el documento (guía o factura; la boleta
+       no lleva giro): deben ser de la ficha del cliente. Si el texto no es el
+       que Bsale tiene hoy, se le pone al cliente justo antes de emitir. */
+    let giroElegido: string | null = null;
+    let giroAntes = '';
+    const girosPedidos: string[] = (Array.isArray(body?.giros) ? body.giros : []).map((g: any) => String(g ?? '').replace(/\s+/g, ' ').trim()).filter(Boolean);
+    if (cliente && !cliente.nuevo && !esBoleta && girosPedidos.length) {
+      // Las mismas opciones que vio la pantalla: los giros de la ficha y, si es otro, el que Bsale tiene hoy.
+      const ficha = opcionesDeGiro(await this.facturacion.girosDeFicha(cliente.rut || rut), cliente.giro).giros;
+      const fuera = girosPedidos.filter((p) => !ficha.some((g) => mismoGiro(g, p)));
+      const elegidos = ficha.filter((g) => girosPedidos.some((p) => mismoGiro(g, p)));
+      const textoGiro = textoDeGiros(elegidos);
+      if (fuera.length) problemas.push({ codigo: 'giro_fuera_de_ficha', mensaje: `El giro «${fuera[0]}» no está entre los de la ficha del cliente. Vuelve a buscar el cliente.` });
+      else if (textoGiro.length > ACTIVITY_MAX) problemas.push({ codigo: 'giros_largos', mensaje: `Los giros elegidos suman ${textoGiro.length} caracteres y Bsale admite ${ACTIVITY_MAX}: elige menos.` });
+      else if (textoGiro && !mismoGiro(textoGiro, cliente.giro)) {
+        giroAntes = String(cliente.giro || '');
+        giroElegido = textoGiro;
+        cliente.giro = textoGiro; // así lo muestra la vista previa
+        avisos.push({ codigo: 'giro_elegido', mensaje: `El documento sale con el giro «${textoGiro}»: el cliente queda con ese giro en Bsale (hoy tiene «${giroAntes || '—'}»).` });
+      }
+    }
     if (cliente?.nuevo && rut) {
       avisos.push({ codigo: 'cliente_nuevo', mensaje: `El cliente (RUT ${rut}) no existe en Bsale: se creará con los datos ingresados.` });
       if (esBoleta) {
@@ -570,6 +601,8 @@ export class BsaleLibreService {
           ? 'entrega_inmediata'
           : null;
     const borrador = {
+      giro_elegido: giroElegido,
+      giro_antes: giroAntes,
       observacion,
       notas_por_linea: notasPorLinea,
       lotes_por_sku: lotes.porSku,
@@ -584,7 +617,7 @@ export class BsaleLibreService {
     const huella = this.facturacion.huellaDe({
       cliente: { id: cliente?.id || cliente?.rut || 'consumidor-final' }, tipo_documento_id: tipoDocumentoId,
       lineas: lineas.map((l) => ({ detalle_id: l.variante_id, cantidad: l.cantidad, neto: l.neto_unitario })),
-      referencias: [...referencias.map((r) => ({ codigo_sii: r.codigo_sii, folio: r.folio, numero: r.numero })), { codigo_sii: 0, numero: `${tipo}|${ventaDirecta}|${fecha}|${JSON.stringify(despacho)}|${formaPago?.id}|${dias}|${descuentaStock}|${conGuia}|${conGuia ? JSON.stringify(guiaVenta?.despacho) : ''}|${cotizacion?.id || ''}|${cliente?.nuevo ? JSON.stringify(cliente) : ''}|${observacion}|${lineas.map((l) => `${l.observacion || ''}${l.lotes_texto ? `#${l.lotes_texto}` : ''}`).join('|')}` }],
+      referencias: [...referencias.map((r) => ({ codigo_sii: r.codigo_sii, folio: r.folio, numero: r.numero })), { codigo_sii: 0, numero: `${tipo}|${ventaDirecta}|${fecha}|${JSON.stringify(despacho)}|${formaPago?.id}|${dias}|${descuentaStock}|${conGuia}|${conGuia ? JSON.stringify(guiaVenta?.despacho) : ''}|${cotizacion?.id || ''}|${cliente?.nuevo ? JSON.stringify(cliente) : ''}|${observacion}|${lineas.map((l) => `${l.observacion || ''}${l.lotes_texto ? `#${l.lotes_texto}` : ''}`).join('|')}${giroElegido ? `|giro:${giroElegido}` : ''}` }],
       totales,
     });
     return { ...borrador, huella };
@@ -702,6 +735,11 @@ export class BsaleLibreService {
     }
 
     const esGuia = b.tipo === 'guia';
+    // (2026-11-17) Antes de registrar el intento: si Bsale no toma el giro elegido, no se emite.
+    if (b.giro_elegido && c?.id) {
+      const nombreDoc = esGuia ? 'la guía' : `la ${b.tipo}`;
+      await this.facturacion.ponerGiroCliente(Number(c.id), b.giro_elegido, { nombre: nombreDoc, noEmitido: `${nombreDoc.charAt(0).toUpperCase()}${nombreDoc.slice(1)} no se emitió` });
+    }
     let creada: any = null;
     let comprobanteRegistrado: { numero: string; pagada: boolean } | null = null;
     const r = await this.despachos.emitirReal({
@@ -781,6 +819,7 @@ export class BsaleLibreService {
       const aviso = await this.lotes.registrarSalidas(b.lotes_por_sku, { origen: 'guia_libre', bsale_document_id: r.bsale_id || null, guia_numero: r.numero || null, licitacion_id: b.cotizacion?.id || null, documento_id: r.documento_id || null, usuario_email: usuario.email || null });
       if (aviso) r.avisos.push(aviso);
     }
+    if (r?.emitida && b.giro_elegido) r.avisos.push(`El documento salió con el giro «${b.giro_elegido}»: el cliente quedó con ese giro en Bsale (antes «${b.giro_antes || '—'}»).`);
     // (2026-10-08) Venta directa con guía: se emite enseguida desde las líneas del documento.
     let guia: any = null;
     if (b.con_guia && r?.emitida && r?.bsale_id) guia = await this.emitirGuiaDeVenta(usuario, b, r, clave, creada, body);

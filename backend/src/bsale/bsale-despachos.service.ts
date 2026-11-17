@@ -5,6 +5,7 @@ import { CorreosService } from '../correos/correos.service';
 import { BsaleService } from './bsale.service';
 import { BsaleClientesService } from './bsale-clientes.service';
 import { LotesService, notaConLotes } from '../inventario/lotes.service';
+import { ACTIVITY_MAX, mismoGiro, opcionesDeGiro, textoDeGiros } from './bsale-giros';
 import {
   BsaleFacturacionService,
   epochAFecha,
@@ -281,6 +282,8 @@ export class BsaleDespachosService {
         rut: String(enBsale.code || ''),
         razon_social: String(enBsale.company || `${enBsale.firstName || ''} ${enBsale.lastName || ''}`).trim(),
         giro: String(enBsale.activity || ''),
+        // (2026-11-17) Giros de la ficha del sistema: con más de uno, la guía deja elegir con cuál sale.
+        giros: await this.facturacion.girosDeFicha(enBsale.code || lic.rut_entidad),
         direccion: String(enBsale.address || ''),
         comuna: String(enBsale.municipality || ''),
         ciudad: String(enBsale.city || ''),
@@ -322,7 +325,19 @@ export class BsaleDespachosService {
     const traslados = await this.tiposTraslado();
     const cliente = await this.clienteParaDocumento(lic);
     if (cliente.nuevo) avisos.push({ codigo: 'cliente_nuevo', mensaje: `El cliente (RUT ${cliente.rut || 'sin RUT'}) no existe en Bsale: se creará con los datos de abajo. Revisa razón social, giro y dirección.` });
-    if (cliente.aviso_giro) avisos.push({ codigo: 'giro_distinto', mensaje: cliente.aviso_giro });
+    /* (2026-11-17) Pedido de Ariel: «al crear una guía de despacho, que nos
+       permita seleccionar el giro y ese giro sea el que se vaya a Bsale». Igual
+       que en la factura (2026-11-05/06): se ofrece cuando la ficha del cliente
+       tiene más de un giro; se marcan uno o más (a Bsale van unidos con « / »).
+       Bsale guarda UN giro por cliente y el documento sale con el que tenga al
+       emitir: el elegido se le pone al cliente justo antes (cliente nuevo: se
+       crea directamente con él). Qué viene marcado: ver opcionesDeGiro —si el
+       giro que Bsale tiene hoy no es de la ficha, se ofrece también y es el
+       marcado, para que la guía no cambie el giro sin que alguien lo elija—. */
+    // (Cliente nuevo: `cliente.giro` es la propuesta, los giros de la ficha que caben unidos.)
+    const { giros, elegidos: girosElegidos } = opcionesDeGiro((cliente.giros || []).length > 1 ? cliente.giros : [], cliente.giro, cliente.nuevo);
+    // Con el selector a la vista no se dice «sale con el de Bsale»: sale con lo que se marque.
+    if (cliente.aviso_giro && !giros.length) avisos.push({ codigo: 'giro_distinto', mensaje: cliente.aviso_giro });
     if (!cliente.rut) problemas.push({ codigo: 'sin_rut', mensaje: 'La cotización no tiene RUT del cliente.' });
 
     // Lo ya despachado para esta orden, según las guías que hay en Bsale.
@@ -424,6 +439,10 @@ export class BsaleDespachosService {
       orden_bsale: nota ? { id: nota.id, numero: nota.numero, url: nota.url } : null,
       tipo_documento_id: Number(tipoGuia?.id) || 0,
       cliente,
+      // Giros de la ficha para elegir con cuál sale la guía ([] = no se elige).
+      giros,
+      giros_elegidos: girosElegidos,
+      giro_max: ACTIVITY_MAX,
       lineas,
       lotes_listo: lotesListo,
       totales,
@@ -644,6 +663,8 @@ export class BsaleDespachosService {
       observaciones?: Record<string, string>;
       // (2026-11-09) Lotes elegidos por SKU: [{ lote_id, cantidad? }] (un solo lote sin cantidad = toda la línea).
       lotes?: Record<string, { lote_id: number; cantidad?: number }[]>;
+      // (2026-11-17) Giros de la ficha con los que sale la guía (a Bsale van unidos con « / »).
+      giros?: string[];
       cliente?: Record<string, any>; fecha_emision?: string; huella?: string; simular?: boolean;
     },
   ) {
@@ -700,10 +721,29 @@ export class BsaleDespachosService {
     if (!despacho.destinatario) faltas.push('el destinatario');
     const traslado = b.tipos_traslado.find((t: any) => t.id === despacho.tipo_traslado_id);
     if (!traslado) faltas.push('el tipo de traslado');
+    /* (2026-11-17) Giro elegido para la guía: debe ser de los de la ficha. Con
+       cliente ya creado en Bsale, si no es el que tiene hoy se le pone antes de
+       emitir; con cliente nuevo, se crea con él (salvo que en pantalla se haya
+       escrito otro giro a mano: manda lo escrito). */
+    const limpioGiro = (v: any) => String(v ?? '').replace(/\s+/g, ' ').trim();
+    const pedidos: string[] = (Array.isArray(body?.giros) ? body.giros : []).map(limpioGiro).filter(Boolean);
+    const fuera = pedidos.filter((p) => !b.giros.some((g: string) => mismoGiro(g, p)));
+    if (fuera.length) throw new BadRequestException(`El giro «${fuera[0]}» no está entre los de la ficha del cliente. Vuelve a abrir el borrador.`);
+    const girosGuia: string[] = b.giros.filter((g: string) => pedidos.some((p) => mismoGiro(g, p)));
+    const giroGuia = girosGuia.length ? textoDeGiros(girosGuia) : null;
+    if (giroGuia && giroGuia.length > ACTIVITY_MAX) {
+      throw new BadRequestException(`Los giros elegidos suman ${giroGuia.length} caracteres y Bsale admite ${ACTIVITY_MAX}: elige menos giros para esta guía.`);
+    }
+    const giroAntes = String(b.cliente?.giro || '');
+    const cambiaGiro = !!giroGuia && !b.cliente.nuevo && !mismoGiro(giroGuia, giroAntes);
+    const clienteEditado = b.cliente.nuevo && giroGuia && !limpioGiro(body?.cliente?.giro) ? { ...(body?.cliente || {}), giro: giroGuia } : body?.cliente;
+
     const problemasCliente: string[] = [];
-    const cli = this.clienteSolicitud(b.cliente, body?.cliente, problemasCliente);
+    const cli = this.clienteSolicitud(b.cliente, clienteEditado, problemasCliente);
     if (faltas.length) throw new BadRequestException(`Falta ${faltas.join(', ')}.`);
     if (problemasCliente.length) throw new BadRequestException(problemasCliente.join(' '));
+    // La vista previa muestra el giro con el que saldrá la guía.
+    if (cambiaGiro) b.cliente = { ...b.cliente, giro: giroGuia };
 
     const totales = totalesDe(elegidas);
     const clave = `AMS-G-${b.cotizacion.id}-${b.oc.id}`;
@@ -750,6 +790,7 @@ export class BsaleDespachosService {
         ...(lotes.porSku.size ? ['El lote y el vencimiento de cada producto van escritos en su línea de la guía.'] : []),
         ...lotes.avisos,
         ...(obs.aviso ? [obs.aviso] : []),
+        ...(cambiaGiro ? [`La guía sale con el giro «${giroGuia}»: el cliente queda con ese giro en Bsale (hoy tiene «${giroAntes || '—'}»).`] : []),
       ],
     });
     // (2026-10-07) La guía se envía sola al cliente: la simulación dice a quién.
@@ -757,6 +798,11 @@ export class BsaleDespachosService {
     // (2026-10-16) En la guía el vendedor es quien la emite en la plataforma.
     await this.facturacion.ponerVendedor(solicitud, vista, null, usuario.email);
     if (!real) return { simulacion: true, emision_apagada: body?.simular !== true, solicitud, totales, vista };
+
+    // Antes de registrar el intento: si Bsale no toma el giro elegido, no se emite.
+    if (cambiaGiro && b.cliente.id) {
+      await this.facturacion.ponerGiroCliente(Number(b.cliente.id), giroGuia as string, { nombre: 'la guía', noEmitido: 'La guía no se emitió' });
+    }
 
     const r = await this.emitirReal({
       usuario, clave, salesId, tipo: 'guia', ruta: '/shippings.json', solicitud, vista,
@@ -814,6 +860,7 @@ export class BsaleDespachosService {
       const aviso = await this.lotes.registrarSalidas(lotes.porSku, { origen: 'guia_oc', bsale_document_id: r.bsale_id || null, guia_numero: r.numero || null, licitacion_id: b.cotizacion.id, documento_id: r.documento_id || null, usuario_email: usuario.email || null });
       if (aviso) r.avisos.push(aviso);
     }
+    if (r?.emitida && cambiaGiro) r.avisos.push(`La guía salió con el giro «${giroGuia}»: el cliente quedó con ese giro en Bsale (antes «${giroAntes || '—'}»).`);
     return r;
   }
 
