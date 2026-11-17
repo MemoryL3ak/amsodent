@@ -17,6 +17,7 @@ import { PortalModulosService, MODULOS_PORTAL } from './portal-modulos.service';
 import { InventarioPortalService } from './inventario-portal.service';
 import { firmarImagenesProductos } from './imagenes-productos';
 import { destinatariosCampanaPedido, vendedorDeCartera } from './destinatarios-pedido';
+import { DIAS_INACTIVIDAD_PORTAL, personasInactivas } from './portal-inactividad';
 import { esRolAdmin, permisosEfectivos } from '../auth/permisos';
 import {
   plantillaAlertaStock,
@@ -875,6 +876,45 @@ export class StockClientesService {
             new Date(c.acceso_expira).getTime() >= Date.now()),
       };
     });
+  }
+
+  /* (2026-11-17) Usuarios del portal que llevan `dias` días o más sin iniciar
+     sesión (ver portal-inactividad.ts): personas activas de cuentas vigentes;
+     los desactivados y las cuentas deshabilitadas o expiradas quedan fuera.
+     Lo usan la pestaña «Sin iniciar sesión» de Acceso Portal Clientes y el
+     aviso diario de la campana (portal-inactividad.cron.ts). */
+  async usuariosInactivosPortal(dias: number = DIAS_INACTIVIDAD_PORTAL) {
+    const client = this.supabase.getClient();
+    const { data: cuentas, error } = await client
+      .from('stock_clientes_portal')
+      .select('rut, razon_social, email, acceso_habilitado, acceso_expira, acceso_habilitado_en, ultimo_acceso')
+      .eq('acceso_habilitado', true)
+      .range(0, 4999);
+    if (error) throw new BadRequestException(error.message);
+
+    // Sin la tabla de usuarios (migración 20260916) solo existen las cuentas principales.
+    let usuarios: any[] = [];
+    const ruts = [...new Set((cuentas || []).map((c: any) => normalizarRut(c.rut)).filter(Boolean))];
+    for (let i = 0; i < ruts.length; i += 200) {
+      const r = await client
+        .from('portal_usuarios')
+        .select('id, rut, email, nombre, rol, activo, ultimo_acceso, created_at')
+        .in('rut', ruts.slice(i, i + 200));
+      if (r.error) { usuarios = []; break; }
+      usuarios.push(...(r.data || []));
+    }
+
+    // Nombre vigente y dueño de la cartera, del maestro de clientes.
+    const { data: maestro } = await client.from('clientes').select('rut, nombre, vendedor_asignado').range(0, 20000);
+    const mapa = new Map<string, any>();
+    (maestro || []).forEach((m: any) => { const k = normalizarRut(m?.rut); if (k && !mapa.has(k)) mapa.set(k, m); });
+    const conMaestro = (cuentas || []).map((c: any) => {
+      const m = mapa.get(normalizarRut(c.rut));
+      return { ...c, razon_social: m?.nombre || c.razon_social, vendedor: m?.vendedor_asignado || null };
+    });
+
+    const personas = personasInactivas(conMaestro, usuarios, Date.now(), dias, normalizarRut).map((p) => ({ ...p, rut_formateado: formatearRut(p.rut) }));
+    return { dias, personas };
   }
 
   // Búsqueda en el maestro de clientes para habilitar nuevos accesos (por

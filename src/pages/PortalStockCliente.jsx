@@ -5225,6 +5225,12 @@ function PanelUsuariosPortal({ setToast, usuarioActual = null }) {
   const [error, setError] = useState("");
   const [modal, setModal] = useState(null); // {} nuevo | { usuario }
   const [guardando, setGuardando] = useState(false);
+  /* (2026-11-17) Pedido de Ariel: «del listado de usuarios, descartar todos
+     los que están desactivados». No se listan; un enlace los deja ver para
+     poder reactivarlos (se editan igual que antes). */
+  const [verDesactivados, setVerDesactivados] = useState(false);
+  const desactivados = usuarios.filter((u) => u.activo === false).length;
+  const usuariosVisibles = verDesactivados ? usuarios : usuarios.filter((u) => u.activo !== false);
 
   async function cargar() {
     setCargando(true);
@@ -5310,7 +5316,22 @@ function PanelUsuariosPortal({ setToast, usuarioActual = null }) {
         </div>
       ) : (
         <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 620 }}>
+          {desactivados > 0 && (
+            <div className="aviso-usuarios-desactivados" style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", padding: "8px 14px", fontSize: 12.5, color: "#64748b", borderBottom: "1px solid #f1f5f9" }}>
+              <span>
+                {verDesactivados
+                  ? `Mostrando también ${desactivados} usuario${desactivados === 1 ? "" : "s"} desactivado${desactivados === 1 ? "" : "s"}.`
+                  : `${desactivados} usuario${desactivados === 1 ? "" : "s"} desactivado${desactivados === 1 ? "" : "s"} no se ${desactivados === 1 ? "muestra" : "muestran"}.`}
+              </span>
+              <button type="button" onClick={() => setVerDesactivados((v) => !v)} style={{ background: "none", border: "none", padding: 0, color: "#0e7490", fontWeight: 700, cursor: "pointer", fontSize: 12.5 }}>
+                {verDesactivados ? "Ocultar desactivados" : "Ver desactivados"}
+              </button>
+            </div>
+          )}
+          {usuariosVisibles.length === 0 && (
+            <div style={{ padding: 24, color: "#64748b", fontSize: 13 }}>No hay usuarios activos: hoy se ingresa solo con el RUT y la clave de la cuenta principal.</div>
+          )}
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 620, display: usuariosVisibles.length ? "table" : "none" }}>
             <thead>
               <tr style={{ background: "#f8fafc" }}>
                 <th style={thPortal}>Correo</th>
@@ -5321,7 +5342,7 @@ function PanelUsuariosPortal({ setToast, usuarioActual = null }) {
               </tr>
             </thead>
             <tbody>
-              {usuarios.map((u) => (
+              {usuariosVisibles.map((u) => (
                 <tr key={u.id} style={{ borderTop: "1px solid #f1f5f9", opacity: u.activo === false ? 0.55 : 1 }}>
                   <td style={tdPortal}>
                     <span style={{ fontWeight: 700, color: "#0f172a" }}>{u.email}</span>

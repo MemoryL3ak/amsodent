@@ -50,6 +50,8 @@ export function normalizarLink(url: any): string {
 
 type Creado = { id: number; nombre: string; estado: string | null; sku: string | null };
 const normSku = (v: any) => String(v ?? '').replace(/\s+/g, '').toUpperCase();
+// Nombre para comparar: sin tildes, en minúsculas y con un solo espacio.
+const normNombre = (v: any) => String(v ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
 
 const texto = (v: any, max: number) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
 // Texto largo de la ficha (conserva saltos de línea), recortado.
@@ -69,7 +71,7 @@ const monto = (v: any): number | null => {
 @Injectable()
 export class ExploradorProductosService {
   private readonly logger = new Logger(ExploradorProductosService.name);
-  private cache: { ts: number; porLink: Map<string, Creado>; porSku: Map<string, Creado> } | null = null;
+  private cache: { ts: number; porLink: Map<string, Creado>; porSku: Map<string, Creado>; porNombre: Map<string, Creado> } | null = null;
 
   constructor(
     private supabase: SupabaseService,
@@ -78,11 +80,12 @@ export class ExploradorProductosService {
 
   /* Catálogo indexado por link de referencia normalizado y por SKU (caché de
      1 minuto; se borra al crear uno). ~5.700 productos, de a 1000. */
-  private async indices(): Promise<{ porLink: Map<string, Creado>; porSku: Map<string, Creado> }> {
+  private async indices(): Promise<{ porLink: Map<string, Creado>; porSku: Map<string, Creado>; porNombre: Map<string, Creado> }> {
     if (this.cache && Date.now() - this.cache.ts < 60 * 1000) return this.cache;
     const db = this.supabase.getClient();
     const porLink = new Map<string, Creado>();
     const porSku = new Map<string, Creado>();
+    const porNombre = new Map<string, Creado>();
     for (let desde = 0; desde < 50000; desde += 1000) {
       const { data, error } = await db
         .from('productos')
@@ -98,11 +101,32 @@ export class ExploradorProductosService {
         if (k && !porLink.has(k)) porLink.set(k, c);
         const s = normSku((p as any).sku);
         if (s && !porSku.has(s)) porSku.set(s, c);
+        const n = normNombre((p as any).nombre);
+        if (n && !porNombre.has(n)) porNombre.set(n, c);
       }
       if (!data || data.length < 1000) break;
     }
-    this.cache = { ts: Date.now(), porLink, porSku };
+    this.cache = { ts: Date.now(), porLink, porSku, porNombre };
     return this.cache;
+  }
+
+  /* (2026-11-17) ¿Están en el catálogo los productos de un pedido del portal?
+     Pedido de Ariel: «al recibir pedidos desde el portal hay productos que no
+     están creados… en cada fila de estos productos debe aparecer un botón
+     "Crear Transitorio"». Mismo orden con que la cotización calza las líneas
+     del pedido: por SKU, luego por nombre exacto; el link de la tienda solo
+     vale cuando la línea no trae SKU (las variantes de una familia comparten
+     link y cada una es un producto distinto). Devuelve, en el mismo orden, el
+     producto del catálogo o null. */
+  async enCatalogo(items: any[]): Promise<(Creado | null)[]> {
+    const lista = (Array.isArray(items) ? items : []).slice(0, 400);
+    if (!lista.length) return [];
+    const idx = await this.indices();
+    return lista.map((it) => {
+      const sku = normSku(it?.sku);
+      const link = normalizarLink(it?.url);
+      return (sku ? idx.porSku.get(sku) : null) || (!sku && link ? idx.porLink.get(link) : null) || idx.porNombre.get(normNombre(it?.nombre)) || null;
+    });
   }
 
   private async porLink(): Promise<Map<string, Creado>> {
@@ -113,7 +137,12 @@ export class ExploradorProductosService {
      tienda) o, en nuestra web, por SKU (el principal o el de una variante). */
   private existente(it: any, idx: { porLink: Map<string, Creado>; porSku: Map<string, Creado> }): Creado | null {
     const porLink = idx.porLink.get(normalizarLink(it?.url));
-    if (porLink) return porLink;
+    /* (2026-11-17) En nuestra web una familia con variantes comparte link: si
+       la línea trae SU SKU y el producto de ese link tiene otro, es una
+       variante hermana, no el mismo producto (antes la segunda variante de una
+       familia salía «ya creada» y no se podía crear). */
+    const skuPropio = String(it?.tienda || '') === 'amsodent' ? normSku(it?.sku) : '';
+    if (porLink && !(skuPropio && porLink.sku && normSku(porLink.sku) !== skuPropio)) return porLink;
     if (String(it?.tienda || '') !== 'amsodent') return null;
     const skus = [it?.sku, ...(Array.isArray(it?.variantes) ? it.variantes.map((v: any) => v?.sku) : [])].map(normSku).filter(Boolean);
     for (const s of skus) { const p = idx.porSku.get(s); if (p) return p; }
@@ -158,7 +187,11 @@ export class ExploradorProductosService {
     const simular = body?.simular === true;
     const url = String(body?.url || '').trim();
     const problemas: { codigo: string; mensaje: string }[] = [];
-    if (!/^https?:\/\/[^\s]+$/i.test(url)) problemas.push({ codigo: 'url', mensaje: 'Falta el link del producto en la tienda.' });
+    /* (2026-11-17) Desde Pedidos del Portal también se crean productos que no
+       tienen página (lo que el cliente pidió desde su inventario y no se
+       encontró en nuestra web): `sin_link` deja crear sin link de referencia. */
+    const sinLink = body?.sin_link === true && !url;
+    if (!sinLink && !/^https?:\/\/[^\s]+$/i.test(url)) problemas.push({ codigo: 'url', mensaje: 'Falta el link del producto en la tienda.' });
     const nombre = texto(body?.nombre, 200);
     if (nombre.length < 3) problemas.push({ codigo: 'nombre', mensaje: 'Escribe el nombre del producto.' });
     const categoria = texto(body?.categoria, 60);
@@ -203,14 +236,17 @@ export class ExploradorProductosService {
     const esAmsodent = String(body?.tienda || '') === 'amsodent';
     const skuWeb = normSku(body?.sku);
     // `existente` revisa el SKU cuando la tienda es la nuestra: con SKU escrito a mano se revisa igual.
-    const existente = url ? this.existente({ url, tienda: skuWeb ? 'amsodent' : body?.tienda, sku: skuWeb }, await this.indices()) : null;
+    const idx = await this.indices();
+    const existente = url
+      ? this.existente({ url, tienda: skuWeb ? 'amsodent' : body?.tienda, sku: skuWeb }, idx)
+      : skuWeb ? idx.porSku.get(skuWeb) || null : null;
     if (existente) {
       return { ya_existe: true, producto: existente, problemas: [{ codigo: 'ya_existe', mensaje: `Ya está creado: «${existente.nombre}» (${existente.sku ? `SKU ${existente.sku}` : 'sin SKU'}, ${existente.estado || 'sin estado'}).` }] };
     }
 
     const fila: Record<string, any> = {
       // De nuestra web viene nuestro SKU: queda con él (y se enlaza en Bsale). De otras tiendas, sin SKU.
-      sku: skuWeb || null, estado: 'Transitorio', nombre, marca, categoria, formato, link_referencia: url,
+      sku: skuWeb || null, estado: 'Transitorio', nombre, marca, categoria, formato, link_referencia: url || null,
       ...ficha,
       ...(Object.values(medidas).every((v) => v != null && !Number.isNaN(v)) ? medidas : {}),
       ...(precioSugerido != null && !Number.isNaN(precioSugerido) && precioSugerido > 0 ? { precio_sugerido: precioSugerido } : {}),
@@ -241,7 +277,7 @@ export class ExploradorProductosService {
       const { error } = await this.supabase.getClient().from('productos').update({ imagen_url: img.path }).eq('id', Number(creado.id));
       if (error) avisos.push(`El producto quedó creado, pero sin imagen (${error.message}): súbela desde Productos.`);
     }
-    this.logger.log(`Explorador: producto transitorio #${creado?.id} «${nombre}» desde ${url} por ${usuario?.email}`);
+    this.logger.log(`Explorador: producto transitorio #${creado?.id} «${nombre}» desde ${url || 'un pedido del portal (sin página)'} por ${usuario?.email}`);
     const bsale = creado?.bsale;
     if (bsale?.estado === 'error') avisos.push(`No se pudo enlazar en Bsale: ${bsale.mensaje || 'error'}.`);
     return { creado: true, producto: { id: Number(creado?.id), nombre: creado?.nombre ?? nombre, estado: creado?.estado ?? 'Transitorio', sku: skuWeb || null }, avisos, bsale: bsale ? { estado: bsale.estado, variante_id: bsale.variante_id ?? null } : null };

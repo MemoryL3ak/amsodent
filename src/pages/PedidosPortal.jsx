@@ -25,7 +25,11 @@ import {
   ChevronRight,
   ChevronLeft,
   X,
+  PackagePlus,
+  PackageCheck,
+  Loader2,
 } from "lucide-react";
+import CrearProductoExplorador from "../components/CrearProductoExplorador";
 
 /* ============================================================
    PEDIDOS DEL PORTAL (2026-09-10)
@@ -241,6 +245,69 @@ export default function PedidosPortal() {
     setPagina(1);
     setExpandidoId(null);
   }, [fTexto, fEstado, fOrigen, fEtapa]);
+
+  /* (2026-11-17) Pedido de Ariel: «al recibir pedidos desde el portal hay
+     productos que no están creados. Se deben crear como transitorios trayendo
+     la información de la página correspondiente: en cada fila de estos
+     productos debe aparecer un botón "Crear Transitorio"».
+     Al abrir el detalle de un pedido se pregunta al servidor cuáles de sus
+     productos están en el catálogo (por SKU, nombre o link). La fila del que no
+     está muestra el botón, que abre la misma ventana «Crear producto
+     transitorio» del Explorador con la ficha de la página ya cargada (marca,
+     descripción, foto, SKU y precio de nuestra web). Si la línea no trae link
+     (lo pedido desde Gestión de Stock), primero se busca su página en nuestra
+     web por SKU o por nombre. */
+  const [catalogo, setCatalogo] = useState({}); // { [pedidoId]: { firma, productos: [..|null] } }
+  const [crearTransitorio, setCrearTransitorio] = useState(null); // { pedidoId, idx, item }
+  const [buscandoPagina, setBuscandoPagina] = useState(null); // `${pedidoId}:${idx}`
+  const firmaItems = (items) => JSON.stringify((items || []).map((i) => [i?.sku || "", i?.nombre || "", i?.url || ""]));
+  async function revisarCatalogo(pedido, forzar = false) {
+    const items = Array.isArray(pedido?.items) ? pedido.items : [];
+    if (!pedido?.id || !items.length) return;
+    const firma = firmaItems(items);
+    if (!forzar && catalogo[pedido.id]?.firma === firma) return;
+    try {
+      const r = await api.post("/stock-clientes/explorador/interno/en-catalogo", {
+        items: items.map((i) => ({ sku: i?.sku || "", nombre: i?.nombre || "", url: i?.url || "" })),
+      });
+      setCatalogo((prev) => ({ ...prev, [pedido.id]: { firma, productos: Array.isArray(r?.productos) ? r.productos : [] } }));
+    } catch {
+      setCatalogo((prev) => ({ ...prev, [pedido.id]: { firma, productos: null } })); // no se pudo revisar: sin botones
+    }
+  }
+  const pedidoAbierto = pedidos.find((p) => p.id === expandidoId) || null;
+  const firmaAbierto = pedidoAbierto ? firmaItems(pedidoAbierto.items) : "";
+  useEffect(() => {
+    if (pedidoAbierto) revisarCatalogo(pedidoAbierto);
+  }, [expandidoId, firmaAbierto]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const esWebAmsodent = (i) => String(i?.tienda || "").toLowerCase().includes("amsodent") || /amsodentmedical\.cl/i.test(String(i?.url || ""));
+  async function abrirCrearTransitorio(pedido, idx, i) {
+    const base = { pedido: pedido.id, nombre: i?.nombre || "", sku: String(i?.sku || "").trim(), precio: Number(i?.precio_referencia || 0) || 0, imagen: null };
+    const conLink = /^https?:\/\//i.test(String(i?.url || ""));
+    if (conLink) {
+      const nuestra = esWebAmsodent(i);
+      setCrearTransitorio({ pedidoId: pedido.id, idx, item: { ...base, url: i.url, tienda: nuestra ? "amsodent" : "", tienda_nombre: nuestra ? "Amsodent (web)" : i?.tienda || "Otra tienda", sku: nuestra ? base.sku : "" } });
+      return;
+    }
+    // Sin link: se busca la página del producto en nuestra web (por SKU o por nombre).
+    setBuscandoPagina(`${pedido.id}:${idx}`);
+    try {
+      const params = new URLSearchParams();
+      if (base.sku) params.set("sku", base.sku);
+      if (base.nombre) params.set("nombre", base.nombre);
+      const r = await api.get(`/stock-clientes/explorador/interno/pagina-amsodent?${params.toString()}`).catch(() => null);
+      const p = r?.pagina || null;
+      setCrearTransitorio({
+        pedidoId: pedido.id, idx,
+        item: p
+          ? { ...base, url: p.url, tienda: "amsodent", tienda_nombre: "Amsodent (web)", sku: base.sku || p.sku || "", precio: Number(p.precio) || base.precio, imagen: p.imagen || null }
+          : { ...base, url: "", tienda: base.sku ? "amsodent" : "", tienda_nombre: "Pedido del portal" },
+      });
+    } finally {
+      setBuscandoPagina(null);
+    }
+  }
 
   const filtrados = useMemo(() => {
     const q = fTexto.trim().toLowerCase();
@@ -959,18 +1026,21 @@ export default function PedidosPortal() {
 
                               {items.length > 0 && (
                                 <div style={{ overflowX: "auto", background: "#fff", border: "1px solid #eef2f7", borderRadius: 10 }}>
-                                  <table className="data-table" style={{ width: "100%", fontSize: 12.5 }}>
+                                  {/* (2026-11-17) Anchos fijos y textos que parten línea: con la columna «Catálogo» la
+                                      tabla, de celdas en una sola línea, ya no cabía a 1280 y el botón quedaba fuera. */}
+                                  <table className="data-table tabla-compacta tabla-items-pedido" style={{ width: "100%", minWidth: 620, fontSize: 12.5, tableLayout: "fixed" }}>
                                     <thead>
                                       <tr>
                                         <th style={{ textAlign: "left" }}>Producto</th>
-                                        <th style={{ textAlign: "right", width: 90 }}>Cantidad</th>
-                                        <th style={{ textAlign: "left", width: "32%" }}>Referencia</th>
+                                        <th style={{ textAlign: "right", width: 86 }}>Cantidad</th>
+                                        <th style={{ textAlign: "left", width: "25%" }}>Referencia</th>
+                                        <th style={{ textAlign: "left", width: 172 }} title="Si el producto del pedido existe en el catálogo de Productos">Catálogo</th>
                                       </tr>
                                     </thead>
                                     <tbody>
                                       {items.map((i, idx) => (
                                         <tr key={idx}>
-                                          <td>
+                                          <td style={{ whiteSpace: "normal", overflowWrap: "anywhere" }}>
                                             {i?.nombre || "—"}
                                             {i?.sku && (
                                               <span style={{ marginLeft: 6, fontSize: 11, color: "#64748b", fontFamily: "ui-monospace, monospace", whiteSpace: "nowrap" }}>
@@ -986,7 +1056,7 @@ export default function PedidosPortal() {
                                           <td style={{ textAlign: "right", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
                                             {i?.cantidad || 0}{i?.unidad ? ` ${i.unidad}` : ""}
                                           </td>
-                                          <td style={{ fontSize: 12, color: "var(--text-muted)" }}>
+                                          <td style={{ fontSize: 12, color: "var(--text-muted)", whiteSpace: "normal", overflowWrap: "anywhere" }}>
                                             {i?.tienda || i?.precio_referencia || i?.url ? (
                                               <>
                                                 {i?.oferta ? (
@@ -1007,6 +1077,42 @@ export default function PedidosPortal() {
                                             ) : (
                                               "—"
                                             )}
+                                          </td>
+                                          <td className="celda-catalogo-pedido">
+                                            {(() => {
+                                              /* (2026-11-17) ¿Está creado en Productos? Si no, «Crear Transitorio». */
+                                              const revisado = catalogo[s.id];
+                                              if (!revisado) return <span style={{ color: "#94a3b8", fontSize: 12 }}>Revisando…</span>;
+                                              if (!revisado.productos) return <span style={{ color: "#94a3b8", fontSize: 12 }} title="No se pudo revisar el catálogo">—</span>;
+                                              const p = revisado.productos[idx];
+                                              if (p) {
+                                                const transitorio = String(p.estado || "").toLowerCase() === "transitorio";
+                                                return (
+                                                  <Link
+                                                    to={`/productos/editar/${p.id}`}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    title={`«${p.nombre}»${p.sku ? ` · SKU ${p.sku}` : ""} · ${p.estado || "sin estado"}. Abrir el producto en otra pestaña.`}
+                                                    style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "2px 9px", borderRadius: 999, fontSize: 11.5, fontWeight: 700, textDecoration: "none", background: transitorio ? "#fef3c7" : "#dcfce7", color: transitorio ? "#b45309" : "#15803d" }}
+                                                  >
+                                                    <PackageCheck size={12} /> {transitorio ? "Transitorio" : "En catálogo"}
+                                                  </Link>
+                                                );
+                                              }
+                                              const buscando = buscandoPagina === `${s.id}:${idx}`;
+                                              return (
+                                                <button
+                                                  type="button"
+                                                  className="btn btn-secondary btn-sm boton-crear-transitorio"
+                                                  onClick={() => abrirCrearTransitorio(s, idx, i)}
+                                                  disabled={buscando}
+                                                  title="Este producto no está en el catálogo: crearlo como transitorio con la información de su página"
+                                                  style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11.5, padding: "4px 9px", whiteSpace: "nowrap", maxWidth: "100%" }}
+                                                >
+                                                  {buscando ? <Loader2 size={13} className="spin" /> : <PackagePlus size={13} />} {buscando ? "Buscando…" : "Crear Transitorio"}
+                                                </button>
+                                              );
+                                            })()}
                                           </td>
                                         </tr>
                                       ))}
@@ -1129,6 +1235,24 @@ export default function PedidosPortal() {
           guardando={accionando}
           onCerrar={() => { if (!accionando) setModalPago(null); }}
           onConfirmar={(payload) => registrarPago(modalPago, payload)}
+        />
+      )}
+
+      {/* (2026-11-17) Crear como transitorio un producto del pedido que no está en el catálogo. */}
+      {crearTransitorio && (
+        <CrearProductoExplorador
+          item={crearTransitorio.item}
+          onCerrar={() => setCrearTransitorio(null)}
+          onCreado={(r) => {
+            const pedido = pedidos.find((p) => p.id === crearTransitorio.pedidoId);
+            setCrearTransitorio(null);
+            const avisos = (r?.avisos || []).filter(Boolean);
+            setToast({
+              type: avisos.length ? "info" : "success",
+              message: `Producto transitorio creado: «${r?.producto?.nombre || "producto"}»${r?.producto?.sku ? ` (SKU ${r.producto.sku})` : ""}. Ya se puede usar en la cotización del pedido.${avisos.length ? ` ${avisos.join(" ")}` : ""}`,
+            });
+            if (pedido) revisarCatalogo(pedido, true);
+          }}
         />
       )}
 

@@ -17,6 +17,7 @@ import {
   FolderOpen,
   PackageX,
   Download,
+  UserX,
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { api } from "../lib/api";
@@ -447,6 +448,24 @@ function getNotifVisuales(notif) {
       color: "#b45309",
       bg: "#fef3c7",
       etiqueta: "Precio actualizado",
+    };
+  }
+  // (2026-11-17) Recepción de stock con costo mayor al del producto: confirmar si es definitivo o momentáneo.
+  if (tipo === "costo_recepcion_mayor") {
+    return {
+      icono: Tag,
+      color: "#b91c1c",
+      bg: "#fee2e2",
+      etiqueta: "Costo por confirmar",
+    };
+  }
+  // (2026-11-17) Usuarios del portal del cliente que llevan 5 días o más sin iniciar sesión.
+  if (tipo === "portal_sin_ingreso") {
+    return {
+      icono: UserX,
+      color: "#b45309",
+      bg: "#fef3c7",
+      etiqueta: "Portal sin ingreso",
     };
   }
   // (2026-11-05) Pedidos que llegan del portal del cliente (también saltan en

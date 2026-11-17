@@ -306,6 +306,42 @@ export class ExploradorService {
     }
   }
 
+  /* (2026-11-17) La página de un producto en NUESTRA web, buscada por su SKU o
+     por su nombre. La usan los Pedidos del Portal para «Crear Transitorio»
+     cuando la línea del pedido no trae link (lo que el cliente pidió desde su
+     inventario): con la página se puede traer la ficha, la foto y el precio.
+     null si la web no lo tiene (o no hay tienda Amsodent configurada). */
+  async paginaAmsodent(q: { sku?: string | null; nombre?: string | null }): Promise<{ url: string; nombre: string; sku: string | null; precio: number; imagen: string | null } | null> {
+    const tiendas = await this.tiendasActivasTodas('plataforma');
+    const t = tiendas.find((x) => x.tipo === 'amsodent' || x.id === 'amsodent');
+    if (!t) return null;
+    const sku = String(q?.sku || '').replace(/\s+/g, '').toUpperCase();
+    const nombre = String(q?.nombre || '').replace(/\s+/g, ' ').trim();
+    const mismoSku = (v: any) => String(v || '').replace(/\s+/g, '').toUpperCase() === sku;
+    const salida = (it: Hallazgo, v?: { sku: string | null; precio: number } | null) => ({ url: it.url, nombre: it.nombre, sku: (v?.sku ?? it.sku) || null, precio: Number(v?.precio || it.precio) || 0, imagen: it.imagen || null });
+    try {
+      // 1) Por SKU: el del producto o el de una de sus variantes.
+      if (sku.length >= 3) {
+        const { items } = await this.catalogoAmsodent(t, encodeURIComponent(sku));
+        for (const it of items) {
+          if (mismoSku(it.sku)) return salida(it);
+          const v = (it.variantes || []).find((x) => mismoSku(x.sku));
+          if (v) return salida(it, v);
+        }
+      }
+      // 2) Por nombre: solo si la web tiene un producto que se llama igual.
+      if (nombre.length >= 3) {
+        const n = ExploradorService.normNombre(nombre);
+        const { items } = await this.catalogoAmsodent(t, encodeURIComponent(nombre.slice(0, 60)));
+        const igual = items.find((it) => ExploradorService.normNombre(it.nombre) === n);
+        if (igual) return salida(igual);
+      }
+    } catch (e: any) {
+      this.logger.warn(`Explorador: no se pudo buscar en la web de Amsodent «${sku || nombre}»: ${String(e?.message || e).slice(0, 120)}`);
+    }
+    return null;
+  }
+
   /* (2026-10-09) Lo que la ficha del producto en su tienda dice de él: nombre,
      marca, SKU, descripción e imagen. Para precargar «Crear producto» con el
      máximo de campos (pedido de Ariel). Cada tipo de tienda lo publica de una
@@ -316,7 +352,7 @@ export class ExploradorService {
     const tiendas = await this.tiendasActivasTodas('plataforma');
     const t = tiendas.find((x) => x.id === String(tiendaId || '')) || tiendas.find((x) => url.startsWith(x.base)) || null;
     const tipo = t?.tipo || (/\/products\//.test(url) ? 'shopify' : /\/producto\//.test(url) && /amsodent/i.test(url) ? 'amsodent' : 'woo');
-    const out: { nombre: string | null; marca: string | null; sku: string | null; presentacion: string | null; descripcion: string | null; imagen: string | null; tipo: string } = { nombre: null, marca: null, sku: null, presentacion: null, descripcion: null, imagen: null, tipo };
+    const out: { nombre: string | null; marca: string | null; sku: string | null; categoria: string | null; presentacion: string | null; descripcion: string | null; datos_clave: string | null; imagen: string | null; tipo: string } = { nombre: null, marca: null, sku: null, categoria: null, presentacion: null, descripcion: null, datos_clave: null, imagen: null, tipo };
     const limpiar = (html: any) => String(html || '').replace(/<br\s*\/?>/gi, '\n').replace(/<\/(p|li|div|h\d)>/gi, '\n').replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/[ \t]+/g, ' ').replace(/\s*\n\s*/g, '\n').trim().slice(0, 2000) || null;
     try {
       if (tipo === 'shopify') {
@@ -345,13 +381,37 @@ export class ExploradorService {
         const flight = flightDeNext(html);
         const i = flight.indexOf('"variantes":[');
         const datos: any = i >= 0 ? objetoQueContiene(flight, i) : null;
-        out.nombre = limpiarNombre(datos?.nombre || datos?.name || '') || null;
-        out.marca = String(datos?.marca || datos?.brand || '').trim() || null;
-        out.sku = String(datos?.sku || datos?.variantes?.[0]?.sku || '').trim() || null;
-        out.presentacion = limpiar(datos?.descripcionCorta || datos?.shortDescription || '');
-        out.descripcion = limpiar(datos?.descripcion || datos?.description || '') || out.presentacion;
+        /* (2026-11-17) La ficha de nuestra web trae el producto en `product`
+           (nombre, marca, categoría, descripción corta y larga, foto) y sus
+           especificaciones en `specs`. Antes se buscaban esos campos un nivel
+           más arriba y casi todo llegaba vacío: «Crear transitorio» quedaba
+           solo con el SKU. Ahora se trae todo lo que la página publica. */
+        const prod: any = datos?.product && typeof datos.product === 'object' ? datos.product : datos || {};
+        const variantes: any[] = Array.isArray(datos?.variantes) ? datos.variantes : [];
+        // La línea de un pedido con variante llega como <url>#v<id>: se toma el SKU de ESA variante.
+        const idVariante = String(urlRaw || '').split('#v')[1] || '';
+        const variante = (idVariante && variantes.find((v) => String(v?.id) === idVariante)) || (variantes.length === 1 ? variantes[0] : null);
+        out.nombre = limpiarNombre(`${prod?.name || prod?.nombre || ''}${variante?.nombre && variantes.length > 1 ? ` ${variante.nombre}` : ''}`) || null;
+        out.marca = String(prod?.brand || prod?.marca || '').trim() || null;
+        out.categoria = String(prod?.category || prod?.categoria || '').trim() || null;
+        out.sku = String(variante?.sku || datos?.sku || (Array.isArray(prod?.skus) && prod.skus.length === 1 ? prod.skus[0] : '') || variantes[0]?.sku || '').trim() || null;
+        out.presentacion = limpiar(prod?.shortDescription || prod?.descripcionCorta || '');
+        out.descripcion = limpiar(prod?.description || prod?.descripcion || '') || out.presentacion;
         const m = html.match(/<meta[^>]+name="description"[^>]+content="([^"]*)"/i);
         if (!out.descripcion && m) out.descripcion = limpiar(m[1]);
+        // Especificaciones técnicas (el grupo «General» repite marca, categoría y textos del sitio).
+        const specs: string[] = [];
+        for (const g of Array.isArray(datos?.specs) ? datos.specs : []) {
+          if (String(g?.grupo || '').toLowerCase() === 'general') continue;
+          for (const f of Array.isArray(g?.filas) ? g.filas : []) {
+            if (Array.isArray(f) && String(f[0] || '').trim() && String(f[1] || '').trim()) specs.push(`${String(f[0]).trim()}: ${String(f[1]).trim()}`);
+          }
+        }
+        out.datos_clave = specs.join('\n').slice(0, 2000) || null;
+        // La foto del producto: la línea de un pedido del portal no la trae.
+        const foto = html.match(/<meta[^>]+property="og:image"[^>]+content="([^"]+)"/i) || html.match(/<meta[^>]+content="([^"]+)"[^>]+property="og:image"/i);
+        const img = String(variante?.imagen || prod?.image || prod?.imagen || foto?.[1] || '').replace(/&amp;/g, '&').trim();
+        if (img) out.imagen = /^https?:/i.test(img) ? img : `${(t?.base || url.replace(/^(https?:\/\/[^/]+).*$/, '$1'))}${img.startsWith('/') ? '' : '/'}${img}`;
       } else {
         const html = await this.fetchTexto(url);
         const m = html.match(/<meta[^>]+(?:name|property)="(?:description|og:description)"[^>]+content="([^"]*)"/i);

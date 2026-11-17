@@ -673,6 +673,23 @@ export class StockClientesController {
     return await this.exploradorProductos.crear({ email: req?.user?.email || null }, body);
   }
 
+  /* (2026-11-17) Pedidos del Portal: qué productos de un pedido están en el
+     catálogo (por SKU, por nombre o por link) y cuáles no. Devuelve, en el
+     mismo orden de `items`, el producto del catálogo o null. Solo lectura. */
+  @UseGuards(AuthGuard)
+  @Post('explorador/interno/en-catalogo')
+  async productosEnCatalogo(@Body() body: { items?: any[] }) {
+    return { productos: await this.exploradorProductos.enCatalogo(Array.isArray(body?.items) ? body.items : []) };
+  }
+
+  /* (2026-11-17) La página de un producto en nuestra web, por SKU o nombre:
+     para «Crear Transitorio» de una línea de pedido que no trae link. */
+  @UseGuards(AuthGuard)
+  @Get('explorador/interno/pagina-amsodent')
+  async paginaAmsodent(@Query('sku') sku?: string, @Query('nombre') nombre?: string) {
+    return { pagina: await this.explorador.paginaAmsodent({ sku, nombre }) };
+  }
+
   // Mantenedor de tiendas del explorador (2026-09-10, solo admin): permite
   // customizar las páginas que consulta el buscador de precios.
   @UseGuards(AdminGuard)
@@ -1004,6 +1021,13 @@ export class StockClientesController {
   @Get('accesos')
   async listarAccesos() {
     return await this.stockClientes.listarAccesos();
+  }
+
+  // (2026-11-17) Usuarios del portal (activos, de cuentas vigentes) que llevan 5 días o más sin iniciar sesión.
+  @UseGuards(AdminGuard)
+  @Get('accesos/inactivos')
+  async usuariosInactivos() {
+    return await this.stockClientes.usuariosInactivosPortal();
   }
 
   // Búsqueda en el maestro de clientes para habilitar un acceso nuevo.

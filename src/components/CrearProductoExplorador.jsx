@@ -68,8 +68,11 @@ export default function CrearProductoExplorador({ item, onCreado, onCerrar }) {
           ...x,
           nombre: x.nombre || d.nombre || "",
           marca: x.marca || d.marca || "",
+          // (2026-11-17) Nuestra web publica la categoría con los mismos nombres del catálogo, y las especificaciones.
+          categoria: x.categoria || (CATEGORIAS_PRODUCTO.includes(d.categoria) ? d.categoria : ""),
           presentacion: x.presentacion || d.presentacion || "",
           descripcion: x.descripcion || d.descripcion || "",
+          datos_clave: x.datos_clave || d.datos_clave || "",
           sku: x.sku || (item?.tienda === "amsodent" ? d.sku || "" : ""),
         }));
       })
@@ -101,12 +104,16 @@ export default function CrearProductoExplorador({ item, onCreado, onCerrar }) {
     return a && l && an ? (a * l * an).toFixed(3) : "";
   }, [f.alto, f.largo, f.ancho]);
 
+  // (2026-11-17) Desde un pedido del portal la línea no trae foto (se usa la que publica la tienda) y puede no traer link.
+  const imagen = item?.imagen || detalle?.imagen || null;
+  const sinLink = !item?.url;
+
   async function enviar(accion, extra = {}) {
     setEnviando(accion);
     setError("");
     try {
       const r = await api.post("/stock-clientes/explorador/interno/crear-producto", {
-        url: item.url, imagen: item.imagen || null, tienda: item.tienda || null,
+        url: item.url || "", imagen, tienda: item.tienda || null, ...(sinLink ? { sin_link: true } : {}),
         ...f, ...(accion === "simular" ? { simular: true } : {}), ...extra,
       });
       setResultado(r);
@@ -178,9 +185,12 @@ export default function CrearProductoExplorador({ item, onCreado, onCerrar }) {
           <div>
             <strong style={{ fontSize: 15, display: "inline-flex", alignItems: "center", gap: 6 }}><PackagePlus size={16} /> Crear producto transitorio</strong>
             <div style={{ fontSize: 12.5, color: "var(--text-muted)" }}>
-              {item?.tienda === "amsodent" && item?.sku
-                ? <>Queda con el SKU <b>{item.sku}</b> de nuestra web, en estado «Transitorio», con el link como referencia. Si el SKU ya está en Bsale, se enlaza a esa variante.</>
-                : "Queda en estado «Transitorio», con el link de la tienda como referencia. Los mismos campos que en Productos; el margen se calcula mientras escribes."}
+              {item?.pedido ? <>Producto del pedido #{item.pedido} del portal que no está en el catálogo. </> : null}
+              {sinLink
+                ? "No se encontró su página en nuestra web: queda en estado «Transitorio» con los datos que completes aquí."
+                : item?.tienda === "amsodent" && item?.sku
+                  ? <>Queda con el SKU <b>{item.sku}</b> de nuestra web, en estado «Transitorio», con el link como referencia. Si el SKU ya está en Bsale, se enlaza a esa variante.</>
+                  : "Queda en estado «Transitorio», con el link de la tienda como referencia. Los mismos campos que en Productos; el margen se calcula mientras escribes."}
             </div>
           </div>
           <button type="button" className="btn btn-ghost" onClick={onCerrar} style={{ padding: 6, flexShrink: 0 }} title="Cerrar"><X size={16} /></button>
@@ -189,18 +199,22 @@ export default function CrearProductoExplorador({ item, onCreado, onCerrar }) {
         <div style={{ padding: "14px 18px", display: "flex", flexDirection: "column", gap: 12 }}>
           {/* De dónde sale */}
           <div style={{ display: "flex", gap: 12, alignItems: "center", border: "1px solid var(--border)", borderRadius: 10, padding: 10, background: "var(--bg)" }}>
-            {item?.imagen
-              ? <img src={item.imagen} alt="" style={{ width: 64, height: 64, objectFit: "contain", background: "#fff", borderRadius: 8, flexShrink: 0 }} />
+            {imagen
+              ? <img src={imagen} alt="" style={{ width: 64, height: 64, objectFit: "contain", background: "#fff", borderRadius: 8, flexShrink: 0 }} />
               : <div style={{ width: 64, height: 64, borderRadius: 8, background: "#fff", flexShrink: 0 }} />}
             <div style={{ minWidth: 0, fontSize: 12.5, lineHeight: 1.45 }}>
-              <div style={{ fontWeight: 700 }}>{item?.tienda === "amsodent" ? "Amsodent (web)" : item?.tienda_nombre} · {fmt(item?.precio)}</div>
-              <a href={item?.url} target="_blank" rel="noopener noreferrer" className="table-link" style={{ display: "inline-flex", alignItems: "center", gap: 4, overflowWrap: "anywhere" }}>
-                {item?.url} <ExternalLink size={12} style={{ flexShrink: 0 }} />
-              </a>
+              <div style={{ fontWeight: 700 }}>{item?.tienda === "amsodent" ? "Amsodent (web)" : item?.tienda_nombre || "Pedido del portal"}{Number(item?.precio) > 0 ? ` · ${fmt(item?.precio)}` : ""}</div>
+              {sinLink ? (
+                <div>Sin página web de referencia.</div>
+              ) : (
+                <a href={item?.url} target="_blank" rel="noopener noreferrer" className="table-link" style={{ display: "inline-flex", alignItems: "center", gap: 4, overflowWrap: "anywhere" }}>
+                  {item?.url} <ExternalLink size={12} style={{ flexShrink: 0 }} />
+                </a>
+              )}
               <div style={{ color: "var(--text-muted)" }}>
-                {item?.imagen ? "La imagen se copia al catálogo. " : "Sin imagen: súbela después en Productos. "}
+                {imagen ? "La imagen se copia al catálogo. " : leyendo ? "" : "Sin imagen: súbela después en Productos. "}
                 {leyendo ? "Leyendo la ficha en la tienda…" : detalle && (detalle.descripcion || detalle.marca || detalle.sku || detalle.presentacion)
-                  ? `Traído de la tienda: ${[detalle.marca && "marca", detalle.presentacion && "presentación", detalle.descripcion && "descripción", detalle.sku && `SKU ${detalle.sku}`].filter(Boolean).join(", ")}. Revísalo antes de crear.`
+                  ? `Traído de la tienda: ${[detalle.marca && "marca", detalle.categoria && "categoría", detalle.presentacion && "presentación", detalle.descripcion && "descripción", detalle.datos_clave && "datos clave", detalle.sku && `SKU ${detalle.sku}`].filter(Boolean).join(", ")}. Revísalo antes de crear.`
                   : ""}
               </div>
             </div>

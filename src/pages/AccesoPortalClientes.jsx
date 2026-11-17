@@ -138,8 +138,11 @@ const modulosCompletos = (m) => {
 const modulosApagados = (m) => MODULOS_PORTAL.filter((x) => modulosCompletos(m)[x.clave] === false).map((x) => x.nombre);
 
 export default function AccesoPortalClientes() {
-  const [tab, setTab] = useState("accesos"); // 'accesos' | 'recuperaciones'
+  // 'accesos' | 'inactivos' | 'recuperaciones' | 'tiendas'. El aviso de la campana abre ?tab=inactivos.
+  const [tab, setTab] = useState(() => (new URLSearchParams(window.location.search).get("tab") === "inactivos" ? "inactivos" : "accesos"));
   const [accesos, setAccesos] = useState([]);
+  // (2026-11-17) Usuarios del portal que llevan 5 días o más sin iniciar sesión.
+  const [inactivos, setInactivos] = useState({ dias: 5, personas: [], error: "" });
   const [recuperaciones, setRecuperaciones] = useState([]);
   const [cargando, setCargando] = useState(true);
   const [busqueda, setBusqueda] = useState("");
@@ -154,12 +157,15 @@ export default function AccesoPortalClientes() {
   const cargar = useCallback(async () => {
     setCargando(true);
     try {
-      const [acc, rec] = await Promise.all([
+      const [acc, rec, ina] = await Promise.all([
         api.get("/stock-clientes/accesos"),
         api.get("/stock-clientes/recuperaciones"),
+        // Si esta lectura falla, el resto de la pantalla carga igual.
+        api.get("/stock-clientes/accesos/inactivos").catch((e) => ({ error: e?.message || "No se pudo leer quiénes están sin iniciar sesión." })),
       ]);
       setAccesos(Array.isArray(acc) ? acc : []);
       setRecuperaciones(Array.isArray(rec) ? rec : []);
+      setInactivos({ dias: Number(ina?.dias) || 5, personas: Array.isArray(ina?.personas) ? ina.personas : [], error: ina?.error || "" });
     } catch (e) {
       setToast({ type: "error", message: e?.message || "No pudimos cargar los datos." });
     } finally {
@@ -274,6 +280,14 @@ export default function AccesoPortalClientes() {
           onClick={() => setTab("accesos")}
         >
           <ShieldCheck size={15} /> Accesos de clientes
+        </button>
+        <button
+          style={{ ...s.tab, ...(tab === "inactivos" ? s.tabActiva : {}) }}
+          onClick={() => setTab("inactivos")}
+          title={`Usuarios del portal que llevan ${inactivos.dias} días o más sin iniciar sesión`}
+        >
+          <Clock size={15} /> Sin iniciar sesión
+          {inactivos.personas.length > 0 && <span style={{ ...s.badge, background: "#b45309" }}>{inactivos.personas.length}</span>}
         </button>
         <button
           style={{ ...s.tab, ...(tab === "recuperaciones" ? s.tabActiva : {}) }}
@@ -424,6 +438,15 @@ export default function AccesoPortalClientes() {
         </section>
       )}
 
+      {tab === "inactivos" && (
+        <SeccionSinIniciarSesion
+          datos={inactivos}
+          cargando={cargando}
+          onActualizar={cargar}
+          onUsuarios={(p) => setModalUsuarios({ rut: p.rut, razon_social: p.razon_social })}
+        />
+      )}
+
       {tab === "recuperaciones" && (
         <section style={s.card}>
           <div style={s.cardHead}>
@@ -539,6 +562,128 @@ export default function AccesoPortalClientes() {
         <Toast type={toast.type} message={toast.message} onClose={() => setToast(null)} />
       )}
     </div>
+  );
+}
+
+/* ── Usuarios del portal sin iniciar sesión (2026-11-17) ─────────────────────
+   Pedido de Ariel: «notificación indicando si un usuario no ha iniciado sesión
+   del portal cliente en 5 días» y «del listado de usuarios, descartar todos
+   los que están desactivados». El aviso llega a la campana una vez al día y
+   abre esta pestaña: una fila por persona (activa, de una cuenta habilitada y
+   vigente) que lleva 5 días o más sin entrar. Los usuarios desactivados y las
+   cuentas deshabilitadas o expiradas no aparecen: lo decide el servidor. */
+const POR_PAGINA_INACTIVOS = 12;
+function SeccionSinIniciarSesion({ datos, cargando, onActualizar, onUsuarios }) {
+  const [busqueda, setBusqueda] = useState("");
+  const [pagina, setPagina] = useState(1);
+  const filtradas = useMemo(() => {
+    const q = busqueda.trim().toLowerCase();
+    if (!q) return datos.personas;
+    return datos.personas.filter((p) => [p.razon_social, p.rut_formateado, p.email, p.nombre].some((v) => String(v || "").toLowerCase().includes(q)));
+  }, [datos.personas, busqueda]);
+  const paginas = Math.max(1, Math.ceil(filtradas.length / POR_PAGINA_INACTIVOS));
+  const actual = Math.min(pagina, paginas);
+  const visibles = filtradas.slice((actual - 1) * POR_PAGINA_INACTIVOS, actual * POR_PAGINA_INACTIVOS);
+  const nunca = datos.personas.filter((p) => p.sin_ingresar).length;
+
+  return (
+    <section style={s.card} className="seccion-sin-iniciar-sesion">
+      <div style={s.infoNota}>
+        <Clock size={14} style={{ flexShrink: 0, marginTop: 1 }} />
+        <span>
+          Personas con acceso vigente al portal que llevan <strong>{datos.dias} días o más sin iniciar sesión</strong>. No
+          aparecen los usuarios desactivados ni las cuentas deshabilitadas o expiradas. Cada mañana llega un aviso a la
+          campana (administradores y vendedor dueño de la cartera) con quienes cumplieron el plazo.
+        </span>
+      </div>
+      <div style={s.cardHead}>
+        <div style={s.searchWrap}>
+          <Search size={15} style={{ color: "#94a3b8" }} />
+          <input style={s.searchInput} placeholder="Buscar por cliente, RUT, correo o nombre…" value={busqueda} onChange={(e) => { setBusqueda(e.target.value); setPagina(1); }} />
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginLeft: "auto", fontSize: 12.5, color: "#64748b" }}>
+          <span>
+            {datos.personas.length} persona{datos.personas.length === 1 ? "" : "s"}
+            {nunca > 0 ? ` · ${nunca} nunca ${nunca === 1 ? "ha" : "han"} entrado` : ""}
+          </span>
+          <button style={s.btnGhost} onClick={onActualizar}>
+            <RefreshCw size={14} /> Actualizar
+          </button>
+        </div>
+      </div>
+
+      {cargando ? (
+        <div style={s.vacio}>Cargando…</div>
+      ) : datos.error ? (
+        <div style={{ ...s.vacio, color: "#b91c1c" }}>{datos.error}</div>
+      ) : filtradas.length === 0 ? (
+        <div style={s.vacio}>
+          {datos.personas.length === 0
+            ? `Todos los usuarios activos del portal iniciaron sesión en los últimos ${datos.dias} días.`
+            : "Sin resultados para su búsqueda."}
+        </div>
+      ) : (
+        <>
+          <div style={s.tablaWrap}>
+            <table style={{ ...s.tabla, minWidth: 720 }}>
+              <thead>
+                <tr>
+                  <th style={s.th}>Cliente</th>
+                  <th style={s.th}>Usuario</th>
+                  <th style={s.th}>Último ingreso</th>
+                  <th style={{ ...s.th, textAlign: "right" }}>Días sin entrar</th>
+                  <th style={{ ...s.th, textAlign: "right" }}>Acciones</th>
+                </tr>
+              </thead>
+              <tbody>
+                {visibles.map((p) => (
+                  <tr key={p.clave} style={s.tr}>
+                    <td style={s.td}>
+                      <div style={{ fontWeight: 700, color: "#0f172a", overflowWrap: "anywhere" }}>{p.razon_social || "—"}</div>
+                      <div style={{ fontSize: 12, color: "#64748b" }}>{p.rut_formateado}</div>
+                    </td>
+                    <td style={s.td}>
+                      <div style={{ fontWeight: 600, color: "#0f172a", overflowWrap: "anywhere" }}>{p.email || "—"}</div>
+                      <div style={{ fontSize: 12, color: "#64748b" }}>
+                        {p.usuario_id == null ? "Cuenta principal" : [p.nombre, p.rol === "admin" ? "Admin" : "Asistente"].filter(Boolean).join(" · ")}
+                      </div>
+                    </td>
+                    <td style={s.td}>
+                      {p.sin_ingresar ? (
+                        <span style={{ ...s.estadoChip, background: "#fef3c7", color: "#b45309" }} title={p.ultimo_acceso ? `Su último ingreso (${fmtFechaHora(p.ultimo_acceso)}) fue antes de volver a habilitar la cuenta` : "No ha entrado desde que tiene acceso"}>
+                          <Clock size={12} /> Nunca ha entrado
+                        </span>
+                      ) : (
+                        fmtFechaHora(p.ultimo_acceso)
+                      )}
+                      {p.sin_ingresar && <div style={{ fontSize: 12, color: "#64748b", marginTop: 4 }}>Con acceso desde el {fmtFecha(p.desde)}</div>}
+                    </td>
+                    <td style={{ ...s.td, textAlign: "right", fontWeight: 700, color: p.dias >= 30 ? "#b91c1c" : "#b45309", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
+                      {p.dias} día{p.dias === 1 ? "" : "s"}
+                    </td>
+                    <td style={{ ...s.td, textAlign: "right" }}>
+                      <button style={s.accBtn} onClick={() => onUsuarios(p)} title="Ver los usuarios de este cliente: enviar el acceso de nuevo, cambiar la clave o desactivar">
+                        <UserPlus size={14} /> Usuarios
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {filtradas.length > POR_PAGINA_INACTIVOS && (
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap", padding: "10px 16px", fontSize: 12.5, color: "#64748b", borderTop: "1px solid #f1f5f9" }}>
+              <span>{(actual - 1) * POR_PAGINA_INACTIVOS + 1}–{Math.min(actual * POR_PAGINA_INACTIVOS, filtradas.length)} de {filtradas.length}</span>
+              <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+                <button type="button" style={{ ...s.accBtn, opacity: actual <= 1 ? 0.5 : 1 }} disabled={actual <= 1} onClick={() => setPagina(actual - 1)}>Anterior</button>
+                <span>Página {actual} de {paginas}</span>
+                <button type="button" style={{ ...s.accBtn, opacity: actual >= paginas ? 0.5 : 1 }} disabled={actual >= paginas} onClick={() => setPagina(actual + 1)}>Siguiente</button>
+              </span>
+            </div>
+          )}
+        </>
+      )}
+    </section>
   );
 }
 
@@ -1211,6 +1356,12 @@ function ModalUsuariosPortal({ rut, razonSocial, onCerrar, onOk, onError }) {
   // correo a la persona; el chip queda como respaldo (y por si el correo
   // no salió, para entregársela a mano).
   const [claveEntregar, setClaveEntregar] = useState(null); // {email, clave, enviado}
+  /* (2026-11-17) Pedido de Ariel: «del listado de usuarios, descartar todos
+     los que están desactivados». No se listan; un enlace los deja ver para
+     poder reactivarlos o eliminarlos. */
+  const [verDesactivados, setVerDesactivados] = useState(false);
+  const desactivados = usuarios.filter((u) => u.activo === false).length;
+  const usuariosVisibles = verDesactivados ? usuarios : usuarios.filter((u) => u.activo !== false);
 
   async function cargar() {
     setCargando(true);
@@ -1365,7 +1516,24 @@ function ModalUsuariosPortal({ rut, razonSocial, onCerrar, onOk, onError }) {
           </div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 4 }}>
-            {usuarios.map((u) => (
+            {/* (2026-11-17) Los desactivados no se listan; quedan a un clic para poder reactivarlos. */}
+            {desactivados > 0 && (
+              <div className="aviso-usuarios-desactivados" style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", fontSize: 12.5, color: "#64748b" }}>
+                <ShieldOff size={13} style={{ flexShrink: 0 }} />
+                <span>
+                  {verDesactivados
+                    ? `Mostrando también ${desactivados} usuario${desactivados === 1 ? "" : "s"} desactivado${desactivados === 1 ? "" : "s"}.`
+                    : `${desactivados} usuario${desactivados === 1 ? "" : "s"} desactivado${desactivados === 1 ? "" : "s"} no se ${desactivados === 1 ? "muestra" : "muestran"}.`}
+                </span>
+                <button type="button" onClick={() => setVerDesactivados((v) => !v)} style={{ background: "none", border: "none", padding: 0, color: "var(--primary, #28aeb1)", fontWeight: 600, cursor: "pointer", fontSize: 12.5 }}>
+                  {verDesactivados ? "Ocultar desactivados" : "Ver desactivados"}
+                </button>
+              </div>
+            )}
+            {usuariosVisibles.length === 0 && (
+              <div style={{ fontSize: 13, color: "#94a3b8", padding: "4px 0" }}>Este RUT no tiene usuarios activos: se entra con la cuenta principal.</div>
+            )}
+            {usuariosVisibles.map((u) => (
               /* El correo ocupa su propia línea y los controles envuelven
                  debajo: en un modal angosto los anchos fijos de los botones
                  aplastaban el texto hasta hacerlo ilegible. */
@@ -1877,7 +2045,7 @@ const s = {
   },
   title: { margin: 0, fontSize: 21, fontWeight: 800, color: "#0f172a" },
   sub: { margin: "3px 0 0", fontSize: 13.5, color: "#64748b", maxWidth: 620 },
-  tabs: { display: "flex", gap: 4, marginBottom: 16, borderBottom: "1px solid #e2e8f0" },
+  tabs: { display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 16, borderBottom: "1px solid #e2e8f0" },
   tab: {
     display: "inline-flex",
     alignItems: "center",
