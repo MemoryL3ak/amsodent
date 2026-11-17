@@ -145,7 +145,9 @@ gráfico en el tiempo (círculo verde = adjudicado a Amsodent, rombo naranjo =
 adjudicado a otro, línea punteada = el precio actual) y la tabla de procesos
 con fecha, código del proceso (abre nuestra cotización en otra pestaña),
 organismo, cantidad, nuestro precio, precio adjudicado, diferencia y ganador.
-Filtro: últimos 12 meses, 24 meses o todo. Lo ve todo el que cotiza; no
+Filtro: últimos 6 meses (el que viene puesto desde el 17-11-2026), 12 meses,
+24 meses o todo el historial; si en los últimos 6 meses no hay procesos, un
+botón muestra todo el historial. Lo ve todo el que cotiza; no
 muestra costos. De dónde sale: de nuestras cotizaciones públicas con ese
 producto (por SKU) y de la ficha que Mercado Público entrega de cada proceso
 (la misma del panel Análisis Mercado Público). Si ganamos, el precio adjudicado
@@ -252,6 +254,17 @@ unidos con « / » en el orden de la ficha y deben caber en 80 caracteres (la
 ventana muestra el texto y el conteo). Al emitir, el cliente queda en Bsale con
 lo marcado; la simulación lo muestra antes y, si Bsale no acepta el cambio, la
 factura no se emite.
+GIRO DE LA GUÍA (desde el 17-11-2026): al emitir una GUÍA DE DESPACHO —desde la
+orden de compra o una guía libre— si la ficha del cliente tiene más de un giro
+aparece «Giros de esta guía» con una casilla por giro; se marcan uno o más
+(unidos con « / », hasta 80 caracteres) y ese es el giro con que sale la guía y
+el que queda en Bsale. Viene marcado el que el cliente tiene HOY en Bsale
+(etiqueta «hoy en Bsale»; si no es de la ficha se ofrece igual, primero): si no
+se toca nada, el giro de Bsale no cambia. La simulación muestra el giro elegido
+y avisa si cambiará el de Bsale; si Bsale no acepta el cambio, la guía no se
+emite. Con cliente nuevo en Bsale lo marcado se escribe en su campo Giro, que
+se puede corregir a mano. La factura libre y la venta directa usan la misma
+casilla.
 ASIGNACIÓN DE CARTERA (/asignacion-cartera, solo admin; también con el botón
 "Asignar cartera" de Clientes): para repartir clientes entre vendedores EN
 MASA. Se filtra por nombre/RUT, tipo, región, vendedor asignado y "le cotiza"
@@ -291,6 +304,18 @@ y en el detalle de la actividad. Desactivar un campo lo oculta sin perder lo
 ya llenado; eliminarlo borra solo la definición.
 
 ### Productos (/productos)
+COSTO Y PRECIOS (desde el 17-11-2026): en un producto del catálogo el costo y
+las listas YA NO se cambian en su ficha: «Editar producto» los muestra de solo
+lectura con el botón «Cambiar en Actualización de precios» (el servidor tampoco
+los acepta desde la ficha). Se cambian en la sección «Actualización de precios»
+de Productos (pestaña arriba del catálogo y submenú de Productos; permiso
+actualizar_precios). Excepción: un producto TRANSITORIO o PENDIENTE DE
+APROBACIÓN conserva costo y precios editables en su ficha (es donde se le ponen
+por primera vez); al quedar Activo pasa a la regla general. La carga masiva
+sigue pudiendo traer precios. NOMBRE DE LA FICHA TÉCNICA (17-11-2026): se
+descarga como «Nombre del producto - SKU.pdf» (sin SKU, solo el nombre), suelta
+o dentro del ZIP; abierta en otra pestaña desde una cotización trae una barra
+con el nombre y un botón «Descargar» que la baja con ese nombre.
 Catálogo maestro: SKU, marca, categoría, formato, 3 listas de precios (Lista 3
 = Lista 2 × 1,08, solo lectura), precios de campaña, imagen, peso y medidas
 (cm³ para el cálculo de flete), ficha técnica en PDF. CÓDIGO DE BARRAS (nov
@@ -520,8 +545,36 @@ detalle, filtros, tarjetas del mes y Excel. Para mover stock entre sucursales
 propias se sigue usando Inventario → Traslados. Requiere la migración
 20261106_recepciones_stock. (Es distinto de la pestaña «Recepción» del portal
 del cliente, que carga el inventario propio de la clínica.)
+COSTO MAYOR AL DEL PRODUCTO (17-11-2026): si el costo neto de una línea es
+mayor que el costo que el producto tiene en el catálogo, la simulación lo avisa
+(con el alza en %) y, al registrar, el costo del producto NO cambia: queda por
+confirmar en Productos → Actualización de precios → «Costos por confirmar»
+(definitiva o momentánea) y llega un aviso a la campana de los administradores
+y de quienes tienen actualizar_precios + ver_costos.
 
-### Actualización de precios (/actualizacion-precios) — nov 2026
+### Actualización de precios (/productos/actualizacion-precios) — nov 2026
+Desde el 17-11-2026 es una SECCIÓN DE PRODUCTOS (pestaña «Actualización de
+precios» arriba del catálogo y submenú de Productos; /actualizacion-precios
+redirige) y es el único lugar donde se cambian el costo y los precios de un
+producto del catálogo. Trae TODO el catálogo, también los productos sin SKU
+(transitorios), que se cambian aquí pero no van al Sheet. Novedades del 17-11:
+· FILTRO POR MARCA (con cuántos productos tiene cada una) y «Sin SKU» en
+  «Mostrar»; la lista 3 también se escribe en la grilla.
+· «AJUSTE MASIVO»: aplica un cambio a todos los productos del filtro actual
+  (una marca, una categoría, una búsqueda): subir o bajar un % el costo y/o las
+  listas (la lista 3 solo donde tiene precio fijo), o fijar el margen sobre el
+  costo (precio = costo ÷ (1 − margen)), redondeando a $1, $10, $50 o $100. El
+  ajuste queda ESCRITO en la grilla sin guardar; después se simula y se guarda.
+  Con muchos productos la simulación y el guardado van por tandas de 80 con el
+  avance a la vista (hasta 1.500 por vez).
+· Pestaña «COSTOS POR CONFIRMAR» (solo con ver_costos): productos cuya ÚLTIMA
+  recepción de stock llegó con un costo neto mayor al que tienen. Muestra costo
+  actual, costo recibido, alza en % y la recepción. «Definitiva» deja el costo
+  del producto en el de la recepción (queda en el historial y sigue al Sheet);
+  «Momentánea» mantiene el costo y cierra la alerta; ambas piden confirmar y
+  muestran cómo queda el margen de cada lista. Si después llega otra recepción
+  más cara, vuelve a aparecer. Guardar «momentánea» requiere la migración
+  20261117_recepcion_costo_decision.
 Admin y quien tenga «Actualización de precios» (actualizar_precios) en su
 perfil; la columna de costo solo con admin o «Ver el costo de los productos»
 (ver_costos). Desde nov 2026 los precios se mantienen EN LA PLATAFORMA y la
@@ -943,6 +996,17 @@ acceso) o no («Sin iniciar sesión», con hace cuántos días se habilitó). El
 filtro junto al buscador separa las que ya iniciaron sesión de las que no.
 Las confirmaciones (deshabilitar un acceso, eliminar un usuario, enviar el
 acceso) usan la ventana de confirmación del sistema.
+SIN INICIAR SESIÓN (17-11-2026): pestaña «Sin iniciar sesión» con las personas
+de acceso vigente que llevan 5 DÍAS o más sin entrar al portal (cliente,
+usuario, último ingreso o «Nunca ha entrado», días sin entrar y botón
+«Usuarios» para reenviarle el acceso). No aparecen los usuarios DESACTIVADOS ni
+las cuentas deshabilitadas o expiradas; la cuenta principal de un RUT cuenta
+solo si no tiene usuarios activos. Cada mañana (09:00) llega un aviso a la
+campana: a los administradores con todos, y al vendedor dueño de la cartera con
+los de sus clientes. Cada persona se avisa una vez por racha de inactividad (si
+vuelve a entrar y deja de hacerlo, se avisa de nuevo). En la ventana «Usuarios»
+de un cliente y en la sección Usuarios del portal, los usuarios desactivados ya
+no se listan: el enlace «Ver desactivados» los muestra para reactivarlos.
 
 ### Portales públicos (sin sesión interna)
 - /portal — Portal del Cliente: entra con RUT + N° de cotización; ve sus
@@ -1128,6 +1192,43 @@ sortea uno al azar (se puede repetir para más ganadores o limpiarlos).
 Evento: KPIs, filtros, QR del portal del evento (generar, copiar link,
 descargar PNG), invitaciones por correo con estado de envío y reenvío,
 confirmación de asistencia.
+
+### Comunidad Amsodent (/comunidad-registros) — permiso "comunidad"
+Desde el 17-11-2026 reúne a TODAS las personas y clínicas: la lista une, en
+vivo, a quienes llenaron el formulario del QR (/comunidad), a los
+participantes de los SORTEOS, a los inscritos en los EVENTOS y a las clínicas
+RASTREADAS en Google Maps. Una persona se reconoce por su correo: si está en
+varias partes sale una sola fila con todas sus fuentes (pastillas).
+CATEGORÍAS: toda fila tiene una de siete — Estudiante, Clínica, Doctor
+Particular, Doctor Docente, Doctor Docente y Profesional Privado, Doctor
+Docente y Profesional Público, Cliente Rastreado. Mientras nadie la elija, el
+sistema PROPONE una según el origen (estudiante del formulario o del sorteo →
+Estudiante; profesor de un evento → Doctor Docente; el resto de los dentistas →
+Doctor Particular; clínica rastreada → Cliente Rastreado) y la muestra con
+borde punteado y «Propuesta · confirmar». Se cambia en la lista de la columna
+Categoría de cada fila (queda guardada) o a varias a la vez: se marcan las
+filas (o «Marcar las N del filtro»), se elige la categoría y «Aplicar
+categoría». Pastillas de categoría con su cantidad (un clic filtra; «Por
+confirmar» = las que siguen con la propuesta), filtros por texto, categoría,
+fuente y fechas, y Excel con todo.
+RASTREO DE CLÍNICAS (el bot, pestaña «Rastreo de clínicas»): se elige región y
+comuna y «Buscar clínicas». Trae de GOOGLE MAPS las clínicas dentales de la
+comuna con nombre, teléfono, página web, dirección, comuna y región; después
+entra a la página web de cada una (de a pocas, con barra de avance; se puede
+detener) para sacar el CORREO y el WHATSAPP, que Google Maps no publica. Si la
+página no trae WhatsApp y el teléfono es celular, queda «WhatsApp probable».
+El resultado es una tabla para revisar: vienen marcadas las clínicas dentales
+con dirección en la comuna que aún no están guardadas; dos casillas dejan ver
+también las de comunas vecinas y lo que no es dental (hospitales, CESFAM,
+centros médicos); se descarga en Excel. «Guardar N en Comunidad como Cliente
+Rastreado» es el único paso que guarda: cada lugar se guarda una sola vez
+(volver a rastrear la comuna solo actualiza sus datos y respeta su categoría)
+y queda la bitácora de comunas rastreadas. Usa la clave de Google del servidor
+con «Places API (New)» (hasta 18 consultas por comuna). Guardar categorías y
+clínicas requiere la migración 20261117_comunidad_categorias_rastreo.
+También: QR del portal /comunidad, reenvío del correo de bienvenida (solo a
+quien llenó el formulario) y eliminar (quien solo está en un sorteo o evento
+se administra desde ese módulo).
 
 ### Marcar Asistencia (/marcaje)
 Reloj de marcaje de entrada/salida con geolocalización puntual: pide el GPS al
@@ -1334,6 +1435,17 @@ girasol 🌻). Hoy ayuda en:
   Explorador de Precios o Gestión de Stock). Muestra cliente, contacto,
   sucursal, ítems con referencias, nota y mensajes; permite cambiar estado,
   abrir la cotización vinculada o crear una nueva precargada desde el pedido.
+  PRODUCTOS QUE NO ESTÁN CREADOS (desde el 17-11-2026): en el detalle del
+  pedido la columna «Catálogo» dice de cada producto si está en Productos («En
+  catálogo» o «Transitorio», con enlace a su ficha) o no. El que no está tiene
+  el botón «CREAR TRANSITORIO»: abre la ventana de creación con lo que publica
+  su página ya cargado (nombre, marca, categoría, presentación, descripción,
+  datos clave, foto, SKU y precio de nuestra web como lista 1 neta) para
+  completar costo, medidas y lo que falte; «Simular» revisa y «Crear producto»
+  lo deja como Transitorio. Si la línea no trae link (lo pedido desde Gestión
+  de Stock) primero se busca su página en nuestra web por SKU o por nombre; si
+  no existe, se crea igual con lo que se escriba. Un producto se reconoce por
+  su SKU, por su nombre exacto o, si la línea no trae SKU, por su link.
   ASOCIAR UNA COTIZACIÓN YA CREADA (desde el 12-11-2026): si la cotización se
   hizo por el listado y no desde el pedido, en el detalle del pedido el botón
   «Asociar una cotización ya creada» lista las cotizaciones de ESE cliente
