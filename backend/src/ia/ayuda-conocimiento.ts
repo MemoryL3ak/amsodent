@@ -324,6 +324,12 @@ la lectura de la pistola; también se tipea); dos productos no pueden compartir
 código (al guardar avisa cuál lo tiene); el filtro de SKU del catálogo también
 busca por código de barras; migración 20261109_productos_codigo_barra. Estados: Activo (con
 SKU), Transitorio (sin SKU), Pendiente Aprobación (margen 0-20%), Inactivo.
+ESTADO «TEMPORAL» (desde el 19-11-2026): producto de OTRA casa dental creado
+desde un pedido del portal («Crear Temporal» en Pedidos del Portal). Existe
+para poder cotizar ese pedido, no para entrar al catálogo: no tiene SKU, no va
+a Bsale ni al Sheet de precios, y su costo y precios se editan en su ficha. Se
+filtra en el catálogo con Estado → Temporal y se puede usar en cotizaciones.
+Al asignarle SKU pasa a Activo y sigue el camino normal.
 En los productos de la categoría Prevención e Higiene (los del Showroom del
 portal) hay un campo VENTA SHOWROOM al crear y en la ficha: el precio sugerido
 de venta al público, con la ganancia que le deja al cliente del portal sobre la
@@ -819,6 +825,14 @@ posponer). La simulación dice a quién irá. Factura de Mercado Público (no
 particular): la envía quien la emite o la carga (Ruth): la ventana de correo y
 el recordatorio le aparecen a esa persona, no al vendedor; copia solo a Ruth
 (admin@), nunca al vendedor de la cotización.
+AVISO DE LA GUÍA SOLO LA PRIMERA VEZ (desde el 19-11-2026): la ventana «Guía
+de despacho por enviar» se levanta cuando la guía se genera por primera vez.
+Si la guía se REEMPLAZA (se elimina y se vuelve a cargar, o se sube otra vez
+el mismo folio, como el PDF firmado de un despacho interno) no vuelve a
+aparecer: la pantalla avisa que reemplaza a una guía que ya tuvo su aviso. Se
+reconoce por el N° de guía dentro de la misma cotización (sin número: una guía
+eliminada de la misma orden de compra). Si el aviso original seguía pospuesto,
+queda apuntando al archivo nuevo. Una guía con otro folio sí avisa.
 VENTA DIRECTA: pagada al emitir pide el N° de comprobante (salvo efectivo) y
 queda en la pestaña «Venta directa» con su cotización. CLIENTE NUEVO EN BSALE:
 si el RUT no está, una ventana pide los datos que Bsale exige y lo crea
@@ -1226,6 +1240,24 @@ Rastreado» es el único paso que guarda: cada lugar se guarda una sola vez
 y queda la bitácora de comunas rastreadas. Usa la clave de Google del servidor
 con «Places API (New)» (hasta 18 consultas por comuna). Guardar categorías y
 clínicas requiere la migración 20261117_comunidad_categorias_rastreo.
+MAILING A LA COMUNIDAD (pestaña «Mailing», desde el 19-11-2026): correo en
+tres pasos. 1) PARA QUIÉN: toda la comunidad, una o más categorías, el filtro
+puesto en la lista o las filas marcadas (en la lista, con filas marcadas,
+«Enviar correo» abre el mailing apuntado a ellas); a cada correo le llega una
+sola vez y quedan fuera las filas sin correo y quienes se dieron de baja.
+2) QUÉ SE ENVÍA: asunto, mensaje ({nombre} pone el nombre de cada persona o
+clínica), imagen o flyer opcional (con link) y botón opcional; sale con el
+logo de Amsodent. 3) «SIMULAR» muestra a cuántos llega, a quiénes no y por
+qué, y la vista previa, sin enviar nada; «Enviarme una prueba» lo manda solo a
+quien redacta; con la simulación a la vista se habilita «ENVIAR» (pide
+confirmar). Sale uno por persona desde el servidor y las respuestas llegan a
+quien lo envió. «Envíos» muestra cada mailing con su avance, aperturas y
+fallidos (se despliega para ver cada destinatario). Cada correo lleva el
+enlace «date de baja»: quien lo usa queda en «Dados de baja» y no recibe más
+mailings (ahí se anota una baja a mano o se reactiva). Gmail limita los
+envíos diarios de la cuenta (500 común, 2.000 Workspace). El enlace de baja y
+el historial requieren la migración 20261119_comunidad_mailing; sin ella el
+correo sale igual, con el pie «responde BAJA».
 También: QR del portal /comunidad, reenvío del correo de bienvenida (solo a
 quien llenó el formulario) y eliminar (quien solo está en un sorteo o evento
 se administra desde ese módulo).
@@ -1493,17 +1525,43 @@ girasol 🌻). Hoy ayuda en:
   Explorador de Precios o Gestión de Stock). Muestra cliente, contacto,
   sucursal, ítems con referencias, nota y mensajes; permite cambiar estado,
   abrir la cotización vinculada o crear una nueva precargada desde el pedido.
-  PRODUCTOS QUE NO ESTÁN CREADOS (desde el 17-11-2026): en el detalle del
-  pedido la columna «Catálogo» dice de cada producto si está en Productos («En
-  catálogo» o «Transitorio», con enlace a su ficha) o no. El que no está tiene
-  el botón «CREAR TRANSITORIO»: abre la ventana de creación con lo que publica
-  su página ya cargado (nombre, marca, categoría, presentación, descripción,
-  datos clave, foto, SKU y precio de nuestra web como lista 1 neta) para
-  completar costo, medidas y lo que falte; «Simular» revisa y «Crear producto»
-  lo deja como Transitorio. Si la línea no trae link (lo pedido desde Gestión
-  de Stock) primero se busca su página en nuestra web por SKU o por nombre; si
-  no existe, se crea igual con lo que se escriba. Un producto se reconoce por
-  su SKU, por su nombre exacto o, si la línea no trae SKU, por su link.
+  PRODUCTOS QUE NO ESTÁN CREADOS: en el detalle del pedido la columna
+  «Catálogo» dice de cada producto si está en Productos («En catálogo»,
+  «Transitorio» o «Temporal», con enlace a su ficha) o no. Un producto se
+  reconoce por su SKU, por su nombre exacto o por su link; el código que trae
+  un producto de otra casa dental es de esa tienda y no se compara con
+  nuestros SKU.
+  «CREAR TRANSITORIO» (desde el 19-11-2026, ventana corta): para un producto
+  NUESTRO que no está en el catálogo. Se crea SOLO con lo que trae su página
+  (nombre, marca, categoría, presentación, descripción, datos clave, foto, SKU
+  y el precio de nuestra web como lista 1 neta); lo único que se pide es
+  nombre, categoría y formato (viene «Unidad»). Ya NO exige ficha técnica,
+  medidas, costo ni lista 2: se completan después en la ficha del producto.
+  «Simular» revisa sin crear. Si la línea no trae link (lo pedido desde
+  Gestión de Stock) primero se busca su página en nuestra web por SKU o por
+  nombre; si no existe, se crea con lo que trae el pedido. El Explorador de
+  Productos sigue creando transitorios con el formulario completo.
+  «CREAR TEMPORAL» (desde el 19-11-2026): los productos de OTRA casa dental
+  (hallazgos del Explorador en otra tienda) NO se crean como transitorios sino
+  como producto «Temporal»: con el nombre, la marca, la descripción y la foto
+  de su página, el link de esa tienda como referencia y su precio (sin IVA)
+  como lista 1 de referencia. No llevan SKU, no se envían a Bsale ni al Sheet
+  de precios y conservan costo y precio editables en su ficha. Con SKU pasan
+  a Activo.
+  COTIZAR CON ELLOS: «Crear cotización desde el pedido» lleva también los
+  productos de otras casas dentales que YA están creados (temporales o del
+  catálogo), enlazados a su producto; los no creados quedan fuera y el aviso
+  dice cuántos. Si un producto no tiene precio en la lista del cliente, la
+  línea entra con el precio de referencia del pedido (en neto) y una nota.
+  PANEL «OTRAS CASAS DENTALES» (pestaña de Pedidos del Portal, desde el
+  19-11-2026): métricas del % de productos pedidos por el portal que son de
+  otras casas dentales (también en unidades, en monto de referencia y en
+  pedidos que los traen), el reparto entre Amsodent / otras casas / inventario
+  del cliente, la evolución por mes, de qué casas vienen, qué clientes los
+  piden y los productos más repetidos (candidatos a incorporar al catálogo)
+  con su casa, precio de referencia, si ya están creados y sus pedidos (un
+  clic abre el pedido). Filtro por período. Cuenta todos los pedidos
+  recibidos, también los cancelados: mide lo que se pide, no lo que se vende.
   ASOCIAR UNA COTIZACIÓN YA CREADA (desde el 12-11-2026): si la cotización se
   hizo por el listado y no desde el pedido, en el detalle del pedido el botón
   «Asociar una cotización ya creada» lista las cotizaciones de ESE cliente
