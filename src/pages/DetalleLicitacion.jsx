@@ -1659,8 +1659,9 @@ export default function EditarLicitacion() {
         size_bytes: Number(file.size || 0),
       };
 
+      let creado = null;
       try {
-        await api.post("/licitaciones/documentos", payload);
+        creado = await api.post("/licitaciones/documentos", payload);
       } catch (insErr) {
         // Clean up uploaded file on failure
         try {
@@ -1668,6 +1669,8 @@ export default function EditarLicitacion() {
         } catch (_) {}
         throw insErr;
       }
+      // (2026-11-19) La guía que reemplaza a una ya avisada no vuelve a abrir la ventana de correo.
+      const guiaReemplazo = esGuia && creado?.aviso_correo === "reemplazo";
 
       setDocNumero("");
       setDocMonto("");
@@ -1680,7 +1683,9 @@ export default function EditarLicitacion() {
       if (fileInputRef.current) fileInputRef.current.value = "";
       setToast({
         type: "success",
-        message: "Documento cargado correctamente.",
+        message: guiaReemplazo
+          ? "Guía de despacho cargada. Reemplaza a una guía que ya tuvo su aviso de envío: no se vuelve a pedir enviarla al cliente."
+          : "Documento cargado correctamente.",
       });
       await cargarDocumentosLicitacion();
       // Fase 1 correos: avisar al detector global para que revise si hay un

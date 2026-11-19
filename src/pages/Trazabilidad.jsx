@@ -2248,16 +2248,21 @@ export default function Trazabilidad() {
             size_bytes: Number(file.size || 0),
           };
 
+      let creado = null;
       try {
-        await api.post("/licitaciones/documentos", payload);
+        creado = await api.post("/licitaciones/documentos", payload);
       } catch (insErr) {
         await api.delete(`/licitaciones/storage/file?bucket=${bucket}&path=${encodeURIComponent(storagePath)}`);
         throw insErr;
       }
 
+      // (2026-11-19) La guía que reemplaza a una ya avisada no vuelve a abrir la ventana de correo.
+      const reemplazo = esGuia && creado?.aviso_correo === "reemplazo";
       setToast({
         type: "success",
-        message: esGuia ? "Guía de despacho cargada correctamente." : "Factura cargada correctamente.",
+        message: reemplazo
+          ? "Guía de despacho cargada. Reemplaza a una guía que ya tuvo su aviso de envío: no se vuelve a pedir enviarla al cliente."
+          : esGuia ? "Guía de despacho cargada correctamente." : "Factura cargada correctamente.",
       });
       const licIdActual = uploadingFor;
       cancelarUploadFactura();

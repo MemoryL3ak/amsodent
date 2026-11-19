@@ -8,6 +8,7 @@ import { MpColaService } from '../mercadopublico/mp-cola.service';
 import { mpLimitador } from '../mercadopublico/mp-limitador';
 import { plantillaOcCargada } from '../correos/correos.templates';
 import { TIPO_OC_CARGADA, avisoOcCargada, clp as clpAviso, fechaCorta } from './oc-cargada-aviso';
+import { decidirAvisoGuia } from './aviso-guia-reemplazo';
 import {
   CotizacionInterna,
   FichaMp,
@@ -2996,7 +2997,11 @@ export class LicitacionesService {
     // sinAvisoCorreo: la guía de una venta directa con entrega inmediata no se
     // envía al cliente (2026-10-15).
     try {
-      if (!opts?.sinAvisoCorreo) await this.notificarCorreoPendiente(inserted?.id, body, opts?.usuarioEmail);
+      if (!opts?.sinAvisoCorreo) {
+        const aviso = await this.notificarCorreoPendiente(inserted?.id, body, opts?.usuarioEmail);
+        // (2026-11-19) La guía reemplaza a una ya avisada: la pantalla lo dice en vez de abrir la ventana de correo.
+        if (aviso && inserted && typeof inserted === 'object') inserted = { ...inserted, aviso_correo: aviso };
+      }
     } catch (e: any) {
       console.error('[LicitacionesService] notificarCorreoPendiente falló:', e?.message || e);
     }
@@ -3087,7 +3092,9 @@ export class LicitacionesService {
     }
   }
 
-  private async notificarCorreoPendiente(docId: number, body: Record<string, any>, emitidoPor?: string | null) {
+  /* Devuelve 'reemplazo' cuando la guía reemplaza a una que ya tuvo su aviso
+     (no se avisa de nuevo); en los demás casos, nada. */
+  private async notificarCorreoPendiente(docId: number, body: Record<string, any>, emitidoPor?: string | null): Promise<'reemplazo' | void> {
     const log = (m: string) => console.log(`[correos-hook] ${m}`);
     if (!docId) {
       log('sin docId — no se notifica');
@@ -3098,6 +3105,44 @@ export class LicitacionesService {
     if (!licitacionId) {
       log('sin licitacion_id — no se notifica');
       return;
+    }
+
+    /* (2026-11-19) Pedido de Ariel: el aviso de envío de la guía «solo debe
+       desplegarse la primera vez que se genera el documento. Cuando se
+       actualiza/reemplaza con otro archivo, no se debe desplegar». Reemplazar
+       una guía es eliminarla y cargarla de nuevo (o subir otra vez el mismo
+       folio, como el PDF firmado de un despacho interno): si esa guía ya tuvo
+       su aviso, no se crea otro. Ver aviso-guia-reemplazo.ts. Ante cualquier
+       falla al revisar, se avisa como siempre. */
+    if (tipo === 'guia_despacho') {
+      try {
+        const db = this.supabase.getClient();
+        const [previos, vigentes] = await Promise.all([
+          db.from('notificaciones').select('id, leida_at, metadata').eq('tipo', 'guia_despacho_enviar')
+            .filter('metadata->>licitacion_id', 'eq', String(licitacionId)).order('id', { ascending: false }).limit(200),
+          db.from('licitacion_documentos').select('id').eq('licitacion_id', licitacionId).eq('tipo', 'guia_despacho').limit(500),
+        ]);
+        if (!previos.error && !vigentes.error) {
+          const decision = decidirAvisoGuia(
+            (previos.data || []) as any[],
+            { docId, numero: body?.numero, derivaDeId: body?.deriva_de_id },
+            (vigentes.data || []).map((d: any) => Number(d.id)),
+          );
+          if (decision.reemplazo) {
+            if (decision.pendiente) {
+              // El aviso original sigue sin atender: cuando vuelva, que envíe el archivo vigente.
+              const { error: errUpd } = await db.from('notificaciones')
+                .update({ metadata: { ...(decision.pendiente.metadata || {}), documento_id: docId, deriva_de_id: body?.deriva_de_id ?? null } })
+                .eq('id', decision.pendiente.id);
+              if (errUpd) log(`no se pudo apuntar el aviso ${decision.pendiente.id} al documento ${docId}: ${errUpd.message}`);
+            }
+            log(`guía ${String(body?.numero || '').trim() || 's/n'} de lic=${licitacionId} reemplaza a una ya avisada (doc=${docId}) — no se repite el aviso`);
+            return 'reemplazo';
+          }
+        }
+      } catch (e: any) {
+        log(`no se pudo revisar si la guía es un reemplazo (${e?.message || e}) — se avisa igual`);
+      }
     }
 
     let tipoCorreo:
@@ -3202,6 +3247,8 @@ export class LicitacionesService {
             documento_id: docId,
             tipo_correo: tipoCorreo,
             numero,
+            // (2026-11-19) De qué orden deriva la guía: para reconocer su reemplazo cuando no trae número.
+            ...(tipoCorreo === 'guia_despacho_enviar' && body?.deriva_de_id != null ? { deriva_de_id: Number(body.deriva_de_id) } : {}),
           },
         },
       ]);
