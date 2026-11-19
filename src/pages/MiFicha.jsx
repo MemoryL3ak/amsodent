@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   UserCircle2, Wallet, FileText, ClipboardCheck, PlaneTakeoff, Eye, PenLine,
-  Clock, CalendarDays, AlertTriangle, Plus, CheckCircle2, FileDown,
+  Clock, CalendarDays, AlertTriangle, Plus, CheckCircle2, FileDown, Orbit,
 } from "lucide-react";
 import { api } from "../lib/api";
 import Toast from "../components/Toast";
 import FirmaDigital from "../components/FirmaDigital";
 import SolicitudPermisoForm, { etiquetaTipo, duracionSolicitud } from "../components/SolicitudPermisoForm";
 import { descargarLiquidacionPDF } from "../lib/liquidacionPDF";
+import MiEvaluacion360 from "../components/e360/MiEvaluacion360";
 
 /* ============================================================================
    Mi Ficha — portal del trabajador
@@ -15,6 +16,8 @@ import { descargarLiquidacionPDF } from "../lib/liquidacionPDF";
    Cada persona ve SOLO lo suyo (el backend resuelve la ficha por el email del
    token): datos personales, saldo de vacaciones, liquidaciones emitidas,
    contratos, evaluaciones y documentos, con firma electrónica en pantalla.
+   La sección «Evaluación 360°» reúne los formularios que le toca responder,
+   sus objetivos y su informe cuando RR.HH. lo publica.
    Desde aquí también solicita vacaciones y permisos.
 ============================================================================ */
 
@@ -36,6 +39,7 @@ const SECCIONES = [
   { key: "liquidaciones", label: "Mis liquidaciones", icon: Wallet },
   { key: "contratos", label: "Mis contratos", icon: FileText },
   { key: "evaluaciones", label: "Mis evaluaciones", icon: ClipboardCheck },
+  { key: "e360", label: "Evaluación 360°", icon: Orbit },
   { key: "solicitudes", label: "Vacaciones y permisos", icon: PlaneTakeoff },
 ];
 
@@ -86,7 +90,12 @@ export default function MiFicha() {
   const [ficha, setFicha] = useState(null);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState("");
-  const [seccion, setSeccion] = useState("resumen");
+  // Los avisos de la campana llegan con ?seccion=e360.
+  const [seccion, setSeccion] = useState(() => {
+    const pedida = new URLSearchParams(window.location.search).get("seccion");
+    return SECCIONES.some((s) => s.key === pedida) ? pedida : "resumen";
+  });
+  const [e360, setE360] = useState(null);
   const [toast, setToast] = useState(null);
   const [firmando, setFirmando] = useState(null); // { tipo, doc, titulo, contenido }
   const [guardandoFirma, setGuardandoFirma] = useState(false);
@@ -107,6 +116,16 @@ export default function MiFicha() {
   }, []);
 
   useEffect(() => { cargar(); }, [cargar]);
+
+  // Evaluación 360°: formularios por responder, objetivos e informes propios.
+  // Si el submódulo aún no está disponible la ficha funciona igual.
+  const cargarE360 = useCallback(async () => {
+    try { setE360(await api.get("/rrhh/mi/e360")); }
+    catch { setE360({ formularios: [], informes: [], objetivos: [], equipo: [] }); }
+  }, []);
+  useEffect(() => { cargarE360(); }, [cargarE360]);
+  const e360Pendientes = (e360?.formularios || []).filter((f) => f.abierta).length;
+  const e360PorRevisar = (e360?.informes || []).filter((i) => !i.acuse_at).length;
 
   async function firmar(datos) {
     setGuardandoFirma(true);
@@ -246,6 +265,20 @@ export default function MiFicha() {
         </div>
       )}
 
+      {/* Aviso de evaluaciones 360° por responder o informes por revisar */}
+      {(e360Pendientes > 0 || e360PorRevisar > 0) && seccion !== "e360" && (
+        <div style={{ border: "1px solid #b2e4e5", background: "#f0fbfb", borderRadius: 12, padding: "13px 16px", marginBottom: 16, display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+          <Orbit size={17} style={{ color: "#0e6e74", flexShrink: 0 }} />
+          <div style={{ fontSize: 13, flex: 1, minWidth: 200 }}>
+            {e360Pendientes > 0 && <>Tienes <b>{e360Pendientes} evaluaci{e360Pendientes === 1 ? "ón" : "ones"} 360°</b> por responder. </>}
+            {e360PorRevisar > 0 && <>Tu <b>informe 360°</b> ya está disponible.</>}
+          </div>
+          <button className="btn btn-primary" style={{ fontSize: 12, padding: "5px 11px" }} onClick={() => setSeccion("e360")}>
+            {e360Pendientes > 0 ? "Responder ahora" : "Ver mi informe"}
+          </button>
+        </div>
+      )}
+
       {/* KPIs personales */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 12, marginBottom: 16 }}>
         <Tarjeta>
@@ -292,9 +325,16 @@ export default function MiFicha() {
               fontSize: 12.5, fontWeight: 700, cursor: "pointer",
             }}>
             <Icon size={14} /> {label}
+            {key === "e360" && e360Pendientes > 0 && (
+              <span style={{ fontSize: 10.5, fontWeight: 800, padding: "1px 6px", borderRadius: 999, background: seccion === key ? "rgba(255,255,255,.25)" : "#fee2e2", color: seccion === key ? "#fff" : "#b91c1c" }}>
+                {e360Pendientes}
+              </span>
+            )}
           </button>
         ))}
       </div>
+
+      {seccion === "e360" && <MiEvaluacion360 datos={e360} recargar={cargarE360} avisar={setToast} />}
 
       {seccion === "resumen" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>

@@ -361,6 +361,15 @@ function getNotifVisuales(notif) {
       etiqueta: "Orden de compra",
     };
   }
+  // (2026-11-19) Evaluación 360°: formularios por responder o informe publicado (abre Mi Ficha).
+  if (tipo === "rrhh_e360_pendiente" || tipo === "rrhh_e360_publicada") {
+    return {
+      icono: ClipboardCheck,
+      color: "#0e6e74",
+      bg: "#e8f7f7",
+      etiqueta: "Evaluación 360°",
+    };
+  }
   // (2026-10-19) Un cliente pide una reunión desde el portal: abre la Bitácora prellenada.
   if (tipo === "portal_solicitud_reunion") {
     return {

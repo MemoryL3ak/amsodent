@@ -1039,6 +1039,9 @@ export const GRUPOS_MANUAL = [
           "Liquidaciones con detalle (haberes, descuentos, líquido) y FIRMA digital.",
           "Solicitudes de vacaciones y permisos: enviar y anular; las aprueba RRHH.",
           "Tus documentos y evaluaciones.",
+          "Evaluación 360° (noviembre 2026): los formularios que te toca responder (tu autoevaluación, tus pares, tu jefatura o tu equipo), tus objetivos del período y tu informe cuando Recursos Humanos lo publica. Puedes guardar un borrador y terminar después; al enviar, la evaluación queda cerrada.",
+          "En un ciclo anónimo, lo que respondes sobre un par o sobre tu jefatura se muestra sin tu nombre y solo agregado con las respuestas de otros; tampoco Recursos Humanos ve qué respondió cada persona.",
+          "Tu informe 360° compara cómo te ves con cómo te ven (radar y tabla por competencia), muestra fortalezas, oportunidades y puntos ciegos, el cumplimiento de tus objetivos, los comentarios y el plan de desarrollo. Al final puedes confirmar que lo revisaste y dejar un comentario.",
         ],
       },
       {
@@ -1073,7 +1076,25 @@ export const GRUPOS_MANUAL = [
         quien: "Solo administradores",
         resumen: "Fichas, contratos, liquidaciones con normativa chilena, asistencia y prevención.",
         funciones: [
-          "8 pestañas: Tablero, Trabajadores (ficha completa con jornada, AFP/salud y documentos), Contratos (con firma digital de empresa), Liquidaciones (generación masiva, PDF), Asistencia (sobre los marcajes), Evaluaciones, Solicitudes (aprobar vacaciones/permisos de Mi Ficha) y Prevención (D.S. 44).",
+          "9 pestañas: Tablero, Trabajadores (ficha completa con jornada, AFP/salud y documentos), Contratos (con firma digital de empresa), Liquidaciones (generación masiva, PDF), Asistencia (sobre los marcajes), Evaluaciones, Evaluación 360°, Solicitudes (aprobar vacaciones/permisos de Mi Ficha) y Prevención (D.S. 44).",
+          "Evaluación 360° (noviembre 2026): cada persona se autoevalúa y recibe la evaluación de su jefatura, sus pares y su equipo a cargo, junto con el cumplimiento de sus objetivos. Se trabaja por CICLOS (una ronda, por ejemplo «segundo semestre 2026») que pasan por cuatro estados: Borrador, En curso, Cerrado y Publicado.",
+          "Instrumento del ciclo: competencias con peso, categoría y «quién la responde» (por ejemplo, las de liderazgo solo las responde el equipo a cargo); escala de 3 a 10 puntos con sus etiquetas, opción «No aplica» y comentario obligatorio en notas bajas; preguntas abiertas; peso de cada tipo de evaluador; peso de competencias frente a objetivos; niveles de desempeño; anonimato. Hay plantillas (Integral 360°, General, Equipo comercial) y se puede duplicar un ciclo anterior.",
+          "Participantes y matriz: se eligen las personas evaluadas y «Simular matriz» propone quién evalúa a quién a partir de la jefatura y el área de cada ficha (autoevaluación, jefatura, equipo y pares); recién con «Aplicar» se guarda, y solo agrega lo que falta. La matriz se ajusta a mano con + y x.",
+          "Objetivos: por persona, con indicador, unidad (porcentaje, número, monto o sí/no), meta, valor real y peso. «Menos es mejor» sirve para reclamos o días de atraso. El cumplimiento se calcula solo y tiene tope de 120 %.",
+          "Seguimiento: avance por evaluador (quién respondió y quién falta, nunca qué respondió), «Recordar pendientes» (primero muestra a quiénes les llegará el aviso de la campana) y «Reabrir» para devolver un formulario ya enviado.",
+          "Resultados: tabla por persona con resultado final, nivel, competencias, autoevaluación y objetivos; mapa de competencias de todo el equipo; e informe individual con radar, brechas, comentarios, retroalimentación de RR.HH. y plan de desarrollo. Los evaluados ven su informe en Mi Ficha solo cuando el ciclo se publica.",
+        ],
+        pasos: [
+          { t: "Crea el ciclo", d: "Evaluación 360° > Nuevo ciclo. Elige una plantilla y ajusta competencias, escala, ponderación y confidencialidad." },
+          { t: "Arma la matriz", d: "Selecciona a las personas evaluadas, simula la matriz y aplícala. Revisa los avisos de fichas sin jefatura o sin correo." },
+          { t: "Inicia el ciclo", d: "Cada evaluador recibe un aviso en la campana y responde desde Mi Ficha. Desde aquí el instrumento queda fijo." },
+          { t: "Cierra y revisa", d: "Ingresa el valor real de los objetivos y escribe la retroalimentación y el plan de desarrollo de cada informe." },
+          { t: "Publica", d: "Cada persona ve su informe en Mi Ficha y confirma que lo revisó." },
+        ],
+        tips: [
+          "Para que la matriz salga sola, cada ficha debe tener su jefatura (Trabajadores > Editar > Jefatura) y su correo.",
+          "En un ciclo anónimo ni el panel muestra qué respondió cada par o cada persona del equipo. Si un grupo tiene menos respuestas que el mínimo, se funde con los otros grupos anónimos o no se desglosa.",
+          "Con peso 0, un tipo de evaluador responde y aparece en el informe pero no mueve la nota (útil para la autoevaluación).",
         ],
       },
       {

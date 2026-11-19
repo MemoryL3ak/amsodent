@@ -38,6 +38,8 @@ export const TIPOS_ALERTA = {
   portal_sin_ingreso: "Usuarios del portal sin iniciar sesión",
   chat_invitacion: "Invitación a sala de chat",
   chat_sala_eliminada: "Sala de chat eliminada",
+  rrhh_e360_pendiente: "Evaluación 360° por responder",
+  rrhh_e360_publicada: "Informe 360° disponible",
   monitor_alerta: "Alerta del sistema",
 };
 export const etiquetaTipo = (t) => TIPOS_ALERTA[t] || t;

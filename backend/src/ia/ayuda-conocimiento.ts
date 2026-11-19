@@ -1240,6 +1240,22 @@ pantalla e historial propio.
 El portal del trabajador: vacaciones disponibles, días administrativos,
 antigüedad, liquidaciones (ver detalle y FIRMAR digitalmente), documentos,
 evaluaciones y solicitudes de vacaciones/permisos (enviar y anular).
+Sección «Evaluación 360°» (nov 2026): ahí están los formularios que a la persona
+le toca responder (su autoevaluación, sus pares, su jefatura o su equipo), sus
+objetivos del período y su informe cuando RR.HH. lo publica. Cada formulario
+pide una nota por competencia (o «No aplica»), comentario opcional y preguntas
+abiertas; se puede «Guardar borrador» y seguir después, y al «Enviar» queda
+cerrado (si hay que corregir, RR.HH. lo reabre mientras el ciclo siga en
+curso). En un ciclo anónimo lo que se responde sobre un par o sobre la jefatura
+se muestra sin nombre y solo agregado; tampoco RR.HH. ve qué respondió cada
+persona. La evaluación que hace una jefatura sobre su equipo sí aparece
+identificada como «Jefatura». El informe compara cómo se ve la persona con cómo
+la ven (radar y tabla por competencia), muestra fortalezas, oportunidades,
+puntos ciegos (se evalúa más alto de lo que la ven) y fortalezas ocultas, el
+cumplimiento de objetivos, los comentarios y el plan de desarrollo; al final se
+puede confirmar la lectura y dejar un comentario. Si el ciclo lo permite, la
+jefatura ve ahí mismo los informes de su equipo directo. Los avisos llegan a la
+campana («Evaluación 360° por responder», «Informe 360° disponible»).
 
 ### Repositorio de documentos (/repositorio-documentos) — nov 2026
 Los documentos de la empresa que se piden una y otra vez: patente comercial,
@@ -1260,13 +1276,55 @@ perfil). Requiere la migración 20261105_repositorio_documentos.
 ## MÓDULOS — GRUPO ADMINISTRACIÓN
 
 ### Recursos Humanos (/recursos-humanos) — solo admin
-8 pestañas: Tablero, Trabajadores (ficha completa: datos, jornada, AFP/salud,
+9 pestañas: Tablero, Trabajadores (ficha completa: datos, jornada, AFP/salud,
 documentos en bucket privado), Contratos (borrador → enviado a firma → firmado;
 firma digital de empresa), Liquidaciones (generación masiva con normativa
 chilena: AFP, salud, impuesto; PDF), Asistencia (resumen por persona y detalle
-por día sobre los marcajes), Evaluaciones, Solicitudes (aprobar/rechazar
-vacaciones y permisos de Mi Ficha) y Prevención (D.S. 44: checklist y registro
-art. 72).
+por día sobre los marcajes), Evaluaciones, Evaluación 360°, Solicitudes
+(aprobar/rechazar vacaciones y permisos de Mi Ficha) y Prevención (D.S. 44:
+checklist y registro art. 72).
+
+EVALUACIÓN 360° (pestaña de Recursos Humanos, nov 2026; solo admin). Cada
+persona se autoevalúa y recibe la evaluación de su jefatura, sus pares y su
+equipo a cargo, junto con el cumplimiento de sus objetivos. Se trabaja por
+CICLOS con cuatro estados: Borrador (se arma todo, nadie ve nada), En curso (la
+gente responde desde Mi Ficha), Cerrado (no se reciben respuestas; RR.HH.
+revisa) y Publicado (cada evaluado ve su informe). Se puede reabrir un ciclo
+cerrado y retirar una publicación; a Borrador solo se vuelve si nadie ha
+empezado a responder.
+- Instrumento: competencias con peso, categoría y «quién la responde» (todos o
+  solo ciertos evaluadores; ej. las de liderazgo solo el equipo a cargo);
+  escala de 3 a 10 puntos con etiquetas, «No aplica» y comentario obligatorio en
+  notas bajas; preguntas abiertas; peso por tipo de evaluador (autoevaluación,
+  jefatura, pares, equipo a cargo, otros; con peso 0 responde pero no mueve la
+  nota); peso de competencias frente a objetivos (por defecto 70/30); niveles de
+  desempeño por tramos de porcentaje; anonimato y mínimo de respuestas por
+  grupo. Plantillas: Integral 360°, General, Equipo comercial; también «Duplicar»
+  un ciclo. Con el ciclo ya iniciado el instrumento y el anonimato quedan fijos;
+  solo se ajustan ponderaciones, niveles y datos del ciclo.
+- Participantes y matriz: se eligen los evaluados; «Simular matriz» propone
+  quién evalúa a quién desde la jefatura y el área de cada ficha y «Aplicar» la
+  guarda (solo agrega, nunca borra). Avisa las fichas sin jefatura o sin correo:
+  sin correo no se puede responder. Se ajusta a mano con + y x.
+- Objetivos: por persona, con indicador, unidad (porcentaje, número, monto,
+  sí/no), meta, valor real y peso; «menos es mejor» para reclamos o atrasos.
+  Cumplimiento = real ÷ meta, con tope de 120 %; quien no tiene objetivos
+  medidos se evalúa solo por competencias.
+- Seguimiento: avance por evaluador (quién falta, nunca qué respondió),
+  «Recordar pendientes» (primero muestra a quiénes les llegará el aviso en la
+  campana) y «Reabrir» un formulario enviado.
+- Resultados: tabla por persona (resultado final %, nivel, competencias,
+  autoevaluación, objetivos, respuestas), mapa de competencias del equipo e
+  informe individual, donde RR.HH. escribe la retroalimentación y el plan de
+  desarrollo. Nota de competencias = promedio por competencia ponderando cada
+  tipo de evaluador (si un grupo no responde, su peso se reparte); resultado
+  final = competencias y objetivos según su peso.
+- Anonimato: en un ciclo anónimo las notas y comentarios de pares, equipo y
+  otros se muestran sin nombre y agregados, también en el panel. Si un grupo
+  tiene menos respuestas que el mínimo (3 por defecto) se funde con los demás
+  grupos anónimos; si ni así alcanza, cuenta en la nota pero no se desglosa ni
+  se muestran sus comentarios. La jefatura y la autoevaluación siempre se ven.
+- Requiere la migración 20261119_rrhh_evaluacion_360.
 
 ### Usuarios (/usuarios)
 Cuentas y roles: crear usuario (genera contraseña temporal), editar, reset de

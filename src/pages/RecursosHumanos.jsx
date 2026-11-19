@@ -3,9 +3,10 @@ import {
   Users, FileText, Wallet, CalendarClock, ClipboardCheck, PlaneTakeoff, LayoutDashboard,
   Plus, Search, Pencil, Trash2, X, Upload, Eye, Download, CheckCircle2, AlertTriangle,
   Cake, TrendingUp, Clock, PenLine, RefreshCw, ChevronRight, ChevronDown,
-  FileDown, Settings2, CalendarDays, ShieldCheck,
+  FileDown, Settings2, CalendarDays, ShieldCheck, Orbit,
 } from "lucide-react";
 import PrevencionSST from "../components/PrevencionSST";
+import Evaluacion360 from "../components/e360/Evaluacion360";
 import BotonLimpiarFiltros from "../components/BotonLimpiarFiltros";
 import { api } from "../lib/api";
 import Toast from "../components/Toast";
@@ -19,7 +20,8 @@ import { descargarLiquidacionPDF, descargarLibroLiquidacionesPDF } from "../lib/
    Recursos Humanos — panel de administración
    ----------------------------------------------------------------------------
    Tablero · Trabajadores (ficha completa) · Contratos · Liquidaciones de
-   sueldo · Asistencia (sobre los marcajes) · Evaluaciones · Solicitudes.
+   sueldo · Asistencia (sobre los marcajes) · Evaluaciones · Evaluación 360°
+   (ciclos con matriz de evaluadores, objetivos e informes) · Solicitudes.
    Solo admin: la ruta usa RequireRole y el backend AdminGuard.
 ============================================================================ */
 
@@ -39,6 +41,7 @@ const TABS = [
   { key: "liquidaciones", label: "Liquidaciones", icon: Wallet },
   { key: "asistencia", label: "Asistencia", icon: CalendarClock },
   { key: "evaluaciones", label: "Evaluaciones", icon: ClipboardCheck },
+  { key: "e360", label: "Evaluación 360°", icon: Orbit },
   { key: "solicitudes", label: "Solicitudes", icon: PlaneTakeoff },
   { key: "prevencion", label: "Prevención", icon: ShieldCheck },
 ];
@@ -287,6 +290,7 @@ export default function RecursosHumanos() {
           {tab === "liquidaciones" && <TabLiquidaciones {...props} />}
           {tab === "asistencia" && <TabAsistencia {...props} />}
           {tab === "evaluaciones" && <TabEvaluaciones {...props} />}
+          {tab === "e360" && <Evaluacion360 empleados={empleados} notificar={setToast} />}
           {tab === "solicitudes" && <TabSolicitudes {...props} />}
           {tab === "prevencion" && <PrevencionSST notificar={setToast} />}
         </>
