@@ -48,6 +48,18 @@ export function normalizarLink(url: any): string {
   }
 }
 
+/* (2026-11-19) ¿La línea de un pedido del portal viene de OTRA casa dental?
+   Trae el link (o el nombre) de una tienda que no es la nuestra. Lo pedido
+   desde el Showroom, las Ofertas o el inventario del cliente no trae tienda.
+   Mismo criterio que src/lib/origenItemPedido.js. */
+export function esDeOtraCasa(it: any): boolean {
+  const tienda = String(it?.tienda ?? '').trim();
+  const url = String(it?.url ?? '').trim();
+  if (!tienda && !url) return false;
+  if (it?.oferta || it?.oferta_id || /^oferta\b/i.test(tienda) || /^mi inventario$/i.test(tienda)) return false;
+  return !(/amsodent/i.test(tienda) || /amsodentmedical\.cl/i.test(url));
+}
+
 type Creado = { id: number; nombre: string; estado: string | null; sku: string | null };
 const normSku = (v: any) => String(v ?? '').replace(/\s+/g, '').toUpperCase();
 // Nombre para comparar: sin tildes, en minúsculas y con un solo espacio.
@@ -123,8 +135,12 @@ export class ExploradorProductosService {
     if (!lista.length) return [];
     const idx = await this.indices();
     return lista.map((it) => {
-      const sku = normSku(it?.sku);
       const link = normalizarLink(it?.url);
+      /* (2026-11-19) El código que trae un hallazgo de OTRA casa dental es el de
+         esa tienda, no un SKU nuestro («BIS-H3301P», «000000009169»): no se
+         compara con el catálogo y el producto se reconoce por su link. Antes,
+         una línea así creada desde el pedido seguía saliendo «sin crear». */
+      const sku = esDeOtraCasa(it) ? '' : normSku(it?.sku);
       return (sku ? idx.porSku.get(sku) : null) || (!sku && link ? idx.porLink.get(link) : null) || idx.porNombre.get(normNombre(it?.nombre)) || null;
     });
   }
@@ -192,6 +208,18 @@ export class ExploradorProductosService {
        encontró en nuestra web): `sin_link` deja crear sin link de referencia. */
     const sinLink = body?.sin_link === true && !url;
     if (!sinLink && !/^https?:\/\/[^\s]+$/i.test(url)) problemas.push({ codigo: 'url', mensaje: 'Falta el link del producto en la tienda.' });
+    /* (2026-11-19) Pedidos de Ariel sobre los productos que se crean desde un
+       pedido del portal (`desde_pedido`):
+         · «solo crear el producto con la información que se trae desde la
+           página»: ya no se exige la ficha técnica, las dimensiones, el costo
+           ni las listas. Solo lo que la base obliga: nombre, categoría y
+           formato. Lo demás se guarda si viene y se completa después.
+         · los de OTRA casa dental «no deben crearse como transitorios»: quedan
+           en estado «Temporal» (ver ProductosService.esTemporal), sin SKU (el
+           código de la otra tienda no es nuestro) y sin ir a Bsale.
+       El Explorador de Productos sigue igual: transitorio con todos los campos. */
+    const desdePedido = body?.desde_pedido === true;
+    const temporal = desdePedido && esDeOtraCasa({ url, tienda: body?.tienda });
     const nombre = texto(body?.nombre, 200);
     if (nombre.length < 3) problemas.push({ codigo: 'nombre', mensaje: 'Escribe el nombre del producto.' });
     const categoria = texto(body?.categoria, 60);
@@ -205,7 +233,7 @@ export class ExploradorProductosService {
     // (2026-10-09) Pedido de Ariel: todos los campos obligatorios salvo la marca.
     for (const [k, v, etiqueta] of [['costo', costo, 'El costo neto'], ['lista1', lista1, 'La lista 1'], ['lista2', lista2, 'La lista 2']] as const) {
       if (Number.isNaN(v)) problemas.push({ codigo: k, mensaje: `${etiqueta} debe ser un monto en pesos.` });
-      else if (!(Number(v) > 0)) problemas.push({ codigo: k, mensaje: `${etiqueta} es obligatorio.` });
+      else if (!desdePedido && !(Number(v) > 0)) problemas.push({ codigo: k, mensaje: `${etiqueta} es obligatorio.` });
     }
     // (2026-10-09) Los mismos campos que Productos → Crear, con sus obligatorios:
     // ficha técnica (presentación, descripción, composición, uso, beneficios),
@@ -218,13 +246,14 @@ export class ExploradorProductosService {
     ] as const) {
       const v = textoLargo(body?.[k], 2000);
       ficha[k] = v || null;
-      if (obligatorio && !v) problemas.push({ codigo: k, mensaje: `Escribe ${etiqueta} del producto${k === 'descripcion' ? ' (la trae la tienda cuando la publica)' : ''}.` });
+      if (obligatorio && !desdePedido && !v) problemas.push({ codigo: k, mensaje: `Escribe ${etiqueta} del producto${k === 'descripcion' ? ' (la trae la tienda cuando la publica)' : ''}.` });
     }
     const descripcion = ficha.descripcion || '';
     const medidas: Record<string, number | null> = {};
     for (const [k, etiqueta] of [['peso', 'El peso (kg)'], ['alto', 'El alto (cm)'], ['largo', 'El largo (cm)'], ['ancho', 'El ancho (cm)']] as const) {
       const v = medida(body?.[k]);
       medidas[k] = v;
+      if (desdePedido && v == null) continue; // desde un pedido las medidas no se piden
       if (v == null || Number.isNaN(v)) problemas.push({ codigo: k, mensaje: `${etiqueta} es obligatorio y debe ser un número.` });
       else if (!(v > 0)) problemas.push({ codigo: k, mensaje: `${etiqueta} debe ser mayor que 0.` });
     }
@@ -234,7 +263,8 @@ export class ExploradorProductosService {
     // ¿Ya existe un producto con este link o con este SKU? El SKU viene de
     // nuestra web o, desde 2026-10-09, escrito a mano (como en Productos).
     const esAmsodent = String(body?.tienda || '') === 'amsodent';
-    const skuWeb = normSku(body?.sku);
+    // Un producto de otra casa dental no lleva SKU: el código de esa tienda no es nuestro.
+    const skuWeb = temporal ? '' : normSku(body?.sku);
     // `existente` revisa el SKU cuando la tienda es la nuestra: con SKU escrito a mano se revisa igual.
     const idx = await this.indices();
     const existente = url
@@ -246,7 +276,7 @@ export class ExploradorProductosService {
 
     const fila: Record<string, any> = {
       // De nuestra web viene nuestro SKU: queda con él (y se enlaza en Bsale). De otras tiendas, sin SKU.
-      sku: skuWeb || null, estado: 'Transitorio', nombre, marca, categoria, formato, link_referencia: url || null,
+      sku: skuWeb || null, estado: temporal ? 'Temporal' : 'Transitorio', nombre, marca, categoria, formato, link_referencia: url || null,
       ...ficha,
       ...(Object.values(medidas).every((v) => v != null && !Number.isNaN(v)) ? medidas : {}),
       ...(precioSugerido != null && !Number.isNaN(precioSugerido) && precioSugerido > 0 ? { precio_sugerido: precioSugerido } : {}),
@@ -258,6 +288,11 @@ export class ExploradorProductosService {
     const avisos: string[] = [];
     if (problemas.length) return { simulacion: simular, bloqueada: true, problemas, avisos };
     if (skuWeb) avisos.unshift(esAmsodent ? `Queda con el SKU ${skuWeb} de nuestra web; si ya existe en Bsale, se enlaza a esa variante.` : `Queda con el SKU ${skuWeb}; si ya existe en Bsale, se enlaza a esa variante.`);
+    if (temporal) avisos.push('Queda como «Temporal»: es de otra casa dental, no lleva SKU y no se envía a Bsale ni al Sheet de precios.');
+    if (desdePedido) {
+      const faltan = [!(Number(costo) > 0) && 'el costo', !(Number(lista1) > 0) && 'el precio', !ficha.descripcion && 'la descripción'].filter(Boolean);
+      if (faltan.length) avisos.push(`Se crea solo con lo que trae la página: falta ${faltan.join(', ')}. Se completa en la ficha del producto o al cotizar.`);
+    }
     void descripcion;
     if (simular) return { simulacion: true, problemas, avisos, producto: fila, imagen: body?.imagen || null };
 
@@ -277,9 +312,9 @@ export class ExploradorProductosService {
       const { error } = await this.supabase.getClient().from('productos').update({ imagen_url: img.path }).eq('id', Number(creado.id));
       if (error) avisos.push(`El producto quedó creado, pero sin imagen (${error.message}): súbela desde Productos.`);
     }
-    this.logger.log(`Explorador: producto transitorio #${creado?.id} «${nombre}» desde ${url || 'un pedido del portal (sin página)'} por ${usuario?.email}`);
+    this.logger.log(`Explorador: producto ${temporal ? 'temporal' : 'transitorio'} #${creado?.id} «${nombre}» desde ${url || 'un pedido del portal (sin página)'}${desdePedido ? ' (pedido del portal)' : ''} por ${usuario?.email}`);
     const bsale = creado?.bsale;
     if (bsale?.estado === 'error') avisos.push(`No se pudo enlazar en Bsale: ${bsale.mensaje || 'error'}.`);
-    return { creado: true, producto: { id: Number(creado?.id), nombre: creado?.nombre ?? nombre, estado: creado?.estado ?? 'Transitorio', sku: skuWeb || null }, avisos, bsale: bsale ? { estado: bsale.estado, variante_id: bsale.variante_id ?? null } : null };
+    return { creado: true, producto: { id: Number(creado?.id), nombre: creado?.nombre ?? nombre, estado: creado?.estado ?? (temporal ? 'Temporal' : 'Transitorio'), sku: skuWeb || null }, avisos, bsale: bsale ? { estado: bsale.estado, variante_id: bsale.variante_id ?? null } : null };
   }
 }

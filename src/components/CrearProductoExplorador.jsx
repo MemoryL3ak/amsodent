@@ -19,8 +19,18 @@ import { FACTOR_LISTA_3, calcularLista3 } from "../lib/listas";
    Al abrir se lee la ficha en la tienda (marca, SKU, descripción, imagen) y
    se precarga; de nuestra web el precio publicado pasa a Lista 1 (neto). El
    link queda en link_referencia y la imagen se copia al catálogo. Simular
-   revisa sin crear; el servidor vuelve a validar y frena los duplicados. */
+   revisa sin crear; el servidor vuelve a validar y frena los duplicados.
 
+   (2026-11-19) Desde un pedido del portal (`item.rapido`) la ventana es la
+   corta. Pedidos de Ariel:
+   · «solo crear el producto con la información que se trae desde la página»:
+     se piden solo nombre, categoría y formato (lo que la base obliga); la
+     marca, la descripción, la foto, el SKU y el precio llegan de la página.
+     La ficha técnica, las medidas y el costo se completan después.
+   · Los productos de otra casa dental (`item.temporal`) «no deben crearse
+     como transitorios»: quedan en estado «Temporal», sin SKU ni Bsale. */
+
+const OBLIGATORIOS_RAPIDO = [["nombre", "Nombre"], ["categoria", "Categoría"], ["formato", "Formato"]];
 const OBLIGATORIOS = [
   ["nombre", "Nombre"], ["categoria", "Categoría"], ["formato", "Formato"],
   ["presentacion", "Presentación"], ["descripcion", "Descripción"], ["composicion", "Composición"], ["uso_indicaciones", "Uso / indicaciones"], ["beneficios", "Beneficios"],
@@ -39,14 +49,18 @@ const seccion = { fontSize: 11, fontWeight: 700, textTransform: "uppercase", let
 const caja = { border: "1px solid var(--border)", borderRadius: 10, padding: "10px 12px", display: "flex", flexDirection: "column", gap: 8 };
 
 export default function CrearProductoExplorador({ item, onCreado, onCerrar }) {
+  // (2026-11-19) Desde un pedido del portal: ventana corta; de otra casa dental: producto «Temporal».
+  const rapido = !!item?.rapido;
+  const temporal = rapido && !!item?.temporal;
+  const tipo = temporal ? "temporal" : "transitorio";
   const [f, setF] = useState({
     sku: item?.tienda === "amsodent" ? item?.sku || "" : "",
-    nombre: item?.nombre || "", marca: "", categoria: "", formato: "",
+    nombre: item?.nombre || "", marca: "", categoria: "", formato: rapido ? "Unidad" : "",
     presentacion: "", descripcion: "", composicion: "", uso_indicaciones: "", beneficios: "", modo_uso: "", almacenamiento: "", datos_clave: "",
     peso: "", alto: "", largo: "", ancho: "",
     costo: "",
-    // De nuestra web el precio publicado es con IVA: Lista 1 neta.
-    lista1: item?.tienda === "amsodent" && Number(item?.precio) > 0 ? String(Math.round(Number(item.precio) / 1.19)) : "",
+    // De nuestra web el precio publicado es con IVA: Lista 1 neta. Desde un pedido, también el de la otra tienda (como referencia).
+    lista1: (item?.tienda === "amsodent" || rapido) && Number(item?.precio) > 0 ? String(Math.round(Number(item.precio) / 1.19)) : "",
     lista2: "", precio_sugerido: "",
   });
   const [detalle, setDetalle] = useState(null); // lo que publica la tienda del producto
@@ -81,7 +95,7 @@ export default function CrearProductoExplorador({ item, onCreado, onCerrar }) {
     return () => { vivo = false; };
   }, [item?.url, item?.tienda]);
 
-  const faltan = OBLIGATORIOS
+  const faltan = (rapido ? OBLIGATORIOS_RAPIDO : OBLIGATORIOS)
     .filter(([k]) => {
       const v = String(f[k] || "").trim();
       if (!v) return true;
@@ -114,6 +128,7 @@ export default function CrearProductoExplorador({ item, onCreado, onCerrar }) {
     try {
       const r = await api.post("/stock-clientes/explorador/interno/crear-producto", {
         url: item.url || "", imagen, tienda: item.tienda || null, ...(sinLink ? { sin_link: true } : {}),
+        ...(rapido ? { desde_pedido: true } : {}),
         ...f, ...(accion === "simular" ? { simular: true } : {}), ...extra,
       });
       setResultado(r);
@@ -174,23 +189,43 @@ export default function CrearProductoExplorador({ item, onCreado, onCerrar }) {
     );
   };
 
+  // Ventana corta: el precio de la página en neto, con su bruto al lado (sin margen: aún no hay costo).
+  const filaPrecioRapido = () => {
+    const neto = Number(f.lista1) || 0;
+    return (
+      <div className="fila-precio fila-lista1" style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end" }}>
+        {campo("lista1", "Lista 1 (neto)", { monto: true, flex: "1 1 160px", placeholder: "Sin precio en la página" })}
+        <label style={{ display: "flex", flexDirection: "column", gap: 4, flex: "1 1 140px", minWidth: 0 }}>
+          <span className="field-label">Con IVA</span>
+          <input className="input" readOnly value={neto > 0 ? Math.round(neto * 1.19).toLocaleString("es-CL") : ""} style={{ background: "var(--bg)", color: "var(--text-muted)" }} />
+        </label>
+      </div>
+    );
+  };
+
   const problemas = resultado?.problemas || [];
   const avisos = resultado?.avisos || [];
   const existente = resultado?.ya_existe ? resultado.producto : null;
 
   return createPortal(
     <div onClick={onCerrar} style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,.5)", zIndex: 11050, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
-      <div className="modal-crear-producto-explorador" onClick={(e) => e.stopPropagation()} style={{ width: 780, maxWidth: "100%", maxHeight: "92vh", overflow: "auto", background: "var(--surface)", borderRadius: "var(--radius-lg)", boxShadow: "var(--shadow-lg)", border: "1px solid var(--border)" }}>
+      <div className={`modal-crear-producto-explorador${rapido ? " modal-crear-producto-rapido" : ""}`} role="dialog" aria-modal="true" aria-label={`Crear producto ${tipo}`} onClick={(e) => e.stopPropagation()} style={{ width: rapido ? 620 : 780, maxWidth: "100%", maxHeight: "92vh", overflow: "auto", background: "var(--surface)", borderRadius: "var(--radius-lg)", boxShadow: "var(--shadow-lg)", border: "1px solid var(--border)" }}>
         <div style={{ padding: "14px 18px", borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
           <div>
-            <strong style={{ fontSize: 15, display: "inline-flex", alignItems: "center", gap: 6 }}><PackagePlus size={16} /> Crear producto transitorio</strong>
-            <div style={{ fontSize: 12.5, color: "var(--text-muted)" }}>
+            <strong style={{ fontSize: 15, display: "inline-flex", alignItems: "center", gap: 6 }}><PackagePlus size={16} /> Crear producto {tipo}</strong>
+            <div className="texto-crear-producto" style={{ fontSize: 12.5, color: "var(--text-muted)" }}>
               {item?.pedido ? <>Producto del pedido #{item.pedido} del portal que no está en el catálogo. </> : null}
-              {sinLink
-                ? "No se encontró su página en nuestra web: queda en estado «Transitorio» con los datos que completes aquí."
-                : item?.tienda === "amsodent" && item?.sku
-                  ? <>Queda con el SKU <b>{item.sku}</b> de nuestra web, en estado «Transitorio», con el link como referencia. Si el SKU ya está en Bsale, se enlaza a esa variante.</>
-                  : "Queda en estado «Transitorio», con el link de la tienda como referencia. Los mismos campos que en Productos; el margen se calcula mientras escribes."}
+              {temporal
+                ? <>Es de otra casa dental ({item?.tienda_nombre || "otra tienda"}): queda en estado <b>«Temporal»</b>, sin SKU, con el link de esa tienda como referencia. No se envía a Bsale ni al Sheet de precios. Se crea solo con lo que trae su página.</>
+                : rapido
+                  ? sinLink
+                    ? "No se encontró su página en nuestra web: queda en estado «Transitorio» solo con lo que trae el pedido. Lo demás se completa después en Productos."
+                    : <>Queda en estado «Transitorio»{item?.tienda === "amsodent" && item?.sku ? <>, con el SKU <b>{item.sku}</b> de nuestra web</> : null}, solo con lo que trae su página. La ficha técnica, las medidas y el costo se completan después en Productos.</>
+                  : sinLink
+                    ? "No se encontró su página en nuestra web: queda en estado «Transitorio» con los datos que completes aquí."
+                    : item?.tienda === "amsodent" && item?.sku
+                      ? <>Queda con el SKU <b>{item.sku}</b> de nuestra web, en estado «Transitorio», con el link como referencia. Si el SKU ya está en Bsale, se enlaza a esa variante.</>
+                      : "Queda en estado «Transitorio», con el link de la tienda como referencia. Los mismos campos que en Productos; el margen se calcula mientras escribes."}
             </div>
           </div>
           <button type="button" className="btn btn-ghost" onClick={onCerrar} style={{ padding: 6, flexShrink: 0 }} title="Cerrar"><X size={16} /></button>
@@ -224,7 +259,8 @@ export default function CrearProductoExplorador({ item, onCreado, onCerrar }) {
           <div style={caja}>
             <div style={seccion}>Información general</div>
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-              {campo("sku", item?.tienda === "amsodent" ? "SKU (de nuestra web)" : "SKU (opcional)", { placeholder: "Si ya tiene código", flex: "1 1 140px" })}
+              {/* Un producto de otra casa dental no lleva SKU: el código de esa tienda no es nuestro. */}
+              {!temporal && campo("sku", item?.tienda === "amsodent" ? "SKU (de nuestra web)" : "SKU (opcional)", { placeholder: "Si ya tiene código", flex: "1 1 140px" })}
               {campo("nombre", "Nombre *", { flex: "3 1 300px" })}
               {campo("marca", "Marca", { placeholder: leyendo ? "Leyendo la tienda…" : "Opcional", flex: "1 1 160px" })}
               <label style={{ display: "flex", flexDirection: "column", gap: 4, flex: "1 1 200px", minWidth: 0 }}>
@@ -242,6 +278,20 @@ export default function CrearProductoExplorador({ item, onCreado, onCerrar }) {
             </div>
           </div>
 
+          {/* (2026-11-19) Desde un pedido: solo el precio que trae la página, como referencia. */}
+          {rapido && (
+            <div style={caja} className="caja-precio-rapido">
+              <div style={seccion}>Precio que trae la página</div>
+              {filaPrecioRapido()}
+              <div style={{ fontSize: 11.5, color: "var(--text-muted)" }}>
+                {temporal
+                  ? "Es el precio publicado por la otra casa dental, sin IVA: queda como Lista 1 de referencia para cotizar. El costo se define al cotizar o en la ficha."
+                  : "Queda como Lista 1 (neta). El costo y la Lista 2 se completan en la ficha del producto, que los deja editar mientras sea transitorio."}
+              </div>
+            </div>
+          )}
+
+          {!rapido && (<>
           {/* Ficha técnica */}
           <div style={caja}>
             <div style={seccion}>Ficha técnica</div>
@@ -281,9 +331,12 @@ export default function CrearProductoExplorador({ item, onCreado, onCerrar }) {
             {filaPrecio("lista3", `Lista 3 (Lista 2 × ${FACTOR_LISTA_3})`, { readOnly: true, value: lista3, hint: "Se calcula sola: licitaciones de 9 a 24 meses." })}
             {filaPrecio("precio_sugerido", "Venta showroom (opcional)", { hint: "Precio sugerido al cliente del portal (Prevención e Higiene)." })}
           </div>
+          </>)}
 
           {faltan.length > 0 && !existente && (
-            <div className="faltan-campos" style={{ fontSize: 12, color: "#92400e" }}>Falta: {faltan.join(", ")}. Obligatorios como en Productos (todo menos marca, SKU, modo de uso, almacenamiento, datos clave y showroom).</div>
+            <div className="faltan-campos" style={{ fontSize: 12, color: "#92400e" }}>
+              Falta: {faltan.join(", ")}. {rapido ? "Es lo único que se pide: lo demás llega de la página o se completa después." : "Obligatorios como en Productos (todo menos marca, SKU, modo de uso, almacenamiento, datos clave y showroom)."}
+            </div>
           )}
           {error && <div style={{ border: "1px solid #fecaca", background: "#fef2f2", color: "#b91c1c", borderRadius: 10, padding: "8px 12px", fontSize: 13 }}>{error}</div>}
           {existente && (
@@ -305,7 +358,10 @@ export default function CrearProductoExplorador({ item, onCreado, onCerrar }) {
           )}
           {resultado?.simulacion && !resultado.bloqueada && (
             <div className="simulacion-producto" style={{ border: "1px solid #bbf7d0", background: "#f0fdf4", borderRadius: 10, padding: "8px 12px", fontSize: 12.5, color: "#166534" }}>
-              <CheckCircle2 size={13} style={{ verticalAlign: -2 }} /> Simulación: se crearía «{resultado.producto?.nombre}» como Transitorio en {resultado.producto?.categoria} ({resultado.producto?.formato}), costo {fmt(resultado.producto?.costo)}, Lista 1 {fmt(resultado.producto?.lista1)} ({pct(margenes.lista1)}), Lista 2 {fmt(resultado.producto?.lista2)} ({pct(margenes.lista2)}).
+              <CheckCircle2 size={13} style={{ verticalAlign: -2 }} /> Simulación: se crearía «{resultado.producto?.nombre}» como {resultado.producto?.estado || "Transitorio"} en {resultado.producto?.categoria} ({resultado.producto?.formato})
+              {rapido
+                ? <>, Lista 1 {fmt(resultado.producto?.lista1)}{resultado.producto?.sku ? `, SKU ${resultado.producto.sku}` : ", sin SKU"}{resultado.imagen ? ", con la foto de la página" : ", sin foto"}.</>
+                : <>, costo {fmt(resultado.producto?.costo)}, Lista 1 {fmt(resultado.producto?.lista1)} ({pct(margenes.lista1)}), Lista 2 {fmt(resultado.producto?.lista2)} ({pct(margenes.lista2)}).</>}
             </div>
           )}
           {avisos.length > 0 && !existente && (
@@ -321,7 +377,7 @@ export default function CrearProductoExplorador({ item, onCreado, onCerrar }) {
             {enviando === "simular" ? <Loader2 size={14} className="spin" /> : null} Simular
           </button>
           <button type="button" className="btn btn-primary" onClick={() => enviar("crear")} disabled={!!enviando || !!existente || faltan.length > 0} title={faltan.length ? `Falta: ${faltan.join(", ")}` : ""}>
-            {enviando === "crear" ? <Loader2 size={14} className="spin" /> : <PackagePlus size={14} />} Crear producto
+            {enviando === "crear" ? <Loader2 size={14} className="spin" /> : <PackagePlus size={14} />} {rapido ? `Crear ${tipo}` : "Crear producto"}
           </button>
         </div>
       </div>

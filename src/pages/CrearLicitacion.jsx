@@ -277,6 +277,8 @@ const opcionesComuna = (regionSeleccionada) =>
   }));
 
 const STORAGE_KEY = "crear_licitacion_draft";
+// Estados de producto que se pueden cotizar. (2026-11-19) «Temporal»: de otra casa dental, creado desde un pedido del portal.
+const ESTADOS_COTIZABLES = ["Activo", "Transitorio", "Temporal"];
 
 function generarId() {
   if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
@@ -945,7 +947,11 @@ export default function CrearLicitacion() {
       if (!porNombre.has(n)) porNombre.set(n, p);
       listaNombres.push({ n, p });
     }
+    const porId = new Map(productos.map((p) => [Number(p.id), p]));
     const buscarProducto = (it) => {
+      // (2026-11-19) La bandeja ya revisó el catálogo: si dijo qué producto es, manda ese
+      // (así entra el «Temporal» de otra casa dental aunque se le haya corregido el nombre).
+      if (Number(it.producto_id) > 0 && porId.has(Number(it.producto_id))) return porId.get(Number(it.producto_id));
       const sku = String(it.sku || "").trim().toUpperCase();
       if (sku && porSku.has(sku)) return porSku.get(sku);
       const n = normNombre(it.nombre);
@@ -957,6 +963,7 @@ export default function CrearLicitacion() {
     const nuevos = [];
     const libres = [];
     let conPrecioDeOferta = 0;
+    let conPrecioDeReferencia = 0;
     for (const it of lista) {
       const cantidad = Math.max(1, Number(it.cantidad || 1));
       const prod = buscarProducto(it);
@@ -969,21 +976,32 @@ export default function CrearLicitacion() {
            dice de dónde sale. */
         const precioOferta = Number(it.precio_oferta || 0);
         const conOferta = precioOferta > 0;
-        const precio = conOferta ? precioOferta : precioLista;
+        /* (2026-11-19) Producto creado solo con lo que trae su página (transitorio
+           o «Temporal» de otra casa dental): puede no tener precio en la lista del
+           cliente. Se usa entonces el precio que el cliente vio (pasado a neto),
+           como precio manual y con la nota para revisarlo. */
+        const refBruto = Number(it.precio_referencia || 0);
+        const conReferencia = !conOferta && !(Number(precioLista) > 0) && refBruto > 0;
+        if (conReferencia) conPrecioDeReferencia += 1;
+        const precio = conOferta ? precioOferta : conReferencia ? Math.round(refBruto / 1.19) : precioLista;
         const notaOferta = conOferta
           ? `Oferta especial${it.oferta_nombre ? ` «${it.oferta_nombre}»` : ""}${it.oferta_pct ? ` (−${Number(it.oferta_pct).toLocaleString("es-CL")}%)` : ""}`
           : "";
+        const notaReferencia = conReferencia
+          ? `Sin precio de lista: se usó el de referencia, ${refBruto.toLocaleString("es-CL")} con IVA${it.tienda ? ` (${it.tienda})` : ""}. Revisar precio y costo.`
+          : "";
         if (conOferta) conPrecioDeOferta += 1;
-        const observacion = [it.observacion || "", notaOferta].filter(Boolean).join(" · ");
+        const observacion = [it.observacion || "", notaOferta, notaReferencia].filter(Boolean).join(" · ");
         nuevos.push({
           ...crearItemVacio(),
+          producto_id: prod.id,
           sku: String(prod.sku || "").trim(),
           producto: prod.nombre || "",
           categoria: prod.categoria || "",
           formato: prod.formato || "",
           cantidad,
           precio,
-          ...(conOferta ? { precioManual: true, precioUnitarioStr: formatearCLDesdeString(String(precio)) } : {}),
+          ...(conOferta || conReferencia ? { precioManual: true, precioUnitarioStr: formatearCLDesdeString(String(precio)) } : {}),
           // (2026-11-05) La oferta del portal es una campaña de margen: la línea
           // queda ligada a ella y, al adjudicarse, sus unidades suman al cupo.
           ...(conOferta && Number(it.oferta_id) > 0 ? { campanaMargenId: Number(it.oferta_id), campanaMargenPrecio: precio } : {}),
@@ -1042,11 +1060,13 @@ export default function CrearLicitacion() {
     } catch { /* */ }
     const partes = [];
     const conCatalogo = nuevos.length - libres.length;
-    if (conCatalogo - conPrecioDeOferta > 0) partes.push(`${conCatalogo - conPrecioDeOferta} producto(s) del pedido cargados con precio de lista.`);
+    const conLista = conCatalogo - conPrecioDeOferta - conPrecioDeReferencia;
+    if (conLista > 0) partes.push(`${conLista} producto(s) del pedido cargados con precio de lista.`);
     if (conPrecioDeOferta > 0) partes.push(`${conPrecioDeOferta} con el precio de la oferta especial del portal.`);
+    if (conPrecioDeReferencia > 0) partes.push(`${conPrecioDeReferencia} sin precio de lista: quedaron con el precio de referencia del pedido (revisar precio y costo).`);
     if (libres.length > 0) partes.push(`${libres.length} no están en el catálogo interno y quedaron como línea libre con el precio web (revisar SKU y precio): ${libres.slice(0, 3).join(", ")}${libres.length > 3 ? "…" : ""}.`);
-    if (sinSku > 0) partes.push(`${sinSku} ítem(s) de otras tiendas quedaron fuera.`);
-    if (partes.length) setToast({ type: libres.length || sinSku ? "warning" : "success", message: partes.join(" ") });
+    if (sinSku > 0) partes.push(`${sinSku} ítem(s) de otras casas dentales sin crear quedaron fuera.`);
+    if (partes.length) setToast({ type: libres.length || sinSku || conPrecioDeReferencia ? "warning" : "success", message: partes.join(" ") });
   }, [hydrated, itemsPendientesPorSku, productos, campanasListas]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* GUARDAR BORRADOR (debounced — evita JSON.stringify enorme en cada tecla) */
@@ -1152,7 +1172,8 @@ export default function CrearLicitacion() {
       // cotización se guarda sin PDF mientras falte alguna ficha.
       try {
         const data = await api.get("/productos/list");
-        setProductos((data || []).filter((p) => ["Activo", "Transitorio"].includes(String(p?.estado || ""))));
+        // (2026-11-19) «Temporal»: productos de otra casa dental creados desde un pedido del portal; se cotizan igual.
+        setProductos((data || []).filter((p) => ESTADOS_COTIZABLES.includes(String(p?.estado || ""))));
       } catch (e) {
         console.error("Error cargando productos:", e);
         setProductos([]);
@@ -1259,7 +1280,7 @@ export default function CrearLicitacion() {
     setProductos((prev) =>
       prev.some((p) => p.id === fresco.id)
         ? prev.map((p) => (p.id === fresco.id ? { ...p, ...fresco } : p))
-        : ["Activo", "Transitorio"].includes(String(fresco.estado || "")) ? [...prev, fresco] : prev,
+        : ESTADOS_COTIZABLES.includes(String(fresco.estado || "")) ? [...prev, fresco] : prev,
     );
     setValidarCosto((v) => (v && Number(v.prod?.id) === Number(fresco.id) ? { ...v, prod: { ...v.prod, ...fresco }, actualizado: true } : v));
     const tocados = itemsRefrescoRef.current.filter((it) => itemEsDelProducto(it, fresco, anterior)).length;

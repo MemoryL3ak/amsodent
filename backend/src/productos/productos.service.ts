@@ -349,8 +349,21 @@ export class ProductosService {
       .select()
       .single();
     if (error) throw new BadRequestException(error.message);
-    const bsale = await this.enviarABsale(data, 'producto nuevo');
+    // (2026-11-19) Un producto «Temporal» (de otra casa dental, creado desde un pedido del portal) no se envía a Bsale.
+    const bsale = ProductosService.esTemporal(data) ? null : await this.enviarABsale(data, 'producto nuevo');
     return bsale ? { ...(data as any), bsale } : data;
+  }
+
+  /* (2026-11-19) Estado «Temporal». Pedido de Ariel: «cuando llegan pedidos
+     desde el portal cliente, los productos que no están creados (otra casa
+     dental) debe dar la opción de crearlos. Sin embargo, estos no deben
+     crearse como transitorios. Alternativa como productos temporales».
+     Un producto Temporal es de OTRA casa dental: existe para poder cotizar el
+     pedido, no para entrar al catálogo. No tiene SKU, no va a Bsale ni al
+     Sheet de precios, y conserva costo y precio editables en su ficha (como un
+     transitorio). Al asignarle SKU pasa a «Activo» y sigue el camino normal. */
+  static esTemporal(p: { estado?: any } | null | undefined): boolean {
+    return String(p?.estado ?? '').trim().toLowerCase() === 'temporal';
   }
 
   // ¿Existe ya un producto con el mismo nombre+marca+formato (normalizados)?
@@ -838,7 +851,8 @@ export class ProductosService {
 
   static enDefinicion(p: { estado?: any; sku?: any } | null | undefined): boolean {
     const estado = String(p?.estado ?? '').trim().toLowerCase();
-    if (estado) return estado === 'transitorio' || estado === 'transsitorio' || estado === 'pendiente aprobación' || estado === 'pendiente aprobacion';
+    // (2026-11-19) «Temporal» (de otra casa dental) también: su costo y precio se ponen en la ficha.
+    if (estado) return estado === 'transitorio' || estado === 'transsitorio' || estado === 'temporal' || estado === 'pendiente aprobación' || estado === 'pendiente aprobacion';
     return !String(p?.sku ?? '').trim(); // sin estado: transitorio si no tiene SKU (misma lectura que la ficha)
   }
 
@@ -934,7 +948,8 @@ export class ProductosService {
       (k) => body?.[k] !== undefined && body?.[k] !== null && (Number(body[k]) || 0) !== (Number(anterior?.[k]) || 0),
     );
     const tocaBsale = cambiaDatos || cambiaPrecios;
-    const inactivo = String((data as any)?.estado || '') === 'Inactivo';
+    // (2026-11-19) Un «Temporal» sin SKU tampoco se envía a Bsale al editarlo.
+    const inactivo = String((data as any)?.estado || '') === 'Inactivo' || (!skuAhora && ProductosService.esTemporal(data as any));
     const bsale = skuAhora && skuAhora !== skuAntes
       ? await this.enviarABsale(data, skuAntes ? `SKU cambiado (antes ${skuAntes})` : 'SKU asignado')
       : !skuAhora && !(data as any)?.bsale_variant_id && !inactivo

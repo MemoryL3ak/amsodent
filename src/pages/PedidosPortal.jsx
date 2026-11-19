@@ -28,8 +28,11 @@ import {
   PackagePlus,
   PackageCheck,
   Loader2,
+  Store,
 } from "lucide-react";
 import CrearProductoExplorador from "../components/CrearProductoExplorador";
+import PanelOtrasCasas from "../components/PanelOtrasCasas";
+import { casaDeItem, esDeOtraCasa, metricasOrigen } from "../lib/origenItemPedido";
 
 /* ============================================================
    PEDIDOS DEL PORTAL (2026-09-10)
@@ -268,7 +271,8 @@ export default function PedidosPortal() {
     if (!forzar && catalogo[pedido.id]?.firma === firma) return;
     try {
       const r = await api.post("/stock-clientes/explorador/interno/en-catalogo", {
-        items: items.map((i) => ({ sku: i?.sku || "", nombre: i?.nombre || "", url: i?.url || "" })),
+        // (2026-11-19) Con la tienda: el código de otra casa dental no es un SKU nuestro y no se compara.
+        items: items.map((i) => ({ sku: i?.sku || "", nombre: i?.nombre || "", url: i?.url || "", tienda: i?.tienda || "", ...(i?.oferta ? { oferta: true } : {}) })),
       });
       setCatalogo((prev) => ({ ...prev, [pedido.id]: { firma, productos: Array.isArray(r?.productos) ? r.productos : [] } }));
     } catch {
@@ -282,12 +286,22 @@ export default function PedidosPortal() {
   }, [expandidoId, firmaAbierto]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const esWebAmsodent = (i) => String(i?.tienda || "").toLowerCase().includes("amsodent") || /amsodentmedical\.cl/i.test(String(i?.url || ""));
+  /* (2026-11-19) Dos pedidos de Ariel sobre esta ventana:
+     · «solo crear el producto con la información que se trae desde la página»:
+       se abre la ventana corta (`rapido`), que pide nombre, categoría y formato;
+     · los de otra casa dental «no deben crearse como transitorios»: van como
+       producto «Temporal» (`temporal`), sin SKU ni Bsale. */
   async function abrirCrearTransitorio(pedido, idx, i) {
-    const base = { pedido: pedido.id, nombre: i?.nombre || "", sku: String(i?.sku || "").trim(), precio: Number(i?.precio_referencia || 0) || 0, imagen: null };
+    const base = { pedido: pedido.id, rapido: true, nombre: i?.nombre || "", sku: String(i?.sku || "").trim(), precio: Number(i?.precio_referencia || 0) || 0, imagen: null };
     const conLink = /^https?:\/\//i.test(String(i?.url || ""));
     if (conLink) {
       const nuestra = esWebAmsodent(i);
-      setCrearTransitorio({ pedidoId: pedido.id, idx, item: { ...base, url: i.url, tienda: nuestra ? "amsodent" : "", tienda_nombre: nuestra ? "Amsodent (web)" : i?.tienda || "Otra tienda", sku: nuestra ? base.sku : "" } });
+      setCrearTransitorio({ pedidoId: pedido.id, idx, item: { ...base, url: i.url, tienda: nuestra ? "amsodent" : "", tienda_nombre: nuestra ? "Amsodent (web)" : casaDeItem(i), sku: nuestra ? base.sku : "", temporal: !nuestra } });
+      return;
+    }
+    // De otra casa dental pero sin link (raro): temporal con lo que trae el pedido.
+    if (esDeOtraCasa(i)) {
+      setCrearTransitorio({ pedidoId: pedido.id, idx, item: { ...base, url: "", tienda: String(i?.tienda || ""), tienda_nombre: casaDeItem(i), sku: "", temporal: true } });
       return;
     }
     // Sin link: se busca la página del producto en nuestra web (por SKU o por nombre).
@@ -355,6 +369,22 @@ export default function PedidosPortal() {
     sinPedido.delete("pedido");
     setParametros(sinPedido, { replace: true });
   }, [pedidoPedido, loading, pedidos, filtrados]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* (2026-11-19) Vista de la pantalla: la bandeja o el panel «Otras casas
+     dentales» (% de productos que llegan de otras tiendas). Un aviso con
+     ?pedido=ID siempre abre la bandeja. */
+  const [vista, setVista] = useState("bandeja");
+  useEffect(() => { if (pedidoPedido) setVista("bandeja"); }, [pedidoPedido]);
+  const pctOtrasCasas = useMemo(() => {
+    const p = metricasOrigen(pedidos).pct_lineas;
+    return p == null ? null : `${Math.round(p)} %`;
+  }, [pedidos]);
+  function abrirPedidoEnBandeja(id) {
+    setVista("bandeja");
+    const sig = new URLSearchParams(parametros);
+    sig.set("pedido", String(id));
+    setParametros(sig, { replace: true });
+  }
 
   const totalPaginas = Math.max(1, Math.ceil(filtrados.length / POR_PAGINA));
   const paginaActual = Math.min(pagina, totalPaginas);
@@ -639,6 +669,11 @@ export default function PedidosPortal() {
        que el vendedor lo complete. Los hallazgos de OTRAS tiendas no son
        productos nuestros: quedan fuera y se avisa cuántos fueron. */
     const items = Array.isArray(s.items) ? s.items : [];
+    /* (2026-11-19) Los de otra casa dental que YA están creados (como producto
+       «Temporal» desde esta bandeja, o porque el catálogo los tiene) también
+       viajan a la cotización, enlazados a su producto. Los que no se han
+       creado siguen quedando fuera, y se dice cuántos son. */
+    const creados = catalogo[s.id]?.productos || [];
     const esNuestro = (i) => {
       if (String(i?.sku || "").trim()) return true;
       const tienda = String(i?.tienda || "").trim().toLowerCase();
@@ -646,9 +681,14 @@ export default function PedidosPortal() {
       return tienda.includes("amsodent") || /amsodentmedical\.cl/i.test(String(i?.url || ""));
     };
     const itemsPorSku = items
-      .filter(esNuestro)
-      .map((i) => ({
-        sku: String(i?.sku || "").trim(),
+      .map((i, idx) => ({ i, creado: creados[idx] || null }))
+      .filter(({ i, creado }) => (esDeOtraCasa(i) ? !!creado : esNuestro(i) || !!creado))
+      .map(({ i, creado }) => ({
+        // El producto del catálogo que le corresponde (si se revisó): /crear lo calza por aquí antes que por SKU o nombre.
+        producto_id: creado?.id || null,
+        // El código de otra casa dental no es un SKU nuestro.
+        ...(esDeOtraCasa(i) ? { de_otra_casa: true } : {}),
+        sku: esDeOtraCasa(i) ? "" : String(i?.sku || "").trim(),
         nombre: i?.nombre || "",
         cantidad: Math.max(1, Number(i?.cantidad || 1)),
         observacion: String(i?.observacion || "").trim(),
@@ -693,7 +733,7 @@ export default function PedidosPortal() {
     if (sinSku > 0) {
       setToast({
         type: "info",
-        message: `Se llevan ${itemsPorSku.length} producto(s) Amsodent al borrador; ${sinSku} ítem(s) son de otras tiendas del Explorador y quedaron fuera.`,
+        message: `Se llevan ${itemsPorSku.length} producto(s) al borrador; ${sinSku} ítem(s) son de otras casas dentales y no están creados: quedaron fuera. Para llevarlos, créalos antes con «Crear Temporal» en su fila.`,
       });
     }
   }
@@ -743,6 +783,21 @@ export default function PedidosPortal() {
         </div>
       </div>
 
+      {/* (2026-11-19) Dos vistas: la bandeja de siempre y el panel de productos de otras casas dentales. */}
+      <div className="pagos-tabs tabs-pedidos-portal" role="tablist" aria-label="Vistas de Pedidos del Portal" style={{ marginTop: 10 }}>
+        {[
+          { value: "bandeja", label: "Bandeja de pedidos", Icono: Inbox, n: stats.total ? String(stats.total) : null },
+          { value: "otras_casas", label: "Otras casas dentales", Icono: Store, n: pctOtrasCasas },
+        ].map((p) => (
+          <button key={p.value} type="button" role="tab" aria-selected={vista === p.value} className={vista === p.value ? "activo" : ""} onClick={() => setVista(p.value)} title={p.value === "otras_casas" ? "Qué porcentaje de los productos pedidos por el portal es de otras casas dentales" : undefined}>
+            <p.Icono size={15} /> {p.label} {p.n ? <span className="pagos-tab-n">{p.n}</span> : null}
+          </button>
+        ))}
+      </div>
+
+      {vista === "otras_casas" && <PanelOtrasCasas pedidos={pedidos} onAbrirPedido={abrirPedidoEnBandeja} />}
+
+      {vista === "bandeja" && (<>
       {/* KPIs — una sola fila (5 columnas) */}
       <div className="stats-row stats-6" style={{ marginTop: 8 }}>
         <div
@@ -1086,30 +1141,36 @@ export default function PedidosPortal() {
                                               if (!revisado.productos) return <span style={{ color: "#94a3b8", fontSize: 12 }} title="No se pudo revisar el catálogo">—</span>;
                                               const p = revisado.productos[idx];
                                               if (p) {
-                                                const transitorio = String(p.estado || "").toLowerCase() === "transitorio";
+                                                const estadoProd = String(p.estado || "").toLowerCase();
+                                                const transitorio = estadoProd === "transitorio";
+                                                // (2026-11-19) «Temporal»: producto de otra casa dental creado desde un pedido.
+                                                const temporal = estadoProd === "temporal";
                                                 return (
                                                   <Link
                                                     to={`/productos/editar/${p.id}`}
                                                     target="_blank"
                                                     rel="noopener noreferrer"
                                                     title={`«${p.nombre}»${p.sku ? ` · SKU ${p.sku}` : ""} · ${p.estado || "sin estado"}. Abrir el producto en otra pestaña.`}
-                                                    style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "2px 9px", borderRadius: 999, fontSize: 11.5, fontWeight: 700, textDecoration: "none", background: transitorio ? "#fef3c7" : "#dcfce7", color: transitorio ? "#b45309" : "#15803d" }}
+                                                    style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "2px 9px", borderRadius: 999, fontSize: 11.5, fontWeight: 700, textDecoration: "none", background: temporal ? "#ede9fe" : transitorio ? "#fef3c7" : "#dcfce7", color: temporal ? "#6d28d9" : transitorio ? "#b45309" : "#15803d" }}
                                                   >
-                                                    <PackageCheck size={12} /> {transitorio ? "Transitorio" : "En catálogo"}
+                                                    <PackageCheck size={12} /> {temporal ? "Temporal" : transitorio ? "Transitorio" : "En catálogo"}
                                                   </Link>
                                                 );
                                               }
                                               const buscando = buscandoPagina === `${s.id}:${idx}`;
+                                              const deOtraCasa = esDeOtraCasa(i);
                                               return (
                                                 <button
                                                   type="button"
-                                                  className="btn btn-secondary btn-sm boton-crear-transitorio"
+                                                  className={`btn btn-secondary btn-sm ${deOtraCasa ? "boton-crear-temporal" : "boton-crear-transitorio"}`}
                                                   onClick={() => abrirCrearTransitorio(s, idx, i)}
                                                   disabled={buscando}
-                                                  title="Este producto no está en el catálogo: crearlo como transitorio con la información de su página"
+                                                  title={deOtraCasa
+                                                    ? `Este producto es de otra casa dental (${casaDeItem(i)}) y no está creado: crearlo como producto temporal con la información de su página`
+                                                    : "Este producto no está en el catálogo: crearlo como transitorio con la información de su página"}
                                                   style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11.5, padding: "4px 9px", whiteSpace: "nowrap", maxWidth: "100%" }}
                                                 >
-                                                  {buscando ? <Loader2 size={13} className="spin" /> : <PackagePlus size={13} />} {buscando ? "Buscando…" : "Crear Transitorio"}
+                                                  {buscando ? <Loader2 size={13} className="spin" /> : <PackagePlus size={13} />} {buscando ? "Buscando…" : deOtraCasa ? "Crear Temporal" : "Crear Transitorio"}
                                                 </button>
                                               );
                                             })()}
@@ -1211,6 +1272,7 @@ export default function PedidosPortal() {
           )}
         </div>
       )}
+      </>)}
 
       {modalValidar && (
         <ModalValidarPedido
@@ -1249,7 +1311,7 @@ export default function PedidosPortal() {
             const avisos = (r?.avisos || []).filter(Boolean);
             setToast({
               type: avisos.length ? "info" : "success",
-              message: `Producto transitorio creado: «${r?.producto?.nombre || "producto"}»${r?.producto?.sku ? ` (SKU ${r.producto.sku})` : ""}. Ya se puede usar en la cotización del pedido.${avisos.length ? ` ${avisos.join(" ")}` : ""}`,
+              message: `Producto ${String(r?.producto?.estado || "").toLowerCase() === "temporal" ? "temporal" : "transitorio"} creado: «${r?.producto?.nombre || "producto"}»${r?.producto?.sku ? ` (SKU ${r.producto.sku})` : ""}. Ya se puede usar en la cotización del pedido.${avisos.length ? ` ${avisos.join(" ")}` : ""}`,
             });
             if (pedido) revisarCatalogo(pedido, true);
           }}

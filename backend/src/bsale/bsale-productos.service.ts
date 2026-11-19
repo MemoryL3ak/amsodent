@@ -389,7 +389,8 @@ export class BsaleProductosService {
         .order('id', { ascending: true })
         .range(desde, desde + 999);
       if (error) throw new Error(/bsale_/.test(error.message) ? 'Falta aplicar la migración 20261006_productos_bsale.' : error.message);
-      out.push(...(data || []).filter((p: any) => String(p.estado || '') !== 'Inactivo'));
+      // (2026-11-19) Los «Temporal» (productos de otra casa dental, sin SKU) no van a Bsale.
+      out.push(...(data || []).filter((p: any) => String(p.estado || '') !== 'Inactivo' && !(String(p.estado || '') === 'Temporal' && !normSku(p.sku))));
       if (!data || data.length < 1000) break;
     }
     return out.sort((a, b) => Number(!!normSku(a.sku)) - Number(!!normSku(b.sku)) || a.id - b.id);

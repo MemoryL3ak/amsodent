@@ -202,7 +202,8 @@ export default function EditarProducto() {
   const [puedeActualizarPrecios, setPuedeActualizarPrecios] = useState(false);
   const preciosBloqueados = useMemo(() => {
     const e = String(estadoGuardado || "").trim().toLowerCase();
-    return !!e && !["transitorio", "transsitorio", "pendiente aprobación", "pendiente aprobacion"].includes(e);
+    // (2026-11-19) «Temporal» (de otra casa dental): también se le pone costo y precio aquí.
+    return !!e && !["transitorio", "transsitorio", "temporal", "pendiente aprobación", "pendiente aprobacion"].includes(e);
   }, [estadoGuardado]);
 
   const [producto, setProducto] = useState({
@@ -354,7 +355,8 @@ export default function EditarProducto() {
 
   const esProductoTransitorio = useMemo(() => {
     const estado = (producto?.estado ?? "").toString().trim().toLowerCase();
-    if (estado) return estado === "transitorio" || estado === "transsitorio";
+    // (2026-11-19) Un «Temporal» (de otra casa dental) se edita igual que un transitorio.
+    if (estado) return estado === "transitorio" || estado === "transsitorio" || estado === "temporal";
     const sku = (producto?.sku ?? "").toString().trim();
     return sku === "";
   }, [producto]);
@@ -688,6 +690,11 @@ export default function EditarProducto() {
     let estadoFinal = skuFinal ? "Activo" : "Transitorio";
     if (producto.estado === "Pendiente Aprobación" && !esAdmin) {
       estadoFinal = "Pendiente Aprobación";
+    }
+    // (2026-11-19) Un producto «Temporal» (de otra casa dental) sigue siéndolo al
+    // guardar su ficha; solo al asignarle SKU entra al catálogo como «Activo».
+    if (!skuFinal && String(estadoGuardado || "").trim().toLowerCase() === "temporal") {
+      estadoFinal = "Temporal";
     }
 
     let imagenUrl = producto.imagen_url || "";
@@ -1046,6 +1053,12 @@ try {
                   />
                   {esPendienteAprobacion && (
                     <p style={{fontSize:12, color:"#b45309", marginTop:4}}>Requiere aprobación de admin (margen &lt; 15%).</p>
+                  )}
+                  {/* (2026-11-19) Producto de otra casa dental creado desde un pedido del portal. */}
+                  {String(estadoMostrado).toLowerCase() === "temporal" && (
+                    <p className="aviso-producto-temporal" style={{fontSize:12, color:"#6d28d9", marginTop:4}}>
+                      Producto temporal: es de otra casa dental y se creó desde un pedido del portal. No va a Bsale ni al Sheet de precios. Al asignarle un SKU pasa a «Activo».
+                    </p>
                   )}
                 </div>
 

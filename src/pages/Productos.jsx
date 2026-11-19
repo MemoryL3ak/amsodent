@@ -95,7 +95,8 @@ function MenuAccionesProducto({ producto, onToggleEstado, onEliminar }) {
 
   const estadoRow = (producto.estado || (producto.sku ? "Activo" : "Transitorio")).toString();
   const esInactivo = estadoRow === "Inactivo";
-  const bloqueado = estadoRow === "Transitorio" || estadoRow === "Pendiente Aprobación";
+  // (2026-11-19) «Temporal» (de otra casa dental) tampoco se alterna Activo/Inactivo.
+  const bloqueado = estadoRow === "Transitorio" || estadoRow === "Temporal" || estadoRow === "Pendiente Aprobación";
 
   function alternar() {
     if (abierto) {
@@ -198,7 +199,7 @@ function MenuAccionesProducto({ producto, onToggleEstado, onEliminar }) {
                 }}
                 title={
                   bloqueado
-                    ? "Los productos transitorios o pendientes no se pueden marcar manualmente"
+                    ? "Los productos transitorios, temporales o pendientes no se pueden marcar manualmente"
                     : undefined
                 }
                 style={itemMenuAcc(bloqueado)}
@@ -586,10 +587,12 @@ export default function Productos() {
     const actual = (producto.estado || "").toString();
     // Solo permitimos togglear entre Activo e Inactivo. "Transitorio" y "Pendiente Aprobación"
     // se manejan por la lógica de SKU/margen y no se tocan acá.
-    if (actual === "Transitorio" || actual === "Pendiente Aprobación") {
+    if (actual === "Transitorio" || actual === "Temporal" || actual === "Pendiente Aprobación") {
       setToast({
         type: "info",
-        message: "Este producto está en flujo de aprobación y no puede marcarse como Inactivo manualmente.",
+        message: actual === "Temporal"
+          ? "Este producto es temporal (de otra casa dental): no se marca Inactivo. Si ya no sirve, se elimina; si entra al catálogo, se le asigna SKU."
+          : "Este producto está en flujo de aprobación y no puede marcarse como Inactivo manualmente.",
       });
       return;
     }
@@ -921,6 +924,7 @@ export default function Productos() {
               { value: "Activo", label: "Activo" },
               { value: "Inactivo", label: "Inactivo" },
               { value: "Transitorio", label: "Transitorio" },
+              { value: "Temporal", label: "Temporal", detalle: "De otra casa dental (pedido del portal)" },
               { value: "Pendiente Aprobación", label: "Pendiente Aprobación" },
             ]}
           />
