@@ -7,10 +7,15 @@ import {
   Body,
   Param,
   Req,
+  Query,
   ParseIntPipe,
   UseGuards,
+  UseInterceptors,
+  UploadedFile,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { ComunidadService } from './comunidad.service';
+import { ComunidadMailingService } from './comunidad-mailing.service';
 import { RastreoService } from './rastreo.service';
 import { AuthGuard } from '../auth/auth.guard';
 import { ModuloGuard } from '../auth/modulo.guard';
@@ -35,6 +40,7 @@ export class ComunidadController {
   constructor(
     private comunidad: ComunidadService,
     private rastreo: RastreoService,
+    private mailing: ComunidadMailingService,
   ) {}
 
   // PÚBLICO (sin AuthGuard) — lo usa el portal /comunidad (destino del QR)
@@ -104,5 +110,73 @@ export class ComunidadController {
   @UseGuards(AuthGuard, Comunidad)
   rastreoGuardar(@Req() req: any, @Body() body: any) {
     return this.rastreo.guardar(body, correoDe(req));
+  }
+
+  /* ── Mailing a la comunidad (2026-11-19) ──
+     Simular no envía ni registra nada; la prueba va solo a quien redacta;
+     enviar despacha en segundo plano y el avance se consulta en `envios`.
+     Los tres aceptan una imagen opcional (campo `imagen`). */
+  @Post('mailing/simular')
+  @UseGuards(AuthGuard, Comunidad)
+  @UseInterceptors(FileInterceptor('imagen'))
+  mailingSimular(@Body() body: any, @UploadedFile() imagen?: Express.Multer.File) {
+    return this.mailing.simular(body, imagen);
+  }
+
+  @Post('mailing/prueba')
+  @UseGuards(AuthGuard, Comunidad)
+  @UseInterceptors(FileInterceptor('imagen'))
+  mailingPrueba(@Req() req: any, @Body() body: any, @UploadedFile() imagen?: Express.Multer.File) {
+    return this.mailing.prueba(body, imagen, correoDe(req));
+  }
+
+  @Post('mailing/enviar')
+  @UseGuards(AuthGuard, Comunidad)
+  @UseInterceptors(FileInterceptor('imagen'))
+  mailingEnviar(@Req() req: any, @Body() body: any, @UploadedFile() imagen?: Express.Multer.File) {
+    return this.mailing.enviar(body, imagen, correoDe(req));
+  }
+
+  @Get('mailing/envios')
+  @UseGuards(AuthGuard, Comunidad)
+  mailingEnvios() {
+    return this.mailing.envios();
+  }
+
+  @Get('mailing/envios/:id')
+  @UseGuards(AuthGuard, Comunidad)
+  mailingEnvio(@Param('id', ParseIntPipe) id: number) {
+    return this.mailing.envio(id);
+  }
+
+  @Get('mailing/bajas')
+  @UseGuards(AuthGuard, Comunidad)
+  mailingBajas() {
+    return this.mailing.bajas();
+  }
+
+  @Post('mailing/bajas')
+  @UseGuards(AuthGuard, Comunidad)
+  mailingDarDeBaja(@Req() req: any, @Body() body: { correo?: string }) {
+    return this.mailing.darDeBaja(String(body?.correo || ''), correoDe(req));
+  }
+
+  @Post('mailing/bajas/reactivar')
+  @UseGuards(AuthGuard, Comunidad)
+  mailingReactivar(@Body() body: { correo?: string }) {
+    return this.mailing.reactivar(String(body?.correo || ''));
+  }
+
+  // PÚBLICO — el enlace «date de baja» de los correos. El correo viaja firmado:
+  // consultar solo lo muestra (enmascarado); la baja exige el botón (POST), así
+  // los filtros de correo que abren los enlaces no dan de baja a nadie.
+  @Get('baja')
+  bajaConsultar(@Query('c') c?: string, @Query('f') f?: string) {
+    return this.mailing.consultarBaja(c, f);
+  }
+
+  @Post('baja')
+  bajaConfirmar(@Body() body: { c?: string; f?: string }) {
+    return this.mailing.confirmarBaja(body?.c, body?.f);
   }
 }

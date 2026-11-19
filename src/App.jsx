@@ -75,6 +75,7 @@ import SorteoRegistro from "./pages/SorteoRegistro";
 import EventoRegistro from "./pages/EventoRegistro";
 import EventoInscripciones from "./pages/EventoInscripciones";
 import ComunidadRegistro from "./pages/ComunidadRegistro";
+import ComunidadBaja from "./pages/ComunidadBaja";
 import ComunidadRegistros from "./pages/ComunidadRegistros";
 import PortalCliente from "./pages/PortalCliente";
 import PortalDespachos from "./pages/PortalDespachos";
@@ -130,6 +131,8 @@ export default function App() {
         <Route path="/evento-brasil" element={<EventoRegistro evento="vina" />} />
         {/* Comunidad Amsodent: formulario público al que apunta el QR */}
         <Route path="/comunidad" element={<ComunidadRegistro />} />
+        {/* (2026-11-19) Baja de los mailings de Comunidad: destino del enlace «date de baja» de esos correos. */}
+        <Route path="/comunidad/baja" element={<ComunidadBaja />} />
         <Route path="/portal" element={<PortalCliente />} />
         <Route path="/despachos" element={<PortalDespachos />} />
         <Route path="/portal-cliente" element={<PortalStockCliente />} />

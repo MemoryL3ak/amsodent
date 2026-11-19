@@ -8,6 +8,7 @@ import BotonLimpiarFiltros from "../components/BotonLimpiarFiltros";
 import DropdownSelect from "../components/ui/DropdownSelect";
 import DateFilter from "../components/DateFilter";
 import RastreoClinicas from "../components/RastreoClinicas";
+import MailingComunidad from "../components/MailingComunidad";
 import { useStickyState } from "../lib/useStickyState";
 import { CATEGORIAS_COMUNIDAD, FUENTES_COMUNIDAD, enlaceWhatsapp, nombreCategoria, nombreFila, telefonoLegible } from "../lib/comunidad";
 import {
@@ -24,6 +25,7 @@ import {
   Globe,
   MessageCircle,
   Tags,
+  Send,
 } from "lucide-react";
 
 /* ============================================================
@@ -40,6 +42,9 @@ import {
      misma fila, o a varias a la vez marcándolas.
    ─ Pestaña «Rastreo de clínicas»: el bot de Google Maps
      (components/RastreoClinicas.jsx).
+   ─ (2026-11-19) Pestaña «Mailing»: correo a toda la comunidad, a una
+     categoría, al filtro de la lista o a las filas marcadas
+     (components/MailingComunidad.jsx).
 
    Además: QR del portal público /comunidad, reenvío del correo de
    bienvenida (solo a quien llenó el formulario) y export a Excel.
@@ -50,7 +55,9 @@ const OPCIONES_CATEGORIA = CATEGORIAS_COMUNIDAD.map((c) => ({ value: c.value, la
 const COLOR_FUENTE = { comunidad: "badge-primary", sorteo: "badge-warning", evento: "badge-success", rastreo: "badge-neutral" };
 
 export default function ComunidadRegistros() {
-  const [vista, setVista] = useStickyState("comunidad.vista", "lista"); // 'lista' | 'rastreo'
+  const [vista, setVista] = useStickyState("comunidad.vista", "lista"); // 'lista' | 'rastreo' | 'mailing'
+  // A quién apunta la pestaña Mailing: 'todos' | 'categorias' | 'filtro' | 'marcadas'.
+  const [publicoMailing, setPublicoMailing] = useState("todos");
   const [registros, setRegistros] = useState([]);
   const [cargando, setCargando] = useState(true);
   const [toast, setToast] = useState(null);
@@ -353,6 +360,7 @@ export default function ComunidadRegistros() {
         {[
           { value: "lista", label: "Comunidad", Icono: Users, n: stats.total || null },
           { value: "rastreo", label: "Rastreo de clínicas", Icono: MapPin, n: null },
+          { value: "mailing", label: "Mailing", Icono: Send, n: null },
         ].map((p) => (
           <button key={p.value} type="button" role="tab" aria-selected={vista === p.value} className={vista === p.value ? "activo" : ""} onClick={() => setVista(p.value)}>
             <p.Icono size={15} /> {p.label} {p.n ? <span className="pagos-tab-n">{p.n.toLocaleString("es-CL")}</span> : null}
@@ -362,6 +370,8 @@ export default function ComunidadRegistros() {
 
       {vista === "rastreo" ? (
         <RastreoClinicas setToast={setToast} onGuardado={() => cargar(true)} />
+      ) : vista === "mailing" ? (
+        <MailingComunidad registros={registros} filtrados={filtrados} marcadas={marcadas} hayFiltros={hayFiltros} publico={publicoMailing} setPublico={setPublicoMailing} setToast={setToast} />
       ) : (
         <>
           {/* Categorías: cuántas filas hay en cada una; un clic filtra. */}
@@ -442,6 +452,10 @@ export default function ComunidadRegistros() {
                   Marcar las {filtrados.length.toLocaleString("es-CL")} del filtro
                 </button>
               )}
+              {/* (2026-11-19) Correo a las filas marcadas: abre la pestaña Mailing ya apuntada a ellas. */}
+              <button type="button" className="btn btn-secondary btn-sm btn-correo-marcadas" onClick={() => { setPublicoMailing("marcadas"); setVista("mailing"); }} disabled={categorizando} title="Redactar un correo para las filas marcadas" style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                <Send size={13} /> Enviar correo
+              </button>
               <button type="button" className="btn btn-ghost btn-sm" onClick={() => setMarcadas(new Set())} disabled={categorizando}>Quitar marcas</button>
             </div>
           )}

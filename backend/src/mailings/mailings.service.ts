@@ -303,6 +303,114 @@ export class MailingsService {
     };
   }
 
+  /* ── Envío personalizado en segundo plano (2026-11-19, mailing de Comunidad) ──
+     Un correo por persona, cada uno con SU html (saludo con el nombre, enlace
+     de baja propio) y el pixel de apertura. Deja el envío y sus destinatarios
+     registrados, responde de inmediato con el id y sigue enviando por detrás:
+     con cientos de destinatarios la petición HTTP no alcanza a esperar. El
+     avance se lee de `mailings_envios` (enviados / fallidos se actualizan cada
+     10 correos) y de `enviosEnCurso`. Si el servidor se reinicia a mitad de
+     camino, los que faltaban quedan sin `enviado_at` ni `fallo`. */
+  private enCurso = new Set<number>();
+
+  envioEnCurso(envioId: number): boolean {
+    return this.enCurso.has(Number(envioId));
+  }
+
+  smtpConfigurado(): boolean {
+    return !!(process.env.SMTP_USER && process.env.SMTP_PASS);
+  }
+
+  async iniciarEnvioPersonalizado(opts: {
+    destinatarios: string[];
+    asunto: string;
+    htmlPara: (email: string) => string;
+    cabecerasPara?: (email: string) => Record<string, string> | undefined;
+    remitenteNombre?: string;
+    replyTo?: string | null;
+    inlineAttachments?: InlineAttachment[];
+    creadoPor?: string | null;
+    origen?: string;
+    detalle?: Record<string, any>;
+    pausaMs?: number;
+  }): Promise<{ envioId: number; total: number }> {
+    const unicos = Array.from(new Set((opts.destinatarios || []).map((e) => String(e || '').trim().toLowerCase()).filter((e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e))));
+    if (!unicos.length) throw new BadRequestException('No hay destinatarios válidos.');
+    if (!opts.asunto?.trim()) throw new BadRequestException('Falta el asunto del correo.');
+    const transporter = this.getTransporter(); // sin SMTP configurado falla aquí, antes de registrar nada
+    const from = this.buildFrom({ remitenteNombre: opts.remitenteNombre } as SendBulkOptions);
+    const client = this.supabase.getClient();
+
+    const base = { asunto: opts.asunto.trim(), total: unicos.length, enviados: 0, fallidos: 0, con_flyer: (opts.inlineAttachments?.length || 0) > 0, creado_por: opts.creadoPor || null };
+    let { data: envio, error: envioErr } = await client.from('mailings_envios').insert([{ ...base, origen: opts.origen || null, detalle: opts.detalle || null }]).select('id').single();
+    // Sin la migración 20261119 (columnas origen / detalle) el envío se registra igual, sin ellas.
+    if (envioErr && /origen|detalle|schema cache|PGRST204|42703/i.test(`${envioErr.message} ${(envioErr as any).code || ''}`)) {
+      ({ data: envio, error: envioErr } = await client.from('mailings_envios').insert([base]).select('id').single());
+    }
+    if (envioErr || !envio) throw new BadRequestException(`No se pudo crear el envío: ${envioErr?.message || 'error desconocido'}`);
+    const envioId = Number(envio.id);
+
+    const filas: { id: number; email: string; token: string }[] = [];
+    for (let i = 0; i < unicos.length; i += 500) {
+      const { data, error } = await client.from('mailings_destinatarios')
+        .insert(unicos.slice(i, i + 500).map((email) => ({ envio_id: envioId, email, token: crypto.randomBytes(16).toString('hex') })))
+        .select('id, email, token');
+      if (error || !data) {
+        await client.from('mailings_envios').delete().eq('id', envioId);
+        throw new BadRequestException(`No se pudieron registrar los destinatarios: ${error?.message || 'error desconocido'}`);
+      }
+      filas.push(...(data as any[]));
+    }
+
+    const baseUrl = this.getApiBaseUrl();
+    const adjuntos = (opts.inlineAttachments || []).map((a) => ({ filename: a.filename, content: a.content, contentType: a.contentType, cid: a.cid }));
+    const pausa = Math.max(0, opts.pausaMs ?? 250);
+    this.enCurso.add(envioId);
+    void (async () => {
+      let enviados = 0;
+      let fallidos = 0;
+      try {
+        for (let i = 0; i < filas.length; i++) {
+          const fila = filas[i];
+          try {
+            const pixel = `<img src="${baseUrl}/mailings/track/open?t=${encodeURIComponent(fila.token)}" width="1" height="1" border="0" alt="" style="display:block;width:1px;height:1px;border:0;" />`;
+            const html = `${opts.htmlPara(fila.email)}${pixel}`;
+            await transporter.sendMail({
+              from,
+              to: fila.email,
+              replyTo: opts.replyTo?.trim() || undefined,
+              subject: opts.asunto.trim(),
+              html,
+              text: stripHtml(html),
+              headers: opts.cabecerasPara?.(fila.email),
+              attachments: adjuntos.length ? adjuntos : undefined,
+            });
+            await client.from('mailings_destinatarios').update({ enviado_at: new Date().toISOString() }).eq('id', fila.id);
+            enviados++;
+          } catch (err: any) {
+            fallidos++;
+            const mensaje = String(err?.message || err);
+            await client.from('mailings_destinatarios').update({ fallo: mensaje.slice(0, 500) }).eq('id', fila.id);
+            this.logger.error(`Envío ${envioId}: falló ${fila.email}: ${mensaje}`);
+          }
+          if ((i + 1) % 10 === 0) await client.from('mailings_envios').update({ enviados, fallidos }).eq('id', envioId);
+          if (pausa && i < filas.length - 1) await new Promise((r) => setTimeout(r, pausa));
+        }
+      } finally {
+        this.enCurso.delete(envioId);
+        await client.from('mailings_envios').update({ enviados, fallidos }).eq('id', envioId);
+        this.monitor.registrar({
+          nivel: fallidos > 0 ? 'warn' : 'info',
+          tipo: 'correo',
+          mensaje: `Mailing "${opts.asunto.trim()}"${opts.origen ? ` (${opts.origen})` : ''}: ${enviados} enviados, ${fallidos} fallidos`,
+          metadata: { asunto: opts.asunto.trim(), destinatarios: filas.length, enviados, fallidos, via: 'smtp-personalizado', envio_id: envioId },
+        });
+        this.logger.log(`Envío ${envioId}: ${enviados}/${filas.length} entregados, ${fallidos} fallidos.`);
+      }
+    })().catch((e) => this.logger.error(`Envío ${envioId}: se interrumpió: ${e?.message || e}`));
+    return { envioId, total: filas.length };
+  }
+
   // Envío de un único correo transaccional (agradecimiento OC, guía, etc.).
   // Reusa el transporter SMTP compartido. replyTo permite que las respuestas
   // del cliente lleguen al vendedor aunque el remitente sea la cuenta común.
