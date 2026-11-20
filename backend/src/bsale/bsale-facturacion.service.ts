@@ -60,6 +60,9 @@ type Problema = { codigo: string; mensaje: string };
    guía (van como líneas libres). Qué rebaja stock lo decide decidirDespacho. */
 type EdicionLinea = { detalle_id: number; cantidad?: number; nota?: string | null; neto_unitario?: number; sku?: string; producto?: string };
 type LineaExtra = { sku: string; producto?: string; cantidad: number; neto_unitario: number; nota?: string | null };
+// (2026-11-19) Comentario interno de un documento: solo plataforma, no va a Bsale.
+type ComentarioDocumento = { comentario: string | null; comentario_at: string | null; comentario_por: string | null };
+const SIN_COMENTARIO: ComentarioDocumento = { comentario: null, comentario_at: null, comentario_por: null };
 
 function hoyEnChile(ahora = new Date()): string {
   return new Intl.DateTimeFormat('en-CA', {
@@ -863,6 +866,28 @@ export class BsaleFacturacionService {
     return { filas };
   }
 
+  /* (2026-11-19) Comentario interno de cada documento (solo plataforma, no va
+     a Bsale), por id de documento. En consulta aparte y tolerante: si la
+     migración 20261119_documentos_comentario no está aplicada, las listas
+     siguen funcionando, sin comentarios. */
+  private async comentariosDe(ids: number[]): Promise<Map<number, ComentarioDocumento>> {
+    const out = new Map<number, ComentarioDocumento>();
+    const unicos = [...new Set(ids.filter((id) => id > 0))];
+    const db = this.supabase.getClient();
+    for (let i = 0; i < unicos.length; i += 300) {
+      const { data, error } = await db
+        .from('licitacion_documentos')
+        .select('id, comentario, comentario_at, comentario_por')
+        .in('id', unicos.slice(i, i + 300))
+        .not('comentario', 'is', null);
+      if (error) return out;
+      for (const d of (data || []) as any[]) {
+        out.set(Number(d.id), { comentario: d.comentario || null, comentario_at: d.comentario_at || null, comentario_por: d.comentario_por || null });
+      }
+    }
+    return out;
+  }
+
   /* Historial de lo emitido (y de los intentos que no resultaron) desde el
      sistema. Si la migración no está aplicada, devuelve la lista vacía. */
   async emitidas(userId: string, limite = 300) {
@@ -929,10 +954,12 @@ export class BsaleFacturacionService {
       const { data: g } = await db.from('licitacion_documentos').select('id, numero').in('id', guiaIds);
       for (const x of g || []) guias.set(Number((x as any).id), String((x as any).numero || ''));
     }
+    const comentarios = await this.comentariosDe(emisiones.map((e) => Number(e.documento_id)));
     return {
       registro_listo: true,
       filas: emisiones.map((e) => ({
         id: e.id,
+        ...(comentarios.get(Number(e.documento_id)) || SIN_COMENTARIO),
         tipo: e.tipo || 'factura',
         // Venta directa (boleta o factura que crea su propia cotización).
         venta_directa: String(e.clave || '').startsWith('AMS-V-'),
@@ -1020,14 +1047,20 @@ export class BsaleFacturacionService {
     }
 
     const sumar = (lista: any[]) => (lista.length ? { total: lista.reduce((a, d) => a + (Number(d.monto) || 0), 0), numeros: lista.map((d) => String(d.numero || '')).filter(Boolean) } : null);
+    // El documento de cada venta (el mismo criterio que usa la fila, más abajo).
+    const docDe = (e: any) => {
+      const dl = docsDe.get(Number(e.licitacion_id)) || [];
+      return dl.find((d) => Number(d.id) === Number(e.documento_id))
+        || dl.find((d) => d.tipo === 'factura_boleta' && String(d.numero) === String(e.numero)) || null;
+    };
+    const comentarios = await this.comentariosDe(ventas.map((e) => Number(docDe(e)?.id ?? e.documento_id)));
     return {
       registro_listo: true,
       solo_mias: soloMias,
       filas: ventas.map((e) => {
         const lic = lics.get(Number(e.licitacion_id)) || null;
         const dl = docsDe.get(Number(e.licitacion_id)) || [];
-        const doc = dl.find((d) => Number(d.id) === Number(e.documento_id))
-          || dl.find((d) => d.tipo === 'factura_boleta' && String(d.numero) === String(e.numero)) || null;
+        const doc = docDe(e);
         const hijos = (tipo: string) => (doc ? dl.filter((d) => d.tipo === tipo && Number(d.deriva_de_id) === Number(doc.id)) : []);
         // Las NC que solo corrigen texto no acreditan nada: Bsale las informa aparte (nc_texto).
         const nc = sumar(hijos('nota_credito').filter((d) => !/^Corrige texto/.test(String(d.descripcion || ''))));
@@ -1044,6 +1077,7 @@ export class BsaleFacturacionService {
           url_pdf: e.url_pdf || null,
           bsale_id: Number(e.bsale_id) || null,
           documento_id: doc ? Number(doc.id) : Number(e.documento_id) || null,
+          ...(comentarios.get(Number(doc?.id ?? e.documento_id)) || SIN_COMENTARIO),
           licitacion_id: Number(e.licitacion_id) || null,
           codigo: lic?.id_licitacion || null,
           cliente: lic?.nombre_entidad || '',

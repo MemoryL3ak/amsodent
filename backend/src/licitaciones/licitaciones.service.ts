@@ -39,6 +39,10 @@ const RESPONSABLE_FACTURA_PUBLICA =
     .map((s) => s.trim().toLowerCase())
     .find((s) => s.includes('@')) || 'admin@amsodentmedical.cl';
 
+/* (2026-11-19) Largo máximo del comentario interno de un documento (el mismo
+   tope que usa la ventana: src/components/ComentarioDocumento.jsx). */
+const COMENTARIO_DOCUMENTO_MAX = 1000;
+
 @Injectable()
 export class LicitacionesService {
   private readonly logger = new Logger('Licitaciones');
@@ -4040,6 +4044,49 @@ export class LicitacionesService {
       await this.registrarAccion(Number(docPrevio!.licitacion_id), 'documento', editado, email);
     }
 
+    return data;
+  }
+
+  /* ── Comentario interno del documento (2026-11-19) ─────────────────────────
+     Pedido de Ariel: "después de emitir cada documento (factura o guía), se
+     pueda agregar un comentario general (este comentario solo vive en la
+     plataforma, no se envía a Bsale)". Se guarda en el documento con autor y
+     hora. Nada de esto viaja a Bsale ni sale en el PDF o en el correo: por eso
+     tiene su propia ruta y no pasa por las emisiones. Texto vacío = borrarlo. */
+  async comentarDocumento(docId: number, comentario: any, email?: string) {
+    const texto = String(comentario ?? '').replace(/\r\n?/g, '\n').trim().slice(0, COMENTARIO_DOCUMENTO_MAX);
+    const db = this.supabase.getClient();
+    const { data: previo } = await db
+      .from('licitacion_documentos').select('id, licitacion_id, tipo, numero').eq('id', docId).maybeSingle();
+    if (!previo) throw new NotFoundException('El documento no existe.');
+
+    const { data, error } = await db
+      .from('licitacion_documentos')
+      .update({
+        comentario: texto || null,
+        comentario_at: new Date().toISOString(),
+        comentario_por: String(email || '').trim().toLowerCase() || 'sistema',
+      })
+      .eq('id', docId)
+      .select('id, licitacion_id, tipo, numero, comentario, comentario_at, comentario_por')
+      .single();
+    if (error) {
+      const msg = [error.message, (error as any).details, (error as any).hint].filter(Boolean).join(' ');
+      if (/comentario/i.test(msg) && /column|schema cache/i.test(msg)) {
+        throw new BadRequestException('Falta aplicar la migración 20261119_documentos_comentario.sql en Supabase.');
+      }
+      throw new BadRequestException(error.message);
+    }
+
+    if (Number((previo as any).licitacion_id) > 0) {
+      const doc = nombreDocumento({ tipo: (previo as any).tipo, numero: (previo as any).numero });
+      await this.registrarAccion(
+        Number((previo as any).licitacion_id),
+        'documento',
+        texto ? `Comentó ${doc}: «${texto.slice(0, 300)}${texto.length > 300 ? '…' : ''}»` : `Borró el comentario de ${doc}`,
+        email,
+      );
+    }
     return data;
   }
 

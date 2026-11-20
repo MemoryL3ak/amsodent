@@ -757,6 +757,21 @@ stock antes y después; la guía queda «Anulada en Bsale» y deja de contar com
 despachada. La usan quienes emiten facturas. COMPROBANTE AL EMITIR: con la factura o boleta emitida y registrada
 aparece "Agregar N° de comprobante de pago" (N°, fecha, monto con IVA, medio);
 queda como pago de ese documento y, si cubre el total, lo deja pagado.
+COMENTARIO INTERNO DEL DOCUMENTO (desde 19-11-2026): apenas se emite una guía,
+factura o boleta, la ventana de emisión muestra «Comentario interno» para dejar
+una nota general del documento (ej. «el cliente retira el viernes», «se
+despacha en dos partes»). Se guarda al salir del campo o con «Guardar
+comentario», con quién lo escribió y cuándo. SOLO VIVE EN LA PLATAFORMA: no se
+envía a Bsale, no sale en el PDF ni en el correo al cliente. Después se lee o
+se edita con el ícono de globo junto al N° del documento: en Trazabilidad (guía
+y factura de cada ciclo, y pestaña Facturas), en Emitidas de Facturación y en
+Venta directa. El globo se ve amarillo si el documento ya tiene comentario y al
+pasar el mouse muestra el texto; «Borrar comentario» lo quita. Quien tiene
+Trazabilidad solo de lectura (rol ventas) puede leerlo, no editarlo. El reporte
+de Trazabilidad lo trae en la hoja Documentos, columna «Comentario Interno», y
+cada cambio queda en el historial de acciones de la cotización. No confundir
+con la «Observación» de la guía (esa sí va a Bsale como atributo del documento)
+ni con la observación de Saldo OC de Despachos.
 EMITIR BOLETA / FACTURA en Trazabilidad: en un cliente particular con la
 factura pendiente, arma la boleta o factura con el cliente y los productos de
 la cotización y la registra ahí (ítems sin SKU se avisan: no van en Bsale).

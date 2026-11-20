@@ -15,6 +15,7 @@ import CrearClienteBsale from "./CrearClienteBsale";
 import RegistrarComprobanteRapido from "./RegistrarComprobanteRapido";
 import SelectorLotes, { cuerpoLotes, problemaLotes, useLotesPorSku } from "./SelectorLotes";
 import SelectorGirosDocumento, { textoGirosDocumento } from "./SelectorGirosDocumento";
+import ComentarioDocumento from "./ComentarioDocumento";
 
 /* ── Guía o factura LIBRE en Bsale (2026-10-03) ──────────────────────────────
    Sin orden de compra ni cotización de por medio: se elige el cliente por RUT
@@ -361,6 +362,10 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
                   </button>
                 )}
               </div>
+              {/* (2026-11-19) Comentario interno del documento recién emitido: solo plataforma, no va a Bsale. */}
+              {resultado.registrada && resultado.documento_id && (
+                <ComentarioDocumento documentoId={resultado.documento_id} nombreDocumento={esGuia ? "la guía" : esBoleta ? "la boleta" : "la factura"} />
+              )}
               {resultado.comprobante && (
                 <div style={{ fontSize: 12.5, color: "#166534" }}>
                   Comprobante N° {resultado.comprobante.numero} registrado{resultado.comprobante.pagada ? `: la ${esBoleta ? "boleta" : "factura"} quedó pagada.` : "."}

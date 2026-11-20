@@ -353,6 +353,12 @@ export class LicitacionesController {
     return this.licitacionesService.updateDocumento(docId, body, (req?.user?.email || '').toLowerCase());
   }
 
+  // (2026-11-19) Comentario interno del documento: solo plataforma, no va a Bsale.
+  @Put('documentos/:docId/comentario')
+  comentarDocumento(@Param('docId', ParseIntPipe) docId: number, @Body() body: { comentario?: string }, @Req() req: any) {
+    return this.licitacionesService.comentarDocumento(docId, body?.comentario, String(req?.user?.email || '').toLowerCase());
+  }
+
   @Get('documentos/:docId/observaciones')
   observacionesDocumento(@Param('docId', ParseIntPipe) docId: number) {
     return this.licitacionesService.observacionesDocumento(docId);

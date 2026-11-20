@@ -12,6 +12,7 @@ import AnularGuiaBsale from "../components/AnularGuiaBsale";
 import { useEstadosBsale } from "../lib/estadosBsale";
 import BotonImprimirCarta from "../components/BotonImprimirCarta";
 import BotonImprimirTermica from "../components/BotonImprimirTermica";
+import { BotonComentarioDocumento } from "../components/ComentarioDocumento";
 
 /* ── Facturación (2026-10-02) ────────────────────────────────────────────────
    Sección para emitir en Bsale la factura de una guía de despacho.
@@ -126,6 +127,15 @@ export default function Facturacion() {
   }, []);
 
   useEffect(() => { cargar(); }, [cargar]);
+
+  // (2026-11-19) Comentario interno guardado: se refleja en la fila sin recargar.
+  const alGuardarComentario = (r) => {
+    if (!r?.id) return;
+    setEmitidas((prev) => ({
+      ...prev,
+      filas: prev.filas.map((f) => (Number(f.documento_id) === Number(r.id) ? { ...f, comentario: r.comentario, comentario_at: r.comentario_at, comentario_por: r.comentario_por } : f)),
+    }));
+  };
 
   const texto = sinTildes(buscar.trim());
   const pendientesFiltradas = useMemo(
@@ -545,6 +555,17 @@ export default function Facturacion() {
                             {/* (2026-10-07) Imprimir en hoja carta (la boleta de Bsale sale en rollo térmico). */}
                             {f.estado === "emitida" && f.tipo !== "nota_venta" && <BotonImprimirTermica urlPdf={f.url_pdf} compacto />}
                             {f.estado === "emitida" && f.tipo !== "nota_venta" && <BotonImprimirCarta bsaleId={f.bsale_id} compacto />}
+                            {/* (2026-11-19) Comentario interno de la guía, factura o boleta: solo plataforma, no va a Bsale. */}
+                            {f.estado === "emitida" && f.documento_id && ["guia", "factura", "boleta"].includes(f.tipo || "factura") && (
+                              <BotonComentarioDocumento
+                                documentoId={f.documento_id}
+                                comentario={f.comentario}
+                                comentarioAt={f.comentario_at}
+                                comentarioPor={f.comentario_por}
+                                nombreDocumento={`la ${(TIPOS_DOC[f.tipo] || "Factura").toLowerCase()}${f.numero ? ` N° ${f.numero}` : ""}`}
+                                onGuardado={alGuardarComentario}
+                              />
+                            )}
                           </div>
                         </td>
                         <td style={{ verticalAlign: "middle", whiteSpace: "normal" }}>

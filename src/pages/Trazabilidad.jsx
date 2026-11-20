@@ -82,6 +82,7 @@ import NotasTrazabilidad from "../components/NotasTrazabilidad";
 import { useEstadosBsale } from "../lib/estadosBsale";
 import { pedirPendientesFacturar } from "../lib/pendientesFacturar";
 import { avisoEliminarFacturaConNotas, esNotaSinSuFactura, notasDeFactura, textoNotas } from "../lib/notasSinFactura";
+import { BotonComentarioDocumento } from "../components/ComentarioDocumento";
 
 // Mapping empresa courier → builder de URL de tracking. Si la empresa no
 // tiene URL o no hay número, devuelve "" (no renderizamos el link).
@@ -689,6 +690,17 @@ export default function Trazabilidad() {
     } catch (err) {
       console.error("Error refrescando documentos:", err);
     }
+  }
+
+  // (2026-11-19) Comentario interno de una guía o factura: se refleja en la fila sin recargar.
+  function alGuardarComentario(licId, r) {
+    if (!r?.id) return;
+    setDocumentosMap((prev) => ({
+      ...prev,
+      [licId]: (prev[licId] || []).map((d) =>
+        d.id === r.id ? { ...d, comentario: r.comentario, comentario_at: r.comentario_at, comentario_por: r.comentario_por } : d,
+      ),
+    }));
   }
 
   // Emisión de facturas en Bsale: el botón solo aparece si el backend dice
@@ -1779,6 +1791,7 @@ export default function Trazabilidad() {
           "Comisión Factoring %": d.factoring_comision_pct ?? "",
           "Vencimiento Factoring": (d.factoring_vencimiento || "").toString().slice(0, 10),
           "Observación": d.observacion_despacho || d.descripcion || "",
+          "Comentario Interno": d.comentario || "",
           "Subido por Cliente": d.subido_por_cliente ? "Sí" : "",
           "ID Documento": d.id,
           "Archivo": d.url_pdf || d.url || "",
@@ -2487,9 +2500,11 @@ export default function Trazabilidad() {
           lics={data}
           documentosMap={documentosMap}
           puedeEmitir={puedeEmitirBsale && !soloLectura}
+          soloLectura={soloLectura}
           estadosBsale={estadosBsale}
           onRefrescar={(licId) => refrescarDocumentosLic(licId)}
           onAviso={(tipo, mensaje) => setToast({ type: tipo, message: mensaje })}
+          onComentario={alGuardarComentario}
         />
       ) : (
       <>
@@ -3092,7 +3107,7 @@ export default function Trazabilidad() {
                           >
                             {guia ? (
                               <div>
-                                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
                                   <span style={{ fontWeight: 500, color: "#1f2937" }}>{guia.numero || "S/N"}</span>
                                   <button
                                     type="button"
@@ -3112,6 +3127,15 @@ export default function Trazabilidad() {
                                       <Package size={13} />
                                     </button>
                                   )}
+                                  <BotonComentarioDocumento
+                                    documentoId={guia.id}
+                                    comentario={guia.comentario}
+                                    comentarioAt={guia.comentario_at}
+                                    comentarioPor={guia.comentario_por}
+                                    nombreDocumento={`la guía${guia.numero ? ` N° ${guia.numero}` : ""}`}
+                                    soloLectura={soloLectura}
+                                    onGuardado={(r) => alGuardarComentario(lic.id, r)}
+                                  />
                                 </div>
                                 {/* (2026-10-14) El neto de la guía a la vista. */}
                                 {Number(guia.monto) > 0 && (
@@ -3145,7 +3169,7 @@ export default function Trazabilidad() {
                         >
                           {factura ? (
                             <div>
-                              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                              <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
                                 <span style={{ fontWeight: 500, color: "#1f2937" }}>{factura.numero || "S/N"}</span>
                                 <button
                                   type="button"
@@ -3175,6 +3199,15 @@ export default function Trazabilidad() {
                                     <Trash2 size={12} />
                                   </button>
                                 )}
+                                <BotonComentarioDocumento
+                                  documentoId={factura.id}
+                                  comentario={factura.comentario}
+                                  comentarioAt={factura.comentario_at}
+                                  comentarioPor={factura.comentario_por}
+                                  nombreDocumento={`la ${factura.descripcion === "Boleta electrónica" ? "boleta" : "factura"}${factura.numero ? ` N° ${factura.numero}` : ""}`}
+                                  soloLectura={soloLectura}
+                                  onGuardado={(r) => alGuardarComentario(lic.id, r)}
+                                />
                               </div>
                               <div style={{ color: "var(--text-muted)", fontSize: "11px" }}>
                                 {factura.fecha_factura

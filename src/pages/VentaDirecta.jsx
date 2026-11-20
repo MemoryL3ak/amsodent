@@ -11,6 +11,7 @@ import NotaDebitoBsale from "../components/NotaDebitoBsale";
 import EstadoBsaleBadge from "../components/EstadoBsale";
 import BotonImprimirCarta from "../components/BotonImprimirCarta";
 import BotonImprimirTermica from "../components/BotonImprimirTermica";
+import { BotonComentarioDocumento } from "../components/ComentarioDocumento";
 import { useEstadosBsale } from "../lib/estadosBsale";
 
 /* ── Comercial → Venta directa (2026-10-07) ─────────────────────────────────
@@ -75,6 +76,15 @@ export default function VentaDirecta() {
     }
   }, []);
   useEffect(() => { cargar(); }, [cargar]);
+
+  // (2026-11-19) Comentario interno guardado: se refleja en la fila sin recargar.
+  const alGuardarComentario = (r) => {
+    if (!r?.id) return;
+    setDatos((prev) => ({
+      ...prev,
+      filas: (prev.filas || []).map((f) => (Number(f.documento_id) === Number(r.id) ? { ...f, comentario: r.comentario, comentario_at: r.comentario_at, comentario_por: r.comentario_por } : f)),
+    }));
+  };
 
   // Cada venta con su estado de pago, sumando las NC que Bsale conoce (también las hechas allá).
   const filas = useMemo(() => (datos.filas || []).map((f) => {
@@ -279,11 +289,22 @@ export default function VentaDirecta() {
                       <td style={{ whiteSpace: "nowrap" }}>{fechaCL(f.fecha)}</td>
                       <td style={{ whiteSpace: "nowrap" }}>
                         <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{f.tipo === "factura" ? "Factura" : "Boleta"}{f.credito ? " · a crédito" : ""}</div>
-                        <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                        <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 5 }}>
                           <span style={{ fontWeight: 700, textDecoration: f.anulada ? "line-through" : "none" }}>N° {f.numero || "—"}</span>
                           {f.url_pdf && <a href={f.url_pdf} target="_blank" rel="noopener noreferrer" title="Ver el documento en Bsale" style={{ color: "var(--primary)", display: "inline-flex" }}><ExternalLink size={13} /></a>}
                           {f.estado === "emitida" && <BotonImprimirTermica urlPdf={f.url_pdf} compacto />}
                           {f.estado === "emitida" && <BotonImprimirCarta bsaleId={f.bsale_id} compacto />}
+                          {/* (2026-11-19) Comentario interno de la boleta o factura: solo plataforma, no va a Bsale. */}
+                          {f.estado === "emitida" && f.documento_id && (
+                            <BotonComentarioDocumento
+                              documentoId={f.documento_id}
+                              comentario={f.comentario}
+                              comentarioAt={f.comentario_at}
+                              comentarioPor={f.comentario_por}
+                              nombreDocumento={`la ${f.tipo === "factura" ? "factura" : "boleta"}${f.numero ? ` N° ${f.numero}` : ""}`}
+                              onGuardado={alGuardarComentario}
+                            />
+                          )}
                         </div>
                         <EstadoBsaleBadge estado={f.eb} style={{ marginTop: 2 }} />
                       </td>

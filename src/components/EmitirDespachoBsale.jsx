@@ -12,6 +12,7 @@ import CamposSeguimientoGuia from "./CamposSeguimientoGuia";
 import CampoObservacionGuia, { OBSERVACION_GUIA_MAX } from "./CampoObservacionGuia";
 import SelectorLotes, { cuerpoLotes, problemaLotes } from "./SelectorLotes";
 import SelectorGirosDocumento, { textoGirosDocumento } from "./SelectorGirosDocumento";
+import ComentarioDocumento from "./ComentarioDocumento";
 
 /* ── Emitir guía de despacho / registrar orden en Bsale (2026-10-02) ─────────
    Ventana del módulo Facturación para una orden de compra:
@@ -215,6 +216,10 @@ export default function EmitirDespachoBsale({ tipo = "guia", licitacionId, ocDoc
                   </button>
                 )}
               </div>
+              {/* (2026-11-19) Comentario interno de la guía recién emitida: solo plataforma, no va a Bsale. */}
+              {esGuia && resultado.registrada && resultado.documento_id && (
+                <ComentarioDocumento documentoId={resultado.documento_id} nombreDocumento="la guía" />
+              )}
             </div>
           )}
           {resultado?.simulacion && (

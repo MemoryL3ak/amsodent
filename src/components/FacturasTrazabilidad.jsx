@@ -9,6 +9,7 @@ import NotaDebitoBsale from "./NotaDebitoBsale";
 import EstadoBsaleBadge from "./EstadoBsale";
 import DropdownSelect from "./ui/DropdownSelect";
 import BotonImprimirCarta from "./BotonImprimirCarta";
+import { BotonComentarioDocumento } from "./ComentarioDocumento";
 import BotonImprimirTermica from "./BotonImprimirTermica";
 import { DineroFactura, RegistrarDevolucionModal, UsarSaldoFavorModal } from "./DineroNotaCredito";
 import { dineroDeFactura, PAGOS } from "../lib/dineroNotaCredito";
@@ -57,7 +58,7 @@ export function Paginas({ pagina, total, porPagina, onCambiar }) {
   );
 }
 
-export default function FacturasTrazabilidad({ lics = [], documentosMap = {}, puedeEmitir = false, estadosBsale, onRefrescar, onAviso }) {
+export default function FacturasTrazabilidad({ lics = [], documentosMap = {}, puedeEmitir = false, soloLectura = false, estadosBsale, onRefrescar, onAviso, onComentario }) {
   const [pendientes, setPendientes] = useState(null);
   const [cargandoPend, setCargandoPend] = useState(false);
   const [q, setQ] = useState("");
@@ -456,10 +457,20 @@ export default function FacturasTrazabilidad({ lics = [], documentosMap = {}, pu
                     <tr key={f.id} className={anulada ? "fila-anulada" : undefined}>
                       <td style={{ whiteSpace: "nowrap" }}>
                         <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{f.tipo === "factura" ? "Factura" : f.esBoleta ? "Boleta" : "Factura o boleta"}</div>
-                        <div style={{ fontWeight: 600, textDecoration: anulada ? "line-through" : "none", display: "flex", alignItems: "center", gap: 4 }}>
+                        <div style={{ fontWeight: 600, textDecoration: anulada ? "line-through" : "none", display: "flex", alignItems: "center", flexWrap: "wrap", gap: 4 }}>
                           N° {f.numero || "S/N"}
                           <BotonImprimirTermica urlPdf={f.bsale_url || est?.url} compacto />
                           <BotonImprimirCarta bsaleId={f.bsale_id || est?.bsale_id} compacto />
+                          {/* (2026-11-19) Comentario interno: solo plataforma, no va a Bsale. */}
+                          <BotonComentarioDocumento
+                            documentoId={f.id}
+                            comentario={f.comentario}
+                            comentarioAt={f.comentario_at}
+                            comentarioPor={f.comentario_por}
+                            nombreDocumento={`la ${f.esBoleta ? "boleta" : "factura"}${f.numero ? ` N° ${f.numero}` : ""}`}
+                            soloLectura={soloLectura}
+                            onGuardado={(r) => onComentario?.(f.lic.id, r)}
+                          />
                         </div>
                         <EstadoBsaleBadge estado={estBadge} style={{ marginTop: 2 }} />
                       </td>

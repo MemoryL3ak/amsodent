@@ -10,6 +10,7 @@ import BotonImprimirCarta from "./BotonImprimirCarta";
 import BotonImprimirTermica from "./BotonImprimirTermica";
 import RegistrarComprobanteRapido from "./RegistrarComprobanteRapido";
 import SelectorGirosDocumento, { textoGirosDocumento } from "./SelectorGirosDocumento";
+import ComentarioDocumento from "./ComentarioDocumento";
 
 /* ── Emitir factura en Bsale (2026-10-02) ────────────────────────────────────
    Ventana que se abre desde Trazabilidad sobre una guía sin factura. El
@@ -348,6 +349,10 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
                   </button>
                 )}
               </div>
+              {/* (2026-11-19) Comentario interno de la factura recién emitida: solo plataforma, no va a Bsale. */}
+              {resultado.registrada && resultado.documento_id && (
+                <ComentarioDocumento documentoId={resultado.documento_id} nombreDocumento="la factura" />
+              )}
               {resultado.registrada && resultado.documento_id && (
                 <RegistrarComprobanteRapido licitacionId={licitacionId} documentoId={resultado.documento_id} totalBruto={resultado.total} nombreDocumento="la factura" />
               )}
