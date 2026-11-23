@@ -18,8 +18,14 @@ const ROL_CONFIG = {
   contabilidad:         { label: "Contabilidad",           text: "#b45309",             bg: "#fffbeb",               border: "#fde68a"               },
 };
 
+// Rol que no está en la lista (p. ej. «Usuario», el valor con que nace un
+// perfil sin rol asignado): se muestra tal cual, en gris, en vez de romper la
+// pantalla completa.
+const ROL_DESCONOCIDO = { text: "#475569", bg: "#f1f5f9", border: "#e2e8f0" };
+
 function RolBadge({ rol }) {
-  const cfg = ROL_CONFIG[rol] || ROL_CONFIG.usuario;
+  const cfg = ROL_CONFIG[rol] || ROL_CONFIG[String(rol || "").trim().toLowerCase()]
+    || { ...ROL_DESCONOCIDO, label: String(rol || "").trim() || "Sin rol" };
   return (
     <span style={{
       display: "inline-flex", alignItems: "center",
