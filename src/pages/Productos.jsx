@@ -714,6 +714,7 @@ export default function Productos() {
         const faltan = new Set(faltantesDe(p));
         const fila = {
           SKU: p.sku || "",
+          "SKU Marca": p.sku_marca || "",
           Producto: p.nombre || "",
           Marca: p.marca || "",
           Categoría: p.categoria || "",
@@ -727,7 +728,7 @@ export default function Productos() {
       });
       filas.sort((a, b) => b["Campos que faltan"] - a["Campos que faltan"] || String(a.SKU).localeCompare(String(b.SKU)));
       const ws = XLSX.utils.json_to_sheet(filas);
-      ws["!cols"] = [{ wch: 14 }, { wch: 48 }, { wch: 18 }, { wch: 20 }, { wch: 16 }, { wch: 12 }, { wch: 10 }, ...CAMPOS_FICHA_TECNICA.map(() => ({ wch: 15 }))];
+      ws["!cols"] = [{ wch: 14 }, { wch: 16 }, { wch: 48 }, { wch: 18 }, { wch: 20 }, { wch: 16 }, { wch: 12 }, { wch: 10 }, ...CAMPOS_FICHA_TECNICA.map(() => ({ wch: 15 }))];
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, "SKU sin ficha completa");
       XLSX.writeFile(wb, `productos-sin-ficha-completa-${new Date().toISOString().slice(0, 10)}.xlsx`);
@@ -1223,10 +1224,17 @@ export default function Productos() {
    Modal: Carga Masiva de Productos (Punto 37)
    ─ Acepta .xlsx, .xls o .csv
    ─ Match por SKU; si no existe → crea (upsert)
-   ─ Campos editables: sku, nombre, categoria, marca, formato, costo,
-     lista1, lista2, estado, peso (kg), alto/largo/ancho (cm)
+   ─ Campos editables: sku, sku_marca, nombre, categoria, marca, formato,
+     costo, lista1, lista2, estado, peso (kg), alto/largo/ancho (cm)
 ============================================================ */
-const COLUMNAS_PLANTILLA = ["sku", "nombre", "categoria", "marca", "formato", "costo", "lista1", "lista2", "estado", "peso", "alto", "largo", "ancho"];
+const COLUMNAS_PLANTILLA = ["sku", "sku_marca", "nombre", "categoria", "marca", "formato", "costo", "lista1", "lista2", "estado", "peso", "alto", "largo", "ancho"];
+// El SKU de Marca también se reconoce con el título que trae el Excel exportado
+// («SKU Marca») o escrito «SKU de Marca», para poder subir ese mismo archivo.
+const ALIAS_COLUMNAS = { "sku marca": "sku_marca", "sku de marca": "sku_marca", "sku de la marca": "sku_marca" };
+function claveColumna(titulo) {
+  const k = String(titulo).trim().toLowerCase().replace(/\s+/g, " ");
+  return ALIAS_COLUMNAS[k] || k;
+}
 // Numéricos con decimales (peso en kg, dimensiones en cm): "0,5" y "0.5" valen 0.5.
 const COLUMNAS_DECIMALES = ["peso", "alto", "largo", "ancho"];
 
@@ -1264,7 +1272,7 @@ function CargaMasivaProductosModal({ onClose, onSuccess, onToast }) {
       const normalizadas = raw.map((row) => {
         const out = {};
         for (const [k, v] of Object.entries(row)) {
-          const key = String(k).trim().toLowerCase();
+          const key = claveColumna(k);
           if (!COLUMNAS_PLANTILLA.includes(key)) continue;
           let val = typeof v === "string" ? v.trim() : v;
           if (val === "" || val == null) continue;
@@ -1312,7 +1320,7 @@ function CargaMasivaProductosModal({ onClose, onSuccess, onToast }) {
     try {
       const XLSX = await import("xlsx");
       const ejemplo = [
-        { sku: "EJ-001", nombre: "Producto ejemplo", categoria: "Categoría", marca: "Marca", formato: "1 unidad", costo: 1000, lista1: 2000, lista2: 2500, estado: "Activo", peso: 0.5, alto: 10, largo: 20, ancho: 15 },
+        { sku: "EJ-001", sku_marca: "MARCA-123", nombre: "Producto ejemplo", categoria: "Categoría", marca: "Marca", formato: "1 unidad", costo: 1000, lista1: 2000, lista2: 2500, estado: "Activo", peso: 0.5, alto: 10, largo: 20, ancho: 15 },
       ];
       const ws = XLSX.utils.json_to_sheet(ejemplo, { header: COLUMNAS_PLANTILLA });
       const wb = XLSX.utils.book_new();
