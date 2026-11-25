@@ -19,9 +19,10 @@ function fmtFecha(v) {
 
 export default function OrdenesCompra() {
   const navigate = useNavigate();
-  const { rol, cargando } = useAuth();
+  const { rol, cargando, puede } = useAuth();
   const rolNorm = (rol || "").toString().trim().toLowerCase();
-  const puedeVer = ["admin", "administrador"].includes(rolNorm);
+  // (2026-11-25) Admin o quien tenga «ordenes_compra» en su perfil de permisos.
+  const puedeVer = ["admin", "administrador"].includes(rolNorm) || puede("ordenes_compra");
 
   const [lista, setLista] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -78,7 +79,7 @@ export default function OrdenesCompra() {
     return (
       <div className="page">
         <div className="surface"><div className="surface-body" style={{ color: "var(--danger)" }}>
-          Acceso restringido: las órdenes de compra son solo para administración.
+          No tienes acceso a las órdenes de compra. Pídele a administración que las agregue a tu perfil.
         </div></div>
       </div>
     );

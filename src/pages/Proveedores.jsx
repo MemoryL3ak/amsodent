@@ -145,9 +145,12 @@ function EditorCondiciones({ valor, onChange }) {
 }
 
 export default function Proveedores() {
-  const { rol, cargando } = useAuth();
+  const { rol, cargando, puede } = useAuth();
   const rolNorm = (rol || "").toString().trim().toLowerCase();
-  const puedeVer = ["admin", "administrador"].includes(rolNorm);
+  // (2026-11-25) Admin o quien tenga «proveedores» en su perfil de permisos: la
+  // pantalla seguía exigiendo admin aunque el menú, la ruta y el servidor ya
+  // iban por permiso desde el 03-11.
+  const puedeVer = ["admin", "administrador"].includes(rolNorm) || puede("proveedores");
 
   const [lista, setLista] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -236,7 +239,7 @@ export default function Proveedores() {
     return (
       <div className="page">
         <div className="surface"><div className="surface-body" style={{ color: "var(--danger)" }}>
-          Acceso restringido: el catálogo de proveedores es solo para administración.
+          No tienes acceso al catálogo de proveedores. Pídele a administración que lo agregue a tu perfil.
         </div></div>
       </div>
     );

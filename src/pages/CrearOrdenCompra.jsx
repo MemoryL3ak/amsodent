@@ -60,9 +60,10 @@ export default function CrearOrdenCompra() {
   const navigate = useNavigate();
   const { id } = useParams();
   const editando = Boolean(id);
-  const { rol, cargando, perfil, user } = useAuth();
+  const { rol, cargando, perfil, user, puede } = useAuth();
   const rolNorm = (rol || "").toString().trim().toLowerCase();
-  const puedeVer = ["admin", "administrador"].includes(rolNorm);
+  // (2026-11-25) Admin o quien tenga «ordenes_compra» en su perfil de permisos.
+  const puedeVer = ["admin", "administrador"].includes(rolNorm) || puede("ordenes_compra");
 
   const [numero, setNumero] = useState(null);
   const [fechaEmision, setFechaEmision] = useState(hoyISO());
@@ -214,7 +215,7 @@ export default function CrearOrdenCompra() {
     return (
       <div className="page">
         <div className="surface"><div className="surface-body" style={{ color: "var(--danger)" }}>
-          Acceso restringido: las órdenes de compra son solo para administración.
+          No tienes acceso a las órdenes de compra. Pídele a administración que las agregue a tu perfil.
         </div></div>
       </div>
     );
