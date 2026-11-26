@@ -1,4 +1,4 @@
-import { BadGatewayException, BadRequestException, ConflictException } from '@nestjs/common';
+import { BadGatewayException, BadRequestException, ConflictException, ServiceUnavailableException } from '@nestjs/common';
 import { TiendaWebService } from './tienda-web.service';
 
 /* Tabla pedidos_tienda_web en memoria: lo justo del cliente de Supabase que
@@ -6,18 +6,20 @@ import { TiendaWebService } from './tienda-web.service';
    compara-y-cambia sobre updated_at). */
 function supabaseFalso() {
   const filas = new Map<string, any>();
+  const emisiones = new Map<string, any>(); // bsale_emisiones por sales_id
   let reloj = Date.now();
   const ahora = () => new Date((reloj += 1)).toISOString();
-  const from = () => {
+  const from = (tabla: string) => {
+    const tablaFilas = tabla === 'bsale_emisiones' ? emisiones : filas;
     const q: any = { filtros: [] as [string, any][], cambios: null as any };
     const coincide = (f: any) => q.filtros.every(([k, v]: [string, any]) => f[k] === v);
     const resolver = () => {
       if (q.cambios) {
-        const hits = [...filas.values()].filter(coincide);
+        const hits = [...tablaFilas.values()].filter(coincide);
         for (const f of hits) Object.assign(f, q.cambios, { updated_at: ahora() });
         return { data: hits.map((f) => ({ ...f })), error: null };
       }
-      return { data: [...filas.values()].filter(coincide).map((f) => ({ ...f })), error: null };
+      return { data: [...tablaFilas.values()].filter(coincide).map((f) => ({ ...f })), error: null };
     };
     Object.assign(q, {
       upsert: (rows: any[]) => {
@@ -34,7 +36,7 @@ function supabaseFalso() {
     return q;
   };
   const envejecer = (pedido: string, ms: number) => (filas.get(pedido).updated_at = new Date(Date.now() - ms).toISOString());
-  return { filas, envejecer, servicio: { getClient: () => ({ from }) } as any };
+  return { filas, emisiones, envejecer, servicio: { getClient: () => ({ from }) } as any };
 }
 
 const pedido = (extra: any = {}) => ({
@@ -44,9 +46,9 @@ const pedido = (extra: any = {}) => ({
   despacho_neto: 0, total_tienda: 10000, ...extra,
 });
 
-function armar(emitir: jest.Mock) {
+function armar(emitir: jest.Mock, listas?: jest.Mock) {
   const db = supabaseFalso();
-  const facturacion: any = { listas: async () => ({ formas: [{ id: 9, nombre: 'WebPay' }, { id: 4, nombre: 'Transferencia' }] }) };
+  const facturacion: any = { listas: listas || (async () => ({ formas: [{ id: 9, nombre: 'WebPay' }, { id: 4, nombre: 'Transferencia' }] })) };
   const svc = new TiendaWebService(db.servicio, facturacion, { emitir } as any);
   return { db, svc };
 }
@@ -136,5 +138,40 @@ describe('TiendaWebService', () => {
     await expect(svc.recibir(pedido({ medio_pago: 'transferencia' }))).rejects.toBeInstanceOf(BadRequestException);
     expect(emitir).not.toHaveBeenCalled();
     expect(db.filas.get('AMS-2026-0031')).toMatchObject({ estado: 'error' });
+  });
+
+  it('si Bsale ya emitió este pedido en un intento anterior, se adopta ese documento y no se emite otro', async () => {
+    const emitir = jest.fn();
+    const { svc, db } = armar(emitir);
+    db.emisiones.set('AMS-WEB-AMS-2026-0031', { sales_id: 'AMS-WEB-AMS-2026-0031', estado: 'emitida', numero: '5501', bsale_id: 777, url_pdf: 'https://x', total: 10000, licitacion_id: 42, documento_id: 9 });
+    await expect(svc.recibir(pedido())).resolves.toMatchObject({ estado: 'emitida', numero: '5501', cotizacion_id: 42 });
+    expect(emitir).not.toHaveBeenCalled();
+  });
+
+  it('un fallo DESPUÉS de que Bsale emitió (registro, correo) no deja el pedido reintentable: se adopta', async () => {
+    const { svc, db } = armar(jest.fn().mockImplementation(async () => {
+      db.emisiones.set('AMS-WEB-AMS-2026-0031', { sales_id: 'AMS-WEB-AMS-2026-0031', estado: 'emitida', numero: '5502', bsale_id: 778, total: 10000 });
+      throw new Error('destinatarioDocumento: fallo de red');
+    }));
+    await expect(svc.recibir(pedido())).resolves.toMatchObject({ estado: 'emitida', numero: '5502' });
+    expect(db.filas.get('AMS-2026-0031').estado).toBe('emitida');
+  });
+
+  it('un intento previo a medio enviar en bsale_emisiones → incierta, sin emitir', async () => {
+    const emitir = jest.fn();
+    const { svc, db } = armar(emitir);
+    db.emisiones.set('AMS-WEB-AMS-2026-0031', { sales_id: 'AMS-WEB-AMS-2026-0031', estado: 'enviando' });
+    await expect(svc.recibir(pedido())).rejects.toBeInstanceOf(ConflictException);
+    expect(db.filas.get('AMS-2026-0031').estado).toBe('incierta');
+    expect(emitir).not.toHaveBeenCalled();
+  });
+
+  it('Bsale caído al leer formas de pago → error reintentable (no queda «emitiendo»)', async () => {
+    const listas = jest.fn().mockRejectedValueOnce(new Error('ETIMEDOUT')).mockResolvedValue({ formas: [{ id: 9, nombre: 'WebPay' }] });
+    const emitir = jest.fn().mockResolvedValue(emitida);
+    const { svc, db } = armar(emitir, listas);
+    await expect(svc.recibir(pedido())).rejects.toBeInstanceOf(ServiceUnavailableException);
+    expect(db.filas.get('AMS-2026-0031').estado).toBe('error');
+    await expect(svc.recibir(pedido())).resolves.toMatchObject({ estado: 'emitida' });
   });
 });

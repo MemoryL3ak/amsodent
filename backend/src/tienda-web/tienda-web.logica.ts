@@ -57,6 +57,10 @@ export function validarPedido(body: any): { ok: true; pedido: PedidoTienda } | {
     if (!(linea.neto_unitario > 0)) errores.push(`Producto ${i + 1}: el precio neto unitario debe ser mayor que 0.`);
     return linea;
   });
+  // Un SKU repetido se descartaría en la venta directa (cobraría de menos): se rechaza.
+  const skus = lineas.map((l) => l.sku.replace(/\s+/g, '').toUpperCase()).filter(Boolean);
+  const repetido = skus.find((k, i) => skus.indexOf(k) !== i);
+  if (repetido) errores.push(`El SKU ${repetido} viene en más de una línea: súmalas en una.`);
   const despachoNeto = body?.despacho_neto == null ? 0 : entero(body.despacho_neto);
   if (!(despachoNeto >= 0)) errores.push('El neto del despacho no es válido.');
   const totalTienda = entero(body?.total_tienda);

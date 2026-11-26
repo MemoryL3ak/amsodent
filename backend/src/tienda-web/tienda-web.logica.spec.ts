@@ -49,6 +49,11 @@ describe('pedido de la tienda web', () => {
     ]));
   });
 
+  it('rechaza el mismo SKU en dos líneas (la venta directa descartaría una y cobraría de menos)', () => {
+    const r = validarPedido({ ...base(), lineas: [{ sku: 'ph00302', cantidad: 1, neto_unitario: 10 }, { sku: 'PH 00302', cantidad: 1, neto_unitario: 10 }] });
+    expect(r.ok).toBe(false);
+  });
+
   it('rechaza un N° de pedido con caracteres raros', () => {
     expect(validarPedido({ ...base(), pedido: 'AMS 2026/31; drop' }).ok).toBe(false);
   });

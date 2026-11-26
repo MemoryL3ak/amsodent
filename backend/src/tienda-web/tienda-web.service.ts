@@ -1,4 +1,4 @@
-import { BadGatewayException, BadRequestException, ConflictException, HttpException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadGatewayException, BadRequestException, ConflictException, HttpException, Injectable, Logger, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
 import { BsaleFacturacionService } from '../bsale/bsale-facturacion.service';
 import { BsaleLibreService } from '../bsale/bsale-libre.service';
@@ -90,8 +90,47 @@ export class TiendaWebService {
       return data;
     };
 
-    // 4. Forma de pago de Bsale para el medio de la tienda.
-    const { formas } = await this.facturacion.listas();
+    const salesId = `AMS-WEB-${p.pedido}`;
+
+    /* ¿Bsale ya emitió este pedido? (bsale_emisiones guarda cada intento por
+       salesId). Si un intento anterior emitió y falló DESPUÉS (registro, correo),
+       la fila del pedido pudo quedar en «error»: se adopta ese documento y nunca
+       se emite otro. Si quedó «incierta» o a medio enviar, no se sigue. */
+    const adoptar = async (): Promise<any | null> => {
+      const { data: em } = await db.from('bsale_emisiones').select('estado, numero, bsale_id, url_pdf, total, licitacion_id, documento_id, updated_at').eq('sales_id', salesId).maybeSingle();
+      const e: any = em;
+      if (!e) return null;
+      if (e.estado === 'emitida') {
+        const fin = await terminar({
+          estado: 'emitida', sales_id: salesId, bsale_id: e.bsale_id || null, numero: e.numero || null, url_pdf: e.url_pdf || null,
+          total_documento: e.total != null ? Number(e.total) : null, cotizacion_id: e.licitacion_id || null, documento_id: e.documento_id || null,
+          avisos: ['El documento ya estaba emitido en Bsale (intento anterior): se tomó ese, no se emitió otro.'], error: null, problemas: null,
+          emitido_at: e.updated_at || new Date().toISOString(),
+        });
+        this.logger.warn(`Pedido web ${p.pedido}: adoptado el documento ${e.numero} ya emitido en Bsale`);
+        return fin;
+      }
+      if (e.estado === 'incierta' || e.estado === 'enviando') {
+        const fin = await terminar({ estado: 'incierta', error: 'Un intento anterior quedó sin confirmar en Bsale: revisa en Bsale si el documento salió.' });
+        throw new ConflictException(this.respuesta(fin));
+      }
+      return null; // «error»: Bsale lo rechazó, se puede volver a intentar
+    };
+
+    // 4. ¿Ya emitido por un intento anterior? Entonces se adopta.
+    const previo = await adoptar();
+    if (previo) return this.respuesta(previo);
+
+    // 5. Forma de pago de Bsale para el medio de la tienda. Si Bsale no responde, el
+    //    pedido queda en «error» (reintentable: todavía no se envió nada).
+    let formas: { id: number; nombre: string }[];
+    try {
+      formas = (await this.facturacion.listas()).formas;
+    } catch (e: any) {
+      const mensaje = `Bsale no respondió al leer las formas de pago: ${String(e?.message || e).slice(0, 200)}`;
+      const fin = await terminar({ estado: 'error', error: mensaje, problemas: [{ codigo: 'bsale_no_disponible', mensaje }] });
+      throw new ServiceUnavailableException(this.respuesta(fin));
+    }
     const idFijado = p.medio_pago === 'webpay' ? process.env.TIENDA_WEB_FORMA_PAGO_WEBPAY : process.env.TIENDA_WEB_FORMA_PAGO_TRANSFERENCIA;
     const forma = formaDePago(formas, p.medio_pago, idFijado);
     if (!forma) {
@@ -100,9 +139,8 @@ export class TiendaWebService {
       throw new BadRequestException(this.respuesta(fin));
     }
 
-    // 5. Emitir como venta directa, con clave y salesId fijos para este pedido.
+    // 6. Emitir como venta directa, con clave y salesId fijos para este pedido.
     const cuerpo = cuerpoVentaDirecta(p, forma.id, hoyEnChile());
-    const salesId = `AMS-WEB-${p.pedido}`;
     try {
       const r: any = await this.libre.emitir(this.usuario, cuerpo, {
         sistema: true, clave: salesId, salesId,
@@ -131,6 +169,9 @@ export class TiendaWebService {
       return this.respuesta(fin);
     } catch (e: any) {
       if (e instanceof HttpException && (e.getResponse() as any)?.pedido === p.pedido) throw e; // ya registrado arriba
+      // Pudo fallar DESPUÉS de que Bsale emitiera (registro, correo): si quedó emitida, se adopta.
+      const adoptado = await adoptar().catch((x) => (x instanceof HttpException ? Promise.reject(x) : null));
+      if (adoptado) return this.respuesta(adoptado);
       const mensaje = String((e?.getResponse?.() as any)?.message || e?.message || e).slice(0, 1000);
       // Bsale no respondió (o el intento anterior quedó así): no se reintenta solo.
       const incierta = e instanceof BadGatewayException || /sin confirmar/i.test(mensaje);
