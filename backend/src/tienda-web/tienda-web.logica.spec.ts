@@ -108,3 +108,38 @@ describe('clave de integración', () => {
     expect(claveValida('', '')).toBe(false);
   });
 });
+
+/* Contrato con la tienda: este es EXACTAMENTE el cuerpo que arma la tienda
+   (amsodent-medical, site/src/modules/invoicing/domain/erpInvoice.test.ts).
+   Si alguno de los dos lados cambia el formato, esta prueba lo detecta. */
+describe('contrato con la tienda amsodentmedical.cl', () => {
+  it('el pedido que manda la tienda pasa la validación y arma la venta directa', () => {
+    const r = validarPedido({
+      pedido: 'AMS-2026-0031', tipo: 'factura', medio_pago: 'webpay', referencia_pago: '1213',
+      cliente: { rut: '76123456-0', razon_social: 'Clínica Sonrisa SpA', giro: 'Clínica dental', direccion: 'Av. Siempre Viva 123', comuna: 'San Bernardo', ciudad: 'San Bernardo', email: 'dte@clinica.cl' },
+      despacho: { destinatario: 'Ana Pérez', direccion: 'Av. Siempre Viva 123, of. 4', comuna: 'San Bernardo', ciudad: 'San Bernardo' },
+      lineas: [{ sku: 'PH00302', producto: 'Clorhexidina · 125 ml', cantidad: 2, neto_unitario: 3782 }],
+      despacho_neto: 2605,
+      total_tienda: 12100,
+    });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const c: any = cuerpoVentaDirecta(r.pedido, 9, '2026-11-26');
+    expect(c.lineas).toHaveLength(2);
+    expect(c.con_guia).toBe(true);
+  });
+
+  it('una boleta por transferencia con retiro en tienda (sin RUT ni despacho)', () => {
+    const r = validarPedido({
+      pedido: 'AMS-2026-0032', tipo: 'boleta', medio_pago: 'transferencia', referencia_pago: 'AMS-2026-0032',
+      cliente: { rut: '', razon_social: 'Ana Pérez', giro: '', direccion: 'Av. Siempre Viva 123', comuna: 'San Bernardo', ciudad: 'San Bernardo', email: 'dte@clinica.cl' },
+      despacho: null,
+      lineas: [{ sku: 'PH00302', producto: 'Clorhexidina · 125 ml', cantidad: 2, neto_unitario: 3782 }],
+      despacho_neto: 0,
+      total_tienda: 9000,
+    });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect((cuerpoVentaDirecta(r.pedido, 4, '2026-11-26') as any).con_guia).toBe(false);
+  });
+});
