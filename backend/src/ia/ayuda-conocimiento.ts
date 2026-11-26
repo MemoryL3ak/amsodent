@@ -1670,6 +1670,13 @@ girasol 🌻). Hoy ayuda en:
   apaga por cliente en Acceso Portal Clientes → «Módulos». Requiere la
   migración 20261126_postventa.sql.
 - CAMBIOS DEL 26-11-2026 (lote de 16 puntos):
+  · TRAZABILIDAD, QUÉ FALTA FACTURAR: en «Filtrar por documentos», «OC» + «Guía»
+    marcados y «Factura» sin marcar muestra SOLO las guías sin factura (lo
+    pendiente por facturar, ciclos abiertos); no trae las ya facturadas ni las
+    abiertas solo por saldo. ENTREGA PARCIAL: en «Estado de ciclo», la opción
+    «Entrega parcial (OC con saldo)» muestra las órdenes de compra con al
+    menos una guía y saldo por entregar (OC − guías), con o sin factura
+    pendiente.
   · ASIGNACIÓN DE CARTERA: el listado «Vendedor asignado» (Asignación de
     cartera, Crear y Editar cliente) ya NO muestra administradores; solo los
     vendedores cuyo canal en Metas vende a particulares. Los clientes que ya

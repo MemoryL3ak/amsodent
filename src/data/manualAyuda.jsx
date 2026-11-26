@@ -534,6 +534,8 @@ export const GRUPOS_MANUAL = [
         funciones: [
           "SLA de despacho: 3 días hábiles desde la fecha de la OC, con feriados chilenos (\"Quedan N días háb.\" o \"vencido\").",
           "Pendiente por Despachar = monto OC − guías de los ciclos abiertos.",
+          "Qué falta facturar (desde el 26-11-2026): en «Filtrar por documentos», marcar «OC» y «Guía» dejando «Factura» sin marcar muestra SOLO las guías de despacho que todavía no tienen factura (columna Factura en «Pendiente»), de ciclos abiertos. No aparecen las cotizaciones ya facturadas ni las que siguen abiertas solo por saldo de la orden de compra, y de una cotización con varias guías se ve únicamente la que falta facturar. Con «Factura» también marcada vuelve a mostrar las que tienen los tres documentos.",
+          "Entrega parcial (desde el 26-11-2026): en «Estado de ciclo», la opción «Entrega parcial (OC con saldo)» muestra las órdenes de compra que ya tienen al menos una guía y todavía tienen saldo por entregar (OC − guías), tengan o no una factura pendiente. Es la forma de ver las que quedan abiertas por saldo.",
           "Subir factura o guía desde la misma fila, con lectura automática del PDF por DamarIA (botón del girasol 🌻: extrae número, fecha, monto y courier).",
           "Cierre forzado de un ciclo con saldo: exige monto forzado, motivo y archivo de respaldo; es reversible.",
           "Tracking del envío por N° de seguimiento.",

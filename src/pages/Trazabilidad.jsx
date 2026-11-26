@@ -195,6 +195,26 @@ function facturaCubreGuia(f, gId) {
   return f.deriva_de_id === gId || (Array.isArray(f.guias_ids) && f.guias_ids.includes(gId));
 }
 
+/* (2026-11-26) Dos filtros pedidos por Ariel para quien factura:
+   · «OC» + «Guía» marcados y «Factura» sin marcar = solo lo que falta FACTURAR:
+     las guías de despacho que todavía no tienen factura. Antes ese filtro traía
+     toda cotización con OC y guía, también las ya facturadas y las que seguían
+     abiertas solo por saldo de la OC.
+   · «Entrega parcial» (Estado de ciclo) = las órdenes de compra con al menos
+     una guía y saldo por entregar (OC − guías > 0), tengan o no factura
+     pendiente. Es la otra forma de ver las que quedan abiertas por saldo.
+   En los dos casos la tabla muestra solo las filas que calzan, no toda la
+   cotización. */
+const ES_FACTURA = (d) => d.tipo === "factura" || d.tipo === "factura_boleta" || d.tipo === "efectivo";
+function guiaSinFactura(guia, docs) {
+  return !docs.some((d) => ES_FACTURA(d) && facturaCubreGuia(d, guia.id));
+}
+function ocConEntregaParcial(oc, docs) {
+  const guias = docs.filter((d) => d.tipo === "guia_despacho" && d.deriva_de_id === oc.id);
+  if (!guias.length) return false;
+  return Math.round(Number(oc.monto || 0) - guias.reduce((a, g) => a + Number(g.monto || 0), 0)) > 0;
+}
+
 // Cliente particular: no usa OC ni guia de despacho, su documento es la
 // factura/boleta.
 function esParticular(lic) {
@@ -676,6 +696,11 @@ export default function Trazabilidad() {
     rolNorm === "jefe_ventas" ||
     rolNorm === "jefe_ventas_especial" ||
     rolNorm === "contabilidad";
+  // (2026-11-26) Filtros que además recortan las filas de cada cotización. Buscar
+  // por N° de OC o de factura manda sobre los botones de documentos, igual que antes.
+  const verSoloPorFacturar = !esSoloClienteParticular && flagGuia && !flagFactura && !flagSinDocs && !filtroOC.trim() && !filtroFactura.trim();
+  const verSoloParciales = filtroEstadoCiclo === "parcial";
+
   // ventas: acceso solo de visualización (no puede cambiar estado de entrega,
   // cerrar ciclo, ni subir/eliminar documentos).
   const soloLectura = esVentas;
@@ -833,6 +858,10 @@ export default function Trazabilidad() {
       if (filtroEstadoCiclo) {
         const cerrado = !!l.ciclo_cerrado;
         const entrega = (l.estado_entrega || "Preparación").toString();
+        if (filtroEstadoCiclo === "parcial") {
+          const docsL = documentosMap[l.id] || [];
+          if (cerrado || !docsL.some((d) => d.tipo === "orden_compra" && ocConEntregaParcial(d, docsL))) return false;
+        }
         if (filtroEstadoCiclo === "forzado" && !cerrado) return false;
         if (filtroEstadoCiclo === "entregado" && (cerrado || entrega !== "Entregado")) return false;
         if (filtroEstadoCiclo === "preparacion" && (cerrado || entrega === "Entregado")) return false;
@@ -888,6 +917,15 @@ export default function Trazabilidad() {
       if (flagOc && !tieneOC) return false;
       if (flagGuia && !tieneGuia) return false;
       if (flagFactura && !tieneFactura) return false;
+
+      // (2026-11-26) «Guía» marcada y «Factura» sin marcar = guías POR FACTURAR
+      // de ciclos abiertos (con «OC» marcada, además, que la guía tenga su OC).
+      if (flagGuia && !flagFactura) {
+        if (l.ciclo_cerrado) return false;
+        const ocIds = new Set(docs.filter((d) => d.tipo === "orden_compra").map((d) => d.id));
+        const pendiente = docs.some((d) => d.tipo === "guia_despacho" && (!flagOc || ocIds.has(d.deriva_de_id)) && guiaSinFactura(d, docs));
+        if (!pendiente) return false;
+      }
 
       return true;
     });
@@ -1098,7 +1136,9 @@ export default function Trazabilidad() {
       .sort((a, b) => a.id - b.id);
   }
 
-  function buildCycles(licId) {
+  // `soloFilas`: con los filtros «por facturar» o «entrega parcial» la tabla
+  // muestra solo las filas que calzan (el reporte Excel siempre va completo).
+  function buildCycles(licId, soloFilas = false) {
     const docs = getDocsForLic(licId);
     const ocs = docs.filter((d) => d.tipo === "orden_compra");
     const guias = docs.filter((d) => d.tipo === "guia_despacho");
@@ -1153,6 +1193,14 @@ export default function Trazabilidad() {
     for (const f of facturas) {
       if (facturasUsadas.has(f.id)) continue;
       cycles.push({ oc: null, guia: null, factura: f, ocGroup: huerfanoGroup++ });
+    }
+
+    if (soloFilas && (verSoloPorFacturar || verSoloParciales)) {
+      const calzan = cycles.filter((c) =>
+        (!verSoloPorFacturar || (c.guia && !c.factura && (!flagOc || c.oc))) &&
+        (!verSoloParciales || (c.oc && ocConEntregaParcial(c.oc, docs))));
+      // Si ninguna calza (no debería: la cotización pasó el filtro), se deja completa.
+      if (calzan.length) cycles.splice(0, cycles.length, ...calzan);
     }
 
     if (cycles.length === 0) cycles.push({ oc: null, guia: null, factura: null, ocGroup: 0 });
@@ -2761,21 +2809,23 @@ export default function Trazabilidad() {
 
           <div>
             <label className="filter-label">Estado de ciclo</label>
-            <select
-              className="input"
+            <DropdownSelect
               value={filtroEstadoCiclo}
-              onChange={(e) => setFiltroEstadoCiclo(e.target.value)}
-              style={{ width: "100%", height: 36 }}
-            >
-              <option value="">Todos</option>
-              <option value="preparacion">En preparación</option>
-              <option value="entregado">Entregado</option>
-              <option value="forzado">Cierre forzado</option>
-            </select>
+              onChange={setFiltroEstadoCiclo}
+              minWidth={200}
+              style={{ width: "100%" }}
+              options={[
+                { value: "", label: "Todos" },
+                { value: "preparacion", label: "En preparación" },
+                { value: "entregado", label: "Entregado" },
+                { value: "parcial", label: "Entrega parcial (OC con saldo)" },
+                { value: "forzado", label: "Cierre forzado" },
+              ]}
+            />
           </div>
 
           <div>
-            <label className="filter-label" title="Cada botón marcado exige que la cotización tenga ese documento; tener más documentos no la excluye">Filtrar por documentos (tiene al menos…)</label>
+            <label className="filter-label" title="Cada botón marcado exige que la cotización tenga ese documento. «Guía» marcada con «Factura» sin marcar muestra solo las guías que todavía no tienen factura (lo que falta facturar)">Filtrar por documentos</label>
             <div style={{ display: "flex", gap: 6 }}>
               {[
                 { key: "oc", label: "OC", value: flagOc, set: (v) => { setFlagOc(v); if (v) setFlagSinDocs(false); }, color: "#1d4ed8", bg: "#dbeafe" },
@@ -2815,6 +2865,12 @@ export default function Trazabilidad() {
                 </button>
               ))}
             </div>
+            {/* (2026-11-26) Qué se está viendo cuando el filtro recorta las filas. */}
+            {verSoloPorFacturar && (
+              <div className="aviso-por-facturar" style={{ fontSize: 11.5, color: "#b45309", fontWeight: 600, marginTop: 4, lineHeight: 1.3 }}>
+                Solo guías sin factura (por facturar).
+              </div>
+            )}
           </div>
 
           {/* (2026-10-22) Un solo «Limpiar filtros»: antes convivían el botón
@@ -2889,7 +2945,7 @@ export default function Trazabilidad() {
                 </tr>
               ) : (
                 dataOrdenada.flatMap((lic) => {
-                  const cycles = buildCycles(lic.id);
+                  const cycles = buildCycles(lic.id, true);
                   const guias = getGuias(lic.id);
                   const emailCreador = (lic.creado_por || "").trim().toLowerCase();
                   const nombreCreador = usuariosMap[emailCreador] || emailCreador;
