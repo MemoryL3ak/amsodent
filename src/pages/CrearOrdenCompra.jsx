@@ -1,53 +1,18 @@
 // CrearOrdenCompra.jsx
 // Formulario de creación/edición de una Orden de Compra. Solo admin.
-// La búsqueda/selección de productos es la MISMA que en la
-// creación de cotización: react-select por SKU + ProductoPickerModal del
-// catálogo. Al elegir un producto se completa descripción y costo (valor
-// unitario de compra). Exporta a PDF con el formato de la marca.
+// (2026-11-26) El SKU de cada línea es un campo de TEXTO LIBRE (antes un
+// listbox del catálogo): se puede escribir cualquier código, también el del
+// proveedor. Si lo escrito calza con un SKU del catálogo y la línea aún no
+// tiene descripción, al salir del campo se completan descripción y costo. La
+// lupa junto a la descripción sigue abriendo el catálogo (ProductoPickerModal).
+// Exporta a PDF con el formato de la marca.
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import Select, { components } from "react-select";
 import { api } from "../lib/api";
 import useAuth from "../hooks/useAuth";
 import ProductoPickerModal from "../components/ProductoPickerModal";
 import { Plus, Trash2, FileDown, Save, ArrowLeft, Search } from "lucide-react";
 import { generarPDFOrdenCompra } from "../components/OrdenCompraDocument";
-
-/* ── Buscador react-select (idéntico a Crear Cotización) ──────────────── */
-const CAP_OPCIONES_SELECT = 60;
-const MenuListLimitada = (props) => {
-  const { children } = props;
-  if (Array.isArray(children) && children.length > CAP_OPCIONES_SELECT) {
-    return (
-      <components.MenuList {...props}>
-        {children.slice(0, CAP_OPCIONES_SELECT)}
-        <div style={{ padding: "8px 12px", fontSize: 12, color: "#64748b", textAlign: "center", borderTop: "1px solid #eef1f4" }}>
-          {children.length.toLocaleString("es-CL")} resultados — escribe para refinar la búsqueda
-        </div>
-      </components.MenuList>
-    );
-  }
-  return <components.MenuList {...props}>{children}</components.MenuList>;
-};
-function normalizarTexto(str) {
-  return (str ?? "").toString().toLowerCase().normalize("NFD")
-    .replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
-}
-function filtrarPorTerminos(option, inputValue) {
-  const q = normalizarTexto(inputValue);
-  if (!q) return true;
-  const label = normalizarTexto(option.label);
-  return q.split(" ").filter(Boolean).every((t) => label.includes(t));
-}
-const customStyles = {
-  control: (base) => ({ ...base, minHeight: "40px", fontSize: "13px", fontFamily: "inherit" }),
-  valueContainer: (base) => ({ ...base, fontSize: "13px", fontFamily: "inherit" }),
-  input: (base) => ({ ...base, fontSize: "13px", fontFamily: "inherit", color: "#333" }),
-  singleValue: (base) => ({ ...base, fontSize: "13px", fontFamily: "inherit" }),
-  option: (base, state) => ({ ...base, fontSize: "13px", fontFamily: "inherit", background: state.isFocused ? "#1A73E8" : "white", color: state.isFocused ? "white" : "#333", cursor: "pointer" }),
-  placeholder: (base) => ({ ...base, fontSize: "13px", fontFamily: "inherit" }),
-  menuPortal: (base) => ({ ...base, zIndex: 99999 }),
-};
 
 const hoyISO = () => {
   const d = new Date();
@@ -86,11 +51,6 @@ export default function CrearOrdenCompra() {
     productos.forEach((p) => { const sku = String(p.sku || "").trim().toUpperCase(); if (sku) m.set(sku, p); });
     return m;
   }, [productos]);
-  const opcionesSKU = useMemo(
-    () => productos.filter((p) => String(p.sku || "").trim() !== "")
-      .map((p) => ({ value: String(p.sku).trim(), label: String(p.sku).trim() })),
-    [productos],
-  );
 
   // Cargar (edición) o número correlativo (nuevo).
   useEffect(() => {
@@ -126,12 +86,17 @@ export default function CrearOrdenCompra() {
   function setItem(idx, patch) {
     setItems((prev) => prev.map((it, i) => (i === idx ? { ...it, ...patch } : it)));
   }
-  // Al elegir un SKU del listbox, completa descripción y costo del producto.
-  function seleccionarSku(idx, sku) {
-    const s = String(sku || "").trim();
-    const p = prodBySku.get(s.toUpperCase());
-    if (p) setItem(idx, { sku: s, descripcion: p.nombre || "", valor_unitario: Number(p.costo || 0) });
-    else setItem(idx, { sku: s });
+  // SKU de texto libre: al salir del campo, si calza con un SKU del catálogo
+  // y la línea no tiene descripción, completa descripción y costo. Nunca pisa
+  // lo que ya se escribió a mano.
+  function completarDesdeSku(idx) {
+    setItems((prev) => prev.map((it, i) => {
+      if (i !== idx) return it;
+      const s = String(it.sku || "").trim();
+      const p = prodBySku.get(s.toUpperCase());
+      if (!p || String(it.descripcion || "").trim()) return { ...it, sku: s };
+      return { ...it, sku: s, descripcion: p.nombre || "", valor_unitario: Number(it.valor_unitario || 0) > 0 ? it.valor_unitario : Number(p.costo || 0) };
+    }));
   }
   // Selección desde el ProductoPickerModal (mismo que en cotización).
   function seleccionarProductoDesdePicker(prod) {
@@ -307,18 +272,10 @@ export default function CrearOrdenCompra() {
                     <tr key={idx}>
                       <td style={{ textAlign: "center", color: "var(--text-muted)" }}>{idx + 1}</td>
                       <td>
-                        <Select
-                          options={opcionesSKU}
-                          styles={customStyles}
-                          placeholder="SKU…"
-                          menuPortalTarget={typeof document !== "undefined" ? document.body : null}
-                          isSearchable
-                          isClearable
-                          filterOption={filtrarPorTerminos}
-                          components={{ MenuList: MenuListLimitada }}
-                          value={opcionesSKU.find((o) => o.value === it.sku) || (it.sku ? { value: it.sku, label: it.sku } : null)}
-                          onChange={(op) => seleccionarSku(idx, op ? op.value : "")}
-                        />
+                        <input className={inputCls} value={it.sku || ""} placeholder="SKU" maxLength={80}
+                          onChange={(e) => setItem(idx, { sku: e.target.value })}
+                          onBlur={() => completarDesdeSku(idx)}
+                          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); completarDesdeSku(idx); } }} />
                       </td>
                       <td>
                         <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
@@ -335,7 +292,7 @@ export default function CrearOrdenCompra() {
                           onChange={(e) => setItem(idx, { cantidad: e.target.value })} style={{ textAlign: "center" }} />
                       </td>
                       <td>
-                        <input type="number" min="0" className={inputCls} value={it.valor_unitario}
+                        <input type="number" min="0" className={`${inputCls} no-spinner`} value={it.valor_unitario}
                           onChange={(e) => setItem(idx, { valor_unitario: e.target.value })} style={{ textAlign: "right" }} />
                       </td>
                       <td style={{ textAlign: "right", fontWeight: 600, whiteSpace: "nowrap" }}>{fmtCLP(it.total)}</td>
