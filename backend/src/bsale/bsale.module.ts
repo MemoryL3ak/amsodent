@@ -36,6 +36,7 @@ import { InventarioModule } from '../inventario/inventario.module';
   // Productos: un producto nuevo con SKU (o al que se le asigna uno) se crea en Bsale.
   // BsaleService: Gestión de compras lee lo despachado por producto (2026-10-16).
   // BsaleClientesService: los giros de la ficha del cliente van al `activity` de Bsale (2026-10-23).
-  exports: [BsaleProductosService, BsaleService, BsaleClientesService],
+  // BsaleLibre + BsaleFacturacion (2026-11-26): la tienda web emite sus pedidos como venta directa (TiendaWebModule).
+  exports: [BsaleProductosService, BsaleService, BsaleClientesService, BsaleLibreService, BsaleFacturacionService],
 })
 export class BsaleModule {}
