@@ -1,7 +1,7 @@
 import { BadRequestException, ConflictException, Injectable, Logger } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
 import { ProductosService } from './productos.service';
-import { AlertaCosto, DecisionCosto, LineaRecibida, ProductoCosto, alertasDeCosto, costoMayor } from './costos-recepcion';
+import { AlertaCosto, DecisionCosto, LineaRecibida, ProductoCosto, alertasDeCosto, costoMayor, preciosPedidosEnAlerta } from './costos-recepcion';
 
 /* ── Costos por confirmar tras una recepción de stock (2026-11-17) ───────────
    Ver costos-recepcion.ts (la regla). Este servicio lee las recepciones
@@ -95,7 +95,7 @@ export class CostosRecepcionService {
   }
 
   /** Aplica la decisión sobre una alerta: definitiva (cambia el costo) o momentánea (lo mantiene). */
-  async resolver(body: { linea_id?: number; decision?: string }, usuario: string | null) {
+  async resolver(body: { linea_id?: number; decision?: string; lista1?: any; lista2?: any }, usuario: string | null) {
     const lineaId = Number(body?.linea_id);
     const decision = body?.decision === 'definitiva' ? 'definitiva' : body?.decision === 'momentanea' ? 'momentanea' : null;
     if (!Number.isInteger(lineaId) || lineaId <= 0 || !decision) throw new BadRequestException('Indica la alerta y si el cambio de costo es definitivo o momentáneo.');
@@ -115,12 +115,24 @@ export class CostosRecepcionService {
 
     if (decision === 'momentanea' && !conDecision) throw new BadRequestException(MIGRACION);
 
+    // (2026-11-26) Con el alza definitiva se pueden cambiar además las listas 1 y 2.
+    let precios: { lista1?: number; lista2?: number } = {};
+    if (decision === 'definitiva') {
+      try {
+        precios = preciosPedidosEnAlerta(body, { lista1: vigente.lista1, lista2: vigente.lista2 });
+      } catch (e: any) {
+        throw new BadRequestException(String(e?.message || 'Precio de lista inválido.'));
+      }
+    }
+
     let costoFinal = vigente.costo_actual;
     if (decision === 'definitiva' && costoMayor(vigente.costo_recepcion, vigente.costo_actual)) {
       // Mismo camino que editar el costo: historial de precios, Bsale y cola del Sheet.
-      await this.productos.update(productoId, { costo: vigente.costo_recepcion }, usuario);
+      // El costo y las listas van en UNA sola actualización: un solo aviso de cambio de precio.
+      await this.productos.update(productoId, { costo: vigente.costo_recepcion, ...precios }, usuario);
       costoFinal = vigente.costo_recepcion;
     }
+    const listasCambiadas = (['lista1', 'lista2'] as const).filter((l) => precios[l] != null);
 
     let aviso: string | null = null;
     if (conDecision) {
@@ -142,8 +154,9 @@ export class CostosRecepcionService {
       sku: vigente.sku,
       costo_anterior: vigente.costo_actual,
       costo: costoFinal,
+      precios,
       mensaje: decision === 'definitiva'
-        ? `Costo de ${vigente.sku || vigente.nombre} actualizado: queda en el de la recepción.`
+        ? `Costo de ${vigente.sku || vigente.nombre} actualizado: queda en el de la recepción.${listasCambiadas.length ? ` También ${listasCambiadas.length === 1 ? 'cambió' : 'cambiaron'} ${listasCambiadas.map((l) => (l === 'lista1' ? 'la lista 1' : 'la lista 2')).join(' y ')}.` : ''}`
         : `El costo de ${vigente.sku || vigente.nombre} se mantiene: el alza quedó como momentánea.`,
       aviso,
     };

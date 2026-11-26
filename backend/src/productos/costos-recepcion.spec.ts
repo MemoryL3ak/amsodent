@@ -1,4 +1,4 @@
-import { alertasDeCosto, costoMayor, mensajeCostoMayor, ultimaPorProducto } from './costos-recepcion';
+import { alertasDeCosto, costoMayor, mensajeCostoMayor, preciosPedidosEnAlerta, ultimaPorProducto } from './costos-recepcion';
 
 const linea = (extra: any = {}) => ({ id: 1, recepcion_id: 10, producto_id: 100, sku: 'A-1', nombre: 'Resina', cantidad: 5, costo_unitario: 1200, costo_decision: null, documento: 'Factura N° 55', proveedor: 'Dental SA', fecha: '2026-11-17T12:00:00Z', usuario: 'f@x.cl', ...extra });
 const productos = (extra: any = {}) => new Map([[100, { id: 100, sku: 'A-1', nombre: 'Resina', marca: '3M', categoria: 'Operatoria', costo: 1000, lista1: 2000, lista2: 1500, lista3: 0, ...extra }]]);
@@ -53,5 +53,39 @@ describe('costo de la recepción mayor que el del producto', () => {
     expect(m).toContain('A-1, B-2, Sin SKU, C-3 y 1 más');
     expect(m).not.toMatch(/\$\s?\d/);
     expect(mensajeCostoMayor(3, [{ sku: 'A-1' }])).toContain('1 producto llegó');
+  });
+});
+
+describe('listas 1 y 2 junto al alza definitiva del costo (2026-11-26)', () => {
+  const actual = { lista1: 10000, lista2: 12000 };
+
+  it('sin precios pedidos no cambia ninguna lista', () => {
+    expect(preciosPedidosEnAlerta({}, actual)).toEqual({});
+    expect(preciosPedidosEnAlerta(null, actual)).toEqual({});
+    expect(preciosPedidosEnAlerta({ lista1: '', lista2: null }, actual)).toEqual({});
+  });
+
+  it('devuelve solo las listas que cambian, redondeadas a pesos', () => {
+    expect(preciosPedidosEnAlerta({ lista1: 11500.4, lista2: 12000 }, actual)).toEqual({ lista1: 11500 });
+    expect(preciosPedidosEnAlerta({ lista1: '10000', lista2: '13990' }, actual)).toEqual({ lista2: 13990 });
+  });
+
+  it('acepta poner precio a una lista que no lo tenía', () => {
+    expect(preciosPedidosEnAlerta({ lista1: 5000 }, { lista1: 0, lista2: 0 })).toEqual({ lista1: 5000 });
+  });
+
+  it('rechaza lo que no es un precio', () => {
+    expect(() => preciosPedidosEnAlerta({ lista1: 0 }, actual)).toThrow(/lista 1/);
+    expect(() => preciosPedidosEnAlerta({ lista2: -5 }, actual)).toThrow(/lista 2/);
+    expect(() => preciosPedidosEnAlerta({ lista1: 'abc' }, actual)).toThrow(/lista 1/);
+    expect(() => preciosPedidosEnAlerta({ lista2: 1e12 }, actual)).toThrow(/demasiado alto/);
+  });
+
+  it('la alerta trae los precios vigentes de las listas 1 y 2', () => {
+    const lineas: any[] = [{ id: 1, recepcion_id: 9, producto_id: 5, cantidad: 2, costo_unitario: 700, created_at: '2026-11-20T10:00:00Z' }];
+    const productos = new Map<number, any>([[5, { id: 5, sku: 'X-1', nombre: 'Prueba', costo: 500, lista1: 1000, lista2: 1200 }]]);
+    const [a] = alertasDeCosto(lineas as any, productos as any);
+    expect(a.lista1).toBe(1000);
+    expect(a.lista2).toBe(1200);
   });
 });

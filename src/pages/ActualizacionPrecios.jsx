@@ -1074,13 +1074,24 @@ function PestanaHistorial({ cambios }) {
      · Definitiva → el costo del producto pasa a ser el de la recepción (queda
        en el historial y sigue a Bsale y al Sheet como cualquier cambio).
      · Momentánea → el costo se mantiene y la alerta se cierra.
-   La ventana de confirmación muestra antes cómo queda el margen de cada lista. */
+   La ventana de confirmación muestra antes cómo queda el margen de cada lista.
+   (2026-11-26) Con el alza DEFINITIVA la misma ventana deja cambiar además los
+   precios de las listas 1 y 2 (pedido de Ariel): vienen con el precio vigente,
+   «Mantener el margen» propone el que conserva el margen de antes, y se ve el
+   margen que resulta mientras se escribe. Si no se tocan, las listas no cambian. */
+const soloDigitos = (v) => String(v ?? "").replace(/[^\d]/g, "").slice(0, 9);
+const margenDe = (precio, costo) => (Number(precio) > 0 ? Math.round(((Number(precio) - Number(costo)) / Number(precio)) * 1000) / 10 : null);
 const NOMBRE_LISTA = { lista1: "Lista 1", lista2: "Lista 2", lista3: "Lista 3" };
 const pct = (m) => (m == null ? "—" : `${Number(m).toLocaleString("es-CL", { maximumFractionDigits: 1 })} %`);
 function PestanaCostos({ costos, onResuelto, setToast }) {
   const [pagina, setPagina] = useState(1);
   const [decidir, setDecidir] = useState(null); // { alerta, decision }
+  const [precios, setPrecios] = useState({ lista1: "", lista2: "" }); // listas 1 y 2 del alza definitiva
   const [ocupado, setOcupado] = useState(null); // linea_id
+  const abrirDecision = (alerta, decision) => {
+    setPrecios({ lista1: alerta.lista1 > 0 ? String(Math.round(alerta.lista1)) : "", lista2: alerta.lista2 > 0 ? String(Math.round(alerta.lista2)) : "" });
+    setDecidir({ alerta, decision });
+  };
   const POR = 12;
   const alertas = costos?.alertas || [];
   const paginaActual = Math.min(pagina, Math.max(1, Math.ceil(alertas.length / POR)));
@@ -1092,7 +1103,11 @@ function PestanaCostos({ costos, onResuelto, setToast }) {
     if (!alerta) return;
     setOcupado(alerta.linea_id);
     try {
-      const r = await api.post("/precios-sheet/costos-recepcion/resolver", { linea_id: alerta.linea_id, decision });
+      // Las listas viajan solo con el alza definitiva y solo si se escribió un precio.
+      const listas = decision === "definitiva"
+        ? Object.fromEntries(["lista1", "lista2"].filter((l) => precios[l] !== "").map((l) => [l, Number(precios[l])]))
+        : {};
+      const r = await api.post("/precios-sheet/costos-recepcion/resolver", { linea_id: alerta.linea_id, decision, ...listas });
       setToast({ type: r?.aviso ? "warning" : "success", message: [r?.mensaje, r?.aviso].filter(Boolean).join(" ") || "Listo." });
       await onResuelto(decision);
     } catch (e) {
@@ -1154,10 +1169,10 @@ function PestanaCostos({ costos, onResuelto, setToast }) {
                 </td>
                 <td style={{ verticalAlign: "top" }}>
                   <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                    <button type="button" className="btn btn-primary btn-sm" disabled={ocupado != null} onClick={() => setDecidir({ alerta: x, decision: "definitiva" })} title="El costo del producto pasa a ser el de la recepción">
+                    <button type="button" className="btn btn-primary btn-sm" disabled={ocupado != null} onClick={() => abrirDecision(x, "definitiva")} title="El costo del producto pasa a ser el de la recepción; en la confirmación puedes ajustar además las listas 1 y 2">
                       {ocupado === x.linea_id ? <Loader2 size={13} className="spin" /> : null} Definitiva
                     </button>
-                    <button type="button" className="btn btn-secondary btn-sm" disabled={ocupado != null || costos.con_decision === false} onClick={() => setDecidir({ alerta: x, decision: "momentanea" })} title={costos.con_decision === false ? "Falta aplicar la migración para poder anotar que es momentánea" : "El costo del producto se mantiene y la alerta se cierra"}>
+                    <button type="button" className="btn btn-secondary btn-sm" disabled={ocupado != null || costos.con_decision === false} onClick={() => abrirDecision(x, "momentanea")} title={costos.con_decision === false ? "Falta aplicar la migración para poder anotar que es momentánea" : "El costo del producto se mantiene y la alerta se cierra"}>
                       Momentánea
                     </button>
                   </div>
@@ -1173,18 +1188,57 @@ function PestanaCostos({ costos, onResuelto, setToast }) {
         open={!!decidir}
         title={decidir?.decision === "definitiva" ? "Alza definitiva: actualizar el costo" : "Alza momentánea: mantener el costo"}
         confirmTone={decidir?.decision === "definitiva" ? "primary" : "warning"}
-        confirmText={decidir?.decision === "definitiva" ? "Actualizar el costo" : "Mantener el costo"}
+        confirmText={decidir?.decision === "definitiva" ? (a && ["lista1", "lista2"].some((l) => precios[l] !== "" && Number(precios[l]) !== Math.round(Number(a[l]) || 0)) ? "Actualizar costo y precios" : "Actualizar el costo") : "Mantener el costo"}
         onConfirm={resolver}
         onCancel={() => setDecidir(null)}
         message={a ? (
           <span style={{ display: "block" }}>
             <b>{a.sku || a.nombre}</b>{a.sku ? ` · ${a.nombre}` : ""}<br />
             {decidir.decision === "definitiva"
-              ? <>El costo pasa de <b>{a.costo_actual > 0 ? clp(a.costo_actual) : "sin costo"}</b> a <b>{clp(a.costo_recepcion)}</b>. Queda en el historial de precios y se envía al Sheet. Los precios de las listas no cambian.</>
+              ? <>El costo pasa de <b>{a.costo_actual > 0 ? clp(a.costo_actual) : "sin costo"}</b> a <b>{clp(a.costo_recepcion)}</b>. Queda en el historial de precios y se envía al Sheet. Si quieres, ajusta aquí mismo las listas 1 y 2.</>
               : <>El costo se mantiene en <b>{a.costo_actual > 0 ? clp(a.costo_actual) : "sin costo"}</b> aunque la recepción llegó a {clp(a.costo_recepcion)}. La alerta se cierra; si otra recepción vuelve a llegar más cara, aparecerá de nuevo.</>}
-            {(a.margenes || []).length > 0 && (
+            {decidir.decision === "definitiva" && (
+              <span className="listas-alza-costo" style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end", marginTop: 10 }}>
+                {["lista1", "lista2"].map((l) => {
+                  const antes = Number(a[l]) || 0;
+                  const valor = precios[l];
+                  const cambia = valor !== "" && Number(valor) !== Math.round(antes);
+                  const m = margenDe(valor === "" ? antes : valor, a.costo_recepcion);
+                  return (
+                    <label key={l} style={{ flex: "1 1 130px", minWidth: 0, display: "block" }}>
+                      <span style={{ display: "block", fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px", color: "var(--text-muted)", marginBottom: 3 }}>{NOMBRE_LISTA[l]} (neto)</span>
+                      <input
+                        className={`input campo-${l}-alza`}
+                        inputMode="numeric"
+                        value={valor}
+                        onChange={(e) => setPrecios((p) => ({ ...p, [l]: soloDigitos(e.target.value) }))}
+                        placeholder={antes > 0 ? String(Math.round(antes)) : "Sin precio"}
+                        style={{ width: "100%", height: 34, textAlign: "right", borderColor: cambia ? "var(--primary)" : undefined }}
+                      />
+                      <span style={{ display: "block", fontSize: 11.5, marginTop: 3, color: m != null && m < 0 ? "#b91c1c" : "var(--text-muted)" }}>
+                        {cambia ? `Antes ${antes > 0 ? clp(antes) : "sin precio"} · ` : "Sin cambio · "}margen {pct(m)}
+                      </span>
+                    </label>
+                  );
+                })}
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm btn-mantener-margen"
+                  disabled={!(a.costo_actual > 0) || !(a.lista1 > 0 || a.lista2 > 0)}
+                  onClick={() => setPrecios({
+                    lista1: a.lista1 > 0 ? String(Math.round((a.lista1 * a.costo_recepcion) / a.costo_actual)) : "",
+                    lista2: a.lista2 > 0 ? String(Math.round((a.lista2 * a.costo_recepcion) / a.costo_actual)) : "",
+                  })}
+                  title={a.costo_actual > 0 ? "Sube cada lista en la misma proporción que el costo, para conservar el margen que tenía" : "El producto no tenía costo: no hay margen anterior que conservar"}
+                  style={{ height: 34, marginBottom: 19, whiteSpace: "nowrap" }}
+                >
+                  Mantener el margen
+                </button>
+              </span>
+            )}
+            {decidir.decision !== "definitiva" && (a.margenes || []).length > 0 && (
               <span style={{ display: "block", marginTop: 8, fontSize: 12.5 }}>
-                {decidir.decision === "definitiva" ? "Margen con el costo nuevo: " : "Margen real de lo recibido: "}
+                {"Margen real de lo recibido: "}
                 {a.margenes.map((m) => `${NOMBRE_LISTA[m.lista]} ${pct(m.actual)} → ${pct(m.nuevo)}`).join(" · ")}
               </span>
             )}

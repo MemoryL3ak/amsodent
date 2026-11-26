@@ -56,6 +56,9 @@ export interface AlertaCosto {
   categoria: string;
   costo_actual: number;
   costo_recepcion: number;
+  /** (2026-11-26) Precios netos vigentes de las listas 1 y 2 (0 = sin precio): la alerta deja cambiarlos junto al costo. */
+  lista1: number;
+  lista2: number;
   diferencia: number;
   /** % de alza sobre el costo actual; null si el producto no tenía costo. */
   alza_pct: number | null;
@@ -115,6 +118,8 @@ export function alertasDeCosto(lineas: LineaRecibida[], productos: Map<number, P
       categoria: String(p.categoria || ''),
       costo_actual: actual,
       costo_recepcion: recibido,
+      lista1: n(p.lista1),
+      lista2: l2,
       diferencia: Math.round((recibido - actual) * 100) / 100,
       alza_pct: actual > 0 ? Math.round(((recibido - actual) / actual) * 1000) / 10 : null,
       cantidad: n(l.cantidad),
@@ -129,6 +134,32 @@ export function alertasDeCosto(lineas: LineaRecibida[], productos: Map<number, P
   }
   // Las alzas más fuertes primero; los que no tenían costo, al final.
   return out.sort((a, b) => (b.alza_pct ?? -1) - (a.alza_pct ?? -1) || b.linea_id - a.linea_id);
+}
+
+/* (2026-11-26) Pedido de Ariel: «cuando en actualización de precios se
+   despliegue alerta de costo, permitir actualizar además el listado de precios
+   1 y 2». Al confirmar el alza como DEFINITIVA se pueden mandar los precios
+   nuevos de las listas 1 y 2. Esta función valida lo pedido y devuelve SOLO
+   las listas que de verdad cambian (vacío = no tocar). Precios netos enteros,
+   como en el resto de la plataforma. Lanza un Error con el motivo si algo no
+   es un precio válido. */
+export const PRECIO_LISTA_MAX = 999_999_999;
+export function preciosPedidosEnAlerta(
+  pedido: { lista1?: any; lista2?: any } | null | undefined,
+  actual: { lista1: number; lista2: number },
+): { lista1?: number; lista2?: number } {
+  const out: { lista1?: number; lista2?: number } = {};
+  for (const lista of ['lista1', 'lista2'] as const) {
+    const crudo = pedido?.[lista];
+    if (crudo === undefined || crudo === null || String(crudo).trim() === '') continue;
+    const valor = typeof crudo === 'number' ? crudo : Number(String(crudo).trim());
+    const nombre = lista === 'lista1' ? 'lista 1' : 'lista 2';
+    if (!Number.isFinite(valor) || valor <= 0) throw new Error(`El precio de la ${nombre} debe ser un número mayor que cero.`);
+    if (valor > PRECIO_LISTA_MAX) throw new Error(`El precio de la ${nombre} es demasiado alto.`);
+    const precio = Math.round(valor);
+    if (precio !== Math.round(n(actual[lista]))) out[lista] = precio;
+  }
+  return out;
 }
 
 /** Aviso de la campana tras registrar una recepción (sin montos: el costo no se difunde). */
