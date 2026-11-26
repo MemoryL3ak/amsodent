@@ -56,6 +56,12 @@ const COLOR_FUENTE = { comunidad: "badge-primary", sorteo: "badge-warning", even
 
 export default function ComunidadRegistros() {
   const [vista, setVista] = useStickyState("comunidad.vista", "lista"); // 'lista' | 'rastreo' | 'mailing'
+  // (2026-11-26) El aviso de aperturas de la campana llega con ?vista=mailing&envio=<id>: abre esa pestaña.
+  useEffect(() => {
+    const pedida = new URLSearchParams(window.location.search).get("vista");
+    if (["lista", "rastreo", "mailing"].includes(pedida)) setVista(pedida);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   // A quién apunta la pestaña Mailing: 'todos' | 'categorias' | 'filtro' | 'marcadas'.
   const [publicoMailing, setPublicoMailing] = useState("todos");
   const [registros, setRegistros] = useState([]);

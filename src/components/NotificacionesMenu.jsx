@@ -361,6 +361,15 @@ function getNotifVisuales(notif) {
       etiqueta: "Orden de compra",
     };
   }
+  // (2026-11-26) Personas que abrieron un mailing enviado por el usuario.
+  if (tipo === "mailing_apertura") {
+    return {
+      icono: Inbox,
+      color: "#0e7490",
+      bg: "#cffafe",
+      etiqueta: "Mailing abierto",
+    };
+  }
   // (2026-11-19) Evaluación 360°: formularios por responder o informe publicado (abre Mi Ficha).
   if (tipo === "rrhh_e360_pendiente" || tipo === "rrhh_e360_publicada") {
     return {

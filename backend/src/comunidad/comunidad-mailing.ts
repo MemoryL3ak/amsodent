@@ -18,7 +18,21 @@ import { CATEGORIAS_COMUNIDAD, FilaComunidad, nombreCategoria } from './comunida
 export const CID_IMAGEN = 'imagen-comunidad';
 export const MAX_DESTINATARIOS = 5000;
 const RE_CORREO = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const esc = (s: any) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+export const esc = (s: any) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+/** Una dirección web escrita por una persona: le pone https:// si falta y solo deja pasar http(s). `vacia` = no escribió nada. */
+export function leerUrl(v: any): { url: string | null; vacia: boolean } {
+  const s = String(v ?? '').trim();
+  if (!s) return { url: null, vacia: true };
+  const conProtocolo = /^https?:\/\//i.test(s) ? s : `https://${s}`;
+  try {
+    const u = new URL(conProtocolo);
+    if (!/^https?:$/.test(u.protocol) || !u.hostname.includes('.')) return { url: null, vacia: false };
+    return { url: u.toString(), vacia: false };
+  } catch {
+    return { url: null, vacia: false };
+  }
+}
 
 export interface DestinatarioMailing {
   correo: string;
@@ -94,26 +108,26 @@ export interface ContenidoMailing {
   imagen_url?: string | null; // a dónde lleva la imagen al pincharla
 }
 
-export function validarContenido(c: any): { contenido: ContenidoMailing; problemas: string[] } {
+/**
+ * `conPlantilla`: el cuerpo lo pone una plantilla de campaña (mailing-plantillas.ts),
+ * así que aquí solo se revisan el asunto y la imagen; el mensaje y el botón libres no cuentan.
+ */
+export function validarContenido(c: any, opciones: { conPlantilla?: boolean } = {}): { contenido: ContenidoMailing; problemas: string[] } {
   const problemas: string[] = [];
   const asunto = String(c?.asunto ?? '').replace(/\s+/g, ' ').trim().slice(0, 200);
-  const mensaje = String(c?.mensaje ?? '').replace(/\r/g, '').trim().slice(0, 20000);
+  const mensaje = opciones.conPlantilla ? '' : String(c?.mensaje ?? '').replace(/\r/g, '').trim().slice(0, 20000);
   const conImagen = c?.con_imagen === true || c?.con_imagen === 'true';
   if (asunto.length < 3) problemas.push('Escribe el asunto del correo.');
-  if (!mensaje && !conImagen) problemas.push('Escribe el mensaje (o adjunta una imagen).');
+  if (!mensaje && !conImagen && !opciones.conPlantilla) problemas.push('Escribe el mensaje (o adjunta una imagen).');
   const url = (v: any, que: string) => {
-    const s = String(v ?? '').trim();
-    if (!s) return null;
-    const conProtocolo = /^https?:\/\//i.test(s) ? s : `https://${s}`;
-    try {
-      const u = new URL(conProtocolo);
-      if (!/^https?:$/.test(u.protocol) || !u.hostname.includes('.')) throw new Error('x');
-      return u.toString();
-    } catch {
-      problemas.push(`El link ${que} no es una dirección web válida.`);
-      return null;
-    }
+    const r = leerUrl(v);
+    if (!r.url && !r.vacia) problemas.push(`El link ${que} no es una dirección web válida.`);
+    return r.url;
   };
+  if (opciones.conPlantilla) {
+    const imagenUrl = url(c?.imagen_url, 'de la imagen');
+    return { contenido: { asunto, mensaje: '', boton_texto: null, boton_url: null, con_imagen: conImagen, imagen_url: conImagen ? imagenUrl : null }, problemas };
+  }
   const botonTexto = String(c?.boton_texto ?? '').replace(/\s+/g, ' ').trim().slice(0, 60) || null;
   const botonUrl = url(c?.boton_url, 'del botón');
   if (botonTexto && !botonUrl && !problemas.some((p) => p.includes('del botón'))) problemas.push('El botón necesita su link.');
@@ -123,7 +137,7 @@ export function validarContenido(c: any): { contenido: ContenidoMailing; problem
 }
 
 /** El mensaje (texto simple) como HTML de correo: párrafos y saltos de línea; los links quedan pinchables. */
-function mensajeHtml(texto: string): string {
+export function mensajeHtml(texto: string): string {
   const conLinks = (t: string) => esc(t).replace(/(https?:\/\/[^\s<]+[^\s<.,;:!?)])/g, '<a href="$1" target="_blank" style="color:#1e9295;">$1</a>');
   return String(texto || '')
     .split(/\n{2,}/)
@@ -133,43 +147,63 @@ function mensajeHtml(texto: string): string {
     .join('');
 }
 
-/**
- * El correo completo de una persona (tablas y estilos en línea, como los demás
- * correos de la marca). `urlBaja` vacío = pie con «responde BAJA».
- */
-export function htmlMailing(c: ContenidoMailing, d: { nombre: string }, opciones: { logoUrl: string; urlBaja?: string | null; anio?: number }): string {
-  const cuerpo = mensajeHtml(personalizar(c.mensaje, d.nombre));
+export interface OpcionesMarco {
+  logoUrl: string;
+  urlBaja?: string | null; // vacío = pie con «responde BAJA»
+  anio?: number;
+  barra?: string; // color (CSS) de la franja de arriba; las plantillas de campaña ponen el suyo
+}
+
+/** La imagen adjunta (cid) a todo el ancho, pinchable si trae link. Fila de la tabla del correo. */
+export function filaImagenAdjunta(conImagen: boolean | undefined, imagenUrl?: string | null): string {
+  if (!conImagen) return '';
   const img = `<img src="cid:${CID_IMAGEN}" alt="" width="548" style="display:block;width:100%;max-width:548px;height:auto;border:0;border-radius:10px;" />`;
-  const imagen = c.con_imagen
-    ? `<tr><td style="padding:0 26px 18px;">${c.imagen_url ? `<a href="${esc(c.imagen_url)}" target="_blank" style="text-decoration:none;">${img}</a>` : img}</td></tr>`
-    : '';
-  const boton = c.boton_texto && c.boton_url
-    ? `<table role="presentation" cellpadding="0" cellspacing="0" align="center" style="margin:6px auto 18px;"><tr><td align="center" style="border-radius:12px;background:#1e9295;background:linear-gradient(135deg,#28aeb1,#1e9295);">
-        <a href="${esc(c.boton_url)}" target="_blank" style="display:inline-block;padding:13px 30px;color:#ffffff;font-size:15px;font-weight:bold;text-decoration:none;border-radius:12px;">${esc(c.boton_texto)}</a>
-      </td></tr></table>`
-    : '';
+  return `<tr><td style="padding:0 26px 18px;">${imagenUrl ? `<a href="${esc(imagenUrl)}" target="_blank" style="text-decoration:none;">${img}</a>` : img}</td></tr>`;
+}
+
+/**
+ * El marco común de todo mailing: fondo, franja de color, logo propio y pie con
+ * la baja. `filas` son las filas (<tr>) del cuerpo. Tablas y estilos en línea,
+ * 600 px, sin JS ni fuentes externas (Gmail y Outlook).
+ */
+export function marcoMailing(filas: string, opciones: OpcionesMarco): string {
   const baja = opciones.urlBaja
     ? `Si no quieres recibir más correos de Amsodent, <a href="${esc(opciones.urlBaja)}" target="_blank" style="color:#667085;text-decoration:underline;">date de baja aquí</a>.`
     : 'Si no quieres recibir más correos de Amsodent, responde este mensaje con la palabra BAJA.';
+  const barra = opciones.barra || 'background:#28aeb1;background:linear-gradient(90deg,#28aeb1,#6fd0d2,#1e9295);';
   return `
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#eef2f6;padding:28px 12px;font-family:Arial,Helvetica,sans-serif;">
   <tr><td align="center">
     <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:16px;overflow:hidden;border:1px solid #e4e7ec;">
-      <tr><td style="height:6px;background:#28aeb1;background:linear-gradient(90deg,#28aeb1,#6fd0d2,#1e9295);font-size:0;line-height:0;">&nbsp;</td></tr>
+      <tr><td style="height:6px;${barra}font-size:0;line-height:0;">&nbsp;</td></tr>
       <tr><td align="center" style="padding:24px 24px 16px;">
         <img src="${esc(opciones.logoUrl)}" alt="AMSODENT" width="160" style="display:block;width:160px;max-width:60%;height:auto;" />
       </td></tr>
-      ${imagen}
-      <tr><td style="padding:4px 26px 6px;">
-        ${cuerpo}
-        ${boton}
-      </td></tr>
+      ${filas}
       <tr><td style="padding:14px 26px;background:#f8fafc;border-top:1px solid #eef2f6;">
         <span style="color:#98a2b3;font-size:11.5px;line-height:1.5;">© ${opciones.anio || new Date().getFullYear()} AMSODENT MEDICAL · Recibes este correo porque eres parte de la Comunidad Amsodent.<br/>${baja}</span>
       </td></tr>
     </table>
   </td></tr>
 </table>`;
+}
+
+/**
+ * El correo simple completo de una persona (tablas y estilos en línea, como los
+ * demás correos de la marca). `urlBaja` vacío = pie con «responde BAJA».
+ */
+export function htmlMailing(c: ContenidoMailing, d: { nombre: string }, opciones: OpcionesMarco): string {
+  const cuerpo = mensajeHtml(personalizar(c.mensaje, d.nombre));
+  const boton = c.boton_texto && c.boton_url
+    ? `<table role="presentation" cellpadding="0" cellspacing="0" align="center" style="margin:6px auto 18px;"><tr><td align="center" style="border-radius:12px;background:#1e9295;background:linear-gradient(135deg,#28aeb1,#1e9295);">
+        <a href="${esc(c.boton_url)}" target="_blank" style="display:inline-block;padding:13px 30px;color:#ffffff;font-size:15px;font-weight:bold;text-decoration:none;border-radius:12px;">${esc(c.boton_texto)}</a>
+      </td></tr></table>`
+    : '';
+  return marcoMailing(`${filaImagenAdjunta(c.con_imagen, c.imagen_url)}
+      <tr><td style="padding:4px 26px 6px;">
+        ${cuerpo}
+        ${boton}
+      </td></tr>`, opciones);
 }
 
 /* ── Enlace de baja: el correo viaja firmado, así nadie puede dar de baja a otra persona adivinando la dirección. */

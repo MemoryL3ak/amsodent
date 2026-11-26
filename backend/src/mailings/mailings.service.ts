@@ -4,6 +4,15 @@ import * as crypto from 'crypto';
 import * as dns from 'dns';
 import { SupabaseService } from '../supabase/supabase.service';
 import { MonitorService } from '../monitor/monitor.service';
+import {
+  TIPO_MAILING_APERTURA, avisoApertura, baseApiPublica, conPixelApertura, decidirAvisoApertura, esBaseLocal, esTokenApertura,
+} from '../comunidad/mailing-aperturas';
+
+/* Columnas de 20261126_mailing_aperturas.sql (contador y última apertura). Sin
+   esa migración el seguimiento sigue funcionando con lo que ya había (primera
+   apertura); solo no se sabe cuántas veces se abrió. */
+const sinColumna = (e: any) => /^(42703|PGRST204)$/.test(String(e?.code || '')) || /does not exist|schema cache|could not find/i.test(String(e?.message || ''));
+const SEGUNDOS_ENTRE_REVISIONES_AVISO = 30;
 
 const BATCH_SIZE = 500; // Gmail/Workspace permite hasta 500 destinatarios por mensaje (modo BCC)
 const DELAY_BETWEEN_BATCHES_MS = 1500;
@@ -96,12 +105,22 @@ export class MailingsService {
     return this.transporter;
   }
 
+  /* (2026-11-26) A dónde apunta el píxel de apertura. Antes era PUBLIC_API_URL o
+     localhost: sin esa variable en el servidor, todos los correos salían con el
+     píxel apuntando a localhost y ninguna apertura quedaba registrada. Ahora,
+     si falta, se usa la dirección por la que llegó la petición de envío
+     (`desdePeticion`) o el dominio público que pone Railway. */
+  urlBaseAperturas(desdePeticion?: string | null): string {
+    return baseApiPublica(process.env as Record<string, string | undefined>, desdePeticion);
+  }
+
+  /** false = el servidor no tiene dirección pública: el correo sale, pero no se sabrá quién lo abrió. */
+  aperturasRastreables(desdePeticion?: string | null): boolean {
+    return !esBaseLocal(this.urlBaseAperturas(desdePeticion));
+  }
+
   private getApiBaseUrl(): string {
-    return (
-      process.env.PUBLIC_API_URL ||
-      process.env.API_URL ||
-      `http://localhost:${process.env.PORT || 3001}/api`
-    );
+    return this.urlBaseAperturas();
   }
 
   async sendBulkBCC(opts: SendBulkOptions): Promise<SendBulkResult> {
@@ -250,11 +269,7 @@ export class MailingsService {
     const errores: Array<{ lote: number; mensaje: string; email?: string }> = [];
 
     for (const row of destInsertados) {
-      const trackingPixel =
-        `<img src="${baseUrl}/mailings/track/open?t=${encodeURIComponent(row.token)}" ` +
-        `width="1" height="1" border="0" alt="" ` +
-        `style="display:block;width:1px;height:1px;border:0;" />`;
-      const htmlConPixel = `${opts.cuerpoHtml}${trackingPixel}`;
+      const htmlConPixel = conPixelApertura(opts.cuerpoHtml, baseUrl, row.token);
 
       try {
         await transporter.sendMail({
@@ -333,6 +348,8 @@ export class MailingsService {
     origen?: string;
     detalle?: Record<string, any>;
     pausaMs?: number;
+    /** Dirección pública del backend (…/api) vista desde la petición; solo se usa si falta PUBLIC_API_URL. */
+    apiBaseUrl?: string | null;
   }): Promise<{ envioId: number; total: number }> {
     const unicos = Array.from(new Set((opts.destinatarios || []).map((e) => String(e || '').trim().toLowerCase()).filter((e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e))));
     if (!unicos.length) throw new BadRequestException('No hay destinatarios válidos.');
@@ -362,7 +379,7 @@ export class MailingsService {
       filas.push(...(data as any[]));
     }
 
-    const baseUrl = this.getApiBaseUrl();
+    const baseUrl = this.urlBaseAperturas(opts.apiBaseUrl);
     const adjuntos = (opts.inlineAttachments || []).map((a) => ({ filename: a.filename, content: a.content, contentType: a.contentType, cid: a.cid }));
     const pausa = Math.max(0, opts.pausaMs ?? 250);
     this.enCurso.add(envioId);
@@ -373,8 +390,7 @@ export class MailingsService {
         for (let i = 0; i < filas.length; i++) {
           const fila = filas[i];
           try {
-            const pixel = `<img src="${baseUrl}/mailings/track/open?t=${encodeURIComponent(fila.token)}" width="1" height="1" border="0" alt="" style="display:block;width:1px;height:1px;border:0;" />`;
-            const html = `${opts.htmlPara(fila.email)}${pixel}`;
+            const html = conPixelApertura(opts.htmlPara(fila.email), baseUrl, fila.token);
             await transporter.sendMail({
               from,
               to: fila.email,
@@ -509,29 +525,125 @@ export class MailingsService {
   }
 
   // ── Tracking de aperturas ────────────────────────────────────────────
+  /* (2026-11-26) Cada carga del píxel: la primera deja `abierto_at`; todas suman
+     al contador y mueven `ultima_apertura_at` (columnas de la migración
+     20261126; si faltan, se sigue anotando solo la primera, como antes). La
+     primera apertura de cada persona, además, puede avisar a quien envió
+     (ver la regla en comunidad/mailing-aperturas.ts). Nunca lanza: el píxel
+     responde su imagen pase lo que pase. */
+  private sinContadorHasta = 0; // si faltan las columnas, no se vuelve a probar por 10 minutos
+
   async registrarApertura(token: string, userAgent?: string): Promise<void> {
-    if (!token) return;
+    if (!esTokenApertura(token)) return;
+    try {
+      const client = this.supabase.getClient();
+      let conContador = Date.now() >= this.sinContadorHasta;
+      let fila: any = null;
+      if (conContador) {
+        const r = await client.from('mailings_destinatarios').select('id, envio_id, abierto_at, aperturas').eq('token', token).maybeSingle();
+        if (r.error && sinColumna(r.error)) {
+          conContador = false;
+          this.sinContadorHasta = Date.now() + 10 * 60_000;
+        } else if (r.error) {
+          return;
+        } else {
+          fila = r.data;
+        }
+      }
+      if (!conContador) {
+        const r = await client.from('mailings_destinatarios').select('id, envio_id, abierto_at').eq('token', token).maybeSingle();
+        if (r.error) return;
+        fila = r.data;
+      }
+      if (!fila) return; // token que no existe (o envío ya eliminado)
+
+      const ahora = new Date().toISOString();
+      const primera = !fila.abierto_at;
+      const cambios: Record<string, any> = {};
+      if (primera) {
+        cambios.abierto_at = ahora;
+        cambios.user_agent = userAgent ? userAgent.slice(0, 400) : null;
+      }
+      if (conContador) {
+        cambios.aperturas = (Number(fila.aperturas) || 0) + 1;
+        cambios.ultima_apertura_at = ahora;
+      }
+      if (!Object.keys(cambios).length) return;
+      const { error } = await client.from('mailings_destinatarios').update(cambios).eq('id', fila.id);
+      if (error) {
+        this.logger.warn(`Apertura sin anotar (destinatario ${fila.id}): ${error.message}`);
+        return;
+      }
+      if (primera && fila.envio_id) this.programarAvisoApertura(Number(fila.envio_id));
+    } catch (e: any) {
+      this.logger.warn(`Apertura sin anotar: ${e?.message || e}`);
+    }
+  }
+
+  /* Los avisos se revisan a lo más una vez cada 30 s por envío: cuando un
+     mailing grande empieza a abrirse llegan muchas aperturas juntas y basta
+     con mirar el total una vez (la última revisión queda programada, así el
+     número del aviso termina al día). */
+  private avisosProgramados = new Map<number, NodeJS.Timeout>();
+  private ultimaRevisionAviso = new Map<number, number>();
+
+  private programarAvisoApertura(envioId: number) {
+    if (this.avisosProgramados.has(envioId)) return;
+    const espera = Math.max(0, (this.ultimaRevisionAviso.get(envioId) || 0) + SEGUNDOS_ENTRE_REVISIONES_AVISO * 1000 - Date.now());
+    const t = setTimeout(() => {
+      this.avisosProgramados.delete(envioId);
+      this.ultimaRevisionAviso.set(envioId, Date.now());
+      void this.avisarAperturas(envioId).catch((e) => this.logger.warn(`Envío ${envioId}: aviso de aperturas sin escribir: ${e?.message || e}`));
+    }, espera);
+    t.unref?.();
+    this.avisosProgramados.set(envioId, t);
+  }
+
+  /**
+   * Escribe (o pone al día) el aviso de la campana de quien envió. Devuelve qué
+   * hizo, para las pruebas. La decisión es de `decidirAvisoApertura`.
+   */
+  async avisarAperturas(envioId: number): Promise<'crear' | 'actualizar' | 'nada'> {
     const client = this.supabase.getClient();
-    const { data, error } = await client
-      .from('mailings_destinatarios')
-      .select('id, abierto_at')
-      .eq('token', token)
-      .maybeSingle();
+    let { data: envio, error } = await client.from('mailings_envios').select('id, asunto, total, enviados, creado_por, origen').eq('id', envioId).maybeSingle();
+    // Sin la migración 20261119 no existe `origen`: el aviso sale igual.
+    if (error && sinColumna(error)) ({ data: envio, error } = (await client.from('mailings_envios').select('id, asunto, total, enviados, creado_por').eq('id', envioId).maybeSingle()) as any);
+    if (error || !envio) return 'nada';
 
-    if (error || !data) {
-      this.logger.warn(`Token de tracking no encontrado: ${token.slice(0, 8)}…`);
-      return;
-    }
+    // Cuenta acotada a los destinatarios de ESTE envío (índice por envio_id; a lo más unos miles de filas).
+    // Se leen los ids en vez de pedir un `count: 'exact'` (regla del proyecto tras el
+    // incidente del 23-10: nada de conteos exactos en producción). El tope de filas de
+    // la API (1.000) alcanza de sobra para los envíos de hoy (~400 destinatarios).
+    const { data: abiertos, error: errCuenta } = await client.from('mailings_destinatarios').select('id').eq('envio_id', envioId).not('abierto_at', 'is', null).limit(5000);
+    if (errCuenta) return 'nada';
+    const aviso = avisoApertura(envio as any, ((abiertos as any[]) || []).length);
+    if (!aviso) return 'nada'; // envío sin autor conocido
 
-    if (!data.abierto_at) {
-      await client
-        .from('mailings_destinatarios')
-        .update({
-          abierto_at: new Date().toISOString(),
-          user_agent: userAgent ? userAgent.slice(0, 400) : null,
-        })
-        .eq('id', data.id);
+    const { data: previos, error: errPrevio } = await client.from('notificaciones')
+      .select('id, leida_at, creado_at, metadata')
+      .eq('tipo', TIPO_MAILING_APERTURA)
+      .eq('metadata->>envio_id', String(envioId))
+      .order('id', { ascending: false })
+      .limit(1);
+    if (errPrevio) {
+      this.logger.warn(`Envío ${envioId}: no se leyó el aviso de aperturas anterior: ${errPrevio.message}`);
+      return 'nada';
     }
+    const previo = (previos || [])[0] as any;
+    const decision = decidirAvisoApertura({
+      abiertos: aviso.metadata.abiertos,
+      enviados: aviso.metadata.enviados,
+      previo: previo ? { abiertos: Number(previo.metadata?.abiertos) || 0, leida: !!previo.leida_at, creado_at: previo.creado_at } : null,
+    });
+    if (decision === 'crear') {
+      const { error: e } = await client.from('notificaciones').insert([{ user_email: aviso.destinatario, tipo: TIPO_MAILING_APERTURA, mensaje: aviso.mensaje, link: aviso.link, metadata: aviso.metadata }]);
+      if (e) this.logger.warn(`Envío ${envioId}: sin campana para ${aviso.destinatario}: ${e.message}`);
+    } else if (decision === 'actualizar') {
+      // El mismo aviso, con el número al día y arriba de la lista.
+      const { error: e } = await client.from('notificaciones').update({ mensaje: aviso.mensaje, metadata: aviso.metadata, creado_at: new Date().toISOString() }).eq('id', previo.id);
+      if (e) this.logger.warn(`Envío ${envioId}: no se actualizó el aviso de aperturas: ${e.message}`);
+    }
+    return decision;
   }
 
   async getUltimoEnvio() {

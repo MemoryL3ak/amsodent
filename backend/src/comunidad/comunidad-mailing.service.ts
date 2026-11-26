@@ -6,6 +6,7 @@ import { ComunidadService } from './comunidad.service';
 import {
   CID_IMAGEN, MAX_DESTINATARIOS, elegirDestinatarios, enlaceBaja, estadoDeEnvio, htmlMailing, leerEnlaceBaja, validarContenido,
 } from './comunidad-mailing';
+import { CAMPOS_PRODUCTO, MAX_PRODUCTOS, catalogoPlantillas, htmlPlantilla, nombreDePlantilla, plantillaUsaNombre, validarPlantilla } from './mailing-plantillas';
 
 /* ── Mailing a la Comunidad Amsodent (2026-11-19) ────────────────────────────
    Ver comunidad-mailing.ts (la lógica). Este servicio pone la base de datos y
@@ -18,9 +19,20 @@ import {
      · bajas    → quien pincha «date de baja» deja de recibir los mailings.
    La tabla `comunidad_bajas` y el origen del envío vienen de la migración
    20261119_comunidad_mailing.sql. Sin ella el mailing funciona igual, pero el
-   pie del correo pide responder «BAJA» (no hay enlace) y no hay historial. */
+   pie del correo pide responder «BAJA» (no hay enlace) y no hay historial.
 
-const FALTA_MIGRACION = 'Falta aplicar la migración 20261119_comunidad_mailing.sql en Supabase: sin ella no hay enlace para darse de baja ni historial de los envíos de Comunidad.';
+   (2026-11-26) Dos agregados:
+     · plantillas de campaña → el cuerpo puede salir de una plantilla
+       (mailing-plantillas.ts) en vez del mensaje libre; el mismo camino
+       simular → prueba → enviar sirve para las dos formas.
+     · aperturas → cada correo lleva su píxel; el seguimiento muestra quién
+       abrió, cuándo y cuántas veces, y quien envió recibe un aviso en la
+       campana (mailing-aperturas.ts). El contador y la última apertura vienen
+       de 20261126_mailing_aperturas.sql; sin ella se ve solo la primera. */
+
+const FALTA_MIGRACION_APERTURAS = 'Falta aplicar la migración 20261126_mailing_aperturas.sql en Supabase: se ve quién abrió cada correo y cuándo, pero no cuántas veces ni la última apertura.';
+const SIN_DIRECCION_PUBLICA = 'Este servidor no tiene una dirección pública (variable PUBLIC_API_URL): el correo sale igual, pero no se va a saber quién lo abrió.';
+const FALTA_MIGRACION ='Falta aplicar la migración 20261119_comunidad_mailing.sql en Supabase: sin ella no hay enlace para darse de baja ni historial de los envíos de Comunidad.';
 const noExiste = (e: any) => /^(42P01|42703|PGRST204|PGRST205)$/.test(String(e?.code || '')) || /does not exist|schema cache|could not find/i.test(String(e?.message || ''));
 const IMAGEN_MAX = 4 * 1024 * 1024;
 const AVISO_TOPE_DIARIO = 450;
@@ -79,8 +91,12 @@ export class ComunidadMailingService {
   }
 
   /* Todo lo que simular, la prueba y el envío comparten: a quiénes, qué y cómo se ve. */
-  private async preparar(body: any, imagen: Imagen) {
-    const { contenido, problemas } = validarContenido({ ...body, con_imagen: !!imagen || body?.con_imagen });
+  private async preparar(body: any, imagen: Imagen, baseApi?: string | null) {
+    // Con plantilla de campaña el cuerpo lo arma la plantilla; sin ella, el mensaje libre de siempre.
+    const clavePlantilla = String(body?.plantilla || '').trim();
+    const plantilla = clavePlantilla ? validarPlantilla(clavePlantilla, body?.plantilla_datos) : null;
+    const { contenido, problemas } = validarContenido({ ...body, con_imagen: !!imagen || body?.con_imagen }, { conPlantilla: !!plantilla });
+    if (plantilla) problemas.push(...plantilla.problemas);
     const errImagen = this.validarImagen(imagen);
     if (errImagen) problemas.push(errImagen);
     const [filas, bajas] = await Promise.all([this.comunidad.listar(), this.leerBajas()]);
@@ -90,17 +106,51 @@ export class ComunidadMailingService {
     if (!bajas.listo) avisos.push(FALTA_MIGRACION);
     if (!this.mailings.smtpConfigurado()) avisos.push('El servidor no tiene configurado el correo de envío (SMTP_USER / SMTP_PASS): el mailing no puede salir desde aquí.');
     if (seleccion.destinatarios.length > AVISO_TOPE_DIARIO) avisos.push(`Son ${seleccion.destinatarios.length.toLocaleString('es-CL')} correos: Gmail limita los envíos diarios de la cuenta (500 en una cuenta común, 2.000 en Workspace). Si el tope se alcanza, los que falten quedan como fallidos.`);
-    if (/\{\s*nombre\s*\}/i.test(contenido.mensaje)) {
+    const aperturas = this.mailings.aperturasRastreables(baseApi);
+    if (!aperturas) avisos.push(SIN_DIRECCION_PUBLICA);
+    if (plantilla ? plantillaUsaNombre(plantilla.datos) : /\{\s*nombre\s*\}/i.test(contenido.mensaje)) {
       const sinNombre = seleccion.destinatarios.filter((d) => !d.nombre).length;
       if (sinNombre) avisos.push(`${sinNombre} destinatario(s) no tienen nombre: su saludo sale sin él.`);
     }
-    const htmlDe = (d: { correo: string; nombre: string }) =>
-      htmlMailing(contenido, d, { logoUrl: LOGO_AMSODENT_URL, urlBaja: bajas.listo ? enlaceBaja(APP_PUBLICA_URL, d.correo, this.secreto()) : null });
-    return { contenido, problemas, avisos, seleccion, bajas, htmlDe };
+    const htmlDe = (d: { correo: string; nombre: string }) => {
+      const marco = { logoUrl: LOGO_AMSODENT_URL, urlBaja: bajas.listo ? enlaceBaja(APP_PUBLICA_URL, d.correo, this.secreto()) : null };
+      return plantilla?.clave
+        ? htmlPlantilla(plantilla.clave, plantilla.datos, d, { ...marco, conImagen: contenido.con_imagen, imagenUrl: contenido.imagen_url })
+        : htmlMailing(contenido, d, marco);
+    };
+    return { contenido, problemas, avisos, seleccion, bajas, htmlDe, plantilla: plantilla?.clave || null, aperturas };
   }
 
-  async simular(body: any, imagen: Imagen) {
-    const p = await this.preparar(body, imagen);
+  /* ── Plantillas de campaña (2026-11-26) ── */
+  /** El catálogo: cada plantilla con sus campos, con qué parte el formulario y su miniatura. */
+  plantillas() {
+    return {
+      plantillas: catalogoPlantillas({ appUrl: APP_PUBLICA_URL, logoUrl: LOGO_AMSODENT_URL }),
+      campos_producto: CAMPOS_PRODUCTO.map((c) => ({ clave: c.clave, etiqueta: c.etiqueta, tipo: c.tipo, obligatorio: !!c.obligatorio, max: c.max || null, corto: !!c.corto, ejemplo: String(c.ejemplo ?? '') })),
+      max_productos: MAX_PRODUCTOS,
+      cid_imagen: CID_IMAGEN,
+    };
+  }
+
+  /**
+   * Cómo queda la plantilla con lo escrito hasta ahora. No lee la comunidad ni
+   * envía nada: es para ver el correo mientras se llena el formulario (saludo
+   * de ejemplo «Ana»; lo que falta no se dibuja y se lista en `problemas`).
+   */
+  vistaPreviaPlantilla(body: any) {
+    const v = validarPlantilla(body?.plantilla, body?.plantilla_datos ?? body?.datos);
+    if (!v.clave) throw new BadRequestException(v.problemas[0]);
+    const conImagen = body?.con_imagen === true || body?.con_imagen === 'true';
+    return {
+      plantilla: v.clave,
+      problemas: v.problemas,
+      cid_imagen: CID_IMAGEN,
+      html: htmlPlantilla(v.clave, v.datos, { nombre: 'Ana' }, { logoUrl: LOGO_AMSODENT_URL, urlBaja: `${APP_PUBLICA_URL}/comunidad/baja`, conImagen, borrador: true }),
+    };
+  }
+
+  async simular(body: any, imagen: Imagen, baseApi?: string | null) {
+    const p = await this.preparar(body, imagen, baseApi);
     const ejemplo = p.seleccion.destinatarios[0] || { correo: 'persona@ejemplo.cl', nombre: 'Ana' };
     return {
       simulacion: true,
@@ -119,6 +169,8 @@ export class ComunidadMailingService {
       cid_imagen: CID_IMAGEN,
       con_baja: p.bajas.listo,
       smtp: this.mailings.smtpConfigurado(),
+      plantilla: p.plantilla,
+      aperturas: p.aperturas,
     };
   }
 
@@ -147,8 +199,8 @@ export class ComunidadMailingService {
     return { ok: true, para: usuarioEmail };
   }
 
-  async enviar(body: any, imagen: Imagen, usuarioEmail: string | null) {
-    const p = await this.preparar(body, imagen);
+  async enviar(body: any, imagen: Imagen, usuarioEmail: string | null, baseApi?: string | null) {
+    const p = await this.preparar(body, imagen, baseApi);
     if (p.problemas.length) throw new BadRequestException(p.problemas.join(' '));
     if (!p.seleccion.destinatarios.length) throw new BadRequestException('Ninguna de las filas elegidas tiene un correo al que escribir.');
     // El envío real exige haber visto la simulación de ESTE mismo público.
@@ -168,7 +220,10 @@ export class ComunidadMailingService {
       inlineAttachments: this.adjuntos(imagen) as any,
       creadoPor: usuarioEmail,
       origen: 'comunidad',
+      apiBaseUrl: baseApi,
       detalle: {
+        plantilla: p.plantilla,
+        aperturas: p.aperturas,
         filas: p.seleccion.filas,
         excluidos: p.seleccion.excluidos,
         por_categoria: p.seleccion.por_categoria,
@@ -203,6 +258,9 @@ export class ComunidadMailingService {
       envios: envios.map((e) => ({
         id: e.id, asunto: e.asunto, total: e.total, con_imagen: !!e.con_flyer, creado_por: e.creado_por, creado_at: e.creado_at,
         publico: e.detalle?.publico || null, excluidos: e.detalle?.excluidos || null,
+        plantilla: nombreDePlantilla(e.detalle?.plantilla),
+        // false = salió desde un servidor sin dirección pública: sus aperturas no se pueden registrar.
+        aperturas: e.detalle?.aperturas !== false,
         ...estadoDeEnvio(Number(e.total) || 0, porEnvio.get(Number(e.id)) || [], this.mailings.envioEnCurso(Number(e.id))),
       })),
     };
@@ -214,13 +272,27 @@ export class ComunidadMailingService {
     if (error) throw new BadRequestException(noExiste(error) ? FALTA_MIGRACION : error.message);
     if (!e || (e as any).origen !== 'comunidad') throw new BadRequestException('Ese envío no es de Comunidad.');
     const dest: any[] = [];
+    // Con la migración 20261126 viene además cuántas veces lo abrió cada persona y la última vez.
+    let conContador = true;
     for (let desde = 0; desde < 20000; desde += 1000) {
-      const { data: d, error: err } = await this.db.from('mailings_destinatarios').select('email, enviado_at, abierto_at, fallo').eq('envio_id', id).order('email', { ascending: true }).range(desde, desde + 999);
+      const columnas = `email, enviado_at, abierto_at, fallo${conContador ? ', aperturas, ultima_apertura_at' : ''}`;
+      const { data: d, error: err } = await this.db.from('mailings_destinatarios').select(columnas).eq('envio_id', id).order('email', { ascending: true }).range(desde, desde + 999);
+      if (err && conContador && noExiste(err)) {
+        conContador = false;
+        desde -= 1000; // la misma página, sin las columnas nuevas
+        continue;
+      }
       if (err) throw new BadRequestException(err.message);
-      dest.push(...(d || []));
+      dest.push(...((d || []) as any[]));
       if (!d || d.length < 1000) break;
     }
-    return { envio: e, destinatarios: dest, ...estadoDeEnvio(Number((e as any).total) || 0, dest, this.mailings.envioEnCurso(id)) };
+    return {
+      envio: e,
+      destinatarios: dest,
+      con_contador: conContador,
+      aviso_aperturas: conContador ? null : FALTA_MIGRACION_APERTURAS,
+      ...estadoDeEnvio(Number((e as any).total) || 0, dest, this.mailings.envioEnCurso(id)),
+    };
   }
 
   async bajas() {

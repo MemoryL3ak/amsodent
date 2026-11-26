@@ -19,6 +19,7 @@ import { ComunidadMailingService } from './comunidad-mailing.service';
 import { RastreoService } from './rastreo.service';
 import { AuthGuard } from '../auth/auth.guard';
 import { ModuloGuard } from '../auth/modulo.guard';
+import { baseDesdePeticion } from './mailing-aperturas';
 
 function extractIp(req: any): string {
   const fwd = req.headers?.['x-forwarded-for'];
@@ -119,8 +120,23 @@ export class ComunidadController {
   @Post('mailing/simular')
   @UseGuards(AuthGuard, Comunidad)
   @UseInterceptors(FileInterceptor('imagen'))
-  mailingSimular(@Body() body: any, @UploadedFile() imagen?: Express.Multer.File) {
-    return this.mailing.simular(body, imagen);
+  mailingSimular(@Req() req: any, @Body() body: any, @UploadedFile() imagen?: Express.Multer.File) {
+    return this.mailing.simular(body, imagen, baseDesdePeticion(req));
+  }
+
+  /* (2026-11-26) Plantillas de campaña: el catálogo (campos y miniatura de cada
+     una) y la vista previa de lo que se va escribiendo. Ninguna de las dos lee
+     la comunidad ni envía nada. */
+  @Get('mailing/plantillas')
+  @UseGuards(AuthGuard, Comunidad)
+  mailingPlantillas() {
+    return this.mailing.plantillas();
+  }
+
+  @Post('mailing/plantillas/vista-previa')
+  @UseGuards(AuthGuard, Comunidad)
+  mailingVistaPreviaPlantilla(@Body() body: any) {
+    return this.mailing.vistaPreviaPlantilla(body);
   }
 
   @Post('mailing/prueba')
@@ -134,7 +150,7 @@ export class ComunidadController {
   @UseGuards(AuthGuard, Comunidad)
   @UseInterceptors(FileInterceptor('imagen'))
   mailingEnviar(@Req() req: any, @Body() body: any, @UploadedFile() imagen?: Express.Multer.File) {
-    return this.mailing.enviar(body, imagen, correoDe(req));
+    return this.mailing.enviar(body, imagen, correoDe(req), baseDesdePeticion(req));
   }
 
   @Get('mailing/envios')

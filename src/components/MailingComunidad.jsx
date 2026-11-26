@@ -1,8 +1,10 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, Eye, Image as ImageIcon, Loader2, Mail, MailX, RefreshCw, Send, Users, X } from "lucide-react";
 import { api } from "../lib/api";
 import ConfirmModal from "./ConfirmModal";
 import DropdownSelect from "./ui/DropdownSelect";
+import { CamposPlantilla, GaleriaPlantillas } from "./MailingPlantillas";
 import { CATEGORIAS_COMUNIDAD } from "../lib/comunidad";
 
 /* ── Mailing a la Comunidad Amsodent (2026-11-19) ────────────────────────────
@@ -19,7 +21,20 @@ import { CATEGORIAS_COMUNIDAD } from "../lib/comunidad";
       entonces «Enviar». «Enviarme una prueba» manda el correo solo a quien
       lo redacta.
    El envío corre en el servidor, uno por persona; abajo queda el historial con
-   el avance, las aperturas y los fallidos. */
+   el avance, las aperturas y los fallidos.
+
+   (2026-11-26) Dos agregados, pedidos por Ariel:
+   · Plantillas de campaña (presentación de la plataforma, productos nuevos,
+     lanzamiento de marca, workshop, hands-on y descuentos): en el paso 2 se
+     elige una en la galería y el mensaje libre se cambia por los campos de
+     esa plantilla; a la derecha se ve el correo mientras se escribe. El
+     diseño y los campos los define el servidor (components/
+     MailingPlantillas.jsx solo los dibuja). Simular y enviar siguen igual.
+   · Aperturas: el seguimiento muestra quién abrió, cuándo, cuántas veces y
+     el % por envío, y quien envió recibe un aviso en la campana (uno por
+     envío, que se va actualizando). La apertura es aproximada y así se dice. */
+
+const APERTURA_APROXIMADA = "La apertura es aproximada: no cuenta a quien tiene las imágenes bloqueadas, y Gmail o Apple Mail pueden cargarlas por su cuenta sin que la persona haya leído el correo.";
 
 const POR_PAGINA = 15;
 const RE_CORREO = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -69,8 +84,14 @@ function DetalleEnvio({ id }) {
   const lista = (datos.destinatarios || []).filter((d) => !ver || estadoDe(d) === ver);
   const paginas = Math.max(1, Math.ceil(lista.length / POR_PAGINA));
   const actual = Math.min(pagina, paginas);
+  const ultimaApertura = (datos.destinatarios || []).reduce((max, d) => { const f = d.ultima_apertura_at || d.abierto_at || ""; return f > max ? f : max; }, "");
   return (
     <div className="detalle-envio-comunidad" style={{ padding: "10px 14px 12px", background: "var(--bg)" }}>
+      <div className="resumen-aperturas-envio" style={{ fontSize: 12.5, marginBottom: 8 }}>
+        <b>{num(datos.abiertos)}</b> de {num(datos.enviados)} persona{datos.enviados === 1 ? "" : "s"} lo {datos.abiertos === 1 ? "abrió" : "abrieron"} · <b>{pct(datos.abiertos, datos.enviados)}</b> de apertura
+        {ultimaApertura ? <span style={{ color: "var(--text-muted)" }}> · última apertura {fechaHora(ultimaApertura)}</span> : null}
+      </div>
+      {datos.aviso_aperturas && <div style={{ marginBottom: 8 }}><Aviso>{datos.aviso_aperturas}</Aviso></div>}
       <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 8 }}>
         <DropdownSelect
           value={ver}
@@ -85,16 +106,16 @@ function DetalleEnvio({ id }) {
             { value: "pendiente", label: `Sin enviar (${num(datos.pendientes)})` },
           ]}
         />
-        <span style={suave}>La apertura se registra cuando el correo carga sus imágenes: algunos programas de correo las bloquean, así que el número real suele ser mayor.</span>
+        <span style={{ ...suave, flex: "1 1 260px", minWidth: 0 }}>{APERTURA_APROXIMADA}</span>
       </div>
       <div className="table-wrap" style={{ margin: 0 }}>
         <table className="data-table tabla-compacta tabla-texto tabla-destinatarios-envio" style={{ width: "100%", minWidth: 480, tableLayout: "fixed", fontSize: 12.5 }}>
           <thead>
             <tr>
               <th style={{ textAlign: "left" }}>Correo</th>
-              <th style={{ textAlign: "left", width: 150 }}>Enviado</th>
-              <th style={{ textAlign: "left", width: 150 }}>Abierto</th>
-              <th style={{ textAlign: "left", width: "26%" }}>Problema</th>
+              <th style={{ textAlign: "left", width: 140 }}>Enviado</th>
+              <th style={{ textAlign: "left", width: 190 }}>Abierto</th>
+              <th style={{ textAlign: "left", width: "24%" }}>Problema</th>
             </tr>
           </thead>
           <tbody>
@@ -103,7 +124,13 @@ function DetalleEnvio({ id }) {
               <tr key={d.email}>
                 <td style={{ overflowWrap: "anywhere" }}>{d.email}</td>
                 <td>{d.enviado_at ? fechaHora(d.enviado_at) : "—"}</td>
-                <td>{d.abierto_at ? fechaHora(d.abierto_at) : "—"}</td>
+                <td>
+                  {d.abierto_at ? fechaHora(d.abierto_at) : "—"}
+                  {/* Con la migración 20261126: cuántas veces lo abrió y la última. */}
+                  {d.abierto_at && Number(d.aperturas) > 1 ? (
+                    <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{num(d.aperturas)} veces{d.ultima_apertura_at ? ` · última ${fechaHora(d.ultima_apertura_at)}` : ""}</div>
+                  ) : null}
+                </td>
                 <td style={{ color: "#b91c1c", overflowWrap: "anywhere" }}>{d.fallo || ""}</td>
               </tr>
             ))}
@@ -135,10 +162,17 @@ export default function MailingComunidad({ registros, filtrados, marcadas, hayFi
   const [ocupado, setOcupado] = useState("");
   const [confirmar, setConfirmar] = useState(false);
   const [envios, setEnvios] = useState(null);
-  const [abierto, setAbierto] = useState(null);
+  // El aviso de aperturas de la campana trae ?envio=<id>: ese envío parte desplegado.
+  const [parametros] = useSearchParams();
+  const [abierto, setAbierto] = useState(() => Number(parametros.get("envio")) || null);
   const [bajas, setBajas] = useState(null);
   const [correoBaja, setCorreoBaja] = useState("");
   const inputImagen = useRef(null);
+  // Plantillas de campaña: el catálogo viene del servidor; "" = correo simple (mensaje libre).
+  const [catalogo, setCatalogo] = useState(null);
+  const [plantilla, setPlantilla] = useState("");
+  const [datosPlantillas, setDatosPlantillas] = useState({}); // lo escrito en cada plantilla, por clave: cambiar de una a otra no lo borra
+  const [previa, setPrevia] = useState(null); // { clave, html, problemas, cid, error }
 
   // Si el público elegido deja de existir (se quitaron las marcas o el filtro), vuelve a «toda la comunidad».
   const publicoVigente = (publico === "marcadas" && !marcadas.size) || (publico === "filtro" && !hayFiltros) ? "todos" : publico;
@@ -157,18 +191,27 @@ export default function MailingComunidad({ registros, filtrados, marcadas, hayFi
       ? `Categorías: ${CATEGORIAS_COMUNIDAD.filter((c) => categorias.includes(c.value)).map((c) => c.label).join(", ") || "ninguna"}`
       : publicoVigente === "filtro" ? "El filtro de la lista" : "Filas marcadas en la lista";
 
+  const plantillaActual = (catalogo?.plantillas || []).find((p) => p.clave === plantilla) || null;
+  const datosPlantilla = plantillaActual ? datosPlantillas[plantillaActual.clave] || plantillaActual.inicial : null;
+  const datosPlantillaJson = plantillaActual ? JSON.stringify(datosPlantilla) : "";
+
   const refs = useMemo(() => (publicoVigente === "todos" ? null : elegidas.map((r) => r.ref)), [publicoVigente, elegidas]);
-  const clave = JSON.stringify([publicoVigente, refs, asunto.trim(), mensaje.trim(), botonTexto.trim(), botonUrl.trim(), imagen ? `${imagen.name}:${imagen.size}` : "", imagenUrl.trim()]);
+  const clave = JSON.stringify([publicoVigente, refs, asunto.trim(), plantillaActual ? [plantillaActual.clave, datosPlantillaJson] : [mensaje.trim(), botonTexto.trim(), botonUrl.trim()], imagen ? `${imagen.name}:${imagen.size}` : "", imagenUrl.trim()]);
   const simVigente = !!sim && sim.clave === clave;
   const datosSim = simVigente ? sim.datos : null;
-  const puedeSimular = asunto.trim().length >= 3 && (mensaje.trim() || imagen) && elegidas.length > 0;
+  const puedeSimular = asunto.trim().length >= 3 && (plantillaActual || mensaje.trim() || imagen) && elegidas.length > 0;
 
   const cuerpo = (extra = {}) => {
     const fd = new FormData();
     fd.append("asunto", asunto);
-    fd.append("mensaje", mensaje);
-    fd.append("boton_texto", botonTexto);
-    fd.append("boton_url", botonUrl);
+    if (plantillaActual) {
+      fd.append("plantilla", plantillaActual.clave);
+      fd.append("plantilla_datos", datosPlantillaJson);
+    } else {
+      fd.append("mensaje", mensaje);
+      fd.append("boton_texto", botonTexto);
+      fd.append("boton_url", botonUrl);
+    }
     fd.append("imagen_url", imagenUrl);
     fd.append("publico", descripcionPublico);
     if (refs) fd.append("refs", JSON.stringify(refs));
@@ -185,6 +228,38 @@ export default function MailingComunidad({ registros, filtrados, marcadas, hayFi
     try { setBajas(await api.get("/comunidad/mailing/bajas")); } catch { setBajas({ listo: false, bajas: [] }); }
   }, []);
   useEffect(() => { cargarEnvios(); cargarBajas(); }, [cargarEnvios, cargarBajas]);
+
+  // El catálogo de plantillas. Si no llega (servidor sin actualizar), queda solo el correo simple.
+  useEffect(() => {
+    let vivo = true;
+    api.get("/comunidad/mailing/plantillas")
+      .then((r) => vivo && setCatalogo({ plantillas: [], ...r }))
+      .catch((e) => vivo && setCatalogo({ plantillas: [], error: e?.message || "No se pudieron leer las plantillas." }));
+    return () => { vivo = false; };
+  }, []);
+
+  function elegirPlantilla(nueva) {
+    const p = (catalogo?.plantillas || []).find((x) => x.clave === nueva);
+    setPlantilla(p ? p.clave : "");
+    if (!p) return;
+    // El asunto sugerido solo reemplaza a uno vacío o al sugerido por otra plantilla: lo que escribió la persona se respeta.
+    const sugeridos = catalogo.plantillas.map((x) => x.asunto);
+    if (!asunto.trim() || sugeridos.includes(asunto)) setAsunto(p.asunto);
+  }
+
+  // Vista previa de la plantilla mientras se escribe: la arma el servidor (no lee la comunidad ni envía nada).
+  const conImagen = !!imagen;
+  useEffect(() => {
+    if (!plantilla || !datosPlantillaJson) return undefined;
+    let vivo = true;
+    const t = setTimeout(() => {
+      api.post("/comunidad/mailing/plantillas/vista-previa", { plantilla, plantilla_datos: JSON.parse(datosPlantillaJson), con_imagen: conImagen })
+        .then((r) => vivo && setPrevia({ clave: plantilla, html: r?.html || "", problemas: r?.problemas || [], cid: r?.cid_imagen || "" }))
+        .catch((e) => vivo && setPrevia({ clave: plantilla, html: "", problemas: [], cid: "", error: e?.message || "No se pudo armar la vista previa." }));
+    }, 450);
+    return () => { vivo = false; clearTimeout(t); };
+  }, [plantilla, datosPlantillaJson, conImagen]);
+  const previaVigente = previa && plantillaActual && previa.clave === plantillaActual.clave ? previa : null;
   // Mientras haya un envío en curso, el historial se refresca solo.
   const hayEnCurso = (envios?.envios || []).some((e) => e.estado === "enviando");
   useEffect(() => {
@@ -278,6 +353,7 @@ export default function MailingComunidad({ registros, filtrados, marcadas, hayFi
   ];
   const excl = datosSim?.excluidos || null;
   const vistaPrevia = datosSim?.html ? datosSim.html.split(`cid:${datosSim.cid_imagen}`).join(imagenVista || "") : "";
+  const vistaPlantilla = previaVigente?.html ? (previaVigente.cid ? previaVigente.html.split(`cid:${previaVigente.cid}`).join(imagenVista || "") : previaVigente.html) : "";
   const minutos = datosSim ? Math.max(1, Math.round((datosSim.destinatarios * 0.7) / 60)) : 0;
 
   return (
@@ -325,15 +401,39 @@ export default function MailingComunidad({ registros, filtrados, marcadas, hayFi
 
           <div style={{ ...caja, display: "flex", flexDirection: "column", gap: 12 }} className="mailing-contenido">
             <h3 style={titulo}><Mail size={15} style={{ color: "var(--primary-dark)" }} /> 2. Qué se envía</h3>
+            {/* (2026-11-26) Plantillas de campaña: al elegir una, sus campos reemplazan al mensaje libre. */}
+            {(catalogo?.plantillas || []).length > 0 && (
+              <div className="mailing-plantillas">
+                <span style={etiqueta}>Plantilla</span>
+                <GaleriaPlantillas plantillas={catalogo.plantillas} valor={plantillaActual?.clave || ""} onElegir={elegirPlantilla} disabled={!!ocupado} />
+                <span style={{ ...suave, display: "block", marginTop: 6 }}>
+                  {plantillaActual
+                    ? <><b>{plantillaActual.nombre}.</b> {plantillaActual.descripcion} Completa sus datos: a la derecha se ve cómo va quedando.</>
+                    : "Elige una plantilla de campaña para partir de un diseño hecho, o sigue con el correo simple."}
+                </span>
+              </div>
+            )}
+            {catalogo?.error && <Aviso>No se pudieron cargar las plantillas de campaña ({catalogo.error}). El correo simple funciona igual.</Aviso>}
             <label>
               <span style={etiqueta}>Asunto</span>
               <input className="input campo-asunto-mailing" value={asunto} onChange={(e) => setAsunto(e.target.value.slice(0, 200))} placeholder="Ej.: Ofertas de noviembre para la comunidad Amsodent" disabled={!!ocupado} style={{ width: "100%" }} />
             </label>
-            <label>
-              <span style={etiqueta}>Mensaje</span>
-              <textarea className="input campo-mensaje-mailing" rows={9} value={mensaje} onChange={(e) => setMensaje(e.target.value.slice(0, 20000))} disabled={!!ocupado} placeholder="Escribe el correo. Una línea en blanco separa los párrafos." style={{ width: "100%", resize: "vertical", minHeight: 150, fontSize: 13.5, lineHeight: 1.5 }} />
-              <span style={{ ...suave, display: "block", marginTop: 4 }}><b>{"{nombre}"}</b> se reemplaza por el nombre de cada persona (o el de la clínica). Los links escritos completos (https://…) quedan pinchables. Va con el logo de Amsodent y el pie para darse de baja.</span>
-            </label>
+            {plantillaActual ? (
+              <CamposPlantilla
+                plantilla={plantillaActual}
+                datos={datosPlantilla}
+                onCambiar={(d) => setDatosPlantillas((prev) => ({ ...prev, [plantillaActual.clave]: d }))}
+                camposProducto={catalogo?.campos_producto}
+                maxProductos={catalogo?.max_productos}
+                disabled={!!ocupado}
+              />
+            ) : (
+              <label>
+                <span style={etiqueta}>Mensaje</span>
+                <textarea className="input campo-mensaje-mailing" rows={9} value={mensaje} onChange={(e) => setMensaje(e.target.value.slice(0, 20000))} disabled={!!ocupado} placeholder="Escribe el correo. Una línea en blanco separa los párrafos." style={{ width: "100%", resize: "vertical", minHeight: 150, fontSize: 13.5, lineHeight: 1.5 }} />
+                <span style={{ ...suave, display: "block", marginTop: 4 }}><b>{"{nombre}"}</b> se reemplaza por el nombre de cada persona (o el de la clínica). Los links escritos completos (https://…) quedan pinchables. Va con el logo de Amsodent y el pie para darse de baja.</span>
+              </label>
+            )}
             <div>
               <span style={etiqueta}>Imagen (opcional)</span>
               <input ref={inputImagen} type="file" accept="image/png,image/jpeg,image/gif,image/webp" style={{ display: "none" }} onChange={(e) => elegirImagen(e.target.files?.[0])} />
@@ -352,18 +452,20 @@ export default function MailingComunidad({ registros, filtrados, marcadas, hayFi
               {imagen && (
                 <input className="input" value={imagenUrl} onChange={(e) => setImagenUrl(e.target.value)} placeholder="Link al que lleva la imagen al pincharla (opcional)" disabled={!!ocupado} style={{ width: "100%", marginTop: 8 }} />
               )}
-              <span style={{ ...suave, display: "block", marginTop: 4 }}>Va arriba del mensaje, a todo el ancho. PNG o JPG de hasta 4 MB.</span>
+              <span style={{ ...suave, display: "block", marginTop: 4 }}>{plantillaActual ? "Va bajo el encabezado de la plantilla, a todo el ancho (un flyer o una foto)." : "Va arriba del mensaje, a todo el ancho."} PNG o JPG de hasta 4 MB.</span>
             </div>
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-              <label style={{ flex: "1 1 170px", minWidth: 0 }}>
-                <span style={etiqueta}>Botón (opcional)</span>
-                <input className="input" value={botonTexto} onChange={(e) => setBotonTexto(e.target.value.slice(0, 60))} placeholder="Ej.: Ver las ofertas" disabled={!!ocupado} style={{ width: "100%" }} />
-              </label>
-              <label style={{ flex: "2 1 220px", minWidth: 0 }}>
-                <span style={etiqueta}>Link del botón</span>
-                <input className="input" value={botonUrl} onChange={(e) => setBotonUrl(e.target.value)} placeholder="https://amsodentmedical.cl/…" disabled={!!ocupado} style={{ width: "100%" }} />
-              </label>
-            </div>
+            {!plantillaActual && (
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                <label style={{ flex: "1 1 170px", minWidth: 0 }}>
+                  <span style={etiqueta}>Botón (opcional)</span>
+                  <input className="input" value={botonTexto} onChange={(e) => setBotonTexto(e.target.value.slice(0, 60))} placeholder="Ej.: Ver las ofertas" disabled={!!ocupado} style={{ width: "100%" }} />
+                </label>
+                <label style={{ flex: "2 1 220px", minWidth: 0 }}>
+                  <span style={etiqueta}>Link del botón</span>
+                  <input className="input" value={botonUrl} onChange={(e) => setBotonUrl(e.target.value)} placeholder="https://amsodentmedical.cl/…" disabled={!!ocupado} style={{ width: "100%" }} />
+                </label>
+              </div>
+            )}
           </div>
         </div>
 
@@ -372,7 +474,7 @@ export default function MailingComunidad({ registros, filtrados, marcadas, hayFi
           <h3 style={titulo}><Eye size={15} style={{ color: "var(--primary-dark)" }} /> 3. Simular y enviar</h3>
           <div style={suave}>«Simular» revisa la lista y arma el correo sin enviar nada. Con la simulación a la vista se habilita «Enviar».</div>
           <div className="btn-row" style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <button type="button" className="btn btn-secondary btn-simular-mailing" onClick={simular} disabled={!puedeSimular || !!ocupado} title={puedeSimular ? "Muestra a cuántos llega y cómo se ve. No envía nada." : "Falta el asunto, el mensaje o elegir a quién va"} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+            <button type="button" className="btn btn-secondary btn-simular-mailing" onClick={simular} disabled={!puedeSimular || !!ocupado} title={puedeSimular ? "Muestra a cuántos llega y cómo se ve. No envía nada." : plantillaActual ? "Falta el asunto o elegir a quién va" : "Falta el asunto, el mensaje o elegir a quién va"} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
               {ocupado === "simular" ? <Loader2 size={14} className="spin" /> : <Eye size={14} />} Simular
             </button>
             <button type="button" className="btn btn-secondary btn-prueba-mailing" onClick={prueba} disabled={!puedeSimular || !!ocupado} title="Te envía este correo solo a ti, para verlo en tu bandeja" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
@@ -383,7 +485,22 @@ export default function MailingComunidad({ registros, filtrados, marcadas, hayFi
             </button>
           </div>
 
-          {!datosSim ? (
+          {!datosSim && plantillaActual ? (
+            /* Con plantilla, el correo se ve mientras se escribe; a cuántos llega lo dice «Simular». */
+            <div className="previa-plantilla-mailing" style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {sim && <div style={suave}>Cambiaste el correo o el público: simula de nuevo antes de enviar.</div>}
+              {previaVigente?.error && <Aviso tipo="error">{previaVigente.error}</Aviso>}
+              {previaVigente?.problemas?.length > 0 && <Aviso><b>Para poder enviar:</b> {previaVigente.problemas.join(" ")}</Aviso>}
+              <div>
+                <span style={etiqueta}>Vista previa de la plantilla · se actualiza mientras escribes</span>
+                <div style={{ fontSize: 12.5, marginBottom: 6 }}><span style={{ color: "var(--text-muted)" }}>Asunto:</span> <b>{asunto.trim() || "—"}</b></div>
+                {vistaPlantilla
+                  ? <iframe title="Vista previa de la plantilla" className="vista-previa-mailing" sandbox="" srcDoc={vistaPlantilla} style={{ width: "100%", height: 520, border: "1px solid var(--border)", borderRadius: 10, background: "#eef2f6" }} />
+                  : <div style={{ border: "1px dashed var(--border-strong, #cbd5e1)", borderRadius: 10, padding: "28px 16px", textAlign: "center", ...suave }}>{previaVigente?.error ? "Sin vista previa." : "Armando la vista previa…"}</div>}
+                <span style={{ ...suave, display: "block", marginTop: 4 }}>El saludo usa un nombre de ejemplo («Ana»). «Simular» muestra a cuántas personas llega y el correo de la primera.</span>
+              </div>
+            </div>
+          ) : !datosSim ? (
             <div style={{ border: "1px dashed var(--border-strong, #cbd5e1)", borderRadius: 10, padding: "28px 16px", textAlign: "center", ...suave }}>
               {sim ? "Cambiaste el correo o el público: simula de nuevo para ver cómo queda." : "Aquí aparecerá a cuántas personas llega y la vista previa del correo."}
             </div>
@@ -421,6 +538,9 @@ export default function MailingComunidad({ registros, filtrados, marcadas, hayFi
           <h3 style={titulo}><Send size={15} style={{ color: "var(--primary-dark)" }} /> Envíos</h3>
           <button type="button" className="btn btn-ghost btn-sm" onClick={cargarEnvios} title="Actualizar" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><RefreshCw size={14} /> Actualizar</button>
         </div>
+        <div className="nota-aperturas-mailing" style={{ ...suave, marginTop: 2 }}>
+          Cuando empiecen a abrir un correo te llega un aviso a la campana (uno por envío, que se va poniendo al día). Abre un envío para ver quién lo abrió y cuándo. {APERTURA_APROXIMADA}
+        </div>
         {envios && !envios.listo && envios.mensaje && <div style={{ marginTop: 8 }}><Aviso>{envios.mensaje}</Aviso></div>}
         <div className="table-wrap" style={{ marginTop: 8 }}>
           <table className="data-table tabla-compacta tabla-texto tabla-envios-comunidad" style={{ width: "100%", minWidth: 760, tableLayout: "fixed", fontSize: 12.5 }}>
@@ -448,7 +568,7 @@ export default function MailingComunidad({ registros, filtrados, marcadas, hayFi
                     <tr onClick={() => setAbierto(expandido ? null : e.id)} style={{ cursor: "pointer", background: expandido ? "#f8fafc" : undefined }} title={expandido ? "Ocultar los destinatarios" : "Ver los destinatarios"}>
                       <td style={{ textAlign: "center", color: "var(--text-muted)" }}>{expandido ? <ChevronDown size={15} /> : <ChevronRight size={15} />}</td>
                       <td>{fechaHora(e.creado_at)}<div style={{ fontSize: 11, color: "var(--text-muted)", overflowWrap: "anywhere" }}>{String(e.creado_por || "").split("@")[0]}</div></td>
-                      <td style={{ fontWeight: 600, overflowWrap: "anywhere" }}>{e.asunto}</td>
+                      <td style={{ fontWeight: 600, overflowWrap: "anywhere" }}>{e.asunto}{e.plantilla ? <div style={{ fontSize: 11, fontWeight: 400, color: "var(--text-muted)" }}>Plantilla: {e.plantilla}</div> : null}</td>
                       <td style={{ overflowWrap: "anywhere" }}>{e.publico || "—"}</td>
                       <td>
                         <div style={{ fontVariantNumeric: "tabular-nums" }}><b>{num(e.enviados)}</b> de {num(e.total)}</div>
@@ -456,7 +576,11 @@ export default function MailingComunidad({ registros, filtrados, marcadas, hayFi
                           <div style={{ height: "100%", width: `${e.total ? (hechos / e.total) * 100 : 0}%`, background: "var(--primary)" }} />
                         </div>
                       </td>
-                      <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}><b>{num(e.abiertos)}</b> · {pct(e.abiertos, e.enviados)}</td>
+                      <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+                        {e.aperturas === false
+                          ? <span style={{ color: "var(--text-muted)" }} title="Este envío salió desde un servidor sin dirección pública: sus aperturas no se pueden registrar.">sin seguimiento</span>
+                          : <><b>{num(e.abiertos)}</b> · {pct(e.abiertos, e.enviados)}</>}
+                      </td>
                       <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: e.fallidos ? "#b91c1c" : undefined }}>{num(e.fallidos)}</td>
                       <td><span className={`badge ${est.clase}`} title={est.ayuda || ""}>{est.texto}</span>{e.estado === "interrumpido" && <div style={{ fontSize: 11, color: "#b45309", marginTop: 2 }}>{num(e.pendientes)} sin enviar</div>}</td>
                     </tr>
