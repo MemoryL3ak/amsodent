@@ -4,6 +4,7 @@ import { supabase } from "../lib/supabase";
 import { api } from "../lib/api";
 import { permisosFallback } from "../constants/modulos";
 import { esCuentaNoRegistrada } from "../lib/ingresoEquipo";
+import { activarBloqueoSesion, bloqueoSesionActual, completarBloqueoSesion, fueSalidaVoluntaria, marcarSalidaVoluntaria } from "../lib/bloqueoSesion";
 
 /* (2026-10-16) Francisco (rol ventas con perfil «Vendedor con campañas,
    trazabilidad e inventario») a veces no podía entrar a Trazabilidad. Cada
@@ -19,6 +20,13 @@ import { esCuentaNoRegistrada } from "../lib/ingresoEquipo";
 
 const VIGENCIA_MS = 60 * 1000;
 let compartida = null; // { userId, ts, promesa }
+/* (2026-11-26) Última sesión buena de este navegador ({ user, perfil, permisos }).
+   Sirve al bloqueo de sesión (lib/bloqueoSesion.js): cuando la sesión se cierra
+   sin que nadie apriete «Cerrar sesión», la pantalla no se desmonta; se conserva
+   este usuario y encima va la ventana que pide la clave. */
+let ultimaBuena = null;
+// Páginas públicas (sin el menú de la plataforma): ahí no hay nada que bloquear.
+const RUTAS_SIN_BLOQUEO = /^\/(login|reset-password|sorteo|evento|evento-vina|evento-brasil|comunidad|portal|despachos|portal-cliente|portal-chofer)(\/|$)/;
 const claveCache = (uid) => `amsodent.perfil.${uid}`;
 
 function guardarCache(uid, perfil) {
@@ -48,6 +56,7 @@ let expulsando = false;
 async function expulsarCuentaNoRegistrada() {
   if (expulsando) return;
   expulsando = true;
+  ultimaBuena = null;
   compartida = null;
   borrarCache();
   try { await supabase.auth.signOut(); } catch { /* ya sin sesión */ }
@@ -93,7 +102,24 @@ export default function useAuth() {
       const session = sessionData?.session;
 
       if (!session) {
+        // La sesión se cerró sola (inactividad, otra pestaña, token vencido) con
+        // la plataforma abierta: se bloquea la pantalla en vez de desmontarla.
+        if (evento === "SIGNED_OUT" && !bloqueoSesionActual() && ultimaBuena && !fueSalidaVoluntaria() && !expulsando && !RUTAS_SIN_BLOQUEO.test(window.location.pathname)) {
+          activarBloqueoSesion({ userId: ultimaBuena.user?.id, email: ultimaBuena.user?.email, motivo: "sesion" });
+        }
+        if (bloqueoSesionActual() && ultimaBuena) {
+          completarBloqueoSesion({ userId: ultimaBuena.user?.id, email: ultimaBuena.user?.email });
+          compartida = null;
+          if (!vivo) return;
+          // Un componente que se monta durante el bloqueo toma el mismo usuario.
+          setUser(ultimaBuena.user);
+          setPerfil(ultimaBuena.perfil);
+          setPermisos(ultimaBuena.permisos);
+          setCargando(false);
+          return;
+        }
         if (evento === "SIGNED_OUT") { compartida = null; borrarCache(); }
+        ultimaBuena = null;
         if (!vivo) return;
         setUser(null);
         setPerfil(null);
@@ -114,11 +140,11 @@ export default function useAuth() {
         const { data } = await supabase.from("profiles").select("*").eq("id", uid).single();
         perfilDB = data;
       }
+      const permisosCalculados = Array.isArray(perfilDB?.permisos) ? perfilDB.permisos : permisosFallback(perfilDB?.rol);
+      ultimaBuena = { user: session.user, perfil: perfilDB, permisos: permisosCalculados };
       if (!vivo) return;
       setPerfil(perfilDB);
-      setPermisos(
-        Array.isArray(perfilDB?.permisos) ? perfilDB.permisos : permisosFallback(perfilDB?.rol),
-      );
+      setPermisos(permisosCalculados);
       setCargando(false);
     }
 
@@ -138,6 +164,8 @@ export default function useAuth() {
   }, []);
 
   async function logout() {
+    marcarSalidaVoluntaria();
+    ultimaBuena = null;
     borrarCache(user?.id);
     compartida = null;
     await supabase.auth.signOut();

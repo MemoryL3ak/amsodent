@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { supabase } from "../lib/supabase";
 import { useNavigate } from "react-router-dom";
 import Toast from "./Toast";
+import { activarBloqueoSesion, anotarActividad, bloqueoSesionActual, suscribirBloqueoSesion, ultimaActividadCompartida } from "../lib/bloqueoSesion";
 
 const IDLE_LOGOUT_MS = 30 * 60 * 1000; // 30 min
 const IDLE_WARN_MS = 29 * 60 * 1000;   // aviso a los 29 min
@@ -26,11 +27,18 @@ export default function SessionTracker() {
   const lastFlushRef = useRef(Date.now());
   const warnedRef = useRef(false);
   const [toast, setToast] = useState(null);
+  // (2026-11-26) Tras desbloquear la sesión (lib/bloqueoSesion.js) el seguimiento parte de nuevo.
+  const [ciclo, setCiclo] = useState(0);
+  useEffect(() => suscribirBloqueoSesion((b) => { if (!b) setCiclo((c) => c + 1); }), []);
 
   // registrar actividad del usuario (solo interacciones reales, NO visibilitychange)
   useEffect(() => {
     const touch = () => {
+      // Con la pantalla bloqueada, mover el mouse no cuenta como actividad.
+      if (bloqueoSesionActual()) return;
       lastActivityRef.current = Date.now();
+      // Compartida entre pestañas: una pestaña quieta no cierra la sesión de la que se está usando.
+      anotarActividad(lastActivityRef.current);
       warnedRef.current = false;
       if (toast) setToast(null);
     };
@@ -138,6 +146,9 @@ export default function SessionTracker() {
       const dt = now - lastTickRef.current;
       lastTickRef.current = now;
 
+      // La actividad vale la de cualquier pestaña de este navegador.
+      const compartidaMs = ultimaActividadCompartida();
+      if (compartidaMs > lastActivityRef.current && compartidaMs <= now) lastActivityRef.current = compartidaMs;
       const idleFor = now - lastActivityRef.current;
 
       if (
@@ -149,7 +160,7 @@ export default function SessionTracker() {
         warnedRef.current = true;
         setToast({
           type: "error",
-          message: "Llevas 29 minutos de inactividad. Se cerrará sesión en 1 minuto.",
+          message: "Llevas 29 minutos de inactividad. En 1 minuto se cerrará la sesión; lo que tengas en pantalla se conserva y sigues con tu clave.",
         });
       }
 
@@ -237,8 +248,18 @@ export default function SessionTracker() {
       }
 
       localStorage.removeItem(LS_KEY);
+      /* (2026-11-26) La sesión se cierra de verdad, pero ya no se va al login:
+         la pantalla queda como está, bloqueada por la ventana que pide la clave
+         (SesionBloqueada). Así no se pierde lo que se estaba escribiendo. */
+      stopped = true;
+      if (tickInterval) clearInterval(tickInterval);
+      let correo = "";
+      try {
+        const { data } = await supabase.auth.getUser();
+        correo = data?.user?.email || "";
+      } catch { /* sin red: el bloqueo usa el usuario que ya conoce la pantalla */ }
+      activarBloqueoSesion({ userId: userIdRef.current, email: correo, motivo: "inactividad" });
       await supabase.auth.signOut();
-      navigate("/login", { replace: true });
     }
 
     // ✅ solo flush al ir a background (no cerrar sesión, se reabre automáticamente al volver)
@@ -289,7 +310,7 @@ export default function SessionTracker() {
       document.removeEventListener("visibilitychange", onVisibility);
       window.removeEventListener("beforeunload", onBeforeUnload);
     };
-  }, [navigate]);
+  }, [navigate, ciclo]);
 
   return toast ? <Toast type={toast.type} message={toast.message} onClose={() => setToast(null)} /> : null;
 }
