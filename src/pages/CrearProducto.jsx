@@ -2,6 +2,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { supabase } from "../lib/supabase";
 import { api } from "../lib/api";
+import { soloVeProductos } from "../lib/productosSoloVer";
 import Toast from "../components/Toast";
 import { Link } from "react-router-dom";
 import Select from "react-select";
@@ -568,6 +569,23 @@ export default function CrearProducto() {
     setImagenFile(null);
     setPrecios({ lista1: "", lista2: "", lista3: "", lista4: "", precio_sugerido: "" });
     setGuardando(false);
+  }
+
+  // (2026-11-26) Permiso «productos_ver»: ve el catálogo, no crea productos.
+  if (!rolLoading && soloVeProductos(rol, permisos)) {
+    return (
+      <div className="page">
+        <div className="surface">
+          <div className="surface-body">
+            <p style={{ fontWeight: 600, marginBottom: 6 }}>Acceso restringido</p>
+            <p style={{ color: "var(--text-soft)", fontSize: 13.5 }}>Tu perfil solo permite ver los productos, no crearlos.</p>
+            <div className="btn-row" style={{ marginTop: 16 }}>
+              <a href="/productos" className="btn btn-ghost">← Volver a Productos</a>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   return (

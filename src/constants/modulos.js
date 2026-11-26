@@ -9,6 +9,8 @@ export const MODULOS = [
   { key: "mis_clientes", label: "Mis clientes", grupo: "Comercial" },
   { key: "bitacora", label: "Bitácora actividades", grupo: "Comercial" },
   { key: "productos", label: "Productos", grupo: "Comercial" },
+  // (2026-11-26) Solo lectura: ve el catálogo, sin crear ni editar. Marcar SIN «Productos».
+  { key: "productos_ver", label: "Productos: solo ver el catálogo (sin crear ni editar)", grupo: "Comercial" },
   // (2026-10-23) Crear productos con el formulario completo (SKU incluido) sin ser admin.
   { key: "crear_productos", label: "Crear productos con SKU (formulario completo)", grupo: "Comercial" },
   // (2026-10-27) Editar productos del catálogo como un admin (menos aprobar pendientes).
@@ -34,6 +36,9 @@ export const MODULOS = [
   // del módulo, el backend exige rol administración, contabilidad o jefe de
   // ventas especial.
   { key: "facturacion", label: "Facturación (emitir en Bsale)", grupo: "Post-venta" },
+  // (2026-11-26) Postventa: reclamos de clientes y su gestión (NC, otra factura,
+  // guía). Cada uno ve los suyos; con «Ver todas las cotizaciones», todos.
+  { key: "postventa", label: "Postventa (reclamos de clientes y su gestión)", grupo: "Post-venta" },
   { key: "mi_correo", label: "Mi Correo", grupo: "Comunicación" },
   { key: "chat", label: "Chat Grupal", grupo: "Comunicación" },
   // "Resumen canales" se fusionó dentro de Definición de metas (2026-09):
@@ -93,12 +98,13 @@ const BASE = ["cotizaciones", "crear_cotizacion", "clientes", "mis_clientes", "b
 
 // Fallback por rol (debe reflejar backend/src/auth/permisos.ts).
 const ROLE_DEFAULTS = {
-  jefe_ventas: [...BASE, "trazabilidad", "metas", "panel_indicadores", "resumen_comercial", "cotizaciones_vendedor", "monitoreo_alertas", "inventario"],
-  jefe_ventas_especial: [...BASE, "trazabilidad", "seguimiento_pagos", "cobranza", "factoring", "facturacion", "venta_directa", "metas", "panel_indicadores", "resumen_comercial", "cotizaciones_vendedor", "monitoreo_alertas", "inventario"],
+  // (2026-11-26) "postventa" para ventas, jefaturas y contabilidad.
+  jefe_ventas: [...BASE, "trazabilidad", "metas", "panel_indicadores", "resumen_comercial", "cotizaciones_vendedor", "monitoreo_alertas", "inventario", "postventa"],
+  jefe_ventas_especial: [...BASE, "trazabilidad", "seguimiento_pagos", "cobranza", "factoring", "facturacion", "venta_directa", "metas", "panel_indicadores", "resumen_comercial", "cotizaciones_vendedor", "monitoreo_alertas", "inventario", "postventa"],
   // (2026-10-23) Venta directa para todos los vendedores.
-  ventas: [...BASE, "metas", "inventario", "venta_directa"],
-  ventas_especial: [...BASE, "metas", "sorteo", "monitoreo_stock", "inventario", "venta_directa"],
-  contabilidad: ["mi_correo", "chat", "seguimiento_pagos", "cobranza", "facturacion", "venta_directa", "metas"],
+  ventas: [...BASE, "metas", "inventario", "venta_directa", "postventa"],
+  ventas_especial: [...BASE, "metas", "sorteo", "monitoreo_stock", "inventario", "venta_directa", "postventa"],
+  contabilidad: ["mi_correo", "chat", "seguimiento_pagos", "cobranza", "facturacion", "venta_directa", "metas", "postventa"],
 };
 
 export function esAdminRol(rol) {

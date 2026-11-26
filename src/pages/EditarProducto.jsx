@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
 import { api } from "../lib/api";
+import { soloVeProductos } from "../lib/productosSoloVer";
 import { useParams, useNavigate } from "react-router-dom";
 import Toast from "../components/Toast";
 import Select from "react-select";
@@ -186,6 +187,8 @@ export default function EditarProducto() {
   // (2026-10-27) Permiso «editar_productos»: edita el formulario completo como
   // un admin (precios, costo, medidas, SKU, link), salvo aprobar pendientes.
   const [editaCatalogo, setEditaCatalogo] = useState(false);
+  // (2026-11-26) Permiso «productos_ver»: ve el catálogo, no edita.
+  const [soloVer, setSoloVer] = useState(false);
 
   // ✅ guardamos el SKU original para evitar "borrados" accidentales
   const [skuOriginal, setSkuOriginal] = useState("");
@@ -363,11 +366,13 @@ export default function EditarProducto() {
 
   const puedeEditarProducto = useMemo(() => {
     if (!rolNorm) return false;
+    // (2026-11-26) Permiso «productos_ver»: solo lectura del catálogo.
+    if (soloVer) return false;
     // Ventas: puede acceder siempre. Si el producto NO es transitorio, solo
     // podrá editar la sección "Detalle del Producto" (controlado por
     // esVentasNoTransitorio más abajo). Si es transitorio, edita todo.
     return true;
-  }, [rolNorm]);
+  }, [rolNorm, soloVer]);
 
   // Ventas mirando un producto ya activo: solo edita "Detalle del Producto";
   // el resto de secciones quedan readonly u ocultas. Los "Pendiente
@@ -397,6 +402,7 @@ export default function EditarProducto() {
         setRol(perfil?.rol ?? null);
         setVerCostos(Array.isArray(perfil?.permisos) && perfil.permisos.includes("ver_costos"));
         setEditaCatalogo(Array.isArray(perfil?.permisos) && perfil.permisos.includes("editar_productos"));
+        setSoloVer(soloVeProductos(perfil?.rol, perfil?.permisos));
         setPuedeActualizarPrecios(["admin", "administrador"].includes(String(perfil?.rol || "").trim().toLowerCase()) || (Array.isArray(perfil?.permisos) && perfil.permisos.includes("actualizar_precios")));
       } catch {
         setRol(null);
@@ -1001,7 +1007,9 @@ try {
           <div className="surface-body">
             <p style={{fontWeight:600, marginBottom:6}}>Acceso restringido</p>
             <p style={{color:"var(--text-soft)", fontSize:13.5}}>
-              {rolNorm === "ventas"
+              {soloVer
+                ? "Tu perfil solo permite ver los productos, no editarlos."
+                : rolNorm === "ventas"
                 ? "El rol ventas solo puede editar productos en estado Transitorio."
                 : "Tu rol no permite editar productos."}
             </p>

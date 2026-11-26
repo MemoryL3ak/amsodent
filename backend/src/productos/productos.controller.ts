@@ -7,6 +7,7 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { ProductosService } from './productos.service';
 import { AuthGuard } from '../auth/auth.guard';
 import { AdminGuard } from '../auth/admin.guard';
+import { ProductosEscrituraGuard } from '../auth/productos-escritura.guard';
 import { PreciosCambiosService } from './precios-cambios.service';
 
 @Controller('productos')
@@ -58,11 +59,13 @@ export class ProductosController {
   }
 
   @Post()
+  @UseGuards(ProductosEscrituraGuard)
   create(@Body() body: any) {
     return this.productosService.create(body);
   }
 
   @Post('bulk-upsert')
+  @UseGuards(ProductosEscrituraGuard)
   bulkUpsert(@Body() body: { rows: Record<string, any>[]; archivo?: string }, @Req() req: any) {
     return this.productosService.bulkUpsert(body?.rows || [], {
       archivo: body?.archivo,
@@ -89,6 +92,7 @@ export class ProductosController {
   }
 
   @Post('upload-image')
+  @UseGuards(ProductosEscrituraGuard)
   @UseInterceptors(FileInterceptor('file'))
   uploadImage(@UploadedFile() file: Express.Multer.File, @Query('sku') sku: string) {
     return this.productosService.uploadImage(file, sku);
@@ -116,11 +120,13 @@ export class ProductosController {
   // (2026-11-17) La ficha del producto ya no cambia costo ni listas de un producto
   // del catálogo (ver updateDesdeFicha): eso va por Actualización de precios.
   @Put(':id')
+  @UseGuards(ProductosEscrituraGuard)
   update(@Param('id', ParseIntPipe) id: number, @Body() body: any, @Req() req: any) {
     return this.productosService.updateDesdeFicha(id, body, (req?.user?.email || '').toLowerCase());
   }
 
   @Delete(':id')
+  @UseGuards(ProductosEscrituraGuard)
   remove(@Param('id', ParseIntPipe) id: number) {
     return this.productosService.remove(id);
   }

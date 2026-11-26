@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { supabase } from "../lib/supabase";
 import { api } from "../lib/api";
+import { soloVeProductos } from "../lib/productosSoloVer";
 import { Link, useSearchParams } from "react-router-dom";
 import DropdownSelect from "../components/ui/DropdownSelect";
 import ConfirmModal from "../components/ConfirmModal";
@@ -351,6 +352,8 @@ export default function Productos() {
   const [perfilLoading, setPerfilLoading] = useState(true);
   const [rol, setRol] = useState(null);
   const [puedeActualizarPrecios, setPuedeActualizarPrecios] = useState(false);
+  // (2026-11-26) Permiso «productos_ver»: ve el catálogo, sin crear ni editar.
+  const [soloVer, setSoloVer] = useState(false);
   const rolNorm = useMemo(() => {
     const r = (rol ?? "").toString().trim().toLowerCase();
     if (!r) return "";
@@ -375,6 +378,7 @@ export default function Productos() {
       try {
         const perfil = await api.get("/auth/profile");
         setRol(perfil?.rol ?? null);
+        setSoloVer(soloVeProductos(perfil?.rol, perfil?.permisos));
         // (2026-11-17) Quién ve el acceso a la sección «Actualización de precios».
         setPuedeActualizarPrecios(["admin", "administrador"].includes(String(perfil?.rol || "").trim().toLowerCase()) || (Array.isArray(perfil?.permisos) && perfil.permisos.includes("actualizar_precios")));
       } catch {
@@ -843,9 +847,11 @@ export default function Productos() {
               <CloudUpload size={14} /> Pendientes en Bsale
             </button>
           )}
-          <Link to="/productos/nuevo" className="btn btn-primary">
-            + Crear Producto
-          </Link>
+          {!soloVer && (
+            <Link to="/productos/nuevo" className="btn btn-primary">
+              + Crear Producto
+            </Link>
+          )}
         </div>
       </div>
       {pendientesBsaleOpen && <EnviarPendientesBsale onCerrar={() => setPendientesBsaleOpen(false)} />}
@@ -1161,13 +1167,15 @@ export default function Productos() {
                           <FileDown size={14} />
                           <span className="productos-ficha-texto">{generandoFichaId === p.id ? "Generando…" : "Ficha"}</span>
                         </button>
-                        <Link
-                          to={`/productos/editar/${p.id}`}
-                          className="btn btn-secondary btn-sm"
-                        >
-                          Editar
-                        </Link>
-                        {rolNorm !== "ventas" && (
+                        {!soloVer && (
+                          <Link
+                            to={`/productos/editar/${p.id}`}
+                            className="btn btn-secondary btn-sm"
+                          >
+                            Editar
+                          </Link>
+                        )}
+                        {rolNorm !== "ventas" && !soloVer && (
                           <MenuAccionesProducto
                             producto={p}
                             onToggleEstado={toggleEstadoActivo}

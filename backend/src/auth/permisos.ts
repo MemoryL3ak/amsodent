@@ -59,6 +59,12 @@ export const MODULOS: string[] = [
   // (precios, costo, medidas, SKU), como un admin, salvo aprobar los
   // pendientes. Pedido de Ariel para Francisco. Asignable por perfil.
   'editar_productos',
+  // (2026-11-26) Productos en SOLO LECTURA: ver el catálogo (listado, precios
+  // de lista, fichas técnicas) sin crear, editar, cargar ni eliminar. Pedido
+  // de Ariel para el usuario de la sala de ventas. Es un permiso positivo: lo
+  // de «solo ver» vale cuando el perfil NO trae además 'productos' ni los de
+  // crear/editar (ver soloVeProductos).
+  'productos_ver',
   // (2026-11-12) Actualización de precios: cambiar costo y listas de precios
   // desde su pantalla y manejar el envío al Google Sheet «Lista de Precios»
   // (nivelar, reintentar). Asignable por perfil; el costo exige además 'ver_costos'.
@@ -87,6 +93,11 @@ export const MODULOS: string[] = [
   // quien lo tenga en su perfil, lo recibe siempre el usuario de la tienda
   // (ver permisosDeUsuario): la caja asocia solo sus ventas.
   'caja',
+  // (2026-11-26) Postventa: reclamos de los clientes y su gestión (nota de
+  // crédito, otra factura, guía). Por defecto lo tienen ventas, jefaturas y
+  // contabilidad; qué solicitudes ve cada uno lo decide postventa.service
+  // (responsable o quien la registró; todas con 'cotizaciones_todas').
+  'postventa',
 ];
 
 // Módulos visibles para todos los roles autenticados (base comercial + comunicación).
@@ -116,13 +127,14 @@ export function esRolAdmin(rol?: string): boolean {
 export const ROLE_DEFAULTS: Record<string, string[]> = {
   // (2026-10-14) 'inventario' para ventas y jefaturas: ven el stock, sin las
   // tarjetas KPI (solo admin desde 2026-10-22) y sin mover stock.
-  jefe_ventas: [...BASE, 'trazabilidad', 'metas', 'panel_indicadores', 'resumen_comercial', 'cotizaciones_vendedor', 'monitoreo_alertas', 'inventario'],
-  jefe_ventas_especial: [...BASE, 'trazabilidad', 'seguimiento_pagos', 'cobranza', 'factoring', 'facturacion', 'venta_directa', 'metas', 'panel_indicadores', 'resumen_comercial', 'cotizaciones_vendedor', 'monitoreo_alertas', 'inventario'],
+  // (2026-11-26) 'postventa' para ventas, jefaturas y contabilidad.
+  jefe_ventas: [...BASE, 'trazabilidad', 'metas', 'panel_indicadores', 'resumen_comercial', 'cotizaciones_vendedor', 'monitoreo_alertas', 'inventario', 'postventa'],
+  jefe_ventas_especial: [...BASE, 'trazabilidad', 'seguimiento_pagos', 'cobranza', 'factoring', 'facturacion', 'venta_directa', 'metas', 'panel_indicadores', 'resumen_comercial', 'cotizaciones_vendedor', 'monitoreo_alertas', 'inventario', 'postventa'],
   // (2026-10-23) Venta directa para todos los vendedores (pedido de Ariel): el
   // módulo y la emisión (puedeEmitir usa estos permisos efectivos).
-  ventas: [...BASE, 'metas', 'inventario', 'venta_directa'],
-  ventas_especial: [...BASE, 'metas', 'sorteo', 'monitoreo_stock', 'inventario', 'venta_directa'],
-  contabilidad: ['mi_correo', 'chat', 'seguimiento_pagos', 'cobranza', 'facturacion', 'venta_directa', 'metas'],
+  ventas: [...BASE, 'metas', 'inventario', 'venta_directa', 'postventa'],
+  ventas_especial: [...BASE, 'metas', 'sorteo', 'monitoreo_stock', 'inventario', 'venta_directa', 'postventa'],
+  contabilidad: ['mi_correo', 'chat', 'seguimiento_pagos', 'cobranza', 'facturacion', 'venta_directa', 'metas', 'postventa'],
 };
 
 // (2026-10-16) Pedido de Ariel: "todos pueden ver el inventario" (las tarjetas
@@ -143,6 +155,15 @@ export function permisosDeUsuario(rol: string | undefined, permisosPerfil: any, 
   const permisos = permisosEfectivos(rol, permisosPerfil);
   const correo = String(email || '').trim().toLowerCase();
   return correo && correo === cajaUsuario() && !permisos.includes('caja') ? [...permisos, 'caja'] : permisos;
+}
+
+/* (2026-11-26) ¿Esta persona solo puede VER el catálogo de productos? Tiene
+   'productos_ver' y ninguno de los permisos que dejan trabajar el catálogo. El
+   admin nunca (recibe todos los módulos). Espejo en src/lib/productosSoloVer.js. */
+export function soloVeProductos(rol: string | undefined, permisos: string[]): boolean {
+  if (esRolAdmin(rol)) return false;
+  const p = Array.isArray(permisos) ? permisos : [];
+  return p.includes('productos_ver') && !['productos', 'crear_productos', 'editar_productos'].some((k) => p.includes(k));
 }
 
 // Permisos efectivos de un usuario: perfil asignado o, en su defecto, por rol.

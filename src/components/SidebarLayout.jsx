@@ -4,6 +4,8 @@ import { api } from "../lib/api";
 import { useEffect, useState } from "react";
 import { useUnsavedChanges } from "../context/UnsavedChangesContext";
 import SessionTracker from "./SessionTracker";
+import SesionBloqueada from "./SesionBloqueada";
+import { marcarSalidaVoluntaria } from "../lib/bloqueoSesion";
 import PresenceTracker from "./PresenceTracker";
 import AvisoCredenciales from "./AvisoCredenciales";
 import Avatar from "./Avatar";
@@ -63,6 +65,7 @@ import {
   HandCoins,
   BellRing,
   Tags,
+  MessageSquareWarning,
 } from "lucide-react";
 import NotificacionesMenu from "./NotificacionesMenu";
 import RecordatoriosCorreo from "./RecordatoriosCorreo";
@@ -177,6 +180,7 @@ export default function SidebarLayout() {
     } catch {
       // best effort
     }
+    marcarSalidaVoluntaria(); // a propósito: va al login, no al bloqueo de sesión
     await supabase.auth.signOut();
     window.location.href = "/login";
   }
@@ -230,12 +234,13 @@ export default function SidebarLayout() {
     puede("bitacora") && { to: "/bitacora-actividades", icon: CalendarDays, label: "Bitácora actividades" },
     // (2026-11-17) «Actualización de precios» pasó a ser una sección de Productos: cuelga de
     // ese ítem del menú. Sigue yendo por permiso de perfil (el admin siempre).
-    puede("productos") && {
+    // (2026-11-26) También quien solo puede ver el catálogo («productos_ver»).
+    (puede("productos") || puede("productos_ver")) && {
       to: "/productos", icon: Package, label: "Productos",
       ...(puede("actualizar_precios") ? { children: [{ to: "/productos/actualizacion-precios", icon: Tags, label: "Actualización de precios" }] } : {}),
     },
     // Quien actualiza precios sin tener el módulo Productos la ve suelta.
-    !puede("productos") && puede("actualizar_precios") && { to: "/productos/actualizacion-precios", icon: Tags, label: "Actualización de precios" },
+    !puede("productos") && !puede("productos_ver") && puede("actualizar_precios") && { to: "/productos/actualizacion-precios", icon: Tags, label: "Actualización de precios" },
     // (2026-10-09) Explorador de productos: en Comercial y para todos los roles (antes «Explorador de Precios», solo admin, en Reportes).
     { to: "/explorador-precios", icon: Store, label: "Explorador de Productos" },
     // (2026-10-01) Margen por marca / categoría sobre una lista, con vigencia.
@@ -266,6 +271,8 @@ export default function SidebarLayout() {
     puede("cobranza") && { to: "/cobranza", icon: Wallet, label: "Cobranza" },
     puede("facturacion") && { to: "/facturacion", icon: Receipt, label: "Facturación" },
     puede("factoring") && { to: "/factoring", icon: Landmark, label: "Factoring" },
+    // (2026-11-26) Reclamos de clientes y su gestión (NC, otra factura, guía).
+    puede("postventa") && { to: "/postventa", icon: MessageSquareWarning, label: "Postventa" },
   ].filter(Boolean);
 
   const comunicacionNav = [
@@ -467,6 +474,7 @@ export default function SidebarLayout() {
   return (
     <div className={`app-shell ${colapsada ? "is-collapsed" : ""}`}>
       <SessionTracker />
+      <SesionBloqueada />
       <PresenceTracker />
       <GoogleAuthSync />
       <RecordatoriosCorreo />
