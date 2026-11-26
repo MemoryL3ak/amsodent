@@ -1638,6 +1638,74 @@ girasol 🌻). Hoy ayuda en:
   se ofrece conservar el correo anterior como alterno para que el historial
   (ventas, bitácora, marcajes) siga apareciendo a su nombre; las oficinas de
   marcaje y la ficha de RRHH se re-vinculan solas al correo nuevo.
+- MAILING DE COMUNIDAD, PLANTILLAS Y APERTURAS (desde 26-11-2026): en Comunidad →
+  Mailing, paso «2. Qué se envía», hay una galería: «Correo simple» y seis
+  plantillas (Presentación de la plataforma, Presentación de productos nuevos,
+  Lanzamiento de marca, Invitación a workshop, Invitación a hands-on, Campaña
+  de descuentos). Cada una propone el asunto y trae sus campos (fecha, hora,
+  lugar, cupos y link de inscripción; productos con precio e imagen por URL;
+  oferta, vigencia y código). La vista previa se actualiza al escribir; luego
+  Simular → Enviarme una prueba → Enviar. APERTURAS: en «Envíos» cada correo
+  muestra cuántas personas lo abrieron y el %; al desplegarlo, quién, cuándo y
+  cuántas veces. Quien envió recibe UN aviso en la campana por envío, que se
+  pone al día; ya leído, llega otro solo al pasar 25 %, 50 % o 75 %. La
+  apertura es aproximada (imágenes bloqueadas no cuentan; Gmail y Apple Mail
+  pueden cargarlas solos).
+- POSTVENTA (/postventa, menú Post venta, desde 26-11-2026; permiso «postventa»:
+  por defecto ventas, jefaturas y contabilidad; con perfil de permisos hay que
+  marcarlo): reclamos de clientes en 8 categorías (productos en mal estado,
+  fecha de vencimiento, producto no corresponde, faltan cantidades, sobran
+  cantidades, cambio a petición del cliente, gestión de apelación de multa,
+  otros). «Nueva solicitud»: cliente, cotización, factura o guía afectada,
+  categoría, descripción y productos. Queda «Ingresada» y avisa en la campana
+  al vendedor responsable (el de la cotización o el asignado al cliente).
+  Gestión: «Tomar» (pasa a «En gestión»), comentarios y tres acciones:
+  emisión de nota de crédito, de otra factura o de guía de despacho, que abren
+  la ventana de emisión habitual (simular → emitir) y dejan el documento
+  asociado; también se puede asociar después. Cierre: «Resolver» o «Rechazar»
+  con motivo; se puede reabrir. Cada uno ve las suyas; admin y «Ver todas las
+  cotizaciones» ven todas. PORTAL: el cliente envía solicitudes desde la
+  pestaña «Postventa» de /portal-cliente y ve su estado, los documentos
+  emitidos y los comentarios marcados «Visible para el cliente»; la sección se
+  apaga por cliente en Acceso Portal Clientes → «Módulos». Requiere la
+  migración 20261126_postventa.sql.
+- CAMBIOS DEL 26-11-2026 (lote de 16 puntos):
+  · ASIGNACIÓN DE CARTERA: el listado «Vendedor asignado» (Asignación de
+    cartera, Crear y Editar cliente) ya NO muestra administradores; solo los
+    vendedores cuyo canal en Metas vende a particulares. Los clientes que ya
+    tenían un administrador asignado lo conservan hasta reasignarlos.
+  · ÓRDENES DE COMPRA: el SKU de cada línea es texto libre (sirve el código del
+    proveedor); si calza con un SKU del catálogo y la línea no tiene
+    descripción, al salir del campo se completan descripción y costo. «Valor
+    Unitario» sin flechitas.
+  · RECEPCIÓN DE STOCK: lote y vencimiento son OPCIONALES (sin ellos la línea
+    entra igual, pero no queda como lote elegible en las guías; la simulación
+    avisa). Lectura con pistola: Enter en el buscador o botón «Pistolear»
+    (cada lectura agrega el producto o le suma una unidad; busca por código de
+    barras o SKU exacto). Pestaña nueva «Otras casas dentales»: el panel de
+    Pedidos del Portal, solo consulta, para quien tiene «Recepción de stock».
+  · VENTA DIRECTA / GUÍA LIBRE: mismo lector de código de barras («Pistolear»
+    y Enter en el buscador de productos).
+  · ACTUALIZACIÓN DE PRECIOS → «Costos por confirmar»: al confirmar un alza
+    como «Definitiva» la ventana deja cambiar además Lista 1 y Lista 2 (netos);
+    «Mantener el margen» sube cada lista en la proporción del costo y se ve el
+    margen resultante. Sin tocarlas, las listas no cambian.
+  · OBSERVACIÓN DE DOCUMENTOS: el comentario interno se puede escribir al
+    CREAR el documento (campo «Observación interna» al cargar una orden de
+    compra, guía o factura, y en las ventanas de emisión de guía, factura y
+    boleta). No va a Bsale ni cambia la simulación. Trazabilidad tiene la
+    columna «Observación» con las de la OC, guías y facturas de cada
+    cotización (clic para leer o editar) y la OC tiene su globo de comentario.
+  · SESIÓN: a los 30 minutos sin actividad la sesión se cierra pero la
+    pantalla NO se pierde: aparece la ventana «Tu sesión se cerró», que pide la
+    contraseña de la misma cuenta y deja todo como estaba. La actividad se
+    comparte entre pestañas del mismo navegador. «Entrar con otra cuenta o con
+    Google» va al inicio de sesión (ahí sí se pierde lo no guardado). «Cerrar
+    sesión» a propósito sale directo.
+  · PRODUCTOS SOLO LECTURA: permiso «Productos: solo ver el catálogo»
+    (productos_ver, grupo Comercial de los perfiles): ve el listado, precios de
+    lista y fichas técnicas, sin crear, editar, cargar ni eliminar. Se marca
+    SIN «Productos». Lo tiene el perfil «Sala Ventas».
 - Si un módulo muestra "Falta aplicar la migración X": el admin debe ejecutar
   ese archivo SQL en Supabase (carpeta supabase/migrations).
 `;
