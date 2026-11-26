@@ -2837,7 +2837,25 @@ export class LicitacionesService {
      hermanas del proceso que sigan abiertas pasan a "Descartada". Nunca
      frena el registro del documento. */
   async createDocumento(body: Record<string, any>, opts?: { sinAvisoCorreo?: boolean; usuarioEmail?: string | null }) {
+    /* (2026-11-26) Observación al cargar el documento (pedido de Ariel: «agregar
+       campo observación cuando se cree una guía de despacho, factura y se suba
+       una orden de compra»). Es el mismo comentario interno del documento
+       (comentarDocumento): se saca del cuerpo para que el alta nunca dependa
+       de esa columna y se guarda apenas el documento existe. Si falla, el
+       documento queda cargado igual y la observación se puede escribir después. */
+    const observacion = String(body?.comentario ?? '').trim();
+    if (body && 'comentario' in body) {
+      const { comentario: _omit, ...resto } = body;
+      body = resto;
+    }
     const inserted = await this.insertarDocumento(body, opts);
+    if (observacion && Number(inserted?.id) > 0) {
+      try {
+        await this.comentarDocumento(Number(inserted.id), observacion, opts?.usuarioEmail || undefined);
+      } catch (e: any) {
+        this.logger.warn(`Documento ${inserted.id} cargado, pero no se guardó su observación: ${String(e?.message || e)}`);
+      }
+    }
     if (Number(body?.licitacion_id) > 0) {
       await this.registrarAccion(Number(body.licitacion_id), 'documento', `Cargó ${nombreDocumento(body)}`, opts?.usuarioEmail);
     }

@@ -1,7 +1,7 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
-import { AlertTriangle, CheckCircle2, FileText, Info, Loader2, Mail, Plus, Receipt, Search, Trash2, Truck, X } from "lucide-react";
+import { AlertTriangle, CheckCircle2, FileText, Info, Loader2, Mail, Plus, Receipt, ScanBarcode, Search, Trash2, Truck, X } from "lucide-react";
 import { api } from "../lib/api";
 import DateFilter from "./DateFilter";
 import DropdownSelect from "./ui/DropdownSelect";
@@ -15,7 +15,8 @@ import CrearClienteBsale from "./CrearClienteBsale";
 import RegistrarComprobanteRapido from "./RegistrarComprobanteRapido";
 import SelectorLotes, { cuerpoLotes, problemaLotes, useLotesPorSku } from "./SelectorLotes";
 import SelectorGirosDocumento, { textoGirosDocumento } from "./SelectorGirosDocumento";
-import ComentarioDocumento from "./ComentarioDocumento";
+import ComentarioDocumento, { CampoObservacionInterna, guardarObservacionInicial } from "./ComentarioDocumento";
+import { EscanerCodigoBarra, limpiarCodigoBarra } from "./CampoCodigoBarra";
 
 /* ── Guía o factura LIBRE en Bsale (2026-10-03) ──────────────────────────────
    Sin orden de compra ni cotización de por medio: se elige el cliente por RUT
@@ -80,6 +81,10 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
   const [conGuia, setConGuia] = useState(!!ventaDirecta);
   // Atributo adicional «Observación» de la guía en Bsale.
   const [observacion, setObservacion] = useState("");
+  // (2026-11-26) Observación interna escrita ANTES de emitir: no va a Bsale ni
+  // entra en la simulación; se guarda en el documento apenas queda emitido.
+  const [obsInterna, setObsInterna] = useState("");
+  const [obsGuardada, setObsGuardada] = useState("");
 
   useEffect(() => {
     let vivo = true;
@@ -179,6 +184,40 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
     setQProducto("");
     setProductos([]);
   }
+  /* (2026-11-26) Lectura con pistola (pedido de Ariel: «traer lectura de código
+     de barra en la creación de venta directa»). El lector escribe el código y
+     manda Enter: sirve en el buscador de productos (Enter) y en la ventanita
+     «Pistolear», que queda abierta para leer varios seguidos. Busca por código
+     de barras o por SKU exacto; si el producto ya está, suma una unidad. */
+  const [escaner, setEscaner] = useState(false);
+  const [leyendo, setLeyendo] = useState(false);
+  const [ultimoLeido, setUltimoLeido] = useState(null);
+  const cerrarEscaner = useCallback(() => setEscaner(false), []);
+  const lineasRef = useRef(lineas);
+  lineasRef.current = lineas;
+  async function leerCodigo(crudo, { silencioso = false } = {}) {
+    const codigo = limpiarCodigoBarra(crudo);
+    if (!codigo) return;
+    setLeyendo(true);
+    try {
+      const r = await api.get(`/bsale/libre/productos?q=${encodeURIComponent(codigo)}`);
+      const lista = Array.isArray(r) ? r : [];
+      const mayus = codigo.toUpperCase();
+      const p = lista.find((x) => x.codigo_barra && x.codigo_barra === codigo) || lista.find((x) => String(x.sku || "").toUpperCase() === mayus);
+      if (!p) {
+        // Enter en el buscador con un texto que no es un código: se deja la lista tal cual.
+        if (!silencioso) setUltimoLeido({ error: true, texto: `Ningún producto activo tiene el código «${codigo}». Revisa que el producto tenga su código de barras guardado (Productos → Editar).` });
+        return;
+      }
+      const ya = lineasRef.current.some((l) => l.sku === p.sku);
+      agregarProducto(p);
+      setUltimoLeido({ texto: `${p.sku} · ${p.nombre}: ${ya ? "ya estaba, se sumó 1 unidad" : "agregado con 1 unidad"}.` });
+    } catch (e) {
+      setUltimoLeido({ error: true, texto: e?.message || "No se pudo buscar el código." });
+    } finally {
+      setLeyendo(false);
+    }
+  }
   const cambiarLinea = (sku, campo, v) => setLineas((prev) => prev.map((l) => (l.sku === sku ? { ...l, [campo]: v.replace(/[^\d.,]/g, "").replace(",", ".") } : l)));
   const quitarLinea = (sku) => setLineas((prev) => prev.filter((l) => l.sku !== sku));
   // Observación por producto (2026-10-08): va al atributo «Observación» de la guía en Bsale.
@@ -269,6 +308,10 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
     setError("");
     try {
       const r = await api.post("/bsale/libre/emitir", { ...cuerpo(), ...(pideComprobante ? { comprobante: comprobante.trim() } : {}), ...(accion === "simular" ? { simular: true } : { huella, ...(esGuia || (conGuia && guiaPosible) ? { seguimiento } : {}) }) });
+      if (r?.emitida && r?.documento_id && obsInterna.trim()) {
+        const g = await guardarObservacionInicial(r.documento_id, obsInterna);
+        setObsGuardada(g ? String(g.comentario || "") : "");
+      }
       setResultado(r);
       if (r?.simulacion) { setSimuladoCon(firma); setHuella(r.huella || null); }
       if (r?.emitida) onEmitida?.(r);
@@ -364,7 +407,7 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
               </div>
               {/* (2026-11-19) Comentario interno del documento recién emitido: solo plataforma, no va a Bsale. */}
               {resultado.registrada && resultado.documento_id && (
-                <ComentarioDocumento documentoId={resultado.documento_id} nombreDocumento={esGuia ? "la guía" : esBoleta ? "la boleta" : "la factura"} />
+                <ComentarioDocumento documentoId={resultado.documento_id} nombreDocumento={esGuia ? "la guía" : esBoleta ? "la boleta" : "la factura"} inicial={obsGuardada} borrador={obsInterna} />
               )}
               {resultado.comprobante && (
                 <div style={{ fontSize: 12.5, color: "#166534" }}>
@@ -555,7 +598,7 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
                 <div style={{ padding: "8px 12px", background: "var(--bg)", borderBottom: "1px solid var(--border)", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                   <span style={{ ...etiqueta, marginBottom: 0 }}>Productos</span>
                   <div style={{ flex: "1 1 260px", minWidth: 0, position: "relative" }}>
-                    <input className="input" value={qProducto} onChange={(e) => setQProducto(e.target.value)} placeholder="Agregar por SKU o nombre…" disabled={!!enviando} style={{ width: "100%", height: 32 }} />
+                    <input className="input" value={qProducto} onChange={(e) => setQProducto(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); leerCodigo(qProducto, { silencioso: true }); } }} placeholder="Agregar por SKU, nombre o código de barras…" disabled={!!enviando} style={{ width: "100%", height: 32 }} />
                     {productos.length > 0 && (
                       <div style={{ position: "absolute", left: 0, right: 0, top: "100%", zIndex: 5, background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 8, boxShadow: "var(--shadow-lg)", maxHeight: 240, overflow: "auto" }}>
                         {productos.map((p) => (
@@ -567,6 +610,20 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
                       </div>
                     )}
                   </div>
+                  <button type="button" className={`btn btn-sm ${escaner ? "btn-primary" : "btn-secondary"} btn-pistolear-documento`} onClick={() => { setUltimoLeido(null); setEscaner((v) => !v); }} disabled={!!enviando} title="Lee códigos de barras con la pistola: cada lectura agrega el producto o le suma una unidad" style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 32, whiteSpace: "nowrap" }}>
+                    <ScanBarcode size={14} /> Pistolear
+                  </button>
+                  {escaner && (
+                    <EscanerCodigoBarra
+                      onLeer={leerCodigo}
+                      onCerrar={cerrarEscaner}
+                      ultimo={ultimoLeido}
+                      ocupado={leyendo}
+                      titulo="Pistolear productos"
+                      ayuda="Cada lectura agrega el producto al documento (si ya está, le suma una unidad). Cierra con Esc para editar cantidades y precios."
+                      zIndex={11500}
+                    />
+                  )}
                 </div>
                 <div style={{ maxHeight: 280, overflow: "auto" }}>
                   <table className="data-table" style={{ width: "100%", minWidth: 620 }}>
@@ -737,6 +794,7 @@ export default function DocumentoLibreBsale({ tipo = "guia", ventaDirecta = fals
                 <div style={{ fontSize: 12, color: "var(--text-muted)" }}>{guiaSinCorreo === "particular" ? "Venta directa a cliente particular: la guía" : "Con entrega inmediata la guía"} no se envía por correo al cliente; la {esBoleta ? "boleta" : "factura"} sí.</div>
               )}
               {conObsGuia && <CampoObservacionGuia valor={observacion} onChange={setObservacion} porProducto max={obsMax} disabled={!!enviando} />}
+              <CampoObservacionInterna valor={obsInterna} onChange={setObsInterna} disabled={!!enviando} nombreDocumento={esGuia ? "la guía" : esBoleta ? "la boleta" : "la factura"} />
               {!ventaDirecta && !esBoleta && <div style={caja}>
                 <span style={etiqueta}>Referencias y registro (opcional)</span>
                 <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 8 }}>

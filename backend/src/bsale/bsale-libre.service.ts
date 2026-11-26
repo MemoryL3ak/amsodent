@@ -262,18 +262,25 @@ export class BsaleLibreService {
     const t = texto(q, 60);
     if (t.length < 2) return [];
     const patron = `%${t.replace(/[%_]/g, '')}%`;
+    // (2026-11-26) También por código de barras (lectura con pistola en la
+    // venta directa): calce exacto, solo si lo escrito parece un código. El
+    // que calza por código va primero, para que la lectura lo tome sin dudar.
+    const esCodigo = /^[A-Za-z0-9-]{4,64}$/.test(t);
     const { data } = await this.supabase
       .getClient()
       .from('productos')
-      .select('sku, nombre, formato, lista1, lista2, stock, estado')
-      .or(`sku.ilike.${patron},nombre.ilike.${patron}`)
+      .select('sku, nombre, formato, lista1, lista2, stock, estado, codigo_barra')
+      .or(`sku.ilike.${patron},nombre.ilike.${patron}${esCodigo ? `,codigo_barra.eq.${t}` : ''}`)
       .limit(40);
+    const porCodigo = (p: any) => (esCodigo && String(p.codigo_barra || '').trim() === t ? 0 : 1);
     const resultados: any[] = (data || [])
       .filter((p: any) => String(p.estado || '') !== 'Inactivo' && normSku(p.sku))
+      .sort((a: any, b: any) => porCodigo(a) - porCodigo(b))
       .slice(0, 15)
       .map((p: any) => ({
         sku: normSku(p.sku), nombre: String(p.nombre || ''), formato: String(p.formato || ''),
         lista1: Number(p.lista1) || 0, lista2: Number(p.lista2) || 0, stock: Number(p.stock) || 0,
+        codigo_barra: String(p.codigo_barra || '').trim(),
       }));
     const k = normSku(t);
     const pareceSku = /^(?=.*\d)[A-Z0-9][A-Z0-9._-]{3,}$/.test(k);

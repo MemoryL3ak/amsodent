@@ -32,8 +32,53 @@ function pieComentario(at, por) {
   return [cuando, quien].filter(Boolean).join(" · ");
 }
 
-export default function ComentarioDocumento({ documentoId, nombreDocumento = "el documento", inicial = "", onGuardado }) {
-  const [texto, setTexto] = useState(inicial || "");
+/* ── Observación al CREAR el documento (2026-11-26) ──────────────────────────
+   Pedido de Ariel: «agregar campo observación cuando se cree una guía de
+   despacho, factura y se suba una orden de compra. Esta observación se agrega
+   como columna nueva en trazabilidad». Es el MISMO comentario interno de
+   arriba, solo que ahora se puede escribir antes de crear el documento:
+   · <CampoObservacionInterna/>: el campo del formulario (carga manual de OC,
+     guía o factura, y ventanas de emisión en Bsale). No viaja a Bsale ni cambia
+     la simulación.
+   · guardarObservacionInicial(): la guarda apenas el documento existe. Nunca
+     lanza: si falla, devuelve null y el texto queda en el recuadro de después
+     de emitir, pendiente de guardar. */
+export function CampoObservacionInterna({ valor, onChange, disabled = false, nombreDocumento = "el documento", estilo }) {
+  return (
+    <label className="campo-observacion-interna" style={{ display: "block", minWidth: 0, ...estilo }}>
+      <span style={{ ...etiqueta, display: "flex", justifyContent: "space-between", gap: 8, alignItems: "baseline", flexWrap: "wrap" }}>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><MessageSquare size={12} /> Observación interna de {nombreDocumento} (opcional)</span>
+        <span style={{ fontWeight: 600, textTransform: "none", letterSpacing: 0 }}>{String(valor || "").length}/{COMENTARIO_DOCUMENTO_MAX}</span>
+      </span>
+      <textarea
+        className="input"
+        rows={2}
+        value={valor || ""}
+        maxLength={COMENTARIO_DOCUMENTO_MAX}
+        onChange={(e) => onChange?.(e.target.value)}
+        disabled={disabled}
+        placeholder="Ej: el cliente retira el viernes, se despacha en dos partes…"
+        style={{ width: "100%", resize: "vertical", minHeight: 48, fontSize: 13, lineHeight: 1.4 }}
+      />
+      <span style={{ display: "block", fontSize: 11.5, color: "var(--text-muted)", marginTop: 3 }}>Se ve en la columna «Observación» de Trazabilidad. {AVISO_INTERNO}</span>
+    </label>
+  );
+}
+
+export async function guardarObservacionInicial(documentoId, texto) {
+  const t = limpiar(texto);
+  if (!documentoId || !t) return null;
+  try {
+    return await guardarComentario(documentoId, t);
+  } catch {
+    return null;
+  }
+}
+
+/* `borrador`: texto escrito antes de emitir que aún no se pudo guardar (queda
+   en el recuadro como pendiente). Por defecto, lo ya guardado (`inicial`). */
+export default function ComentarioDocumento({ documentoId, nombreDocumento = "el documento", inicial = "", borrador, onGuardado }) {
+  const [texto, setTexto] = useState((borrador ?? inicial) || "");
   const [guardado, setGuardado] = useState(limpiar(inicial));
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState("");
@@ -125,6 +170,62 @@ export function BotonComentarioDocumento({ documentoId, comentario, comentarioAt
         />
       )}
     </>
+  );
+}
+
+/* ── Columna «Observación» de Trazabilidad (2026-11-26) ──────────────────────
+   Las observaciones internas de los documentos de UNA cotización (orden de
+   compra, guías y facturas/boletas), una debajo de otra, cada una con el
+   documento al que pertenece. Clic en una la abre para leerla entera o
+   editarla (con `soloLectura`, solo leer). Sin observaciones, un guion. */
+const ETIQUETA_TIPO_OBS = { orden_compra: "OC", guia_despacho: "Guía", factura: "Factura", factura_boleta: "Factura / Boleta" };
+const NOMBRE_TIPO_OBS = { orden_compra: "la orden de compra", guia_despacho: "la guía", factura: "la factura", factura_boleta: "la factura o boleta" };
+const ORDEN_TIPO_OBS = ["orden_compra", "guia_despacho", "factura", "factura_boleta"];
+
+export function ObservacionesDocumentos({ docs, soloLectura = false, onGuardado, max = 3 }) {
+  const [abierto, setAbierto] = useState(null); // documento cuya observación se está viendo
+  const [todas, setTodas] = useState(false);
+  const conTexto = (docs || [])
+    .filter((d) => d && ETIQUETA_TIPO_OBS[d.tipo] && String(d.comentario || "").trim())
+    .sort((a, b) => ORDEN_TIPO_OBS.indexOf(a.tipo) - ORDEN_TIPO_OBS.indexOf(b.tipo) || Number(a.id) - Number(b.id));
+  if (!conTexto.length) return <span className="sin-observaciones" style={{ color: "#cbd5e1" }}>—</span>;
+  const visibles = todas ? conTexto : conTexto.slice(0, max);
+  return (
+    <div className="observaciones-documentos" style={{ display: "flex", flexDirection: "column", gap: 5, minWidth: 0 }}>
+      {visibles.map((d) => (
+        <button
+          key={d.id}
+          type="button"
+          className="observacion-documento"
+          onClick={() => setAbierto(d)}
+          title={`${ETIQUETA_TIPO_OBS[d.tipo]}${d.numero ? ` N° ${d.numero}` : ""}${pieComentario(d.comentario_at, d.comentario_por) ? ` (${pieComentario(d.comentario_at, d.comentario_por)})` : ""}: ${String(d.comentario).trim()}`}
+          style={{ background: "none", border: "none", padding: 0, margin: 0, textAlign: "left", cursor: "pointer", fontFamily: "inherit", minWidth: 0, width: "100%" }}
+        >
+          <span style={{ display: "block", fontSize: 10.5, fontWeight: 700, color: "#b45309", textTransform: "uppercase", letterSpacing: ".3px", overflowWrap: "anywhere" }}>
+            {ETIQUETA_TIPO_OBS[d.tipo]}{d.numero ? ` ${d.numero}` : ""}
+          </span>
+          <span style={{ display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden", fontSize: 12, lineHeight: 1.3, color: "#1f2937", overflowWrap: "anywhere", whiteSpace: "pre-line" }}>
+            {String(d.comentario).trim()}
+          </span>
+        </button>
+      ))}
+      {conTexto.length > max && (
+        <button type="button" onClick={() => setTodas((v) => !v)} className="table-link" style={{ background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: "inherit", fontSize: 11.5, fontWeight: 600, textAlign: "left" }}>
+          {todas ? "Ver menos" : `+${conTexto.length - max} más`}
+        </button>
+      )}
+      {abierto && (
+        <ModalComentarioDocumento
+          documentoId={abierto.id}
+          comentario={abierto.comentario}
+          pie={pieComentario(abierto.comentario_at, abierto.comentario_por)}
+          nombreDocumento={`${NOMBRE_TIPO_OBS[abierto.tipo]}${abierto.numero ? ` N° ${abierto.numero}` : ""}`}
+          soloLectura={soloLectura}
+          onCerrar={() => setAbierto(null)}
+          onGuardado={onGuardado}
+        />
+      )}
+    </div>
   );
 }
 

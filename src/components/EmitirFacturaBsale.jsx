@@ -10,7 +10,7 @@ import BotonImprimirCarta from "./BotonImprimirCarta";
 import BotonImprimirTermica from "./BotonImprimirTermica";
 import RegistrarComprobanteRapido from "./RegistrarComprobanteRapido";
 import SelectorGirosDocumento, { textoGirosDocumento } from "./SelectorGirosDocumento";
-import ComentarioDocumento from "./ComentarioDocumento";
+import ComentarioDocumento, { CampoObservacionInterna, guardarObservacionInicial } from "./ComentarioDocumento";
 
 /* ── Emitir factura en Bsale (2026-10-02) ────────────────────────────────────
    Ventana que se abre desde Trazabilidad sobre una guía sin factura. El
@@ -123,6 +123,10 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
     extras: extras.map((x) => [x.sku, x.cantidad, x.neto_unitario, x.nota]),
   });
   const [simuladoCon, setSimuladoCon] = useState(null);
+  // (2026-11-26) Observación interna escrita ANTES de emitir: no va a Bsale ni
+  // entra en la simulación; se guarda en el documento apenas queda emitido.
+  const [obsInterna, setObsInterna] = useState("");
+  const [obsGuardada, setObsGuardada] = useState("");
   const [confirmadoCon, setConfirmadoCon] = useState(null);
   const simulacionVigente = !!resultado?.simulacion && simuladoCon === firma;
   const confirmo = confirmadoCon === firma;
@@ -281,6 +285,10 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
         lineas: lineasActivas.map((l) => ({ detalle_id: l.detalle_id, cantidad: cantidadDe(l), nota: edits[l.detalle_id]?.nota ?? l.nota ?? "", ...(precioCambiado(l) ? { neto_unitario: precioDe(l) } : {}), ...(skuCambiado(l) ? { sku: skuDe(l), producto: productoDe(l) } : {}) })),
         extras: extras.map((x) => ({ sku: x.sku, producto: x.producto, cantidad: numero(x.cantidad), neto_unitario: numero(x.neto_unitario), nota: x.nota || "" })),
       });
+      if (r?.emitida && r?.documento_id && obsInterna.trim()) {
+        const g = await guardarObservacionInicial(r.documento_id, obsInterna);
+        setObsGuardada(g ? String(g.comentario || "") : "");
+      }
       setResultado(r);
       if (r?.simulacion) setSimuladoCon(firma);
       if (r?.emitida) onEmitida?.(r);
@@ -351,7 +359,7 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
               </div>
               {/* (2026-11-19) Comentario interno de la factura recién emitida: solo plataforma, no va a Bsale. */}
               {resultado.registrada && resultado.documento_id && (
-                <ComentarioDocumento documentoId={resultado.documento_id} nombreDocumento="la factura" />
+                <ComentarioDocumento documentoId={resultado.documento_id} nombreDocumento="la factura" inicial={obsGuardada} borrador={obsInterna} />
               )}
               {resultado.registrada && resultado.documento_id && (
                 <RegistrarComprobanteRapido licitacionId={licitacionId} documentoId={resultado.documento_id} totalBruto={resultado.total} nombreDocumento="la factura" />
@@ -816,6 +824,7 @@ export default function EmitirFacturaBsale({ licitacionId, guiaDocId, guiaDocIds
                           : "Si cambias el precio o el SKU de una línea de la guía, va como glosa (texto sin producto de Bsale) y tampoco mueve stock; en una línea copiada tras una nota de crédito, el SKU nuevo sale como producto."}
                     </div>
                   </div>
+                  <CampoObservacionInterna valor={obsInterna} onChange={setObsInterna} disabled={!!enviando} nombreDocumento="la factura" />
 
                   {!apagada && !borrador.recuperar && !bloqueada && simulacionVigente && (
                     <label style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 13, border: "1px solid var(--border)", borderRadius: 10, padding: "10px 12px", cursor: "pointer" }}>

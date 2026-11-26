@@ -12,7 +12,7 @@ import CamposSeguimientoGuia from "./CamposSeguimientoGuia";
 import CampoObservacionGuia, { OBSERVACION_GUIA_MAX } from "./CampoObservacionGuia";
 import SelectorLotes, { cuerpoLotes, problemaLotes } from "./SelectorLotes";
 import SelectorGirosDocumento, { textoGirosDocumento } from "./SelectorGirosDocumento";
-import ComentarioDocumento from "./ComentarioDocumento";
+import ComentarioDocumento, { CampoObservacionInterna, guardarObservacionInicial } from "./ComentarioDocumento";
 
 /* ── Emitir guía de despacho / registrar orden en Bsale (2026-10-02) ─────────
    Ventana del módulo Facturación para una orden de compra:
@@ -43,6 +43,10 @@ export default function EmitirDespachoBsale({ tipo = "guia", licitacionId, ocDoc
   // Atributo adicional «Observación» de la guía en Bsale (sí cambia lo simulado):
   // la general y, por producto, la de la cotización editable (2026-10-08).
   const [observacion, setObservacion] = useState("");
+  // (2026-11-26) Observación interna escrita ANTES de emitir: no va a Bsale ni
+  // entra en la simulación; se guarda en el documento apenas queda emitido.
+  const [obsInterna, setObsInterna] = useState("");
+  const [obsGuardada, setObsGuardada] = useState("");
   // Por SKU (como las cantidades): si la cotización repite un SKU, sus observaciones se juntan.
   const [obsLineas, setObsLineas] = useState({});
   const [obsCotizacion, setObsCotizacion] = useState({});
@@ -151,6 +155,10 @@ export default function EmitirDespachoBsale({ tipo = "guia", licitacionId, ocDoc
         ...(eligeGiro && girosSel.length && !cliente?.nuevo ? { giros: girosSel } : {}),
         ...(cliente?.nuevo ? { cliente } : {}),
       });
+      if (r?.emitida && r?.documento_id && obsInterna.trim()) {
+        const g = await guardarObservacionInicial(r.documento_id, obsInterna);
+        setObsGuardada(g ? String(g.comentario || "") : "");
+      }
       setResultado(r);
       if (r?.simulacion) setSimuladoCon(firma);
       if (r?.emitida) onEmitida?.(r);
@@ -218,7 +226,7 @@ export default function EmitirDespachoBsale({ tipo = "guia", licitacionId, ocDoc
               </div>
               {/* (2026-11-19) Comentario interno de la guía recién emitida: solo plataforma, no va a Bsale. */}
               {esGuia && resultado.registrada && resultado.documento_id && (
-                <ComentarioDocumento documentoId={resultado.documento_id} nombreDocumento="la guía" />
+                <ComentarioDocumento documentoId={resultado.documento_id} nombreDocumento="la guía" inicial={obsGuardada} borrador={obsInterna} />
               )}
             </div>
           )}
@@ -431,6 +439,7 @@ export default function EmitirDespachoBsale({ tipo = "guia", licitacionId, ocDoc
                   )}
                   {esGuia && <CamposSeguimientoGuia valor={seguimiento} onChange={setSeguimiento} disabled={!!enviando} />}
                   {esGuia && <CampoObservacionGuia valor={observacion} onChange={setObservacion} porProducto max={obsMax} disabled={!!enviando} />}
+                  {esGuia && <CampoObservacionInterna valor={obsInterna} onChange={setObsInterna} disabled={!!enviando} nombreDocumento="la guía" />}
                   <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.45 }}>
                     {borrador.referencias?.length ? `Referencia a la orden de compra: folio ${borrador.referencias[0].folio} · razón ${borrador.referencias[0].razon || borrador.referencias[0].numero}. ` : ""}
                     {esGuia ? "Bsale descuenta el stock al emitir la guía; la factura se emite después desde la guía." : "La nota de venta no va al SII ni mueve stock."}

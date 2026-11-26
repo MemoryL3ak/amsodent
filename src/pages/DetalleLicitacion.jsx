@@ -12,6 +12,10 @@
 
 import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { api } from "../lib/api";
+import { CampoObservacionInterna } from "../components/ComentarioDocumento";
+
+// (2026-11-26) Documentos que llevan observación interna al cargarlos.
+const TIPOS_CON_OBSERVACION = ["orden_compra", "guia_despacho", "factura", "factura_boleta"];
 import { useParams, useNavigate, useLocation, Link } from "react-router-dom";
 import Toast from "../components/Toast";
 import DropdownSelect from "../components/ui/DropdownSelect";
@@ -536,6 +540,7 @@ export default function EditarLicitacion() {
   const [docEmpresa, setDocEmpresa] = useState("Starken");
   const [docNumSeguimiento, setDocNumSeguimiento] = useState("");
   const [docUrl, setDocUrl] = useState(""); // Webpay: link al comprobante
+  const [docObservacion, setDocObservacion] = useState(""); // (2026-11-26) observación interna del documento
   // (2026-10-01) Procesador del pago con tarjeta: Transbank o Getnet. Los dos
   // depositan en la misma cuenta, así que hay que anotarlo al registrar.
   const [docProcesador, setDocProcesador] = useState("transbank");
@@ -1652,6 +1657,8 @@ export default function EditarLicitacion() {
         // El tipo sigue siendo "webpay" (pago con tarjeta); el procesador va en
         // forma_pago, que es donde Seguimiento de Pagos lee el medio.
         ...(esWebpay ? { forma_pago: docProcesador } : {}),
+        // (2026-11-26) Observación interna (columna «Observación» de Trazabilidad): el servidor la guarda como comentario del documento.
+        ...(TIPOS_CON_OBSERVACION.includes(tipo) && docObservacion.trim() ? { comentario: docObservacion.trim() } : {}),
         bucket,
         storage_path: storagePath,
         file_name: file.name,
@@ -1679,6 +1686,7 @@ export default function EditarLicitacion() {
       setDocEmpresa("Starken");
       setDocNumSeguimiento("");
       setDocUrl("");
+      setDocObservacion("");
       setDocFile(null);
       if (fileInputRef.current) fileInputRef.current.value = "";
       setToast({
@@ -5426,6 +5434,18 @@ export default function EditarLicitacion() {
                 />
               </div>
             )}
+          </div>
+        )}
+
+        {/* (2026-11-26) Observación interna al cargar la OC, la guía o la factura: sale en la columna «Observación» de Trazabilidad. */}
+        {TIPOS_CON_OBSERVACION.includes(docTipo) && (
+          <div className="mt-4">
+            <CampoObservacionInterna
+              valor={docObservacion}
+              onChange={setDocObservacion}
+              disabled={subiendoDoc}
+              nombreDocumento={docTipo === "orden_compra" ? "la orden de compra" : docTipo === "guia_despacho" ? "la guía" : "la factura"}
+            />
           </div>
         )}
 

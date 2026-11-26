@@ -82,7 +82,7 @@ import NotasTrazabilidad from "../components/NotasTrazabilidad";
 import { useEstadosBsale } from "../lib/estadosBsale";
 import { pedirPendientesFacturar } from "../lib/pendientesFacturar";
 import { avisoEliminarFacturaConNotas, esNotaSinSuFactura, notasDeFactura, textoNotas } from "../lib/notasSinFactura";
-import { BotonComentarioDocumento } from "../components/ComentarioDocumento";
+import { BotonComentarioDocumento, ObservacionesDocumentos } from "../components/ComentarioDocumento";
 
 // Mapping empresa courier → builder de URL de tracking. Si la empresa no
 // tiene URL o no hay número, devuelve "" (no renderizamos el link).
@@ -593,6 +593,8 @@ export default function Trazabilidad() {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const [facturaNumero, setFacturaNumero] = useState("");
   const [facturaFecha, setFacturaFecha] = useState("");
+  // (2026-11-26) Observación interna escrita al cargar la guía o la factura.
+  const [docObservacionUp, setDocObservacionUp] = useState("");
   const [facturaMonto, setFacturaMonto] = useState(""); // monto NETO de la factura (solo dígitos)
   const [facturaFile, setFacturaFile] = useState(null);
   const [leyendoIA, setLeyendoIA] = useState(false); // lectura del PDF con IA
@@ -2106,6 +2108,7 @@ export default function Trazabilidad() {
     setDocTipoUp("factura");
     setFacturaNumero("");
     setFacturaFecha("");
+    setDocObservacionUp("");
     setFacturaMonto("");
     setFacturaFile(null);
     setFacturaGuiaIds([]);
@@ -2260,6 +2263,9 @@ export default function Trazabilidad() {
             mime_type: file.type || "application/pdf",
             size_bytes: Number(file.size || 0),
           };
+
+      // (2026-11-26) Observación interna: sale en la columna «Observación».
+      if (docObservacionUp.trim()) payload.comentario = docObservacionUp.trim();
 
       let creado = null;
       try {
@@ -2836,7 +2842,7 @@ export default function Trazabilidad() {
               <tr>
                 <th
                   onClick={() => toggleSort("entidad")}
-                  style={{ cursor: "pointer", userSelect: "none", width: esSoloClienteParticular ? "34%" : "26%", textAlign: "left" }}
+                  style={{ cursor: "pointer", userSelect: "none", width: esSoloClienteParticular ? "26%" : "17.5%", textAlign: "left" }}
                 >
                   <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
                     Cotización / Cliente <SortIcon col="entidad" />
@@ -2844,7 +2850,7 @@ export default function Trazabilidad() {
                 </th>
                 <th
                   onClick={() => toggleSort("monto")}
-                  style={{ cursor: "pointer", userSelect: "none", textAlign: "right", width: "11%" }}
+                  style={{ cursor: "pointer", userSelect: "none", textAlign: "right", width: "10.5%" }}
                 >
                   <span style={{ display: "inline-flex", alignItems: "center", gap: 4, justifyContent: "flex-end" }}>
                     Saldo por consumir <SortIcon col="monto" />
@@ -2852,13 +2858,13 @@ export default function Trazabilidad() {
                 </th>
                 {!esSoloClienteParticular && (
                   <>
-                    <th style={{ width: "14%", textAlign: "left" }}>Orden de Compra</th>
-                    <th style={{ width: "14%", textAlign: "left" }}>Guía Despacho</th>
+                    <th style={{ width: "12%", textAlign: "left" }}>Orden de Compra</th>
+                    <th style={{ width: "12%", textAlign: "left" }}>Guía Despacho</th>
                   </>
                 )}
                 <th
                   onClick={() => toggleSort("factura")}
-                  style={{ width: esSoloClienteParticular ? "18%" : "14%", textAlign: "left", cursor: "pointer", userSelect: "none" }}
+                  style={{ width: esSoloClienteParticular ? "15%" : "12%", textAlign: "left", cursor: "pointer", userSelect: "none" }}
                   title="Ordenar por avance del ciclo: sin factura y pago pendiente primero, pagadas al final"
                 >
                   <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
@@ -2866,16 +2872,18 @@ export default function Trazabilidad() {
                   </span>
                 </th>
                 {esSoloClienteParticular && (
-                  <th style={{ width: "18%", textAlign: "left" }}>Comprobante</th>
+                  <th style={{ width: "14%", textAlign: "left" }}>Comprobante</th>
                 )}
-                <th style={{ width: esSoloClienteParticular ? "16%" : "13%", textAlign: "left" }}>Tracking Envío</th>
-                <th style={{ textAlign: "right", width: esSoloClienteParticular ? "16%" : "16%" }}>Acción</th>
+                <th style={{ width: esSoloClienteParticular ? "12%" : "9%", textAlign: "left" }}>Tracking Envío</th>
+                {/* (2026-11-26) Observaciones internas de la OC, las guías y las facturas de la cotización. */}
+                <th style={{ width: esSoloClienteParticular ? "13%" : "12%", textAlign: "left", whiteSpace: "nowrap" }} title="Observaciones internas de los documentos de la cotización (no van a Bsale ni al cliente)">Observación</th>
+                <th style={{ textAlign: "right", width: esSoloClienteParticular ? "15%" : "15%" }}>Acción</th>
               </tr>
             </thead>
             <tbody>
               {dataFiltrada.length === 0 ? (
                 <tr>
-                  <td colSpan={esSoloClienteParticular ? 6 : 7} style={{ textAlign: "center", padding: "60px 0", color: "var(--text-muted)" }}>
+                  <td colSpan={esSoloClienteParticular ? 7 : 8} style={{ textAlign: "center", padding: "60px 0", color: "var(--text-muted)" }}>
                     No hay cotizaciones adjudicadas que coincidan con los filtros.
                   </td>
                 </tr>
@@ -3015,8 +3023,10 @@ export default function Trazabilidad() {
                                       borderTop: "1px solid #f1f5f9",
                                       fontWeight: 400,
                                       fontSize: "11px",
-                                      lineHeight: 1.5,
+                                      lineHeight: 1.35,
                                       color: "#94a3b8",
+                                      whiteSpace: "normal",
+                                      overflowWrap: "anywhere",
                                     }}
                                     title="OC cargadas (neto) menos guías de despacho cargadas (neto)"
                                   >
@@ -3052,8 +3062,8 @@ export default function Trazabilidad() {
                               );
                               return (
                                 <div>
-                                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                                    <span style={{ fontWeight: 500, color: "#1f2937" }}>{oc.numero || "S/N"}</span>
+                                  <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: "2px 6px" }}>
+                                    <span style={{ fontWeight: 500, color: "#1f2937", overflowWrap: "anywhere" }}>{oc.numero || "S/N"}</span>
                                     <button
                                       type="button"
                                       onClick={() => abrirDocumento(oc)}
@@ -3062,6 +3072,15 @@ export default function Trazabilidad() {
                                     >
                                       <Eye size={13} />
                                     </button>
+                                    <BotonComentarioDocumento
+                                      documentoId={oc.id}
+                                      comentario={oc.comentario}
+                                      comentarioAt={oc.comentario_at}
+                                      comentarioPor={oc.comentario_por}
+                                      nombreDocumento={`la orden de compra${oc.numero ? ` N° ${oc.numero}` : ""}`}
+                                      soloLectura={soloLectura}
+                                      onGuardado={(r) => alGuardarComentario(lic.id, r)}
+                                    />
                                     {oc.numero && (
                                       <button
                                         type="button"
@@ -3346,6 +3365,23 @@ export default function Trazabilidad() {
                           );
                         })()}
 
+                        {/* (2026-11-26) Observación — una celda por cotización con las de sus documentos. */}
+                        {isFirstRow && (
+                          <td
+                            className="celda-observaciones"
+                            rowSpan={cycles.length}
+                            onMouseEnter={() => setHoverChain({ type: "cot", licId: lic.id })}
+                            onMouseLeave={clearHover}
+                            style={{ verticalAlign: "middle", borderLeft: "1px solid #e5e7eb", backgroundColor: hoverCotizacion ? hoverBg : undefined }}
+                          >
+                            <ObservacionesDocumentos
+                              docs={getDocsForLic(lic.id)}
+                              soloLectura={soloLectura}
+                              onGuardado={(r) => alGuardarComentario(lic.id, r)}
+                            />
+                          </td>
+                        )}
+
                         {/* Acción - solo en la primera fila */}
                         {isFirstRow && (
                           <td
@@ -3524,6 +3560,18 @@ export default function Trazabilidad() {
                                     />
                                   </>
                                 )}
+                                {/* (2026-11-26) Observación interna del documento (no va a Bsale ni al cliente). */}
+                                <textarea
+                                  className="input campo-observacion-carga"
+                                  rows={2}
+                                  value={docObservacionUp}
+                                  maxLength={1000}
+                                  onChange={(e) => setDocObservacionUp(e.target.value)}
+                                  placeholder="Observación (opcional)"
+                                  title="Observación interna: se ve en la columna «Observación». No se envía a Bsale ni al cliente."
+                                  disabled={subiendoFactura}
+                                  style={{ resize: "vertical", minHeight: 44, fontSize: 12.5, lineHeight: 1.35 }}
+                                />
                                 <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                                   <input
                                     ref={fileInputRef}
