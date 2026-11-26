@@ -36,6 +36,16 @@ const RUT_CONSUMIDOR_FINAL = '66666666-6';
 type Tipo = 'guia' | 'factura' | 'boleta';
 type Problema = { codigo: string; mensaje: string };
 
+/* (2026-11-26) Emisión pedida por OTRO sistema (la tienda amsodentmedical.cl),
+   no por una persona en pantalla. Solo la usa TiendaWebService:
+   · no se exige rol (quien llama se autenticó con su clave de integración);
+   · no hay paso de simular: no se compara la huella;
+   · la clave y el salesId los fija quien llama (uno por pedido web), así el
+     mismo pedido nunca produce dos documentos;
+   · se aceptan líneas de GLOSA (sin SKU), como el despacho: Bsale las documenta
+     como «Sin control de stock» (docs.bsale.dev/documentos#detalles-1). */
+export type OpcionesSistema = { sistema: true; clave: string; salesId: string; observacionCotizacion?: string };
+
 const hoyEnChile = () =>
   new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Santiago', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
 const normSku = (v: any) => String(v ?? '').replace(/\s+/g, '').toUpperCase();
@@ -360,7 +370,7 @@ export class BsaleLibreService {
 
   // ── Armado y validación ────────────────────────────────────────────────
 
-  private async armar(body: any) {
+  private async armar(body: any, sistema: OpcionesSistema | null = null) {
     const tipo: Tipo = body?.tipo === 'factura' ? 'factura' : body?.tipo === 'boleta' ? 'boleta' : 'guia';
     const ventaDirecta = body?.venta_directa === true;
     const esBoleta = tipo === 'boleta';
@@ -426,6 +436,16 @@ export class BsaleLibreService {
       ? new Map<string, any>(Object.keys(body.observaciones).map((k) => [normSku(k), body.observaciones[k]]))
       : null;
     for (const l of crudas) {
+      // Glosa (2026-11-26): solo en la emisión de sistema y solo sin SKU (p. ej. «Despacho»).
+      const glosa = sistema && !normSku(l?.sku) ? texto(l?.glosa, 80) : '';
+      if (glosa) {
+        const cantidad = Number(l?.cantidad);
+        const neto = Math.round(Number(l?.neto_unitario));
+        if (!(cantidad > 0)) problemas.push({ codigo: 'cantidad', mensaje: `${glosa}: la cantidad debe ser mayor que 0.` });
+        if (!(neto > 0)) problemas.push({ codigo: 'precio', mensaje: `${glosa}: indica el precio neto unitario.` });
+        lineas.push({ sku: '', glosa, producto: glosa, cantidad, neto_unitario: neto, neto: Math.round(cantidad * neto), en_bsale: false, variante_id: null, observacion: '' });
+        continue;
+      }
       const sku = normSku(l?.sku);
       if (!sku || vistos.has(sku)) continue;
       vistos.add(sku);
@@ -447,7 +467,7 @@ export class BsaleLibreService {
     /* (2026-11-09) Lotes y vencimientos elegidos por producto (guía libre o la
        guía de la venta directa): van escritos en la nota de la línea de la guía. */
     const lotes = (tipo === 'guia' || conGuia) && this.lotes
-      ? await this.lotes.asignar(lineas.map((l) => ({ sku: l.sku, cantidad: l.cantidad })), body?.lotes)
+      ? await this.lotes.asignar(lineas.filter((l) => !l.glosa).map((l) => ({ sku: l.sku, cantidad: l.cantidad })), body?.lotes)
       : { porSku: new Map(), problemas: [] as string[], avisos: [] as string[] };
     for (const p of lotes.problemas) problemas.push({ codigo: 'lotes', mensaje: p });
     for (const a of lotes.avisos) avisos.push({ codigo: 'lotes', mensaje: a });
@@ -456,7 +476,7 @@ export class BsaleLibreService {
       l.lotes_texto = deLinea?.texto || '';
       l.lotes = deLinea?.asignaciones || null;
     }
-    if (!lineas.length) problemas.push({ codigo: 'sin_lineas', mensaje: 'Agrega al menos un producto.' });
+    if (!lineas.some((l) => !l.glosa)) problemas.push({ codigo: 'sin_lineas', mensaje: 'Agrega al menos un producto.' });
     if (lineas.length > 200) problemas.push({ codigo: 'muchas_lineas', mensaje: 'Máximo 200 líneas por documento.' });
     const totales = totalesDe(lineas);
 
@@ -671,21 +691,25 @@ export class BsaleLibreService {
 
   // ── Simular / emitir ───────────────────────────────────────────────────
 
-  async emitir(usuario: { id: string; email: string }, body: any) {
+  async emitir(usuario: { id: string; email: string }, body: any, sistema: OpcionesSistema | null = null) {
     // (2026-10-15) La guía de despacho sola (no venta directa) la emite
     // cualquiera; boletas, facturas y la venta directa siguen pidiendo rol o
     // perfil. Misma resolución del tipo que en armar().
+    // (2026-11-26) La emisión de sistema ya se autenticó con su clave (TiendaWebController).
     const esGuiaSola = !(body?.tipo === 'factura' || body?.tipo === 'boleta') && body?.venta_directa !== true;
-    if (esGuiaSola) await this.facturacion.exigirRolGuia(usuario.id);
-    else await this.facturacion.exigirRol(usuario.id);
+    if (sistema?.sistema !== true) {
+      if (esGuiaSola) await this.facturacion.exigirRolGuia(usuario.id);
+      else await this.facturacion.exigirRol(usuario.id);
+    }
     const simular = body?.simular === true;
     const real = this.facturacion.emisionActiva && !simular;
-    const b: any = await this.armar(body);
+    const b: any = await this.armar(body, sistema);
+    if (sistema?.observacionCotizacion) b.observacion_cotizacion = sistema.observacionCotizacion;
     if (b.problemas.length) {
       if (simular) return { simulacion: true, bloqueada: true, problemas: b.problemas, avisos: b.avisos, huella: b.huella, totales: b.totales };
       throw new BadRequestException(`No se puede emitir: ${b.problemas.map((p: Problema) => p.mensaje).join(' ')}`);
     }
-    if (!simular && (!body?.huella || body.huella !== b.huella)) {
+    if (!sistema && !simular && (!body?.huella || body.huella !== b.huella)) {
       throw new ConflictException('Los datos cambiaron desde la simulación. Simula de nuevo antes de emitir.');
     }
 
@@ -704,14 +728,23 @@ export class BsaleLibreService {
         : { clientId: c.id };
     const letra = b.tipo === 'guia' ? 'G' : b.tipo === 'boleta' ? 'B' : 'F';
     // AMS-V-…: venta directa (la que crea su cotización); AMS-L-…: documento libre.
-    const clave = `AMS-${b.venta_directa ? 'V' : 'L'}-${letra}-${b.huella}`;
-    const { data: previas } = await this.supabase.getClient().from('bsale_emisiones').select('id').eq('clave', clave).eq('estado', 'emitida');
-    const salesId = `${clave}-${(previas || []).length}`;
-    const details = b.lineas.map((l: any) => ({
-      code: l.sku, quantity: l.cantidad, netUnitValue: l.neto_unitario, taxId: `[${IVA_ID}]`,
-      // Observación del producto → nota de su línea en la guía (2026-10-08); desde 2026-11-09 con sus lotes adelante.
-      ...(b.tipo === 'guia' && l.nota_guia ? { comment: l.nota_guia } : {}),
-    }));
+    // (2026-11-26) La emisión de sistema trae su propia clave y salesId (uno por pedido web).
+    const clave = sistema ? sistema.clave : `AMS-${b.venta_directa ? 'V' : 'L'}-${letra}-${b.huella}`;
+    let salesId = sistema?.salesId || '';
+    if (!salesId) {
+      const { data: previas } = await this.supabase.getClient().from('bsale_emisiones').select('id').eq('clave', clave).eq('estado', 'emitida');
+      salesId = `${clave}-${(previas || []).length}`;
+    }
+    const details = b.lineas.map((l: any) =>
+      l.glosa
+        ? // Glosa: sin variante ni SKU, no mueve stock (Bsale «Sin control de stock»).
+          { comment: l.glosa, quantity: l.cantidad, netUnitValue: l.neto_unitario, taxId: `[${IVA_ID}]` }
+        : {
+            code: l.sku, quantity: l.cantidad, netUnitValue: l.neto_unitario, taxId: `[${IVA_ID}]`,
+            // Observación del producto → nota de su línea en la guía (2026-10-08); desde 2026-11-09 con sus lotes adelante.
+            ...(b.tipo === 'guia' && l.nota_guia ? { comment: l.nota_guia } : {}),
+          },
+    );
     const references = b.referencias.map((r: any) => referenciaParaBsale(r, emision));
     const solicitud: Record<string, any> =
       b.tipo === 'guia'
@@ -852,7 +885,11 @@ export class BsaleLibreService {
       // La observación de cada producto va en la línea de la guía (nota del detalle); se reconoce por la variante.
       // (2026-11-09) La nota lleva adelante el lote y el vencimiento elegidos.
       const obsPorVariante = new Map<number, string>(b.lineas.filter((l: any) => l.variante_id && l.nota_guia).map((l: any) => [Number(l.variante_id), String(l.nota_guia)]));
+      // (2026-11-26) Solo las líneas de productos: una glosa (el despacho de un pedido web) no se despacha ni mueve stock.
+      const variantesProducto = new Set<number>(b.lineas.filter((l: any) => !l.glosa && l.variante_id).map((l: any) => Number(l.variante_id)));
+      const hayGlosas = b.lineas.some((l: any) => l.glosa);
       const details = lineasDoc
+        .filter((d: any) => !hayGlosas || variantesProducto.has(Number(d?.variant?.id)))
         .map((d: any) => {
           const nota = obsPorVariante.get(Number(d?.variant?.id)) || null;
           return { detailId: Number(d.id), quantity: Number(d.quantity) || 0, ...(nota ? { comment: nota } : {}) };
@@ -879,7 +916,7 @@ export class BsaleLibreService {
       const r = await this.despachos.emitirReal({
         usuario, clave: claveG, salesId, tipo: 'guia', ruta: '/shippings.json', solicitud, vista,
         licitacionId: cotizacion?.id || null, origenDocId: docEmitido.documento_id || null,
-        lineas: b.lineas.map((l: any) => ({ sku: l.sku, cantidad: l.cantidad, neto_unitario: l.neto_unitario, ...(l.observacion ? { observacion: l.observacion } : {}), ...(l.lotes ? { lotes: l.lotes } : {}) })),
+        lineas: b.lineas.filter((l: any) => !l.glosa).map((l: any) => ({ sku: l.sku, cantidad: l.cantidad, neto_unitario: l.neto_unitario, ...(l.observacion ? { observacion: l.observacion } : {}), ...(l.lotes ? { lotes: l.lotes } : {}) })),
         bucket: 'guia-despacho',
         ...(sinCorreo ? {} : { correo: { tipo: 'guia' as const, para: b.cliente?.email || null } }),
         registrar: async (doc: any, pdf: any) => {
@@ -950,7 +987,9 @@ export class BsaleLibreService {
       condicion_venta: b.credito ? `Crédito ${b.dias_vencimiento} días` : 'Contado',
       creado_por: usuario.email, estado: 'Adjudicada', fecha_adjudicada: ahora, madre_id: null, jerarquia: 'madre', flete_estimado: 0,
       total_con_iva: b.totales.total, total_sin_iva: b.totales.neto, total_iva: b.totales.iva,
-      observaciones: `Creada automáticamente por la venta directa: ${etiqueta} N° ${numero} emitida en Bsale por ${usuario.email}.`,
+      observaciones: b.observacion_cotizacion
+        ? `${b.observacion_cotizacion} ${etiqueta} N° ${numero} emitida en Bsale.`.slice(0, 1000)
+        : `Creada automáticamente por la venta directa: ${etiqueta} N° ${numero} emitida en Bsale por ${usuario.email}.`,
       vendedor_nombre: (perfil as any)?.nombre || null, vendedor_celular: (perfil as any)?.celular || null, vendedor_correo: (perfil as any)?.email || usuario.email,
       estado_entrega: 'Entregado', estado_envio: 'retirado',
     });
@@ -958,7 +997,7 @@ export class BsaleLibreService {
     // Para cliente particular el código de la cotización es su propio número.
     await db.from('licitaciones').update({ id_licitacion: String(licId) }).eq('id', licId);
 
-    const skus = b.lineas.map((l: any) => l.sku);
+    const skus = b.lineas.filter((l: any) => !l.glosa).map((l: any) => l.sku);
     const { data: prods } = await db.from('productos').select('sku, formato, categoria, costo').in('sku', skus);
     const porSku = new Map<string, any>((prods || []).map((p: any) => [normSku(p.sku), p]));
     await this.licitaciones.insertItems(
@@ -966,7 +1005,7 @@ export class BsaleLibreService {
         const p = porSku.get(l.sku);
         return {
           licitacion_id: licId, orden: i + 1, producto: l.producto, formato: p?.formato || null, cantidad: l.cantidad,
-          valor_unitario: l.neto_unitario, sku: l.sku, total: l.neto, categoria: p?.categoria || null, observacion: null,
+          valor_unitario: l.neto_unitario, sku: l.glosa ? null : l.sku, total: l.neto, categoria: p?.categoria || null, observacion: null,
           costo: p?.costo != null ? Number(p.costo) : null,
         };
       }),
