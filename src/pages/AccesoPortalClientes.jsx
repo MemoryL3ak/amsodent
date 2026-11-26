@@ -128,6 +128,8 @@ const MODULOS_PORTAL = [
   { clave: "explorador", nombre: "Explorador de precios", detalle: "Comparador de precios de otras tiendas dentales.", pide: true },
   { clave: "actividad", nombre: "Actividad", detalle: "Línea de tiempo de los pedidos de la cuenta.", pide: false },
   { clave: "facturas", nombre: "Facturas", detalle: "Facturas emitidas con su condición de pago, vencimiento, estado y PDF.", pide: false },
+  // (2026-11-26) Solicitudes de postventa (reclamos) del cliente; encendida por defecto.
+  { clave: "postventa", nombre: "Postventa", detalle: "Solicitudes de postventa: reclamos por productos, cantidades, cambios y su seguimiento.", pide: false },
 ];
 const modulosCompletos = (m) => {
   const r = {};

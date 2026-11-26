@@ -361,6 +361,15 @@ function getNotifVisuales(notif) {
       etiqueta: "Orden de compra",
     };
   }
+  // (2026-11-26) Solicitud de postventa (reclamo de un cliente) a cargo del usuario.
+  if (tipo === "postventa_solicitud") {
+    return {
+      icono: AlertCircle,
+      color: "#b45309",
+      bg: "#fef3c7",
+      etiqueta: "Postventa",
+    };
+  }
   // (2026-11-26) Personas que abrieron un mailing enviado por el usuario.
   if (tipo === "mailing_apertura") {
     return {

@@ -25,6 +25,7 @@ import { AdminGuard } from '../auth/admin.guard';
   imports: [MailingsModule, CorreosModule, LicitacionesModule, ProductosModule, CampanasModule],
   controllers: [StockClientesController],
   providers: [StockClientesService, ExploradorService, PedidosFlujoService, WebpayService, OfertasPortalService, PortalModulosService, ExploradorProductosService, InventarioPortalService, RecepcionPortalService, FacturasPortalService, PortalInactividadCron, AuthGuard, AdminGuard],
-  exports: [StockClientesService, PedidosFlujoService],
+  // (2026-11-26) PortalModulosService: el módulo de Postventa exige su sección del portal.
+  exports: [StockClientesService, PedidosFlujoService, PortalModulosService],
 })
 export class StockClientesModule {}

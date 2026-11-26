@@ -63,6 +63,7 @@ import SeguimientoPagos from "./pages/SeguimientoPagos";
 import Cobranza from "./pages/Cobranza";
 import Factoring from "./pages/Factoring";
 import Facturacion from "./pages/Facturacion";
+import Postventa from "./pages/Postventa";
 import VentaDirecta from "./pages/VentaDirecta";
 import MonitoreoAlertas from "./pages/MonitoreoAlertas";
 import AlertasPendientes from "./pages/AlertasPendientes";
@@ -311,6 +312,15 @@ export default function App() {
             element={
               <RequireModulo modulo="facturacion">
                 <Facturacion />
+              </RequireModulo>
+            }
+          />
+          {/* Post venta → Postventa (2026-11-26): reclamos de clientes y su gestión. */}
+          <Route
+            path="postventa"
+            element={
+              <RequireModulo modulo="postventa">
+                <Postventa />
               </RequireModulo>
             }
           />

@@ -50,9 +50,11 @@ import {
   Bell,
   CreditCard,
   Receipt,
+  MessageSquareWarning,
 } from "lucide-react";
 
 import DropdownSelect from "../components/ui/DropdownSelect";
+import PostventaPortal from "../components/postventa/PostventaPortal";
 import { celdaFecha, celdaMonto, descargarExcel, descargarReportePDF } from "../lib/reporteStock";
 import { generarPDFcotizacion } from "../utils/generarPDFcotizacion";
 import { CUENTA_VACIA, calcularCuentas, dedupFacturas, estadoDeFactura, plazoDias } from "../lib/cuentasFacturas";
@@ -2281,6 +2283,8 @@ function PantallaDeclaracion({ cliente, setToast }) {
         <PanelHistorialPortal />
       ) : tabActiva === "facturas" ? (
         <PanelFacturas />
+      ) : tabActiva === "postventa" ? (
+        <PostventaPortal apiRequest={apiRequest} eventoRefrescar={PORTAL_REFRESCAR} setToast={setToast} />
       ) : tabActiva === "explorador" ? (
         // Sin Explorador habilitado, la pestaña muestra solo el carrito ("Mi pedido").
         <PanelExploradorPrecios soloCarrito={!habil("explorador")} />
@@ -3079,6 +3083,8 @@ function PanelHistorialPortal() {
 
 /** A dónde lleva un aviso de Amsodent. */
 function destinoAviso(a) {
+  // (2026-11-26) Avisos de una solicitud de postventa: llevan a su pestaña.
+  if (String(a?.tipo || "").startsWith("postventa")) return ["postventa", null];
   if (a?.solicitud_id) return ["solicitudes", a.solicitud_id];
   if (a?.licitacion_id) return ["solicitudes", null];
   return ["actividad", null];
@@ -3942,6 +3948,8 @@ function TabNavigator({ tab, onChange, contadorSolicitudes, contadorOfertas = 0,
     habil("solicitudes") && { id: "solicitudes", label: "Mis cotizaciones", icono: FileSpreadsheet },
     // (2026-11-09) Facturas emitidas con su condición de pago y estado.
     habil("facturas") && { id: "facturas", label: "Facturas", icono: Receipt },
+    // (2026-11-26) Solicitudes de postventa (reclamos) y su seguimiento.
+    habil("postventa") && { id: "postventa", label: "Postventa", icono: MessageSquareWarning },
     habil("ofertas") && { id: "ofertas", label: "Ofertas", icono: Tag },
     habil("showroom") && { id: "showroom", label: "Showroom", icono: ShoppingCart },
     habil("explorador")

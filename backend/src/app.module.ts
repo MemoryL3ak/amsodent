@@ -40,6 +40,7 @@ import { GestionComprasModule } from './gestion-compras/gestion-compras.module';
 import { BsaleModule } from './bsale/bsale.module';
 import { RepositorioModule } from './repositorio/repositorio.module';
 import { CajaModule } from './caja/caja.module';
+import { PostventaModule } from './postventa/postventa.module';
 
 @Module({
   imports: [
@@ -87,6 +88,7 @@ import { CajaModule } from './caja/caja.module';
     BsaleModule,
     RepositorioModule,
     CajaModule,
+    PostventaModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
 })
