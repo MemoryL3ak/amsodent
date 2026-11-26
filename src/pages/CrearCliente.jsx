@@ -86,7 +86,7 @@ export default function CrearCliente() {
     return vendedoresMap[e] || vendedorAsignado;
   }, [vendedorAsignado, vendedoresMap]);
 
-  // (2026-11-09) Solo administradores y vendedores cuyo canal en Metas vende a
+  // (2026-11-09; sin administradores desde el 26-11) Solo vendedores cuyo canal en Metas vende a
   // particulares (lib/vendedoresCartera); antes salía todo el equipo de venta.
   const opcionesVendedores = useMemo(() => {
     const lista = vendedoresCartera(vendedores, canalVendedores)

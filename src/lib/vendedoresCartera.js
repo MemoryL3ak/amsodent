@@ -4,10 +4,12 @@
 // El vendedor asignado existe solo para el Cliente Particular (es su cartera),
 // pero el listado —en Asignación de cartera, al crear y al editar un cliente—
 // mostraba a todo el equipo, incluidos los vendedores que solo venden a
-// Mercado Público. Desde hoy quedan:
-//   • los ADMINISTRADORES, y
-//   • los vendedores cuyo canal en Metas vende a particulares (terreno,
-//     tienda, página web, freelance; los mixtos terreno/mercado también).
+// Mercado Público. Quedan solo los vendedores cuyo canal en Metas vende a
+// particulares (terreno, tienda, página web, freelance; los mixtos
+// terreno/mercado también).
+// (2026-11-26) Los ADMINISTRADORES ya no figuran en el listado (pedido de
+// Ariel: «quitar administradores de asignación de cartera»). Los clientes que
+// ya tienen un administrador asignado lo conservan hasta que se reasignen.
 // Un vendedor solo de Mercado Público, sin canal asignado o bloqueado no
 // aparece. El canal sale de /metas/canal del periodo vigente (el backend
 // arrastra el último periodo guardado si el mes actual no tiene).
@@ -58,7 +60,6 @@ export function vendedoresCartera(perfiles, canalPorCorreo) {
   return (perfiles || []).filter((p) => {
     if (!p?.email || p?.bloqueado === true) return false;
     const rol = String(p.rol || "").trim().toLowerCase();
-    if (esRolAdmin(rol)) return true;
     if (!ROLES_VENTA.includes(rol)) return false;
     if (!canalPorCorreo) return true;
     return esCanalParticular(canalDe(p, canalPorCorreo));

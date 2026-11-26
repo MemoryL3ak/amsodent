@@ -90,7 +90,7 @@ export default function AsignacionCartera() {
     return String(perfilPorCorreo[e]?.nombre || "").trim() || e;
   };
 
-  // A quién se le puede asignar (2026-11-09): administradores y vendedores
+  // A quién se le puede asignar (2026-11-09; sin administradores desde el 26-11): vendedores
   // cuyo canal en Metas vende a particulares (lib/vendedoresCartera); los que
   // solo venden a Mercado Público ya no aparecen. Los de venta primero, con su
   // canal como segunda línea.
