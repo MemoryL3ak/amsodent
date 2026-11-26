@@ -25,6 +25,7 @@ import { OfertasPortalService } from './ofertas-portal.service';
 import { StockPortalGuard } from './stock-clientes.guard';
 import { PortalModulosService, MODULOS_PORTAL } from './portal-modulos.service';
 import { AuthGuard } from '../auth/auth.guard';
+import { ModuloGuard } from '../auth/modulo.guard';
 import { AdminGuard } from '../auth/admin.guard';
 
 @Controller('stock-clientes')
@@ -765,6 +766,18 @@ export class StockClientesController {
   async listarSolicitudesTodas(@Req() req: any) {
     const alcance = await this.stockClientes.alcancePedidos({ id: req?.user?.id, email: req?.user?.email });
     return await this.stockClientes.listarSolicitudesTodas(400, alcance.todos ? null : alcance.ruts);
+  }
+
+  /* (2026-11-26) Recepción de stock → pestaña «Otras casas dentales» (pedido de
+     Ariel: «agregar panel de otras casas dentales en recepción de stock para
+     visualizar»). Bodega no siempre tiene «monitoreo_stock», así que el panel
+     lee los pedidos por esta ruta, que exige el permiso de Recepción de stock.
+     Solo lectura; trae todos los pedidos porque mide lo que llega de otras
+     casas, no la cartera de quien mira. */
+  @UseGuards(AuthGuard, ModuloGuard('recepcion_stock', 'Recepción de stock'))
+  @Get('solicitudes-otras-casas')
+  async pedidosParaPanelOtrasCasas() {
+    return await this.stockClientes.listarSolicitudesTodas(400, null);
   }
 
   // Sucursales de un cliente (para el detalle/monitoreo admin).

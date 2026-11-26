@@ -1,8 +1,11 @@
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
-import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, Download, FlaskConical, PackagePlus, Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, Download, FlaskConical, PackagePlus, Plus, RefreshCw, ScanBarcode, Search, Store, Trash2, X } from "lucide-react";
 import { api } from "../lib/api";
+import useAuth from "../hooks/useAuth";
+import PanelOtrasCasas from "../components/PanelOtrasCasas";
+import { EscanerCodigoBarra, limpiarCodigoBarra } from "../components/CampoCodigoBarra";
 import DropdownSelect from "../components/ui/DropdownSelect";
 import BotonLimpiarFiltros from "../components/BotonLimpiarFiltros";
 import Toast from "../components/Toast";
@@ -23,8 +26,10 @@ import Toast from "../components/Toast";
    La bandeja es una tabla paginada con el detalle de cada recepción al
    desplegarla. Entra el admin o quien tenga «Recepción de stock» en su perfil.
 
-   (2026-11-09) Cada línea lleva LOTE y FECHA DE VENCIMIENTO, obligatorios
-   (van juntos). Un producto que llega en varios lotes va en varias líneas:
+   (2026-11-09) Cada línea lleva LOTE y FECHA DE VENCIMIENTO (van juntos).
+   (2026-11-26) Dejaron de ser obligatorios: sin ellos la línea entra igual,
+   solo no queda como lote elegible en las guías.
+   Un producto que llega en varios lotes va en varias líneas:
    «Otro lote» en la fila, o agregarlo de nuevo desde el buscador. Las guías
    de despacho ofrecen después esos lotes en un listbox por producto. */
 
@@ -110,8 +115,10 @@ function ModalRecepcion({ contexto, onCerrar, onRegistrada }) {
   // La simulación vale para ESTOS datos: si cambia algo, caduca y hay que simular de nuevo.
   const firma = JSON.stringify(cuerpo);
   const simulacionVigente = !!simulacion && simuladoCon === firma;
-  // (2026-11-09) Lote y vencimiento obligatorios en cada línea.
-  const lineasValidas = lineas.length > 0 && lineas.every((l) => aNumero(l.cantidad) > 0 && l.lote.trim() && l.vencimiento);
+  // (2026-11-26) Lote y vencimiento son opcionales (antes obligatorios): la
+  // línea solo necesita cantidad. Sin los dos, entra al stock pero no queda
+  // como lote para elegir en las guías; se avisa, no se frena.
+  const lineasValidas = lineas.length > 0 && lineas.every((l) => aNumero(l.cantidad) > 0);
   const faltanLotes = lineas.some((l) => !l.lote.trim() || !l.vencimiento);
   const completo = !!sucursalId && lineasValidas && (!conNumero || numero.trim().length > 0) && !enviando;
   const puedeRegistrar = completo && simulacionVigente && simulacion.problemas.length === 0 && contexto.emision_activa !== false;
@@ -126,6 +133,46 @@ function ModalRecepcion({ contexto, onCerrar, onRegistrada }) {
     });
     setQ("");
   }
+  /* (2026-11-26) Lectura con pistola: el lector escribe el código y manda
+     Enter. Sirve en el buscador (Enter) y en la ventanita «Pistolear», que
+     queda abierta para leer varios seguidos. Busca por código de barras o por
+     SKU exacto; si el producto ya está en la recepción suma una unidad a su
+     última línea (pistolear 10 cajas = cantidad 10), si no, agrega la línea. */
+  const [escaner, setEscaner] = useState(false);
+  const [leyendo, setLeyendo] = useState(false);
+  const [ultimoLeido, setUltimoLeido] = useState(null);
+  const cerrarEscaner = useCallback(() => setEscaner(false), []);
+  const lineasRef = useRef(lineas);
+  lineasRef.current = lineas;
+  const leerCodigo = useCallback(async (crudo, { silencioso = false } = {}) => {
+    const codigo = limpiarCodigoBarra(crudo);
+    if (!codigo) return;
+    setLeyendo(true);
+    try {
+      const r = await api.get(`/recepciones-stock/productos?q=${encodeURIComponent(codigo)}`);
+      const lista = Array.isArray(r) ? r : [];
+      const mayus = codigo.toUpperCase();
+      const p = lista.find((x) => x.codigo_barra && x.codigo_barra === codigo) || lista.find((x) => String(x.sku || "").toUpperCase() === mayus);
+      if (!p) {
+        // Enter en el buscador con un texto que no es un código: se deja la lista de resultados tal cual.
+        if (silencioso) return;
+        setUltimoLeido({ error: true, texto: `Ningún producto con SKU tiene el código «${codigo}». Revisa que el producto tenga su código de barras guardado (Productos → Editar).` });
+        return;
+      }
+      const ya = lineasRef.current.some((l) => l.producto_id === p.id);
+      setLineas((prev) => {
+        const i = prev.map((l) => l.producto_id).lastIndexOf(p.id);
+        if (i >= 0) return prev.map((l, n) => (n === i ? { ...l, cantidad: String(aNumero(l.cantidad) + 1) } : l));
+        return [...prev, { uid: nuevoUid(), producto_id: p.id, sku: p.sku, nombre: p.nombre, stock: p.stock, lote: "", vencimiento: "", cantidad: "1", costo: p.costo ? String(Math.round(p.costo)) : "" }];
+      });
+      setQ("");
+      setUltimoLeido({ texto: `${p.sku} · ${p.nombre}: ${ya ? "ya estaba, se sumó 1 unidad" : "agregado con 1 unidad"}.` });
+    } catch (e) {
+      setUltimoLeido({ error: true, texto: e?.message || "No se pudo buscar el código." });
+    } finally {
+      setLeyendo(false);
+    }
+  }, []);
   const cambiar = (uid, campo, valor) => setLineas((prev) => prev.map((l) => (l.uid === uid ? { ...l, [campo]: valor } : l)));
   const quitar = (uid) => setLineas((prev) => prev.filter((l) => l.uid !== uid));
   // «Otro lote»: una línea más del mismo producto, justo debajo.
@@ -217,9 +264,10 @@ function ModalRecepcion({ contexto, onCerrar, onRegistrada }) {
           {/* Líneas */}
           <div>
             <span style={etiqueta}>Productos recibidos *</span>
-            <div style={{ position: "relative" }}>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-start" }}>
+            <div style={{ position: "relative", flex: "1 1 280px", minWidth: 0 }}>
               <Search size={14} style={{ position: "absolute", left: 10, top: 12, color: "var(--text-muted)" }} />
-              <input className="input buscador-producto-recepcion" value={q} onChange={(e) => setQ(e.target.value)} disabled={!!enviando} placeholder="Buscar por SKU o nombre para agregar un producto…" style={{ width: "100%", paddingLeft: 30 }} />
+              <input className="input buscador-producto-recepcion" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); leerCodigo(q, { silencioso: true }); } }} disabled={!!enviando} placeholder="Buscar por SKU, nombre o código de barras para agregar un producto…" style={{ width: "100%", paddingLeft: 30 }} />
               {q.trim().length >= 2 && (
                 <div className="resultados-producto-recepcion" style={{ marginTop: 4, border: "1px solid var(--border)", borderRadius: 10, maxHeight: 200, overflowY: "auto", padding: 4, background: "var(--surface)" }}>
                   {buscando && <div style={{ padding: "10px", fontSize: 12.5, color: "var(--text-muted)" }}>Buscando…</div>}
@@ -239,13 +287,28 @@ function ModalRecepcion({ contexto, onCerrar, onRegistrada }) {
                 </div>
               )}
             </div>
+            <button type="button" className={`btn btn-sm ${escaner ? "btn-primary" : "btn-secondary"} btn-pistolear-recepcion`} onClick={() => { setUltimoLeido(null); setEscaner((v) => !v); }} disabled={!!enviando} title="Lee códigos de barras con la pistola: cada lectura agrega el producto o le suma una unidad" style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 38, whiteSpace: "nowrap" }}>
+              <ScanBarcode size={15} /> Pistolear
+            </button>
+            </div>
+            {escaner && (
+              <EscanerCodigoBarra
+                onLeer={leerCodigo}
+                onCerrar={cerrarEscaner}
+                ultimo={ultimoLeido}
+                ocupado={leyendo}
+                titulo="Pistolear productos recibidos"
+                ayuda="Cada lectura agrega el producto a la recepción (si ya está, le suma una unidad). Cierra con Esc para escribir lotes, cantidades o costos."
+                zIndex={11500}
+              />
+            )}
             <div className="table-wrap" style={{ margin: "8px 0 0" }}>
               <table className="data-table tabla-compacta tabla-texto tabla-lineas-recepcion" style={{ minWidth: 760 }}>
                 <thead>
                   <tr>
                     <th>Producto</th>
-                    <th style={{ width: 130 }} title="Obligatorio. El lote y su fecha de vencimiento van juntos">Lote *</th>
-                    <th style={{ width: 146 }} title="Obligatoria. El lote y su fecha de vencimiento van juntos">Vencimiento *</th>
+                    <th style={{ width: 130 }} title="Opcional. Para que el lote se pueda elegir en las guías necesita también su fecha de vencimiento">Lote</th>
+                    <th style={{ width: 146 }} title="Opcional. Va junto con el lote">Vencimiento</th>
                     <th style={{ textAlign: "right", width: 96 }}>Cantidad</th>
                     <th style={{ textAlign: "right", width: 124 }}>Costo neto unit.</th>
                     <th style={{ textAlign: "right" }}>Subtotal</th>
@@ -264,10 +327,10 @@ function ModalRecepcion({ contexto, onCerrar, onRegistrada }) {
                           <div style={{ fontSize: 11.5, color: "var(--text-muted)" }}>{l.sku} · stock hoy {num(l.stock)}{varios ? " · otro lote" : ""}</div>
                         </td>
                         <td>
-                          <input className="input campo-lote-recepcion" value={l.lote} onChange={(e) => cambiar(l.uid, "lote", e.target.value.toUpperCase().slice(0, 40))} disabled={!!enviando} placeholder="Ej: L2311A" style={{ width: "100%", minWidth: 96, height: 32, borderColor: l.lote.trim() ? undefined : "#dc2626" }} />
+                          <input className="input campo-lote-recepcion" value={l.lote} onChange={(e) => cambiar(l.uid, "lote", e.target.value.toUpperCase().slice(0, 40))} disabled={!!enviando} placeholder="Opcional" style={{ width: "100%", minWidth: 96, height: 32 }} />
                         </td>
                         <td>
-                          <input type="date" className="input campo-vencimiento-recepcion" value={l.vencimiento} onChange={(e) => cambiar(l.uid, "vencimiento", e.target.value)} disabled={!!enviando} title={vencido ? "Esta fecha ya pasó" : "Fecha de vencimiento del lote"} style={{ width: "100%", minWidth: 128, height: 32, borderColor: !l.vencimiento ? "#dc2626" : vencido ? "#d97706" : undefined }} />
+                          <input type="date" className="input campo-vencimiento-recepcion" value={l.vencimiento} onChange={(e) => cambiar(l.uid, "vencimiento", e.target.value)} disabled={!!enviando} title={vencido ? "Esta fecha ya pasó" : "Fecha de vencimiento del lote"} style={{ width: "100%", minWidth: 128, height: 32, borderColor: vencido ? "#d97706" : undefined }} />
                         </td>
                         <td style={{ textAlign: "right" }}>
                           <input className="input campo-cantidad-recepcion" inputMode="decimal" value={l.cantidad} onChange={(e) => cambiar(l.uid, "cantidad", soloNumero(e.target.value))} disabled={!!enviando} style={{ width: 84, textAlign: "right", height: 32, borderColor: aNumero(l.cantidad) > 0 ? undefined : "#dc2626" }} />
@@ -320,7 +383,7 @@ function ModalRecepcion({ contexto, onCerrar, onRegistrada }) {
               )}
             </div>
           )}
-          {faltanLotes && <div style={{ fontSize: 12.5, color: "#b91c1c" }}>Cada producto necesita su lote y su fecha de vencimiento. Si llegó en varios lotes, usa «+» en la fila para agregar otro.</div>}
+          {faltanLotes && <div style={{ fontSize: 12.5, color: "var(--text-muted)" }}>Lote y vencimiento son opcionales: las líneas que van sin los dos se reciben igual, pero no aparecerán como lote al emitir guías. Si un producto llegó en varios lotes, usa «+» en la fila.</div>}
           {error && <div style={{ fontSize: 12.5, color: "#dc2626", fontWeight: 600 }}>{error}</div>}
         </div>
 
@@ -354,6 +417,21 @@ export default function RecepcionStock() {
   const [tipo, setTipo] = useState("");
   const [pagina, setPagina] = useState(1);
   const [abierta, setAbierta] = useState(null);
+  // (2026-11-26) Pestaña «Otras casas dentales»: los pedidos del portal se
+  // piden recién al abrirla (ruta propia, con el permiso de Recepción de stock).
+  const { puede } = useAuth();
+  const [vista, setVista] = useState("recepciones");
+  const [pedidosPortal, setPedidosPortal] = useState(null);
+  const [errorPedidos, setErrorPedidos] = useState("");
+  useEffect(() => {
+    if (vista !== "otras_casas" || pedidosPortal !== null) return undefined;
+    let vivo = true;
+    setErrorPedidos("");
+    api.get("/stock-clientes/solicitudes-otras-casas")
+      .then((r) => { if (vivo) setPedidosPortal(Array.isArray(r) ? r : []); })
+      .catch((e) => { if (vivo) setErrorPedidos(e?.message || "No se pudieron cargar los pedidos del portal."); });
+    return () => { vivo = false; };
+  }, [vista, pedidosPortal]);
 
   const cargar = useCallback(async () => {
     setCargando(true);
@@ -454,6 +532,25 @@ export default function RecepcionStock() {
         </div>
       </div>
 
+      {/* (2026-11-26) Dos vistas: las recepciones de siempre y el panel de productos de otras casas dentales pedidos por el portal. */}
+      <div className="pagos-tabs tabs-recepcion-stock" role="tablist" aria-label="Vistas de Recepción de stock" style={{ marginBottom: 12 }}>
+        {[
+          { value: "recepciones", label: "Recepciones", Icono: PackagePlus },
+          { value: "otras_casas", label: "Otras casas dentales", Icono: Store },
+        ].map((p) => (
+          <button key={p.value} type="button" role="tab" aria-selected={vista === p.value} className={vista === p.value ? "activo" : ""} onClick={() => setVista(p.value)} title={p.value === "otras_casas" ? "Productos de otras casas dentales que los clientes piden por el portal: lo que puede llegar a bodega sin estar en nuestro catálogo" : undefined} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+            <p.Icono size={15} /> {p.label}
+          </button>
+        ))}
+      </div>
+
+      {vista === "otras_casas" && (
+        pedidosPortal === null
+          ? <div className="surface"><div className="surface-body" style={{ color: errorPedidos ? "var(--danger)" : "var(--text-muted)", fontSize: 13 }}>{errorPedidos || "Cargando los pedidos del portal…"}</div></div>
+          : <PanelOtrasCasas pedidos={pedidosPortal} onAbrirPedido={puede("monitoreo_stock") || puede("mis_clientes") ? (id) => window.open(`/pedidos-portal?pedido=${id}`, "_blank", "noopener") : undefined} />
+      )}
+
+      {vista === "recepciones" && (<>
       {bloqueo && (
         <div style={{ display: "flex", gap: 10, fontSize: 13, color: "#78350f", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 10, padding: "10px 14px", marginBottom: 14 }}>
           <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: 1, color: "#d97706" }} /> {bloqueo}
@@ -596,6 +693,7 @@ export default function RecepcionStock() {
         </table>
       </div>
       <Paginador pagina={paginaActual} total={filtradas.length} onCambiar={(p) => { setPagina(p); setAbierta(null); }} />
+      </>)}
     </div>
   );
 }

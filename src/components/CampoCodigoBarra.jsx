@@ -69,7 +69,11 @@ export default function CampoCodigoBarra({ value, onChange, disabled, className 
 
 /* Ventana flotante para pistolear varios productos seguidos. `ultimo` es el
    texto del último resultado (lo arma quien la usa). */
-export function EscanerCodigoBarra({ onLeer, onCerrar, ultimo, ocupado = false, titulo = "Pistolear código de barras" }) {
+/* (2026-11-26) También se usa DENTRO de ventanas (venta directa, recepción de
+   stock): `zIndex` la deja por encima de la ventana, `ayuda` es el texto de
+   espera propio de cada pantalla, y los clics dentro no llegan al fondo de la
+   ventana (que la cerraría). */
+export function EscanerCodigoBarra({ onLeer, onCerrar, ultimo, ocupado = false, titulo = "Pistolear código de barras", ayuda = "Cada lectura agrega el producto a la cotización (si ya está, suma una unidad). Esc para cerrar.", zIndex = 10500 }) {
   const ref = useRef(null);
   const [valor, setValor] = useState("");
 
@@ -91,7 +95,7 @@ export function EscanerCodigoBarra({ onLeer, onCerrar, ultimo, ocupado = false, 
   }
 
   return (
-    <div className="escaner-codigo-barra" role="dialog" aria-label={titulo} style={{ position: "fixed", right: 20, bottom: 20, zIndex: 10500, width: 360, maxWidth: "calc(100vw - 32px)", background: "var(--surface, #fff)", border: "1px solid var(--border, #e2e8f0)", borderRadius: 12, boxShadow: "var(--shadow-lg, 0 18px 40px -12px rgba(15,23,42,.3))", padding: "12px 14px", display: "flex", flexDirection: "column", gap: 8 }}>
+    <div className="escaner-codigo-barra" role="dialog" aria-label={titulo} onClick={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()} style={{ position: "fixed", right: 20, bottom: 20, zIndex, width: 360, maxWidth: "calc(100vw - 32px)", background: "var(--surface, #fff)", border: "1px solid var(--border, #e2e8f0)", borderRadius: 12, boxShadow: "var(--shadow-lg, 0 18px 40px -12px rgba(15,23,42,.3))", padding: "12px 14px", display: "flex", flexDirection: "column", gap: 8 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <ScanBarcode size={16} style={{ color: "var(--primary, #28aeb1)", flexShrink: 0 }} />
         <strong style={{ fontSize: 13.5, flex: 1, minWidth: 0 }}>{titulo}</strong>
@@ -110,7 +114,7 @@ export function EscanerCodigoBarra({ onLeer, onCerrar, ultimo, ocupado = false, 
         style={{ width: "100%", height: 38, fontSize: 14, borderColor: "var(--primary, #28aeb1)" }}
       />
       <div style={{ fontSize: 12, color: ultimo?.error ? "#b91c1c" : "var(--text-muted, #64748b)", lineHeight: 1.4, overflowWrap: "anywhere" }}>
-        {ultimo?.texto || "Cada lectura agrega el producto a la cotización (si ya está, suma una unidad). Esc para cerrar."}
+        {ultimo?.texto || ayuda}
       </div>
     </div>
   );

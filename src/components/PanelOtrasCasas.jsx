@@ -433,7 +433,10 @@ export default function PanelOtrasCasas({ pedidos, onAbrirPedido }) {
                             </td>
                             <td>
                               <span style={{ display: "inline-flex", gap: "2px 8px", flexWrap: "wrap" }}>
-                                {p.pedidos_ids.slice(0, 4).map((id) => (
+                                {/* Sin `onAbrirPedido` (quien mira no tiene la bandeja de pedidos): el número va como texto. */}
+                                {p.pedidos_ids.slice(0, 4).map((id) => !onAbrirPedido ? (
+                                  <span key={id} style={{ fontSize: 12.5, fontWeight: 600 }}>N° {id}</span>
+                                ) : (
                                   <button key={id} type="button" onClick={() => onAbrirPedido?.(id)} className="table-link" title={`Abrir el pedido N° ${id} en la bandeja`} style={{ background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: "inherit", fontSize: 12.5, fontWeight: 600 }}>
                                     N° {id}
                                   </button>

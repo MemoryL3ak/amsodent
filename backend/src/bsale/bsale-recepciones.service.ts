@@ -132,17 +132,20 @@ export class BsaleRecepcionesService {
     if (t.length < 2) return [];
     // Los caracteres que PostgREST usa como separadores pasan a comodín.
     const patron = `*${t.replace(/[,()"\\*%]/g, '_').replace(/\s+/g, '*')}*`;
+    // (2026-11-26) También por código de barras (lectura con pistola): calce
+    // exacto, y solo si lo escrito parece un código (sin espacios ni símbolos).
+    const esCodigo = /^[A-Za-z0-9-]{4,64}$/.test(t);
     const { data, error } = await this.db
       .from('productos')
-      .select('id, sku, nombre, marca, costo, stock, bsale_variant_id')
-      .or(`sku.ilike.${patron},nombre.ilike.${patron}`)
+      .select('id, sku, nombre, marca, costo, stock, bsale_variant_id, codigo_barra')
+      .or(`sku.ilike.${patron},nombre.ilike.${patron}${esCodigo ? `,codigo_barra.eq.${t}` : ''}`)
       .not('sku', 'is', null)
       .order('nombre', { ascending: true })
       .limit(25);
     if (error) throw new BadRequestException(error.message);
     return ((data || []) as any[])
       .filter((p) => String(p.sku || '').trim())
-      .map((p) => ({ id: Number(p.id), sku: String(p.sku).trim(), nombre: String(p.nombre || ''), marca: String(p.marca || ''), costo: Number(p.costo) || 0, stock: Number(p.stock) || 0, en_bsale: !!p.bsale_variant_id }));
+      .map((p) => ({ id: Number(p.id), sku: String(p.sku).trim(), nombre: String(p.nombre || ''), marca: String(p.marca || ''), costo: Number(p.costo) || 0, stock: Number(p.stock) || 0, en_bsale: !!p.bsale_variant_id, codigo_barra: String(p.codigo_barra || '').trim() }));
   }
 
   /* Valida la recepción y arma lo que se enviaría a Bsale. No escribe. */
@@ -173,7 +176,11 @@ export class BsaleRecepcionesService {
     }
 
     // Líneas: producto + lote + vencimiento (las repetidas se suman), cantidad > 0 y costo ≥ 0.
-    // (2026-11-09) Lote y vencimiento obligatorios: un mismo producto puede venir en varios lotes.
+    // (2026-11-09) Un mismo producto puede venir en varios lotes.
+    // (2026-11-26) Lote y vencimiento dejaron de ser obligatorios (pedido de
+    // Ariel): una línea sin ellos entra igual al stock; solo no queda como lote
+    // para elegir en las guías (un lote necesita código Y fecha). Lo único que
+    // se rechaza es una fecha escrita que no es una fecha.
     if (!(await this.lotes.listo())) problemas.push(MIGRACION_LOTES);
     const crudas: any[] = Array.isArray(body?.lineas) ? body.lineas : [];
     if (!crudas.length) throw new BadRequestException('Agrega al menos un producto a la recepción.');
@@ -188,8 +195,7 @@ export class BsaleRecepcionesService {
       if (costoCrudo != null && !(costoCrudo >= 0)) { problemas.push('Hay una línea con costo inválido.'); continue; }
       const lote = normLote(l?.lote);
       const vencimiento = fechaValida(l?.vencimiento);
-      if (!lote) problemas.push('Indica el lote de cada producto.');
-      if (!vencimiento) problemas.push(String(l?.vencimiento || '').trim() ? 'Hay una fecha de vencimiento inválida.' : 'Indica la fecha de vencimiento de cada producto.');
+      if (!vencimiento && String(l?.vencimiento || '').trim()) problemas.push('Hay una fecha de vencimiento inválida.');
       const clave = `${id}|${lote}|${vencimiento || ''}`;
       const previa = pedidas.get(clave);
       pedidas.set(clave, { id, lote, vencimiento: vencimiento || '', cantidad: redondo((previa?.cantidad || 0) + cantidad), costo: costoCrudo ?? previa?.costo ?? null });
@@ -291,7 +297,9 @@ export class BsaleRecepcionesService {
       huella: b.huella,
       problemas: b.problemas,
       avisos: [
-        ...b.lineas.filter((l) => l.vencimiento && l.vencimiento < hoy).map((l) => `«${l.nombre}», lote ${l.lote}: la fecha de vencimiento (${fechaCorta(l.vencimiento)}) ya pasó.`),
+        ...b.lineas.filter((l) => l.vencimiento && l.vencimiento < hoy).map((l) => `«${l.nombre}»${l.lote ? `, lote ${l.lote}` : ''}: la fecha de vencimiento (${fechaCorta(l.vencimiento)}) ya pasó.`),
+        // (2026-11-26) Sin lote o sin vencimiento la línea entra igual, pero no queda como lote elegible en las guías.
+        ...this.avisoSinLote(b.lineas),
         ...otros.map((o) => `${b.lineas.find((l) => l.producto_id === o.producto_id)?.sku || 'Un producto'}: el lote ${o.lote} ya está registrado con vencimiento ${fechaCorta(o.existente)}; con ${fechaCorta(o.vencimiento)} quedará como otro lote. Revisa la fecha.`),
         ...(repetida ? [`Ya hay una recepción registrada con ${b.tipo.nombre.toLowerCase()} N° ${b.documentoNumero} (recepción #${repetida.id}): revisa que no sea la misma mercadería.`] : []),
         ...(!this.facturacion.emisionActiva ? ['Las escrituras en Bsale están apagadas en este servidor (BSALE_EMISION=off): solo se puede simular.'] : []),
@@ -331,7 +339,7 @@ export class BsaleRecepcionesService {
       .single();
     if (eCab) throw new BadRequestException(this.sinTabla(eCab) ? MIGRACION : eCab.message);
     const recepcionId = Number(cab.id);
-    const filasNuevas = b.lineas.map((l) => ({ recepcion_id: recepcionId, producto_id: l.producto_id, sku: l.sku, nombre: l.nombre, lote: l.lote, vencimiento: l.vencimiento, cantidad: l.cantidad, costo_unitario: l.costo_unitario, bsale_variant_id: l.variante_id }));
+    const filasNuevas = b.lineas.map((l) => ({ recepcion_id: recepcionId, producto_id: l.producto_id, sku: l.sku, nombre: l.nombre, lote: l.lote || null, vencimiento: l.vencimiento || null, cantidad: l.cantidad, costo_unitario: l.costo_unitario, bsale_variant_id: l.variante_id }));
     // (2026-11-17) Se guarda también el costo que tenía el producto al recibir (si la columna ya existe).
     let insercion: any = await this.db.from('recepcion_stock_lineas').insert(b.lineas.map((l, i) => ({ ...filasNuevas[i], costo_catalogo: l.costo_catalogo }))).select('id, producto_id, sku, lote, vencimiento');
     if (insercion.error && /costo_catalogo/i.test(String(insercion.error.message))) {
@@ -370,7 +378,7 @@ export class BsaleRecepcionesService {
         await this.inventario.registrarMovimiento(
           {
             productoId: l.producto_id, tipo: 'entrada', cantidad: l.cantidad, costoUnitario: l.costo_unitario, sucursalId: sucursal.id,
-            motivo: `Recepción de stock${b.proveedor ? ` · ${b.proveedor.razon_social}` : ''}${l.lote ? ` · Lote ${l.lote} (venc. ${fechaCorta(l.vencimiento)})` : ''}`,
+            motivo: `Recepción de stock${b.proveedor ? ` · ${b.proveedor.razon_social}` : ''}${l.lote ? ` · Lote ${l.lote}${l.vencimiento ? ` (venc. ${fechaCorta(l.vencimiento)})` : ''}` : l.vencimiento ? ` · Venc. ${fechaCorta(l.vencimiento)}` : ''}`,
             referencia: `Recepción #${recepcionId} · ${etiqueta}${bsaleId ? ` · Bsale ${bsaleId}` : ''}`,
           },
           email,
@@ -410,6 +418,18 @@ export class BsaleRecepcionesService {
       if (!previa || l.costo_unitario > previa.costo_unitario) porProducto.set(l.producto_id, l);
     }
     return [...porProducto.values()];
+  }
+
+  /* (2026-11-26) Lote y vencimiento son opcionales. Un lote solo existe para las
+     guías cuando la línea trae código Y fecha: se avisa (sin frenar) cuántas
+     líneas entran sin eso, para que no sea una sorpresa al despachar. */
+  private avisoSinLote(lineas: LineaLista[]): string[] {
+    const sin = lineas.filter((l) => !l.lote || !l.vencimiento);
+    if (!sin.length) return [];
+    const nombres = sin.slice(0, 4).map((l) => l.sku || `«${l.nombre}»`).join(', ');
+    return [
+      `${sin.length === 1 ? 'Una línea entra' : `${sin.length} líneas entran`} sin lote o sin fecha de vencimiento (${nombres}${sin.length > 4 ? '…' : ''}): el stock se suma igual, pero ${sin.length === 1 ? 'no quedará' : 'no quedarán'} como lote para elegir al emitir guías.`,
+    ];
   }
 
   private avisosCostoMayor(lineas: LineaLista[], registrada = false): string[] {
