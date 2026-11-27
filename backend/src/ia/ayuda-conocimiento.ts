@@ -265,6 +265,13 @@ y avisa si cambiará el de Bsale; si Bsale no acepta el cambio, la guía no se
 emite. Con cliente nuevo en Bsale lo marcado se escribe en su campo Giro, que
 se puede corregir a mano. La factura libre y la venta directa usan la misma
 casilla.
+QUIÉN CREÓ UN CLIENTE (desde el 27-11-2026): el encabezado de la ficha del
+cliente muestra «Creado» (fecha) y «Creado por» (la persona; al pasar el mouse
+se ve su correo y la hora). El dato se guarda solo al crear el cliente (desde
+Clientes, desde la Bitácora o cuando se crea al guardar una cotización) y no se
+puede editar. Los clientes creados antes de fines de octubre de 2026 dicen «Sin
+registro»: de esa época no quedó guardado quién los creó (no se puede recuperar). No
+confundir con «Ejecutivo» (el vendedor asignado), que sí se puede cambiar.
 ASIGNACIÓN DE CARTERA (/asignacion-cartera, solo admin; también con el botón
 "Asignar cartera" de Clientes): para repartir clientes entre vendedores EN
 MASA. Se filtra por nombre/RUT, tipo, región, vendedor asignado y "le cotiza"

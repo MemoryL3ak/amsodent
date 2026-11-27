@@ -36,6 +36,19 @@ export class ClientesService {
     return msg.includes('giros');
   }
 
+  /* (2026-11-27) Quién creó el cliente: el correo de la sesión, en minúscula
+     (como `vendedor_asignado` y `licitaciones.creado_por`). */
+  static correoCreador(email: any): string | null {
+    const e = String(email ?? '').trim().toLowerCase();
+    return e || null;
+  }
+
+  // ¿El error es que la columna `creado_por` (migración 20261127) aún no existe?
+  static faltaColumnaCreadoPor(error: any): boolean {
+    const msg = [error?.message, error?.details, error?.hint].filter(Boolean).join(' ').toLowerCase();
+    return msg.includes('creado_por');
+  }
+
   /* Los giros de la ficha van también a Bsale (su único campo `activity`), si
      el RUT ya existe allá. Nunca frena el guardado: devuelve qué pasó. */
   private async girosABsale(rut: any, giros: string[]): Promise<ResultadoGirosBsale | null> {
@@ -255,8 +268,16 @@ export class ClientesService {
       const asignado = (body?.vendedor_asignado || creadorEmail || '').toString().trim().toLowerCase();
       fila.vendedor_asignado = asignado || null;
     }
+    // (2026-11-27) Queda registrado quién lo creó: siempre la sesión, nunca lo
+    // que venga en el cuerpo.
+    fila.creado_por = ClientesService.correoCreador(creadorEmail);
     const insertar = (f: Record<string, any>) => this.supabase.getClient().from('clientes').insert([f]).select().single();
     let { data, error } = await insertar(fila);
+    // Tolera que la columna `creado_por` (migración 20261127) aún no esté aplicada.
+    if (error && ClientesService.faltaColumnaCreadoPor(error)) {
+      delete fila.creado_por;
+      ({ data, error } = await insertar(fila));
+    }
     // Tolera que la columna `giros` (migración 20261023) aún no esté aplicada.
     if (error && traeGiros && ClientesService.faltaColumnaGiros(error)) {
       const sinGiros = { ...fila };
@@ -318,11 +339,16 @@ export class ClientesService {
       const asignado = (body?.vendedor_asignado || creadorEmail || '').toString().trim().toLowerCase();
       if (asignado) fila.vendedor_asignado = asignado;
     }
+    // (2026-11-27) Queda registrado quién lo creó (la sesión).
+    const creador = ClientesService.correoCreador(creadorEmail);
+    if (creador) fila.creado_por = creador;
     const intentar = (f: Record<string, any>) =>
       this.supabase.getClient().from('clientes').insert([f]).select().single();
-    // Tolera columnas aún no migradas (transitorio / oficina / vendedor_asignado):
-    // si el error indica que una columna no existe, se quita y se reintenta.
-    const OPCIONALES = ['oficina', 'transitorio', 'vendedor_asignado'];
+    // Tolera columnas aún no migradas (creado_por / transitorio / oficina /
+    // vendedor_asignado): si el error indica que una columna no existe, se
+    // quita y se reintenta. `creado_por` va primero: el error de PostgREST
+    // nombra la columna que falta.
+    const OPCIONALES = ['creado_por', 'oficina', 'transitorio', 'vendedor_asignado'];
     let intento = await intentar(fila);
     let data = intento.data;
     let error = intento.error;
@@ -340,6 +366,8 @@ export class ClientesService {
 
   async update(id: string | number, body: Record<string, any>, userId?: string | null) {
     const patch: Record<string, any> = { ...body };
+    // (2026-11-27) Quién creó el cliente no se edita: se ignora si viene.
+    delete patch.creado_por;
     // Giros (2026-10-23): se guardan limpios y, si cambiaron, van a Bsale.
     const traeGiros = ClientesService.girosDelCuerpo(patch);
     let girosAntes: string[] = [];

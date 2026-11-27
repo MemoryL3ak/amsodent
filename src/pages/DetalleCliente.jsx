@@ -14,6 +14,7 @@ import {
   ArrowLeft, Pencil, Building2, MapPin, Phone, Mail, Globe, User, IdCard,
   DollarSign, Package, FileText, Target, CheckCircle2, Plus, Trash2,
   CalendarClock, AlertTriangle, Cake, Briefcase, Clock, ShieldCheck, Wallet, Tag,
+  CalendarPlus, UserPlus,
 } from "lucide-react";
 
 /* ─── Helpers ─────────────────────────────────────────────────────────── */
@@ -34,6 +35,18 @@ function fmtFecha(iso) {
   const f = new Date(`${String(iso).slice(0, 10)}T00:00:00`);
   if (Number.isNaN(f.getTime())) return "—";
   return f.toLocaleDateString("es-CL", { day: "2-digit", month: "short", year: "numeric" });
+}
+
+/* (2026-11-27) Fecha de creación del cliente: `created_at` viene en UTC, así
+   que se pasa a la hora local (cortar el texto a 10 caracteres corría el día
+   en los clientes creados de noche). */
+function fmtCreado(iso, conHora = false) {
+  if (!iso) return "";
+  const f = new Date(iso);
+  if (Number.isNaN(f.getTime())) return "";
+  const dia = f.toLocaleDateString("es-CL", { day: "2-digit", month: "short", year: "numeric" });
+  if (!conHora) return dia;
+  return `${dia}, ${f.toLocaleTimeString("es-CL", { hour: "2-digit", minute: "2-digit" })}`;
 }
 
 function diasDesde(iso) {
@@ -315,6 +328,26 @@ export default function DetalleCliente() {
     return { ultima: pasadas[0]?.fecha || null, proxima: futuras[0]?.fecha || null };
   }, [actividades]);
 
+  /* (2026-11-27) «¿Cómo se puede ver quién creó un cliente?»: fecha de alta y
+     persona (clientes.creado_por = correo de la sesión que lo creó). Se muestra
+     el nombre del usuario si se conoce; los clientes anteriores no tienen dato. */
+  const creacion = useMemo(() => {
+    const correo = String(cliente?.creado_por || "").trim().toLowerCase();
+    const perfil = correo
+      ? (vendedores || []).find((p) => String(p?.email || "").trim().toLowerCase() === correo)
+      : null;
+    const nombre = String(perfil?.nombre || "").trim();
+    const fechaHora = fmtCreado(cliente?.created_at, true);
+    return {
+      fecha: fmtCreado(cliente?.created_at),
+      fechaTitulo: fechaHora ? `Creado el ${fechaHora}` : "",
+      quien: nombre || correo,
+      quienTitulo: correo
+        ? [nombre ? correo : "", fechaHora ? `Lo creó el ${fechaHora}` : ""].filter(Boolean).join(" · ")
+        : "No quedó registrado quién lo creó: el dato existe para los clientes creados desde fines de octubre de 2026.",
+    };
+  }, [cliente, vendedores]);
+
   // Estado del cliente (heurístico): activo si tuvo actividad o cotización < 180 días.
   const estadoCliente = useMemo(() => {
     const fechas = [
@@ -476,6 +509,14 @@ export default function DetalleCliente() {
               <HeaderItem icon={User} label="Ejecutivo" value={cliente.vendedor_asignado || "—"} />
               <HeaderItem icon={CalendarClock} label="Última visita" value={fmtFecha(visitas.ultima)} />
               <HeaderItem icon={CalendarClock} label="Próxima visita" value={fmtFecha(visitas.proxima)} />
+              <HeaderItem icon={CalendarPlus} label="Creado" value={creacion.fecha} title={creacion.fechaTitulo} />
+              <HeaderItem
+                icon={UserPlus}
+                label="Creado por"
+                value={creacion.quien || "Sin registro"}
+                title={creacion.quienTitulo}
+                tenue={!creacion.quien}
+              />
 
               {/* Estado de cliente (editable por admin: Activo ↔ Transitorio) */}
               <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
@@ -1104,13 +1145,13 @@ function TlStat({ label, value, hint }) {
   );
 }
 
-function HeaderItem({ icon: Icon, label, value }) {
+function HeaderItem({ icon: Icon, label, value, title, tenue = false }) {
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 2 }} title={title || undefined}>
       <span style={{ fontSize: 10.5, textTransform: "uppercase", letterSpacing: ".4px", color: "var(--text-muted)", display: "flex", alignItems: "center", gap: 4 }}>
         <Icon size={11} /> {label}
       </span>
-      <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>{value || "—"}</span>
+      <span style={{ fontSize: 13, fontWeight: tenue ? 500 : 600, color: tenue ? "var(--text-muted)" : "var(--text)" }}>{value || "—"}</span>
     </div>
   );
 }
