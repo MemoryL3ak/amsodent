@@ -344,7 +344,7 @@ export default function DetalleCliente() {
       quien: nombre || correo,
       quienTitulo: correo
         ? [nombre ? correo : "", fechaHora ? `Lo creó el ${fechaHora}` : ""].filter(Boolean).join(" · ")
-        : "No quedó registrado quién lo creó: el dato existe para los clientes creados desde fines de octubre de 2026.",
+        : "No quedó registrado quién lo creó: es un cliente antiguo cargado en masa o creado a mano, sin una cotización hecha en ese momento.",
     };
   }, [cliente, vendedores]);
 

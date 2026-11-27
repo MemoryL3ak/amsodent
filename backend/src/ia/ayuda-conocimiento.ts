@@ -269,8 +269,10 @@ QUIÉN CREÓ UN CLIENTE (desde el 27-11-2026): el encabezado de la ficha del
 cliente muestra «Creado» (fecha) y «Creado por» (la persona; al pasar el mouse
 se ve su correo y la hora). El dato se guarda solo al crear el cliente (desde
 Clientes, desde la Bitácora o cuando se crea al guardar una cotización) y no se
-puede editar. Los clientes creados antes de fines de octubre de 2026 dicen «Sin
-registro»: de esa época no quedó guardado quién los creó (no se puede recuperar). No
+puede editar. En los clientes anteriores el dato se recuperó cuando se pudo: si
+el cliente nació al guardar una cotización (misma hora, mismo RUT), lo creó
+quien hizo esa cotización. Unos 345 clientes antiguos, cargados en masa o
+creados a mano, dicen «Sin registro»: no quedó guardado quién los creó. No
 confundir con «Ejecutivo» (el vendedor asignado), que sí se puede cambiar.
 ASIGNACIÓN DE CARTERA (/asignacion-cartera, solo admin; también con el botón
 "Asignar cartera" de Clientes): para repartir clientes entre vendedores EN
