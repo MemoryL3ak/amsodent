@@ -41,6 +41,7 @@ import { BsaleModule } from './bsale/bsale.module';
 import { RepositorioModule } from './repositorio/repositorio.module';
 import { CajaModule } from './caja/caja.module';
 import { PostventaModule } from './postventa/postventa.module';
+import { NotasModule } from './notas/notas.module';
 
 @Module({
   imports: [
@@ -89,6 +90,7 @@ import { PostventaModule } from './postventa/postventa.module';
     RepositorioModule,
     CajaModule,
     PostventaModule,
+    NotasModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
 })

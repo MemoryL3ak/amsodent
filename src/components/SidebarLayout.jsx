@@ -73,6 +73,7 @@ import RecordatoriosCierre from "./RecordatoriosCierre";
 import RecordatoriosSeguimiento from "./RecordatoriosSeguimiento";
 import GoogleAuthSync from "./GoogleAuthSync";
 import DamarIAWidget from "./DamarIAWidget";
+import Notas from "./notas/Notas";
 import useChatNoLeidos from "../hooks/useChatNoLeidos";
 import AvisoMensajeChat from "./AvisoMensajeChat";
 import AvisoOcCargada from "./AvisoOcCargada";
@@ -339,6 +340,13 @@ export default function SidebarLayout() {
     esAdmin && { to: "/monitoreo-sistema", icon: Gauge, label: "Monitoreo del Sistema" },
   ].filter(Boolean);
 
+  // Nombre de cada pantalla según el menú: las notas adhesivas lo usan para
+  // rotular la pantalla a la que queda anclada una nota.
+  const pantallasMenu = [comercialNav, abastecimientoNav, logisticaNav, postVentaNav, portalClienteNav, metasNav, reportesNav, comunicacionNav, herramientasNav, adminNav]
+    .flat()
+    .flatMap((it) => [it, ...(it.children || [])])
+    .map((it) => ({ to: it.to, label: it.label }));
+
   // Ítem hoja del menú (o hijo anidado si `nested`).
   function NavLeaf({ item, nested }) {
     const { to, icon: Icon, label: itemLabel, badge } = item;
@@ -484,6 +492,8 @@ export default function SidebarLayout() {
       {/* (2026-11-04) Otra persona cargó una OC en una cotización mía: ventana flotante. */}
       <AvisoOcCargada />
       {esAdmin && <DamarIAWidget />}
+      {/* (2026-11-27) Notas adhesivas personales: pestaña en el borde derecho (Alt + N). */}
+      {perfil && <Notas pantallas={pantallasMenu} />}
       <AvisoMensajeChat
         aviso={avisoChat}
         onAbrir={abrirChatGrupal}

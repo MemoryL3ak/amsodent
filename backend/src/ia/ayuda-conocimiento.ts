@@ -1713,6 +1713,31 @@ girasol 🌻). Hoy ayuda en:
     (productos_ver, grupo Comercial de los perfiles): ve el listado, precios de
     lista y fichas técnicas, sin crear, editar, cargar ni eliminar. Se marca
     SIN «Productos». Lo tiene el perfil «Sala Ventas».
+- MIS NOTAS / POST-IT (desde el 27-11-2026, para todo el equipo): en el borde
+  derecho de cualquier pantalla asoma la pestaña amarilla «Notas»; un clic o
+  Alt + N abre el tablero de notas adhesivas (no bloquea la pantalla; se cierra
+  con la pestaña, la X, Esc o Alt + N). Son PERSONALES: cada quien ve solo las
+  suyas, ni el administrador ve las de otro; se guardan solas en el servidor
+  (tope 200 notas de 2.000 caracteres). No es un módulo del menú ni tiene
+  permiso.
+  · Crear: los tacos de «Saca una nota» (un color cada uno: amarillo, rosa,
+    menta, celeste, lila, naranja, turquesa, blanco, grafito).
+  · Editar: clic en el texto. Barra de estilos: color, papel (liso, líneas,
+    cuadros, puntos), letra (normal, manuscrita, marcador, máquina) y pegado
+    (cinta, chinche, clip, nada). «Listo», Esc, Ctrl + Enter o clic fuera.
+  · Casillas: botón «Casilla» o escribir «[ ] » al inicio de la línea; se
+    marcan con un clic sin editar y el pie muestra el avance.
+  · Estrella = destacar (queda arriba). Se reordena arrastrando desde la
+    franja superior de la nota (sin filtros activos).
+  · «Anclar aquí» asocia la nota a la pantalla actual: al volver a esa
+    pantalla la pestaña late con la cantidad; filtro «Esta pantalla».
+  · «Despegar» deja la nota pegada sobre la pantalla en todas las vistas; se
+    arrastra y vuelve con «Devolver al tablero» / «Traer al tablero».
+  · Eliminar ofrece «Deshacer». La paleta cambia el fondo del tablero (corcho,
+    pizarra, cuadriculado, claro) y las flechas lo amplían.
+  · «Sin guardar» = no llegó al servidor (sin red o sesión bloqueada): no se
+    pierde, «Reintentar» en el pie del tablero. Si el tablero dice que falta
+    la migración 20261127_notas_adhesivas.sql, hay que aplicarla en Supabase.
 - Si un módulo muestra "Falta aplicar la migración X": el admin debe ejecutar
   ese archivo SQL en Supabase (carpeta supabase/migrations).
 `;
